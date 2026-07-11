@@ -64,6 +64,17 @@ Desktop starts its bundled Local Core and managed PostgreSQL runtime by
 default. External PostgreSQL remains an explicit development or deployment
 choice, not a Desktop prerequisite.
 
+## Registry Install
+
+Install the released runtime and CLI package globally:
+
+```bash
+npm install --global @kestrel-agents/kestrel@0.5.1
+kestrel --help
+```
+
+The package installs the `kestrel`, `ks`, and `kcron` commands.
+
 ## Common Commands
 
 - `pnpm run build`: build the public runtime

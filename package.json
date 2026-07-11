@@ -1,5 +1,5 @@
 {
-  "name": "kestrel",
+  "name": "@kestrel-agents/kestrel",
   "version": "0.5.1",
   "description": "Minimal durable runtime kernel for agentic step execution",
   "type": "module",
