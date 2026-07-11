@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
 
   serverExternalPackages: [
     "pdf-parse",
+    "@napi-rs/canvas",
     "@chat-adapter/discord",
     "discord.js",
     "@discordjs/ws",

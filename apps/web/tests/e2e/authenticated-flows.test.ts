@@ -366,6 +366,9 @@ test.describe("Authenticated unified flows", () => {
         text: "Playwright UI message",
       },
     ]);
+    await expect(
+      page.getByText("Bootstrap reply", { exact: true })
+    ).toBeVisible();
   });
 
   test("new chat page does not attempt resumable reconnect before first send", async ({

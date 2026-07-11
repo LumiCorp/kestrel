@@ -618,11 +618,7 @@ export function Chat({
       initialChatExists &&
       handoff &&
       controller.messages.some((message) => message.id === handoff.messageId);
-    const hasAssistantResponse = controller.messages.some(
-      (message) => message.role === "assistant"
-    );
-
-    if (handoff && (hasPersistedFirstUserMessage || hasAssistantResponse)) {
+    if (handoff && hasPersistedFirstUserMessage) {
       clearChatFirstTurnHandoff(id);
       setHandoff(null);
     }
