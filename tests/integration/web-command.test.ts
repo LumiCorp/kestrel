@@ -16,6 +16,8 @@ import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const CURL_REQUEST_TIMEOUT_SECONDS = "5";
+const CURL_STREAM_TIMEOUT_SECONDS = "15";
 
 test("kestrel web prints env exports and answers curl health checks", async (t) => {
   await ensureCurlAvailable();
@@ -538,7 +540,7 @@ async function runCurlJson(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const args = ["-sS", "--max-time", "5", "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "--max-time", CURL_REQUEST_TIMEOUT_SECONDS, "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }
@@ -579,7 +581,7 @@ async function runCurlText(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: string }> {
-  const args = ["-sS", "-N", "--max-time", "5", "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "-N", "--max-time", CURL_STREAM_TIMEOUT_SECONDS, "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }
