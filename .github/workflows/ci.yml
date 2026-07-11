@@ -83,6 +83,4 @@ jobs:
         run: pnpm run cli:package && pnpm run cli:release-check
 
       - name: Package and verify Desktop
-        run: |
-          ulimit -n unlimited
-          pnpm run desktop:package && pnpm run desktop:release-check
+        run: pnpm run desktop:package && pnpm run desktop:release-check

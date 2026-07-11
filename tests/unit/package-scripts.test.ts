@@ -177,7 +177,6 @@ test("public CI packages and verifies macOS release artifacts from a clean check
   assert.match(workflow, /^    runs-on: macos-15$/mu);
   assert.match(workflow, /brew install postgresql@14/u);
   assert.match(workflow, /pnpm run cli:package && pnpm run cli:release-check/u);
-  assert.match(workflow, /ulimit -n unlimited/u);
   assert.match(workflow, /pnpm run desktop:package && pnpm run desktop:release-check/u);
 });
 
@@ -216,6 +215,9 @@ test("Desktop packaging validates and verifies portable macOS resources", async 
   assert.match(packageScript, /KESTREL_DESKTOP_SIGN_IDENTITY/u);
   assert.match(packageScript, /identityValidation: false/u);
   assert.match(packageScript, /codesign/u);
+  assert.match(packageScript, /darwinSigning\?\.identity !== "-"/u);
+  assert.match(packageScript, /signDesktopPackageAdHoc/u);
+  assert.match(packageScript, /\["--force", "--deep", "--sign", "-", appPath\]/u);
   assert.match(releaseScript, /Desktop Postgres bundle is not portable/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);
