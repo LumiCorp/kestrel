@@ -6,7 +6,8 @@ import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
 import { getStorageAdapter } from "@/lib/storage";
 import { chunkKnowledgeDocument } from "./chunk";
 import { embedKnowledgeTexts, getKnowledgeEmbeddingMode } from "./embed";
-import { extractKnowledgeDocument, getKnowledgeOcrMode } from "./extract";
+import { extractKnowledgeDocument } from "./extract";
+import { getKnowledgeOcrMode } from "./ocr-config";
 import { buildKnowledgeDocumentObjectKey, normalizeMediaType } from "./shared";
 import {
   createKnowledgeDocument,

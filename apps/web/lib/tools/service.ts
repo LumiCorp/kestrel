@@ -3,7 +3,7 @@ import { getDiscordIntegrationStatus } from "@/lib/bots/discord";
 import { getBotUserName } from "@/lib/bots/github-config";
 import { getUnifiedBotRuntime } from "@/lib/bots/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/extract";
+import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
 import { getActiveKnowledgeSnapshot } from "@/lib/knowledge/snapshot-store";
 import { mapWithConcurrencyLimit } from "./concurrency";
 import { buildToolsOverview } from "./overview";
@@ -67,9 +67,9 @@ function mergePolicy(
       ? toSurfaceAccess(row.surfaceAccess)
       : definition.defaultPolicy.surfaceAccess,
     rateLimitMode: row?.rateLimitMode ?? definition.defaultPolicy.rateLimitMode,
-      loggingMode: row?.loggingMode ?? definition.defaultPolicy.loggingMode,
-      settings: {
-        ...definition.defaultPolicy.settings,
+    loggingMode: row?.loggingMode ?? definition.defaultPolicy.loggingMode,
+    settings: {
+      ...definition.defaultPolicy.settings,
       ...parseRecord(row?.settings),
     },
   };

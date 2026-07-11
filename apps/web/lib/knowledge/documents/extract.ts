@@ -101,10 +101,6 @@ async function extractTextFromImageWithVision(
   };
 }
 
-export function getKnowledgeOcrMode() {
-  return getDirectRuntimeConfig("ocr").mode;
-}
-
 async function extractPdf(
   buffer: Buffer
 ): Promise<ExtractKnowledgeDocumentResult> {

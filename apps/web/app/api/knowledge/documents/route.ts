@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getKnowledgeEmbeddingMode } from "@/lib/knowledge/documents/embed";
-import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/extract";
+import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
 import {
   isKnowledgeDocumentMediaTypeSupported,
   normalizeMediaType,

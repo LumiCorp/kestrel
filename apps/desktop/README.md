@@ -40,7 +40,7 @@ Desktop is implemented as an Electron app over the shared Kestrel surfaces. On s
 
 The renderer does not receive runner or Local Core credentials. Desktop settings are projected into an explicit non-secret view; hosted provider keys use a write-only IPC command and are never returned to the renderer.
 
-The static renderer currently owns conversation, Mission Control task and product-board operations, project workspace, local MCP discovery, and diagnostics views. Mission Control reads runner-owned project snapshots, submits validated task and board actions, and projects runner-owned `operator.thread` and `operator.run` views through typed IPC; it does not maintain browser-local runtime state. MCP installation/configuration, run and session indexes, graph inspection, deeper operator controls, and packaged Electron smoke remain migration gates before the legacy Next cockpit can be deleted.
+The static renderer owns conversation, Mission Control task and product-board operations, project workspace, local MCP discovery, and diagnostics views. Mission Control reads runner-owned project snapshots, submits validated task and board actions, and projects runner-owned `operator.thread` and `operator.run` views through typed IPC; it does not maintain browser-local runtime state. The legacy embedded Next.js cockpit has been removed, and release checks reject Next.js or hosted-product source in packaged Desktop resources.
 
 ## 0.5.1 State Bridge
 
@@ -64,7 +64,7 @@ Local Core settings support two database modes:
 
 `External` mode requires `DATABASE_URL`. Desktop validates connectivity during runtime startup/restart and surfaces failures through runtime health and recovery flows.
 
-The 0.6 static renderer shows the active database mode and recovery state but does not yet accept a new external URL. That write-only configuration boundary must be completed before the legacy Settings route is removed.
+The static renderer shows the active database mode and recovery state but does not yet accept a new external URL. External database mode remains optional; packaged Desktop defaults to its bundled managed Postgres runtime.
 
 ## First-Run Setup
 
@@ -79,9 +79,9 @@ Packaged Desktop treats first-run onboarding as an explicit choice flow, not a s
 ## v0.5 Beta Boundaries
 
 - macOS is the first clean-machine proof target.
-- The v0.5 beta artifact is unsigned and not notarized.
+- The v0.5 beta artifact is ad-hoc signed. It is not Apple Developer ID signed or notarized.
 - Auto-update is out of scope.
-- Managed packaged Postgres remains beta until clean-machine proof is captured.
+- Managed packaged Postgres is bundled and covered by clean-package lifecycle smoke tests; it remains a beta surface in v0.5.
 - Code/dev-shell workflows and `kcron` automation are beta companion surfaces, not the default first-run promise.
 
 ## Local Development

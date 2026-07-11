@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getKnowledgeEmbeddingMode } from "@/lib/knowledge/documents/embed";
-import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/extract";
+import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
 import {
   getKnowledgeDocumentsForOrganization,
   getLatestKnowledgeIngestionRunsForDocuments,
