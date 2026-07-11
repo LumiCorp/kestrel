@@ -177,7 +177,7 @@ test("public CI packages and verifies macOS release artifacts from a clean check
   assert.match(workflow, /^    runs-on: macos-15$/mu);
   assert.match(workflow, /brew install postgresql@14/u);
   assert.match(workflow, /pnpm run cli:package && pnpm run cli:release-check/u);
-  assert.match(workflow, /ulimit -n 65536/u);
+  assert.match(workflow, /ulimit -n unlimited/u);
   assert.match(workflow, /pnpm run desktop:package && pnpm run desktop:release-check/u);
 });
 

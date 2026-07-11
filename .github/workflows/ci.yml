@@ -84,5 +84,5 @@ jobs:
 
       - name: Package and verify Desktop
         run: |
-          ulimit -n 65536
+          ulimit -n unlimited
           pnpm run desktop:package && pnpm run desktop:release-check
