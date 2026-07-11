@@ -16,7 +16,7 @@ import {
   MAX_KNOWLEDGE_FILE_BYTES,
   uploadKnowledgeDocumentForUser,
 } from "@/lib/knowledge/mutations";
-import { getKnowledgeQueueStatus } from "@/lib/knowledge/queue";
+import { getKnowledgeQueueStatus } from "@/lib/knowledge/queue-state";
 import { getStorageConfig } from "@/lib/storage";
 
 const listQuerySchema = z.object({
