@@ -98,8 +98,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
     ],
     onFinishPersist: async (messages, meta) => {
       const part = messages[0]?.parts[0];
-      persistedText =
-        part?.type === "text" && "text" in part ? part.text : "";
+      persistedText = part?.type === "text" && "text" in part ? part.text : "";
       persistedMeta = meta;
     },
   });
@@ -151,6 +150,59 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   });
 });
 
+test("createKestrelOneAgentResponse isolates transient title failures from the agent stream", async () => {
+  let persistedTitle: string | null | undefined;
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    const response = createKestrelOneAgentResponseFromAgent({
+      request: new Request("http://example.test/api/chats/chat_123", {
+        method: "POST",
+      }),
+      agent: fakeAgent({
+        terminal: completedTerminal({ message: "Runtime answer" }),
+      }),
+      ownsAgent: false,
+      session,
+      organizationId: "org_123",
+      correlation: {
+        requestId: "req_123",
+        correlationId: "req_123",
+      },
+      chatId: "chat_123",
+      messages: [
+        {
+          id: "msg_user",
+          role: "user",
+          parts: [{ type: "text", text: "What changed?" }],
+        },
+      ],
+      transientTitle: Promise.reject(
+        new Error(
+          'Model "gpt-5-mini" is not an approved gateway model for the title surface.'
+        )
+      ),
+      onFinishPersist: async (_messages, meta) => {
+        persistedTitle = meta.title;
+      },
+    });
+
+    const body = await response.text();
+
+    assert.match(body, /Runtime answer/);
+    assert.doesNotMatch(body, /not an approved gateway model/);
+    assert.equal(persistedTitle, null);
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]?.[0]), /continuing without a title/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test("createKestrelOneAgentResponse dedupes progress and persists only final assistant text", async () => {
   let persistedText = "";
   const terminal = completedTerminal({ message: "Final answer" });
@@ -194,8 +246,7 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
     ],
     onFinishPersist: async (messages) => {
       const part = messages[0]?.parts[0];
-      persistedText =
-        part?.type === "text" && "text" in part ? part.text : "";
+      persistedText = part?.type === "text" && "text" in part ? part.text : "";
     },
   });
 
@@ -249,8 +300,7 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
     ],
     onFinishPersist: async (messages, meta) => {
       const part = messages[0]?.parts[0];
-      persistedText =
-        part?.type === "text" && "text" in part ? part.text : "";
+      persistedText = part?.type === "text" && "text" in part ? part.text : "";
       persistedMeta = meta;
     },
   });
@@ -285,8 +335,7 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
     ],
     onFinishPersist: async (messages) => {
       const part = messages[0]?.parts[0];
-      persistedText =
-        part?.type === "text" && "text" in part ? part.text : "";
+      persistedText = part?.type === "text" && "text" in part ? part.text : "";
     },
   });
 

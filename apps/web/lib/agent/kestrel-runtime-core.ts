@@ -1,8 +1,3 @@
-import {
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  type UIMessage,
-} from "ai";
 import type {
   KestrelAgent,
   KestrelAgentTurnInput,
@@ -11,6 +6,11 @@ import type {
   RunnerStream,
   RunnerStreamEvent,
 } from "@kestrel-agents/sdk";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+} from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import {
   extractFinalizedAssistantText,
@@ -153,6 +153,17 @@ export function createKestrelOneAgentResponseFromAgent(
   const textPartId = crypto.randomUUID();
   const reasoningPartId = crypto.randomUUID();
   let streamErrorMessage: string | null = null;
+  const transientTitle =
+    input.transientTitle?.catch((error: unknown) => {
+      console.warn(
+        "Transient chat title generation failed; continuing without a title.",
+        {
+          message:
+            error instanceof Error ? error.message : "Unknown title error",
+        }
+      );
+      return null;
+    }) ?? null;
 
   const stream = createUIMessageStream({
     originalMessages: input.messages,
@@ -203,7 +214,7 @@ export function createKestrelOneAgentResponseFromAgent(
 
       streamErrorMessage = streamResult.errorMessage;
 
-      const title = await input.transientTitle;
+      const title = await transientTitle;
       if (title) {
         writer.write({
           type: "data-chat-title",
@@ -223,7 +234,8 @@ export function createKestrelOneAgentResponseFromAgent(
           },
         ],
         {
-          model: process.env.KESTREL_ONE_PROFILE_ID?.trim() || DEFAULT_PROFILE_ID,
+          model:
+            process.env.KESTREL_ONE_PROFILE_ID?.trim() || DEFAULT_PROFILE_ID,
           title: title ?? null,
           errorMessage: streamResult.errorMessage,
           failureVisible: streamResult.failureVisible,
@@ -254,7 +266,9 @@ function getLatestUserText(messages: UIMessage[]): string {
 function toKestrelHistory(messages: UIMessage[]) {
   return messages
     .filter(
-      (message): message is UIMessage & { role: "user" | "assistant" | "system" } =>
+      (
+        message
+      ): message is UIMessage & { role: "user" | "assistant" | "system" } =>
         message.role === "user" ||
         message.role === "assistant" ||
         message.role === "system"
