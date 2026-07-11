@@ -85,8 +85,10 @@ try {
   const manifest = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
     main?: string;
+    name?: string;
     types?: string;
   };
+  assert.equal(manifest.name, "@kestrel-agents/kestrel");
   assert.equal(manifest.main, "dist/src/index.js");
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "0.5.1");
