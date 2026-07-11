@@ -7,7 +7,7 @@ import {
   getLatestKnowledgeIngestionRunsForDocuments,
 } from "@/lib/knowledge/documents/store";
 import { KV_KEYS, kvGet } from "@/lib/knowledge/kv";
-import { getKnowledgeQueueStatus } from "@/lib/knowledge/queue";
+import { getKnowledgeQueueStatus } from "@/lib/knowledge/queue-state";
 import { getSnapshotRepoConfig } from "@/lib/knowledge/snapshot-config";
 import { getStorageConfig } from "@/lib/storage";
 import { normalizeMediaType } from "./documents/shared";
