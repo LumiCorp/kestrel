@@ -649,6 +649,8 @@ test("DevShellSupervisor source-write guard protects managed worktree gitfile", 
     assert.equal(result.exitCode, 126);
     assert.match(result.failureReason ?? "", /unauthorized source writes/u);
     assert.deepEqual(result.unauthorizedSourceWrites?.map((item) => item.path), [".git"]);
+    assert.deepEqual(result.sourceWriteGuard?.unauthorizedSourceWrites, result.unauthorizedSourceWrites);
+    assert.equal(result.sourceWriteGuard?.finalCheckCompleted, true);
     assert.equal(result.unauthorizedSourceWrites?.[0]?.kind, "deleted");
     assert.equal(result.unauthorizedSourceWrites?.[0]?.restored, true);
     assert.equal(await readFile(gitFilePath, "utf8"), "gitdir: /tmp/kestrel-worktree-gitdir\n");

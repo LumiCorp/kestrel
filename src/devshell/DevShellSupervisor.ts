@@ -67,6 +67,7 @@ interface RunningProcess {
   stopRequested: boolean;
   forcedFailureReason?: string | undefined;
   sourceWriteGuardChecked: boolean;
+  sourceWriteGuardCheck?: Promise<void> | undefined;
   transcriptTruncated: boolean;
 }
 
@@ -664,6 +665,24 @@ export class DevShellSupervisor {
     if (process.sourceWriteGuard === undefined || process.sourceWriteGuardChecked) {
       return;
     }
+
+    if (process.sourceWriteGuardCheck !== undefined) {
+      await process.sourceWriteGuardCheck;
+      return;
+    }
+
+    const check = this.enforceSourceWriteGuardOnce(process);
+    process.sourceWriteGuardCheck = check;
+    try {
+      await check;
+    } finally {
+      if (process.sourceWriteGuardCheck === check) {
+        process.sourceWriteGuardCheck = undefined;
+      }
+    }
+  }
+
+  private async enforceSourceWriteGuardOnce(process: RunningProcess): Promise<void> {
     const result = await enforceDevShellSourceWriteGuard(process.sourceWriteGuard);
     if (result === undefined) {
       return;
