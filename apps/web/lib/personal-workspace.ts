@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
 const PERSONAL_WORKSPACE_NAME = "Personal";
@@ -38,62 +38,73 @@ export async function ensurePersonalOrganization(user: UserLike) {
   const slug = getPersonalOrganizationSlug(user.id);
   const metadata = buildPersonalMetadata(user.id);
   const now = new Date();
+  const lockKey = `kestrel:personal-workspace:${user.id}`;
 
-  let organization = await knowledgeDb.query.organizations.findFirst({
-    where: (table, { eq }) => eq(table.slug, slug),
-  });
+  return knowledgeDb.transaction(async (transaction) => {
+    // Layouts and pages may resolve the same new session concurrently.
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
 
-  if (!organization) {
-    const [createdOrganization] = await knowledgeDb
-      .insert(schema.organizations)
-      .values({
-        id: crypto.randomUUID(),
-        name: PERSONAL_WORKSPACE_NAME,
-        slug,
-        logo: null,
-        createdAt: now,
-        metadata,
-      })
-      .returning();
-
-    organization = createdOrganization;
-  } else if (
-    organization.name !== PERSONAL_WORKSPACE_NAME ||
-    organization.metadata !== metadata
-  ) {
-    const [updatedOrganization] = await knowledgeDb
-      .update(schema.organizations)
-      .set({
-        name: PERSONAL_WORKSPACE_NAME,
-        metadata,
-      })
-      .where(eq(schema.organizations.id, organization.id))
-      .returning();
-
-    organization = updatedOrganization ?? organization;
-  }
-
-  const membership = await knowledgeDb.query.members.findFirst({
-    where: (table, { and, eq }) =>
-      and(eq(table.organizationId, organization.id), eq(table.userId, user.id)),
-  });
-
-  if (!membership) {
-    await knowledgeDb.insert(schema.members).values({
-      id: crypto.randomUUID(),
-      organizationId: organization.id,
-      userId: user.id,
-      role: "owner",
-      createdAt: now,
+    let organization = await transaction.query.organizations.findFirst({
+      where: (table, { eq }) => eq(table.slug, slug),
     });
-  } else if (membership.role !== "owner") {
-    await knowledgeDb
-      .update(schema.members)
-      .set({ role: "owner" })
-      .where(eq(schema.members.id, membership.id));
-  }
 
-  return organization;
+    if (!organization) {
+      const [createdOrganization] = await transaction
+        .insert(schema.organizations)
+        .values({
+          id: crypto.randomUUID(),
+          name: PERSONAL_WORKSPACE_NAME,
+          slug,
+          logo: null,
+          createdAt: now,
+          metadata,
+        })
+        .returning();
+
+      organization = createdOrganization;
+    } else if (
+      organization.name !== PERSONAL_WORKSPACE_NAME ||
+      organization.metadata !== metadata
+    ) {
+      const [updatedOrganization] = await transaction
+        .update(schema.organizations)
+        .set({
+          name: PERSONAL_WORKSPACE_NAME,
+          metadata,
+        })
+        .where(eq(schema.organizations.id, organization.id))
+        .returning();
+
+      organization = updatedOrganization ?? organization;
+    }
+
+    const membership = await transaction.query.members.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, organization.id),
+          eq(table.userId, user.id)
+        ),
+    });
+
+    if (!membership) {
+      await transaction.insert(schema.members).values({
+        id: crypto.randomUUID(),
+        organizationId: organization.id,
+        userId: user.id,
+        role: "owner",
+        createdAt: now,
+      });
+    } else if (membership.role !== "owner") {
+      await transaction
+        .update(schema.members)
+        .set({ role: "owner" })
+        .where(eq(schema.members.id, membership.id));
+    }
+
+    return organization;
+  });
 }
 
 export async function ensurePersonalOrganizationByUserId(userId: string) {

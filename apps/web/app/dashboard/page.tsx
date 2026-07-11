@@ -1,20 +1,9 @@
-import { headers } from "next/headers";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppPage } from "@/components/app-page";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { auth } from "@/lib/auth";
 
 export default async function DashboardPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session?.user) {
-    redirect("/sign-in");
-  }
-
   return (
     <AppPage>
       <AdminPageHeader
