@@ -162,9 +162,22 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   assert.match(packageScript, /packPublicProtocolPackage\(\{ repoRoot, packDir: localPackageDir \}\)/u);
   assert.match(packageScript, /resolveRuntimeDependencyInstallArgs\(localPackages\)/u);
   assert.match(packageScript, /rmSync\(localPackageDir, \{ recursive: true, force: true \}\)/u);
+  assert.match(packageScript, /prepareDesktopPostgresBundle\(\{/u);
+  assert.match(packageScript, /strict: true/u);
+  assert.match(packageScript, /verifyPreparedDesktopPostgresBundle\(\{/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /parseRunnerHealthV1\(health\.body\)/u);
+});
+
+test("public CI packages and verifies macOS release artifacts from a clean checkout", async () => {
+  const workflow = await readFile(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+
+  assert.match(workflow, /^  package-macos:$/mu);
+  assert.match(workflow, /^    runs-on: macos-15$/mu);
+  assert.match(workflow, /brew install postgresql@14/u);
+  assert.match(workflow, /pnpm run cli:package && pnpm run cli:release-check/u);
+  assert.match(workflow, /pnpm run desktop:package && pnpm run desktop:release-check/u);
 });
 
 test("Desktop package stage preserves npm overrides for static runtime audits", async () => {
@@ -202,6 +215,9 @@ test("Desktop packaging validates and verifies portable macOS resources", async 
   assert.match(packageScript, /KESTREL_DESKTOP_SIGN_IDENTITY/u);
   assert.match(packageScript, /identityValidation: false/u);
   assert.match(packageScript, /codesign/u);
+  assert.match(packageScript, /darwinSigning\?\.identity !== "-"/u);
+  assert.match(packageScript, /signDesktopPackageAdHoc/u);
+  assert.match(packageScript, /\["--force", "--deep", "--sign", "-", appPath\]/u);
   assert.match(releaseScript, /Desktop Postgres bundle is not portable/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);

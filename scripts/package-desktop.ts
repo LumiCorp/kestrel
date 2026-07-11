@@ -70,7 +70,7 @@ const packagedPaths = await electronPackager({
   platform: packagerConfig.platform,
   prune: false,
   quiet: false,
-  ...(packagerConfig.platform === "darwin"
+  ...(packagerConfig.platform === "darwin" && darwinSigning?.identity !== "-"
     ? {
         osxSign: darwinSigning?.options,
       }
@@ -78,8 +78,21 @@ const packagedPaths = await electronPackager({
 });
 
 for (const packagedPath of packagedPaths) {
+  if (packagerConfig.platform === "darwin" && darwinSigning?.identity === "-") {
+    signDesktopPackageAdHoc(packagedPath, packagerConfig);
+  }
   verifyDesktopPackage(packagedPath, packagerConfig, darwinSigning?.hardenedRuntime);
   console.log(`[desktop] packaged app at ${packagedPath}`);
+}
+
+function signDesktopPackageAdHoc(
+  packagedPath: string,
+  config: { appName: string },
+): void {
+  const appPath = path.join(packagedPath, `${config.appName}.app`);
+  execFileSync("codesign", ["--force", "--deep", "--sign", "-", appPath], {
+    stdio: "inherit",
+  });
 }
 
 function verifyDesktopPackage(
@@ -114,6 +127,7 @@ function verifyDesktopPackage(
 }
 
 function resolveDarwinSigningOptions(): {
+  identity: string;
   hardenedRuntime: boolean;
   options: Record<string, unknown>;
 } {
@@ -123,11 +137,13 @@ function resolveDarwinSigningOptions(): {
     : "-";
   if (identity !== "-") {
     return {
+      identity,
       hardenedRuntime: true,
       options: { identity },
     };
   }
   return {
+    identity,
     hardenedRuntime: false,
     options: {
       identity,

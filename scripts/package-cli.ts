@@ -7,6 +7,10 @@ import {
   packPublicProtocolPackage,
   resolveRuntimeDependencyInstallArgs,
 } from "./runtime-package-dependencies.js";
+import {
+  prepareDesktopPostgresBundle,
+  verifyPreparedDesktopPostgresBundle,
+} from "./prepare-desktop-postgres-bundle.js";
 
 const TARGET_PLATFORM = "darwin";
 const TARGET_ARCH = "arm64";
@@ -37,6 +41,7 @@ mkdirSync(outDir, { recursive: true });
 
 writeCliRuntimeManifest();
 copyCliRuntimeResources();
+prepareCliPostgresBundle();
 copyCliPostgresBundle();
 installRuntimeDependenciesWithPackedProtocol();
 writeLaunchers();
@@ -85,6 +90,23 @@ function copyCliRuntimeResources(): void {
       filter: shouldCopyDesktopResourceEntry,
     });
   }
+}
+
+function prepareCliPostgresBundle(): void {
+  const result = prepareDesktopPostgresBundle({
+    repoRoot,
+    platform: TARGET_PLATFORM,
+    arch: TARGET_ARCH,
+    strict: true,
+  });
+  if (result.prepared === false) {
+    throw new Error(`Unable to prepare the CLI Postgres bundle: ${result.reason ?? "unavailable"}.`);
+  }
+  verifyPreparedDesktopPostgresBundle({
+    targetRoot: result.targetRoot,
+    expectedPlatform: TARGET_PLATFORM,
+    expectedArch: TARGET_ARCH,
+  });
 }
 
 function copyCliPostgresBundle(): void {
