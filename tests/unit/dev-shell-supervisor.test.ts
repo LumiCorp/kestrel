@@ -444,13 +444,16 @@ test("DevShellSupervisor source-write guard fails and restores unauthorized shel
 });
 
 test("DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
-  const { supervisor, workspaceRoot } = await createSupervisor();
+  const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
+  const stagedDir = path.join(baseDir, "staged-generated");
   const generatedDir = path.join(workspaceRoot, "generated");
   const generatedFile = path.join(generatedDir, "nested", "file.txt");
+  await mkdir(path.join(stagedDir, "nested"), { recursive: true });
+  await writeFile(path.join(stagedDir, "nested", "file.txt"), "new", "utf8");
   try {
     const result = await supervisor.runCommand({
       workspaceRoot,
-      command: "mkdir -p generated/nested && printf 'new' > generated/nested/file.txt",
+      command: "mv ../staged-generated generated",
       timeoutMs: TEST_COMMAND_TIMEOUT_MS,
       maxOutputBytes: 4096,
       sourceWriteGuard: {
