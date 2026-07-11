@@ -1,0 +1,5 @@
+{
+  "feature": "hybrid-rag",
+  "anchor": "fixture-json-anchor-hybrid",
+  "defaultRoute": "documents-first"
+}

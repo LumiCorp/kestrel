@@ -1,0 +1,75 @@
+---
+title: Docs
+summary: Product narrative and conceptual onboarding for understanding Kestrel Desktop, the suite around it, and the runtime that powers the whole system.
+section: docs
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-06-03
+---
+
+The docs section should answer the questions that decide whether Kestrel Desktop and the broader Kestrel Suite are the right shape for your product. It explains the flagship Desktop experience, the companion surfaces around it, and the runtime and runner-service model that keep the suite coherent.
+
+Start here if you need the product point of view before the implementation manual. These pages are for evaluation, orientation, and decision-making, not only for package lookup.
+
+## Where Current Contracts Live
+
+Use this section for the richer narrative and cross-surface reading path. For compact repo-level source-of-truth summaries, pair it with:
+
+- [README.md](README.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [RELIABILITY.md](RELIABILITY.md)
+- [SECURITY.md](SECURITY.md)
+
+Use [Reference](/reference) for exact contract material and [Archive](/archive) for historical rationale.
+
+## Start Here
+
+### Start with the flagship app
+
+[Desktop app](/apps/desktop) is the fastest way to understand the main Kestrel product surface: local workspaces, persistent sessions, operator visibility, and recovery.
+
+### Read the product story
+
+[Why Kestrel](/docs/why-kestrel) explains the repository's point of view: durable execution, explicit trust boundaries, operator-visible state, replay, and workspace-local behavior.
+
+### Learn the vocabulary
+
+[Core concepts](/docs/core-concepts) defines the mental model that appears across the SDK, route helpers, CLI, runtime, and operations material.
+
+### See the execution model
+
+[Runtime model](/docs/runtime-model) explains the flow from inbound request to run events, persisted history, subscriptions, and replayable operator evidence.
+
+### Find the practical entry point
+
+[Quickstart](/docs/quickstart) moves from install into the flagship Desktop flow first, then into the broader suite and extension paths.
+
+### Jump to the strongest capabilities
+
+If evaluation depends less on a tutorial and more on proof of power, jump straight to:
+
+- [Desktop app](/apps/desktop)
+- [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- [Review and state workflows](/operations/review-and-state-workflows)
+- [Operator control workflows](/operations/operator-control-workflows)
+- [Evaluations with Ruhroh](/operations/evaluations)
+
+## What This Section Is For
+
+- flagship product orientation
+- product narrative
+- architectural orientation
+- cross-surface concepts
+- decision-making support for evaluators and integrators
+
+## What This Section Is Not
+
+This section is not the full package reference and it is not the place to learn every command or route shape. Once you know the shape of the system, switch to [Build](/build), [Deploy](/deploy), [Packages](/packages), [CLI](/cli), or [Runtime](/runtime) depending on what you need to do next.
+
+## What To Read Next
+
+- [Desktop app](/apps/desktop)
+- [Quickstart](/docs/quickstart)
+- [Why Kestrel](/docs/why-kestrel)
+- [Build](/build)

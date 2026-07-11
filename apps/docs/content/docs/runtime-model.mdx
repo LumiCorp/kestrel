@@ -1,0 +1,128 @@
+---
+title: Runtime model
+summary: How a Kestrel request moves from application boundary to run execution, stream events, subscriptions, persisted history, and replayable operator evidence.
+section: docs
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+Kestrel is easiest to reason about if you separate the request path from the evidence path.
+
+The request path is how an app or operator tells the system to do work. The evidence path is what survives after that work starts and finishes: stream events, background updates, memory revisions, artifacts, and replay material. Kestrel cares about both because the second path is what makes the first one operable.
+
+## Request path
+
+At integration time, the usual flow looks like this:
+
+1. a browser or external caller hits your application
+2. your application resolves actor context and request correlation
+3. your server calls the runner service through the SDK, route helpers, or the OpenAI-compatible HTTP layer
+4. the runtime executes the turn and emits terminal or streaming events
+
+When you use `@kestrel-agents/next`, that shape is explicit in the helpers. The route handler reads JSON, resolves context, builds a `KestrelAgentTurnInput`, and then calls `agent.run()` or `agent.stream()`. When you use the OpenAI-compatible layer, the same boundary exists even though the payload shape looks familiar.
+
+```ts
+import { createStreamRunRouteHandler } from "@kestrel-agents/next";
+
+export const POST = createStreamRunRouteHandler({
+  agent,
+  async resolveContext(request, correlation) {
+    return {
+      actor: {
+        actorId: "user-123",
+        actorType: "end_user",
+      },
+      tenantId: "acme",
+    };
+  },
+});
+```
+
+The OpenAI-compatible path follows the same topology, but with `/v1/chat/completions` or `/v1/responses` instead of a typed route helper.
+
+## Execution path
+
+Inside the runtime, the engine owns run and step lifecycle. The IO layer owns model and tool gateways. The store owns persistence for state, logs, events, and replay material. That separation is what lets Kestrel preserve durable evidence without forcing every UI surface to understand engine internals or invent its own state model.
+
+```text
+application route
+  -> runner service
+    -> execution engine
+      -> model/tool IO
+      -> state and event store
+        -> streaming output
+        -> task/operator updates
+        -> replay evidence
+```
+
+The runtime is intentionally conservative:
+
+- inputs are parsed at the boundary before mutation
+- effects and outbox writes stay commit-coupled
+- quality gates are treated as part of the product
+- policy drift should be handled through contracts and prompts before heuristics
+
+That posture is why replay, released evaluations, and control-plane inspection stay useful after the system grows. The runtime is trying to remain legible under change, not only functional on the happy path.
+
+## Streaming versus subscriptions versus replay
+
+Kestrel distinguishes between three different ways of “seeing what happened”:
+
+| Capability | Scope | Best for |
+| --- | --- | --- |
+| `run()` | one request, terminal result only | request-response APIs |
+| `stream()` | one request, live events while it executes | browser progress or live terminal feedback |
+| `subscribe()` over `/events/stream` | filtered background events outside one request | task updates, operator updates, long-lived observers |
+| replay inspection | persisted historical evidence | debugging, comparison, evaluation, operator forensics |
+
+`agent.stream()` is request-scoped. It delivers events for the run you just started. If the request is canceled, the SDK cancels that exact run and `stream.result` resolves with `run.cancelled`.
+
+`agent.subscribe()` is for independent observation of background events. It must be filtered by `sessionId`, `threadId`, or `runId`. The root SDK does not expose a global firehose.
+
+The repo tests show the `/events/stream` path delivering filtered SSE for subscription use cases such as `task.updated`.
+
+Replay is different again. It is not live observation. It is the persisted record that later powers run comparison, artifact inspection, evaluation evidence, and operator forensics. If a team confuses those three surfaces, it usually ends up overloading one path and under-documenting the others.
+
+## Memory and continuity
+
+Continuity is not left to hidden prompt accumulation. The SDK exposes explicit session memory and versioned updates. That lets the app or operator read the current memory record, patch it, and keep the state tied to the session's durable history. It also means memory conflicts fail visibly instead of turning into silent overwrites.
+
+## Control-plane state
+
+The runtime model is broader than “prompt in, text out.” The control plane also exposes:
+
+- `operator.inbox` and `operator.thread` for reading operator state
+- `operator.control` for steering or retrying work already underway
+- `task.graph.get` and `task.graph.update` for durable task structure
+- `project.snapshot.get`, `project.snapshot.update`, and `project.action` for higher-level project state
+
+Those capabilities matter because Kestrel is meant to support inspection and control after a run has started, not only request initiation. The runtime model is therefore closer to "durable work plus control and evidence" than to "messages in, text out."
+
+## Replay and operator evidence
+
+Kestrel does not stop at "the request returned a result." Ruhroh evaluations, append-only CLI history, quality scorecards, and archive material all depend on the system leaving behind a readable trail. That is what lets teams compare runs, debug a workflow, defend a migration, or explain why a review action was taken later.
+
+## Workspaces in the runtime model
+
+Workspaces extend the runtime model beyond one-off requests. A folder's `global profile selection` becomes the local behavior contract. `kcron` can then run that folder's recurring tasks without moving the logic into a centralized scheduler config that no one reviews. That is how Kestrel keeps automation reviewable instead of ambient.
+
+## The main runtime decisions teams have to make
+
+| Question | Choose this when |
+| --- | --- |
+| OpenAI-compatible HTTP or SDK/protocol? | use HTTP for chat-first compatibility, SDK/protocol for richer control surfaces |
+| request-response or streaming? | use response mode when live progress is irrelevant, streaming when the caller benefits from run events |
+| streaming or background subscriptions? | use streaming for one run, subscriptions for filtered ongoing observation |
+| live execution or replay inspection? | use live execution for doing work, replay for understanding historical work |
+| interactive session or scheduled workspace automation? | use interactive for immediate control, scheduled workspace automation for recurring project-local work |
+
+## What To Read Next
+
+- [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- [@kestrel-agents/sdk](/packages/sdk)
+- [Building your first agent](/build/building-your-first-agent)
+- [Operator control workflows](/operations/operator-control-workflows)
+- [Running the runner service](/deploy/running-the-runner-service)
+- [Runtime](/runtime)

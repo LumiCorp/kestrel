@@ -1,0 +1,45 @@
+---
+title: Architecture rules
+summary: The approved dependency directions for runtime layers and the small set of exceptions that are explicitly documented instead of implied.
+section: reference
+audience: maintainers
+status: active
+sourceKind: curated
+internal: true
+updatedAt: 2026-03-20
+---
+
+The architecture-rules reference encodes the dependency directions that the repo treats as acceptable.
+
+## Current layers
+
+The current rules name:
+
+- engine
+- store
+- io
+- tools
+- apps
+- cli
+
+Each layer has a bounded set of allowed dependencies, which keeps architectural drift visible instead of implicit.
+
+## Explicit exception
+
+The current documented exception is:
+
+- engine -> store
+- reason: legacy transition persistence coupling
+- expires at: `2026-12-31`
+
+Exceptions staying explicit is the important part. Even temporary architectural debt should remain visible and time-bounded.
+
+## When you hit this
+
+Use this page when a code review or refactor starts sounding like:
+
+- “just import the store from the engine layer”
+- “it’s easier if the app reaches into runtime internals directly”
+- “this can be a quick cross-layer fix”
+
+That is usually the signal to stop and check whether the dependency direction is actually allowed.

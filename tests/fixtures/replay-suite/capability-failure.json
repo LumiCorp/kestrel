@@ -1,0 +1,54 @@
+{
+  "baseline": {
+    "scenario_id": "capability-failure",
+    "strict_events": ["step.selected", "terminal.normalized"],
+    "expected_terminal_status": "FAILED",
+    "expected_error_codes": ["DECISION_CAPABILITY_UNAVAILABLE"],
+    "tolerant_metrics": {
+      "stepsObservedDelta": 0
+    },
+    "approved_at": "2026-03-12T00:00:00.000Z"
+  },
+  "current": {
+    "events": ["step.selected", "terminal.normalized"],
+    "summary": {
+      "eventCount": 2,
+      "stepsObserved": 1,
+      "regionsStarted": 0,
+      "regionsCompleted": 0,
+      "syncNodesHit": 0,
+      "mergeConflicts": 0,
+      "progressStages": 0,
+      "progressToolCalls": 0,
+      "waitingMilestones": 0,
+      "heartbeatLiveOnlyCount": 0,
+      "schedulerActions": 0,
+      "waitsEntered": 0,
+      "waitsResumed": 0,
+      "loopGuards": 0,
+      "terminalStatus": "FAILED",
+      "truncated": false
+    },
+    "errorCodes": ["DECISION_CAPABILITY_UNAVAILABLE"]
+  },
+  "previous": {
+    "summary": {
+      "eventCount": 2,
+      "stepsObserved": 1,
+      "regionsStarted": 0,
+      "regionsCompleted": 0,
+      "syncNodesHit": 0,
+      "mergeConflicts": 0,
+      "progressStages": 0,
+      "progressToolCalls": 0,
+      "waitingMilestones": 0,
+      "heartbeatLiveOnlyCount": 0,
+      "schedulerActions": 0,
+      "waitsEntered": 0,
+      "waitsResumed": 0,
+      "loopGuards": 0,
+      "terminalStatus": "FAILED",
+      "truncated": false
+    }
+  }
+}

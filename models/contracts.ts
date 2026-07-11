@@ -1,0 +1,68 @@
+import type { ModelRequest, ModelResponse, ModelToolIntent } from "../src/kestrel/contracts/model-io.js";
+
+
+export type OpenRouterEndpoint = "chat" | "responses";
+
+export interface OpenRouterEnvConfig {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  siteUrl?: string | undefined;
+  appName?: string | undefined;
+}
+
+export interface OpenAiEnvConfig {
+  apiKey?: string | undefined;
+  model: string;
+  baseUrl: string;
+  providerName: "openai" | "ollama" | "lmstudio";
+  providerLabel: string;
+  organization?: string | undefined;
+  project?: string | undefined;
+}
+
+export interface AnthropicEnvConfig {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  version: string;
+}
+
+export interface OpenRouterHttpRequest {
+  endpoint: OpenRouterEndpoint;
+  model: string;
+  path: string;
+  body: Record<string, unknown>;
+  structuredOutput?:
+    | {
+        mode: "constrained" | "json_object";
+        schemaName?: string | undefined;
+        compilerDiagnostics?: Record<string, unknown> | undefined;
+      }
+    | undefined;
+}
+
+export interface OpenRouterMappedResponse<TOutput> extends ModelResponse<TOutput> {}
+
+export interface OpenRouterResponseContext {
+  endpoint: OpenRouterEndpoint;
+  requestedModel: string;
+  requestId?: string | undefined;
+  structuredOutput?: OpenRouterHttpRequest["structuredOutput"] | undefined;
+}
+
+export interface OpenRouterInvoker {
+  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+}
+
+export interface OpenAiInvoker {
+  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+}
+
+export interface AnthropicInvoker {
+  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+}
+
+export interface ParsedToolIntent {
+  intents: ModelToolIntent[];
+}

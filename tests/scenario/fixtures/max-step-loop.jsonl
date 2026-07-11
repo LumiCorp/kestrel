@@ -1,0 +1,3 @@
+{"timestamp":"2026-02-26T00:00:00.000Z","kind":"log","event":"step_started","step":"react.deliberate","version":0}
+{"timestamp":"2026-02-26T00:00:01.000Z","kind":"log","event":"step_started","step":"react.exec.dispatch","version":1}
+{"timestamp":"2026-02-26T00:00:02.000Z","kind":"error","event":"run_failed","code":"MAX_STEP_VISITS_EXCEEDED","message":"Step react.exec.dispatch visited too many times"}

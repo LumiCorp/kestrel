@@ -1,0 +1,42 @@
+---
+title: Heuristic hotspots
+summary: The inventory of heuristic behavior that has been removed or remains under watch, used to keep runtime changes contract-first and reviewable.
+section: reference
+audience: maintainers
+status: active
+sourceKind: curated
+internal: true
+updatedAt: 2026-03-20
+---
+
+This inventory is one of the clearest windows into Kestrel's engineering posture.
+
+## What it documents
+
+The page records heuristic behavior that has already been removed and the remaining fallback areas that still deserve attention.
+
+## Removed heuristic classes
+
+- route-family overrides
+- planner-side weather/time/fx parsing heuristics
+- follow-up source fuzzy ranking
+- lexical file-write authorization
+- tool metadata inference
+- wait-kind inference from `eventType`
+
+## Remaining hotspots to watch
+
+- continuation-intent parsing
+- web extraction quality thresholding
+- evidence-quality thresholding
+
+## When you hit this
+
+Use this page when a proposed fix sounds like:
+
+- “just add a quick keyword rule”
+- “let’s rank the options with a local score”
+- “we can guess the user intent from the phrasing”
+- “we can infer the metadata from the tool name”
+
+In this repo, that phrasing is usually the signal to stop and harden the prompt, schema, or explicit contract instead.

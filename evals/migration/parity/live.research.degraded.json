@@ -1,0 +1,644 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "live.research.degraded",
+  "executedAt": "2026-07-10T21:35:14.569Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "9fb3e2b34842c53af0b1c35ca95d3039150e8deeed0ca0a7897f94451b30833a",
+    "instructionSha256": "4916803f5ee9a3a6c98aa127a066af74ffe4a8a2c0c04fc6d4988ef3a4e51cc2",
+    "clock": "2026-03-10T15:10:00.000Z",
+    "seed": 225,
+    "legacyFixtureSha256": "b6ce3c0805ddd24e3b265c4aa97a31ef87313a0ff8f0a9fcdcbbce7b513bb73a"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Research recovery note complete with degraded-fetch caveat.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "invoice automation evidence"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Evidence source.",
+                "title": "Invoice automation benchmark",
+                "url": "https://example.com/benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "urls": [
+              "https://example.com/benchmark"
+            ]
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "failedResults": [
+              {
+                "error": "timeout",
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "provider": "tavily",
+            "results": [
+              {
+                "content": "",
+                "truncated": false,
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "status": "degraded"
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "extractDepth": "advanced",
+            "query": "fallback analyst note",
+            "urls": [
+              "https://example.com/benchmark"
+            ]
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "failedResults": [],
+            "provider": "tavily",
+            "results": [
+              {
+                "content": "Fallback analyst note with invoice automation benchmark context.",
+                "title": "Fallback analyst note",
+                "truncated": false,
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Research recovery note complete with degraded-fetch caveat.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "invoice automation evidence"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Evidence source.",
+                "title": "Invoice automation benchmark",
+                "url": "https://example.com/benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "urls": [
+              "https://example.com/benchmark"
+            ]
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "failedResults": [
+              {
+                "error": "timeout",
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "provider": "tavily",
+            "results": [
+              {
+                "content": "",
+                "truncated": false,
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "status": "degraded"
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "extractDepth": "advanced",
+            "query": "fallback analyst note",
+            "urls": [
+              "https://example.com/benchmark"
+            ]
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "failedResults": [],
+            "provider": "tavily",
+            "results": [
+              {
+                "content": "Fallback analyst note with invoice automation benchmark context.",
+                "title": "Fallback analyst note",
+                "truncated": false,
+                "url": "https://example.com/benchmark"
+              }
+            ],
+            "status": "ok"
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Research recovery note complete with degraded-fetch caveat.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Evidence source.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [
+                {
+                  "error": "timeout",
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "degraded"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "extractDepth": "advanced",
+              "query": "fallback analyst note",
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "Fallback analyst note with invoice automation benchmark context.",
+                  "title": "Fallback analyst note",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "ok"
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Research recovery note complete with degraded-fetch caveat.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Evidence source.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [
+                {
+                  "error": "timeout",
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "degraded"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "extractDepth": "advanced",
+              "query": "fallback analyst note",
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "Fallback analyst note with invoice automation benchmark context.",
+                  "title": "Fallback analyst note",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "ok"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "01d0b3b43e70fc3b2b7897d64d0262224be623bb067dbae7b24d96f2be1b43ce",
+      "sizeBytes": 1112
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "675ad119084d507c8269be9316cdddfeba7d604c83b77d97652f2f0545030047",
+      "sizeBytes": 625
+    },
+    {
+      "name": "eventLog",
+      "sha256": "384ab802436730cda3a75b4a265369025cb8394afd1c5769d7a168b9e7b74f31",
+      "sizeBytes": 1189
+    },
+    {
+      "name": "transcript",
+      "sha256": "f5831b24ce1138f8cd4a77962995a8a368a69ff8e69316639e4438bff980bb44",
+      "sizeBytes": 735
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "b7f12fedb4c4656635e81c0d38b44a2bf1801b6ba2a893b25f2cbe53a838650d",
+      "sizeBytes": 1958
+    },
+    {
+      "name": "runManifest",
+      "sha256": "1dbd20b84839e8cffae20b1d9e3ebe96d1461761c22799bf8d098d2357a35745",
+      "sizeBytes": 5545
+    },
+    {
+      "name": "journey",
+      "sha256": "b8f70bc0db76301ac8578d65e9a70e9134c75879d25ef6ae3a54202d7a235512",
+      "sizeBytes": 5923
+    },
+    {
+      "name": "evalResult",
+      "sha256": "237b806825beb9f7bb56e7b7bd4460995054cad801a195c92e66c448260b2a34",
+      "sizeBytes": 1133
+    },
+    {
+      "name": "loopResult",
+      "sha256": "1c2c980e07c471715ca5ab7a358f5497eeb23a7cd50b56aad86c7e11a00665f3",
+      "sizeBytes": 14858
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "1f8835a05c662dbe63462eb49f6f604787c781a5477ac58352309f7bd606a708",
+      "sizeBytes": 1150
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "d4dfd28d251b316f07f6287e487261229380e759f816e26b19ba1dae48314d86",
+      "sizeBytes": 625
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "384ab802436730cda3a75b4a265369025cb8394afd1c5769d7a168b9e7b74f31",
+      "sizeBytes": 1189
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "89beafc7e1f9d71715e733de15d8bc484913f45266380b41767a14bbf546be2f",
+      "sizeBytes": 806
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "b706f1801be5e78e8d143aa05a6c439efea5ec556bb28ea3774fb2d6f45c4bd1",
+      "sizeBytes": 2086
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "93ea806e8174d2823f4312667046237b522cb34b566eec0aa93bb8835095707d",
+      "sizeBytes": 5787
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "99de8cb5bd00cf35805c6997501b6cd92261cf6be82a665e62d2afebdbde40af",
+      "sizeBytes": 6272
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "f34786d9e0bbf0957ef1baad548bfc45a6cf2c11c4dabf3c70b68f727466b620",
+      "sizeBytes": 1190
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "809582ac895d79291f602bcd719a792085875a96aeb3d3a70885863bc26e8d7a",
+      "sizeBytes": 15698
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Evidence source.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [
+                {
+                  "error": "timeout",
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "degraded"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "extractDepth": "advanced",
+              "query": "fallback analyst note",
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "Fallback analyst note with invoice automation benchmark context.",
+                  "title": "Fallback analyst note",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "ok"
+            }
+          }
+        ],
+        "finalText": "Research recovery note complete with degraded-fetch caveat."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Evidence source.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [
+                {
+                  "error": "timeout",
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "degraded"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "extractDepth": "advanced",
+              "query": "fallback analyst note",
+              "urls": [
+                "https://example.com/benchmark"
+              ]
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "failedResults": [],
+              "provider": "tavily",
+              "results": [
+                {
+                  "content": "Fallback analyst note with invoice automation benchmark context.",
+                  "title": "Fallback analyst note",
+                  "truncated": false,
+                  "url": "https://example.com/benchmark"
+                }
+              ],
+              "status": "ok"
+            }
+          }
+        ],
+        "finalText": "Research recovery note complete with degraded-fetch caveat.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "live.research.degraded"
+}

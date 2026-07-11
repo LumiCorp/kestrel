@@ -1,0 +1,53 @@
+{
+  "name": "@kestrel-agents/next",
+  "version": "0.5.1",
+  "description": "Next.js integration helpers for Kestrel agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LumiCorp/kestrel.git",
+    "directory": "packages/next"
+  },
+  "homepage": "https://github.com/LumiCorp/kestrel/tree/main/packages/next",
+  "bugs": {
+    "url": "https://github.com/LumiCorp/kestrel/issues"
+  },
+  "keywords": [
+    "kestrel",
+    "agents",
+    "nextjs",
+    "sse",
+    "typescript"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@kestrel-agents/sdk": "workspace:*"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp-pack', { recursive: true, force: true });\"",
+    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kestrel-agents/sdk build && node --import tsx --test tests/**/*.test.ts",
+    "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ createJsonRunRouteHandler, readRequestCorrelation }) => { void createJsonRunRouteHandler; void readRequestCorrelation; })\"",
+    "release:check": "pnpm run build && node --import tsx ./scripts/release-check.ts"
+  }
+}

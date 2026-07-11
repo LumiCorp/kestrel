@@ -1,0 +1,48 @@
+{
+  "name": "@kestrel-agents/protocol",
+  "version": "0.5.1",
+  "description": "Canonical public protocol contracts for Kestrel runner services",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LumiCorp/kestrel.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://github.com/LumiCorp/kestrel#readme",
+  "bugs": {
+    "url": "https://github.com/LumiCorp/kestrel/issues"
+  },
+  "keywords": [
+    "agents",
+    "kestrel",
+    "protocol",
+    "runtime"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "release:check": "pnpm run build && node --import tsx scripts/release-check.ts"
+  }
+}

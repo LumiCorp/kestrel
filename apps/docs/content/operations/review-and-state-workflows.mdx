@@ -1,0 +1,248 @@
+---
+title: Review and state workflows
+summary: Inspect and update task graph, project snapshot, project action, and project review state from the browser or the SDK when a run becomes larger than a transcript.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Operator manual">
+Use this page when Workspace Copilot has moved beyond a simple report prompt and now needs durable task, project, and review state that operators can inspect and change.
+</WorkspaceCopilotDemo>
+
+This is the missing middle layer between “an agent replied” and “an operator can actually manage ongoing work.” Kestrel exposes several stateful control-plane surfaces for that job:
+
+- `task.graph.get`
+- `task.graph.update`
+- `project.snapshot.get`
+- `project.snapshot.update`
+- `project.action`
+- `project.review.get`
+- `project.review.action`
+
+Use them when transcript and memory are no longer enough to explain or steer the workflow. If a team can describe the current run but cannot describe the current task tree, project record, or review state, this is the page they need.
+
+## When to use which surface
+
+| Surface | Use it for | Do not use it for |
+| --- | --- | --- |
+| task graph | durable structured task state tied to threads and sessions | general project metadata |
+| project snapshot | higher-level project state that should outlive one thread | thread-local operator actions |
+| project action | intentional project-level mutations | low-level task editing |
+| project review | code/file review workflows tied to the active session | broad project state storage |
+
+## Browser workflow through `/api/kchat/control`
+
+The web app can use the control route to move through the full inspection path.
+
+```ts
+const inbox = await sendRunnerControl({
+  command: "operator.inbox",
+  sessionId: "workspace-copilot-nightly",
+});
+
+const thread = await sendRunnerControl({
+  command: "operator.thread",
+  threadId: "thread-main",
+});
+
+const graph = await sendRunnerControl({
+  command: "task.graph.get",
+  sessionId: "workspace-copilot-nightly",
+  threadId: "thread-main",
+});
+
+const snapshot = await sendRunnerControl({
+  command: "project.snapshot.get",
+  sessionId: "workspace-copilot-nightly",
+});
+
+const review = await sendRunnerControl({
+  command: "project.review.get",
+  sessionId: "workspace-copilot-nightly",
+  reviewTarget: {
+    taskId: "task:thread:thread-main",
+    filePath: "src/project/workspace.ts",
+  },
+});
+```
+
+That flow matches the current browser state-sync code: read the operator signals first, then fetch task graph, project snapshot, and review detail as needed. The browser is using the same runtime model the SDK uses, which is why inspection and control stay aligned across surfaces.
+
+## Browser review action example
+
+When an operator wants to leave or apply a review action, the control route accepts a structured payload:
+
+```json
+{
+  "command": "project.review.action",
+  "sessionId": "workspace-copilot-nightly",
+  "reviewAction": {
+    "type": "review.comment.create",
+    "sessionId": "workspace-copilot-nightly",
+    "target": {
+      "taskId": "task:thread:thread-main",
+      "pullRequestNumber": 42,
+      "filePath": "src/project/workspace.ts"
+    },
+    "body": "Please tighten this parser.",
+    "path": "src/project/workspace.ts",
+    "line": 12,
+    "side": "RIGHT"
+  }
+}
+```
+
+The web route tests already exercise this shape and confirm it returns a `project.review` event. That matters because the browser surface is not inventing review state on its own. It is driving the runtime control plane.
+
+## SDK workflow with `KestrelClient`
+
+If the product is server-owned rather than browser-driven, use the runner client directly.
+
+```ts
+import { KestrelClient } from "@kestrel-agents/sdk/runner";
+
+const client = new KestrelClient({
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+
+const context = {
+  actor: {
+    actorId: "user-123",
+    actorType: "operator",
+    displayName: "Taylor Example",
+    tenantId: "acme",
+  },
+  tenantId: "acme",
+};
+
+const graph = await client.getTaskGraph(
+  {
+    sessionId: "workspace-copilot-nightly",
+    threadId: "thread-main",
+  },
+  context,
+);
+
+const snapshot = await client.getProjectSnapshot(
+  { sessionId: "workspace-copilot-nightly" },
+  context,
+);
+
+const detail = await client.getProjectReview(
+  {
+    sessionId: "workspace-copilot-nightly",
+    target: {
+      taskId: "task:thread:thread-main",
+      filePath: "src/project/workspace.ts",
+    },
+  },
+  context,
+);
+```
+
+## Updating state through the SDK
+
+Reading the surfaces is only half the workflow. The same client can update them with explicit payloads:
+
+```ts
+await client.updateTaskGraph(
+  {
+    sessionId: "workspace-copilot-nightly",
+    threadId: "thread-main",
+    graph: {
+      tasks: {
+        "task:thread:thread-main": {
+          status: "in_review",
+          summary: "Waiting on operator review for the workspace parser changes.",
+        },
+      },
+    },
+  },
+  context,
+);
+
+await client.updateProjectSnapshot(
+  {
+    sessionId: "workspace-copilot-nightly",
+    snapshot: {
+      branch: "docs/search-hardening",
+      focus: "review-state and search behavior",
+      nextMilestone: "ship the docs example pass",
+    },
+  },
+  context,
+);
+
+await client.runProjectAction(
+  {
+    sessionId: "workspace-copilot-nightly",
+    action: {
+      type: "project.status.set",
+      value: "needs-review",
+      reason: "Operator requested tighter parser review before merge.",
+    },
+  },
+  context,
+);
+```
+
+## Representative control responses
+
+Task graph response:
+
+```json
+{
+  "type": "task.graph",
+  "sessionId": "workspace-copilot-nightly",
+  "threadId": "thread-main",
+  "graph": {
+    "taskId": "task:thread:thread-main",
+    "status": "in_review",
+    "summary": "Waiting on operator review for the workspace parser changes."
+  }
+}
+```
+
+Project snapshot response:
+
+```json
+{
+  "type": "project.snapshot",
+  "sessionId": "workspace-copilot-nightly",
+  "snapshot": {
+    "branch": "docs/search-hardening",
+    "focus": "review-state and search behavior",
+    "nextMilestone": "ship the docs example pass"
+  }
+}
+```
+
+## Workflow: choosing the right state surface
+
+Use the surfaces in this order:
+
+1. read `operator.thread` if the operator needs thread context first
+2. read `task.graph` when the question is "what work items exist and what state are they in?"
+3. read `project.snapshot` when the question is "what is the higher-level project state right now?"
+4. read or apply `project.review` when the question is "what review work or comment actions are attached to this state?"
+5. use `project.action` only for intentional project-level mutations
+
+That keeps the state model legible. It stops teams from forcing every state question into one oversized snapshot object or a transcript-only workflow.
+
+## What changes in this step
+
+This is the point where Kestrel stops looking like “a runtime with memory” and starts looking like a runtime with durable operator state. Task graph, project snapshot, and project review let a product or operator surface manage more than messages.
+
+## Why this exists
+
+Without these surfaces, teams end up hiding task and review state in transcripts, prompts, or ad hoc side stores. Kestrel keeps them in the runtime control plane so the browser, CLI, and server-owned integrations can reason about the same state model.
+
+## What To Read Next
+
+- [Operator control workflows](/operations/operator-control-workflows)
+- [Web workbench](/apps/web)
+- [@kestrel-agents/sdk](/packages/sdk)

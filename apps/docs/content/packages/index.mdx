@@ -1,0 +1,44 @@
+---
+title: Packages
+summary: The published integration surfaces for building against Kestrel including compat HTTP, the typed SDK, Next.js route helpers, and observability tooling.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+The packages section is where Kestrel becomes something you can embed. These packages are deliberately narrow, but they now cover multiple integration depths: compatibility HTTP, typed agent APIs, lower-level control-plane access, and observability.
+
+This section is for product engineers choosing the right integration surface.
+
+## Start here if you are...
+
+- keeping an OpenAI-style app contract while moving to Kestrel: read [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- creating a typed server-side agent integration: read [SDK](/packages/sdk)
+- wiring application routes in Next.js: read [Next.js](/packages/next)
+- instrumenting runs, streams, and subscriptions: read [Observability](/packages/observability)
+
+## How to choose
+
+| Need | Start here |
+| --- | --- |
+| keep existing chat/responses clients | [OpenAI-compatible HTTP](/build/openai-compatible-http) |
+| build server-owned product logic | [SDK](/packages/sdk) |
+| expose typed Next.js routes | [Next.js](/packages/next) |
+| inspect task graph, project snapshot, or review state | [SDK](/packages/sdk) then [Review and state workflows](/operations/review-and-state-workflows) |
+| add traces and OTEL export | [Observability](/packages/observability) |
+
+## Recommended reading order
+
+1. [SDK](/packages/sdk)
+2. [Next.js](/packages/next)
+3. [OpenAI-compatible HTTP](/build/openai-compatible-http)
+4. [Observability](/packages/observability)
+
+## What To Read Next
+
+- [Build](/build)
+- [Review and state workflows](/operations/review-and-state-workflows)
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Deploy](/deploy)

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "research.evidence.happy",
+  "title": "Kestrel Evidence-Backed Research",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "research", "evidence", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 60,
+    "networkRationale": "The scenario requires live search and source extraction for evidence-backed research.",
+    "contaminationNotes": "The prompt provides no source URLs, claims, or expected answer text.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated the evidence research live canary to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 60 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["internet.search", "internet.extract", "evidence.extract"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "This scenario checks Kestrel's normal search-to-source-to-evidence research path.",
+      "A polished summary is insufficient unless preserved artifacts connect its claims to retrieved source evidence."
+    ],
+    "goalRubric": [
+      "Kestrel evidence shows a relevant internet.search call, at least one successful source extraction, and an evidence.extract step or equivalent structured claim derivation.",
+      "The final summary presents actionable invoice-automation findings and distinguishes source-supported claims from interpretation.",
+      "Citations or source references in the final result correspond to preserved retrieval evidence and the run completes without terminal runtime errors."
+    ],
+    "evidenceGuidance": [
+      "Trace final claims through the Kestrel job output and event log to search and extraction results.",
+      "Judge evidence quality and delivered usefulness rather than requiring exact source names or prose."
+    ],
+    "calibrationCases": [
+      {
+        "id": "grounded-research-pass",
+        "inputSummary": "Search, source extraction, and structured evidence are preserved, and the final recommendations are traceable to those artifacts.",
+        "expectedStatus": "passed",
+        "rationale": "The complete research workflow produced an auditable user outcome."
+      },
+      {
+        "id": "search-snippet-only-fail",
+        "inputSummary": "The agent summarized search snippets without extracting a source or preserving evidence for its recommendations.",
+        "expectedStatus": "failed",
+        "rationale": "The requested evidence-backed workflow was not completed."
+      },
+      {
+        "id": "useful-summary-weak-lineage-review",
+        "inputSummary": "The summary is useful and sources were fetched, but one central recommendation cannot be traced to preserved evidence.",
+        "expectedStatus": "review",
+        "rationale": "Most of the outcome is delivered, but a central evidence-lineage gap blocks an automatic pass."
+      }
+    ]
+  }
+}

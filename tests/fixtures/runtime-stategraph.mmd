@@ -1,0 +1,51 @@
+stateDiagram-v2
+
+state Engine {
+  [*] --> RUN_BOOT
+  RUN_BOOT --> RESUME_PENDING_EFFECTS : ensureSession + startRun
+  RUN_BOOT --> RUN_FAILED : session_busy | startup_error | cancel
+  RESUME_PENDING_EFFECTS --> STEP_SELECTION : resume ok
+  RESUME_PENDING_EFFECTS --> RUN_WAITING : effect WAIT
+  RESUME_PENDING_EFFECTS --> RUN_FAILED : effect STOP
+  STEP_SELECTION --> STEP_EXECUTION : use current step
+  STEP_SELECTION --> STEP_EXECUTION : claim region work
+  STEP_SELECTION --> RUN_WAITING : wait_for_merge
+  STEP_EXECUTION --> STEP_COMMIT : transition returned
+  STEP_EXECUTION --> RUN_FAILED : error | guardrail | cancel
+  STEP_EXECUTION --> RUN_WAITING : region merge conflict
+  STEP_COMMIT --> EFFECT_EXECUTION : persist state/effects/events
+  EFFECT_EXECUTION --> OUTBOX_DISPATCH : effects complete
+  EFFECT_EXECUTION --> RUN_WAITING : effect WAIT
+  EFFECT_EXECUTION --> RUN_FAILED : effect STOP
+  OUTBOX_DISPATCH --> TERMINAL_CHECK : dispatch inline
+  TERMINAL_CHECK --> STEP_SELECTION : RUNNING
+  TERMINAL_CHECK --> RUN_WAITING : WAITING
+  TERMINAL_CHECK --> RUN_COMPLETED : COMPLETED
+  TERMINAL_CHECK --> RUN_FAILED : FAILED
+}
+
+state Agent {
+  [*] --> agent.loop
+  agent.loop --> agent.exec.dispatch : valid action
+  agent.loop --> agent.loop : validation feedback
+  agent.exec.dispatch --> agent.exec.wait_effect : durable tool/effect
+  agent.exec.dispatch --> agent.exec.wait_approval : approval required
+  agent.exec.dispatch --> agent.exec.wait_user : ask_user
+  agent.exec.dispatch --> agent.exec.collect : tool/effect result
+  agent.exec.dispatch --> agent.exec.finalize : finalize
+  agent.exec.dispatch --> agent.loop : validation/policy/tool feedback
+  agent.exec.wait_effect --> agent.exec.wait_effect : waiting
+  agent.exec.wait_effect --> agent.exec.collect : effect available
+  agent.exec.wait_approval --> agent.exec.wait_approval : waiting
+  agent.exec.wait_approval --> agent.exec.dispatch : approved
+  agent.exec.wait_approval --> agent.loop : denied/replan
+  agent.exec.wait_user --> agent.exec.wait_user : waiting
+  agent.exec.wait_user --> agent.loop : reply
+  agent.exec.collect --> agent.exec.dispatch : batch continues
+  agent.exec.collect --> agent.loop : result feedback
+  agent.exec.finalize --> [*]
+}
+
+RUN_COMPLETED --> [*]
+RUN_FAILED --> [*]
+RUN_WAITING --> [*]

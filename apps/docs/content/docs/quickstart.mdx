@@ -1,0 +1,79 @@
+---
+title: Quickstart
+summary: The shortest path from checkout to Kestrel Desktop first, then into the broader Kestrel Suite and extension paths.
+section: docs
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-06-16
+---
+
+Use this page when you want a real starting point, not a marketing overview. It gets Kestrel Desktop running first, then points you toward the companion surfaces and extension paths based on what you are trying to accomplish.
+
+## Start With Kestrel Desktop
+
+For the packaged application, use the current macOS release artifact. That path does not require a repository checkout.
+
+For contributor development from this repository:
+
+```bash
+cp .env.example .env
+pnpm install
+pnpm run desktop:dev
+```
+
+Desktop is the recommended first-run path for local evaluation.
+
+Model-backed and internet-backed workflows still require provider credentials in `.env`. For the default repo wiring, plan on configuring `OPENROUTER_API_KEY` for model access and `TAVILY_API_KEY` for internet-backed tooling.
+
+In packaged Desktop, first run starts with an explicit provider choice. Hosted providers need a key during setup. Local providers (`ollama`, `lmstudio`) do not need one by default.
+
+## Start Other Suite Surfaces As Needed
+
+If you want the broader suite or a specific companion surface, the repo also supports:
+
+```bash
+pnpm run web:dev
+pnpm run tui
+```
+
+## Check That The Runtime Is Healthy
+
+```bash
+pnpm run governance:check
+pnpm run test
+pnpm run prompt-suite
+pnpm run evals:release-check
+```
+
+Those commands are not optional polish. They reflect how the repo defends runtime contracts, replay behavior, and prompt quality before a change lands.
+
+## Open The Main Surfaces
+
+- Desktop: primary local product surface
+- Kestrel One: `http://localhost:43103`
+- CLI companion flow: `kestrel`
+
+## Try The Runner Service Boundary
+
+If you want to understand how Kestrel expects product apps to integrate, start the local runner service:
+
+```bash
+kestrel web
+```
+
+That command prints the `KESTREL_RUNNER_SERVICE_URL` and `KESTREL_RUNNER_SERVICE_TOKEN` values that an app server should use. The browser should not talk to that service directly. Your application server owns that boundary.
+
+## Choose Your Next Path
+
+- If you want the main product story, read [Desktop app](/apps/desktop), [Why Kestrel](/docs/why-kestrel), and [Core concepts](/docs/core-concepts).
+- If you want to build an extension or integration, read [Building your first agent](/build/building-your-first-agent).
+- If you want workspace-local automation, read [Workspaces and automation](/build/workspaces-and-automation).
+- If you want deployment mechanics, read [Running the runner service](/deploy/running-the-runner-service).
+
+## What To Read Next
+
+- [Desktop app](/apps/desktop)
+- [Why Kestrel](/docs/why-kestrel)
+- [Building your first agent](/build/building-your-first-agent)
+- [Running the runner service](/deploy/running-the-runner-service)

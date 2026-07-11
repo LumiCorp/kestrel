@@ -1,0 +1,199 @@
+{
+  "version": "cli_contract_matrix_v1",
+  "generatedAt": "2026-07-11T01:42:01.474Z",
+  "executables": [
+    {
+      "name": "kestrel",
+      "entrypoint": "bin/kestrel.js",
+      "aliases": [
+        "ks"
+      ]
+    },
+    {
+      "name": "kcron",
+      "entrypoint": "bin/kcron.js",
+      "aliases": []
+    }
+  ],
+  "commandMode": [
+    {
+      "command": "model",
+      "usage": "kestrel model <show|search|set-provider|set> ...",
+      "flags": []
+    },
+    {
+      "command": "status",
+      "usage": "kestrel status",
+      "flags": []
+    },
+    {
+      "command": "workspace",
+      "usage": "kestrel workspace <status|list>",
+      "flags": []
+    },
+    {
+      "command": "web",
+      "usage": "kestrel web ...",
+      "flags": []
+    },
+    {
+      "command": "job",
+      "usage": "kestrel job run --json-in <file> --json-out <file> [--profile <id>] [--store auto|postgres|sqlite]",
+      "flags": [
+        "--json-in",
+        "--json-out",
+        "--profile",
+        "--store"
+      ]
+    },
+    {
+      "command": "operator",
+      "usage": "kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...",
+      "flags": [
+        "--thread-id",
+        "--request-id",
+        "--allow-tool-class",
+        "--allow-capability",
+        "--delegation-id",
+        "--run-id",
+        "--out",
+        "--reason"
+      ]
+    },
+    {
+      "command": "runtime",
+      "usage": "kestrel runtime bundle --run-id|--thread-id <id> --out <file> [--store auto|postgres|sqlite]",
+      "flags": [
+        "--run-id",
+        "--session-id",
+        "--thread-id",
+        "--delegation-id",
+        "--out",
+        "--store",
+        "--limit"
+      ]
+    },
+    {
+      "command": "setup",
+      "usage": "kestrel setup [--profile <id>] [--store auto|postgres|sqlite] [--sqlite-path <path>] [--approval-pack dev|ci_bot|production] [--full]",
+      "flags": [
+        "--profile",
+        "--store",
+        "--sqlite-path",
+        "--approval-pack",
+        "--full"
+      ]
+    }
+  ],
+  "slashCommands": [
+    "help",
+    "profiles",
+    "model",
+    "theme",
+    "mode",
+    "start",
+    "new",
+    "sessions",
+    "workspace",
+    "tasks",
+    "switch",
+    "resume",
+    "status",
+    "mcp",
+    "code",
+    "skill",
+    "compact",
+    "snapshot",
+    "restore",
+    "approve",
+    "deny",
+    "reject",
+    "reply",
+    "retry",
+    "steer",
+    "queue",
+    "stop",
+    "focus",
+    "checkpoint",
+    "assembly",
+    "child",
+    "fanin",
+    "operator",
+    "quit"
+  ],
+  "runnerProtocol": {
+    "commands": [
+      "profile.list",
+      "profile.get",
+      "job.run",
+      "run.start",
+      "run.cancel",
+      "session.describe",
+      "session.state",
+      "operator.inbox",
+      "operator.thread",
+      "operator.runs",
+      "operator.run",
+      "operator.control",
+      "task.graph.get",
+      "task.graph.update",
+      "workspace.checkpoint.capture",
+      "workspace.checkpoint.list",
+      "workspace.checkpoint.inspect",
+      "workspace.checkpoint.diff",
+      "workspace.checkpoint.restore",
+      "workspace.checkpoint.cleanup",
+      "workspace.promotion.undo_latest",
+      "project.snapshot.get",
+      "project.snapshot.update",
+      "project.action",
+      "project.review.get",
+      "project.review.action",
+      "runner.ping",
+      "mcp.status",
+      "mcp.refresh"
+    ],
+    "events": [
+      "profile.listed",
+      "profile.loaded",
+      "job.started",
+      "job.progress",
+      "job.completed",
+      "job.failed",
+      "run.started",
+      "run.cancelled",
+      "run.log",
+      "run.console",
+      "run.progress",
+      "run.reasoning",
+      "run.completed",
+      "run.failed",
+      "runner.error",
+      "runner.pong",
+      "session.described",
+      "session.state",
+      "operator.inbox",
+      "operator.thread",
+      "operator.runs",
+      "operator.run",
+      "operator.controlled",
+      "task.updated",
+      "task.graph",
+      "workspace.checkpoint",
+      "project.snapshot",
+      "project.review",
+      "mcp.status",
+      "mcp.refreshed"
+    ],
+    "streamingCommands": [
+      "run.start",
+      "job.run"
+    ]
+  },
+  "notes": [
+    "Legacy ambiguous command/flag aliases are intentionally excluded from the frozen matrix.",
+    "Streaming protocol commands must use /commands/stream on runner-service.",
+    "job.run is the protocol-native non-interactive surface for strict JSON IO.",
+    "store driver sqlite is local durable mode backed by PGlite with runtime.db defaults."
+  ]
+}

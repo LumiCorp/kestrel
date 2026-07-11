@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.research.degraded",
+  "title": "Kestrel Research Degradation Recovery",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "hard",
+    "tags": ["kestrel", "research", "fallback", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 50,
+    "networkRationale": "The scenario exercises live search and extraction fallback behavior.",
+    "contaminationNotes": "The prompt identifies the workflow but contains no benchmark answer or source fixture.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated degraded research recovery to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 50 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["internet.search", "internet.extract"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "The primary extraction path may degrade or return incomplete content.",
+      "A successful Kestrel run should retain useful evidence, attempt a fallback, and expose uncertainty."
+    ],
+    "goalRubric": [
+      "The event log shows at least one internet.search call and two source-extraction attempts or equivalent primary-plus-fallback evidence retrieval.",
+      "The final response distinguishes directly supported invoice-automation findings from fallback or incomplete evidence.",
+      "The run completes without hiding provider failure and without MAX_STEPS_EXCEEDED or MODEL_INVOCATION_FAILED errors."
+    ],
+    "evidenceGuidance": [
+      "Inspect Kestrel tool events for the primary and fallback extraction attempts and their statuses.",
+      "Inspect the final payload for explicit caveats and reject unsupported certainty even when the prose is polished."
+    ],
+    "calibrationCases": [
+      {
+        "id": "fallback-recovery-pass",
+        "inputSummary": "Primary extraction degraded, a secondary retrieval supplied usable context, and the final response separated evidence from caveat.",
+        "expectedStatus": "passed",
+        "rationale": "The runtime recovered without obscuring the degraded source path."
+      },
+      {
+        "id": "silent-degradation-fail",
+        "inputSummary": "Extraction failed, but the final response presented detailed findings without a fallback source or caveat.",
+        "expectedStatus": "failed",
+        "rationale": "The response is not evidence backed and hides the provider failure."
+      },
+      {
+        "id": "partial-fallback-review",
+        "inputSummary": "A fallback was attempted and caveated, but artifacts do not establish whether it returned usable evidence.",
+        "expectedStatus": "review",
+        "rationale": "The recovery behavior is plausible but not fully auditable."
+      }
+    ]
+  }
+}

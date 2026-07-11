@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.reference.forecast",
+  "title": "Kestrel Reference And Forecast",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "reference", "weather", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 45,
+    "networkRationale": "The scenario requires live reference search and weather forecast providers.",
+    "contaminationNotes": "The prompt specifies information categories but no expected answer text.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated the reference-and-forecast canary to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 45 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["internet.search", "free.weather.forecast"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "The user requests a compact note combining reference and forecast information.",
+      "The original live contract expected two reference searches and one London forecast call."
+    ],
+    "goalRubric": [
+      "Kestrel evidence shows two relevant internet.search calls and one free.weather.forecast call for London.",
+      "The final note separately covers the Ada Lovelace summary, related references, and the forecast rather than collapsing or omitting a category.",
+      "Claims remain attributable to preserved tool evidence and the run completes without terminal runtime errors."
+    ],
+    "evidenceGuidance": [
+      "Inspect event-log tool records and the finalized job payload retained by the Kestrel adapter.",
+      "Check semantic coverage and evidence grounding rather than requiring exact wording from the old evaluator case."
+    ],
+    "calibrationCases": [
+      {
+        "id": "three-part-note-pass",
+        "inputSummary": "The event log proves all three retrieval steps and the final note clearly covers each requested category.",
+        "expectedStatus": "passed",
+        "rationale": "The requested multi-source outcome and its evidence are complete."
+      },
+      {
+        "id": "missing-related-links-fail",
+        "inputSummary": "The response includes a biography and forecast but no related-reference retrieval or discussion.",
+        "expectedStatus": "failed",
+        "rationale": "One explicit user outcome is absent."
+      },
+      {
+        "id": "ambiguous-tool-count-review",
+        "inputSummary": "The note covers all topics, but the preserved event log is truncated before tool counts can be verified.",
+        "expectedStatus": "review",
+        "rationale": "The output may be complete, but migration parity needs auditable execution evidence."
+      }
+    ]
+  }
+}

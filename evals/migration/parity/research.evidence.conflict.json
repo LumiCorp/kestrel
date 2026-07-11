@@ -1,0 +1,608 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "research.evidence.conflict",
+  "executedAt": "2026-07-10T21:35:18.754Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "08115f3cbc782896f66281f5c6283776bcae2bb71281087e4db4f050543d5a78",
+    "instructionSha256": "dc0d740745050f00e5e5c92d9bd162fe4350e48e943e3beaf8fb5cc14e57ef0f",
+    "clock": "2026-03-06T14:10:00.000Z",
+    "seed": 126,
+    "legacyFixtureSha256": "4bb2819221a2370c7d1424e13602222e3701198d964292fbff61a7e797a42bf6"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "duplicate invoice prevention conflicting reports"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Duplicate incidents reduced by 30 percent.",
+                "title": "Control outcome report A",
+                "url": "https://example.com/report-a"
+              },
+              {
+                "snippet": "Duplicate incidents unchanged after rollout.",
+                "title": "Control outcome report B",
+                "url": "https://example.com/report-b"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/report-a"
+          },
+          "status": "success",
+          "output": {
+            "content": "Study A reports a substantial reduction in duplicate payments.",
+            "url": "https://example.com/report-a"
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/report-b"
+          },
+          "status": "success",
+          "output": {
+            "content": "Study B shows no measurable duplicate-payment reduction.",
+            "url": "https://example.com/report-b"
+          }
+        },
+        {
+          "toolName": "evidence.extract",
+          "input": {
+            "text": "report-a report-b comparison"
+          },
+          "status": "success",
+          "output": {
+            "claims": [
+              {
+                "confidence": 0.72,
+                "text": "Report A claims improvement."
+              },
+              {
+                "confidence": 0.71,
+                "text": "Report B claims no change."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "duplicate invoice prevention conflicting reports"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Duplicate incidents reduced by 30 percent.",
+                "title": "Control outcome report A",
+                "url": "https://example.com/report-a"
+              },
+              {
+                "snippet": "Duplicate incidents unchanged after rollout.",
+                "title": "Control outcome report B",
+                "url": "https://example.com/report-b"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/report-a"
+          },
+          "status": "success",
+          "output": {
+            "content": "Study A reports a substantial reduction in duplicate payments.",
+            "url": "https://example.com/report-a"
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/report-b"
+          },
+          "status": "success",
+          "output": {
+            "content": "Study B shows no measurable duplicate-payment reduction.",
+            "url": "https://example.com/report-b"
+          }
+        },
+        {
+          "toolName": "evidence.extract",
+          "input": {
+            "text": "report-a report-b comparison"
+          },
+          "status": "success",
+          "output": {
+            "claims": [
+              {
+                "confidence": 0.72,
+                "text": "Report A claims improvement."
+              },
+              {
+                "confidence": 0.71,
+                "text": "Report B claims no change."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "duplicate invoice prevention conflicting reports"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Duplicate incidents reduced by 30 percent.",
+                  "title": "Control outcome report A",
+                  "url": "https://example.com/report-a"
+                },
+                {
+                  "snippet": "Duplicate incidents unchanged after rollout.",
+                  "title": "Control outcome report B",
+                  "url": "https://example.com/report-b"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-a"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study A reports a substantial reduction in duplicate payments.",
+              "url": "https://example.com/report-a"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-b"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study B shows no measurable duplicate-payment reduction.",
+              "url": "https://example.com/report-b"
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "report-a report-b comparison"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.72,
+                  "text": "Report A claims improvement."
+                },
+                {
+                  "confidence": 0.71,
+                  "text": "Report B claims no change."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "duplicate invoice prevention conflicting reports"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Duplicate incidents reduced by 30 percent.",
+                  "title": "Control outcome report A",
+                  "url": "https://example.com/report-a"
+                },
+                {
+                  "snippet": "Duplicate incidents unchanged after rollout.",
+                  "title": "Control outcome report B",
+                  "url": "https://example.com/report-b"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-a"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study A reports a substantial reduction in duplicate payments.",
+              "url": "https://example.com/report-a"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-b"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study B shows no measurable duplicate-payment reduction.",
+              "url": "https://example.com/report-b"
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "report-a report-b comparison"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.72,
+                  "text": "Report A claims improvement."
+                },
+                {
+                  "confidence": 0.71,
+                  "text": "Report B claims no change."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "616c2fa914746bd26f8ce7da7991e6d47fe7f91f969945de3a8dd4bac0afb0ca",
+      "sizeBytes": 1210
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "2df49493817c7a2360e8e01be3e0a11a0896cc820be2934d15c9a0a8ecb5cb40",
+      "sizeBytes": 710
+    },
+    {
+      "name": "eventLog",
+      "sha256": "97860586d2ed10a857ed762fde9e64608aa89e2c3564a9203550da90fb13b6bf",
+      "sizeBytes": 1365
+    },
+    {
+      "name": "transcript",
+      "sha256": "a1ab345c23521d5ebff578e6887f3a5272a19e6f8f9a80382e409461d8fbcce4",
+      "sizeBytes": 751
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "949b4ce4eab9a44b501db142c9c40c51a43707e3a8c8ec92bdd4ff434ffdf84f",
+      "sizeBytes": 2067
+    },
+    {
+      "name": "runManifest",
+      "sha256": "35899941f4265e328ad49c7eecd49c38cd10d26b46ec1b874f65d047ee76706e",
+      "sizeBytes": 5617
+    },
+    {
+      "name": "journey",
+      "sha256": "31f62ad6cb93da248dcedb75973ba3c181b65218fc3b8b96233b7d8086a48fa1",
+      "sizeBytes": 6174
+    },
+    {
+      "name": "evalResult",
+      "sha256": "69d1cdc1ce4c6b6fb7f1853ec340a59c7d232c4467fa86e7b6048e1f8393dfbf",
+      "sizeBytes": 1149
+    },
+    {
+      "name": "loopResult",
+      "sha256": "c9d572409eed5520aad67b2f876b5a0832b07f72ac39a3414cf9f25c21a580b5",
+      "sizeBytes": 15179
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "93b39a735b3257b90235df274780af63efd0f3e15c06b5b579f6874d94d7a231",
+      "sizeBytes": 1248
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "c6926c7faa0e7e27012a81e44a3f3075d4f8d2761969f27d63c5d172f4668ed7",
+      "sizeBytes": 710
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "97860586d2ed10a857ed762fde9e64608aa89e2c3564a9203550da90fb13b6bf",
+      "sizeBytes": 1365
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "caec0d8236735fe4b2d1d295684a59a70e4c7fdb9b0fdfa47d72715d1c3ca917",
+      "sizeBytes": 822
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "0dce0b93cfa7b42b5f73bfd43c62ddbed43b052eaaf1bf757b0989258fcd4140",
+      "sizeBytes": 2195
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "d7cf753e9d40d751073fa10334c6f297acc52097beacfd72f67c6176dcf06284",
+      "sizeBytes": 5859
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "a84863e87132414d7c8880533e62d08d983fdfbc5716e18c571e6ea0bb6ffc95",
+      "sizeBytes": 6523
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "96d5a75f920688ea63b18be2526c1ebacf0bad1c3a59d6dfaccb5a2bf6a009b7",
+      "sizeBytes": 1206
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "2d52bbe767c951b12c8b59772d1f549ad2c4bba155f1479460d518f4459a60f3",
+      "sizeBytes": 16019
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "duplicate invoice prevention conflicting reports"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Duplicate incidents reduced by 30 percent.",
+                  "title": "Control outcome report A",
+                  "url": "https://example.com/report-a"
+                },
+                {
+                  "snippet": "Duplicate incidents unchanged after rollout.",
+                  "title": "Control outcome report B",
+                  "url": "https://example.com/report-b"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-a"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study A reports a substantial reduction in duplicate payments.",
+              "url": "https://example.com/report-a"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-b"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study B shows no measurable duplicate-payment reduction.",
+              "url": "https://example.com/report-b"
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "report-a report-b comparison"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.72,
+                  "text": "Report A claims improvement."
+                },
+                {
+                  "confidence": 0.71,
+                  "text": "Report B claims no change."
+                }
+              ]
+            }
+          }
+        ],
+        "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "duplicate invoice prevention conflicting reports"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Duplicate incidents reduced by 30 percent.",
+                  "title": "Control outcome report A",
+                  "url": "https://example.com/report-a"
+                },
+                {
+                  "snippet": "Duplicate incidents unchanged after rollout.",
+                  "title": "Control outcome report B",
+                  "url": "https://example.com/report-b"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-a"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study A reports a substantial reduction in duplicate payments.",
+              "url": "https://example.com/report-a"
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/report-b"
+            },
+            "status": "success",
+            "output": {
+              "content": "Study B shows no measurable duplicate-payment reduction.",
+              "url": "https://example.com/report-b"
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "report-a report-b comparison"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.72,
+                  "text": "Report A claims improvement."
+                },
+                {
+                  "confidence": 0.71,
+                  "text": "Report B claims no change."
+                }
+              ]
+            }
+          }
+        ],
+        "finalText": "Conflict detected: evidence sources disagree on control effectiveness, so confidence is moderated and escalation is recommended.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "research.evidence.conflict"
+}

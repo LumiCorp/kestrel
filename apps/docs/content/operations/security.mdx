@@ -1,0 +1,28 @@
+---
+title: Security
+summary: Boundary validation, approved dependency directions, explicit escalation, and audit-friendly runtime records as the repo's core security posture.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-19
+---
+
+The security story in this repository is rooted less in a single security framework and more in enforceable engineering discipline.
+
+## Core Guardrails
+
+The current security documentation emphasizes:
+
+- parse and validate external input at boundaries
+- restrict architecture edges to approved dependency directions
+- require explicit escalation for high-risk policy or migration changes
+- keep durable logs for investigation
+
+## What This Means In Practice
+
+Security work in Kestrel often looks like contract tightening, runtime boundary cleanup, and stronger invariant enforcement rather than only perimeter features.
+
+## Where To Look Next
+
+If you are changing high-risk runtime behavior, read the architecture rules, lint invariants, and heuristic-hotspot material alongside the code.

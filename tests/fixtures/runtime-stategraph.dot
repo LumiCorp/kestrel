@@ -1,0 +1,50 @@
+digraph RuntimeStateGraph {
+  rankdir=LR;
+  subgraph cluster_engine {
+    label="Engine";
+    "RUN_BOOT" -> "RESUME_PENDING_EFFECTS" [label="ensureSession + startRun"];
+    "RUN_BOOT" -> "RUN_FAILED" [label="session_busy | startup_error | cancel"];
+    "RESUME_PENDING_EFFECTS" -> "STEP_SELECTION" [label="resume ok"];
+    "RESUME_PENDING_EFFECTS" -> "RUN_WAITING" [label="effect WAIT"];
+    "RESUME_PENDING_EFFECTS" -> "RUN_FAILED" [label="effect STOP"];
+    "STEP_SELECTION" -> "STEP_EXECUTION" [label="use current step"];
+    "STEP_SELECTION" -> "STEP_EXECUTION" [label="claim region work"];
+    "STEP_SELECTION" -> "RUN_WAITING" [label="wait_for_merge"];
+    "STEP_EXECUTION" -> "STEP_COMMIT" [label="transition returned"];
+    "STEP_EXECUTION" -> "RUN_FAILED" [label="error | guardrail | cancel"];
+    "STEP_EXECUTION" -> "RUN_WAITING" [label="region merge conflict"];
+    "STEP_COMMIT" -> "EFFECT_EXECUTION" [label="persist state/effects/events"];
+    "EFFECT_EXECUTION" -> "OUTBOX_DISPATCH" [label="effects complete"];
+    "EFFECT_EXECUTION" -> "RUN_WAITING" [label="effect WAIT"];
+    "EFFECT_EXECUTION" -> "RUN_FAILED" [label="effect STOP"];
+    "OUTBOX_DISPATCH" -> "TERMINAL_CHECK" [label="dispatch inline"];
+    "TERMINAL_CHECK" -> "STEP_SELECTION" [label="RUNNING"];
+    "TERMINAL_CHECK" -> "RUN_WAITING" [label="WAITING"];
+    "TERMINAL_CHECK" -> "RUN_COMPLETED" [label="COMPLETED"];
+    "TERMINAL_CHECK" -> "RUN_FAILED" [label="FAILED"];
+  }
+  subgraph cluster_agent {
+    label="Agent";
+    "agent.loop" -> "agent.exec.dispatch" [label="valid action"];
+    "agent.loop" -> "agent.loop" [label="validation feedback"];
+    "agent.exec.dispatch" -> "agent.exec.wait_effect" [label="durable tool/effect"];
+    "agent.exec.dispatch" -> "agent.exec.wait_approval" [label="approval required"];
+    "agent.exec.dispatch" -> "agent.exec.wait_user" [label="ask_user"];
+    "agent.exec.dispatch" -> "agent.exec.collect" [label="tool/effect result"];
+    "agent.exec.dispatch" -> "agent.exec.finalize" [label="finalize"];
+    "agent.exec.dispatch" -> "agent.loop" [label="validation/policy/tool feedback"];
+    "agent.exec.wait_effect" -> "agent.exec.wait_effect" [label="waiting"];
+    "agent.exec.wait_effect" -> "agent.exec.collect" [label="effect available"];
+    "agent.exec.wait_approval" -> "agent.exec.wait_approval" [label="waiting"];
+    "agent.exec.wait_approval" -> "agent.exec.dispatch" [label="approved"];
+    "agent.exec.wait_approval" -> "agent.loop" [label="denied/replan"];
+    "agent.exec.wait_user" -> "agent.exec.wait_user" [label="waiting"];
+    "agent.exec.wait_user" -> "agent.loop" [label="reply"];
+    "agent.exec.collect" -> "agent.exec.dispatch" [label="batch continues"];
+    "agent.exec.collect" -> "agent.loop" [label="result feedback"];
+    "agent.exec.finalize" [shape=doublecircle];
+  }
+  "RUN_COMPLETED" [shape=doublecircle];
+  "RUN_FAILED" [shape=doublecircle];
+  "RUN_WAITING" [shape=doublecircle];
+}

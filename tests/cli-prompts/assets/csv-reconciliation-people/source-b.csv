@@ -1,0 +1,9 @@
+contact_key,name,email_address,account,title,success_manager,lifecycle,updated_at
+B-9001,Ada King,ada@analytical.example,Analytical Engines,Chief Product Officer,Mira,customer,2026-06-04
+B-9002,Grace Hopper,grace.hopper@example.com,Compiler Labs,Chief Technology Officer,Noah,customer,2026-06-02
+B-9003,Katherine G. Johnson,k.johnson@example.com,Orbital Analytics,Director of Flight Data,Eli,customer,2026-05-29
+B-9004,Dorothy Vaughan,dorothy.vaughan@example.com,Orbital Analytics,Engineering Manager,Eli,customer,2026-06-01
+B-9005,Margaret Hamilton,margaret.hamilton@example.com,Apollo Systems,Principal Engineer,Rae,customer,2026-06-05
+B-9006,Barbara Liskov,barbara@liskov.example,Distributed Systems Co,Systems Architect,Noah,customer,2026-05-30
+B-9007,Evelyn Boyd Granville,evelyn.granville@example.com,Orbital Analytics,Mathematician,Eli,prospect,2026-05-20
+B-9008,Alan M. Turing,alan.turing@example.com,Manchester Machines,Research Director,Mira,churn_risk,2026-05-17

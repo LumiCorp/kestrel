@@ -1,0 +1,9 @@
+assignment_id,shift_id,employee_id,assigned_role,notes
+A-301,S-001,E-101,barista,Only one barista is assigned to the Monday opening rush
+A-302,S-002,E-105,cashier,
+A-303,S-003,E-101,shift_lead,Role mismatch because Ava is not a shift lead
+A-304,S-004,E-104,barista,Conflicts with Theo's approved time off
+A-305,S-005,E-104,cashier,Overlaps with Theo's Wednesday espresso shift
+A-306,S-006,E-106,barista,Pending time off overlaps the second half
+A-307,S-007,E-103,manager,Conflicts with Priya's Friday time off
+A-308,S-007,E-102,barista,Extra coverage but does not satisfy manager requirement

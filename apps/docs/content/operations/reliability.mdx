@@ -1,0 +1,112 @@
+---
+title: Reliability
+summary: Replay stability, operator control, event-level diagnostics, and persistent run history as the main reliability signals for Workspace Copilot and the wider runtime.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Operator manual">
+For the canonical demo, reliability is not just “did the route return 200?” It means the same workspace can produce useful interactive and nightly results without losing continuity or replayability.
+</WorkspaceCopilotDemo>
+
+Reliability in Kestrel is about whether a system remains explainable under change. A demo that only works on the happy path is not reliable enough to teach from, and a runtime that cannot explain a bad run is not reliable enough to operate.
+
+## Core signals
+
+- replay regression violations
+- canary pass or fail outcomes
+- error clusters by event type and step
+- memory revision conflicts
+- missing or stale report artifacts
+- failed operator control flows
+- task graph or project snapshot drift
+
+## Practical operator loop
+
+```bash
+pnpm run governance:check
+pnpm run test
+pnpm run prompt-suite
+```
+
+If the change touched runtime or determinism behavior:
+
+```bash
+pnpm run evals:release-check
+```
+
+## Incident: nightly report missing
+
+Start with the obvious checks:
+
+```bash
+kestrel workspace status
+kcron status
+kcron run-once
+```
+
+Then inspect:
+
+- workspace catalog state
+- `automationEnabled` and central scheduler state
+- recent traces or run outcomes
+- whether `reports/nightly-review.md` was supposed to be updated by the prompt
+- whether the session memory `linkedArtifacts` still point at the expected path
+
+If those checks do not explain the issue, the next stop is replay and artifact inspection, not prompt improvisation.
+
+## Incident: operator control did not move the thread
+
+If `/stop`, `/steer`, or `/retry` appears to do nothing:
+
+- confirm the operator inbox entry still exists
+- inspect the thread view for the current blocker
+- confirm the control action returned `operator.controlled`
+- verify that the action targeted the right `threadId`
+- compare the resulting run or checkpoint state with the pre-control state
+
+This is where operator control stops being “a nice extra” and becomes part of the reliability model. A system that cannot be steered predictably is harder to operate than one that simply fails loudly.
+
+## Incident: memory revision conflict
+
+If session continuity looks wrong:
+
+- inspect the current memory revision
+- confirm whether two writers updated the same session
+- compare the interactive route path and the scheduled path
+- treat visible revision failure as safer than silent overwrite
+
+## Incident: replay and live behavior diverge
+
+Treat this as a contract investigation, not a tuning exercise:
+
+1. run `pnpm run evals:release-check`
+2. inspect the behavior owner in `evals/migration/ownership-ledger.json`
+3. compare traces, artifacts, and session state with the owning test or Ruhroh scenario
+4. only after that decide whether the product contract changed intentionally
+
+## Reliability reading order
+
+When the runtime feels unstable, inspect in this order:
+
+1. runner and route boundary
+2. operator control outcome
+3. session memory revision
+4. replay and evaluation evidence
+5. artifact output paths
+
+That order keeps reliability work tied to concrete evidence instead of broad suspicion.
+
+## What this means for Workspace Copilot
+
+If the nightly review starts drifting or the streamed route behaves differently than the scheduled run, these are the signals that should tell you whether the problem is replay stability, prompt behavior, route drift, or tool/runtime degradation.
+
+## What To Read Next
+
+- [Operator control workflows](/operations/operator-control-workflows)
+- [Evaluations with Ruhroh](/operations/evaluations)
+- [Quality gates](/operations/quality-gates)
+- [Store and replay](/runtime/store-and-replay)

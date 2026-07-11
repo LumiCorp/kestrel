@@ -1,0 +1,65 @@
+---
+title: Evaluations with Ruhroh
+summary: Validate Kestrel behavior with released Ruhroh scenarios, suites, target metadata, and immutable migration evidence.
+section: operations
+audience: maintainers
+status: active
+sourceKind: repo-inferred
+updatedAt: 2026-07-10
+---
+
+Kestrel owns the evaluation definitions in `evals/`. Ruhroh owns execution,
+reporting, comparison, and the maintained `kestrel-cli` adapter. Keeping that
+boundary explicit lets Kestrel validate runtime behavior without carrying a
+second evaluator inside the product repository.
+
+## Core commands
+
+```bash
+pnpm run evals:validate
+pnpm run evals:release-check
+pnpm run check:evals
+```
+
+All three commands execute the exact Ruhroh version pinned by the root
+workspace. Local checkouts, binary overrides, and copied adapters are rejected.
+
+## What the gate validates
+
+The release gate verifies:
+
+- every declared behavior has an owner in `evals/migration/ownership-ledger.json`
+- every Ruhroh-owned behavior resolves to a maintained scenario and suite
+- every runtime-owned behavior cites a concrete replacement test
+- scenario, instruction, and released package hashes match recorded evidence
+- Ruhroh accepts the scenarios, suite, benchmark targets, and adapter dry run
+
+The gate is credential-free. Live provider benchmarks remain explicit release
+work and are not silently substituted for deterministic validation.
+
+## Migration evidence
+
+The files under `evals/migration/parity/` are immutable records from the
+evaluator cutover. Each record identifies the behavior, released Ruhroh
+artifact, scenario hash, instruction hash, outcome, evidence, cancellation,
+and failure classification that were checked before the old in-repo evaluator
+was removed.
+
+These records are evidence, not an executable fallback. New validation work
+must be added to Ruhroh or to a named Kestrel runtime test according to the
+ownership ledger.
+
+## Workflow
+
+1. change the Kestrel runtime or an evaluation definition
+2. run `pnpm run evals:release-check`
+3. inspect any failing Ruhroh validation output
+4. update a scenario, suite, or concrete runtime test in the owning repository
+5. keep migration records unchanged unless performing an explicitly reviewed evaluator migration
+
+## What To Read Next
+
+- [Quality gates](/operations/quality-gates)
+- [Artifact inspection](/operations/artifact-inspection)
+- [Store and replay](/runtime/store-and-replay)
+- [Ruhroh evaluation sources](https://github.com/LumiCorp/ruhroh)

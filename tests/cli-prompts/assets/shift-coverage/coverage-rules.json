@@ -1,0 +1,29 @@
+{
+  "weekStart": "2026-06-15",
+  "timezone": "America/New_York",
+  "minimumRestHoursBetweenShifts": 10,
+  "maxShiftHours": 8,
+  "countPendingTimeOffAsWarning": true,
+  "roleHierarchy": {
+    "manager": ["manager"],
+    "shift_lead": ["shift_lead", "manager"],
+    "barista": ["barista", "shift_lead", "manager"],
+    "cashier": ["cashier", "shift_lead", "manager"]
+  },
+  "violationTypes": [
+    "uncovered_shift",
+    "approved_time_off_conflict",
+    "pending_time_off_warning",
+    "role_mismatch",
+    "overlapping_assignments",
+    "insufficient_rest",
+    "overtime"
+  ],
+  "replacementRanking": [
+    "has_required_role",
+    "available_for_entire_shift",
+    "does_not_create_overlap",
+    "keeps_weekly_hours_under_max",
+    "preserves_minimum_rest"
+  ]
+}

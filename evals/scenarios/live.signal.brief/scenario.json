@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.signal.brief",
+  "title": "Kestrel Multi-Signal Brief",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "free-tools", "signals", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 45,
+    "networkRationale": "The scenario exercises five public signal providers through Kestrel tools.",
+    "contaminationNotes": "The prompt specifies requested signals but no expected current values.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated the broad free-tool signal canary to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 45 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["free.time.current", "free.weather.current", "free.geocode.lookup", "free.exchange.rate", "free.hn.top"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "This scenario checks broad Kestrel tool orchestration in one user turn.",
+      "The values are time sensitive, so evidence coverage matters more than matching a fixed answer."
+    ],
+    "goalRubric": [
+      "The Kestrel event log shows calls to all five requested tool families with inputs appropriate to UTC, New York City, Berlin, EUR/USD, and top stories.",
+      "The final brief clearly includes all five requested signal categories and does not substitute one category for another.",
+      "The response reflects returned provider data, marks any provider limitation, and reaches a completed terminal outcome."
+    ],
+    "evidenceGuidance": [
+      "Use the preserved event log to verify tool names, inputs, statuses, and returned signal categories.",
+      "Use the finalized payload to judge coverage and caveats; do not compare live values to static fixtures."
+    ],
+    "calibrationCases": [
+      {
+        "id": "five-signal-pass",
+        "inputSummary": "All five tool calls are preserved and the final brief contains a distinct, grounded item for each signal.",
+        "expectedStatus": "passed",
+        "rationale": "The requested orchestration and delivered outcome are complete."
+      },
+      {
+        "id": "missing-signal-fail",
+        "inputSummary": "The brief omits the Berlin geocode signal and no geocode call appears in the event log.",
+        "expectedStatus": "failed",
+        "rationale": "A required signal and its execution evidence are absent."
+      },
+      {
+        "id": "truncated-log-review",
+        "inputSummary": "The brief names all signals, but the event log ends before two provider calls can be verified.",
+        "expectedStatus": "review",
+        "rationale": "Outcome coverage appears complete but execution evidence is insufficient for parity."
+      }
+    ]
+  }
+}

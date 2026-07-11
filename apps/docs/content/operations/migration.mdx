@@ -1,0 +1,23 @@
+---
+title: Migration
+summary: The v2-to-v3 migration flow and the broader operational stance for schema or persistence changes in a runtime that values replayable history.
+section: operations
+audience: maintainers
+status: active
+sourceKind: curated
+updatedAt: 2026-03-19
+---
+
+Migration work in Kestrel is treated cautiously because schema and persistence changes can damage replay and audit semantics if handled casually.
+
+## Current Migration Surface
+
+The root README documents a dedicated v2-to-v3 migration CLI with dry-run and apply modes, plus scopes for active/resumable sessions, all sessions, or targeted session IDs.
+
+## Operational Posture
+
+The repo instructions explicitly call for escalation when schema migrations, irreversible data moves, or policy changes are involved.
+
+## Why That Matters
+
+In a durable runtime, migration is not only data movement. It is also historical integrity work.

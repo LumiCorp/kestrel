@@ -1,0 +1,138 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminStatCard } from "@/components/admin/admin-stat-card";
+import { AppPage } from "@/components/app-page";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+
+type StatsResponse = {
+  days: number;
+  totalMessages: number;
+  previousMessages: number;
+  totals: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalDurationMs: number;
+  };
+  bySource: Array<{
+    source: string;
+    model?: string | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+  }>;
+  availableSources: string[];
+  availableModels: string[];
+};
+
+export function StatsAdminClient() {
+  const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [status, setStatus] = useState("Loading stats...");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [modelFilter, setModelFilter] = useState("");
+
+  async function load(days = 30) {
+    setStatus("Loading stats...");
+    const search = new URLSearchParams({ days: String(days) });
+    if (sourceFilter) {
+      search.set("sources", sourceFilter);
+    }
+    if (modelFilter) {
+      search.set("models", modelFilter);
+    }
+    const response = await fetch(`/api/stats?${search.toString()}`, {
+      cache: "no-store",
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setStatus(json.error || "Failed to load stats");
+      return;
+    }
+    setStats(json);
+    setStatus("");
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  return (
+    <AppPage className="grid gap-6">
+      <AdminPageHeader
+        description="Review org-scoped usage totals, token consumption, and source/model activity."
+        eyebrow="Usage"
+        title="Stats"
+      />
+
+      <div className="grid gap-3 border border-border/70 bg-card p-4 md:grid-cols-2">
+        <Input
+          onChange={(event) => setSourceFilter(event.target.value)}
+          placeholder="Filter sources (comma-separated)"
+          value={sourceFilter}
+        />
+        <Input
+          onChange={(event) => setModelFilter(event.target.value)}
+          placeholder="Filter models (comma-separated)"
+          value={modelFilter}
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <Button onClick={() => void load(7)} size="sm" variant="outline">
+          7 days
+        </Button>
+        <Button onClick={() => void load(30)} size="sm" variant="outline">
+          30 days
+        </Button>
+        <Button onClick={() => void load(90)} size="sm" variant="outline">
+          90 days
+        </Button>
+      </div>
+
+      {status ? (
+        <div className="text-muted-foreground text-sm">{status}</div>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <AdminStatCard
+          title="Total Messages"
+          value={stats?.totalMessages ?? 0}
+        />
+        <AdminStatCard
+          title="Previous Window"
+          value={stats?.previousMessages ?? 0}
+        />
+        <AdminStatCard
+          title="Input Tokens"
+          value={stats?.totals.totalInputTokens ?? 0}
+        />
+        <AdminStatCard
+          title="Output Tokens"
+          value={stats?.totals.totalOutputTokens ?? 0}
+        />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Usage Events</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(stats?.bySource ?? []).map((row, index) => (
+            <div
+              className="rounded-lg border p-3"
+              key={`${row.source}-${index}`}
+            >
+              <div className="font-medium">{row.source}</div>
+              <div className="text-muted-foreground text-sm">
+                {row.model || "unknown model"} · input {row.inputTokens ?? 0} ·
+                output {row.outputTokens ?? 0}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </AppPage>
+  );
+}

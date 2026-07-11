@@ -1,0 +1,21 @@
+stateDiagram-v2
+
+[*] --> agent.loop
+agent.loop --> agent.exec.dispatch : valid action
+agent.loop --> agent.loop : validation feedback
+agent.exec.dispatch --> agent.exec.wait_effect : durable tool/effect
+agent.exec.dispatch --> agent.exec.wait_approval : approval required
+agent.exec.dispatch --> agent.exec.wait_user : ask_user
+agent.exec.dispatch --> agent.exec.collect : tool/effect result
+agent.exec.dispatch --> agent.exec.finalize : finalize
+agent.exec.dispatch --> agent.loop : validation/policy/tool feedback
+agent.exec.wait_effect --> agent.exec.wait_effect : waiting
+agent.exec.wait_effect --> agent.exec.collect : effect available
+agent.exec.wait_approval --> agent.exec.wait_approval : waiting
+agent.exec.wait_approval --> agent.exec.dispatch : approved
+agent.exec.wait_approval --> agent.loop : denied/replan
+agent.exec.wait_user --> agent.exec.wait_user : waiting
+agent.exec.wait_user --> agent.loop : reply
+agent.exec.collect --> agent.exec.dispatch : batch continues
+agent.exec.collect --> agent.loop : result feedback
+agent.exec.finalize --> [*]

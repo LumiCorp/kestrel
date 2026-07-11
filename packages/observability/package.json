@@ -1,0 +1,62 @@
+{
+  "name": "@kestrel-agents/observability",
+  "version": "0.5.1",
+  "description": "Tracing and observability helpers for Kestrel agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LumiCorp/kestrel.git",
+    "directory": "packages/observability"
+  },
+  "homepage": "https://github.com/LumiCorp/kestrel/tree/main/packages/observability",
+  "bugs": {
+    "url": "https://github.com/LumiCorp/kestrel/issues"
+  },
+  "keywords": [
+    "kestrel",
+    "agents",
+    "observability",
+    "tracing",
+    "otel",
+    "typescript"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./otel": {
+      "types": "./dist/otel.d.ts",
+      "import": "./dist/otel.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@kestrel-agents/sdk": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/resources": "^2.6.0",
+    "@opentelemetry/sdk-trace-base": "^2.6.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp-pack', { recursive: true, force: true });\"",
+    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kestrel-agents/sdk build && node --import tsx --test tests/**/*.test.ts",
+    "smoke:import": "node --input-type=module -e \"Promise.all([import('./dist/index.js'), import('./dist/otel.js')]).then(([obs, otel]) => { const tracer = obs.createTracer({ processors: [new obs.InMemoryTraceProcessor()] }); void tracer; void otel.OpenTelemetryTraceExporter; })\"",
+    "release:check": "pnpm run build && node --import tsx ./scripts/release-check.ts"
+  }
+}

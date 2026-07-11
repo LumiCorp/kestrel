@@ -1,0 +1,440 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "live.weather.degraded",
+  "executedAt": "2026-07-10T21:35:17.717Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "8bacf0d744aa29bd102b8084f79a190e2aadbfa789dd883a10c4b7303f0ed1f3",
+    "instructionSha256": "953f09632e5558780a4dfadde141e80e784f1b163b2a8a7bc9878fdb2d3c3bf6",
+    "clock": "2026-03-10T15:00:00.000Z",
+    "seed": 224,
+    "legacyFixtureSha256": "6f0c71b48b18d00fee52995ad305d661a839c35d0571237a37026bdfa1d3d156"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Forecast-backed weather note complete with degraded-current caveat.",
+      "toolEvidence": [
+        {
+          "toolName": "free.weather.current",
+          "input": {
+            "city": "Seattle"
+          },
+          "status": "success",
+          "output": {
+            "error": {
+              "code": "provider_degraded",
+              "message": "current conditions unavailable"
+            },
+            "source": "open-meteo"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "Seattle",
+            "days": 2
+          },
+          "status": "success",
+          "output": {
+            "daily": [
+              {
+                "date": "2026-03-11",
+                "highC": 11,
+                "lowC": 4,
+                "precipPct": 35,
+                "windKph": 13
+              }
+            ],
+            "source": "open-meteo"
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Forecast-backed weather note complete with degraded-current caveat.",
+      "toolEvidence": [
+        {
+          "toolName": "free.weather.current",
+          "input": {
+            "city": "Seattle"
+          },
+          "status": "success",
+          "output": {
+            "error": {
+              "code": "provider_degraded",
+              "message": "current conditions unavailable"
+            },
+            "source": "open-meteo"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "Seattle",
+            "days": 2
+          },
+          "status": "success",
+          "output": {
+            "daily": [
+              {
+                "date": "2026-03-11",
+                "highC": 11,
+                "lowC": 4,
+                "precipPct": 35,
+                "windKph": 13
+              }
+            ],
+            "source": "open-meteo"
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Forecast-backed weather note complete with degraded-current caveat.",
+        "toolEvidence": [
+          {
+            "toolName": "free.weather.current",
+            "input": {
+              "city": "Seattle"
+            },
+            "status": "success",
+            "output": {
+              "error": {
+                "code": "provider_degraded",
+                "message": "current conditions unavailable"
+              },
+              "source": "open-meteo"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "Seattle",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [
+                {
+                  "date": "2026-03-11",
+                  "highC": 11,
+                  "lowC": 4,
+                  "precipPct": 35,
+                  "windKph": 13
+                }
+              ],
+              "source": "open-meteo"
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Forecast-backed weather note complete with degraded-current caveat.",
+        "toolEvidence": [
+          {
+            "toolName": "free.weather.current",
+            "input": {
+              "city": "Seattle"
+            },
+            "status": "success",
+            "output": {
+              "error": {
+                "code": "provider_degraded",
+                "message": "current conditions unavailable"
+              },
+              "source": "open-meteo"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "Seattle",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [
+                {
+                  "date": "2026-03-11",
+                  "highC": 11,
+                  "lowC": 4,
+                  "precipPct": 35,
+                  "windKph": 13
+                }
+              ],
+              "source": "open-meteo"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "4b255329361437bc924ff4d3a0a5297eeff23c2775ce7ed42f434d274fa7b4e0",
+      "sizeBytes": 1098
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "992b2503bf8727f3162ac5fb58423ecfdebdc2be77ab204fdb41624d7a5c7909",
+      "sizeBytes": 629
+    },
+    {
+      "name": "eventLog",
+      "sha256": "86f37d4607b098a02f08ea75d1950fc2d37ad541ebc160358acb359997e0339c",
+      "sizeBytes": 546
+    },
+    {
+      "name": "transcript",
+      "sha256": "675347ba67e86a159fee0b19825b1ab5398c6d011570ccdf352d4b5ec2d67c9a",
+      "sizeBytes": 731
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "8bb797247cea70c76eee7e863de4efd8a9457381495ee20d40ea43910465db29",
+      "sizeBytes": 1956
+    },
+    {
+      "name": "runManifest",
+      "sha256": "7c2a5aad50c301c047d52c3cc4526aca840daccd3dd0cb77fc5e9ed2ba47d860",
+      "sizeBytes": 5527
+    },
+    {
+      "name": "journey",
+      "sha256": "3168cf7c6d64698df00df1ba66b8c42228f81bc163062a3fb986851111c24cf3",
+      "sizeBytes": 5896
+    },
+    {
+      "name": "evalResult",
+      "sha256": "750444745a842c9182f6ae58e79f4da814d76457f4928df218ae07e0fdf5ca20",
+      "sizeBytes": 1129
+    },
+    {
+      "name": "loopResult",
+      "sha256": "dd84af5d22d20bd11e9dd81a50d1f4bb6e97f216c5da136f2c39bb38f9554ca0",
+      "sizeBytes": 14803
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "6624e3093440b7bc79ce70c2daf6bcb356b2b4a3aa02c1d3b90a944becd5a1dd",
+      "sizeBytes": 1136
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "896d0d88713ef4a3bfabb6eed4dbc135088ca58228e274607a57c716f98986d9",
+      "sizeBytes": 629
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "86f37d4607b098a02f08ea75d1950fc2d37ad541ebc160358acb359997e0339c",
+      "sizeBytes": 546
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "dbf1ae21fb28f267c7d9f9f5cf9cf23c6b896d7179710f1966ac2819cac87876",
+      "sizeBytes": 802
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "56f1797022a882a45b8acf7baf283c218a0c11fe584e8963713642c150c199b9",
+      "sizeBytes": 2084
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "f38c31ab5dbbf0bfe25ec667f3b2476a4960a4df1ce161306ca39e08ce3a032c",
+      "sizeBytes": 5769
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "6b6f6ae0a30291c3cbe773487e3bef0946e138008bd1d00c1012b0d5c8d7a2e8",
+      "sizeBytes": 6245
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "da16c0aa6039a8d75c98f6495a594369c0fe8e8100d3019db40ba02477edc488",
+      "sizeBytes": 1186
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "4a848298599028b6958182e730b84322c54af1cf616abcac991c7e1a575af215",
+      "sizeBytes": 15643
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "free.weather.current",
+            "input": {
+              "city": "Seattle"
+            },
+            "status": "success",
+            "output": {
+              "error": {
+                "code": "provider_degraded",
+                "message": "current conditions unavailable"
+              },
+              "source": "open-meteo"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "Seattle",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [
+                {
+                  "date": "2026-03-11",
+                  "highC": 11,
+                  "lowC": 4,
+                  "precipPct": 35,
+                  "windKph": 13
+                }
+              ],
+              "source": "open-meteo"
+            }
+          }
+        ],
+        "finalText": "Forecast-backed weather note complete with degraded-current caveat."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "free.weather.current",
+            "input": {
+              "city": "Seattle"
+            },
+            "status": "success",
+            "output": {
+              "error": {
+                "code": "provider_degraded",
+                "message": "current conditions unavailable"
+              },
+              "source": "open-meteo"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "Seattle",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [
+                {
+                  "date": "2026-03-11",
+                  "highC": 11,
+                  "lowC": 4,
+                  "precipPct": 35,
+                  "windKph": 13
+                }
+              ],
+              "source": "open-meteo"
+            }
+          }
+        ],
+        "finalText": "Forecast-backed weather note complete with degraded-current caveat.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "live.weather.degraded"
+}

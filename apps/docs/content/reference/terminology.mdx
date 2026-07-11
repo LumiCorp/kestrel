@@ -1,0 +1,33 @@
+---
+title: Terminology
+summary: "A compact vocabulary for the words the repo repeats: runtime, runner service, evaluations, replay, artifacts, profiles, and workspaces."
+section: reference
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-19
+---
+
+## Runtime kernel
+
+The durable core in `src/` that owns execution stages, persistence behavior, and replayable event history.
+
+## Runner service
+
+The HTTP or process boundary that receives application-facing requests and executes work against the runtime.
+
+## Scene
+
+A deterministic scenario used for evaluation, replay, or baseline comparison.
+
+## Replay
+
+The ability to inspect or re-run a durable execution history and compare sequence or terminal behavior against expected outcomes.
+
+## Workspace
+
+A local project context that can carry Kestrel configuration and be registered for scheduler eligibility.
+
+## Artifact
+
+A persisted output or claim-associated record produced during execution that can be reviewed later.

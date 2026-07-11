@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  alignExecutionPolicyWithMode,
+  isToolClassAllowed,
+  normalizeInteractionMode,
+  resolveAllowedToolClasses,
+} from "../../src/mode/contracts.js";
+
+test("normalizeInteractionMode preserves explicit build submodes", () => {
+  assert.deepEqual(
+    normalizeInteractionMode({
+      interactionMode: "build",
+      actSubmode: "full_auto",
+      defaultActSubmode: "safe",
+    }),
+    {
+      interactionMode: "build",
+      actSubmode: "full_auto",
+    },
+  );
+
+  assert.deepEqual(
+    normalizeInteractionMode({
+      interactionMode: "plan",
+      actSubmode: "full_auto",
+      defaultActSubmode: "safe",
+    }),
+    {
+      interactionMode: "plan",
+    },
+  );
+
+  assert.deepEqual(
+    normalizeInteractionMode({
+      defaultInteractionMode: "build",
+      defaultActSubmode: "safe",
+    }),
+    {
+      interactionMode: "build",
+      actSubmode: "safe",
+    },
+  );
+});
+
+test("alignExecutionPolicyWithMode leaves approval policy to the runtime", () => {
+  assert.deepEqual(
+    alignExecutionPolicyWithMode({
+      interactionMode: "build",
+      actSubmode: "full_auto",
+      executionPolicy: {
+        toolClassPolicy: {
+          read_only: true,
+          sandboxed_only: true,
+          external_side_effect: false,
+        },
+        capabilityPolicy: {
+          "workspace.read": true,
+        },
+        approvalPolicy: {
+          strictApprovalPerCall: true,
+        },
+      },
+    }),
+    {
+      toolClassPolicy: {
+        read_only: true,
+        sandboxed_only: true,
+        external_side_effect: false,
+      },
+      capabilityPolicy: {
+        "workspace.read": true,
+      },
+      approvalPolicy: {
+        strictApprovalPerCall: true,
+      },
+    },
+  );
+});
+
+test("alignExecutionPolicyWithMode preserves explicit overrides", () => {
+  assert.deepEqual(
+    alignExecutionPolicyWithMode({
+      interactionMode: "build",
+      actSubmode: "safe",
+      executionPolicy: {
+        toolClassPolicy: {
+          external_side_effect: true,
+        },
+      },
+    }),
+    {
+      toolClassPolicy: {
+        external_side_effect: true,
+      },
+    },
+  );
+
+  assert.equal(
+    alignExecutionPolicyWithMode({
+      interactionMode: "chat",
+      executionPolicy: undefined,
+    }),
+    undefined,
+  );
+});
+
+test("resolveAllowedToolClasses respects execution-policy overrides", () => {
+  assert.deepEqual(
+    resolveAllowedToolClasses(
+      {
+        interactionMode: "build",
+        actSubmode: "full_auto",
+      },
+      {
+        toolClassPolicy: {
+          external_side_effect: false,
+        },
+      },
+    ),
+    ["read_only", "sandboxed_only"],
+  );
+
+  assert.deepEqual(
+    resolveAllowedToolClasses(
+      {
+        interactionMode: "build",
+        actSubmode: "safe",
+      },
+      {
+        toolClassPolicy: {
+          external_side_effect: true,
+        },
+      },
+    ),
+    ["read_only", "sandboxed_only", "external_side_effect"],
+  );
+});
+
+test("plan mode allows read-only tools and session plan document writes by default", () => {
+  assert.equal(
+    isToolClassAllowed({
+      interactionMode: "plan",
+      toolClass: "sandboxed_only",
+    }),
+    false,
+  );
+  assert.deepEqual(resolveAllowedToolClasses({ interactionMode: "plan" }), ["read_only", "planning_write"]);
+});

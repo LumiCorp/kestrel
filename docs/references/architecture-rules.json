@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "layer": "contracts",
+      "can_depend_on": ["contracts"]
+    },
+    {
+      "layer": "engine",
+      "can_depend_on": ["contracts", "engine", "io", "tools"],
+      "exceptions": [
+        {
+          "from": "engine",
+          "to": "store",
+          "reason": "Legacy transition persistence coupling; scheduled extraction.",
+          "expires_at": "2026-12-31"
+        }
+      ]
+    },
+    {
+      "layer": "store",
+      "can_depend_on": ["contracts", "store", "io"]
+    },
+    {
+      "layer": "io",
+      "can_depend_on": ["contracts", "io", "tools"]
+    },
+    {
+      "layer": "tools",
+      "can_depend_on": ["contracts", "tools", "io"]
+    },
+    {
+      "layer": "apps",
+      "can_depend_on": ["apps", "contracts", "io", "tools"]
+    },
+    {
+      "layer": "cli",
+      "can_depend_on": ["cli", "contracts", "io", "tools"]
+    }
+  ]
+}

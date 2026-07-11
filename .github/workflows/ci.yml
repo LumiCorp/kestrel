@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Install public dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Governance checks
+        run: pnpm run governance:check
+
+      - name: Full test suite
+        run: pnpm run test
+
+      - name: Prompt suite
+        run: pnpm run prompt-suite
+
+      - name: Ruhroh release gate
+        run: pnpm run evals:release-check
+
+      - name: Build public products
+        run: pnpm run build && pnpm run web:build && pnpm run docs:build && pnpm run desktop:build

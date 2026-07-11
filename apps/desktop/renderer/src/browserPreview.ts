@@ -1,0 +1,1374 @@
+import type {
+  DesktopBridge,
+  DesktopFileContent,
+  DesktopFileReadInput,
+  DesktopFileWriteInput,
+  DesktopLegacyUiStateEntries,
+  DesktopManagedProjectRun,
+  DesktopPathTargetInput,
+  DesktopProjectAction,
+  DesktopProjectSnapshotResponse,
+  DesktopProviderCredentialInput,
+  DesktopRendererSettings,
+  DesktopRendererSettingsUpdate,
+  DesktopRunnerEvent,
+  DesktopRuntimeRunIndex,
+  DesktopRuntimeRunIndexQuery,
+  DesktopRuntimeRunInspection,
+  DesktopRuntimeThreadInspection,
+} from "../../src/contracts";
+
+type PreviewSnapshot = DesktopProjectSnapshotResponse["snapshot"];
+type PreviewTaskAction = Extract<DesktopProjectAction, { type: `task.${string}` }>;
+type PreviewBoardAction = Extract<DesktopProjectAction, { type: `board.${string}` }>;
+type PreviewBoard = PreviewSnapshot["board"];
+type PreviewBoardCard = PreviewBoard["cards"][string];
+
+export function ensureBrowserPreviewBridge(): void {
+  const previewWindow = window as unknown as { kestrelDesktop?: DesktopBridge };
+  if (import.meta.env.DEV === false || previewWindow.kestrelDesktop !== undefined) {
+    return;
+  }
+
+  let settings: DesktopRendererSettings = {
+    selectedProvider: "openrouter",
+    databaseMode: "default",
+    presetId: "desktop_dev_local",
+    capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+    projects: [
+      { path: "/workspace/kestrel", label: "kestrel" },
+      { path: "/workspace/demo-agent", label: "demo-agent" },
+    ],
+    providerCredentialConfigured: true,
+    advancedWorkspaceEnabled: false,
+    setupCompletedAt: new Date().toISOString(),
+  };
+  let entries: DesktopLegacyUiStateEntries = {};
+  let previewProjectSnapshot = createPreviewProjectSnapshot();
+  let previewFileContent = [
+    "import { createKestrelClient } from \"@kestrel/sdk\";",
+    "",
+    "const client = createKestrelClient();",
+    "await client.run({ message: \"Inspect this workspace\" });",
+    "",
+  ].join("\n");
+  const runnerListeners = new Set<(event: DesktopRunnerEvent) => void>();
+  const projectRunListeners = new Set<(runs: DesktopManagedProjectRun[]) => void>();
+  let projectRuns: DesktopManagedProjectRun[] = [
+    {
+      runId: "preview-run-1",
+      projectPath: "/workspace/kestrel",
+      manifestPath: "/workspace/kestrel/package.json",
+      scriptName: "dev",
+      packageManager: "pnpm",
+      command: "pnpm run dev",
+      status: "running",
+      startedAt: new Date(Date.now() - 42_000).toISOString(),
+      updatedAt: new Date().toISOString(),
+      primaryPreviewUrl: "http://127.0.0.1:43103",
+      previewUrls: [],
+      stdoutTail: ["Local: http://127.0.0.1:43103", "ready in 412ms"],
+      stderrTail: [],
+    },
+  ];
+
+  const emit = (event: DesktopRunnerEvent) => {
+    for (const listener of runnerListeners) {
+      listener(event);
+    }
+  };
+  const getPreviewRuntimeStatus = () => ({
+    running: true,
+    pid: 43103,
+    recentStdout: ["Runner service listening on 127.0.0.1", "Local Core connected"],
+    recentStderr: [],
+    logPath: "/tmp/kestrel-preview/runtime.log",
+  });
+  const getPreviewDatabaseStatus = () => ({
+    state: "healthy" as const,
+    summary: "Local Core database is ready.",
+    managed: true,
+    initialized: true,
+    running: true,
+    host: "127.0.0.1",
+    port: 54329,
+    database: "kestrel",
+    logPath: "/tmp/kestrel-preview/database.log",
+  });
+  const startPreviewProjectRun = async (input: {
+    projectPath: string;
+    scriptName: string;
+  }) => {
+    const nextRun: DesktopManagedProjectRun = {
+      runId: crypto.randomUUID(),
+      projectPath: input.projectPath,
+      manifestPath: `${input.projectPath}/package.json`,
+      scriptName: input.scriptName,
+      packageManager: "pnpm",
+      command: `pnpm run ${input.scriptName}`,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      previewUrls: [],
+      stdoutTail: ["starting preview run"],
+      stderrTail: [],
+    };
+    projectRuns = [nextRun, ...projectRuns];
+    for (const listener of projectRunListeners) {
+      listener(projectRuns);
+    }
+    return nextRun;
+  };
+  const bridge = {
+    async getBridgeInfo() {
+      return {
+        connected: true,
+        version: "3-preview",
+        capabilities: [
+          "ui_state",
+          "runner_commands",
+          "settings",
+          "provider_credentials",
+          "project_picker",
+          "runtime_control",
+          "mission_control",
+          "runtime_inspection",
+        ],
+      };
+    },
+    async getUiState() {
+      return null;
+    },
+    async saveUiState(nextEntries: DesktopLegacyUiStateEntries) {
+      entries = nextEntries;
+      return {
+        updated: true,
+        state: {
+          version: "desktop-ui-state-v1",
+          source: "vite-renderer",
+          sourceAppVersion: "preview",
+          capturedAt: new Date().toISOString(),
+          entries,
+        },
+      };
+    },
+    async getSettings() {
+      return settings;
+    },
+    async saveSettings(update: DesktopRendererSettingsUpdate) {
+      settings = {
+        ...settings,
+        ...(update.selectedProvider !== undefined
+          ? { selectedProvider: update.selectedProvider }
+          : {}),
+        ...(update.projects !== undefined ? { projects: update.projects } : {}),
+        providerCredentialConfigured: update.selectedProvider === undefined
+          ? settings.providerCredentialConfigured
+          : update.selectedProvider === "ollama" || update.selectedProvider === "lmstudio",
+      };
+      return settings;
+    },
+    async saveProviderCredential(input: DesktopProviderCredentialInput) {
+      settings = {
+        ...settings,
+        selectedProvider: input.provider,
+        providerCredentialConfigured: true,
+      };
+      return settings;
+    },
+    async getRuntimeHealth() {
+      return {
+        state: "healthy",
+        summary: "Local runtime is ready.",
+        running: true,
+      };
+    },
+    async getRuntimeStatus() {
+      return getPreviewRuntimeStatus();
+    },
+    async getDatabaseStatus() {
+      return getPreviewDatabaseStatus();
+    },
+    async getBootState() {
+      return {
+        phase: "ready" as const,
+        message: "Kestrel is ready.",
+        readiness: {
+          summary: {
+            state: "ready" as const,
+            title: "Ready",
+            detail: "Desktop services are ready.",
+          },
+          items: [
+            { id: "resources" as const, label: "Resources", state: "ready" as const, detail: "Packaged resources verified." },
+            { id: "provider" as const, label: "Provider", state: "ready" as const, detail: "OpenRouter credential configured." },
+            { id: "database" as const, label: "Database", state: "ready" as const, detail: "Local Core database is healthy." },
+            { id: "runner" as const, label: "Runner", state: "ready" as const, detail: "Runner service is accepting commands." },
+          ],
+        },
+      };
+    },
+    onRuntimeHealth() {
+      return () => undefined;
+    },
+    onRunnerEvent(listener: (event: DesktopRunnerEvent) => void) {
+      runnerListeners.add(listener);
+      return () => runnerListeners.delete(listener);
+    },
+    async runTurn(request: { sessionId: string; message: string }) {
+      const commandId = crypto.randomUUID();
+      const runId = crypto.randomUUID();
+      const started = {
+        id: crypto.randomUUID(),
+        type: "run.started",
+        ts: new Date().toISOString(),
+        commandId,
+        runId,
+        sessionId: request.sessionId,
+        payload: {
+          sessionId: request.sessionId,
+          eventType: "user.message",
+          interactionMode: "build",
+          stepAgent: "kestrel-agent-1",
+        },
+      } as DesktopRunnerEvent;
+      emit(started);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      const completed = {
+        id: crypto.randomUUID(),
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        commandId,
+        runId,
+        sessionId: request.sessionId,
+        payload: {
+          result: {
+            output: { status: "COMPLETED" },
+            finalizedPayload: {
+              message: `Preview response for: ${request.message.trim()}`,
+            },
+          },
+        },
+      } as DesktopRunnerEvent;
+      emit(completed);
+      return completed;
+    },
+    async cancelRun(request: { sessionId: string }) {
+      return {
+        id: crypto.randomUUID(),
+        type: "run.cancelled",
+        ts: new Date().toISOString(),
+        sessionId: request.sessionId,
+        payload: { sessionId: request.sessionId },
+      } as DesktopRunnerEvent;
+    },
+    async restartRuntime() {
+      return { running: true, recentStdout: [], recentStderr: [], logPath: "/tmp/kestrel.log" };
+    },
+    async restartDatabase() {
+      return getPreviewDatabaseStatus();
+    },
+    async repairDatabase() {
+      return getPreviewDatabaseStatus();
+    },
+    async resetRuntimeStore() {
+      return {
+        storePath: "/tmp/kestrel-preview/runtime.db",
+        archivedStorePath: "/tmp/kestrel-preview/runtime.db.bak",
+        resetAt: new Date().toISOString(),
+        runtimeStatus: getPreviewRuntimeStatus(),
+      };
+    },
+    async getSupportBundle() {
+      return {
+        generatedAt: new Date().toISOString(),
+        runtime: getPreviewRuntimeStatus(),
+      };
+    },
+    async openDiagnostics() {
+      return undefined;
+    },
+    async revealDatabaseFiles() {
+      return undefined;
+    },
+    async restartApp() {
+      return undefined;
+    },
+    async pickProjectFolder() {
+      return undefined;
+    },
+    async listDirectory(rootPath: string, directoryPath?: string) {
+      const resolvedDirectory = directoryPath ?? rootPath;
+      const inSourceDirectory = resolvedDirectory.endsWith("/src");
+      return {
+        rootPath,
+        directoryPath: resolvedDirectory,
+        entries: inSourceDirectory
+          ? [
+              { path: `${rootPath}/src/index.ts`, name: "index.ts", kind: "file" as const, sizeBytes: 1842 },
+              { path: `${rootPath}/src/runtime.ts`, name: "runtime.ts", kind: "file" as const, sizeBytes: 6250 },
+            ]
+          : [
+              { path: `${rootPath}/src`, name: "src", kind: "directory" as const },
+              { path: `${rootPath}/README.md`, name: "README.md", kind: "file" as const, sizeBytes: 3920 },
+              { path: `${rootPath}/package.json`, name: "package.json", kind: "file" as const, sizeBytes: 1260 },
+            ],
+      };
+    },
+    async searchProjectFiles(rootPath: string, query: string) {
+      return {
+        rootPath,
+        query,
+        results: [
+          { path: `${rootPath}/src/runtime.ts`, name: "runtime.ts", directoryPath: `${rootPath}/src` },
+        ].filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase())),
+        truncated: false,
+        fullSearchAvailable: true,
+      };
+    },
+    async watchProjectFiles() {
+      return undefined;
+    },
+    async unwatchProjectFiles() {
+      return undefined;
+    },
+    onProjectFilesChanged() {
+      return () => undefined;
+    },
+    async openFileEditor() {
+      return undefined;
+    },
+    async readProjectLauncher(projectPath: string) {
+      return {
+        projectPath,
+        manifestPath: `${projectPath}/package.json`,
+        scripts: [
+          { name: "dev", command: "vite --host 127.0.0.1" },
+          { name: "test", command: "vitest run" },
+          { name: "build", command: "tsc -b && vite build" },
+        ],
+        packageManager: "pnpm" as const,
+        packageManagerSelectionRequired: false,
+      };
+    },
+    async listProjectRuns() {
+      return projectRuns;
+    },
+    async startProjectRun(input: { projectPath: string; scriptName: string }) {
+      return startPreviewProjectRun(input);
+    },
+    async stopProjectRun(runId: string) {
+      projectRuns = projectRuns.map((run) => run.runId === runId
+        ? { ...run, status: "stopped" as const, updatedAt: new Date().toISOString() }
+        : run);
+      for (const listener of projectRunListeners) {
+        listener(projectRuns);
+      }
+      return projectRuns.find((run) => run.runId === runId);
+    },
+    async restartProjectRun(runId: string) {
+      const existing = projectRuns.find((run) => run.runId === runId)!;
+      return startPreviewProjectRun({
+        projectPath: existing.projectPath,
+        scriptName: existing.scriptName,
+      });
+    },
+    async getProjectSnapshot(sessionId: string): Promise<DesktopProjectSnapshotResponse> {
+      return { sessionId, snapshot: previewProjectSnapshot };
+    },
+    async runProjectAction(action: DesktopProjectAction): Promise<DesktopProjectSnapshotResponse> {
+      previewProjectSnapshot = applyPreviewProjectAction(previewProjectSnapshot, action);
+      return { sessionId: action.sessionId, snapshot: previewProjectSnapshot };
+    },
+    async getOperatorThread(threadId: string): Promise<DesktopRuntimeThreadInspection> {
+      return createPreviewRuntimeThreadInspection(threadId);
+    },
+    async listOperatorRuns(
+      query: DesktopRuntimeRunIndexQuery = {},
+    ): Promise<DesktopRuntimeRunIndex> {
+      return createPreviewRuntimeRunIndex(query);
+    },
+    async getOperatorRun(runId: string): Promise<DesktopRuntimeRunInspection> {
+      return createPreviewRuntimeRunInspection(runId);
+    },
+    onProjectRuns(listener: (runs: DesktopManagedProjectRun[]) => void) {
+      projectRunListeners.add(listener);
+      return () => projectRunListeners.delete(listener);
+    },
+    async openProjectRunPreview() {
+      return undefined;
+    },
+    async discoverMcpServers() {
+      return {
+        discoveredAt: new Date().toISOString(),
+        diagnostics: [],
+        servers: [
+          {
+            id: "filesystem",
+            name: "Filesystem",
+            transport: "stdio" as const,
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-filesystem"],
+            enabled: true,
+            source: "Claude Desktop",
+            sourceKind: "config-file" as const,
+            sourcePath: "~/.config/claude/claude_desktop_config.json",
+            toolCount: 3,
+            tools: [
+              { name: "read_file", description: "Read a file from an allowed root." },
+              { name: "list_directory", description: "List an allowed directory." },
+              { name: "search_files", description: "Search files by name." },
+            ],
+          },
+          {
+            id: "docker-toolkit",
+            name: "Docker MCP Toolkit",
+            transport: "stdio" as const,
+            command: "docker",
+            enabled: false,
+            source: "Docker Desktop",
+            sourceKind: "docker-toolkit" as const,
+            toolCount: 0,
+            tools: [],
+          },
+        ],
+      };
+    },
+    async readFile(input: DesktopFileReadInput): Promise<DesktopFileContent> {
+      return {
+        path: input.targetPath,
+        content: previewFileContent,
+        viewKind: "code",
+        language: "typescript",
+        contentHash: `preview-${previewFileContent.length}`,
+        lineEnding: "lf",
+        editable: true,
+        sizeBytes: new TextEncoder().encode(previewFileContent).byteLength,
+      };
+    },
+    async writeFile(input: DesktopFileWriteInput): Promise<DesktopFileContent> {
+      previewFileContent = input.content;
+      return {
+        path: input.targetPath,
+        content: previewFileContent,
+        viewKind: "code",
+        language: "typescript",
+        contentHash: `preview-${previewFileContent.length}`,
+        lineEnding: input.lineEnding ?? "lf",
+        editable: true,
+        sizeBytes: new TextEncoder().encode(previewFileContent).byteLength,
+      };
+    },
+    async openPath(_input: DesktopPathTargetInput) {
+      return undefined;
+    },
+  } as unknown as DesktopBridge;
+
+  previewWindow.kestrelDesktop = bridge;
+}
+
+function createPreviewProjectSnapshot(): DesktopProjectSnapshotResponse["snapshot"] {
+  const now = new Date().toISOString();
+  const earlier = new Date(Date.now() - 48_000).toISOString();
+  return {
+    version: 1,
+    graphVersion: 1,
+    setup: {
+      workspaceRoot: "/workspace/kestrel",
+      repoRoot: "/workspace/kestrel",
+      repoLabel: "kestrel",
+      defaultBranch: "main",
+      providerProfileId: "reference-web",
+      githubConnected: true,
+      browserReady: true,
+      codeReady: true,
+      mcpReady: true,
+    },
+    policy: {
+      sandboxMode: "workspace_write",
+      approvalMode: "on_request",
+      toolClassPolicy: {},
+      browserScope: "project",
+      githubScope: "project",
+      mcpScope: "project",
+      taskOverrides: {},
+      recentDecisions: [],
+    },
+    board: {
+      version: 1,
+      boardVersion: 5,
+      nextCardNumber: 5,
+      lanes: ["idea", "planned", "wip", "testing", "done"],
+      settings: { autopilotEnabled: false, wipLimit: 2 },
+      cards: {
+        "K-1": {
+          id: "K-1",
+          title: "Define hosted app cutover",
+          prompt: "Document the path, package, and deployment transition from Web Client to Kestrel One.",
+          lane: "idea",
+          order: 1,
+          createdAt: earlier,
+          updatedAt: earlier,
+          threads: [],
+          evidence: [{
+            id: "preview-board-evidence-1",
+            timestamp: earlier,
+            source: "operator",
+            outcome: "created",
+            summary: "Card created for the 0.6 repository split.",
+          }],
+        },
+        "K-2": {
+          id: "K-2",
+          title: "Retire legacy web cockpit",
+          prompt: "Move retained local workflows into Desktop before promoting Kestrel One to apps/web.",
+          lane: "planned",
+          order: 1,
+          createdAt: earlier,
+          updatedAt: now,
+          threads: [],
+          evidence: [{
+            id: "preview-board-evidence-2",
+            timestamp: now,
+            source: "operator",
+            outcome: "moved",
+            summary: "Cutover work is ready for implementation.",
+          }],
+        },
+        "K-3": {
+          id: "K-3",
+          title: "Package Desktop state bridge",
+          prompt: "Verify the 0.5.1 bridge migrates local state before the hosted path cutover.",
+          lane: "wip",
+          order: 1,
+          createdAt: earlier,
+          updatedAt: now,
+          activeClaim: {
+            threadId: "thread-main:preview-desktop-bridge",
+            sessionId: "preview-desktop-bridge",
+            kind: "implementation",
+            claimedAt: now,
+            claimReason: "copilot",
+          },
+          threads: [{
+            threadId: "thread-main:preview-desktop-bridge",
+            sessionId: "preview-desktop-bridge",
+            kind: "implementation",
+            startedAt: now,
+            status: "active",
+          }],
+          evidence: [{
+            id: "preview-board-evidence-3",
+            timestamp: now,
+            source: "copilot",
+            outcome: "thread_started",
+            summary: "Implementation thread started.",
+            threadId: "thread-main:preview-desktop-bridge",
+          }],
+        },
+        "K-4": {
+          id: "K-4",
+          title: "Verify public clone boundary",
+          prompt: "Run release package, source sanitation, and fresh-clone gates from public dependencies.",
+          lane: "testing",
+          order: 1,
+          createdAt: earlier,
+          updatedAt: now,
+          threads: [],
+          evidence: [{
+            id: "preview-board-evidence-4",
+            timestamp: now,
+            source: "implementation_thread",
+            outcome: "success",
+            summary: "Implementation completed and is ready for testing.",
+          }],
+        },
+      },
+    },
+    taskQueue: {
+      version: 1,
+      queueVersion: 4,
+      nextTaskNumber: 4,
+      tasks: {
+        "T-1": {
+          id: "T-1",
+          title: "Verify public package boundary",
+          instructions: "Run packed consumer checks for protocol, SDK, and Next.",
+          priority: "high",
+          status: "running",
+          createdBy: "user",
+          createdAt: earlier,
+          updatedAt: now,
+          order: 1,
+          threadId: "thread-package-verification",
+          evidence: [{
+            id: "evidence-1",
+            timestamp: now,
+            summary: "Package verification is running.",
+            source: "runtime",
+          }],
+        },
+        "T-2": {
+          id: "T-2",
+          title: "Review Desktop parity",
+          instructions: "Confirm the static renderer owns retained cockpit workflows.",
+          priority: "medium",
+          status: "ready_for_review",
+          createdBy: "agent",
+          createdAt: earlier,
+          updatedAt: now,
+          order: 2,
+          evidence: [{
+            id: "evidence-2",
+            timestamp: now,
+            summary: "Mission Control bridge implemented.",
+            source: "agent",
+          }],
+          review: {
+            submittedAt: now,
+            summary: "Ready for operator review.",
+          },
+        },
+        "T-3": {
+          id: "T-3",
+          title: "Archive obsolete web routes",
+          instructions: "Wait for the 0.5.1 Desktop bridge release before path cutover.",
+          priority: "urgent",
+          status: "proposed",
+          createdBy: "agent",
+          createdAt: now,
+          updatedAt: now,
+          order: 3,
+          evidence: [{
+            id: "evidence-3",
+            timestamp: now,
+            summary: "Task proposed by migration planner.",
+            source: "agent",
+          }],
+        },
+      },
+    },
+    review: {
+      branches: [],
+      worktrees: [],
+      pullRequests: [],
+      recentCommits: [],
+    },
+    workspaceCheckpoints: {
+      recentActivity: [],
+    },
+    activity: [],
+  };
+}
+
+function createPreviewRuntimeThreadInspection(threadId: string): DesktopRuntimeThreadInspection {
+  const now = new Date().toISOString();
+  const createdAt = new Date(Date.now() - 420_000).toISOString();
+  const isChild = threadId.startsWith("thread-child:");
+  const parentThreadId = "thread-main:preview-runtime-cutover";
+  const title = threadId.includes("package-verification")
+    ? "Verify public package boundary"
+    : threadId.includes("desktop-bridge")
+      ? "Package Desktop state bridge"
+      : isChild
+        ? "Verify packaged Electron navigation"
+        : "Inspect canonical web cutover";
+  return {
+    thread: {
+      threadId,
+      sessionId: "preview-session",
+      title,
+      status: isChild ? "WAITING" : "RUNNING",
+      agentProfileId: "reference",
+      agentProfileLabel: "Kestrel build",
+      ...(isChild ? { parentThreadId } : {}),
+      activeRunId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
+      lastRunStatus: isChild ? "WAITING" : "RUNNING",
+      createdAt,
+      updatedAt: now,
+    },
+    focusedThreadId: threadId,
+    ...(isChild
+      ? {
+          parentThread: {
+            threadId: parentThreadId,
+            sessionId: "preview-session",
+            title: "Inspect canonical web cutover",
+            status: "RUNNING" as const,
+            activeRunId: "run-preview-web-cutover",
+            createdAt,
+            updatedAt: now,
+          },
+        }
+      : {}),
+    childThreads: isChild ? [] : [{
+      threadId: "thread-child:preview-electron-smoke",
+      sessionId: "preview-session",
+      title: "Verify packaged Electron navigation",
+      status: "WAITING",
+      parentThreadId: threadId,
+      activeRunId: "run-preview-electron-smoke",
+      createdAt,
+      updatedAt: now,
+    }],
+    operatorPhase: isChild ? "wait" : "act",
+    ...(isChild
+      ? {
+          blocker: {
+            kind: "checkpoint" as const,
+            summary: "Packaged Electron smoke has not run yet.",
+            actionable: true,
+            threadId,
+            checkpointId: "checkpoint-electron-smoke",
+          },
+          nextAction: {
+            kind: "resolve_context_checkpoint" as const,
+            summary: "Run packaged Electron smoke and record the artifact.",
+            threadId,
+            checkpointId: "checkpoint-electron-smoke",
+          },
+        }
+      : {
+          nextAction: {
+            kind: "wait" as const,
+            summary: "Wait for the packaged Desktop verification child thread.",
+            childThreadId: "thread-child:preview-electron-smoke",
+          },
+        }),
+    runtimePlan: {
+      phase: "verify",
+      currentChunk: isChild ? "Packaged Desktop smoke" : "Web Client parity",
+      status: isChild ? "waiting" : "running",
+      expectedNextCommand: isChild ? "pnpm --filter @kestrel/desktop package" : "operator.thread",
+      ...(isChild ? { waitReason: "Package artifact required." } : {}),
+      commandNames: isChild
+        ? ["pnpm --filter @kestrel/desktop package"]
+        : ["operator.thread", "project.snapshot.get"],
+    },
+    latestSteering: {
+      message: "Keep the hosted app and Desktop runtime boundaries independent.",
+      issuedBy: "operator",
+      at: now,
+      runId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
+    },
+  };
+}
+
+function createPreviewRuntimeRunInspection(runId: string): DesktopRuntimeRunInspection {
+  const waiting = runId.includes("electron-smoke");
+  const startedAt = new Date(Date.now() - (waiting ? 195_000 : 82_000)).toISOString();
+  const now = new Date().toISOString();
+  const threadId = waiting
+    ? "thread-child:preview-electron-smoke"
+    : "thread-main:preview-runtime-cutover";
+  return {
+    version: "operator-run-v1",
+    run: {
+      runId,
+      sessionId: "preview-session",
+      eventType: waiting ? "operator.package_verification" : "operator.web_cutover",
+      status: waiting ? "WAITING" : "RUNNING",
+      startedAt,
+    },
+    threadId,
+    summary: {
+      eventCount: 5,
+      firstEventAt: startedAt,
+      lastEventAt: now,
+      stepsObserved: waiting ? 2 : 3,
+      progressToolCalls: waiting ? 1 : 2,
+      waitingMilestones: waiting ? 1 : 0,
+      truncated: false,
+    },
+    diagnosis: waiting
+      ? {
+          status: "WAITING",
+          finalStep: "exec.wait_approval",
+          actionable: true,
+          wait: {
+            kind: "approval",
+            actionable: true,
+            eventType: "operator.approval",
+            threadId,
+            requestId: "request-electron-package-proof",
+            enteredAt: now,
+          },
+          latestReasoning: {
+            message: "The package boundary is ready; the installable Electron artifact still needs smoke evidence.",
+            at: new Date(Date.now() - 18_000).toISOString(),
+          },
+        }
+      : {
+          status: "RUNNING",
+          actionable: false,
+          latestReasoning: {
+            message: "Runtime inspection is moving behind the runner-owned protocol before the legacy Web route is removed.",
+            at: new Date(Date.now() - 9_000).toISOString(),
+          },
+        },
+    modelProvenance: {
+      retention: "hash_only",
+      callCount: waiting ? 2 : 4,
+      actionCallCount: waiting ? 2 : 3,
+      maintenanceCallCount: waiting ? 0 : 1,
+      providers: ["openai"],
+      models: ["gpt-5"],
+    },
+    runtimePlan: {
+      phase: "verify",
+      currentChunk: waiting ? "Packaged Desktop smoke" : "Web Client parity",
+      status: waiting ? "waiting" : "running",
+      expectedNextCommand: waiting
+        ? "pnpm --filter @kestrel/desktop package"
+        : "operator.run",
+      ...(waiting ? { waitReason: "Installable artifact approval required." } : {}),
+      commandNames: waiting
+        ? ["pnpm --filter @kestrel/desktop package", "pnpm run check:desktop-release"]
+        : ["operator.thread", "operator.run", "project.snapshot.get"],
+    },
+    timeline: [
+      {
+        seq: 1,
+        at: startedAt,
+        label: "run.started",
+        source: "engine",
+      },
+      {
+        seq: 2,
+        at: new Date(new Date(startedAt).getTime() + 2_000).toISOString(),
+        label: "step started",
+        detail: "from=runtime to=exec status=RUNNING",
+        source: "engine",
+        step: "exec.deliberate",
+        stepIndex: 1,
+      },
+      {
+        seq: 3,
+        at: new Date(new Date(startedAt).getTime() + 11_000).toISOString(),
+        label: "reasoning update",
+        detail: waiting ? "Package proof requires an installable artifact." : "The runner owns runtime inspection.",
+        source: "agent",
+        step: "exec.deliberate",
+        stepIndex: 1,
+      },
+      {
+        seq: 4,
+        at: new Date(new Date(startedAt).getTime() + 29_000).toISOString(),
+        label: "tool completed",
+        detail: waiting ? "pnpm --filter @kestrel/desktop package" : "operator.run",
+        source: "tooling",
+        step: "exec.dispatch",
+        stepIndex: 2,
+      },
+      ...(waiting
+        ? [{
+            seq: 5,
+            at: now,
+            label: "wait entered",
+            detail: "eventType=operator.approval",
+            source: "wait" as const,
+            step: "exec.wait_approval",
+            stepIndex: 3,
+          }]
+        : [{
+            seq: 5,
+            at: now,
+            label: "step committed",
+            detail: "status=RUNNING",
+            source: "engine" as const,
+            step: "exec.observe",
+            stepIndex: 3,
+          }]),
+    ],
+  };
+}
+
+function createPreviewRuntimeRunIndex(
+  query: DesktopRuntimeRunIndexQuery,
+): DesktopRuntimeRunIndex {
+  const active = createPreviewRuntimeRunInspection("run-preview-web-cutover");
+  const waiting = createPreviewRuntimeRunInspection("run-preview-electron-smoke");
+  const completedBase = createPreviewRuntimeRunInspection("run-preview-public-sdk");
+  const completed: DesktopRuntimeRunInspection = {
+    ...completedBase,
+    run: {
+      ...completedBase.run,
+      sessionId: "preview-session-archive",
+      eventType: "operator.public_sdk_boundary",
+      status: "COMPLETED",
+      completedAt: new Date(Date.now() - 290_000).toISOString(),
+    },
+    threadId: "thread-main:preview-public-sdk",
+    diagnosis: {
+      status: "COMPLETED",
+      finalStep: "exec.finalize",
+      actionable: false,
+    },
+  };
+  const limit = query.limit ?? 25;
+  const all = [active, waiting, completed]
+    .filter((entry) => query.sessionId === undefined || entry.run.sessionId === query.sessionId)
+    .filter((entry) => query.status === undefined || entry.run.status === query.status);
+  const selected = all.slice(0, limit);
+  const runs = selected.map((entry) => ({
+    run: entry.run,
+    ...(entry.threadId !== undefined ? { threadId: entry.threadId } : {}),
+    summary: {
+      eventCount: entry.summary.eventCount,
+      truncated: entry.summary.truncated,
+    },
+    diagnosis: {
+      status: entry.diagnosis.status,
+      ...(entry.diagnosis.finalStep !== undefined ? { finalStep: entry.diagnosis.finalStep } : {}),
+      ...(entry.diagnosis.terminalReasonCode !== undefined
+        ? { terminalReasonCode: entry.diagnosis.terminalReasonCode }
+        : {}),
+      actionable: entry.diagnosis.actionable,
+      ...(entry.diagnosis.dominantFailure !== undefined
+        ? { dominantFailure: entry.diagnosis.dominantFailure }
+        : {}),
+      ...(entry.diagnosis.wait !== undefined ? { wait: entry.diagnosis.wait } : {}),
+    },
+  }));
+  const sessions = [...new Set(runs.map((entry) => entry.run.sessionId))].map((sessionId) => {
+    const sessionRuns = runs.filter((entry) => entry.run.sessionId === sessionId);
+    const latest = sessionRuns[0]!;
+    return {
+      sessionId,
+      runCount: sessionRuns.length,
+      statusCounts: {
+        RUNNING: sessionRuns.filter((entry) => entry.run.status === "RUNNING").length,
+        WAITING: sessionRuns.filter((entry) => entry.run.status === "WAITING").length,
+        COMPLETED: sessionRuns.filter((entry) => entry.run.status === "COMPLETED").length,
+        FAILED: sessionRuns.filter((entry) => entry.run.status === "FAILED").length,
+      },
+      latestRunId: latest.run.runId,
+      latestStatus: latest.run.status,
+      latestStartedAt: latest.run.startedAt,
+    };
+  });
+  return {
+    version: "operator-run-index-v1",
+    generatedAt: new Date().toISOString(),
+    filters: {
+      ...(query.sessionId !== undefined ? { sessionId: query.sessionId } : {}),
+      ...(query.status !== undefined ? { status: query.status } : {}),
+      limit,
+    },
+    hasMore: all.length > limit,
+    runs,
+    sessions,
+  };
+}
+
+function applyPreviewProjectAction(
+  snapshot: PreviewSnapshot,
+  action: DesktopProjectAction,
+): PreviewSnapshot {
+  return isPreviewBoardAction(action)
+    ? applyPreviewBoardAction(snapshot, action)
+    : applyPreviewTaskAction(snapshot, action);
+}
+
+function applyPreviewTaskAction(
+  snapshot: PreviewSnapshot,
+  action: PreviewTaskAction,
+): PreviewSnapshot {
+  const tasks = { ...snapshot.taskQueue.tasks };
+  if (action.type === "task.create" || action.type === "task.propose") {
+    const taskId = `T-${snapshot.taskQueue.nextTaskNumber}`;
+    tasks[taskId] = {
+      id: taskId,
+      title: action.title,
+      instructions: action.instructions,
+      ...(action.acceptanceCriteria !== undefined
+        ? { acceptanceCriteria: action.acceptanceCriteria }
+        : {}),
+      ...(action.projectPath !== undefined ? { projectPath: action.projectPath } : {}),
+      ...(action.projectLabel !== undefined ? { projectLabel: action.projectLabel } : {}),
+      priority: action.priority ?? "medium",
+      status: action.type === "task.create" ? "queued" : "proposed",
+      createdBy: action.type === "task.create" ? "user" : "agent",
+      createdAt: action.actionTs,
+      updatedAt: action.actionTs,
+      order: Object.keys(tasks).length + 1,
+      evidence: [{
+        id: `${action.actionId}:evidence`,
+        timestamp: action.actionTs,
+        summary: action.summary ?? "Task created.",
+        source: action.type === "task.create" ? "user" : "agent",
+      }],
+    };
+    return {
+      ...snapshot,
+      taskQueue: {
+        ...snapshot.taskQueue,
+        queueVersion: snapshot.taskQueue.queueVersion + 1,
+        nextTaskNumber: snapshot.taskQueue.nextTaskNumber + 1,
+        tasks,
+      },
+    };
+  }
+
+  if (action.taskId === undefined || tasks[action.taskId] === undefined) {
+    return snapshot;
+  }
+  const current = tasks[action.taskId]!;
+  const status = action.type === "task.approve" || action.type === "task.retry" || action.type === "task.request_changes"
+    ? "queued"
+    : action.type === "task.claim" || action.type === "task.mark_running"
+      ? "running"
+      : action.type === "task.needs_attention" || action.type === "task.stop"
+        ? "needs_attention"
+        : action.type === "task.submit_review"
+          ? "ready_for_review"
+          : action.type === "task.accept"
+            ? "done"
+            : action.type === "task.discard"
+              ? "discarded"
+              : current.status;
+  tasks[action.taskId] = {
+    ...current,
+    status,
+    updatedAt: action.actionTs,
+    evidence: [
+      ...current.evidence,
+      {
+        id: `${action.actionId}:evidence`,
+        timestamp: action.actionTs,
+        summary: action.summary ?? action.type.replaceAll("_", " "),
+        source: "runtime",
+      },
+    ],
+  };
+  return {
+    ...snapshot,
+    taskQueue: {
+      ...snapshot.taskQueue,
+      queueVersion: snapshot.taskQueue.queueVersion + 1,
+      tasks,
+    },
+  };
+}
+
+function isPreviewBoardAction(action: DesktopProjectAction): action is PreviewBoardAction {
+  return action.type.startsWith("board.");
+}
+
+function applyPreviewBoardAction(
+  snapshot: PreviewSnapshot,
+  action: PreviewBoardAction,
+): PreviewSnapshot {
+  if (
+    action.expectedBoardVersion !== undefined
+    && action.expectedBoardVersion !== snapshot.board.boardVersion
+  ) {
+    throw Object.assign(
+      new Error(
+        `Project board version conflict: expected=${action.expectedBoardVersion} actual=${snapshot.board.boardVersion}.`,
+      ),
+      { code: "PROJECT_BOARD_VERSION_CONFLICT" },
+    );
+  }
+
+  switch (action.type) {
+    case "board.autopilot.configure":
+      return replacePreviewBoard(snapshot, {
+        ...snapshot.board,
+        settings: {
+          ...snapshot.board.settings,
+          ...(action.autopilotEnabled !== undefined
+            ? { autopilotEnabled: action.autopilotEnabled }
+            : {}),
+          ...(action.autopilotConfirmedAt !== undefined
+            ? { autopilotConfirmedAt: action.autopilotConfirmedAt }
+            : {}),
+          ...(action.wipLimit !== undefined ? { wipLimit: action.wipLimit } : {}),
+        },
+      });
+    case "board.autopilot.tick":
+      return applyPreviewAutopilotTick(snapshot, action);
+    case "board.card.create": {
+      const cardId = `K-${snapshot.board.nextCardNumber}`;
+      const card: PreviewBoardCard = {
+        id: cardId,
+        title: action.title,
+        prompt: action.prompt,
+        lane: "idea",
+        order: nextPreviewLaneOrder(snapshot.board, "idea"),
+        createdAt: action.actionTs,
+        updatedAt: action.actionTs,
+        threads: [],
+        evidence: [previewBoardEvidence(action, "created", action.summary ?? "Card created.")],
+      };
+      return replacePreviewBoard(snapshot, {
+        ...snapshot.board,
+        nextCardNumber: snapshot.board.nextCardNumber + 1,
+        cards: { ...snapshot.board.cards, [cardId]: card },
+      });
+    }
+    case "board.card.update": {
+      const card = snapshot.board.cards[action.cardId];
+      if (card === undefined) {
+        return snapshot;
+      }
+      return replacePreviewBoardCard(snapshot, {
+        ...card,
+        ...(action.title !== undefined ? { title: action.title } : {}),
+        ...(action.prompt !== undefined ? { prompt: action.prompt } : {}),
+        updatedAt: action.actionTs,
+        evidence: [
+          ...card.evidence,
+          previewBoardEvidence(action, "updated", action.summary ?? "Card updated."),
+        ],
+      });
+    }
+    case "board.card.move": {
+      const card = snapshot.board.cards[action.cardId];
+      if (card === undefined) {
+        return snapshot;
+      }
+      return replacePreviewBoardCard(snapshot, {
+        ...card,
+        lane: action.targetLane,
+        order: action.order ?? nextPreviewLaneOrder(snapshot.board, action.targetLane, card.id),
+        updatedAt: action.actionTs,
+        evidence: [
+          ...card.evidence,
+          previewBoardEvidence(
+            action,
+            "moved",
+            action.summary ?? `Moved from ${card.lane} to ${action.targetLane}.`,
+          ),
+        ],
+      });
+    }
+    case "board.card.manual_done": {
+      const card = snapshot.board.cards[action.cardId];
+      if (card === undefined) {
+        return snapshot;
+      }
+      return replacePreviewBoardCard(snapshot, {
+        ...card,
+        lane: "done",
+        order: nextPreviewLaneOrder(snapshot.board, "done", card.id),
+        activeClaim: undefined,
+        updatedAt: action.actionTs,
+        evidence: [
+          ...card.evidence,
+          previewBoardEvidence(action, "manual_done", action.reason ?? "Card marked done."),
+        ],
+      });
+    }
+    case "board.card.delete": {
+      if (snapshot.board.cards[action.cardId] === undefined) {
+        return snapshot;
+      }
+      const cards = { ...snapshot.board.cards };
+      delete cards[action.cardId];
+      return replacePreviewBoard(snapshot, { ...snapshot.board, cards });
+    }
+    case "board.card.start_implementation":
+      return startPreviewBoardThread(snapshot, action, "implementation");
+    case "board.card.start_testing":
+      return startPreviewBoardThread(snapshot, action, "testing");
+    case "board.card.thread_completed":
+      return finishPreviewBoardThread(snapshot, action, "completed");
+    case "board.card.thread_failed":
+      return finishPreviewBoardThread(snapshot, action, "failed");
+    case "board.card.thread_stopped":
+      return finishPreviewBoardThread(snapshot, action, "stopped");
+    case "board.card.testing_verdict":
+      return applyPreviewTestingVerdict(snapshot, action);
+  }
+}
+
+function applyPreviewAutopilotTick(
+  snapshot: PreviewSnapshot,
+  action: Extract<PreviewBoardAction, { type: "board.autopilot.tick" }>,
+): PreviewSnapshot {
+  if (snapshot.board.settings.autopilotEnabled === false) {
+    return snapshot;
+  }
+  const testingCard = previewLaneCards(snapshot.board, "testing")
+    .find((card) => card.activeClaim === undefined);
+  if (testingCard !== undefined) {
+    return startPreviewBoardThread(snapshot, {
+      ...action,
+      type: "board.card.start_testing",
+      cardId: testingCard.id,
+      source: "autopilot",
+    }, "testing");
+  }
+  if (previewLaneCards(snapshot.board, "wip").length >= snapshot.board.settings.wipLimit) {
+    return snapshot;
+  }
+  const plannedCard = previewLaneCards(snapshot.board, "planned")
+    .find((card) => card.activeClaim === undefined);
+  return plannedCard === undefined
+    ? snapshot
+    : startPreviewBoardThread(snapshot, {
+        ...action,
+        type: "board.card.start_implementation",
+        cardId: plannedCard.id,
+        source: "autopilot",
+      }, "implementation");
+}
+
+function startPreviewBoardThread(
+  snapshot: PreviewSnapshot,
+  action:
+    | Extract<PreviewBoardAction, { type: "board.card.start_implementation" }>
+    | Extract<PreviewBoardAction, { type: "board.card.start_testing" }>,
+  kind: "implementation" | "testing",
+): PreviewSnapshot {
+  const card = snapshot.board.cards[action.cardId];
+  if (card === undefined || card.activeClaim !== undefined) {
+    return snapshot;
+  }
+  const sessionId = `${action.sessionId}:${card.id}:${kind}:${action.actionId}`;
+  const threadId = `thread-main:${sessionId}`;
+  const source = action.source === "autopilot" ? "autopilot" : "copilot";
+  return replacePreviewBoardCard(snapshot, {
+    ...card,
+    lane: kind === "implementation" ? "wip" : "testing",
+    order: nextPreviewLaneOrder(
+      snapshot.board,
+      kind === "implementation" ? "wip" : "testing",
+      card.id,
+    ),
+    activeClaim: {
+      threadId,
+      sessionId,
+      kind,
+      claimedAt: action.actionTs,
+      claimReason: source,
+    },
+    threads: [
+      ...card.threads,
+      { threadId, sessionId, kind, startedAt: action.actionTs, status: "active" },
+    ],
+    updatedAt: action.actionTs,
+    evidence: [
+      ...card.evidence,
+      previewBoardEvidence(action, "thread_started", `${kind} thread started.`, threadId),
+    ],
+  });
+}
+
+function finishPreviewBoardThread(
+  snapshot: PreviewSnapshot,
+  action:
+    | Extract<PreviewBoardAction, { type: "board.card.thread_completed" }>
+    | Extract<PreviewBoardAction, { type: "board.card.thread_failed" }>
+    | Extract<PreviewBoardAction, { type: "board.card.thread_stopped" }>,
+  status: "completed" | "failed" | "stopped",
+): PreviewSnapshot {
+  const card = snapshot.board.cards[action.cardId];
+  if (card?.activeClaim === undefined) {
+    return snapshot;
+  }
+  const activeClaim = card.activeClaim;
+  const implementationCompleted = status === "completed" && activeClaim.kind === "implementation";
+  const targetLane = implementationCompleted ? "testing" : "planned";
+  const outcome = status === "completed" ? "success" : status === "failed" ? "failure" : "thread_stopped";
+  return replacePreviewBoardCard(snapshot, {
+    ...card,
+    lane: targetLane,
+    order: nextPreviewLaneOrder(snapshot.board, targetLane, card.id),
+    activeClaim: undefined,
+    threads: card.threads.map((thread) => thread.threadId === activeClaim.threadId
+      ? { ...thread, status, completedAt: action.actionTs }
+      : thread),
+    updatedAt: action.actionTs,
+    evidence: [
+      ...card.evidence,
+      previewBoardEvidence(action, outcome, action.summary ?? `Thread ${status}.`, activeClaim.threadId),
+    ],
+  });
+}
+
+function applyPreviewTestingVerdict(
+  snapshot: PreviewSnapshot,
+  action: Extract<PreviewBoardAction, { type: "board.card.testing_verdict" }>,
+): PreviewSnapshot {
+  const card = snapshot.board.cards[action.cardId];
+  if (card?.activeClaim?.kind !== "testing") {
+    return snapshot;
+  }
+  const activeClaim = card.activeClaim;
+  const passed = action.testingVerdict === "pass";
+  const targetLane = passed ? "done" : "planned";
+  return replacePreviewBoardCard(snapshot, {
+    ...card,
+    lane: targetLane,
+    order: nextPreviewLaneOrder(snapshot.board, targetLane, card.id),
+    activeClaim: undefined,
+    threads: card.threads.map((thread) => thread.threadId === activeClaim.threadId
+      ? {
+          ...thread,
+          status: passed ? "completed" : "failed",
+          completedAt: action.actionTs,
+        }
+      : thread),
+    updatedAt: action.actionTs,
+    evidence: [
+      ...card.evidence,
+      previewBoardEvidence(
+        action,
+        passed ? "verdict_pass" : "verdict_fail",
+        action.summary ?? `Testing ${action.testingVerdict}.`,
+        activeClaim.threadId,
+      ),
+    ],
+  });
+}
+
+function replacePreviewBoard(snapshot: PreviewSnapshot, board: PreviewBoard): PreviewSnapshot {
+  return {
+    ...snapshot,
+    board: { ...board, boardVersion: snapshot.board.boardVersion + 1 },
+  };
+}
+
+function replacePreviewBoardCard(snapshot: PreviewSnapshot, card: PreviewBoardCard): PreviewSnapshot {
+  return replacePreviewBoard(snapshot, {
+    ...snapshot.board,
+    cards: { ...snapshot.board.cards, [card.id]: card },
+  });
+}
+
+function previewLaneCards(
+  board: PreviewBoard,
+  lane: PreviewBoardCard["lane"],
+): PreviewBoardCard[] {
+  return Object.values(board.cards)
+    .filter((card) => card.lane === lane)
+    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+}
+
+function nextPreviewLaneOrder(
+  board: PreviewBoard,
+  lane: PreviewBoardCard["lane"],
+  excludeCardId?: string,
+): number {
+  return previewLaneCards(board, lane)
+    .filter((card) => card.id !== excludeCardId)
+    .reduce((highest, card) => Math.max(highest, card.order), 0) + 1;
+}
+
+function previewBoardEvidence(
+  action: PreviewBoardAction,
+  outcome: PreviewBoardCard["evidence"][number]["outcome"],
+  summary: string,
+  threadId?: string,
+): PreviewBoardCard["evidence"][number] {
+  return {
+    id: `${action.actionId}:${outcome}`,
+    timestamp: action.actionTs,
+    source: action.source ?? "operator",
+    outcome,
+    summary,
+    ...(threadId !== undefined ? { threadId } : {}),
+  };
+}

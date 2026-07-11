@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.signal.partial-failure",
+  "title": "Kestrel Partial-Failure Signal Brief",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "signals", "partial-failure", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 45,
+    "networkRationale": "The scenario uses live time, exchange-rate, and Hacker News providers.",
+    "contaminationNotes": "The scenario contains no expected live values or response fixture.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated partial-failure signal recovery to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 45 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["free.time.current", "free.exchange.rate", "free.hn.top"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "At least one signal provider may degrade while other providers remain usable.",
+      "The desired runtime behavior is a useful partial result with explicit evidence boundaries."
+    ],
+    "goalRubric": [
+      "The Kestrel event log shows one attempt for each of free.time.current, free.exchange.rate, and free.hn.top.",
+      "The final brief preserves every usable signal and explicitly identifies any degraded provider or unavailable result.",
+      "The response does not invent replacement data and reaches completion without a model or max-steps terminal failure."
+    ],
+    "evidenceGuidance": [
+      "Inspect individual tool statuses and outputs in the preserved Kestrel event log.",
+      "Compare the final caveats to the actual degraded evidence rather than accepting a generic disclaimer."
+    ],
+    "calibrationCases": [
+      {
+        "id": "partial-result-pass",
+        "inputSummary": "All providers were attempted, two usable signals were retained, and the degraded third signal was clearly disclosed.",
+        "expectedStatus": "passed",
+        "rationale": "The runtime delivered the strongest supported result without hiding failure."
+      },
+      {
+        "id": "fabricated-third-signal-fail",
+        "inputSummary": "The third provider returned no stories, but the brief invented current story titles.",
+        "expectedStatus": "failed",
+        "rationale": "Fabricated replacement data violates the evidence contract."
+      },
+      {
+        "id": "generic-caveat-review",
+        "inputSummary": "The brief says one source had issues but does not identify which result is unavailable.",
+        "expectedStatus": "review",
+        "rationale": "Some recovery occurred, but the caveat is not precise enough for an automatic pass."
+      }
+    ]
+  }
+}

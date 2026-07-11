@@ -1,0 +1,226 @@
+---
+title: "@kestrel-agents/sdk"
+summary: The primary server-side TypeScript package for creating `workspace-copilot`, running and streaming work, reading control-plane state, and subscribing to scoped events.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Package surface">
+The SDK page maps directly onto the canonical demo. The agent id is `workspace-copilot`, the profile id is `workspace-copilot`, and the session prefix stays `workspace-copilot`.
+</WorkspaceCopilotDemo>
+
+The SDK is the package most teams should start with. It gives product code an agent-first interface over the runner service without forcing a framework-specific integration, and it is the clearest path when the product needs more than compat HTTP but less than a custom control-plane app.
+
+## Two layers in one package family
+
+There are really two SDK stories here:
+
+| Surface | Use it for | Import path |
+| --- | --- | --- |
+| root agent API | app-owned run, stream, resume, memory, and filtered subscriptions | `@kestrel-agents/sdk` |
+| runner client | operator and product control-plane access | `@kestrel-agents/sdk/runner` |
+
+Start with the root API unless you explicitly need thread control, task graph, project snapshot, or project review. The important choice is not "simple versus advanced." It is "request-oriented product code versus runtime control-plane work."
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/sdk
+```
+
+## Canonical demo definition
+
+```ts
+const workspaceCopilotAgent = createAgent({
+  id: "workspace-copilot",
+  profileId: "workspace-copilot",
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+```
+
+## Core surfaces
+
+| Surface | Required input | Returns / behavior | Common failure case |
+| --- | --- | --- | --- |
+| `createAgent()` | `id`, `profileId`, runner URL, token | reusable server-side agent | missing env values |
+| `run()` | `sessionId`, `message`, request context | terminal run event | runner unavailable |
+| `stream()` | same as `run()` plus optional `signal` | async event stream plus `result` | caller disconnect cancels upstream |
+| `resume()` | same as `run()` | terminal event for resumed blocked run | invalid resume context |
+| `session().memory.get()` | request context | revisioned memory snapshot | session not found |
+| `session().memory.update()` | `expectedRevision`, `patch`, request context | persisted next snapshot | revision conflict |
+| `subscribe()` | explicit filter plus request context | filtered background event stream | unscoped or wrong filter |
+
+## Advanced control surface
+
+When the root agent API stops being enough, the runner subpath exposes the fuller runtime surface through `KestrelClient`.
+
+```ts
+import { KestrelClient } from "@kestrel-agents/sdk/runner";
+
+const client = new KestrelClient({
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+```
+
+| Method | Underlying command family | Use it for |
+| --- | --- | --- |
+| `getSessionState()` | `session.state` | atomic session snapshot instead of transcript-only inspection |
+| `getOperatorInbox()` | `operator.inbox` | actionable operator work for a session |
+| `getOperatorThread()` | `operator.thread` | detailed thread state and blocker inspection |
+| `controlOperator()` | `operator.control` | retry, steer, stop, focus-thread, and checkpoint actions |
+| `getTaskGraph()` / `updateTaskGraph()` | `task.graph.get` / `task.graph.update` | structured task state tied to a session |
+| `getProjectSnapshot()` / `updateProjectSnapshot()` | `project.snapshot.*` | durable project-level state |
+| `runProjectAction()` | `project.action` | higher-level project mutations |
+| `getProjectReview()` | `project.review.get` | load review detail for a file- or task-scoped target |
+| `applyProjectReviewAction()` | `project.review.action` | create or apply review actions through the runtime |
+| `subscribe()` | `/events/stream` | filtered background observation for runs, tasks, or operators |
+
+## Operator and control example
+
+```ts
+const context = {
+  actor: {
+    actorId: "user-123",
+    actorType: "operator",
+    displayName: "Taylor Example",
+    tenantId: "acme",
+  },
+  tenantId: "acme",
+};
+
+const inbox = await client.getOperatorInbox({ sessionId: "workspace-copilot-nightly" }, context);
+const view = await client.getOperatorThread("thread-main", context);
+
+await client.controlOperator(
+  {
+    action: "steer",
+    threadId: "thread-main",
+    message: "Collect one more source before finalizing the report.",
+  },
+  context,
+);
+```
+
+## Task graph, project snapshot, and review example
+
+```ts
+const graph = await client.getTaskGraph(
+  {
+    sessionId: "workspace-copilot-nightly",
+    threadId: "thread-main",
+  },
+  context,
+);
+
+await client.updateTaskGraph(
+  {
+    sessionId: graph.sessionId,
+    threadId: "thread-main",
+    graph: {
+      ...(graph.graph as Record<string, unknown>),
+      tasks: {
+        "task:thread:thread-main": {
+          status: "in_review",
+          summary: "Waiting on operator review for the workspace parser changes.",
+        },
+      },
+    },
+  },
+  context,
+);
+
+const snapshot = await client.getProjectSnapshot({ sessionId: "workspace-copilot-nightly" }, context);
+
+const detail = await client.getProjectReview(
+  {
+    sessionId: "workspace-copilot-nightly",
+    target: {
+      taskId: "task:thread:thread-main",
+      filePath: "src/project/workspace.ts",
+    },
+  },
+  context,
+);
+
+await client.applyProjectReviewAction(
+  {
+    sessionId: "workspace-copilot-nightly",
+    action: {
+      type: "review.comment.create",
+      sessionId: "workspace-copilot-nightly",
+      target: {
+        taskId: "task:thread:thread-main",
+        pullRequestNumber: 42,
+        filePath: "src/project/workspace.ts",
+      },
+      body: "Please tighten this parser.",
+      path: "src/project/workspace.ts",
+      line: 12,
+      side: "RIGHT",
+    },
+  },
+  context,
+);
+```
+
+## Scenes and subscriptions
+
+The SDK supports two different “advanced visibility” patterns:
+
+- Ruhroh evaluations for deliberate behavior validation
+- subscriptions for filtered background event observation in real products
+
+```ts
+const events = client.subscribe(
+  {
+    sessionId: "workspace-copilot-nightly",
+    eventTypes: ["task.updated", "operator.controlled"],
+  },
+  context,
+);
+
+for await (const event of events) {
+  console.log(event.type, event.sessionId);
+}
+```
+
+## Key distinctions
+
+| Decision | Use this |
+| --- | --- |
+| simple compatibility integration | OpenAI-compatible HTTP |
+| server-owned product logic | root SDK agent API |
+| operator or project control plane | `KestrelClient` from `@kestrel-agents/sdk/runner` |
+| live progress for one request | `stream()` |
+| filtered background observation | `subscribe()` |
+| historical inspection and validation | replay surfaces and evaluation records |
+
+## Why teams choose this package
+
+- server-side product code stays close to application concepts
+- actor and tenant context remain explicit
+- streaming, memory, and subscriptions share one agent definition
+- low-level protocol access remains available only when needed
+- the same package family reaches from tutorial-grade agent calls to operator-grade control surfaces
+
+In practice, that makes the SDK the right middle path for teams that have outgrown compat HTTP but do not want to flatten everything into raw runner commands.
+
+## Constraints
+
+- server-side only
+- no browser or edge-runtime support in this release
+- use the `runner` subpath when you need lower-level command or event control
+
+## What To Read Next
+
+- [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- [Operator control workflows](/operations/operator-control-workflows)
+- [Review and state workflows](/operations/review-and-state-workflows)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)
+- [Building your first agent](/build/building-your-first-agent)
+- [Next.js package](/packages/next)

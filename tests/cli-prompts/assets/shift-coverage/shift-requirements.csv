@@ -1,0 +1,8 @@
+shift_id,date,start_time,end_time,area,required_role,min_staff,notes
+S-001,2026-06-15,06:00,12:00,espresso_bar,barista,2,Monday opening rush needs two baristas
+S-002,2026-06-15,09:00,15:00,front_register,cashier,1,Lunch register coverage
+S-003,2026-06-16,14:00,22:00,closing_floor,shift_lead,1,Closing shift needs a shift lead
+S-004,2026-06-17,06:00,12:00,espresso_bar,barista,1,Wednesday opening espresso coverage
+S-005,2026-06-17,08:00,14:00,front_register,cashier,1,Wednesday register coverage
+S-006,2026-06-18,12:00,20:00,kitchen_pickup,barista,1,Afternoon drink handoff station
+S-007,2026-06-19,14:00,22:00,closing_floor,manager,1,Friday close needs manager coverage

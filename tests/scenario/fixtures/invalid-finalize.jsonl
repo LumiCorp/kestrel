@@ -1,0 +1,2 @@
+{"timestamp":"2026-02-26T00:00:00.000Z","kind":"log","event":"step_started","step":"react.exec.dispatch","version":2}
+{"timestamp":"2026-02-26T00:00:01.000Z","kind":"event","event":"run_completed","status":"COMPLETED","payload":{"message":"","data":{"rawFinalizePayload":{"goal":"Resolve"}}}}

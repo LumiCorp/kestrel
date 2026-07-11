@@ -1,0 +1,282 @@
+---
+title: OpenAI-compatible HTTP
+summary: Use the runner service as an OpenAI-compatible chat or responses backend when you want familiar HTTP semantics without giving up Kestrel actor context and durable execution.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+The runner service exposes an OpenAI-compatible layer for teams that already speak chat or responses APIs. It is the lowest-friction way to put Kestrel behind an existing Next.js app, Desktop-led product surface, or server-rendered product without rewriting your entire integration around the custom runner protocol on day one.
+
+## When to choose this path
+
+Choose the OpenAI-compatible path when:
+
+- your app already has OpenAI-style client code
+- you only need chat or responses semantics
+- you want server-owned auth, actor metadata, and durable run IDs
+- you are not yet using operator inbox, task graph, or project snapshot APIs directly
+
+Use the SDK and custom runner protocol instead when the application needs richer control-plane access.
+
+| Integration path | Best fit | What you gain | What you do not get directly |
+| --- | --- | --- | --- |
+| OpenAI-compatible HTTP | chat-first or responses-first apps | familiar request bodies, simple proxy routes, standard SSE | operator control, task graph, project snapshot APIs |
+| `@kestrel-agents/sdk` | server-owned product logic | typed agent API, session memory, streaming, subscriptions | no drop-in OpenAI client compatibility |
+| custom runner protocol | advanced operator surfaces | full control plane and event model | more app-side routing and payload work |
+
+## Available endpoints
+
+The compatibility layer exposes:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+
+Those endpoints sit behind the same runner service you already use for the custom protocol. The difference is request shape, not a separate runtime.
+
+### Models example
+
+Use `GET /v1/models` when the app wants to render or validate the available compat models before sending traffic:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN" \
+  "$KESTREL_RUNNER_SERVICE_URL/v1/models"
+```
+
+That is especially useful during migration when the browser or server still thinks in “model picker” terms.
+
+Representative response:
+
+```json
+{
+  "data": [
+    {
+      "id": "reference-react",
+      "object": "model"
+    }
+  ],
+  "object": "list"
+}
+```
+
+## Required auth and actor headers
+
+Your Next.js server should forward bearer auth and actor context on every request:
+
+```text
+Authorization: Bearer <service-token>
+x-kestrel-actor-id: user-123
+x-kestrel-actor-type: end_user
+x-kestrel-actor-name: Taylor Example
+x-kestrel-tenant-id: acme
+```
+
+The browser should not know the service token. Keep the proxy route in your app and attach actor metadata from your own auth system.
+
+## Full Next.js proxy example
+
+This is the simplest useful pattern for a browser app that already uses OpenAI-style chat. The browser posts to your Next.js route. The route keeps auth and correlation on the server. The runner service turns that into a durable Kestrel run.
+
+```ts
+import "server-only";
+
+export async function POST(request: Request) {
+  const body = await request.text();
+  const user = await requireAuthenticatedUser(request);
+
+  const upstream = await fetch(
+    `${process.env.KESTREL_RUNNER_SERVICE_URL}/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.KESTREL_RUNNER_SERVICE_TOKEN}`,
+        "x-kestrel-actor-id": user.id,
+        "x-kestrel-actor-type": "end_user",
+        "x-kestrel-actor-name": user.name,
+        "x-kestrel-tenant-id": user.tenantId,
+      },
+      body,
+    },
+  );
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: upstream.headers,
+  });
+}
+```
+
+### Responses proxy example
+
+If the app uses the Responses API instead of chat completions, keep the same server-owned pattern:
+
+```ts
+import "server-only";
+
+export async function POST(request: Request) {
+  const body = await request.text();
+  const user = await requireAuthenticatedUser(request);
+
+  const upstream = await fetch(
+    `${process.env.KESTREL_RUNNER_SERVICE_URL}/v1/responses`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.KESTREL_RUNNER_SERVICE_TOKEN}`,
+        "x-kestrel-actor-id": user.id,
+        "x-kestrel-actor-type": "end_user",
+        "x-kestrel-actor-name": user.name,
+        "x-kestrel-tenant-id": user.tenantId,
+      },
+      body,
+    },
+  );
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: upstream.headers,
+  });
+}
+```
+
+## Request examples
+
+### Chat completions
+
+```json
+{
+  "model": "reference-react",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the latest deployment issues."
+    }
+  ],
+  "stream": true
+}
+```
+
+Representative streamed completion headers worth preserving:
+
+```text
+x-kestrel-session-id: workspace-copilot-session-001
+x-kestrel-run-id: run_01workspacecopilot
+x-kestrel-request-id: req_01workspacecopilot
+```
+
+### Responses API
+
+```json
+{
+  "model": "reference-react",
+  "input": "Return machine readable status",
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "compat_status",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": ["status"],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}
+```
+
+The repo tests show that `POST /v1/responses` returns a `response` object and preserves Kestrel metadata such as the run id in the response metadata.
+
+Representative responses payload:
+
+```json
+{
+  "id": "resp_01workspacecopilot",
+  "object": "response",
+  "created_at": 1710000000,
+  "model": "reference-react",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_01workspacecopilot",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"status\":\"needs-review\"}"
+        }
+      ]
+    }
+  ],
+  "output_text": "{\"status\":\"needs-review\"}",
+  "metadata": {
+    "kestrel": {
+      "session_id": "workspace-copilot-session-001",
+      "run_id": "run_01workspacecopilot"
+    }
+  }
+}
+```
+
+## Model selection and migration path
+
+Treat the compat layer as a migration ramp, not the destination for every app.
+
+| Stage | Use this |
+| --- | --- |
+| existing OpenAI-style chat UI | proxy `/v1/chat/completions` |
+| responses-first or structured output app | proxy `/v1/responses` |
+| app now needs session memory, subscriptions, or typed routes | move to `@kestrel-agents/sdk` and `@kestrel-agents/next` |
+| app now needs operator control, task graph, or project review | add the runner client or custom protocol |
+
+## Response headers worth preserving
+
+If your frontend needs continuity or debugging breadcrumbs, forward these response headers from the runner service:
+
+- `x-kestrel-session-id`
+- `x-kestrel-run-id`
+- `x-kestrel-thread-id`
+- `x-kestrel-model-id`
+- `x-kestrel-request-id`
+- `x-kestrel-correlation-id`
+
+Those headers make it possible to connect a chat completion back to later operator inspection or replay evidence.
+
+## What changes in this step
+
+Instead of writing typed agent routes first, you can put Kestrel behind a thin proxy route and keep the app's external contract unchanged. That is the fastest route for migrating an OpenAI-style app into a Kestrel runtime boundary.
+
+## Why this exists
+
+Many teams already have chat products. Requiring an immediate rewrite to a custom protocol would slow adoption. The compatibility layer lets those teams keep familiar HTTP while still gaining durable runs, actor attribution, request correlation, and a clean server-side trust boundary.
+
+## When to move beyond compatibility mode
+
+Move to the SDK or runner protocol when you need any of these:
+
+- `operator.inbox`, `operator.thread`, or `operator.control`
+- `task.graph.get` or `task.graph.update`
+- `project.snapshot.get`, `project.snapshot.update`, or `project.action`
+- filtered background subscriptions over `/events/stream`
+- evaluator-owned behavior validation
+
+Those capabilities are what separate Kestrel from a thin compat proxy.
+
+## What To Read Next
+
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [@kestrel-agents/next](/packages/next)
+- [@kestrel-agents/sdk](/packages/sdk)

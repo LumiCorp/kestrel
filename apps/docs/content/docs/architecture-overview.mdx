@@ -1,0 +1,66 @@
+---
+title: Architecture overview
+summary: A map of the runtime kernel, runner-service boundary, package surfaces, applications, and operator layers that make up Kestrel.
+section: docs
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-06-08
+---
+
+Kestrel centers on a durable runtime kernel, then builds outward into application and integration surfaces. The architecture is intentionally layered so apps can reuse the same execution semantics without embedding the runtime directly into the browser or duplicating policy logic across multiple servers.
+
+## Runtime kernel
+
+The runtime kernel is anchored by canonical contract modules plus four execution-facing layers:
+
+- `src/kestrel/contracts/` defines the durable runtime contract families
+- `src/engine` orchestrates run and step lifecycle
+- `src/io` handles model and tool gateways
+- `src/store` persists state, logs, and replay material
+- `tools/` contains executable tool contracts
+
+That split keeps execution orchestration separate from product presentation. The runtime does not need to know whether a run came from the browser workbench, a Next.js API route, the CLI, or a scheduled workspace job.
+
+## Runner-service boundary
+
+Kestrel's main integration contract is the runner service. The service accepts authenticated server-side requests, executes work, and returns terminal or streaming events. This is the bridge between the runtime kernel and the app layer.
+
+The important rule is simple:
+
+- browser to app server
+- app server to runner service
+- runner service to runtime
+
+That keeps secrets, auth tokens, and request correlation on the server side.
+
+## Product surfaces
+
+Several layers sit above the runner boundary:
+
+- `apps/web` for the canonical Kestrel One hosted product
+- `apps/desktop` for independent local GUI interaction
+- `packages/` for SDK, Next.js, and observability integration surfaces
+- `cli/` for local operator flows, workspace commands, and scheduler tooling
+- `evals/` for declarative specifications executed by released Ruhroh
+
+## Workspace catalog
+
+Workspaces are not a side feature bolted onto the CLI. They are part of the architecture. The machine-local catalog in `~/.kestrel/workspaces.json` gives Kestrel a stable inventory of local project roots without writing project-local scaffold files. Future scheduling should build on that catalog instead of hidden folder-local prompt state.
+
+## Operational discipline
+
+The system also includes the things many agent stacks postpone:
+
+- released Ruhroh evaluation validation
+- quality scorecards and prompt-suite gates
+- reliability and migration runbooks
+- security and governance references
+
+Those are architectural elements because they shape how teams change the runtime safely.
+
+## What To Read Next
+
+- [Runtime model](/docs/runtime-model)
+- [Running the runner service](/deploy/running-the-runner-service)
+- [Runtime](/runtime)

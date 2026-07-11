@@ -1,0 +1,9 @@
+person_id,full_name,email,company,role,owner,status,last_contacted
+A-1001,Ada Lovelace,ADA@Analytical.Example,Analytical Engines,VP Product,Mira,active,2026-06-01
+A-1002,Grace Hopper,grace.hopper@example.com,Compiler Labs,CTO,Noah,active,2026-05-28
+A-1003,Katherine Johnson,k.johnson@example.com,Orbital Analytics,Director,Eli,active,2026-05-16
+A-1004,Dorothy Vaughan,dorothy.vaughan@example.com,Orbital Analytics,Manager,Eli,nurture,2026-04-30
+A-1005,Margaret Hamilton,mhamilton@example.com,Apollo Systems,Principal Engineer,Rae,active,2026-06-03
+A-1006,Alan Turing,alan.turing@example.com,Manchester Machines,Research Lead,Mira,inactive,2026-03-12
+A-1007,Barbara Liskov,barbara@liskov.example,Distributed Systems Co,Architect,Noah,active,2026-05-22
+A-1008,Radia Perlman,radia.perlman@example.com,Network Bridges,Advisor,Rae,active,2026-05-19

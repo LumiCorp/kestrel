@@ -1,0 +1,165 @@
+"use client";
+
+import { Building2, ChevronsUpDown, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import {
+  organization,
+  useActiveOrganization,
+  useListOrganizations,
+} from "@/lib/auth-client";
+import type { OrganizationSnapshot } from "@/lib/auth-types";
+import { isPersonalOrganization } from "@/lib/personal-workspace-shared";
+import { CreateOrganizationDialog } from "./create-organization-dialog";
+
+export function TeamSwitcher({
+  initialActiveOrganization = null,
+}: {
+  initialActiveOrganization?: OrganizationSnapshot | null;
+}) {
+  const { isMobile } = useSidebar();
+  const organizations = useListOrganizations();
+  const activeOrgData = useActiveOrganization();
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(
+    initialActiveOrganization?.id ?? activeOrgData.data?.id ?? null
+  );
+
+  const personalOrg =
+    organizations.data?.find((org: any) => isPersonalOrganization(org)) ?? null;
+  const teamOrganizations =
+    organizations.data?.filter((org: any) => !isPersonalOrganization(org)) ??
+    [];
+
+  useEffect(() => {
+    if (activeOrgData.data?.id) {
+      setActiveOrgId(activeOrgData.data.id);
+    } else if (initialActiveOrganization?.id) {
+      setActiveOrgId(initialActiveOrganization.id);
+    } else if (personalOrg?.id) {
+      setActiveOrgId(personalOrg.id);
+    } else {
+      setActiveOrgId(null);
+    }
+  }, [activeOrgData.data?.id, initialActiveOrganization?.id, personalOrg?.id]);
+
+  const activeOrg =
+    organizations.data?.find((org: any) => org.id === activeOrgId) ??
+    (initialActiveOrganization?.id === activeOrgId
+      ? initialActiveOrganization
+      : null) ??
+    personalOrg;
+  const activeIsPersonal = isPersonalOrganization(activeOrg);
+
+  const handleSetActive = async (orgId: string) => {
+    if (orgId === activeOrgId) {
+      return;
+    }
+    setActiveOrgId(orgId);
+    await organization.setActive({
+      organizationId: orgId,
+    });
+  };
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              size="lg"
+            >
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                {!activeIsPersonal && activeOrg ? (
+                  <Building2 className="size-4" />
+                ) : (
+                  <span className="font-semibold text-xs">P</span>
+                )}
+              </div>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">
+                  {activeIsPersonal
+                    ? "Personal"
+                    : activeOrg?.name || "Personal"}
+                </span>
+                <span className="truncate text-xs">
+                  {activeIsPersonal ? "Personal Workspace" : "Organization"}
+                </span>
+              </div>
+              <ChevronsUpDown className="ml-auto" />
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+            side={isMobile ? "bottom" : "right"}
+            sideOffset={4}
+          >
+            <DropdownMenuLabel className="text-muted-foreground text-xs">
+              Organizations
+            </DropdownMenuLabel>
+            {personalOrg ? (
+              <DropdownMenuItem
+                className={activeIsPersonal ? "bg-accent" : ""}
+                onClick={() => handleSetActive(personalOrg.id)}
+              >
+                <div className="flex size-6 items-center justify-center rounded-md border">
+                  <span className="font-semibold text-xs">P</span>
+                </div>
+                Personal
+                {activeIsPersonal && (
+                  <DropdownMenuShortcut>⌘1</DropdownMenuShortcut>
+                )}
+              </DropdownMenuItem>
+            ) : null}
+            {teamOrganizations.map((org: any, index: number) => (
+              <DropdownMenuItem
+                className={org.id === activeOrgId ? "bg-accent" : ""}
+                key={org.id}
+                onClick={() => handleSetActive(org.id)}
+              >
+                <div className="flex size-6 items-center justify-center rounded-md border">
+                  <Building2 className="size-3.5 shrink-0" />
+                </div>
+                {org.name}
+                {org.id === activeOrgId && (
+                  <DropdownMenuShortcut>
+                    ⌘{index + (personalOrg ? 2 : 1)}
+                  </DropdownMenuShortcut>
+                )}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <CreateOrganizationDialog>
+              <DropdownMenuItem
+                className="gap-2 p-2"
+                onSelect={(e) => e.preventDefault()}
+              >
+                <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
+                  <Plus className="size-4" />
+                </div>
+                <div className="font-medium text-muted-foreground">
+                  Add organization
+                </div>
+              </DropdownMenuItem>
+            </CreateOrganizationDialog>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}

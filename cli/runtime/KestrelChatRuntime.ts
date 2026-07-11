@@ -1,0 +1,1254 @@
+import {
+  createAnthropicModelGatewayFromEnv,
+  createLmStudioModelGatewayFromEnv,
+  createOpenAiModelGatewayFromEnv,
+  createOllamaModelGatewayFromEnv,
+  createOpenRouterModelGatewayFromEnv,
+  createSessionStoreFromEnv,
+  DEFAULT_ACT_SUBMODE,
+  LocalDevShellService,
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_BALANCED_TOOL_ALLOWLIST,
+  type GuardrailConfig,
+  Kestrel,
+  type NormalizedOutput,
+  type RunEvent,
+  ProductTaskGraphStore,
+  createProductProjectActionToolAdapter,
+  ProductProjectRuntimeService,
+  requireProductProjectRuntimeService,
+  ProductProjectStateStore,
+  createEmptyProjectSnapshot,
+  type RuntimeTurnInput,
+  type RuntimeTurnResult,
+  type ProgressUpdateV1,
+  type ReasoningUpdateV1,
+  type RunConsoleUpdateV1,
+  type RunLogEntry,
+  ThreadRuntime,
+  type ToolRuntimeStatus,
+  type ToolExecutionClass,
+  UnifiedToolRegistry,
+  WorkspaceCheckpointService,
+  RuntimeWorkspaceCheckpointService,
+  WorkspaceContextResolver,
+  RuntimeTurnCoordinatorService,
+  RuntimeThreadedTurnExecutor,
+  ManagedTaskWorktreeService,
+  applyActiveTaskRuntimeMetadata,
+  resolveRuntimeWorkspaceAuthority,
+  createTurnExecutor,
+  buildRuntimeSessionStateProjection,
+  buildRuntimeTaskGraphProjection,
+  persistDelegationTaskUpdateToGraph,
+  buildOperatorSessionProjection,
+  type OperatorAssemblySummary,
+  type OperatorChildBlockerChainSummary,
+  type OperatorCheckpointSummary,
+  type OperatorChildBlockerSummary,
+  type OperatorFanInDispositionSummary,
+  type OperatorSessionProjection,
+  type RuntimeTaskGraphProjection,
+  type RuntimeSessionStateProjection,
+  type OperatorSupervisionSummary,
+  type OperatorSupervisedChildSummary,
+  type OperatorInboxSummary,
+  type OperatorSteeringSummary,
+} from "../../src/index.js";
+import type {
+  OperatorCompactionState,
+  OperatorAffordancePayload,
+  WorkspaceRuntimeContext,
+  SkillPackDefinition,
+  TuiProfile,
+} from "../contracts.js";
+import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
+import type {
+  ModelGateway,
+  ModelRequest,
+} from "../../src/kestrel/contracts/model-io.js";
+
+import type { SharedToolContext } from "../../tools/index.js";
+import { registerAgent } from "./AgentFactory.js";
+import type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
+import { getSkillPackById } from "./skillPacks.js";
+import {
+  buildExecutionPolicyFromPack,
+} from "./approvalPolicyPacks.js";
+import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import type { OperatorThreadView } from "../../src/orchestration/contracts.js";
+import { createTerminalBenchDevShellServiceFromEnv } from "../../src/devshell/TerminalBenchDevShellService.js";
+import { createRuntimeHeapDiagnosticsFromEnv } from "../../src/runtime/heapDiagnostics.js";
+import type {
+  ProductProjectAction,
+  ProductProjectSnapshot,
+  ProductReviewAction,
+  ProductReviewDetail,
+  ProductReviewTarget,
+} from "../../src/project/contracts.js";
+import { readWaitResumeStepAgent } from "../../src/runtime/waitState.js";
+import type {
+  WorkspaceCheckpointCleanupPolicy,
+  WorkspaceCheckpointCleanupResult,
+  WorkspaceCheckpointDetail,
+  WorkspaceCheckpointRecord,
+  WorkspaceDiffRecord,
+  WorkspaceRestoreRecord,
+} from "../../src/workspaceCheckpoints/contracts.js";
+export type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
+
+export type RunTurnInput = Omit<RuntimeTurnInput, "workspace" | "skillPack" | "autoCompaction"> & {
+  autoCompaction?:
+    | {
+        enabled?: boolean | undefined;
+        state?: OperatorCompactionState | undefined;
+        suppressOnce?: boolean | undefined;
+      }
+    | undefined;
+  workspace?: WorkspaceRuntimeContext | undefined;
+  skillPack?: SkillPackDefinition | undefined;
+};
+
+export type RunTurnResult = RuntimeTurnResult & {
+  output: NormalizedOutput;
+  operatorAffordance?: OperatorAffordancePayload | undefined;
+};
+
+interface RuntimeBootstrap {
+  kestrel: Kestrel;
+  threadRuntime?: ThreadRuntime | undefined;
+  taskGraphStore?: ProductTaskGraphStore | undefined;
+  projectStore?: ProductProjectStateStore | undefined;
+  workspaceCheckpointService?: WorkspaceCheckpointService | undefined;
+  close: () => Promise<void>;
+  entryStepAgent: string;
+  readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
+}
+
+const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
+  maxStepVisits: 80,
+  maxConcurrentToolJobsPerRun: 8,
+  maxConcurrentToolJobsGlobal: 24,
+  maxQueuedToolJobsPerRun: 50,
+  toolBatchCheckpointSize: 10,
+  toolCallRetryCount: 1,
+};
+const LOCAL_OPENAI_COMPATIBLE_MODEL_TIMEOUT_MS = 45_000;
+const LOCAL_OPENAI_COMPATIBLE_MODEL_RETRY_COUNT = 0;
+const DEFAULT_REASONING_MODEL_BY_PROVIDER: Record<NonNullable<TuiProfile["modelProvider"]>, string> = {
+  openrouter: "openai/gpt-4.1-nano",
+  openai: "gpt-5.4-2026-03-05",
+  anthropic: "claude-3-5-haiku-latest",
+  ollama: "llama3.2:3b",
+  lmstudio: "local-model",
+};
+
+export function resolveReasoningModelForProfile(profile: TuiProfile): string | undefined {
+  const provider = profile.modelProvider ?? "openrouter";
+  return parseEnvString("KCHAT_REASONING_MODEL") ??
+    profile.model ??
+    DEFAULT_REASONING_MODEL_BY_PROVIDER[provider];
+}
+
+export interface RuntimeFactory {
+  create(
+    profile: TuiProfile,
+    onFinalize: (payload: unknown) => unknown,
+    onRunLog?: ((entry: RunLogEntry) => void) | undefined,
+    onProgress?: ((update: ProgressUpdateV1) => void) | undefined,
+    onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined,
+    onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined,
+    onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
+    onRunEvent?: ((event: RunEvent) => void) | undefined,
+  ): RuntimeBootstrap;
+}
+
+export interface KestrelChatRuntimeOptions {
+  onRunLog?: ((entry: RunLogEntry) => void) | undefined;
+  onProgress?: ((update: ProgressUpdateV1) => void) | undefined;
+  onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined;
+  onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined;
+  onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
+  onRunEvent?: ((event: RunEvent) => void) | undefined;
+}
+
+export class KestrelChatRuntime {
+  private readonly kestrel: Kestrel;
+  private readonly threadRuntime: ThreadRuntime | undefined;
+  private readonly taskGraphStore: ProductTaskGraphStore | undefined;
+  private readonly projectStore: ProductProjectStateStore | undefined;
+  private readonly projectRuntimeService: ProductProjectRuntimeService | undefined;
+  private readonly workspaceCheckpointService: WorkspaceCheckpointService | undefined;
+  private readonly runtimeWorkspaceCheckpointService: RuntimeWorkspaceCheckpointService | undefined;
+  private readonly entryStepAgent: string;
+  private readonly closePool: () => Promise<void>;
+  private readonly toolBatchCheckpointSize: number;
+  private readonly defaultInteractionMode: "chat" | "plan" | "build";
+  private readonly defaultActSubmode: "strict" | "safe" | "full_auto";
+  private readonly forceModeSystemV2: boolean;
+  private readonly modeSystemV2Enabled: boolean;
+  private readonly defaultExecutionPolicy: RunTurnInput["executionPolicy"];
+  private readonly readFinalizedPayload:
+    | ((sessionId: string) => Promise<unknown | undefined>)
+    | undefined;
+  private readonly turnCoordinator: RuntimeTurnCoordinatorService;
+
+  private finalizedPayload: unknown;
+
+  constructor(
+    profile: TuiProfile,
+    factory: RuntimeFactory = { create: createDefaultRuntime },
+    options: KestrelChatRuntimeOptions = {},
+  ) {
+    const bootstrap = factory.create(profile, (payload) => {
+      this.finalizedPayload = payload;
+      return payload;
+    }, options.onRunLog, options.onProgress, options.onConsole, options.onReasoning, options.onTaskUpdate, options.onRunEvent);
+
+    this.kestrel = bootstrap.kestrel;
+    this.threadRuntime = bootstrap.threadRuntime;
+    this.taskGraphStore = bootstrap.taskGraphStore;
+    this.projectStore = bootstrap.projectStore;
+    this.projectRuntimeService =
+      bootstrap.taskGraphStore !== undefined && bootstrap.projectStore !== undefined
+        ? new ProductProjectRuntimeService({
+            taskGraphStore: bootstrap.taskGraphStore,
+            projectStore: bootstrap.projectStore,
+            turnRunner: {
+              runTurn: (turn, runOptions) => this.runTurn(turn as RunTurnInput, runOptions),
+            },
+          })
+        : undefined;
+    this.workspaceCheckpointService = bootstrap.workspaceCheckpointService;
+    this.runtimeWorkspaceCheckpointService =
+      bootstrap.workspaceCheckpointService !== undefined && bootstrap.projectStore !== undefined
+        ? new RuntimeWorkspaceCheckpointService({
+            checkpointService: bootstrap.workspaceCheckpointService,
+            resolver: new WorkspaceContextResolver({
+              getProjectSnapshot: (input) => this.getProjectSnapshot(input),
+            }),
+          })
+        : undefined;
+    this.entryStepAgent = bootstrap.entryStepAgent;
+    this.closePool = bootstrap.close;
+    this.readFinalizedPayload = bootstrap.readFinalizedPayload;
+    this.forceModeSystemV2 = profile.agent === "reference-react";
+    this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
+    this.defaultExecutionPolicy = buildExecutionPolicyFromPack(profile.approvalPolicyPackId);
+    this.defaultInteractionMode = profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE;
+    this.defaultActSubmode = profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE;
+    this.toolBatchCheckpointSize = normalizePositiveInt(
+      profile.toolQueue?.checkpointSize ??
+        profile.guardrails?.toolBatchCheckpointSize ??
+        DEFAULT_KCHAT_GUARDRAILS.toolBatchCheckpointSize ??
+        5,
+      5,
+    );
+    this.turnCoordinator = new RuntimeTurnCoordinatorService({
+      defaults: {
+        defaultInteractionMode: this.defaultInteractionMode,
+        defaultActSubmode: this.defaultActSubmode,
+        modeSystemV2Enabled: this.modeSystemV2Enabled,
+        forceModeSystemV2: this.forceModeSystemV2,
+        defaultExecutionPolicy: this.defaultExecutionPolicy,
+        toolBatchCheckpointSize: this.toolBatchCheckpointSize,
+      },
+      ...(this.threadRuntime !== undefined ? { threadRuntime: this.threadRuntime } : {}),
+      directRun: async (event, runOptions) => this.kestrel.run(event, runOptions),
+      getSession: async (sessionId) => (await this.kestrel.getSession(sessionId)) ?? undefined,
+      readFinalizedPayload: async (sessionId) => {
+        if (this.finalizedPayload !== undefined) {
+          return this.finalizedPayload;
+        }
+        return this.readFinalizedPayload?.(sessionId);
+      },
+      readPersistedResumeStepAgent: async (sessionId) => {
+        const session = await this.kestrel.getSession(sessionId);
+        return readResumeStepAgentFromSession(session?.state);
+      },
+    });
+  }
+
+  getEntryStepAgent(): string {
+    return this.entryStepAgent;
+  }
+
+  async runTurn(
+    input: RunTurnInput,
+    options: { signal?: AbortSignal | undefined } = {},
+  ): Promise<RunTurnResult> {
+    this.finalizedPayload = undefined;
+    const normalizedInput: RunTurnInput = {
+      ...input,
+      message: requireRunTurnMessage(input.message),
+    };
+    const effectiveInput = await applyActiveTaskRuntimeMetadata(normalizedInput, this.taskGraphStore);
+    const authorizedInput: RunTurnInput = {
+      ...effectiveInput,
+      ...(effectiveInput.workspace !== undefined
+        ? {
+            workspace:
+              resolveRuntimeWorkspaceAuthority({
+                workspace: effectiveInput.workspace,
+                interactionMode: effectiveInput.interactionMode,
+                actSubmode: effectiveInput.actSubmode,
+                defaultInteractionMode: this.defaultInteractionMode,
+                defaultActSubmode: this.defaultActSubmode,
+              }) ?? effectiveInput.workspace,
+          }
+        : {}),
+    };
+    const result = await this.turnCoordinator.runTurn(authorizedInput, options);
+    if (result.finalizedPayload !== undefined) {
+      this.finalizedPayload = result.finalizedPayload;
+    }
+    return result as RunTurnResult;
+  }
+
+  async getToolRuntimeStatus(): Promise<ToolRuntimeStatus> {
+    return this.kestrel.getToolRuntimeStatus();
+  }
+
+  async describeSession(sessionId: string): Promise<{
+    sessionId: string;
+    version: number;
+    threadId?: string | undefined;
+    currentStepAgent?: string | undefined;
+    updatedAt?: string | undefined;
+    waitFor?: NormalizedOutput["waitFor"] | undefined;
+    activeAssembly?: OperatorAssemblySummary | undefined;
+    operatorInbox?: OperatorInboxSummary | undefined;
+    childBlocker?: OperatorChildBlockerSummary | undefined;
+    childThreads?: OperatorSupervisedChildSummary[] | undefined;
+    childBlockerChainDetails?: OperatorChildBlockerChainSummary[] | undefined;
+    blockerChain?: string[] | undefined;
+    dominantBlocker?: string | undefined;
+    latestCheckpoint?: OperatorCheckpointSummary | undefined;
+    latestCheckpointDisposition?: OperatorCheckpointSummary["status"] | undefined;
+    latestFanInDisposition?: OperatorFanInDispositionSummary | undefined;
+    latestSteering?: OperatorSteeringSummary | undefined;
+    latestReasoning?: import("../contracts.js").OperatorReasoningSummary | undefined;
+    latestAdaptation?: import("../contracts.js").OperatorAdaptationSummary | undefined;
+    latestEvidenceRecovery?: import("../contracts.js").OperatorEvidenceRecoverySummary | undefined;
+    supervision?: OperatorSupervisionSummary | undefined;
+    nextAction?: string | undefined;
+    runtimePlan?: OperatorAffordancePayload["runtimePlan"] | undefined;
+    visibleTodos?: import("../../src/runtime/visibleTodos.js").VisibleTodoState | undefined;
+    contextPosture?: string | undefined;
+    operatorPhase?: import("../../src/orchestration/index.js").OperatorThreadView["operatorPhase"] | undefined;
+    modelProvenance?: import("../../src/replay/RunReplayService.js").ReplayModelProvenanceSummary | undefined;
+    focusedThreadId?: string | undefined;
+    operatorThreadView?: import("../../src/orchestration/index.js").OperatorThreadView | undefined;
+  } | undefined> {
+    if (this.threadRuntime !== undefined) {
+      await this.ensureMainThread(sessionId);
+    }
+    const session = await this.kestrel.getSession(sessionId);
+    if (session === null) {
+      return undefined;
+    }
+    return this.buildSessionDescription(sessionId, session);
+  }
+
+  async getSessionState(sessionId: string): Promise<RuntimeSessionStateProjection | undefined> {
+    const session = await this.kestrel.getSession(sessionId);
+    if (session === null) {
+      return undefined;
+    }
+    return buildRuntimeSessionStateProjection({
+      sessionId,
+      session,
+      ...(this.threadRuntime !== undefined ? { threadRuntime: this.threadRuntime } : {}),
+      ...(this.taskGraphStore !== undefined ? { taskGraphStore: this.taskGraphStore } : {}),
+    });
+  }
+
+  private async buildSessionDescription(
+    sessionId: string,
+    session: {
+      version: number;
+      currentStepAgent?: string | undefined;
+      updatedAt?: string | undefined;
+      state: Record<string, unknown>;
+    },
+  ): Promise<OperatorSessionProjection> {
+    return buildOperatorSessionProjection({
+      sessionId,
+      session,
+      ...(this.threadRuntime !== undefined ? { threadRuntime: this.threadRuntime } : {}),
+    });
+  }
+
+  async listOperatorInbox(input: {
+    sessionId?: string | undefined;
+    threadId?: string | undefined;
+  }) {
+    if (this.threadRuntime === undefined) {
+      return {
+        items: [],
+        summary: {
+          total: 0,
+          actionable: 0,
+          approvals: 0,
+          userInputs: 0,
+          checkpoints: 0,
+          childBlockers: 0,
+          stalled: 0,
+          assemblyProposals: 0,
+          compatibilityAlerts: 0,
+        },
+      };
+    }
+    return this.threadRuntime.listOperatorInbox(input);
+  }
+
+  async getOperatorThreadView(threadId: string) {
+    return this.threadRuntime?.getOperatorThreadView(threadId) ?? null;
+  }
+
+  async listOperatorRuns(input: {
+    sessionId?: string | undefined;
+    status?: import("../../src/orchestration/contracts.js").OperatorRunStatus | undefined;
+    limit?: number | undefined;
+  } = {}) {
+    return this.threadRuntime?.listOperatorRuns(input) ?? {
+      version: "operator-run-index-v1" as const,
+      generatedAt: new Date().toISOString(),
+      filters: {
+        ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        limit: Math.max(1, Math.min(input.limit ?? 25, 50)),
+      },
+      hasMore: false,
+      runs: [],
+      sessions: [],
+    };
+  }
+
+  async getOperatorRunView(runId: string) {
+    return this.threadRuntime?.getOperatorRunView(runId) ?? null;
+  }
+
+  async getTaskGraph(input: { sessionId: string; threadId?: string | undefined }): Promise<RuntimeTaskGraphProjection> {
+    const session = await this.kestrel.getSession(input.sessionId);
+    return buildRuntimeTaskGraphProjection({
+      sessionId: input.sessionId,
+      session,
+      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+      ...(this.threadRuntime !== undefined ? { threadRuntime: this.threadRuntime } : {}),
+      ...(this.taskGraphStore !== undefined ? { taskGraphStore: this.taskGraphStore } : {}),
+    });
+  }
+
+  async updateTaskGraph(input: {
+    sessionId: string;
+    graph: import("../../src/index.js").ProductTaskGraph;
+    expectedVersion?: number | undefined;
+  }) {
+    if (this.taskGraphStore === undefined) {
+      const session = await this.kestrel.getSession(input.sessionId);
+      return {
+        sessionId: input.sessionId,
+        version: session?.version ?? 0,
+        graph: input.graph,
+      };
+    }
+    const persisted = await this.taskGraphStore.saveGraph(input);
+    return {
+      sessionId: input.sessionId,
+      version: persisted.version,
+      graph: persisted.graph,
+    };
+  }
+
+  async getProjectSnapshot(input: { sessionId: string }): Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }> {
+    if (this.projectRuntimeService !== undefined) {
+      return this.projectRuntimeService.getProjectSnapshot(input);
+    }
+    if (this.projectStore === undefined) {
+      return {
+        sessionId: input.sessionId,
+        snapshot: createEmptyProjectSnapshot(),
+      };
+    }
+    const graph = this.taskGraphStore === undefined
+      ? undefined
+      : (await this.taskGraphStore.getGraph({ sessionId: input.sessionId }));
+    return {
+      sessionId: input.sessionId,
+      snapshot: await this.projectStore.getSnapshot({
+        sessionId: input.sessionId,
+        ...(graph !== undefined ? { graph } : {}),
+      }),
+    };
+  }
+
+  async updateProjectSnapshot(input: { sessionId: string; snapshot: ProductProjectSnapshot }) {
+    if (this.projectRuntimeService !== undefined) {
+      return this.projectRuntimeService.updateProjectSnapshot(input);
+    }
+    if (this.projectStore === undefined) {
+      return {
+        sessionId: input.sessionId,
+        snapshot: input.snapshot,
+      };
+    }
+    const snapshot = await this.projectStore.saveSnapshot(input.sessionId, input.snapshot);
+    return {
+      sessionId: input.sessionId,
+      snapshot,
+    };
+  }
+
+  async performProjectAction(input: ProductProjectAction) {
+    return requireProductProjectRuntimeService(this.projectRuntimeService).performProjectAction(input);
+  }
+
+  async captureWorkspaceCheckpoint(input: {
+    sessionId: string;
+    label?: string | undefined;
+    reason?: string | undefined;
+    threadId?: string | undefined;
+    runId?: string | undefined;
+    taskId?: string | undefined;
+  }): Promise<{ sessionId: string; checkpoint: WorkspaceCheckpointDetail }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).capture(input);
+  }
+
+  async listWorkspaceCheckpoints(input: {
+    sessionId: string;
+  }): Promise<{ sessionId: string; checkpoints: WorkspaceCheckpointRecord[] }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).list(input);
+  }
+
+  async inspectWorkspaceCheckpoint(input: {
+    sessionId: string;
+    checkpointId: string;
+  }): Promise<{ sessionId: string; checkpoint: WorkspaceCheckpointDetail }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).inspect(input);
+  }
+
+  async diffWorkspaceCheckpoints(input: {
+    sessionId: string;
+    source: {
+      checkpointId?: string | undefined;
+      gitRef?: string | undefined;
+      workingTree?: boolean | undefined;
+    };
+    target: {
+      checkpointId?: string | undefined;
+      gitRef?: string | undefined;
+      workingTree?: boolean | undefined;
+    };
+    includeHunks?: boolean | undefined;
+  }): Promise<{ sessionId: string; diff: WorkspaceDiffRecord }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).diff(input);
+  }
+
+  async restoreWorkspaceCheckpoint(input: {
+    sessionId: string;
+    checkpointId: string;
+    reason?: string | undefined;
+    threadId?: string | undefined;
+    runId?: string | undefined;
+    taskId?: string | undefined;
+  }): Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).restore(input);
+  }
+
+  async cleanupWorkspaceCheckpoints(input: {
+    sessionId: string;
+    reason?: string | undefined;
+    policyOverride?: Partial<WorkspaceCheckpointCleanupPolicy> | undefined;
+  }): Promise<{ sessionId: string } & WorkspaceCheckpointCleanupResult> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).cleanup(input);
+  }
+
+  async restoreLatestWorkspacePromotion(input: {
+    sessionId: string;
+    reason?: string | undefined;
+  }): Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }> {
+    return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).restoreLatestPromotion(input);
+  }
+
+  async getProjectReviewDetail(input: { sessionId: string; target: ProductReviewTarget }): Promise<{ sessionId: string; detail: ProductReviewDetail }> {
+    return requireProductProjectRuntimeService(this.projectRuntimeService).getProjectReviewDetail(input);
+  }
+
+  async performProjectReviewAction(input: { sessionId: string; action: ProductReviewAction }): Promise<{ sessionId: string; detail: ProductReviewDetail }> {
+    return requireProductProjectRuntimeService(this.projectRuntimeService).performProjectReviewAction(input);
+  }
+
+  async performOperatorAction(input: {
+    action:
+      | "approve"
+      | "reject"
+      | "reply"
+      | "steer"
+      | "retry"
+      | "focus_thread"
+      | "resolve_context_checkpoint"
+      | "approve_assembly_change"
+      | "reject_assembly_change"
+      | "spawn_child_thread"
+      | "supersede_child_thread"
+      | "resolve_fan_in_checkpoint";
+    threadId: string;
+    requestId?: string | undefined;
+    proposalId?: string | undefined;
+    checkpointId?: string | undefined;
+    delegationId?: string | undefined;
+    actionValue?:
+      | "continue"
+      | "compact"
+      | "summarize_forward"
+      | "handoff"
+      | "split_into_child_thread"
+      | "operator_checkpoint"
+      | "accept"
+      | "defer"
+      | undefined;
+    message?: string | undefined;
+    attachments?: RunTurnAttachment[] | undefined;
+    title?: string | undefined;
+    rolePrompt?: string | undefined;
+    goal?: string | undefined;
+    profileId?: string | undefined;
+    provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+    model?: string | undefined;
+    skillPackId?: string | undefined;
+    maxTurns?: number | undefined;
+    maxRuntimeMs?: number | undefined;
+    allowApprovalInheritance?: boolean | undefined;
+    allowToolClasses?: ToolExecutionClass[] | undefined;
+    allowCapabilities?: string[] | undefined;
+    issuedBy?: string | undefined;
+  }): Promise<{
+    sessionId?: string | undefined;
+    threadId: string;
+    inbox?: import("../../src/orchestration/index.js").OperatorInboxSnapshot | undefined;
+    view?: import("../../src/orchestration/index.js").OperatorThreadView | undefined;
+    result?: RunTurnResult | undefined;
+  }> {
+    const threadRuntime = this.threadRuntime;
+    if (threadRuntime === undefined) {
+      throw createRuntimeFailure(
+        "OPERATOR_CONTROL_UNAVAILABLE",
+        "Thread runtime is not configured.",
+      );
+    }
+    const operatorIssuedBy = input.issuedBy ?? "operator";
+    let result: RunTurnResult | undefined;
+    if (input.action === "approve" || input.action === "reject" || input.action === "reply") {
+      const requestId =
+        input.requestId ??
+        (await threadRuntime.getThreadStatus(input.threadId))?.openRequests[0]?.requestId;
+      if (requestId === undefined) {
+        throw createRuntimeFailure(
+          "OPERATOR_REQUEST_NOT_FOUND",
+          `No pending request found for thread '${input.threadId}'.`,
+          {
+            threadId: input.threadId,
+            action: input.action,
+          },
+        );
+      }
+      result = await threadRuntime.replyToRequest({
+        threadId: input.threadId,
+        requestId,
+        message: input.message ?? (input.action === "reject" ? "Rejected." : "Approved."),
+        issuedBy: operatorIssuedBy,
+        approve: input.action !== "reject",
+        ...(input.allowToolClasses !== undefined ? { allowedToolClasses: input.allowToolClasses } : {}),
+        ...(input.allowCapabilities !== undefined ? { allowedCapabilities: input.allowCapabilities } : {}),
+      });
+    } else if (input.action === "steer") {
+      const steering = await threadRuntime.steerThread({
+        threadId: input.threadId,
+        message: input.message ?? "Apply operator steering.",
+        ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+        issuedBy: operatorIssuedBy,
+      });
+      result = steering.result;
+    } else if (input.action === "retry") {
+      result = await threadRuntime.retryThread({
+        threadId: input.threadId,
+        reason: input.message,
+      });
+    } else if (input.action === "focus_thread") {
+      await threadRuntime.focusThread({
+        threadId: input.threadId,
+      });
+    } else if (input.action === "approve_assembly_change") {
+      if (input.proposalId === undefined) {
+        throw createRuntimeFailure(
+          "OPERATOR_ASSEMBLY_PROPOSAL_INPUT_INVALID",
+          "Approving an assembly change requires proposalId.",
+          { threadId: input.threadId, proposalId: input.proposalId },
+        );
+      }
+      result = await threadRuntime.approveAssemblyChange({
+        threadId: input.threadId,
+        proposalId: input.proposalId,
+        issuedBy: operatorIssuedBy,
+        reason: input.message,
+      });
+    } else if (input.action === "reject_assembly_change") {
+      if (input.proposalId === undefined) {
+        throw createRuntimeFailure(
+          "OPERATOR_ASSEMBLY_PROPOSAL_INPUT_INVALID",
+          "Rejecting an assembly change requires proposalId.",
+          { threadId: input.threadId, proposalId: input.proposalId },
+        );
+      }
+      await threadRuntime.rejectAssemblyChange({
+        threadId: input.threadId,
+        proposalId: input.proposalId,
+        issuedBy: operatorIssuedBy,
+        reason: input.message,
+      });
+    } else if (input.action === "spawn_child_thread") {
+      const prompt = input.message?.trim() ?? "";
+      if (prompt.length === 0) {
+        throw createRuntimeFailure(
+          "OPERATOR_CHILD_THREAD_INPUT_INVALID",
+          "Spawning a child thread requires a prompt message.",
+          { threadId: input.threadId },
+        );
+      }
+      await threadRuntime.spawnChildThread({
+        threadId: input.threadId,
+        prompt,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.rolePrompt !== undefined ? { rolePrompt: input.rolePrompt } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
+        ...(input.provider !== undefined ? { provider: input.provider } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
+        ...(input.maxTurns !== undefined ||
+        input.maxRuntimeMs !== undefined ||
+        input.allowApprovalInheritance !== undefined
+          ? {
+              budget: {
+                ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+                ...(input.maxRuntimeMs !== undefined ? { maxRuntimeMs: input.maxRuntimeMs } : {}),
+                ...(input.allowApprovalInheritance !== undefined
+                  ? { allowApprovalInheritance: input.allowApprovalInheritance }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(input.allowToolClasses !== undefined || input.allowCapabilities !== undefined
+          ? {
+              policy: {
+                ...(input.allowToolClasses !== undefined ? { allowedToolClasses: input.allowToolClasses } : {}),
+                ...(input.allowCapabilities !== undefined ? { allowedCapabilities: input.allowCapabilities } : {}),
+              },
+            }
+          : {}),
+        issuedBy: operatorIssuedBy,
+      });
+    } else if (input.action === "supersede_child_thread") {
+      if (input.delegationId === undefined) {
+        throw createRuntimeFailure(
+          "OPERATOR_CHILD_THREAD_INPUT_INVALID",
+          "Superseding a child thread requires delegationId.",
+          { threadId: input.threadId, delegationId: input.delegationId },
+        );
+      }
+      await threadRuntime.supersedeChildThread({
+        threadId: input.threadId,
+        delegationId: input.delegationId,
+        issuedBy: operatorIssuedBy,
+        reason: input.message,
+      });
+    } else if (input.action === "resolve_fan_in_checkpoint") {
+      if (input.checkpointId === undefined || (input.actionValue !== "accept" && input.actionValue !== "defer")) {
+        throw createRuntimeFailure(
+          "OPERATOR_FAN_IN_INPUT_INVALID",
+          "Fan-in resolution requires checkpointId and actionValue=accept|defer.",
+          {
+            threadId: input.threadId,
+            checkpointId: input.checkpointId,
+            actionValue: input.actionValue,
+          },
+        );
+      }
+      await threadRuntime.resolveFanInCheckpoint({
+        threadId: input.threadId,
+        checkpointId: input.checkpointId,
+        disposition: input.actionValue,
+        issuedBy: operatorIssuedBy,
+      });
+    } else if (input.action === "resolve_context_checkpoint") {
+      const checkpointAction = input.actionValue;
+      if (
+        input.checkpointId === undefined ||
+        (checkpointAction !== "continue" &&
+          checkpointAction !== "compact" &&
+          checkpointAction !== "summarize_forward" &&
+          checkpointAction !== "handoff" &&
+          checkpointAction !== "split_into_child_thread" &&
+          checkpointAction !== "operator_checkpoint")
+      ) {
+        throw createRuntimeFailure(
+          "OPERATOR_CONTEXT_CHECKPOINT_INPUT_INVALID",
+          "Context checkpoint resolution requires checkpointId and actionValue.",
+          {
+            threadId: input.threadId,
+            checkpointId: input.checkpointId,
+            actionValue: input.actionValue,
+          },
+        );
+      }
+      await threadRuntime.resolveContextCheckpoint({
+        threadId: input.threadId,
+        checkpointId: input.checkpointId,
+        action: checkpointAction,
+        issuedBy: operatorIssuedBy,
+      });
+    }
+    const view = await threadRuntime.getOperatorThreadView(input.threadId);
+    return {
+      ...(view !== null ? { sessionId: view.thread.sessionId } : {}),
+      threadId: input.threadId,
+      ...(result !== undefined ? { result } : {}),
+      ...(view !== null ? { view } : {}),
+      ...(view !== null ? { inbox: await threadRuntime.listOperatorInbox({ sessionId: view.thread.sessionId }) } : {}),
+    };
+  }
+
+  async refreshToolRuntime(): Promise<ToolRuntimeStatus> {
+    return this.kestrel.refreshToolRuntime();
+  }
+
+  async cancelActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
+    return this.kestrel.cancelActiveRun(sessionId);
+  }
+
+  async close(): Promise<void> {
+    await this.closePool();
+  }
+
+  private async ensureMainThread(sessionId: string) {
+    const threadRuntime = this.threadRuntime;
+    if (threadRuntime === undefined) {
+      return undefined;
+    }
+    if (
+      typeof (threadRuntime as {
+        ensureMainThreadForSession?: unknown;
+      }).ensureMainThreadForSession === "function"
+    ) {
+      return threadRuntime.ensureMainThreadForSession({
+        sessionId,
+        title: sessionId,
+      });
+    }
+    const existing = await threadRuntime.getThreadStatus(sessionId);
+    if (existing !== null) {
+      return existing.thread;
+    }
+    return threadRuntime.startThread({
+      threadId: sessionId,
+      sessionId,
+      title: sessionId,
+      metadata: {
+        legacyImported: true,
+      },
+    });
+  }
+}
+
+function createDefaultRuntime(
+  profile: TuiProfile,
+  onFinalize: (payload: unknown) => unknown,
+  onRunLog?: ((entry: RunLogEntry) => void) | undefined,
+  onProgress?: ((update: ProgressUpdateV1) => void) | undefined,
+  onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined,
+  onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined,
+  onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
+  onRunEvent?: ((event: RunEvent) => void) | undefined,
+): RuntimeBootstrap {
+  const storeHandle = createSessionStoreFromEnv({
+    ...(profile.storeDriver !== undefined ? { driver: profile.storeDriver } : {}),
+  });
+  const store = storeHandle.store;
+  const taskGraphStore = new ProductTaskGraphStore(store);
+  const projectStore = new ProductProjectStateStore(store);
+  const workspaceCheckpointService = new WorkspaceCheckpointService(store);
+  const managedTaskWorktreeService =
+    resolveManagedWorktreesEnabledForRuntime()
+      ? new ManagedTaskWorktreeService()
+      : undefined;
+  const devShellService = resolveDevShellServiceForProfile(profile);
+  const toolContext: SharedToolContext = {
+    store,
+    onFinalize,
+    codeMode: profile.codeMode,
+    devShell: profile.devShell,
+    kestrelOne: {
+      appUrl: parseEnvString("KESTREL_ONE_APP_URL"),
+      toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN"),
+    },
+    ...(devShellService !== undefined ? { devShellService } : {}),
+    ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
+    projectActions: createProductProjectActionToolAdapter({ taskGraphStore, projectStore }),
+    delegationService: undefined,
+  };
+
+  const toolRegistry = new UnifiedToolRegistry({
+    allowlist: profile.toolAllowlist ?? [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
+    context: toolContext,
+    mcpServers: profile.mcpServers ?? [],
+  });
+
+  const timeoutMs = resolveModelTimeoutMs(profile);
+  const retryCount = resolveModelRetryCount(profile);
+  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED");
+  const provider = profile.modelProvider ?? "openrouter";
+  const reasoningModel = resolveReasoningModelForProfile(profile);
+  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS");
+  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS");
+  const gatewayOptions = {
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(retryCount !== undefined ? { retryCount } : {}),
+    ...(profile.model !== undefined ? { envConfig: { model: profile.model } } : {}),
+  };
+  const modelGateway = createLazyModelGateway(() =>
+    provider === "openai"
+      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
+      : provider === "anthropic"
+        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
+        : provider === "ollama"
+          ? createOllamaModelGatewayFromEnv(gatewayOptions)
+          : provider === "lmstudio"
+            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
+            : createOpenRouterModelGatewayFromEnv(gatewayOptions));
+
+  const kestrel = new Kestrel({
+    store,
+    modelGateway,
+    toolGateway: toolRegistry,
+    workspaceCheckpointService,
+    ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
+    guardrails: {
+      ...DEFAULT_KCHAT_GUARDRAILS,
+      ...(profile.guardrails ?? {}),
+      ...(profile.toolQueue?.perRunConcurrency !== undefined
+        ? { maxConcurrentToolJobsPerRun: profile.toolQueue.perRunConcurrency }
+        : {}),
+      ...(profile.toolQueue?.globalConcurrency !== undefined
+        ? { maxConcurrentToolJobsGlobal: profile.toolQueue.globalConcurrency }
+        : {}),
+      ...(profile.toolQueue?.maxQueuedJobsPerRun !== undefined
+        ? { maxQueuedToolJobsPerRun: profile.toolQueue.maxQueuedJobsPerRun }
+        : {}),
+      ...(profile.toolQueue?.checkpointSize !== undefined
+        ? { toolBatchCheckpointSize: profile.toolQueue.checkpointSize }
+        : {}),
+      ...(profile.toolQueue?.retryCount !== undefined
+        ? { toolCallRetryCount: profile.toolQueue.retryCount }
+        : {}),
+    },
+    ...(onRunLog !== undefined ? { runLogListener: onRunLog } : {}),
+    ...(onProgress !== undefined ? { progressListener: onProgress } : {}),
+    ...(onConsole !== undefined ? { consoleListener: onConsole } : {}),
+    ...(onReasoning !== undefined ? { reasoningListener: onReasoning } : {}),
+    ...(onRunEvent !== undefined ? { runEventListener: onRunEvent } : {}),
+    heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(process.env, {
+      processRole: process.env.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
+    }),
+    reasoningSidecar: {
+      ...(reasoningEnabled !== undefined ? { enabled: reasoningEnabled } : {}),
+      ...(reasoningModel !== undefined ? { model: reasoningModel } : {}),
+      ...(reasoningTimeoutMs !== undefined ? { timeoutMs: reasoningTimeoutMs } : {}),
+      ...(reasoningMaxTokens !== undefined ? { maxTokens: reasoningMaxTokens } : {}),
+    },
+  });
+
+  const registration = registerAgent(kestrel, profile.agent, {
+    thinkerToolsProvider: (ctx) =>
+      toolRegistry.getModelTools({
+        runContext: {
+          runId: ctx.runId,
+          sessionId: ctx.session.sessionId,
+          payload: ctx.event.payload,
+          sessionState: ctx.session.state,
+        },
+      }),
+    capabilityManifestProvider: (ctx) =>
+      toolRegistry.getCapabilityManifest({
+        runContext: {
+          runId: ctx.runId,
+          sessionId: ctx.session.sessionId,
+          payload: ctx.event.payload,
+          sessionState: ctx.session.state,
+        },
+      }),
+    ...(managedTaskWorktreeService !== undefined
+      ? {
+          managedWorktreeProposalProvider: (request: Parameters<ManagedTaskWorktreeService["prepare"]>[0]) =>
+            managedTaskWorktreeService.prepare(request),
+        }
+      : {}),
+    agentStageModelByStage: profile.agentStageConfig?.modelByStage,
+  });
+  let threadRuntime: ThreadRuntime | undefined;
+  const threadedTurnExecutor = new RuntimeThreadedTurnExecutor({
+    entryStepAgent: registration.entryStepAgent,
+    defaults: {
+      defaultInteractionMode: profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
+      defaultActSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+      defaultToolAllowlist: profile.toolAllowlist ?? [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
+      toolBatchCheckpointSize:
+        profile.toolQueue?.checkpointSize ??
+        profile.guardrails?.toolBatchCheckpointSize ??
+        DEFAULT_KCHAT_GUARDRAILS.toolBatchCheckpointSize ??
+        5,
+    },
+    getSession: (sessionId) => kestrel.getSession(sessionId),
+    runKernel: (event, runOptions) => kestrel.run(event, runOptions),
+    refreshToolRuntime: () => toolRegistry.refreshRuntime(),
+    resolveAvailableToolAllowlist: (allowlist) => toolRegistry.resolveAvailableAllowlist(allowlist),
+    resolveSkillPackById: (skillPackId) => getSkillPackById(skillPackId),
+    handleCapabilityLoss: (input) => {
+      if (threadRuntime === undefined) {
+        return Promise.resolve(null);
+      }
+      return threadRuntime.handleCapabilityLoss(input);
+    },
+  });
+  threadRuntime = new ThreadRuntime({
+    sessionStore: store,
+    orchestrationStore: store,
+    executor: createTurnExecutor({
+      runTurn: (input) => threadedTurnExecutor.executeTurn(input),
+      getSession: (sessionId) => kestrel.getSession(sessionId),
+    }),
+    profile,
+    onTaskUpdate: (update) => {
+      void persistDelegationTaskUpdateToGraph(taskGraphStore, update).catch(() => {
+        // Task graph persistence is additive and should not block runtime task updates.
+      });
+      onTaskUpdate?.(update);
+    },
+  });
+  toolContext.delegationService = threadRuntime.getDelegationService();
+
+  return {
+    kestrel,
+    threadRuntime,
+    taskGraphStore,
+    projectStore,
+    workspaceCheckpointService,
+    entryStepAgent: registration.entryStepAgent,
+    readFinalizedPayload: async (sessionId: string) => {
+      const session = await kestrel.getSession(sessionId);
+      return asRecord(session?.state.agent)?.finalOutput;
+    },
+    close: async () =>
+      closeRuntimeResources(
+        toolRegistry.close.bind(toolRegistry),
+        storeHandle.close,
+        devShellService instanceof LocalDevShellService ? devShellService.close.bind(devShellService) : undefined,
+      ),
+  };
+}
+
+export function resolveDevShellServiceForProfile(
+  profile: TuiProfile,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  if (profile.devShell?.enabled !== true) {
+    return undefined;
+  }
+  return createTerminalBenchDevShellServiceFromEnv(env) ?? new LocalDevShellService();
+}
+
+export function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
+  let gateway: ModelGateway | undefined;
+  return {
+    async call<T>(
+      request: ModelRequest,
+      options?: { signal?: AbortSignal | undefined },
+    ): Promise<T> {
+      gateway ??= factory();
+      return await gateway.call<T>(request, options);
+    },
+  };
+}
+
+function requireRuntimeWorkspaceCheckpointService(
+  service: RuntimeWorkspaceCheckpointService | undefined,
+): RuntimeWorkspaceCheckpointService {
+  if (service === undefined) {
+    throw createRuntimeFailure("WORKSPACE_CHECKPOINT_UNAVAILABLE", "Workspace checkpoints are unavailable.");
+  }
+  return service;
+}
+
+function readResumeStepAgentFromSession(
+  state: Record<string, unknown> | undefined,
+): string | undefined {
+  return readWaitResumeStepAgent(asRecord(state?.agent));
+}
+
+export function resolveModelTimeoutMs(
+  profile: Pick<TuiProfile, "modelProvider" | "modelTimeoutMs">,
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const profileTimeout = normalizeOptionalPositiveInt(profile.modelTimeoutMs);
+  if (profileTimeout !== undefined) {
+    return profileTimeout;
+  }
+  const envTimeout = parseEnvInt("KCHAT_MODEL_TIMEOUT_MS", env);
+  if (envTimeout !== undefined) {
+    return envTimeout;
+  }
+  return profile.modelProvider === "ollama" || profile.modelProvider === "lmstudio"
+    ? LOCAL_OPENAI_COMPATIBLE_MODEL_TIMEOUT_MS
+    : undefined;
+}
+
+export function resolveModelRetryCount(
+  profile: Pick<TuiProfile, "modelProvider">,
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const envRetryCount = parseEnvInt("KCHAT_MODEL_RETRY_COUNT", env);
+  if (envRetryCount !== undefined) {
+    return envRetryCount;
+  }
+  return profile.modelProvider === "ollama" || profile.modelProvider === "lmstudio"
+    ? LOCAL_OPENAI_COMPATIBLE_MODEL_RETRY_COUNT
+    : undefined;
+}
+
+export function resolveManagedWorktreesEnabledForRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return parseEnvBoolean("KESTREL_ENABLE_MANAGED_WORKTREES", env) === true;
+}
+
+function parseEnvInt(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env[name];
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseEnvBoolean(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | undefined {
+  const raw = env[name];
+  if (raw === undefined) {
+    return undefined;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return undefined;
+}
+
+function parseEnvString(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizePositiveInt(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function normalizeOptionalPositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+  if (Number.isFinite(value) === false || value <= 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+export async function closeRuntimeResources(
+  closeToolRegistry: () => Promise<void>,
+  closePool: () => Promise<void>,
+  closeDevShellService?: (() => Promise<void>) | undefined,
+): Promise<void> {
+  const errors: Error[] = [];
+
+  try {
+    await closeToolRegistry();
+  } catch (error) {
+    errors.push(asError(error, "toolRegistry.close failed"));
+  }
+
+  if (closeDevShellService !== undefined) {
+    try {
+      await closeDevShellService();
+    } catch (error) {
+      errors.push(asError(error, "devShellService.close failed"));
+    }
+  }
+
+  try {
+    await closePool();
+  } catch (error) {
+    errors.push(asError(error, "pool.end failed"));
+  }
+
+  if (errors.length === 1) {
+    throw errors[0]!;
+  }
+
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "Failed to close runtime resources");
+  }
+}
+
+function asError(value: unknown, fallbackMessage: string): Error {
+  return value instanceof Error ? value : new Error(fallbackMessage);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireRunTurnMessage(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  throw createRuntimeFailure(
+    "RUN_TURN_INPUT_INVALID",
+    "KestrelChatRuntime runTurn requires turn.message to be a string.",
+    {
+      subsystem: "cli",
+      classification: "schema",
+      recoverable: false,
+      statePath: "turn.message",
+      actualType: Array.isArray(value) ? "array" : typeof value,
+    },
+  );
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}

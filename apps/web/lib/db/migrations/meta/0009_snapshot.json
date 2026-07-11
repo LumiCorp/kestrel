@@ -1,0 +1,6 @@
+{
+  "id": "0009_native_knowledge_documents",
+  "prevId": "0008_flat_forgotten_one",
+  "version": "7",
+  "dialect": "postgresql"
+}

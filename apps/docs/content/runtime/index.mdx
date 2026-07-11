@@ -1,0 +1,33 @@
+---
+title: Runtime
+summary: Deeper mechanics for how Kestrel executes runs, handles IO, persists evidence, and enforces invariants across the durable runtime.
+section: runtime
+audience: maintainers
+status: active
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+The runtime section is where the repo stops speaking in product terms and starts speaking in execution terms. Use it when you need to understand how the engine, IO, store, replay, and governance pieces fit together.
+
+This section is for maintainers, operators, and engineers touching the runtime contract directly.
+
+## Start here if you are...
+
+- tracing how one request becomes one durable run: read [Engine](/runtime/engine)
+- debugging tool or artifact behavior: read [IO and tools](/runtime/io-and-tools)
+- investigating persistence, memory, or replay: read [Store and replay](/runtime/store-and-replay)
+- checking invariant and governance boundaries: read [Governance and invariants](/runtime/governance-and-invariants)
+
+## Read this in order
+
+1. [Engine](/runtime/engine)
+2. [IO and tools](/runtime/io-and-tools)
+3. [Store and replay](/runtime/store-and-replay)
+4. [Governance and invariants](/runtime/governance-and-invariants)
+
+## What To Read Next
+
+- [Runtime model](/docs/runtime-model)
+- [Operations](/operations)
+- [Reference](/reference)

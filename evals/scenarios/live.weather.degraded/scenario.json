@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.weather.degraded",
+  "title": "Kestrel Weather Degradation Recovery",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "weather", "degraded-provider", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 45,
+    "networkRationale": "The scenario exercises live current-weather and forecast providers.",
+    "contaminationNotes": "No expected Seattle weather values are embedded in the scenario.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated degraded weather recovery to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 45 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["free.weather.current", "free.weather.forecast"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "Current conditions may fail while the forecast remains available.",
+      "The user still needs a useful tomorrow-morning assessment grounded in forecast evidence."
+    ],
+    "goalRubric": [
+      "The preserved Kestrel evidence shows a Seattle current-weather attempt and a Seattle forecast attempt covering tomorrow.",
+      "The final answer uses forecast evidence for the requested assessment and clearly states when current conditions are unavailable.",
+      "The response avoids unsupported current-condition claims and reaches a completed terminal state."
+    ],
+    "evidenceGuidance": [
+      "Inspect current and forecast tool outputs separately in the Kestrel event log.",
+      "Verify that final claims can be traced to the forecast output and that the current-condition caveat is specific."
+    ],
+    "calibrationCases": [
+      {
+        "id": "forecast-recovery-pass",
+        "inputSummary": "Current conditions degraded, the forecast succeeded, and the answer used the forecast with an explicit current-data caveat.",
+        "expectedStatus": "passed",
+        "rationale": "The runtime recovered with grounded, useful information."
+      },
+      {
+        "id": "unsupported-current-claim-fail",
+        "inputSummary": "Current conditions failed, but the response asserted a current temperature not present in any evidence.",
+        "expectedStatus": "failed",
+        "rationale": "The response invents evidence and obscures provider degradation."
+      },
+      {
+        "id": "forecast-only-no-caveat-review",
+        "inputSummary": "The forecast-backed recommendation is useful, but the response never tells the user current conditions were unavailable.",
+        "expectedStatus": "review",
+        "rationale": "The result is partially useful but does not fully satisfy the transparent-recovery contract."
+      }
+    ]
+  }
+}

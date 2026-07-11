@@ -1,0 +1,90 @@
+---
+title: Automating common tasks
+summary: Use `workspace-copilot` for recurring workspace review loops, deployment summaries, and research digests driven by local prompts and `kcron`.
+section: build
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Step 8">
+This step turns the workspace-bound demo into recurring automation. The same `workspace-copilot` contract now powers scheduled work instead of only interactive requests.
+</WorkspaceCopilotDemo>
+
+Kestrel automation works best when the workspace catalog is the product surface and the scheduler is built on that central structure.
+
+## Why this exists
+
+Good recurring automation is:
+
+- local to the workspace that owns the work
+- explicit about what artifact it writes
+- safe to run as a fresh session
+- inspectable after the fact
+
+That is why `Workspace Copilot` writes reports into `./reports` and keeps continuity in explicit memory rather than relying on one immortal session.
+
+## Nightly workspace review
+
+```json
+{
+  "label": "Workspace Copilot",
+  "agent": "workspace-copilot",
+  "sessionPrefix": "workspace-copilot",
+  "outputRoot": "./reports",
+  "cron": {
+    "enabled": true,
+    "schedule": "0 22 * * *",
+    "launchPrompt": "./central scheduler prompt"
+  }
+}
+```
+
+Prompt for `./central scheduler prompt`:
+
+```md
+Review the workspace changes since the previous run. Summarize the highest-risk changes, open questions, missing tests, and next actions. Write the result to ./reports/nightly-review.md.
+```
+
+## Validate with `run-once`
+
+```bash
+kcron run-once
+```
+
+Use `run-once` before you trust a real schedule. It is the cleanest way to verify prompt behavior, output paths, and memory continuity without waiting for the next cron tick.
+
+## Common automation patterns
+
+| Pattern | Prompt focus | Durable output |
+| --- | --- | --- |
+| nightly repo review | risk, missing tests, next actions | `./reports/nightly-review.md` |
+| deployment summary | deploy state, incidents, follow-ups | `./reports/deploy-summary.md` |
+| research digest | new findings, sources, open questions | `./reports/research-digest.md` |
+| maintenance loop | docs drift, lint issues, owner handoff | `./reports/maintenance-pass.md` |
+
+## What changes in this step
+
+- the demo now has a recurring nightly task
+- the workspace produces predictable report artifacts in `./reports`
+- the example covers the full loop from interactive run to scheduled automation
+- operators can reason about failure by inspecting prompts, memory, reports, and traces together
+
+## Failure modes to watch
+
+- the workspace is not registered, so `kcron` never picks it up
+- `cron.enabled` is `false`
+- the launch prompt path is wrong
+- the prompt writes outside `./reports`
+- continuity is expected from a long-lived session instead of workspace files and explicit memory
+
+## Why this matters
+
+This is where Workspaces stop being configuration and become product behavior. A strong automation story is not “you can schedule something.” It is “you can review the workspace, understand the prompt, inspect the output, and trust the operator trail later.”
+
+## What To Read Next
+
+- [kcron](/cli/kcron)
+- [Production operating model](/deploy/production-operating-model)
+- [Reliability](/operations/reliability)

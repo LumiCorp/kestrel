@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kestrel Desktop</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #141518;
+        --bg-muted: #191b1f;
+        --surface: rgba(25, 27, 31, 0.9);
+        --surface-soft: rgba(20, 22, 26, 0.86);
+        --surface-elevated: rgba(29, 31, 36, 0.95);
+        --surface-ink: #111317;
+        --border: rgba(238, 230, 214, 0.12);
+        --border-strong: rgba(238, 230, 214, 0.24);
+        --text: #f3eee5;
+        --muted: rgba(243, 238, 229, 0.72);
+        --dim: rgba(243, 238, 229, 0.44);
+        --success: #6fbd8e;
+        --warning: #d5a24d;
+        --danger: #df7777;
+        --focus: #b1bfdc;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(180deg, var(--surface-ink), var(--bg) 42%, #101115);
+        color: var(--text);
+        font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(900px, calc(100vw - 64px));
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+        border-radius: 8px;
+        padding: 40px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+      }
+      .topline {
+        display: grid;
+        gap: 18px;
+        padding: 6px 0 30px;
+        text-align: center;
+      }
+      .brand-lockup {
+        display: grid;
+        justify-items: center;
+        gap: 18px;
+      }
+      .brand-logo-wrap {
+        display: grid;
+        place-items: center;
+        width: min(540px, 76vw);
+        min-width: 0;
+        min-height: 156px;
+        padding: 18px 24px;
+      }
+      .brand-logo {
+        display: block;
+        width: min(500px, 100%);
+        max-width: none;
+        max-height: 132px;
+        object-fit: contain;
+      }
+      .brand-copy {
+        display: grid;
+        justify-items: center;
+        gap: 0;
+        max-width: 560px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 28px;
+        line-height: 1.15;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .appinfo {
+        justify-self: start;
+        max-width: 360px;
+        color: var(--dim);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .status {
+        padding: 26px 28px 24px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        text-align: center;
+      }
+      .phase {
+        display: inline-flex;
+        width: fit-content;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border: 1px solid var(--border);
+        background: var(--surface-muted, rgba(35, 39, 45, 0.9));
+        color: var(--muted);
+      }
+      body[data-boot-phase="ready"] .phase {
+        color: var(--success);
+      }
+      body[data-boot-phase="failed"] .phase {
+        color: var(--danger);
+      }
+      body[data-boot-phase="starting"] .phase,
+      body[data-boot-phase="waiting"] .phase {
+        color: var(--warning);
+      }
+      .message {
+        margin-top: 14px;
+        font-size: 25px;
+        line-height: 1.2;
+        font-weight: 500;
+        color: var(--text);
+      }
+      .details {
+        margin-top: 10px;
+        white-space: pre-wrap;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .summary-detail {
+        margin: 8px auto 0;
+        max-width: 620px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .actions:empty {
+        display: none;
+      }
+      .utility-actions {
+        display: none;
+      }
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin: 22px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .checklist:empty {
+        display: none;
+      }
+      .checklist li {
+        display: grid;
+        gap: 4px;
+        align-content: center;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        background: var(--surface-elevated);
+      }
+      .check-head {
+        display: grid;
+        gap: 4px;
+        justify-items: center;
+      }
+      .check-label {
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .check-state {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .check-state.ready { color: var(--success); }
+      .check-state.starting, .check-state.unknown { color: var(--warning); }
+      .check-state.blocked, .check-state.degraded { color: var(--danger); }
+      .check-detail {
+        display: none;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .check-evidence {
+        display: none;
+        color: color-mix(in srgb, var(--muted) 76%, white);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .check-action {
+        display: none;
+        justify-self: start;
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+      button {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: var(--bg-muted);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      button:hover {
+        border-color: var(--border-strong);
+        background: color-mix(in srgb, var(--bg-muted) 82%, white);
+      }
+      .foot {
+        display: none;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 18px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .timeline {
+        display: none;
+        gap: 6px;
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+      .timeline li {
+        display: flex;
+        gap: 10px;
+        border-top: 1px solid var(--border);
+        padding-top: 6px;
+      }
+      @media (max-width: 760px) {
+        .checklist {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .topline {
+          display: grid;
+          padding-bottom: 24px;
+        }
+        .brand-lockup {
+          display: grid;
+          gap: 18px;
+        }
+        .brand-logo-wrap {
+          width: min(360px, 100%);
+          min-width: 0;
+          min-height: 120px;
+          padding: 12px 16px;
+        }
+        .brand-logo {
+          width: min(340px, 100%);
+        }
+        .appinfo {
+          max-width: none;
+        }
+        main {
+          width: min(100vw - 32px, 900px);
+          padding: 24px;
+        }
+        .message {
+          font-size: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="topline">
+        <div class="brand-lockup">
+          <div class="brand-logo-wrap" aria-hidden="true">
+            <img class="brand-logo" src="./kestrel-full-horz-dark-mode.png" alt="" />
+          </div>
+          <div class="brand-copy">
+            <h1 class="sr-only">Kestrel Desktop</h1>
+          </div>
+        </div>
+      </div>
+      <section class="status">
+        <div>
+          <span id="phase" class="phase">Starting</span>
+          <div id="message" class="message">Preparing desktop app...</div>
+          <div id="summary-detail" class="summary-detail"></div>
+          <div id="details" class="details"></div>
+        </div>
+        <div id="quick-actions" class="actions"></div>
+        <div class="utility-actions" aria-hidden="true">
+          <button id="restart" type="button">Restart runtime</button>
+          <button id="diagnostics" type="button">Open diagnostics</button>
+          <button id="copy-help-packet" type="button">Copy help packet</button>
+          <button id="reset-store" type="button" hidden>Reset Runtime Store</button>
+        </div>
+        <ul id="checklist" class="checklist" aria-label="Readiness checklist"></ul>
+        <ol id="timeline" class="timeline" aria-label="Boot timeline"></ol>
+      </section>
+      <div class="foot">
+        <span id="updated-at">Waiting for first boot event...</span>
+        <span id="appinfo" class="appinfo">Loading app info...</span>
+      </div>
+    </main>
+    <script>
+      const phase = document.getElementById("phase");
+      const message = document.getElementById("message");
+      const summaryDetail = document.getElementById("summary-detail");
+      const details = document.getElementById("details");
+      const appinfo = document.getElementById("appinfo");
+      const updatedAt = document.getElementById("updated-at");
+      const restart = document.getElementById("restart");
+      const diagnostics = document.getElementById("diagnostics");
+      const copyHelpPacket = document.getElementById("copy-help-packet");
+      const resetStore = document.getElementById("reset-store");
+      const quickActions = document.getElementById("quick-actions");
+      const checklist = document.getElementById("checklist");
+      const timeline = document.getElementById("timeline");
+      const desktopBridge = window.kestrelDesktop;
+
+      function render(state) {
+        document.body.dataset.bootPhase = state.phase;
+        const display = summarizeBootState(state);
+        phase.textContent = display.badge;
+        message.textContent = display.title;
+        summaryDetail.textContent = display.detail;
+        details.textContent = state.details ?? "";
+        resetStore.hidden = state.code !== "STORE_SQLITE_INIT_FAILED";
+        updatedAt.textContent = state.updatedAt ? `Updated ${new Date(state.updatedAt).toLocaleTimeString()}` : "Waiting for first boot event...";
+        const items = state.readiness?.items ?? fallbackItems(state);
+        renderQuickActions(state, items);
+        renderChecklist(items);
+        renderTimeline(state.timeline ?? []);
+      }
+
+      function summarizeBootState(state) {
+        const summaryState = state.readiness?.summary?.state;
+        if (state.phase === "ready" || summaryState === "ready") {
+          return {
+            badge: "Ready",
+            title: "Kestrel is ready",
+            detail: "Opening your workspace.",
+          };
+        }
+        if (state.phase === "failed" || summaryState === "blocked") {
+          return {
+            badge: "Needs attention",
+            title: state.readiness?.summary?.title ?? "Kestrel needs attention",
+            detail: state.readiness?.summary?.detail ?? state.message,
+          };
+        }
+        if (summaryState === "degraded") {
+          return {
+            badge: "Limited",
+            title: state.readiness?.summary?.title ?? "Kestrel is starting with an issue",
+            detail: state.readiness?.summary?.detail ?? state.message,
+          };
+        }
+        return {
+          badge: "Starting",
+          title: "Starting Kestrel",
+          detail: state.readiness?.summary?.detail ?? "Preparing the local runtime and workspace.",
+        };
+      }
+
+      function fallbackItems(state) {
+        return [
+          {
+            id: "boot",
+            label: "Boot state",
+            state: state.phase === "failed" ? "blocked" : "starting",
+            detail: state.message,
+          },
+        ];
+      }
+
+      function renderQuickActions(state, items) {
+        const actions = [];
+        if (state.code === "STORE_SQLITE_INIT_FAILED") {
+          actions.push({ label: "Reset Runtime Store", command: "reset_runtime_store" });
+        }
+        for (const item of items) {
+          if (item.action && !actions.some((action) => action.command === item.action.command)) {
+            actions.push(item.action);
+          }
+        }
+        if (desktopBridge === undefined) {
+          quickActions.replaceChildren();
+          return;
+        }
+        quickActions.replaceChildren(...actions.slice(0, 2).map((item) => {
+          const action = document.createElement("button");
+          action.type = "button";
+          action.textContent = item.label;
+          action.addEventListener("click", () => {
+            void runReadinessAction(item.command);
+          });
+          return action;
+        }));
+      }
+
+      function renderChecklist(items) {
+        const priority = { blocked: 0, degraded: 1, starting: 2, unknown: 3, ready: 4 };
+        const visibleItems = [...items]
+          .sort((a, b) => (priority[a.state] ?? 5) - (priority[b.state] ?? 5))
+          .slice(0, 4);
+        if (visibleItems.length <= 1) {
+          checklist.replaceChildren();
+          return;
+        }
+        checklist.replaceChildren(...visibleItems.map((item) => {
+          const row = document.createElement("li");
+          const head = document.createElement("div");
+          head.className = "check-head";
+          const label = document.createElement("span");
+          label.className = "check-label";
+          label.textContent = item.label;
+          const state = document.createElement("span");
+          state.className = `check-state ${item.state}`;
+          state.textContent = item.state.replace("_", " ");
+          head.append(label, state);
+
+          const detail = document.createElement("div");
+          detail.className = "check-detail";
+          detail.textContent = item.detail;
+          row.append(head, detail);
+
+          if (item.evidence) {
+            const evidence = document.createElement("div");
+            evidence.className = "check-evidence";
+            evidence.textContent = item.evidence;
+            row.append(evidence);
+          }
+          if (item.action) {
+            const action = document.createElement("button");
+            action.type = "button";
+            action.className = "check-action";
+            action.textContent = item.action.label;
+            action.addEventListener("click", () => {
+              void runReadinessAction(item.action.command);
+            });
+            row.append(action);
+          }
+          return row;
+        }));
+      }
+
+      function renderTimeline(events) {
+        timeline.replaceChildren(...events.slice(-5).reverse().map((event) => {
+          const row = document.createElement("li");
+          const at = document.createElement("span");
+          at.textContent = new Date(event.at).toLocaleTimeString();
+          const text = document.createElement("span");
+          text.textContent = `${event.phase}: ${event.message}`;
+          row.append(at, text);
+          return row;
+        }));
+      }
+
+      async function runReadinessAction(command) {
+        if (command === "restart_runtime") {
+          await restartRuntime();
+          return;
+        }
+        if (command === "open_logs") {
+          void desktopBridge?.openDiagnostics();
+          return;
+        }
+        if (command === "copy_help_packet") {
+          await copyHelp();
+          return;
+        }
+        if (command === "repair_database") {
+          await desktopBridge?.repairDatabase();
+          return;
+        }
+        if (command === "reset_runtime_store") {
+          await resetRuntimeStore();
+          return;
+        }
+        if (command === "restart_database") {
+          await desktopBridge?.restartDatabase();
+          return;
+        }
+        if (command === "open_settings") {
+          details.textContent = "Settings will open after the cockpit finishes loading.";
+          return;
+        }
+        if (command === "add_project") {
+          details.textContent = "Project setup is available after the cockpit opens.";
+          return;
+        }
+        details.textContent = "Rebuild or reinstall the Desktop package, then launch Kestrel again.";
+      }
+
+      if (desktopBridge === undefined) {
+        appinfo.textContent = "Kestrel preview";
+        render({
+          phase: "failed",
+          message: "Desktop bridge is not available in this preview.",
+          updatedAt: new Date().toISOString(),
+          readiness: {
+            summary: {
+              state: "blocked",
+              title: "Desktop bridge unavailable",
+              detail: "Open this screen through Kestrel Desktop to receive live boot checks.",
+            },
+            items: [
+              {
+                id: "bridge",
+                label: "Desktop bridge",
+                state: "blocked",
+                detail: "Electron preload did not expose the Desktop bridge.",
+                action: { label: "Open diagnostics", command: "open_logs" },
+              },
+            ],
+          },
+        });
+      } else {
+        desktopBridge.getAppInfo().then((info) => {
+          appinfo.textContent = `${info.name} ${info.version}${info.isPackaged ? "" : " (dev)"}`;
+        }).catch(() => {
+          appinfo.textContent = "Kestrel";
+        });
+
+        desktopBridge.getBootState().then(render);
+        const release = desktopBridge.onBootState(render);
+        window.addEventListener("beforeunload", release, { once: true });
+      }
+
+      async function restartRuntime() {
+        try {
+          if (desktopBridge === undefined) {
+            details.textContent = "Desktop bridge is not available in this preview.";
+            return;
+          }
+          const status = await desktopBridge.restartRuntime();
+          details.textContent = status.running ? `Runtime pid ${status.pid ?? "starting"} is active.` : "Runtime is not active.";
+        } catch (error) {
+          details.textContent = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      restart.addEventListener("click", restartRuntime);
+      diagnostics.addEventListener("click", () => {
+        void desktopBridge?.openDiagnostics();
+      });
+      async function copyHelp() {
+        try {
+          if (desktopBridge === undefined) {
+            details.textContent = "Desktop bridge is not available in this preview.";
+            return;
+          }
+          const bundle = await desktopBridge.getSupportBundle();
+          const text = `${bundle.schema}\n${JSON.stringify(bundle, null, 2)}`;
+          await navigator.clipboard.writeText(text);
+          details.textContent = "Help packet copied.";
+        } catch (error) {
+          details.textContent = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      copyHelpPacket.addEventListener("click", copyHelp);
+      async function resetRuntimeStore() {
+        try {
+          if (desktopBridge === undefined) {
+            details.textContent = "Desktop bridge is not available in this preview.";
+            return;
+          }
+          const result = await desktopBridge.resetRuntimeStore();
+          details.textContent =
+            result.archivedStorePath !== undefined
+              ? `Runtime store reset complete. Archived previous store at ${result.archivedStorePath}.`
+              : "Runtime store reset complete.";
+        } catch (error) {
+          details.textContent = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      resetStore.addEventListener("click", resetRuntimeStore);
+    </script>
+  </body>
+</html>

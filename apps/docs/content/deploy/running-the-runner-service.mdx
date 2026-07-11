@@ -1,0 +1,153 @@
+---
+title: Running the runner service
+summary: Start the local runner service for the Workspace Copilot demo and preserve the server-owned boundary between `/api/copilot/*` routes and the runtime.
+section: deploy
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Deploy step 1">
+This page starts the runner boundary that the Workspace Copilot routes call. The application-facing routes stay `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook`.
+</WorkspaceCopilotDemo>
+
+The runner service is the integration boundary most product teams should start from. It lets your app call Kestrel over HTTP without embedding the runtime directly into browser code or letting every surface invent its own execution path.
+
+## Why this exists
+
+The runner boundary keeps three concerns separate:
+
+- the browser only speaks to the app
+- the app server owns user auth and service credentials
+- the runtime owns durable execution, storage, and replay evidence
+
+If you collapse those boundaries, the resulting system becomes harder to secure and harder to debug. Most deployment confusion later comes from losing this separation, not from the runtime being mysterious.
+
+## Start the service locally
+
+```bash
+kestrel web
+```
+
+That command starts the runner service and prints copy-paste-ready values for:
+
+- `KESTREL_RUNNER_SERVICE_URL`
+- `KESTREL_RUNNER_SERVICE_TOKEN`
+
+## Wire the demo application
+
+```bash
+export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
+export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
+pnpm dev
+```
+
+With those values in place, the shared `workspaceCopilotAgent` can serve:
+
+- `/api/copilot/run`
+- `/api/copilot/stream`
+- `/api/copilot/webhook`
+
+## Request flow
+
+```text
+Browser
+  -> POST /api/copilot/stream
+    -> Next.js server route
+      -> workspaceCopilotAgent.stream()
+        -> runner service
+          -> runtime
+            -> store/events/tools/model
+```
+
+## Health and boundary checks
+
+Use these quick checks before you debug the application routes:
+
+```bash
+echo "$KESTREL_RUNNER_SERVICE_URL"
+echo "$KESTREL_RUNNER_SERVICE_TOKEN"
+curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+```
+
+The health check should succeed before you spend time on route-level debugging. A healthy app with an unhealthy runner is still a broken Kestrel deployment.
+
+## Full smoke-test sequence
+
+Once health is up, verify both the compat layer and the command boundary:
+
+```bash
+curl -sS "$KESTREL_RUNNER_SERVICE_URL/v1/models" \
+  -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN"
+
+curl -sS "$KESTREL_RUNNER_SERVICE_URL/commands" \
+  -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-kestrel-actor-id: user-123" \
+  -H "x-kestrel-actor-type: end_user" \
+  -H "x-kestrel-actor-name: Taylor Example" \
+  -H "x-kestrel-tenant-id: acme" \
+  -d '{
+    "command": "runner.ping"
+  }'
+```
+
+Representative `runner.ping` response:
+
+```json
+{
+  "type": "runner.pong",
+  "status": "ok"
+}
+```
+
+If `/health` works but `/commands` fails, the runner is listening but the app-side auth or actor metadata contract is wrong. If `/commands` works but `/api/copilot/run` fails, the next suspect is the app route, not the runtime core.
+
+## What changes in this step
+
+- the demo now has a live runner boundary
+- the Next.js routes can proxy browser requests safely
+- the browser still never sees runner credentials
+- the app and runtime now have a clear failure boundary
+
+## Failure mode: runner unavailable
+
+If the runner is down:
+
+- `/api/copilot/run` fails even though the app is healthy
+- `/api/copilot/stream` can close early or emit an upstream error
+- `kcron` cannot launch the nightly review job successfully
+
+That is why the runner service should be treated as a first-class dependency, not as an implementation detail.
+
+## What to inspect first when the app looks broken
+
+Use this order:
+
+1. confirm `/health`
+2. confirm `GET /v1/models`
+3. confirm `/commands` with `runner.ping`
+4. only then inspect `/api/copilot/*` routes
+
+That sequence keeps you from debugging product code when the actual failure is lower in the boundary stack.
+
+## Minimal local operator loop
+
+Use this sequence when you want to prove the full local stack before debugging app code:
+
+```bash
+kestrel web
+export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
+export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
+pnpm dev
+curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+curl -sS "$KESTREL_RUNNER_SERVICE_URL/v1/models" \
+  -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN"
+```
+
+## What To Read Next
+
+- [Environment and auth](/deploy/environment-and-auth)
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Runner service CLI](/cli/runner-service)

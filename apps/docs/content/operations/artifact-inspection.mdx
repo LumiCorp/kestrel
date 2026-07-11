@@ -1,0 +1,95 @@
+---
+title: Artifact inspection
+summary: Inspect reports, memory-linked artifacts, traces, and replay evidence when Workspace Copilot outputs drift, disappear, or disagree with the operator view.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Operator manual">
+Use this page when Workspace Copilot produced the wrong artifact, failed to update `reports/nightly-review.md`, or left behind evidence that needs interpretation.
+</WorkspaceCopilotDemo>
+
+Artifacts are part of the product contract in Kestrel. They are not incidental files. They are durable evidence that help operators understand what happened.
+
+## What to inspect first
+
+For the canonical demo, start with:
+
+- `reports/nightly-review.md`
+- session memory fields such as `linkedArtifacts`
+- route or scheduler path that launched the run
+- traces or replay evidence tied to the same request or session
+
+## Core artifact surfaces
+
+| Surface | Why inspect it |
+| --- | --- |
+| `reports/nightly-review.md` | confirms whether the expected report was written and what it contained |
+| session memory `linkedArtifacts` | confirms what the run intended to update |
+| traces | confirms route, actor, tenant, and run-level execution path |
+| replay/store evidence | confirms the durable sequence after the run finishes |
+
+## Artifact lifecycle
+
+The useful operator question is not only “is the file there?” It is “how did the artifact get there and what other state points at it?”
+
+```text
+interactive route or kcron run-once
+  -> runner service
+    -> session memory and linkedArtifacts
+      -> report or UI artifact written
+        -> trace and replay evidence persisted
+```
+
+That is why `reports/nightly-review.md` matters. It is the visible result of a larger durable trail.
+
+## Incident: nightly report missing
+
+Inspect in this order:
+
+1. confirm `kcron run-once` or the route actually launched
+2. inspect `reports/nightly-review.md`
+3. inspect memory revision and `linkedArtifacts`
+4. inspect traces for the corresponding request or scheduled run
+5. inspect replay evidence to confirm whether the artifact step happened
+
+```text
+kcron run-once or /api/copilot/run
+  -> expected report path: reports/nightly-review.md
+    -> compare linkedArtifacts and memory revision
+      -> inspect trace and replay evidence for the same session
+```
+
+## Incident: memory and replay mismatch
+
+If the artifact does not match the remembered context:
+
+- inspect the current memory revision
+- inspect the stored `linkedArtifacts`
+- compare the prompt path used by the route and scheduler
+- use traces and replay evidence to confirm which path actually ran
+
+## Incident: replay evidence and a visible artifact disagree
+
+If a visible artifact disagrees with replay evidence:
+
+1. confirm the persisted run id
+2. confirm the artifact path, checksum, and producer
+3. compare the artifact with the original linked artifacts and run events
+4. rerun the owning workflow only when new evidence is required
+
+Do not rewrite historical evidence to make the current output look consistent.
+
+## What this means for Workspace Copilot
+
+The product promise is not only “it writes a report.” It is “operators can explain why the report was written, why it was wrong, or why it never appeared.”
+
+## What To Read Next
+
+- [Reliability](/operations/reliability)
+- [Evaluations with Ruhroh](/operations/evaluations)
+- [Store and replay](/runtime/store-and-replay)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)

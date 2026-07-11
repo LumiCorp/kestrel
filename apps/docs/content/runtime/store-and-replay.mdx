@@ -1,0 +1,82 @@
+---
+title: Store and replay
+summary: The persistence layer that gives Workspace Copilot durable session state, replayable evidence, and enough history to inspect interactive and scheduled runs after the fact.
+section: runtime
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Runtime consequence">
+This page is the reason the canonical demo is more than a tutorial. The same workspace can support interactive requests and nightly review jobs because the runtime leaves behind durable state and inspectable history.
+</WorkspaceCopilotDemo>
+
+Kestrel's store layer persists state, logs, events, and replay material. That is what lets operators reason about a run after it finishes instead of reconstructing it from loose logs or conflicting prompt memories.
+
+## What persists for the demo
+
+- session continuity for `workspace-copilot-session-*`
+- explicit memory updates and revisions
+- run events and terminal outcomes
+- enough evidence to compare an interactive route and a nightly scheduler path
+
+## Data-flow summary
+
+```text
+route or scheduler launch
+  -> run/session state persisted
+    -> events and outcomes written durably
+      -> memory revision updated
+        -> operators inspect replay evidence later
+```
+
+## What this means for Workspace Copilot
+
+If the nightly report is wrong, replay and persisted state should help answer:
+
+- which route or scheduler path triggered the run
+- what memory state existed before the run
+- which tools or steps were involved
+- what artifact path the run intended to update
+- whether the failure was a cancellation, error, or content problem
+
+That is the core support value of the store layer. It turns "something weird happened overnight" into a concrete inspection sequence.
+
+## Operator loop
+
+```bash
+pnpm run governance:check
+pnpm run test
+pnpm run prompt-suite
+```
+
+Those commands are not the replay system itself, but they defend the quality of the evidence the runtime stores by reducing drift before it ships.
+
+## Failure mode: memory and replay mismatch
+
+If the daytime route and the nightly run disagree, replay and store data should let you separate:
+
+- route contract drift
+- workspace prompt drift
+- memory revision conflict
+- runtime behavior regression
+
+That is the practical support value of durable persistence.
+
+## What to inspect first
+
+When an operator is trying to explain a bad outcome, the order should usually be:
+
+1. terminal event and run outcome
+2. session memory revision before the run
+3. artifact path and whether the expected file changed
+4. replay or evaluation evidence for comparable prior behavior
+
+That order keeps the investigation attached to durable evidence instead of drifting into guesswork.
+
+## What To Read Next
+
+- [Reliability](/operations/reliability)
+- [Evaluations with Ruhroh](/operations/evaluations)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)

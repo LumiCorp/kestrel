@@ -1,0 +1,268 @@
+---
+title: Integrating with Next.js
+summary: Expose `workspace-copilot` through `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook` while keeping runner-service trust, actor context, and correlation handling on the server.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Step 5">
+This step turns the SDK example into application routes. The demo now has three fixed server routes: `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook`.
+</WorkspaceCopilotDemo>
+
+`@kestrel-agents/next` removes the repetitive route-handler work around Kestrel integrations. It is the right tool when your app server should speak to the runner service and your browser should speak only to your app.
+
+For **Workspace Copilot**, this is the step where the server-owned route contract becomes concrete.
+
+## Why this exists
+
+The Next.js layer should do four jobs and no more:
+
+- parse the inbound request
+- resolve authenticated actor and tenant context
+- call the runner service through the shared agent
+- return a response shape the browser or webhook caller can consume
+
+It should not:
+
+- expose the runner token to the browser
+- let the browser choose the canonical tenant or actor id
+- duplicate route-to-runner glue in every file
+
+## Install the package pair
+
+```bash
+pnpm add @kestrel-agents/next @kestrel-agents/sdk
+```
+
+## Shared server module: `lib/workspace-copilot.ts`
+
+The routes stay small because the shared module owns the stable agent and context:
+
+```ts
+import { createAgent } from "@kestrel-agents/sdk";
+
+export const workspaceCopilotAgent = createAgent({
+  id: "workspace-copilot",
+  profileId: "workspace-copilot",
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+
+export async function resolveWorkspaceCopilotContext() {
+  return {
+    actor: {
+      actorId: "user-123",
+      actorType: "end_user" as const,
+      displayName: "Taylor Example",
+    },
+    tenantId: "acme",
+  };
+}
+```
+
+## JSON route: `app/api/copilot/run/route.ts`
+
+Use the JSON route when the caller wants one terminal response:
+
+```ts
+import { createJsonRunRouteHandler } from "@kestrel-agents/next";
+
+import { resolveWorkspaceCopilotContext, workspaceCopilotAgent } from "@/lib/workspace-copilot";
+
+export const POST = createJsonRunRouteHandler({
+  agent: workspaceCopilotAgent,
+  async resolveContext(request, correlation) {
+    return resolveWorkspaceCopilotContext();
+  },
+});
+```
+
+Typical request body:
+
+```json
+{
+  "sessionId": "workspace-copilot-session-001",
+  "message": "Summarize the highest-risk files in this workspace."
+}
+```
+
+## Streaming route: `app/api/copilot/stream/route.ts`
+
+Use the stream route when the browser needs request-scoped SSE progress:
+
+```ts
+import { createStreamRunRouteHandler } from "@kestrel-agents/next";
+
+import { resolveWorkspaceCopilotContext, workspaceCopilotAgent } from "@/lib/workspace-copilot";
+
+export const POST = createStreamRunRouteHandler({
+  agent: workspaceCopilotAgent,
+  resolveContext: async () => resolveWorkspaceCopilotContext(),
+});
+```
+
+The helper:
+
+- reads or generates request and correlation ids
+- forwards `request.signal` upstream
+- serializes stream events as SSE
+- returns `x-kestrel-request-id` and `x-kestrel-correlation-id`
+
+## Webhook route: `app/api/copilot/webhook/route.ts`
+
+Use the webhook route when another service posts a payload that your app maps into a Kestrel turn:
+
+```ts
+import { createWebhookRunRouteHandler } from "@kestrel-agents/next";
+
+import { resolveWorkspaceCopilotContext, workspaceCopilotAgent } from "@/lib/workspace-copilot";
+
+export const POST = createWebhookRunRouteHandler<{ sessionId?: string; prompt: string }>({
+  agent: workspaceCopilotAgent,
+  resolveContext: async () => resolveWorkspaceCopilotContext(),
+  mapPayload(payload) {
+    return {
+      sessionId: payload.sessionId ?? "workspace-copilot-session-001",
+      message: payload.prompt,
+    };
+  },
+});
+```
+
+## Response and correlation contract
+
+The helpers return Kestrel correlation headers on the response:
+
+| Header | Why it matters |
+| --- | --- |
+| `x-kestrel-request-id` | lines up one app request with one route-handling path |
+| `x-kestrel-correlation-id` | ties route handling to runner-side traces or errors |
+
+For the stream route, the response is `text/event-stream`. For the JSON and webhook routes, the response is JSON.
+
+## Browser and webhook callers
+
+The route helpers are server-side abstractions. From the caller's point of view, they are just normal application routes.
+
+Interactive browser call:
+
+```ts
+const response = await fetch("/api/copilot/run", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    sessionId: "workspace-copilot-session-001",
+    message: "Summarize the riskiest files in this workspace.",
+  }),
+});
+
+const data = await response.json();
+console.log(response.headers.get("x-kestrel-request-id"));
+console.log(data);
+```
+
+Webhook caller:
+
+```bash
+curl -sS \
+  -X POST http://127.0.0.1:3000/api/copilot/webhook \
+  -H 'content-type: application/json' \
+  -d '{
+    "sessionId": "workspace-copilot-nightly-001",
+    "prompt": "Review the workspace and write ./reports/nightly-review.md."
+  }'
+```
+
+Representative JSON route response:
+
+```json
+{
+  "type": "run.completed",
+  "runId": "run_01workspacecopilot",
+  "sessionId": "workspace-copilot-session-001",
+  "payload": {
+    "result": {
+      "output": {
+        "status": "COMPLETED",
+        "sessionId": "workspace-copilot-session-001",
+        "runId": "run_01workspacecopilot",
+        "errors": []
+      }
+    }
+  }
+}
+```
+
+Representative webhook response:
+
+```json
+{
+  "type": "run.completed",
+  "runId": "run_01workspacecopilot_nightly",
+  "sessionId": "workspace-copilot-nightly-001",
+  "payload": {
+    "result": {
+      "output": {
+        "status": "COMPLETED",
+        "sessionId": "workspace-copilot-nightly-001",
+        "runId": "run_01workspacecopilot_nightly",
+        "errors": []
+      }
+    }
+  }
+}
+```
+
+## Correlation logging example
+
+If the app needs to line browser reports up with the runner, log the correlation headers at the route boundary:
+
+```ts
+const upstream = await fetch("/api/copilot/run", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    sessionId: "workspace-copilot-session-001",
+    message: "Summarize the workspace.",
+  }),
+});
+
+console.log({
+  requestId: upstream.headers.get("x-kestrel-request-id"),
+  correlationId: upstream.headers.get("x-kestrel-correlation-id"),
+});
+```
+
+## Request flow
+
+```text
+browser or webhook caller
+  -> /api/copilot/run | /api/copilot/stream | /api/copilot/webhook
+    -> resolveWorkspaceCopilotContext()
+      -> workspaceCopilotAgent.run() or stream()
+        -> runner service
+          -> runtime
+```
+
+## What changes in this step
+
+- the demo is now reachable from a real app server
+- the browser still never talks directly to the runner service
+- `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook` become the stable entrypoints
+- request correlation and actor context are now handled consistently instead of ad hoc
+
+## Failure modes to expect
+
+- `sessionId` missing: route body contract is wrong
+- stream closes immediately: client disconnected, signal propagated, or runner became unavailable
+- wrong actor or tenant: context resolver drifted
+- webhook payload maps badly: `mapPayload()` contract is wrong
+
+## What To Read Next
+
+- [Next.js route cookbook](/build/nextjs-route-cookbook)
+- [Running the runner service](/deploy/running-the-runner-service)
+- [Next.js package reference](/packages/next)

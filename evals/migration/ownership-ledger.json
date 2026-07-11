@@ -1,0 +1,174 @@
+{
+  "version": "kestrel_evaluation_ownership_v1",
+  "updatedAt": "2026-07-10",
+  "owners": {
+    "specs": "LumiCorp/kestrel",
+    "execution": "LumiCorp/ruhroh"
+  },
+  "behaviors": [
+    {
+      "behaviorId": "coding.contract.blocked",
+      "disposition": "runtime_test",
+      "replacement": "independent build-mode capability-block test",
+      "replacementTests": [
+        {
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop accepts a concrete unavailable build capability with blocker provenance"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "coding.contract.verified",
+      "disposition": "runtime_test",
+      "replacement": "independent implemented-and-verified contract test",
+      "replacementTests": [
+        {
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop allows build-mode file mutation after visible todos exist"
+        },
+        {
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop accepts visible todo closure with finalization in one model turn"
+        },
+        {
+          "path": "tests/unit/react-acter-code-artifacts.test.ts",
+          "testName": "exec.finalize dispatches implemented_and_verified without runtime proof-token gates"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.browser.degraded",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.browser.degraded",
+      "parityRecord": "evals/migration/parity/live.browser.degraded.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.reference.forecast",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.reference.forecast",
+      "parityRecord": "evals/migration/parity/live.reference.forecast.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.research.degraded",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.research.degraded",
+      "parityRecord": "evals/migration/parity/live.research.degraded.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.signal.brief",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.signal.brief",
+      "parityRecord": "evals/migration/parity/live.signal.brief.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.signal.partial-failure",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.signal.partial-failure",
+      "parityRecord": "evals/migration/parity/live.signal.partial-failure.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "live.weather.degraded",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "live.weather.degraded",
+      "parityRecord": "evals/migration/parity/live.weather.degraded.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.adversarial-tool-denial",
+      "disposition": "runtime_test",
+      "replacement": "independent prompt-injection and tool-grounding test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "adversarial_forbid_tools_weather"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.capability-unavailable",
+      "disposition": "runtime_test",
+      "replacement": "independent unavailable-capability finalization test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "capability_unavailable"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.conflict",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "research.evidence.conflict",
+      "parityRecord": "evals/migration/parity/research.evidence.conflict.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.fetch-fallback",
+      "disposition": "runtime_test",
+      "replacement": "independent extraction-degradation fallback test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "research_fetch_timeout_recovery"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.happy",
+      "disposition": "ruhroh",
+      "ruhrohScenarioId": "research.evidence.happy",
+      "parityRecord": "evals/migration/parity/research.evidence.happy.json",
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.evidence.insufficient-support",
+      "disposition": "runtime_test",
+      "replacement": "independent insufficient-evidence policy test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "agent_loop_finalize_requires_evidence"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.policy.chat-weather-block",
+      "disposition": "runtime_test",
+      "replacement": "independent chat-mode tool-block test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "chat_mode_weather_wait"
+        }
+      ],
+      "parityStatus": "passed"
+    },
+    {
+      "behaviorId": "research.policy.mode-escalation",
+      "disposition": "runtime_test",
+      "replacement": "independent plan-to-build escalation and resume test",
+      "replacementTests": [
+        {
+          "path": "tests/scenario/promptSuiteHarness.ts",
+          "promptSuiteCase": "policy_mode_block_filesystem"
+        },
+        {
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop resumes a mode-blocked continuation offer after structural mode-switch reply"
+        }
+      ],
+      "parityStatus": "passed"
+    }
+  ]
+}

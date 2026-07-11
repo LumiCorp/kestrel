@@ -1,0 +1,101 @@
+---
+title: Deployment troubleshooting
+summary: Isolate Workspace Copilot failures by checking runner availability, `/api/copilot/*` routing, server-side context resolution, replay state, and workspace scheduling health.
+section: deploy
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Deploy step 4">
+Use this page when the canonical demo is broken and you need to decide whether the failure is in the runner, the app routes, the request context, memory continuity, or the workspace scheduler.
+</WorkspaceCopilotDemo>
+
+Most Kestrel deployment problems come from boundary mistakes, not from the runtime being fundamentally unavailable. Treat troubleshooting as a boundary-classification exercise first and a prompt/content problem second.
+
+## Runner unavailable
+
+Check the service first:
+
+```bash
+echo "$KESTREL_RUNNER_SERVICE_URL"
+echo "$KESTREL_RUNNER_SERVICE_TOKEN"
+curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+kestrel web
+```
+
+If the runner is not healthy, the app routes are downstream victims, not the root cause.
+
+## Stream route disconnects
+
+If `/api/copilot/stream` closes immediately:
+
+- confirm the browser did not disconnect
+- confirm the Next.js route still forwards `request.signal`
+- confirm the runner stayed healthy for the duration of the request
+
+The route helper intentionally propagates cancellation. That means a client disconnect can become `run.cancelled` upstream. That is a feature, not a bug, because it leaves behind a cleaner operator story than a vanished request.
+
+## Context missing or wrong
+
+Check the server route, not the browser body. The example depends on server-side resolution of:
+
+- `actorId: user-123`
+- `tenantId: acme`
+
+If those values drift or disappear, the bug lives in route code or auth integration, not in the workspace prompt.
+
+## Nightly report missing
+
+Use this checklist:
+
+```bash
+kestrel workspace status
+kcron status
+kcron run-once
+```
+
+Then verify:
+
+- the workspace is registered
+- `cron.enabled` is `true`
+- `cron.launchPrompt` points to `./central scheduler prompt`
+- the prompt writes into `./reports/nightly-review.md`
+
+If those checks pass and the file is still missing, move next to replay, traces, and artifact inspection. The goal is to learn whether the run never launched, launched and failed, or launched and wrote somewhere unexpected.
+
+## Memory and replay mismatch
+
+If the nightly run behaves differently from the daytime route:
+
+- inspect the current session memory revision
+- check whether a concurrent update changed the memory snapshot
+- compare the prompt path used by the route and the scheduler
+- use traces and replay evidence to confirm which path actually ran
+
+This is not a generic “AI inconsistency” bucket. The point of Kestrel is that there is usually a concrete boundary to inspect.
+
+## Recommended inspection order
+
+When the failure is still ambiguous, inspect in this order:
+
+1. runner health
+2. route and auth boundary
+3. session memory revision
+4. replay and traces
+5. workspace catalog and scheduler state
+
+That keeps deployment debugging tied to the real runtime model instead of turning into random prompt edits.
+
+## What changes in this step
+
+- the demo now has an explicit operator troubleshooting path
+- failures can be classified by boundary instead of treated as one vague deployment problem
+- the incident stories now cover runner availability, stream cancellation, missing reports, and memory drift
+
+## What To Read Next
+
+- [Environment and auth](/deploy/environment-and-auth)
+- [Workspaces and automation](/build/workspaces-and-automation)
+- [Reliability](/operations/reliability)

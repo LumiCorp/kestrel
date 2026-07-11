@@ -1,0 +1,1124 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
+import { createWebRunnerAdapter } from "../../src/web/index.js";
+import type { ProtocolTransport } from "../../cli/client/ProtocolClient.js";
+
+class MockTransport implements ProtocolTransport {
+  private handlers:
+    | {
+        onLine: (line: string) => void;
+        onExit: (code: number | null) => void;
+        onErrorOutput?: ((line: string) => void) | undefined;
+      }
+    | undefined;
+
+  sent: Array<{ id: string; type: string; payload: unknown; metadata?: unknown }> = [];
+
+  start(handlers: {
+    onLine: (line: string) => void;
+    onExit: (code: number | null) => void;
+    onErrorOutput?: ((line: string) => void) | undefined;
+  }): void {
+    this.handlers = handlers;
+  }
+
+  send(line: string): void {
+    if (this.handlers === undefined) {
+      throw new Error("transport not started");
+    }
+
+    const command = JSON.parse(line) as {
+      id: string;
+      type: string;
+      payload: {
+        turn?: {
+          sessionId: string;
+        };
+      };
+    };
+
+    this.sent.push(command);
+
+    if (command.type === "run.start") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-unrelated",
+          type: "run.log",
+          ts: new Date().toISOString(),
+          commandId: "some-other-command",
+          runId: "run-other",
+          payload: {
+            entry: {
+              sessionId: command.payload.turn?.sessionId ?? "unknown",
+              runId: "run-other",
+              timestamp: new Date().toISOString(),
+              level: "INFO",
+              eventName: "ignored",
+              metadata: {},
+            },
+          },
+        }),
+      );
+
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-started",
+          type: "run.started",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            sessionId: command.payload.turn?.sessionId ?? "unknown",
+            eventType: "user.message",
+          },
+        }),
+      );
+
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-log",
+          type: "run.log",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: "run-1",
+          payload: {
+            entry: {
+              sessionId: command.payload.turn?.sessionId ?? "unknown",
+              runId: "run-1",
+              timestamp: new Date().toISOString(),
+              level: "INFO",
+              eventName: "step_started",
+              metadata: {},
+            },
+          },
+        }),
+      );
+
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-completed",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: "run-1",
+          payload: {
+            result: {
+              output: {
+                status: "COMPLETED",
+                sessionId: command.payload.turn?.sessionId ?? "unknown",
+                runId: "run-1",
+                errors: [],
+                telemetry: {
+                  stepsExecuted: 1,
+                  toolCalls: 0,
+                  modelCalls: 1,
+                  durationMs: 2,
+                },
+              },
+              finalizedPayload: {
+                message: "done",
+              },
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "runner.ping") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-pong",
+          type: "runner.pong",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            nonce: "ok",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "run.cancel") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-run-cancelled",
+          type: "run.cancelled",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            sessionId: "session-web",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "mcp.status") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-mcp",
+          type: "mcp.status",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            status: {
+              healthy: true,
+              checkedAt: new Date().toISOString(),
+              servers: [],
+              tools: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "mcp.refresh") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-mcp-refresh",
+          type: "mcp.refreshed",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            status: {
+              healthy: true,
+              checkedAt: new Date().toISOString(),
+              servers: [],
+              tools: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "session.state") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-session-state",
+          type: "session.state",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            session: {
+              sessionId: "session-main",
+              version: 2,
+              threadId: "thread-main:session-main",
+              focusedThreadId: "thread-main:session-main",
+            },
+            version: 2,
+            graph: {
+              version: 1,
+              rootTaskIds: [],
+              tasks: {},
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "operator.inbox") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-operator-inbox",
+          type: "operator.inbox",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            inbox: {
+              focusThreadId: "thread-main",
+              items: [],
+              summary: {
+                total: 0,
+                actionable: 0,
+                approvals: 0,
+                userInputs: 0,
+                checkpoints: 0,
+                childBlockers: 0,
+                stalled: 0,
+                assemblyProposals: 0,
+                compatibilityAlerts: 0,
+              },
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "operator.thread") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-operator-thread",
+          type: "operator.thread",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            view: {
+              thread: {
+                threadId: "thread-main",
+                sessionId: "session-main",
+                title: "Main",
+                status: "WAITING",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+              childThreads: [],
+              childBlocker: {
+                delegationId: "delegation-1",
+                childThreadId: "thread-child",
+                status: "WAITING",
+                reason: "Waiting for user.reply",
+              },
+              childBlockerChain: [],
+              nextAction: {
+                kind: "switch_thread",
+                summary: "Switch to the blocked child thread.",
+                threadId: "thread-child",
+              },
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "operator.run") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-operator-run",
+          type: "operator.run",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: "run-main",
+          sessionId: "session-main",
+          threadId: "thread-main",
+          payload: {
+            view: {
+              version: "operator-run-v1",
+              run: {
+                runId: "run-main",
+                sessionId: "session-main",
+                eventType: "user.message",
+                status: "RUNNING",
+                startedAt: new Date().toISOString(),
+              },
+              threadId: "thread-main",
+              summary: {
+                eventCount: 1,
+                stepsObserved: 0,
+                progressToolCalls: 0,
+                waitingMilestones: 0,
+                truncated: false,
+              },
+              diagnosis: { status: "RUNNING", actionable: false },
+              modelProvenance: {
+                retention: "hash_only",
+                callCount: 0,
+                actionCallCount: 0,
+                maintenanceCallCount: 0,
+                providers: [],
+                models: [],
+              },
+              timeline: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "operator.runs") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-operator-runs",
+          type: "operator.runs",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            view: {
+              version: "operator-run-index-v1",
+              generatedAt: new Date().toISOString(),
+              filters: { ...(command.payload as Record<string, unknown>), limit: 10 },
+              hasMore: false,
+              runs: [],
+              sessions: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+
+    if (command.type === "operator.control") {
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-operator-control",
+          type: "operator.controlled",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            threadId: "thread-main",
+          },
+        }),
+      );
+      return;
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.handlers?.onExit(0);
+  }
+}
+
+class SlowRunTransport implements ProtocolTransport {
+  constructor(private readonly runtimeThreadId?: string) {}
+
+  private handlers:
+    | {
+        onLine: (line: string) => void;
+        onExit: (code: number | null) => void;
+        onErrorOutput?: ((line: string) => void) | undefined;
+      }
+    | undefined;
+  private activeRun:
+    | {
+        commandId: string;
+        sessionId: string;
+        runId: string;
+        threadId?: string | undefined;
+      }
+    | undefined;
+
+  sent: Array<{ id: string; type: string; payload: unknown; metadata?: unknown }> = [];
+
+  start(handlers: {
+    onLine: (line: string) => void;
+    onExit: (code: number | null) => void;
+    onErrorOutput?: ((line: string) => void) | undefined;
+  }): void {
+    this.handlers = handlers;
+  }
+
+  send(line: string): void {
+    if (this.handlers === undefined) {
+      throw new Error("transport not started");
+    }
+    const command = JSON.parse(line) as {
+      id: string;
+      type: string;
+      payload: {
+        turn?: {
+          sessionId: string;
+          runId?: string;
+        };
+      };
+      metadata?: unknown;
+    };
+    this.sent.push(command);
+    if (command.type === "run.cancel") {
+      const payload = command.payload as {
+        sessionId?: string | undefined;
+        runId?: string | undefined;
+      };
+      const active = this.activeRun;
+      if (
+        active !== undefined &&
+        payload.sessionId === active.sessionId &&
+        (payload.runId === undefined || payload.runId === active.runId)
+      ) {
+        this.handlers.onLine(
+          JSON.stringify({
+            id: "evt-durable-cancelled",
+            type: "run.cancelled",
+            ts: new Date().toISOString(),
+            commandId: active.commandId,
+            runId: active.runId,
+            sessionId: active.sessionId,
+            payload: {
+              sessionId: active.sessionId,
+              runId: active.runId,
+            },
+          }),
+        );
+        this.activeRun = undefined;
+      }
+      this.handlers.onLine(
+        JSON.stringify({
+          id: "evt-durable-cancel-ack",
+          type: "run.cancelled",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: payload.runId,
+          sessionId: payload.sessionId,
+          payload: {
+            sessionId: payload.sessionId ?? "session-durable",
+            ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+          },
+        }),
+      );
+      return;
+    }
+    if (command.type !== "run.start") {
+      return;
+    }
+    this.activeRun = {
+      commandId: command.id,
+      sessionId: command.payload.turn?.sessionId ?? "session-durable",
+      runId: command.payload.turn?.runId ?? "run-durable",
+      ...(this.runtimeThreadId !== undefined ? { threadId: this.runtimeThreadId } : {}),
+    };
+    this.handlers.onLine(
+      JSON.stringify({
+        id: "evt-durable-started",
+        type: "run.started",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        runId: command.payload.turn?.runId,
+        sessionId: command.payload.turn?.sessionId,
+        ...(this.runtimeThreadId !== undefined ? { threadId: this.runtimeThreadId } : {}),
+        payload: {
+          sessionId: command.payload.turn?.sessionId ?? "session-durable",
+          runId: command.payload.turn?.runId,
+          eventType: "user.message",
+        },
+      }),
+    );
+  }
+
+  emitCompleted(commandId: string, sessionId: string, runId: string): void {
+    this.handlers?.onLine(
+      JSON.stringify({
+        id: "evt-durable-completed",
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        commandId,
+        runId,
+        sessionId,
+        payload: {
+          result: {
+            output: {
+              status: "COMPLETED",
+              sessionId,
+              runId,
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 1,
+                durationMs: 2,
+              },
+            },
+          },
+        },
+      }),
+    );
+  }
+
+  async stop(): Promise<void> {
+    this.handlers?.onExit(0);
+  }
+}
+
+test("web adapter normalizes history and emits only correlated run events", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const seen: string[] = [];
+  const history = [
+    {
+      role: "system",
+      text: "Auto-applying pending checkpoint (compact) before submit.",
+      timestamp: new Date().toISOString(),
+    },
+    ...Array.from({ length: 70 }, (_, idx) => ({
+      role: idx % 2 === 0 ? "user" : "assistant",
+      text: `line-${idx}`,
+      timestamp: new Date().toISOString(),
+    })),
+    {
+      role: "assistant",
+      text: "I am checking files.",
+      timestamp: new Date().toISOString(),
+      data: {
+        reasoning: true,
+      },
+    },
+    {
+      role: "assistant",
+      text: "final useful assistant context",
+      timestamp: new Date().toISOString(),
+    },
+  ] as unknown as Array<{ role: "user" | "assistant"; text: string; timestamp: string }>;
+
+  const terminal = await adapter.runTurnStream(
+    {
+      sessionId: "session-1",
+      message: "hello",
+      eventType: "user.message",
+      history,
+      workspace: {
+        workspaceId: "/tmp/project-a",
+        workspaceRoot: "/tmp/project-a",
+        appRoot: ".",
+        commands: {},
+        label: "project-a",
+      },
+    },
+    {
+      onEvent: (event) => {
+        seen.push(event.type);
+      },
+    },
+  );
+
+  assert.equal(terminal.type, "run.completed");
+  assert.deepEqual(seen, ["run.started", "run.log", "run.completed"]);
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command?.payload as {
+    profile: {
+      shellKind?: string | undefined;
+      presetId?: string | undefined;
+      capabilityPacks?: string[] | undefined;
+      toolAllowlist: string[];
+      codeMode?: {
+        enabled?: boolean | undefined;
+      } | undefined;
+    };
+    turn: {
+      history: unknown[];
+      stepAgent: string;
+      workspace?: {
+        workspaceId?: string | undefined;
+        workspaceRoot?: string | undefined;
+        label?: string | undefined;
+      } | undefined;
+      clientCapabilities?: {
+        surface?: string | undefined;
+        generativeUi?: {
+          enabled?: boolean | undefined;
+        } | undefined;
+      } | undefined;
+    };
+  };
+
+  assert.equal(payload.turn.history.length, 64);
+  assert.equal((payload.turn.history[0] as { text?: string }).text, "line-0");
+  assert.equal((payload.turn.history[1] as { text?: string }).text, "line-8");
+  assert.equal((payload.turn.history[63] as { text?: string }).text, "final useful assistant context");
+  assert.equal(payload.turn.history.some((line) => (line as { role?: string }).role === "system"), false);
+  assert.equal(payload.turn.history.some((line) => (line as { text?: string }).text === "I am checking files."), false);
+  assert.equal(payload.turn.stepAgent, AGENT_STEP_IDS.loop);
+  assert.equal(payload.turn.workspace?.workspaceId, "/tmp/project-a");
+  assert.equal(payload.turn.workspace?.workspaceRoot, "/tmp/project-a");
+  assert.equal(payload.turn.workspace?.label, "project-a");
+  assert.equal(payload.turn.clientCapabilities?.surface, "web");
+  assert.equal(payload.turn.clientCapabilities?.generativeUi?.enabled, true);
+  assert.equal(payload.profile.shellKind, "web");
+  assert.equal(payload.profile.presetId, "web_balanced");
+  assert.deepEqual(payload.profile.capabilityPacks, ["balanced"]);
+  assert.equal(payload.profile.toolAllowlist.includes("code.execute"), false);
+  assert.equal(payload.profile.codeMode?.enabled, false);
+
+  await adapter.close();
+});
+
+test("web adapter durable start and subscribe do not cancel on subscriber abort", async () => {
+  const transport = new SlowRunTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const accepted = await adapter.startRun({
+    sessionId: "session-durable",
+    runId: "run-durable",
+    message: "keep going",
+    eventType: "user.message",
+  });
+
+  assert.equal(accepted.runId, "run-durable");
+  const startCommand = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(startCommand);
+  assert.equal((startCommand?.payload as { turn?: { runId?: string } }).turn?.runId, "run-durable");
+  assert.equal(
+    (startCommand?.metadata as { durability?: string } | undefined)?.durability,
+    "continue_on_disconnect",
+  );
+
+  const checkIn = adapter.checkInRun({
+    threadId: "session-durable",
+    sessionId: "session-durable",
+  });
+  assert.equal(checkIn.status, "running");
+  assert.equal(checkIn.canSubscribe, true);
+
+  const controller = new AbortController();
+  const seen: string[] = [];
+  const subscription = adapter.subscribeRunEvents(
+    {
+      threadId: "session-durable",
+      sessionId: "session-durable",
+      runId: "run-durable",
+    },
+    {
+      signal: controller.signal,
+      onEvent(event) {
+        seen.push(event.type);
+      },
+    },
+  );
+  controller.abort();
+  await subscription;
+
+  assert.deepEqual(seen, ["run.started"]);
+  assert.equal(transport.sent.some((item) => item.type === "run.cancel"), false);
+
+  transport.emitCompleted(accepted.commandId, accepted.sessionId, accepted.runId);
+  const finalCheckIn = adapter.checkInRun({
+    threadId: "session-durable",
+    sessionId: "session-durable",
+    runId: "run-durable",
+  });
+  assert.equal(finalCheckIn.status, "completed");
+  await adapter.close();
+});
+
+test("web adapter durable runs adopt the canonical runtime thread id from events", async () => {
+  const sessionId = "8ffbb0bc-9810-45b4-a220-29a15fb9593a";
+  const canonicalThreadId = `thread-main:${sessionId}`;
+  const transport = new SlowRunTransport(canonicalThreadId);
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const accepted = await adapter.startRun({
+    sessionId,
+    runId: "run:ebd43724-7c97-4b56-b00c-761b32b24ab3",
+    message: "ping 8.8.8.8",
+    eventType: "user.message",
+  });
+
+  assert.equal(accepted.threadId, canonicalThreadId);
+
+  const checkIn = adapter.checkInRun({
+    threadId: canonicalThreadId,
+    sessionId,
+  });
+  assert.equal(checkIn.threadId, canonicalThreadId);
+  assert.equal(checkIn.runId, accepted.runId);
+  assert.equal(checkIn.canSubscribe, true);
+
+  const seen: string[] = [];
+  await adapter.subscribeRunEvents(
+    {
+      threadId: canonicalThreadId,
+      sessionId,
+      runId: accepted.runId,
+    },
+    {
+      onEvent(event) {
+        seen.push(event.type);
+      },
+      signal: AbortSignal.timeout(1),
+    },
+  );
+
+  assert.deepEqual(seen, ["run.started"]);
+  await adapter.close();
+});
+
+test("web adapter can cancel a durable run after subscriber disconnect", async () => {
+  const transport = new SlowRunTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const accepted = await adapter.startRun({
+    sessionId: "session-durable-cancel",
+    runId: "run-durable-cancel",
+    message: "keep going",
+    eventType: "user.message",
+  });
+
+  const controller = new AbortController();
+  const subscription = adapter.subscribeRunEvents(
+    {
+      threadId: "session-durable-cancel",
+      sessionId: "session-durable-cancel",
+      runId: accepted.runId,
+    },
+    {
+      signal: controller.signal,
+      onEvent() {
+        // no-op
+      },
+    },
+  );
+  controller.abort();
+  await subscription;
+
+  const activeCheckIn = adapter.checkInRun({
+    threadId: "session-durable-cancel",
+    sessionId: "session-durable-cancel",
+    runId: accepted.runId,
+  });
+  assert.equal(activeCheckIn.active, true);
+  assert.equal(activeCheckIn.canCancel, true);
+
+  const cancelled = await adapter.sendControl({
+    type: "run.cancel",
+    sessionId: "session-durable-cancel",
+    runId: accepted.runId,
+  });
+  assert.equal(cancelled.type, "run.cancelled");
+  const cancelCommand = transport.sent.find((item) => item.type === "run.cancel");
+  assert.equal((cancelCommand?.payload as { runId?: string } | undefined)?.runId, accepted.runId);
+
+  const finalCheckIn = adapter.checkInRun({
+    threadId: "session-durable-cancel",
+    sessionId: "session-durable-cancel",
+    runId: accepted.runId,
+  });
+  assert.equal(finalCheckIn.status, "canceled");
+  assert.equal(finalCheckIn.active, false);
+  await adapter.close();
+});
+
+test("web adapter durable start reuses the active run for duplicate thread starts", async () => {
+  const transport = new SlowRunTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const first = await adapter.startRun({
+    sessionId: "session-durable",
+    runId: "run-durable",
+    message: "keep going",
+    eventType: "user.message",
+  });
+  const second = await adapter.startRun({
+    sessionId: "session-durable",
+    runId: "run-duplicate",
+    message: "duplicate",
+    eventType: "user.message",
+  });
+
+  assert.equal(second.runId, first.runId);
+  assert.equal(transport.sent.filter((item) => item.type === "run.start").length, 1);
+
+  transport.emitCompleted(first.commandId, first.sessionId, first.runId);
+  const finalCheckIn = adapter.checkInRun({
+    threadId: "session-durable",
+    sessionId: "session-durable",
+  });
+  assert.equal(finalCheckIn.runId, "run-durable");
+  assert.equal(finalCheckIn.status, "completed");
+  await adapter.close();
+});
+
+test("web adapter omits stepAgent for resume-from-wait turns", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-2",
+      message: "resume",
+      eventType: "user.confirmation",
+      resumeFromWait: true,
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+  );
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command?.payload as {
+    turn: {
+      stepAgent?: string | undefined;
+      resumeBlockedRun?: boolean | undefined;
+    };
+  };
+
+  assert.equal(payload.turn.stepAgent, undefined);
+  assert.equal(payload.turn.resumeBlockedRun, undefined);
+  await adapter.close();
+});
+
+test("web adapter forwards explicit blocked-run resumes", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-3",
+      message: "/mode build",
+      eventType: "user.reply",
+      resumeFromWait: true,
+      resumeBlockedRun: true,
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+  );
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command?.payload as {
+    turn: {
+      stepAgent?: string | undefined;
+      resumeBlockedRun?: boolean | undefined;
+    };
+  };
+
+  assert.equal(payload.turn.stepAgent, undefined);
+  assert.equal(payload.turn.resumeBlockedRun, true);
+  await adapter.close();
+});
+
+test("web adapter does not infer explicit tool directive flags from prompt text", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-3",
+      message:
+        "Call code.execute (javascript) and output a KCHAT_ARTIFACT_MANIFEST line, then finalize.",
+      eventType: "user.message",
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+  );
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command?.payload as {
+    turn: {
+      interactionMode?: string | undefined;
+    };
+  };
+
+  assert.equal(payload.turn.interactionMode, "chat");
+  await adapter.close();
+});
+
+test("web adapter normalizes legacy work mode to build", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-4",
+      message: "run in legacy work mode",
+      eventType: "user.message",
+      interactionMode: "build",
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+  );
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command?.payload as {
+    turn: {
+      interactionMode?: string | undefined;
+    };
+  };
+
+  assert.equal(payload.turn.interactionMode, "build");
+  await adapter.close();
+});
+
+test("web adapter forwards control commands", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  const pong = await adapter.sendControl({ type: "ping", nonce: "abc" });
+  assert.equal(pong.type, "runner.pong");
+
+  const status = await adapter.sendControl({ type: "mcp.status" });
+  assert.equal(status.type, "mcp.status");
+
+  const refreshed = await adapter.sendControl({ type: "mcp.refresh" });
+  assert.equal(refreshed.type, "mcp.refreshed");
+
+  const sessionState = await adapter.sendControl({ type: "session.state", sessionId: "session-main" });
+  assert.equal(sessionState.type, "session.state");
+  assert.equal(sessionState.payload.session.threadId, "thread-main:session-main");
+
+  const cancelled = await adapter.sendControl({ type: "run.cancel", sessionId: "session-web" });
+  assert.equal(cancelled.type, "run.cancelled");
+
+  const inbox = await adapter.sendControl({ type: "operator.inbox", sessionId: "session-main" });
+  assert.equal(inbox.type, "operator.inbox");
+
+  const view = await adapter.sendControl({ type: "operator.thread", threadId: "thread-main" });
+  assert.equal(view.type, "operator.thread");
+  const operatorView = view.payload.view as unknown as {
+    childBlocker?: { childThreadId?: string };
+    nextAction?: { kind?: string };
+  };
+  assert.equal(operatorView.childBlocker?.childThreadId, "thread-child");
+  assert.equal(operatorView.nextAction?.kind, "switch_thread");
+
+  const runs = await adapter.sendControl({
+    type: "operator.runs",
+    sessionId: "session-main",
+    status: "RUNNING",
+    limit: 10,
+  });
+  assert.equal(runs.type, "operator.runs");
+  assert.equal(runs.payload.view.version, "operator-run-index-v1");
+  assert.equal(runs.payload.view.filters.sessionId, "session-main");
+
+  const run = await adapter.sendControl({ type: "operator.run", runId: "run-main" });
+  assert.equal(run.type, "operator.run");
+  assert.equal(run.payload.view.run.runId, "run-main");
+
+  const controlled = await adapter.sendControl({
+    type: "operator.control",
+    action: "spawn_child_thread",
+    threadId: "thread-main",
+    message: "Investigate policy propagation.",
+    allowToolClasses: ["read_only", "sandboxed_only"],
+    allowCapabilities: ["workspace.read"],
+  });
+  assert.equal(controlled.type, "operator.controlled");
+
+  const focused = await adapter.sendControl({
+    type: "operator.control",
+    action: "focus_thread",
+    threadId: "thread-main",
+  });
+  assert.equal(focused.type, "operator.controlled");
+
+  const superseded = await adapter.sendControl({
+    type: "operator.control",
+    action: "supersede_child_thread",
+    threadId: "thread-main",
+    delegationId: "delegation-2",
+    message: "stale child",
+  });
+  assert.equal(superseded.type, "operator.controlled");
+
+  const fanIn = await adapter.sendControl({
+    type: "operator.control",
+    action: "resolve_fan_in_checkpoint",
+    threadId: "thread-main",
+    checkpointId: "fanin-checkpoint-1",
+    actionValue: "accept",
+  });
+  assert.equal(fanIn.type, "operator.controlled");
+
+  const commandTypes = transport.sent.map((item) => item.type);
+  assert.equal(commandTypes.includes("operator.inbox"), true);
+  assert.equal(commandTypes.includes("operator.thread"), true);
+  assert.equal(commandTypes.includes("operator.runs"), true);
+  assert.equal(commandTypes.includes("operator.run"), true);
+  assert.equal(commandTypes.includes("operator.control"), true);
+  const policyControl = transport.sent.find(
+    (item) =>
+      item.type === "operator.control" &&
+      (item.payload as Record<string, unknown>).action === "spawn_child_thread",
+  )?.payload as Record<string, unknown> | undefined;
+  assert.deepEqual(policyControl?.allowToolClasses, ["read_only", "sandboxed_only"]);
+  assert.deepEqual(policyControl?.allowCapabilities, ["workspace.read"]);
+  const recentControls = transport.sent
+    .filter((item) => item.type === "operator.control")
+    .slice(-2)
+    .map((item) => item.payload as Record<string, unknown>);
+  assert.equal(recentControls[0]?.action, "supersede_child_thread");
+  assert.equal(recentControls[0]?.threadId, "thread-main");
+  assert.equal(recentControls[0]?.delegationId, "delegation-2");
+  assert.equal(recentControls[0]?.message, "stale child");
+  assert.equal(recentControls[1]?.action, "resolve_fan_in_checkpoint");
+  assert.equal(recentControls[1]?.threadId, "thread-main");
+  assert.equal(recentControls[1]?.checkpointId, "fanin-checkpoint-1");
+  assert.equal(recentControls[1]?.actionValue, "accept");
+
+  await adapter.close();
+});
+
+test("web adapter forwards runner command metadata from request context", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-ctx",
+      message: "hello",
+      eventType: "user.message",
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+    {
+      actor: {
+        actorId: "web-user-1",
+        actorType: "end_user",
+        displayName: "Web User",
+        tenantId: "internal",
+      },
+      tenantId: "internal",
+    },
+  );
+
+  await adapter.sendControl(
+    {
+      type: "operator.control",
+      action: "retry",
+      threadId: "thread-main",
+    },
+    {
+      actor: {
+        actorId: "operator-1",
+        actorType: "operator",
+        displayName: "Operator One",
+        tenantId: "internal",
+      },
+      tenantId: "internal",
+    },
+  );
+
+  const runCommand = transport.sent.find((item) => item.type === "run.start");
+  const controlCommand = transport.sent.find((item) => item.type === "operator.control");
+  assert.equal((runCommand?.metadata as { actor?: { actorId?: string } })?.actor?.actorId, "web-user-1");
+  assert.equal((controlCommand?.metadata as { actor?: { displayName?: string } })?.actor?.displayName, "Operator One");
+
+  await adapter.close();
+});

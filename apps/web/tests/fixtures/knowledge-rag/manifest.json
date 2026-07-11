@@ -1,0 +1,68 @@
+{
+  "corpusVersion": 1,
+  "fixtures": [
+    {
+      "filename": "knowledge-runbook.md",
+      "mediaType": "text/markdown",
+      "query": "What is the markdown anchor for the knowledge runbook?",
+      "anchor": "fixture-markdown-anchor-helix",
+      "notes": "Markdown runbook for deterministic text retrieval."
+    },
+    {
+      "filename": "operations-config.yaml",
+      "mediaType": "application/yaml",
+      "query": "Which YAML anchor appears in the operations config?",
+      "anchor": "fixture-yaml-anchor-aurora",
+      "notes": "YAML config to cover plain-text structured extraction."
+    },
+    {
+      "filename": "release-checklist.html",
+      "mediaType": "text/html",
+      "query": "What HTML anchor appears in the release checklist?",
+      "anchor": "fixture-html-anchor-orbit",
+      "notes": "HTML content to verify markup stripping."
+    },
+    {
+      "filename": "service-metrics.csv",
+      "mediaType": "text/csv",
+      "query": "What CSV anchor appears in the service metrics file?",
+      "anchor": "fixture-csv-anchor-vector",
+      "notes": "CSV fixture for tabular text extraction."
+    },
+    {
+      "filename": "routing-config.json",
+      "mediaType": "application/json",
+      "query": "What JSON anchor appears in the routing config?",
+      "anchor": "fixture-json-anchor-hybrid",
+      "notes": "JSON fixture for structured retrieval."
+    },
+    {
+      "filename": "quarterly-metrics.xlsx",
+      "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "query": "What XLSX anchor appears in the quarterly metrics workbook?",
+      "anchor": "fixture-xlsx-anchor-quartz",
+      "notes": "Real XLSX workbook fixture."
+    },
+    {
+      "filename": "executive-brief.docx",
+      "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "query": "What DOCX anchor appears in the executive brief?",
+      "anchor": "fixture-docx-anchor-lattice",
+      "notes": "Minimal valid DOCX file generated with JSZip."
+    },
+    {
+      "filename": "roadmap-deck.pptx",
+      "mediaType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "query": "What PPTX anchor appears in the roadmap deck?",
+      "anchor": "fixture-pptx-anchor-cosmos",
+      "notes": "Minimal PPTX archive that matches the current parser."
+    },
+    {
+      "filename": "incident-playbook.pdf",
+      "mediaType": "application/pdf",
+      "query": "What PDF anchor appears in the incident playbook?",
+      "anchor": "fixture-pdf-anchor-signal",
+      "notes": "Simple single-page PDF fixture with embedded text."
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+---
+title: Kestrel is an open runtime platform for durable agents
+summary: "Build with the runtime and public packages, operate locally through Desktop and the CLI, or ship hosted experiences with Kestrel One."
+section: home
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-07-10
+---
+
+Kestrel gives product teams one durable execution model across local and hosted
+agent experiences. The runtime owns runs, events, persistence, replay, operator
+control, and evidence. Product surfaces consume those contracts instead of
+copying runtime policy.
+
+## What Kestrel Ships
+
+- the open runtime kernel and Local Core
+- a self-contained Desktop application with bundled PostgreSQL
+- Kestrel One as the canonical hosted web product
+- CLI and TUI workflows for local operators
+- public protocol, SDK, Next.js, and observability packages
+- declarative evaluations executed by released Ruhroh
+
+Kestrel Studio is a separate private commercial product. It consumes released
+public packages and does not share source with this repository.
+
+## Start Here For Capabilities
+
+- Build a typed agent integration: [Building your first agent](/build/building-your-first-agent)
+- Use OpenAI-compatible server routes: [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- Stop, steer, retry, or focus active work: [Operator control workflows](/operations/operator-control-workflows)
+- Inspect task, project, and review state: [Review and state workflows](/operations/review-and-state-workflows)
+- Validate behavior ownership and released evaluator contracts: [Evaluations with Ruhroh](/operations/evaluations)
+- Configure local tool and MCP policy: [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
+
+## Choose A Product Surface
+
+### Local application
+
+Start with [Desktop](/apps/desktop) when you need a self-contained local GUI,
+managed data, workspaces, sessions, and recovery.
+
+### Hosted product
+
+Start with [Kestrel One](/apps/web) when you need hosted auth, streaming,
+artifacts, knowledge, bots, administration, and billing.
+
+### Terminal operation
+
+Start with the [CLI terminal client](/cli/kchat) for workspace-local control,
+automation, and direct runner access.
+
+### Embedded integration
+
+Start with [Packages](/packages) when Kestrel is part of another application or
+service.
+
+## Ownership Model
+
+Kestrel favors explicit boundaries: browsers call trusted app servers, app
+servers call the runner service, and cross-repository products consume exact
+released packages. Ruhroh owns evaluator execution. Studio owns private
+authoring workflows. This repository remains the public source of truth for
+runtime and product contracts.
+
+## What To Read Next
+
+- [Quickstart](/docs/quickstart)
+- [Core concepts](/docs/core-concepts)
+- [Runtime model](/docs/runtime-model)
+- [Architecture overview](/docs/architecture-overview)
+- [Kestrel One](/apps/web)
+- [Desktop](/apps/desktop)

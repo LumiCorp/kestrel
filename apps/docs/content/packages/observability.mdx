@@ -1,0 +1,67 @@
+---
+title: "@kestrel-agents/observability"
+summary: Kestrel-native tracing and OTEL export helpers for instrumenting `workspace-copilot` runs, streams, resumptions, and subscriptions.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Package surface">
+The observability package wraps the same `workspace-copilot` agent used across the tutorial and makes the demo inspectable as a real operated system.
+</WorkspaceCopilotDemo>
+
+The package starts with a Kestrel-native trace model and offers OTEL export as a bridge.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/observability @kestrel-agents/sdk
+```
+
+## Core surfaces
+
+| Surface | Purpose | Common use |
+| --- | --- | --- |
+| `createTracer()` | construct the tracer | attach processors and exporters |
+| `InMemoryTraceProcessor` | keep traces in process | local debugging and tests |
+| `wrapAgent()` | instrument one agent | add trace coverage without changing route logic |
+| `toOpenTelemetrySpans()` | bridge to OTEL-compatible records | vendor-neutral export |
+
+## Canonical wrapper
+
+```ts
+const tracer = createTracer({
+  processors: [new InMemoryTraceProcessor()],
+});
+
+const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
+```
+
+## What gets instrumented
+
+| Agent call | Trace kind |
+| --- | --- |
+| `run()` | `run` |
+| `stream()` | `stream` |
+| `resume()` | `resume` |
+| `subscribe()` | `subscription` |
+
+## Why this matters
+
+The package is useful because it preserves Kestrel semantics first. Product code can reason in terms of runs, sessions, and subscriptions instead of remapping everything into a generic tracing vocabulary too early.
+
+## Common failure cases
+
+| Failure | Usually means |
+| --- | --- |
+| no traces appear | wrapped agent is not the one used by routes |
+| traces lack actor or tenant metadata | request context is incomplete |
+| export succeeds but operator story is still weak | traces exist, but routes or reports are not correlated clearly |
+
+## What To Read Next
+
+- [Adding observability](/build/adding-observability)
+- [Production operating model](/deploy/production-operating-model)
+- [Reliability](/operations/reliability)

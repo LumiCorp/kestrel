@@ -1,0 +1,5 @@
+request_id,employee_id,date,start_time,end_time,status,reason
+R-201,E-104,2026-06-17,06:00,12:00,approved,Dental appointment
+R-202,E-103,2026-06-19,15:00,22:00,approved,Family event
+R-203,E-106,2026-06-18,16:00,22:00,pending,Class registration
+R-204,E-105,2026-06-16,06:00,10:00,approved,Childcare coverage

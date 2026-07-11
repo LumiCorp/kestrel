@@ -1,0 +1,55 @@
+---
+title: Quality gates
+summary: Governance checks, tests, prompt suite, released Ruhroh validation, and scorecards that define the repo's release discipline.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Operator manual">
+Workspace Copilot is useful here as a concrete reminder that docs examples still sit on top of real runtime behavior. The release gates below are what keep those behaviors trustworthy.
+</WorkspaceCopilotDemo>
+
+The repo already names its validation gates clearly. The right improvement is to use them consistently, not to invent a new ad hoc check every time a feature changes.
+
+## Core gates
+
+```bash
+pnpm run governance:check
+pnpm run test
+pnpm run prompt-suite
+```
+
+For runtime and determinism work:
+
+```bash
+pnpm run evals:release-check
+```
+
+## What each gate protects
+
+| Gate | Protects |
+| --- | --- |
+| `governance:check` | structural rules and contract discipline |
+| `test` | code-level behavior |
+| `prompt-suite` | reference-agent prompt behavior |
+| `evals:release-check` | behavior ownership and released Ruhroh contract validation |
+
+## Operator consequence
+
+When a nightly report goes missing or a streamed route starts behaving differently, these gates are how you distinguish:
+
+- product prompt drift
+- runtime regression
+- structural contract breakage
+- replay instability
+
+Skipping them turns every incident into open-ended guesswork.
+
+## What To Read Next
+
+- [Reliability](/operations/reliability)
+- [Evaluations with Ruhroh](/operations/evaluations)
+- [Quality score](/reference/quality-score)

@@ -1,0 +1,74 @@
+---
+title: Adding background subscriptions
+summary: Watch filtered `workspace-copilot` activity outside a single request stream and separate live request UX from longer-running session observation.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Step 4">
+This step keeps the same `workspace-copilot` session and actor context, but adds a second observation path for session activity that is not tied to a browser request.
+</WorkspaceCopilotDemo>
+
+Streaming and subscribing are different tools. `stream()` is for one in-flight request. `subscribe()` is for filtered background observation over a session, run, or thread.
+
+## Why this exists
+
+The canonical example eventually has two kinds of interest:
+
+- the end user wants live output while an interactive request is running
+- an operator or background surface wants to watch important session updates after the original request is gone
+
+If you overload `stream()` to handle both jobs, the route layer becomes hard to reason about. Subscriptions keep those responsibilities separate.
+
+## Open a filtered subscription
+
+```ts
+const events = workspaceCopilotAgent.subscribe(
+  {
+    sessionId: "workspace-copilot-session-001",
+    eventTypes: ["task.updated"],
+  },
+  workspaceCopilotContext,
+);
+
+for await (const event of events) {
+  console.log(event.type, event.sessionId);
+}
+```
+
+The filter matters. The root SDK does not expose a global event firehose.
+
+## When to scope the filter
+
+| Scope | Use it when |
+| --- | --- |
+| `sessionId` | you want the whole Workspace Copilot conversation or job lifecycle |
+| `runId` | you care about one specific run |
+| `threadId` | you are watching one thread lineage in a larger session |
+| `eventTypes` | you only need particular background updates |
+
+## Request stream vs background subscription
+
+| Surface | Best for | Wrong use |
+| --- | --- | --- |
+| `stream()` | one active request | long-lived session monitoring |
+| `subscribe()` | filtered background observation | replacing user-facing request streaming |
+
+## What changes in this step
+
+- the demo now has a request-scoped stream and a separate background observation path
+- an app can watch session-level changes without binding everything to one browser request
+- later operator surfaces can monitor `workspace-copilot` without pretending they own the original interactive request
+
+## Why this matters
+
+This is the step that keeps the example honest as it grows. A system with automation, reports, and replay needs more than one way to observe work. It just should not collapse those modes into one ambiguous transport.
+
+## What To Read Next
+
+- [Adding observability](/build/adding-observability)
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Observability package](/packages/observability)

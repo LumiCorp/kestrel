@@ -1,0 +1,51 @@
+---
+title: Workspace workflows
+summary: The current CLI mechanics for workspace catalog discovery, status, listing, and session binding.
+section: cli
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-05-20
+---
+
+<WorkspaceCopilotDemo step="CLI mechanics">
+Use this page when you need the current workspace catalog commands.
+</WorkspaceCopilotDemo>
+
+Kestrel workspaces are catalog entries in `~/.kestrel/workspaces.json`.
+The catalog is the durable local inventory. The current directory is only the discovery signal.
+
+## Inspect the current workspace
+
+```bash
+kestrel workspace status
+```
+
+This resolves the current directory, registers the Git root when available, and prints the catalog binding.
+
+## List known workspaces
+
+```bash
+kestrel workspace list
+```
+
+Inside the TUI, use:
+
+```text
+/workspace status
+/workspace list
+/workspace use <workspaceId|rootPath|detached>
+```
+
+## What changed
+
+Kestrel creates catalog entries, not project-local runtime scaffolds.
+
+Profiles are selected through the normal global profile flow.
+Automation will be rebuilt on top of the catalog instead of project-local cron settings.
+
+## What To Read Next
+
+- [Workspaces and automation](/build/workspaces-and-automation)
+- [kcron](/cli/kcron)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)

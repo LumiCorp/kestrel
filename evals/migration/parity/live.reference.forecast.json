@@ -1,0 +1,620 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "live.reference.forecast",
+  "executedAt": "2026-07-10T21:35:13.514Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "7eac3d83e03688a752a4e9f5078ee8f31a246552d46cde8c286199b19fa11017",
+    "instructionSha256": "ffc13dc16c0548424a9de25322768ebe33f21d0c197cfcde6f004c61a6617cb0",
+    "clock": "2026-03-09T12:10:00.000Z",
+    "seed": 10,
+    "legacyFixtureSha256": "dd6bb1992040befd51831324e924580288085067af1e61c0e2f195b1d3009c74"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "Ada Lovelace"
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "provider": "tavily",
+            "query": "Ada Lovelace biography",
+            "results": [
+              {
+                "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                "title": "Ada Lovelace",
+                "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+              }
+            ],
+            "status": "ok"
+          }
+        },
+        {
+          "toolName": "internet.search",
+          "input": {
+            "limit": 10,
+            "query": "Ada Lovelace related topics"
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "provider": "tavily",
+            "query": "Ada Lovelace biography",
+            "results": [
+              {
+                "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                "title": "Ada Lovelace",
+                "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+              }
+            ],
+            "status": "ok"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "London",
+            "days": 3
+          },
+          "status": "success",
+          "output": {
+            "days": [
+              {
+                "condition": "Rain",
+                "day": "Mon",
+                "highC": 10
+              },
+              {
+                "condition": "Cloudy",
+                "day": "Tue",
+                "highC": 11
+              }
+            ],
+            "location": "London"
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "Ada Lovelace"
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "provider": "tavily",
+            "query": "Ada Lovelace biography",
+            "results": [
+              {
+                "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                "title": "Ada Lovelace",
+                "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+              }
+            ],
+            "status": "ok"
+          }
+        },
+        {
+          "toolName": "internet.search",
+          "input": {
+            "limit": 10,
+            "query": "Ada Lovelace related topics"
+          },
+          "status": "success",
+          "output": {
+            "attempts": 1,
+            "provider": "tavily",
+            "query": "Ada Lovelace biography",
+            "results": [
+              {
+                "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                "title": "Ada Lovelace",
+                "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+              }
+            ],
+            "status": "ok"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "London",
+            "days": 3
+          },
+          "status": "success",
+          "output": {
+            "days": [
+              {
+                "condition": "Rain",
+                "day": "Mon",
+                "highC": 10
+              },
+              {
+                "condition": "Cloudy",
+                "day": "Tue",
+                "highC": 11
+              }
+            ],
+            "location": "London"
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "internet.search",
+            "input": {
+              "limit": 10,
+              "query": "Ada Lovelace related topics"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 3
+            },
+            "status": "success",
+            "output": {
+              "days": [
+                {
+                  "condition": "Rain",
+                  "day": "Mon",
+                  "highC": 10
+                },
+                {
+                  "condition": "Cloudy",
+                  "day": "Tue",
+                  "highC": 11
+                }
+              ],
+              "location": "London"
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "internet.search",
+            "input": {
+              "limit": 10,
+              "query": "Ada Lovelace related topics"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 3
+            },
+            "status": "success",
+            "output": {
+              "days": [
+                {
+                  "condition": "Rain",
+                  "day": "Mon",
+                  "highC": 10
+                },
+                {
+                  "condition": "Cloudy",
+                  "day": "Tue",
+                  "highC": 11
+                }
+              ],
+              "location": "London"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "0894b4a392cd41d697abefeb303ecb366a5424e9eff6b58761fd70a7361ed151",
+      "sizeBytes": 1131
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "8bc3960bcda65d67583be9b43e8e7072c5866a142e51d0e93a92f9b497feef3c",
+      "sizeBytes": 670
+    },
+    {
+      "name": "eventLog",
+      "sha256": "c3dc0eb198bc539db10ebb363cafd5033d08e2203234a56e3df7c85e21f8d879",
+      "sizeBytes": 1138
+    },
+    {
+      "name": "transcript",
+      "sha256": "77db591039ffdef47c191073bf933e0fd500668a9c664ce5875e4747c6a80fdd",
+      "sizeBytes": 739
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "8a3a69b0f8f01259fd1afdb3c1ab27104522d8693ede40d43771579ce96fcbf5",
+      "sizeBytes": 2009
+    },
+    {
+      "name": "runManifest",
+      "sha256": "e168f81cd1bd8f8e1d867a4f5a33751918bedf526ca8c14986731cf932adc326",
+      "sizeBytes": 5563
+    },
+    {
+      "name": "journey",
+      "sha256": "92e0655740502aa71e53eb308711a7119056047f756ebcf9a71877c0aea4cb92",
+      "sizeBytes": 6004
+    },
+    {
+      "name": "evalResult",
+      "sha256": "77bb547eb9f11fd54c1545ed22e5480521bb1d6393e6b99439369bff61126c34",
+      "sizeBytes": 1137
+    },
+    {
+      "name": "loopResult",
+      "sha256": "d127a63c2d2123116cbf096b9c0b516858b4cb94c813a91bbf7090b7771c605e",
+      "sizeBytes": 14962
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "ecec8b991c7fef9ff18beb0332b7980d9603fdc694ecea241498d15814fe446d",
+      "sizeBytes": 1169
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "d0a30f453a13ff336f5dbcba77a4dd4bc95eb6646d9df3557e9212d8bc76f76a",
+      "sizeBytes": 670
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "c3dc0eb198bc539db10ebb363cafd5033d08e2203234a56e3df7c85e21f8d879",
+      "sizeBytes": 1138
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "7bbe48dca7c164106f1264227ae49828091fcdf97f934ff1e8b836bbc5d4a57e",
+      "sizeBytes": 810
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "83e8a865843a1390b80a8629f13b0fead367a16ffc4a2bc7b998c575456f3b3c",
+      "sizeBytes": 2137
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "145d94c2ee3442eeb86857d1636d9dfc772c6168f3df737b68352a625edbbeb4",
+      "sizeBytes": 5805
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "f7ef802bf2b4b336b86ec9f71ba91698b80d40d732aa7f935d487b5d100c1b30",
+      "sizeBytes": 6353
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "f8c2c87530222caef2256d6dc174d121ac2d5e8fc48c05822c00d3b71c5ba802",
+      "sizeBytes": 1194
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "efb3181789680ddb35054ed026b3568afd9fc61e5b220ca85819e20a94ed1222",
+      "sizeBytes": 15802
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "internet.search",
+            "input": {
+              "limit": 10,
+              "query": "Ada Lovelace related topics"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 3
+            },
+            "status": "success",
+            "output": {
+              "days": [
+                {
+                  "condition": "Rain",
+                  "day": "Mon",
+                  "highC": 10
+                },
+                {
+                  "condition": "Cloudy",
+                  "day": "Tue",
+                  "highC": 11
+                }
+              ],
+              "location": "London"
+            }
+          }
+        ],
+        "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "internet.search",
+            "input": {
+              "limit": 10,
+              "query": "Ada Lovelace related topics"
+            },
+            "status": "success",
+            "output": {
+              "attempts": 1,
+              "provider": "tavily",
+              "query": "Ada Lovelace biography",
+              "results": [
+                {
+                  "snippet": "Ada Lovelace is often regarded as an early computing pioneer.",
+                  "title": "Ada Lovelace",
+                  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"
+                }
+              ],
+              "status": "ok"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 3
+            },
+            "status": "success",
+            "output": {
+              "days": [
+                {
+                  "condition": "Rain",
+                  "day": "Mon",
+                  "highC": 10
+                },
+                {
+                  "condition": "Cloudy",
+                  "day": "Tue",
+                  "highC": 11
+                }
+              ],
+              "location": "London"
+            }
+          }
+        ],
+        "finalText": "Reference and forecast note complete with encyclopedia summary, related links, and forecast details.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "live.reference.forecast"
+}

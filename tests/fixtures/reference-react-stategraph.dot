@@ -1,0 +1,21 @@
+digraph AgentGraph {
+  rankdir=LR;
+  "agent.loop" -> "agent.exec.dispatch" [label="valid action"];
+  "agent.loop" -> "agent.loop" [label="validation feedback"];
+  "agent.exec.dispatch" -> "agent.exec.wait_effect" [label="durable tool/effect"];
+  "agent.exec.dispatch" -> "agent.exec.wait_approval" [label="approval required"];
+  "agent.exec.dispatch" -> "agent.exec.wait_user" [label="ask_user"];
+  "agent.exec.dispatch" -> "agent.exec.collect" [label="tool/effect result"];
+  "agent.exec.dispatch" -> "agent.exec.finalize" [label="finalize"];
+  "agent.exec.dispatch" -> "agent.loop" [label="validation/policy/tool feedback"];
+  "agent.exec.wait_effect" -> "agent.exec.wait_effect" [label="waiting"];
+  "agent.exec.wait_effect" -> "agent.exec.collect" [label="effect available"];
+  "agent.exec.wait_approval" -> "agent.exec.wait_approval" [label="waiting"];
+  "agent.exec.wait_approval" -> "agent.exec.dispatch" [label="approved"];
+  "agent.exec.wait_approval" -> "agent.loop" [label="denied/replan"];
+  "agent.exec.wait_user" -> "agent.exec.wait_user" [label="waiting"];
+  "agent.exec.wait_user" -> "agent.loop" [label="reply"];
+  "agent.exec.collect" -> "agent.exec.dispatch" [label="batch continues"];
+  "agent.exec.collect" -> "agent.loop" [label="result feedback"];
+  "agent.exec.finalize" [shape=doublecircle];
+}

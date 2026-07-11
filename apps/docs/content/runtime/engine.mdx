@@ -1,0 +1,73 @@
+---
+title: Engine
+summary: The orchestration layer that owns run and step lifecycle, transition checks, and sequencing rules that make execution replayable for Workspace Copilot and every other Kestrel surface.
+section: runtime
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Runtime consequence">
+When Workspace Copilot runs interactively through `/api/copilot/stream` or later through `kcron`, the engine is the layer that keeps both paths legible under the same lifecycle rules.
+</WorkspaceCopilotDemo>
+
+The engine exists so transition logic does not leak into applications, tools, or UI handlers. If application routes start deciding run lifecycle rules for themselves, replay value degrades immediately and operator explanations become unreliable.
+
+## What the engine owns
+
+- run and step lifecycle
+- transition and terminal-state rules
+- sequencing around progression to the next stage
+- event ordering that later replay can explain
+- enough structure for interactive and scheduled runs to remain comparable
+
+## Request flow for the demo
+
+```text
+/api/copilot/stream
+  -> workspaceCopilotAgent.stream()
+    -> runner service
+      -> engine starts run
+        -> steps and tools execute
+          -> events persist
+            -> terminal outcome resolves
+```
+
+The same lifecycle applies when `kcron` launches the nightly review. The caller changes; the orchestration rules do not.
+
+## What to inspect first when execution looks wrong
+
+Ask these questions in order:
+
+1. did the run start at all?
+2. which session and thread did it bind to?
+3. did it end as `completed`, `cancelled`, or `failed`?
+4. did the terminal state line up with what the caller observed?
+
+Those questions sound basic, but they are the fastest way to separate route bugs from orchestration bugs.
+
+## What this means for Workspace Copilot
+
+Because the engine owns lifecycle, operators can ask a precise question when the nightly report looks wrong:
+
+- did the run start?
+- which session did it use?
+- what step failed or cancelled?
+- did the terminal event match the route behavior?
+
+That is much better than guessing whether the issue was “the AI.”
+
+## Operator consequence
+
+If lifecycle rules leak into app routes or CLI scripts, replay quality degrades quickly. For Workspace Copilot, that would make it harder to explain whether a bad nightly report came from the prompt, the route, or the runtime core.
+
+## Failure mode: stream route disconnects
+
+When a stream disconnects early, the engine should still leave behind a coherent cancellation story. That is why the route helper propagates cancellation instead of swallowing it. An explicit `run.cancelled` is easier to support than a vanished request with no durable explanation.
+
+## What To Read Next
+
+- [IO and tools](/runtime/io-and-tools)
+- [Store and replay](/runtime/store-and-replay)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)

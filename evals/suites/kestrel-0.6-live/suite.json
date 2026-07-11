@@ -1,0 +1,58 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/suite-v1.schema.json",
+  "version": "ruhroh_suite_v1",
+  "id": "kestrel-0.6-live",
+  "title": "Kestrel 0.6 Live Runtime",
+  "suiteVersion": "0.2.0",
+  "description": "Public runtime behavior scenarios executed by Ruhroh through the maintained Kestrel adapter.",
+  "scenarioIds": [
+    "live.browser.degraded",
+    "live.reference.forecast",
+    "live.research.degraded",
+    "live.signal.brief",
+    "live.signal.partial-failure",
+    "live.weather.degraded",
+    "research.evidence.conflict",
+    "research.evidence.happy"
+  ],
+  "scenarioVersions": {
+    "live.browser.degraded": "0.1.0",
+    "live.reference.forecast": "0.1.0",
+    "live.research.degraded": "0.1.0",
+    "live.signal.brief": "0.1.0",
+    "live.signal.partial-failure": "0.1.0",
+    "live.weather.degraded": "0.1.0",
+    "research.evidence.conflict": "0.1.0",
+    "research.evidence.happy": "0.1.0"
+  },
+  "methodology": {
+    "minRuns": 3,
+    "aggregationUnit": "scenario_adapter",
+    "reportPolicy": "pass_rate_ci_pass_at_k",
+    "confidenceLevel": 0.95,
+    "retryPolicy": "Retry only documented provider or evaluation infrastructure failures; do not retry agent or outcome failures inside a sample."
+  },
+  "governance": {
+    "owner": "kestrel-runtime",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "changelog": [
+      "0.2.0: Added conflicting-evidence synthesis as an evaluator-owned Ruhroh scenario.",
+      "0.1.0: Initial declarative migration of seven live evaluator cases."
+    ],
+    "acceptanceCriteria": [
+      "Kestrel reaches the requested terminal outcome through the public job contract.",
+      "Ruhroh preserves Kestrel run, thread, replay, event-log, and job-output evidence.",
+      "Tool use, degraded-provider behavior, and user-visible caveats satisfy each scenario rubric."
+    ],
+    "contaminationReview": "Prompts originate from Kestrel's pre-existing live canary cases and contain no hidden solution artifacts.",
+    "rewardHackingReview": "Reviewers must inspect Kestrel job and event evidence; output phrase matching alone cannot pass a scenario.",
+    "reviewChecklist": [
+      "Confirm the Kestrel adapter reports native_session continuity.",
+      "Confirm expected tool calls appear in the preserved event log.",
+      "Confirm provider degradation is surfaced rather than hidden.",
+      "Confirm no in-repository evaluator implementation is used during execution."
+    ],
+    "deprecationPolicy": "Bump suiteVersion whenever membership, prompts, scenario versions, or acceptance evidence changes."
+  }
+}

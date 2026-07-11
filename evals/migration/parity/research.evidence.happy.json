@@ -1,0 +1,602 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "research.evidence.happy",
+  "executedAt": "2026-07-10T21:35:19.872Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "c1951e35380a4e465187e8e3248b31b45a2d8667999ac0388a0fe0a143f384d8",
+    "instructionSha256": "7815a551c25d6bb81ffcf35084d77426fec3e03d3b06b48d96c1cbd5597c7939",
+    "clock": "2026-03-06T14:00:00.000Z",
+    "seed": 42,
+    "legacyFixtureSha256": "84070c5fd67c873e16bbdb30311cef563d699b5285c0d909cedd0c644bb748a6"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "invoice automation validation evidence"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                "title": "Invoice automation benchmark",
+                "url": "https://example.com/benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/benchmark"
+          },
+          "status": "success",
+          "output": {
+            "sources": [
+              {
+                "rank": 1,
+                "title": "Invoice automation benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/benchmark"
+          },
+          "status": "success",
+          "output": {
+            "sources": [
+              {
+                "rank": 1,
+                "title": "Invoice automation benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "evidence.extract",
+          "input": {
+            "text": "benchmark findings"
+          },
+          "status": "success",
+          "output": {
+            "claims": [
+              {
+                "confidence": 0.88,
+                "text": "Deterministic validation reduced approval rework."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "invoice automation validation evidence"
+          },
+          "status": "success",
+          "output": {
+            "results": [
+              {
+                "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                "title": "Invoice automation benchmark",
+                "url": "https://example.com/benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/benchmark"
+          },
+          "status": "success",
+          "output": {
+            "sources": [
+              {
+                "rank": 1,
+                "title": "Invoice automation benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "internet.extract",
+          "input": {
+            "url": "https://example.com/benchmark"
+          },
+          "status": "success",
+          "output": {
+            "sources": [
+              {
+                "rank": 1,
+                "title": "Invoice automation benchmark"
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "evidence.extract",
+          "input": {
+            "text": "benchmark findings"
+          },
+          "status": "success",
+          "output": {
+            "claims": [
+              {
+                "confidence": 0.88,
+                "text": "Deterministic validation reduced approval rework."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation validation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "benchmark findings"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.88,
+                  "text": "Deterministic validation reduced approval rework."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation validation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "benchmark findings"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.88,
+                  "text": "Deterministic validation reduced approval rework."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "25b89039075638ce92a9a253cef493e0bb576c4e80f1a73c8cc8981581b18b0b",
+      "sizeBytes": 1129
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "426c0e3b36110f584cee2a8d9dec5bbbc12f3db1ddc2717bd11316d153181e13",
+      "sizeBytes": 674
+    },
+    {
+      "name": "eventLog",
+      "sha256": "04e60c5bf0c8bff11142eeadbd5f4bfe8af35595eb54e38290f1b6657723392c",
+      "sizeBytes": 1114
+    },
+    {
+      "name": "transcript",
+      "sha256": "140afef2abee760532bac74ce9dbb82d7e49c464693ca1bb11649ab4edf3df14",
+      "sizeBytes": 739
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "d8da696a77bcbd87de2bd7bdfb75161a64f7cb102584140628ef4566f2e3baca",
+      "sizeBytes": 2013
+    },
+    {
+      "name": "runManifest",
+      "sha256": "721f47a2d6715cc113fd2b7118c318ca979a4388ff3356503b2cc684973f1714",
+      "sizeBytes": 5563
+    },
+    {
+      "name": "journey",
+      "sha256": "8bdc7abcbd8b2b3d8a8af6239b325777e733b013a90a48f8135ce295825451bc",
+      "sizeBytes": 6006
+    },
+    {
+      "name": "evalResult",
+      "sha256": "36e2bb21de2d95724190a1313d8ffb71d98f63731ea24738258d334fcda8c728",
+      "sizeBytes": 1137
+    },
+    {
+      "name": "loopResult",
+      "sha256": "a6f62f5ff6f9d8852cf58bdc1011e62b9e733e0879a7393363e3443c46d85c21",
+      "sizeBytes": 14966
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "142075355998dc9f629915a0a4176c2bf21f0b061bb1f31c3a54209592c155ae",
+      "sizeBytes": 1167
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "2be79c3454d72815ab5bf51cb7ea1fe39d706800eb74c7503599d5a34c9a4b46",
+      "sizeBytes": 674
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "04e60c5bf0c8bff11142eeadbd5f4bfe8af35595eb54e38290f1b6657723392c",
+      "sizeBytes": 1114
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "454c28cff55ac114febcebe0500fc19f33254a35037f6c16de91f70d09d0721e",
+      "sizeBytes": 810
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "97842ed58280c76d35dcab91f6c96d31ff1f6e17228e7ce57a1a292c47bc6cd8",
+      "sizeBytes": 2141
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "02cf163aa1f576e4177f69d05df9b12a56fd95390f987cac276c8ec2ad05da4f",
+      "sizeBytes": 5805
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "2434f15f5af6c920de9efa180652bd742a8ab52f10c9fb5c84f8be59d45e98bd",
+      "sizeBytes": 6355
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "a676dfd8553399c3baa2f6a73893879159e284bdc522500cb2d8ed8f66561042",
+      "sizeBytes": 1194
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "00a01b59f4077b7d5cc01c28cffe63134f6a752e4d07e0337be722d5118e8595",
+      "sizeBytes": 15806
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation validation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "benchmark findings"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.88,
+                  "text": "Deterministic validation reduced approval rework."
+                }
+              ]
+            }
+          }
+        ],
+        "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "invoice automation validation evidence"
+            },
+            "status": "success",
+            "output": {
+              "results": [
+                {
+                  "snippet": "Teams cut cycle time with staged validation and evidence checks.",
+                  "title": "Invoice automation benchmark",
+                  "url": "https://example.com/benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "internet.extract",
+            "input": {
+              "url": "https://example.com/benchmark"
+            },
+            "status": "success",
+            "output": {
+              "sources": [
+                {
+                  "rank": 1,
+                  "title": "Invoice automation benchmark"
+                }
+              ]
+            }
+          },
+          {
+            "toolName": "evidence.extract",
+            "input": {
+              "text": "benchmark findings"
+            },
+            "status": "success",
+            "output": {
+              "claims": [
+                {
+                  "confidence": 0.88,
+                  "text": "Deterministic validation reduced approval rework."
+                }
+              ]
+            }
+          }
+        ],
+        "finalText": "Evidence package complete: deterministic validation checks reduced rework while preserving auditability.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "research.evidence.happy"
+}

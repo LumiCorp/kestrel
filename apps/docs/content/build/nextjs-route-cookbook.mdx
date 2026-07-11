@@ -1,0 +1,132 @@
+---
+title: Next.js route cookbook
+summary: The mechanical reference for `workspace-copilot` route bodies, response headers, SSE cancellation, and webhook payload mapping in a Next.js app.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Mechanical companion">
+Use this page after the main Next.js integration guide when you need the exact route mechanics for `workspace-copilot`.
+</WorkspaceCopilotDemo>
+
+This page is intentionally narrow. The main integration guide explains the architecture. This one captures the route contract you keep reopening while implementing or debugging.
+
+For **Workspace Copilot**, these route details are the mechanical contract behind the three canonical `/api/copilot/*` entrypoints.
+
+## Route files
+
+The canonical route pack is:
+
+```text
+app/api/copilot/run/route.ts
+app/api/copilot/stream/route.ts
+app/api/copilot/webhook/route.ts
+```
+
+## Request body for `/api/copilot/run`
+
+```json
+{
+  "sessionId": "workspace-copilot-session-001",
+  "message": "Summarize the highest-risk files in this workspace."
+}
+```
+
+Required fields:
+
+- `sessionId`
+- `message`
+
+Optional field:
+
+- `eventType`
+
+## Request body for `/api/copilot/stream`
+
+The stream route uses the same request body:
+
+```json
+{
+  "sessionId": "workspace-copilot-session-001",
+  "message": "Stream progress while you inspect the workspace."
+}
+```
+
+The difference is the response type, not the input contract.
+
+## Response headers
+
+The route helpers return:
+
+```text
+x-kestrel-request-id
+x-kestrel-correlation-id
+```
+
+The stream route also returns:
+
+```text
+content-type: text/event-stream; charset=utf-8
+cache-control: no-cache, no-transform
+connection: keep-alive
+```
+
+## Stream cancellation behavior
+
+When the browser closes the connection:
+
+```text
+client disconnect
+  -> Response stream cancel()
+    -> stream.cancel()
+      -> upstream run cancellation
+        -> terminal result becomes run.cancelled
+```
+
+That behavior is deliberate. The helper should not swallow the disconnect and pretend the run completed cleanly.
+
+## Webhook payload mapping
+
+The webhook route exists because external payloads rarely already match the Kestrel turn shape.
+
+Example payload mapping:
+
+```ts
+mapPayload(payload) {
+  return {
+    sessionId: payload.sessionId ?? "workspace-copilot-session-001",
+    message: payload.prompt,
+  };
+}
+```
+
+Use the webhook helper when:
+
+- another service already owns the payload schema
+- the caller is not a browser
+- you want the app server to normalize the inbound event before Kestrel sees it
+
+## When to choose each route
+
+| Route | Choose it when | Avoid it when |
+| --- | --- | --- |
+| `/api/copilot/run` | caller wants one terminal response | caller expects live progress |
+| `/api/copilot/stream` | browser needs incremental output | caller cannot hold an SSE connection |
+| `/api/copilot/webhook` | payload comes from another system | the caller can already use the normal run route |
+
+## Debugging checklist
+
+- [ ] route file imports the shared `workspaceCopilotAgent`
+- [ ] route resolves server-side context, not browser-supplied actor data
+- [ ] `sessionId` is present in the inbound body or mapped payload
+- [ ] response includes `x-kestrel-request-id`
+- [ ] stream route surfaces `run.cancelled` when the client disconnects
+
+## What To Read Next
+
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Environment and auth](/deploy/environment-and-auth)
+- [Next.js package reference](/packages/next)

@@ -1,0 +1,108 @@
+# Kestrel
+
+Kestrel is an open runtime platform for building and operating durable AI
+agents. This monorepo contains the runtime kernel, Local Core, CLI/TUI,
+self-contained Desktop application, Kestrel One hosted web product, public
+TypeScript packages, documentation, integrations, and declarative evaluation
+specifications.
+
+## Product Boundaries
+
+- **Kestrel** owns the runtime, local services, public clients, packages, and
+  product surfaces in this repository.
+- **Kestrel One** is the canonical hosted web product under `apps/web`.
+- **Kestrel Desktop** is an independent local application with a bundled
+  PostgreSQL runtime. It does not require an externally managed database.
+- **Kestrel Studio** is a separate private commercial product that consumes
+  exact released Kestrel packages. Studio source does not belong here.
+- **Ruhroh** is a separate project that owns evaluation execution, reporting,
+  comparison, and the maintained Kestrel adapter. Kestrel owns only the
+  declarative specifications and ownership evidence under `evals/`.
+
+## Repository Layout
+
+- `src/`: runtime, orchestration, persistence, replay, governance, Local Core,
+  and shared adapters
+- `cli/`: `kestrel`, `ks`, `kcron`, the TUI, and runner-service commands
+- `apps/desktop/`: self-contained Electron application and bundled local data
+  runtime
+- `apps/web/`: Kestrel One, including auth, streaming, artifacts, knowledge,
+  bots, administration, and billing
+- `apps/docs/`: public documentation site
+- `packages/protocol/`: public runner protocol contracts
+- `packages/sdk/`: public TypeScript SDK
+- `packages/next/`: Next.js integration helpers
+- `packages/observability/`: observability integrations
+- `evals/`: declarative Ruhroh scenarios, suites, targets, and migration
+  evidence
+- `agents/reference-react/`: canonical bundled reference agent
+- `tools/`: typed tool contracts and handlers
+- `db/migrations/`: persistent runtime and orchestration schema
+
+## Local Setup
+
+Prerequisites: Node.js 22 and pnpm 9.
+
+```bash
+cp .env.example .env
+pnpm install
+```
+
+Start one product surface:
+
+```bash
+pnpm run desktop:dev
+pnpm run web:dev
+pnpm run tui
+```
+
+Model-backed flows require `OPENROUTER_API_KEY`. Internet-backed flows require
+`TAVILY_API_KEY`. Kestrel One also requires its hosted service configuration;
+see `apps/web/.env.example`.
+
+Desktop starts its bundled Local Core and managed PostgreSQL runtime by
+default. External PostgreSQL remains an explicit development or deployment
+choice, not a Desktop prerequisite.
+
+## Common Commands
+
+- `pnpm run build`: build the public runtime
+- `pnpm run web:build`: build canonical Kestrel One
+- `pnpm run desktop:build`: build Desktop
+- `pnpm run desktop:package`: package Desktop
+- `pnpm run docs:build`: build the docs site
+- `pnpm run cli:package`: package the CLI/TUI distribution
+- `pnpm run runner:service`: start the runner service
+- `pnpm run install:cli`: install commands from the current checkout
+
+## Validation Gates
+
+Run focused checks first, then the repository gates:
+
+```bash
+pnpm run governance:check
+pnpm run test
+pnpm run prompt-suite
+pnpm run evals:release-check
+```
+
+`evals:release-check` executes the exact released Ruhroh version pinned by the
+workspace. It rejects source checkouts, copied adapters, and binary overrides.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Reliability](RELIABILITY.md)
+- [Security](SECURITY.md)
+- [Quality score](QUALITY_SCORE.md)
+- [Contributing](CONTRIBUTING.md)
+- [Documentation index](docs/index.md)
+- [Desktop](apps/desktop/README.md)
+- [Kestrel One](apps/web/README.md)
+- [SDK](packages/sdk/README.md)
+- [Evaluations](evals/README.md)
+
+## Support
+
+Use GitHub Issues for reproducible defects and feature requests. Do not file
+security vulnerabilities publicly; follow [SECURITY.md](SECURITY.md).

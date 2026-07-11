@@ -1,0 +1,101 @@
+---
+title: Command suite
+summary: The main Kestrel command family and the jobs each command is best suited for, including operator control, workspace automation, runner-service startup, and evaluation gates.
+section: cli
+audience: everyone
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+Kestrel ships a family of commands because the workflows are different, not because the branding is noisy.
+
+## Start here if you are...
+
+- doing interactive terminal work: use `kestrel`
+- using the shorter local alias: use `ks`
+- scheduling recurring workspace work: use `kcron`
+- starting a local app-facing HTTP runner: use `kestrel web`
+
+## Use the right command for the job
+
+| Command | Best for | Example |
+| --- | --- | --- |
+| `kestrel` | interactive chat, operator work, and command mode | `kestrel --profile reference` |
+| `ks` | short alias for the same CLI entrypoint | `ks workspace status` |
+| `kcron` | recurring workspace automation | `kcron run-once` |
+| `kestrel web` | local runner service for another app | `kestrel web --port 43102` |
+| `pnpm run evals:release-check` | released Ruhroh evaluation validation | `pnpm run evals:release-check` |
+
+## Why the suite exists
+
+The command set mirrors the product model:
+
+- interactive work
+- workspace-local behavior
+- recurring scheduled work
+- application-facing runtime boundary
+
+That separation keeps workflows explicit instead of overloading one giant command surface.
+
+## Common sequences
+
+### Workspace lifecycle
+
+```bash
+kestrel workspace status
+kestrel workspace status
+kestrel workspace list
+kcron install
+kcron start
+kcron status
+kcron run-once
+```
+
+### Operator cockpit workflow
+
+```text
+kestrel
+/status
+/sessions
+/resume workspace-copilot-nightly
+/steer collect one more source
+/stop hold for review
+```
+
+### Local runner-service workflow
+
+```bash
+kestrel web
+export KESTREL_RUNNER_SERVICE_URL='http://127.0.0.1:43102'
+export KESTREL_RUNNER_SERVICE_TOKEN='...'
+```
+
+### Evaluation workflow
+
+```bash
+pnpm run evals:validate
+pnpm run evals:release-check
+```
+
+## Command families that reveal the “cool stuff”
+
+The command suite is interesting because it exposes more than chat:
+
+- workspace catalog status
+- runner-service startup and health
+- scheduled recurring work through `kcron`
+- operator steering and stop/retry flows in `kestrel`
+- MCP server and tool policy control
+- codeMode policy inspection and toggling
+- released Ruhroh evaluation and migration-evidence checks
+
+That is the same reason the repo ships multiple apps and protocol surfaces. Kestrel is trying to cover a full runtime lifecycle, not only a prompt loop.
+
+## What To Read Next
+
+- [Workspace workflows](/cli/workspace-workflows)
+- [CLI terminal client](/cli/kchat)
+- [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
+- [kcron](/cli/kcron)
+- [Runner service](/cli/runner-service)

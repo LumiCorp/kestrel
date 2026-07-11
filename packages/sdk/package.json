@@ -1,0 +1,58 @@
+{
+  "name": "@kestrel-agents/sdk",
+  "version": "0.5.1",
+  "description": "Framework-agnostic TypeScript client for a Kestrel-compatible runner service",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LumiCorp/kestrel.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/LumiCorp/kestrel/tree/main/packages/sdk",
+  "bugs": {
+    "url": "https://github.com/LumiCorp/kestrel/issues"
+  },
+  "keywords": [
+    "kestrel",
+    "agents",
+    "runner",
+    "sdk",
+    "typescript",
+    "nextjs"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runner": {
+      "types": "./dist/runner.d.ts",
+      "import": "./dist/runner.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@kestrel-agents/protocol": "workspace:*"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp-pack', { recursive: true, force: true });\"",
+    "build": "pnpm --filter @kestrel-agents/protocol build && pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kestrel-agents/protocol build && node --import tsx --test tests/**/*.test.ts",
+    "smoke:import": "node --input-type=module -e \"Promise.all([import('./dist/index.js'), import('./dist/runner.js')]).then(([sdk, runner]) => { sdk.createAgent({ id: 'smoke-agent', profileId: 'reference', baseUrl: 'http://127.0.0.1:1' }); new runner.KestrelClient({ baseUrl: 'http://127.0.0.1:1' }); })\"",
+    "release:check": "pnpm run build && node --import tsx ./scripts/release-check.ts"
+  }
+}

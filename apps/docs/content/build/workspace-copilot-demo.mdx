@@ -1,0 +1,374 @@
+---
+title: Workspace Copilot demo
+summary: The canonical end-to-end example used across the docs, following one workspace-centric assistant from SDK integration through Next.js routes, observability, and recurring workspace automation.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+`Workspace Copilot` is the canonical example used across the Kestrel docs. It is a workspace-local assistant that answers interactive questions during the day, keeps explicit session memory, and runs a nightly review against the same folder through `kcron`.
+
+<WorkspaceCopilotDemo step="Canonical example">
+This page defines the fixed contract for the rest of the docs. The example always uses the same agent id, profile id, tenant, actor id, route names, workspace output root, and session prefix.
+</WorkspaceCopilotDemo>
+
+The point of the example is continuity. Kestrel is most useful when the same product surface can support:
+
+- interactive requests from an application route
+- session continuity through explicit memory
+- server-owned observability
+- recurring workspace automation without hidden machine-global behavior
+
+## Demo contract
+
+| Field | Value |
+| --- | --- |
+| Agent id | `workspace-copilot` |
+| Profile id | `workspace-copilot` |
+| Tenant | `acme` |
+| Actor id | `user-123` |
+| JSON route | `/api/copilot/run` |
+| Stream route | `/api/copilot/stream` |
+| Webhook route | `/api/copilot/webhook` |
+| Output root | `./reports` |
+| Session prefix | `workspace-copilot` |
+
+## Topology
+
+```text
+Browser
+  -> Next.js route handlers
+    -> runner service
+      -> Kestrel runtime
+        -> store, tools, model gateway, event history
+          -> workspace reports and traces
+```
+
+That topology is intentional. The browser never speaks directly to the runner service, and the runner token never leaves the application server.
+
+## File layout
+
+The example is written as a small app plus a workspace-local contract:
+
+| Path | Purpose |
+| --- | --- |
+| `lib/workspace-copilot.ts` | agent definition, shared actor context, tracer wrapper |
+| `app/api/copilot/run/route.ts` | synchronous JSON route |
+| `app/api/copilot/stream/route.ts` | SSE streaming route |
+| `app/api/copilot/webhook/route.ts` | webhook/background entrypoint |
+| `global profile selection` | workspace-local runtime contract |
+| `selected global profile` | baseline system guidance |
+| `interactive prompt` | interactive run prompt |
+| `central scheduler prompt` | nightly automation prompt |
+| `reports/nightly-review.md` | expected recurring report artifact |
+
+The resulting workspace looks like this:
+
+```text
+project/
+  app/
+    api/
+      copilot/
+        run/route.ts
+        stream/route.ts
+        webhook/route.ts
+  lib/
+    workspace-copilot.ts
+  reports/
+    nightly-review.md
+```
+
+## `~/.kestrel/workspaces.json`
+
+The workspace id should be stable and machine-local. That is what lets the catalog, sessions, and future scheduler agree on the same folder identity.
+
+```json
+{
+  "version": 3,
+  "workspaces": [
+    {
+      "id": "local:example",
+      "rootPath": "/path/to/workspace-copilot",
+      "label": "workspace-copilot",
+      "automationEnabled": false
+    }
+  ]
+}
+```
+
+## `lib/workspace-copilot.ts`
+
+This is the shared server-side definition reused by the Build, Deploy, and Package pages.
+
+```ts
+import { createAgent } from "@kestrel-agents/sdk";
+import { createTracer, InMemoryTraceProcessor } from "@kestrel-agents/observability";
+
+export const workspaceCopilotAgent = createAgent({
+  id: "workspace-copilot",
+  profileId: "workspace-copilot",
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+
+export const workspaceCopilotContext = {
+  actor: {
+    actorId: "user-123",
+    actorType: "end_user" as const,
+    displayName: "Taylor Example",
+  },
+  tenantId: "acme",
+};
+
+const tracer = createTracer({
+  processors: [new InMemoryTraceProcessor()],
+});
+
+export const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
+```
+
+The important point is that the route handlers do not define their own agent ids or actor defaults. They all reuse this module so the product contract stays stable.
+
+## `app/api/copilot/run/route.ts`
+
+Use the JSON route for standard request-response turns:
+
+```ts
+import { createJsonRunRouteHandler } from "@kestrel-agents/next";
+
+import { tracedWorkspaceCopilotAgent, workspaceCopilotContext } from "@/lib/workspace-copilot";
+
+export const POST = createJsonRunRouteHandler({
+  agent: tracedWorkspaceCopilotAgent,
+  resolveContext: async () => workspaceCopilotContext,
+});
+```
+
+## `app/api/copilot/stream/route.ts`
+
+Use the stream route when the browser needs request-scoped progress:
+
+```ts
+import { createStreamRunRouteHandler } from "@kestrel-agents/next";
+
+import { tracedWorkspaceCopilotAgent, workspaceCopilotContext } from "@/lib/workspace-copilot";
+
+export const POST = createStreamRunRouteHandler({
+  agent: tracedWorkspaceCopilotAgent,
+  resolveContext: async () => workspaceCopilotContext,
+});
+```
+
+## `app/api/copilot/webhook/route.ts`
+
+Use the webhook route for server-driven or background entrypoints that map an external payload into a Kestrel turn:
+
+```ts
+import { createWebhookRunRouteHandler } from "@kestrel-agents/next";
+
+import { tracedWorkspaceCopilotAgent, workspaceCopilotContext } from "@/lib/workspace-copilot";
+
+export const POST = createWebhookRunRouteHandler<{ sessionId?: string; prompt: string }>({
+  agent: tracedWorkspaceCopilotAgent,
+  resolveContext: async () => workspaceCopilotContext,
+  mapPayload(payload) {
+    return {
+      sessionId: payload.sessionId ?? "workspace-copilot-nightly-001",
+      message: payload.prompt,
+    };
+  },
+});
+```
+
+## `global profile selection`
+
+This file is the workspace-local product contract. It does not merge with machine-global profiles. That is what makes the workspace portable and reviewable.
+
+```json
+{
+  "version": 1,
+  "label": "Workspace Copilot",
+  "agent": "workspace-copilot",
+  "sessionPrefix": "workspace-copilot",
+  "modelProvider": "openai",
+  "model": "gpt-5.4-2026-03-05",
+  "promptFiles": ["./selected global profile"],
+  "outputRoot": "./reports",
+  "cron": {
+    "enabled": true,
+    "schedule": "0 22 * * *",
+    "launchPrompt": "./central scheduler prompt"
+  }
+}
+```
+
+## Prompt files
+
+The system prompt keeps the assistant grounded in the workspace:
+
+```md
+You are Workspace Copilot for this repository.
+
+Read the workspace before making claims. Keep outputs concrete, cite files when relevant, and write durable artifacts into ./reports when the prompt asks for them.
+```
+
+An interactive prompt can stay lightweight:
+
+```md
+Review the current workspace changes. Summarize the highest-risk files, note missing tests, and propose the next review actions.
+```
+
+The nightly prompt should define a durable artifact:
+
+```md
+Review the workspace changes since the previous run. Write a report to ./reports/nightly-review.md with sections for:
+
+1. Significant changes
+2. Risks and open questions
+3. Missing tests or validation
+4. Next actions for tomorrow
+```
+
+## Memory bootstrap files
+
+The example workspace can start with small plain-text bootstrap files instead of hiding context in prompt text:
+
+```md
+# workspace catalog entry
+
+The workspace currently prioritizes docs, replay, and operator-control polish.
+```
+
+```md
+# catalog metadata
+
+- Reports must be written into ./reports.
+- Nightly review should call out operator impact before low-level cleanup.
+```
+
+```md
+# session history
+
+If the nightly run cannot finish, leave the next operator a clear summary of blockers and the expected follow-up route.
+```
+
+## Session memory
+
+The example relies on explicit session memory, not hidden model state:
+
+```ts
+const session = workspaceCopilotAgent.session("workspace-copilot-session-001");
+const memory = await session.memory.get(workspaceCopilotContext);
+
+await session.memory.update(
+  {
+    expectedRevision: memory.revision,
+    patch: {
+      findings: "Docs and runtime pages changed in the last review cycle.",
+      decisions: "Nightly review should call out operator impact first.",
+      nextAction: "Write the update to reports/nightly-review.md.",
+      linkedArtifacts: ["reports/nightly-review.md"],
+    },
+  },
+  workspaceCopilotContext,
+);
+```
+
+This is what lets an interactive daytime session and a nightly run share continuity without pretending they are the same long-lived request.
+
+## Example output artifact
+
+The nightly automation should leave behind a report that an operator can inspect directly in the repo:
+
+```md
+# Nightly Review
+
+## Significant changes
+- Expanded Workspace Copilot docs with full route examples.
+- Added operator guidance for runner troubleshooting and replay inspection.
+
+## Risks and open questions
+- Streaming route behavior still needs manual verification after deploy.
+- The nightly review prompt should stay aligned with current output expectations.
+
+## Missing tests or validation
+- Add docs assertions for report artifact references.
+- Confirm search finds session-memory content after the rewrite.
+
+## Next actions for tomorrow
+- Run docs build and governance gates.
+- Review the generated report with the owning team.
+```
+
+## Route and webhook request examples
+
+Interactive JSON route:
+
+```bash
+curl -sS \
+  -X POST http://127.0.0.1:3000/api/copilot/run \
+  -H 'content-type: application/json' \
+  -d '{
+    "sessionId": "workspace-copilot-session-001",
+    "message": "Summarize the riskiest docs changes and list follow-up tasks."
+  }'
+```
+
+Streaming route:
+
+```bash
+curl -N \
+  -X POST http://127.0.0.1:3000/api/copilot/stream \
+  -H 'content-type: application/json' \
+  -d '{
+    "sessionId": "workspace-copilot-session-001",
+    "message": "Stream the review as you inspect the workspace."
+  }'
+```
+
+Webhook route:
+
+```bash
+curl -sS \
+  -X POST http://127.0.0.1:3000/api/copilot/webhook \
+  -H 'content-type: application/json' \
+  -d '{
+    "sessionId": "workspace-copilot-nightly-001",
+    "prompt": "Review the workspace and write ./reports/nightly-review.md."
+  }'
+```
+
+## Running the demo end to end
+
+Use this sequence locally:
+
+```bash
+kestrel web
+export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
+export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
+pnpm dev
+kestrel workspace status
+kestrel workspace list
+kcron install
+kcron run-once
+```
+
+## Why this example matters
+
+The `Workspace Copilot` story is intentionally modest. It is not a flashy chatbot demo. It is a realistic example of how teams actually use Kestrel:
+
+- expose a server-owned route surface
+- keep actor and tenant context explicit
+- persist continuity through versioned memory
+- bind recurring work to the workspace instead of a hidden global schedule
+- leave behind enough traces, reports, and replay evidence to support operators later
+
+If a docs page cannot explain how its advice affects this example, it probably is not saying enough about the product.
+
+## What To Read Next
+
+- [Building your first agent](/build/building-your-first-agent)
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Workspaces and automation](/build/workspaces-and-automation)

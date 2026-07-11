@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "../..",
+    "skipLibCheck": true,
+    "types": ["node", "electron"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "src",
+    "../../src/config/localDev.ts",
+    "../../src/desktopShell/contracts.ts",
+    "../../src/kestrel/index.ts",
+    "../../src/kestrel/contracts/**/*.ts",
+    "../../src/kestrel/executableActions.ts",
+    "../../src/runtime/RuntimeFailure.ts",
+    "../../src/runtime/databasePreflight.ts",
+    "../../src/runtime/localDatabaseSelfHeal.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,0 +1,19 @@
+---
+title: Prompt suite
+summary: A quality gate for reference-agent behavior that treats prompt and contract quality as first-class release signals rather than incidental application detail.
+section: operations
+audience: maintainers
+status: active
+sourceKind: curated
+updatedAt: 2026-03-19
+---
+
+`pnpm run prompt-suite` is one of the repo's required gates. That is a strong statement about the project: prompt behavior is part of runtime quality, not just a testing afterthought.
+
+## Why It Exists
+
+Kestrel relies on explicit agent stages and prompt-backed contracts. When those prompts drift, the runtime may still compile while the behavioral envelope degrades.
+
+## What To Take From It
+
+If a change affects planner, observer, follow-up grounding, or tool-intent behavior, prompt-suite coverage is part of the real definition of done.

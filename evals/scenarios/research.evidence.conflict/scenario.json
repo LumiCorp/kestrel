@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "research.evidence.conflict",
+  "title": "Kestrel Conflicting Evidence Synthesis",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "hard",
+    "tags": ["kestrel", "research", "conflicting-evidence", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 60,
+    "networkRationale": "The scenario requires independent current sources with potentially divergent findings.",
+    "contaminationNotes": "The prompt names the research question but provides no sources, findings, or expected conclusion.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated conflicting-evidence synthesis to Ruhroh."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 60 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["internet.search", "internet.extract", "evidence.extract"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "The scenario evaluates synthesis when credible retrieved sources disagree about control effectiveness.",
+      "A pass requires preserving the disagreement instead of selecting a convenient source or averaging incompatible claims."
+    ],
+    "goalRubric": [
+      "Kestrel evidence shows relevant search plus successful extraction of at least two independent sources and structured claim derivation or equivalent evidence analysis.",
+      "The final response identifies material agreement and disagreement, ties each side to preserved source evidence, and moderates confidence accordingly.",
+      "The conclusion recommends a proportionate follow-up when the conflict remains unresolved and reaches completion without terminal runtime errors."
+    ],
+    "evidenceGuidance": [
+      "Inspect the Kestrel event log and job artifacts to verify that the compared findings came from distinct retrieved sources.",
+      "Reject a polished single-source conclusion when the evidence bundle contains a material contradiction that the final response omits."
+    ],
+    "calibrationCases": [
+      {
+        "id": "explicit-conflict-pass",
+        "inputSummary": "Two independent sources disagree, both findings are represented accurately, confidence is moderated, and a focused follow-up is proposed.",
+        "expectedStatus": "passed",
+        "rationale": "The response preserves and acts on the material evidence conflict."
+      },
+      {
+        "id": "cherry-pick-fail",
+        "inputSummary": "The evidence bundle contains contradictory findings, but the response reports only the favorable source as settled fact.",
+        "expectedStatus": "failed",
+        "rationale": "Omitting known contradictory evidence breaks the synthesis contract."
+      },
+      {
+        "id": "weak-lineage-review",
+        "inputSummary": "The response describes a plausible conflict, but one side cannot be traced to a preserved extraction artifact.",
+        "expectedStatus": "review",
+        "rationale": "The synthesis may be reasonable, but source lineage is insufficient for automatic parity."
+      }
+    ]
+  }
+}

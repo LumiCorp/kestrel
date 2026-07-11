@@ -1,0 +1,62 @@
+---
+title: IO and tools
+summary: The runtime boundary where models, tools, and external systems are admitted through explicit gateways instead of ambient application logic.
+section: runtime
+audience: maintainers
+status: active
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Runtime consequence">
+Workspace Copilot depends on this layer every time it inspects the workspace, writes a report, or touches an external capability. The point of the layer is to keep those capabilities explainable later.
+</WorkspaceCopilotDemo>
+
+`src/io` is where model and tool gateways enter the runtime, while `tools/` holds executable tool contracts. This layer matters because durable systems cannot afford ambiguous capability boundaries.
+
+## What this layer protects
+
+- model and tool access is explicit
+- capabilities are logged and gateable
+- later replay can explain why a run touched an external system
+- tool behavior stays visible to operators instead of hiding inside app glue
+
+## Flow for the canonical demo
+
+```text
+Workspace Copilot route
+  -> runner service
+    -> engine
+      -> model gateway / tool gateway
+        -> workspace files, reports, or external systems
+```
+
+## What this means for Workspace Copilot
+
+When the nightly review writes `./reports/nightly-review.md`, operators should still be able to reason about:
+
+- which path triggered the run
+- whether a tool or direct model response produced the output
+- why the artifact path was selected
+- whether a gateway policy change affected the run
+
+That is why Kestrel favors explicit gateways and metadata instead of ambient tool access.
+
+## Failure mode: runner available, artifact still missing
+
+If the runner is healthy but `reports/nightly-review.md` never appears, inspect this layer next. The failure may be:
+
+- prompt asked for the wrong output path
+- tool capability changed
+- gateway policy blocked the write
+- the run terminated before the artifact step completed
+
+## Operator consequence
+
+If a tool surface becomes fuzzy or heuristic-driven, the demo may still appear to “work,” but the run history becomes harder to trust when debugging a bad report or a missing artifact.
+
+## What To Read Next
+
+- [Store and replay](/runtime/store-and-replay)
+- [Heuristic hotspots](/reference/heuristic-hotspots)
+- [Workspace Copilot demo](/build/workspace-copilot-demo)

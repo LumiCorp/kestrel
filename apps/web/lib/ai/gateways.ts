@@ -1,0 +1,1128 @@
+import "server-only";
+
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import type { ProviderV3 } from "@ai-sdk/provider";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { getDefaultAIModel } from "./config";
+import {
+  GATEWAY_MODALITIES,
+  GATEWAY_PROVIDERS,
+  getGatewayLanguageProtocol,
+  getProviderSupportedModalities as getSharedProviderSupportedModalities,
+  normalizeGatewayModelMetadata,
+  normalizeOpenAICompatibleBaseUrl,
+} from "./gateway-utils";
+import type { ChatModel } from "./models";
+
+export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
+export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
+export type GatewayModality = (typeof GATEWAY_MODALITIES)[number];
+
+export type GatewayRecord = typeof schema.aiGateways.$inferSelect;
+export type GatewayModelRecord = typeof schema.aiGatewayModels.$inferSelect;
+
+export type GatewayCatalogModel = ChatModel & {
+  alias: string | null;
+  rawModelId: string;
+  modality: GatewayModality;
+  gatewayId: string | null;
+  gatewayProvider: GatewayProvider;
+  isDefault: boolean;
+  metadata: Record<string, unknown> | null;
+};
+
+const GATEWAY_SELECTION_PRIORITY: Record<GatewayProvider, number> = {
+  openai: 0,
+  lumi: 1,
+  anthropic: 2,
+  ollama: 3,
+  openrouter: 4,
+  replicate: 5,
+};
+
+const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
+  anthropic: "Anthropic",
+  lumi: "Lumi",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  ollama: "Ollama",
+  replicate: "Replicate",
+};
+
+type SyncedGatewayModel = {
+  rawModelId: string;
+  modality: GatewayModality;
+  description?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+function titleCase(value: string) {
+  return value
+    .split(/[-_/]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function getProviderDisplayName(provider: GatewayProvider) {
+  return PROVIDER_DISPLAY_NAMES[provider];
+}
+
+export function getProviderSupportedModalities(provider: GatewayProvider) {
+  return getSharedProviderSupportedModalities(provider);
+}
+
+function getDefaultBaseUrl(provider: GatewayProvider) {
+  switch (provider) {
+    case "lumi":
+      return "https://api.kestrelagents.dev";
+    case "openrouter":
+      return "https://openrouter.ai/api/v1";
+    case "ollama":
+      return "http://127.0.0.1:11434/v1";
+    case "openai":
+      return "https://api.openai.com/v1";
+    default:
+      return null;
+  }
+}
+
+function getDefaultApiKeyEnvVar(provider: GatewayProvider) {
+  switch (provider) {
+    case "lumi":
+      return "LUMI_API_KEY";
+    case "openai":
+      return "OPENAI_API_KEY";
+    case "openrouter":
+      return "OPENROUTER_API_KEY";
+    case "anthropic":
+      return "ANTHROPIC_API_KEY";
+    case "replicate":
+      return "REPLICATE_API_TOKEN";
+    default:
+      return null;
+  }
+}
+
+function getGatewayApiKey(gateway: GatewayRecord) {
+  if (gateway.apiKey?.trim()) {
+    return gateway.apiKey.trim();
+  }
+
+  const envVar =
+    gateway.apiKeyEnvVar?.trim() || getDefaultApiKeyEnvVar(gateway.provider);
+
+  if (!envVar) {
+    return null;
+  }
+
+  return process.env[envVar]?.trim() || null;
+}
+
+function getOpenAICompatibleBaseUrl(gateway: GatewayRecord) {
+  return normalizeOpenAICompatibleBaseUrl(
+    gateway.baseUrl?.trim() || getDefaultBaseUrl(gateway.provider)
+  );
+}
+
+function getDefaultGatewayMetadata(provider: GatewayProvider) {
+  switch (provider) {
+    case "lumi":
+      return {
+        compatibility: {
+          openaiCompatible: true,
+          anthropicCompatible: true,
+          azureOpenAICompatible: true,
+          vertexCompatible: true,
+        },
+      } satisfies Record<string, unknown>;
+    default:
+      return null;
+  }
+}
+
+function normalizeModelLabel(model: GatewayModelRecord) {
+  return (
+    model.alias?.trim() ||
+    titleCase(model.rawModelId.split("/").pop() || model.rawModelId)
+  );
+}
+
+function getComparableModelName(rawModelId: string) {
+  const trimmed = rawModelId.trim().toLowerCase();
+  const parts = trimmed.split("/").filter(Boolean);
+  return parts.at(-1) || trimmed;
+}
+
+function getOpenAICompatibleAuthHeaders(apiKey: string | null) {
+  return apiKey
+    ? ({ Authorization: `Bearer ${apiKey}` } satisfies Record<string, string>)
+    : undefined;
+}
+
+async function fetchProviderJson<T>(
+  url: string,
+  init?: RequestInit
+): Promise<T> {
+  const response = await fetch(url, init);
+  const json = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message =
+      (json as { error?: { message?: string }; detail?: string }).error
+        ?.message ||
+      (json as { detail?: string }).detail ||
+      `Model sync failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  return json as T;
+}
+
+function inferOpenAICompatibleModality(rawModelId: string): GatewayModality {
+  const value = rawModelId.trim().toLowerCase();
+
+  if (value.includes("embedding")) {
+    return "embedding";
+  }
+
+  if (value.includes("sora") || value.includes("video")) {
+    return "video";
+  }
+
+  if (
+    value.includes("gpt-image") ||
+    value.includes("image-preview") ||
+    value.includes("-image")
+  ) {
+    return "image";
+  }
+
+  if (
+    value.includes("tts") ||
+    value.includes("audio") ||
+    value.includes("voice")
+  ) {
+    return "speech";
+  }
+
+  return "language";
+}
+
+function inferOpenRouterModality(model: {
+  id: string;
+  architecture?: {
+    modality?: string | null;
+    output_modalities?: string[] | null;
+  } | null;
+}): GatewayModality {
+  const outputModalities =
+    model.architecture?.output_modalities?.map((value) =>
+      value.toLowerCase()
+    ) ?? [];
+
+  if (outputModalities.includes("video")) {
+    return "video";
+  }
+
+  if (outputModalities.includes("image")) {
+    return "image";
+  }
+
+  if (outputModalities.includes("audio")) {
+    return "speech";
+  }
+
+  if (
+    (model.architecture?.modality || "").toLowerCase().includes("embedding")
+  ) {
+    return "embedding";
+  }
+
+  return inferOpenAICompatibleModality(model.id);
+}
+
+function inferOllamaModality(rawModelId: string): GatewayModality {
+  return rawModelId.toLowerCase().includes("embed") ? "embedding" : "language";
+}
+
+function inferReplicateModality(rawModelId: string): GatewayModality {
+  const value = rawModelId.toLowerCase();
+
+  if (
+    value.includes("video") ||
+    value.includes("wan-") ||
+    value.includes("kling") ||
+    value.includes("minimax") ||
+    value.includes("ltx")
+  ) {
+    return "video";
+  }
+
+  return "image";
+}
+
+async function fetchOpenAICompatibleModels(
+  gateway: GatewayRecord
+): Promise<SyncedGatewayModel[]> {
+  const apiKey = getGatewayApiKey(gateway);
+  if (!apiKey && gateway.provider !== "ollama") {
+    throw new Error(
+      `${getProviderDisplayName(gateway.provider)} API key is required.`
+    );
+  }
+
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!baseUrl) {
+    throw new Error(
+      `${getProviderDisplayName(gateway.provider)} base URL is missing.`
+    );
+  }
+
+  const json = await fetchProviderJson<{
+    data?: Array<Record<string, unknown>>;
+  }>(`${baseUrl.replace(/\/$/, "")}/models`, {
+    headers: getOpenAICompatibleAuthHeaders(apiKey),
+  });
+
+  return (json.data ?? []).flatMap((model) => {
+    const rawModelId = typeof model.id === "string" ? model.id.trim() : "";
+    if (!rawModelId) {
+      return [];
+    }
+
+    const modality =
+      gateway.provider === "openrouter"
+        ? inferOpenRouterModality(model as never)
+        : inferOpenAICompatibleModality(rawModelId);
+
+    return [
+      {
+        rawModelId,
+        modality,
+        description:
+          (typeof model.name === "string" && model.name) ||
+          (typeof model.description === "string" && model.description) ||
+          null,
+        metadata: model,
+      } satisfies SyncedGatewayModel,
+    ];
+  });
+}
+
+async function fetchAnthropicModels(
+  gateway: GatewayRecord
+): Promise<SyncedGatewayModel[]> {
+  const apiKey = getGatewayApiKey(gateway);
+  if (!apiKey) {
+    throw new Error("Anthropic API key is required.");
+  }
+
+  const baseUrl = gateway.baseUrl?.trim() || "https://api.anthropic.com/v1";
+  const json = await fetchProviderJson<{
+    data?: Array<Record<string, unknown>>;
+  }>(`${baseUrl.replace(/\/$/, "")}/models`, {
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+  });
+
+  return (json.data ?? []).flatMap((model) => {
+    const rawModelId = typeof model.id === "string" ? model.id.trim() : "";
+    if (!rawModelId) {
+      return [];
+    }
+
+    return [
+      {
+        rawModelId,
+        modality: "language",
+        description:
+          (typeof model.display_name === "string" && model.display_name) ||
+          (typeof model.description === "string" && model.description) ||
+          null,
+        metadata: model,
+      } satisfies SyncedGatewayModel,
+    ];
+  });
+}
+
+async function fetchOllamaModels(
+  gateway: GatewayRecord
+): Promise<SyncedGatewayModel[]> {
+  const baseUrl = gateway.baseUrl?.trim() || getDefaultBaseUrl("ollama")!;
+  const url = new URL(baseUrl);
+  url.pathname = "/api/tags";
+  url.search = "";
+
+  const json = await fetchProviderJson<{
+    models?: Array<Record<string, unknown>>;
+  }>(url.toString());
+
+  return (json.models ?? []).flatMap((model) => {
+    const rawModelId =
+      (typeof model.model === "string" && model.model.trim()) ||
+      (typeof model.name === "string" && model.name.trim()) ||
+      "";
+    if (!rawModelId) {
+      return [];
+    }
+
+    return [
+      {
+        rawModelId,
+        modality: inferOllamaModality(rawModelId),
+        description: (typeof model.name === "string" && model.name) || null,
+        metadata: model,
+      } satisfies SyncedGatewayModel,
+    ];
+  });
+}
+
+async function fetchReplicateModels(
+  gateway: GatewayRecord
+): Promise<SyncedGatewayModel[]> {
+  const apiKey = getGatewayApiKey(gateway);
+  if (!apiKey) {
+    throw new Error("Replicate API token is required.");
+  }
+
+  const baseUrl = gateway.baseUrl?.trim() || "https://api.replicate.com";
+  const json = await fetchProviderJson<{
+    results?: Array<Record<string, unknown>>;
+  }>(`${baseUrl.replace(/\/$/, "")}/v1/models`, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+
+  return (json.results ?? []).flatMap((model) => {
+    const owner = typeof model.owner === "string" ? model.owner.trim() : "";
+    const name = typeof model.name === "string" ? model.name.trim() : "";
+    const rawModelId = owner && name ? `${owner}/${name}` : "";
+
+    if (!rawModelId) {
+      return [];
+    }
+
+    return [
+      {
+        rawModelId,
+        modality: inferReplicateModality(rawModelId),
+        description:
+          (typeof model.description === "string" && model.description) || null,
+        metadata: model,
+      } satisfies SyncedGatewayModel,
+    ];
+  });
+}
+
+async function fetchGatewayModels(gateway: GatewayRecord) {
+  switch (gateway.provider) {
+    case "lumi":
+    case "openai":
+    case "openrouter":
+      return fetchOpenAICompatibleModels(gateway);
+    case "anthropic":
+      return fetchAnthropicModels(gateway);
+    case "ollama":
+      return fetchOllamaModels(gateway);
+    case "replicate":
+      return fetchReplicateModels(gateway);
+  }
+}
+
+function sanitizeGateway(gateway: GatewayRecord) {
+  return {
+    ...gateway,
+    apiKey: null,
+    hasApiKey: Boolean(getGatewayApiKey(gateway)),
+  };
+}
+
+export async function listAIGatewaysWithModels() {
+  const [gateways, models] = await Promise.all([
+    knowledgeDb
+      .select()
+      .from(schema.aiGateways)
+      .orderBy(
+        asc(schema.aiGateways.provider),
+        asc(schema.aiGateways.displayName)
+      ),
+    knowledgeDb
+      .select()
+      .from(schema.aiGatewayModels)
+      .orderBy(
+        asc(schema.aiGatewayModels.modality),
+        asc(schema.aiGatewayModels.alias),
+        asc(schema.aiGatewayModels.rawModelId)
+      ),
+  ]);
+
+  const modelsByGateway = models.reduce<Record<string, GatewayModelRecord[]>>(
+    (accumulator, model) => {
+      if (!accumulator[model.gatewayId]) {
+        accumulator[model.gatewayId] = [];
+      }
+      accumulator[model.gatewayId].push(model);
+      return accumulator;
+    },
+    {}
+  );
+
+  return gateways.map((gateway) => ({
+    gateway: sanitizeGateway(gateway),
+    models: modelsByGateway[gateway.id] ?? [],
+  }));
+}
+
+export async function listApprovedModels(modality: GatewayModality) {
+  const rows = await knowledgeDb
+    .select({
+      gateway: schema.aiGateways,
+      model: schema.aiGatewayModels,
+    })
+    .from(schema.aiGatewayModels)
+    .innerJoin(
+      schema.aiGateways,
+      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
+    )
+    .where(
+      and(
+        eq(schema.aiGatewayModels.approved, true),
+        eq(schema.aiGatewayModels.modality, modality),
+        eq(schema.aiGateways.enabled, true)
+      )
+    )
+    .orderBy(
+      desc(schema.aiGatewayModels.isDefault),
+      asc(schema.aiGateways.displayName),
+      asc(schema.aiGatewayModels.alias),
+      asc(schema.aiGatewayModels.rawModelId)
+    );
+
+  return rows.map(({ gateway, model }) => ({
+    id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
+    name: normalizeModelLabel(model),
+    provider: gateway.provider,
+    description:
+      model.description || `${gateway.displayName} ${modality} model`,
+    alias: model.alias,
+    rawModelId: model.rawModelId,
+    modality: model.modality as GatewayModality,
+    gatewayId: gateway.id,
+    gatewayProvider: gateway.provider as GatewayProvider,
+    isDefault: model.isDefault,
+    metadata: normalizeGatewayModelMetadata({
+      gatewayProvider: gateway.provider as GatewayProvider,
+      modality: model.modality as GatewayModality,
+      metadata: model.metadata,
+    }),
+  })) as GatewayCatalogModel[];
+}
+
+export async function getApprovedLanguageModels() {
+  return listApprovedModels("language");
+}
+
+export async function resolvePreferredLanguageModelId(
+  selectedModelId?: string | null
+) {
+  const languageModels = await getApprovedLanguageModels();
+
+  if (selectedModelId) {
+    const matching = languageModels.find(
+      (model) => model.id === selectedModelId
+    );
+    if (matching) {
+      return matching.id;
+    }
+
+    return selectedModelId;
+  }
+
+  return (
+    languageModels.find((model) => model.isDefault)?.id ||
+    languageModels[0]?.id ||
+    getDefaultAIModel()
+  );
+}
+
+export async function getSpeechModelForLanguageSelection(
+  languageModelId?: string | null
+) {
+  const languageModels = await getApprovedLanguageModels();
+  const speechModels = await listApprovedModels("speech");
+
+  if (speechModels.length === 0) {
+    return null;
+  }
+
+  const selectedLanguageModel = languageModelId
+    ? languageModels.find(
+        (model) =>
+          model.id === languageModelId ||
+          model.alias === languageModelId ||
+          `${model.gatewayProvider}/${model.rawModelId}` === languageModelId
+      )
+    : null;
+  const provider = selectedLanguageModel?.gatewayProvider;
+
+  return (
+    speechModels.find((model) => model.gatewayProvider === provider) ||
+    speechModels.find((model) => model.isDefault) ||
+    speechModels[0]
+  );
+}
+
+export async function getGenerationModelsByKind(kind: "image" | "video") {
+  return listApprovedModels(kind);
+}
+
+export async function resolveGatewayModelSelection(input: {
+  selection?: string | null;
+  modality: GatewayModality;
+}) {
+  const models = await listApprovedModels(input.modality);
+
+  if (models.length === 0) {
+    return null;
+  }
+
+  if (input.selection) {
+    const explicitMatches = models.filter(
+      (model) =>
+        model.id === input.selection ||
+        model.alias === input.selection ||
+        `${model.gatewayProvider}/${model.rawModelId}` === input.selection
+    );
+
+    if (explicitMatches.length > 0) {
+      const exactIdMatches = explicitMatches.filter(
+        (model) => model.id === input.selection
+      );
+      const exactSourceMatches = explicitMatches.filter(
+        (model) =>
+          `${model.gatewayProvider}/${model.rawModelId}` === input.selection
+      );
+      const candidatePool =
+        exactIdMatches.length > 0
+          ? exactIdMatches
+          : exactSourceMatches.length > 0
+            ? exactSourceMatches
+            : explicitMatches;
+
+      return [...candidatePool].sort((left, right) => {
+        if (left.isDefault !== right.isDefault) {
+          return left.isDefault ? -1 : 1;
+        }
+
+        return (
+          GATEWAY_SELECTION_PRIORITY[left.gatewayProvider] -
+          GATEWAY_SELECTION_PRIORITY[right.gatewayProvider]
+        );
+      })[0];
+    }
+
+    return null;
+  }
+
+  return models.find((model) => model.isDefault) || models[0];
+}
+
+export async function createGateway(input: {
+  provider: GatewayProvider;
+  displayName?: string;
+  baseUrl?: string | null;
+  apiKeyEnvVar?: string | null;
+  apiKey?: string | null;
+  enabled?: boolean;
+  supportedModalities?: GatewayModality[];
+  metadata?: Record<string, unknown> | null;
+}) {
+  const [gateway] = await knowledgeDb
+    .insert(schema.aiGateways)
+    .values({
+      id: crypto.randomUUID(),
+      provider: input.provider,
+      displayName: input.displayName || getProviderDisplayName(input.provider),
+      baseUrl: input.baseUrl || getDefaultBaseUrl(input.provider),
+      apiKeyEnvVar:
+        input.apiKeyEnvVar || getDefaultApiKeyEnvVar(input.provider),
+      apiKey: input.apiKey || null,
+      enabled: input.enabled ?? true,
+      supportedModalities:
+        input.supportedModalities ||
+        getProviderSupportedModalities(input.provider),
+      metadata: input.metadata ?? getDefaultGatewayMetadata(input.provider),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  return sanitizeGateway(gateway);
+}
+
+export async function updateGateway(
+  gatewayId: string,
+  input: Partial<{
+    displayName: string;
+    baseUrl: string | null;
+    apiKeyEnvVar: string | null;
+    apiKey: string | null;
+    enabled: boolean;
+    supportedModalities: GatewayModality[];
+    metadata: Record<string, unknown> | null;
+  }>
+) {
+  const [gateway] = await knowledgeDb
+    .update(schema.aiGateways)
+    .set({
+      ...(input.displayName !== undefined
+        ? { displayName: input.displayName }
+        : {}),
+      ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+      ...(input.apiKeyEnvVar !== undefined
+        ? { apiKeyEnvVar: input.apiKeyEnvVar }
+        : {}),
+      ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      ...(input.supportedModalities !== undefined
+        ? { supportedModalities: input.supportedModalities }
+        : {}),
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.aiGateways.id, gatewayId))
+    .returning();
+
+  return gateway ? sanitizeGateway(gateway) : null;
+}
+
+export async function syncGatewayModels(gatewayId: string) {
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: (table, operators) => operators.eq(table.id, gatewayId),
+  });
+
+  if (!gateway) {
+    throw new Error("Gateway not found");
+  }
+
+  const [syncedModels, existingModels] = await Promise.all([
+    fetchGatewayModels(gateway),
+    listModelsForGateway(gatewayId),
+  ]);
+
+  const existingByRawModelId = new Map(
+    existingModels.map((model) => [model.rawModelId, model] as const)
+  );
+
+  const uniqueSyncedModels = new Map<string, SyncedGatewayModel>();
+  for (const model of syncedModels) {
+    uniqueSyncedModels.set(model.rawModelId, model);
+  }
+
+  const savedModels: GatewayModelRecord[] = [];
+  for (const syncedModel of uniqueSyncedModels.values()) {
+    const existing = existingByRawModelId.get(syncedModel.rawModelId);
+    const savedModel = await saveGatewayModel({
+      id: existing?.id,
+      gatewayId,
+      rawModelId: syncedModel.rawModelId,
+      alias: existing?.alias ?? null,
+      modality: existing?.modality ?? syncedModel.modality,
+      approved: existing?.approved ?? false,
+      isDefault: existing?.isDefault ?? false,
+      description: syncedModel.description ?? existing?.description ?? null,
+      metadata: normalizeGatewayModelMetadata({
+        gatewayProvider: gateway.provider,
+        modality: (existing?.modality ??
+          syncedModel.modality) as GatewayModality,
+        metadata:
+          syncedModel.metadata ??
+          (existing?.metadata as Record<string, unknown> | null) ??
+          null,
+      }),
+      gatewayProvider: gateway.provider,
+    });
+    savedModels.push(savedModel);
+  }
+
+  const discoveredModalities = Array.from(
+    new Set(savedModels.map((model) => model.modality as GatewayModality))
+  );
+
+  await knowledgeDb
+    .update(schema.aiGateways)
+    .set({
+      supportedModalities:
+        discoveredModalities.length > 0
+          ? discoveredModalities
+          : getProviderSupportedModalities(gateway.provider),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.aiGateways.id, gatewayId));
+
+  return {
+    gateway: sanitizeGateway({
+      ...gateway,
+      supportedModalities:
+        discoveredModalities.length > 0
+          ? discoveredModalities
+          : getProviderSupportedModalities(gateway.provider),
+      updatedAt: new Date(),
+    }),
+    models: savedModels,
+    syncedCount: savedModels.length,
+  };
+}
+
+export async function saveGatewayModel(input: {
+  id?: string;
+  gatewayId: string;
+  gatewayProvider?: GatewayProvider;
+  rawModelId: string;
+  alias?: string | null;
+  modality: GatewayModality;
+  approved?: boolean;
+  isDefault?: boolean;
+  description?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const gatewayProvider =
+    input.gatewayProvider ||
+    (
+      await knowledgeDb.query.aiGateways.findFirst({
+        columns: { provider: true },
+        where: (table, operators) => operators.eq(table.id, input.gatewayId),
+      })
+    )?.provider;
+
+  const metadata =
+    gatewayProvider != null
+      ? normalizeGatewayModelMetadata({
+          gatewayProvider: gatewayProvider as GatewayProvider,
+          modality: input.modality,
+          metadata: input.metadata,
+        })
+      : (input.metadata ?? null);
+
+  if (input.isDefault) {
+    await knowledgeDb
+      .update(schema.aiGatewayModels)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+          eq(schema.aiGatewayModels.modality, input.modality)
+        )
+      );
+  }
+
+  if (input.id) {
+    const [updated] = await knowledgeDb
+      .update(schema.aiGatewayModels)
+      .set({
+        rawModelId: input.rawModelId,
+        alias: input.alias ?? null,
+        modality: input.modality,
+        approved: input.approved ?? true,
+        isDefault: input.isDefault ?? false,
+        description: input.description ?? null,
+        metadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.aiGatewayModels.id, input.id))
+      .returning();
+
+    return updated;
+  }
+
+  const [created] = await knowledgeDb
+    .insert(schema.aiGatewayModels)
+    .values({
+      id: crypto.randomUUID(),
+      gatewayId: input.gatewayId,
+      rawModelId: input.rawModelId,
+      alias: input.alias ?? null,
+      modality: input.modality,
+      approved: input.approved ?? true,
+      isDefault: input.isDefault ?? false,
+      description: input.description ?? null,
+      metadata,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  return created;
+}
+
+type ResolvedGatewayModel = {
+  gateway: GatewayRecord;
+  model: GatewayCatalogModel;
+};
+
+async function getResolvedGatewayModel(input: {
+  selection?: string | null;
+  modality: GatewayModality;
+}): Promise<ResolvedGatewayModel | null> {
+  const selection = await resolveGatewayModelSelection(input);
+
+  if (!selection?.gatewayId) {
+    return null;
+  }
+
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: (table, operators) => operators.eq(table.id, selection.gatewayId!),
+  });
+
+  if (!gateway) {
+    return null;
+  }
+
+  return {
+    gateway,
+    model: selection,
+  };
+}
+
+export async function getResolvedGatewayExecutionModel(input: {
+  selection?: string | null;
+  modality: GatewayModality;
+}) {
+  return getResolvedGatewayModel(input);
+}
+
+function createOpenAICompatibleProvider(gateway: GatewayRecord): ProviderV3 {
+  const apiKey = getGatewayApiKey(gateway);
+  const baseURL = getOpenAICompatibleBaseUrl(gateway);
+
+  if (!apiKey && gateway.provider !== "ollama") {
+    throw new Error(`Gateway ${gateway.displayName} is missing an API key.`);
+  }
+
+  return createOpenAI({
+    apiKey: apiKey || "ollama",
+    baseURL: baseURL || undefined,
+    headers:
+      gateway.provider === "openrouter"
+        ? {
+            "HTTP-Referer":
+              process.env.AI_AGENT_SITE_URL?.trim() || "http://127.0.0.1:43103",
+            "X-Title": process.env.AI_AGENT_SITE_NAME?.trim() || "Kestrel One",
+          }
+        : undefined,
+    name: gateway.provider,
+  });
+}
+
+function createGatewayProvider(input: {
+  gateway: GatewayRecord;
+  model: Pick<GatewayCatalogModel, "metadata" | "modality">;
+}): ProviderV3 {
+  if (
+    input.gateway.provider === "lumi" &&
+    getGatewayLanguageProtocol({
+      gatewayProvider: "lumi",
+      modality: input.model.modality,
+      metadata: input.model.metadata,
+    }) === "anthropic"
+  ) {
+    return createAnthropic({
+      apiKey: getGatewayApiKey(input.gateway) || undefined,
+      baseURL: input.gateway.baseUrl?.trim() || undefined,
+      name: input.gateway.provider,
+    });
+  }
+
+  switch (input.gateway.provider) {
+    case "lumi":
+    case "openai":
+    case "openrouter":
+    case "ollama":
+      return createOpenAICompatibleProvider(input.gateway);
+    case "anthropic":
+      return createAnthropic({
+        apiKey: getGatewayApiKey(input.gateway) || undefined,
+        baseURL: input.gateway.baseUrl?.trim() || undefined,
+        name: input.gateway.provider,
+      });
+    case "replicate":
+      throw new Error(
+        "Replicate gateways are used through the media adapter, not the language/image/speech provider registry."
+      );
+  }
+}
+
+export async function resolveLanguageModelHandle(input: {
+  selection?: string | null;
+  usage?: "default" | "tool-loop";
+}) {
+  const resolved = await getResolvedGatewayModel({
+    selection: input.selection,
+    modality: "language",
+  });
+
+  if (!resolved) {
+    return null;
+  }
+
+  const provider = createGatewayProvider(resolved);
+  const modelId = resolved.model.rawModelId;
+
+  if (
+    input.usage === "tool-loop" &&
+    resolved.gateway.provider === "openrouter" &&
+    "chat" in provider &&
+    typeof provider.chat === "function"
+  ) {
+    return {
+      model: provider.chat(modelId),
+      resolvedModelId: resolved.model.id,
+      provider: resolved.gateway.provider,
+    };
+  }
+
+  return {
+    model: provider.languageModel(modelId),
+    resolvedModelId: resolved.model.id,
+    provider: resolved.gateway.provider,
+  };
+}
+
+export async function resolveLanguageModelRetryFallback(
+  selection?: string | null
+) {
+  const resolved = await getResolvedGatewayModel({
+    selection,
+    modality: "language",
+  });
+
+  if (!resolved || resolved.gateway.provider !== "openrouter") {
+    return null;
+  }
+
+  const currentAlias = resolved.model.alias?.trim().toLowerCase() || null;
+  const comparableCurrentModel = getComparableModelName(
+    resolved.model.rawModelId
+  );
+
+  const languageModels = await getApprovedLanguageModels();
+  const candidates = languageModels.filter(
+    (model) =>
+      model.gatewayId !== resolved.gateway.id &&
+      model.gatewayProvider !== "openrouter"
+  );
+
+  return (
+    candidates.find(
+      (model) => model.alias?.trim().toLowerCase() === currentAlias
+    ) ||
+    candidates.find(
+      (model) =>
+        getComparableModelName(model.rawModelId) === comparableCurrentModel
+    ) ||
+    null
+  );
+}
+
+export async function resolveSpeechModelHandle(selection?: string | null) {
+  const resolved = await getResolvedGatewayModel({
+    selection,
+    modality: "speech",
+  });
+
+  if (!resolved) {
+    return null;
+  }
+
+  const provider = createGatewayProvider(resolved);
+  if (!provider.speechModel) {
+    throw new Error(
+      `${resolved.gateway.displayName} does not expose speech models in this runtime.`
+    );
+  }
+
+  return {
+    model: provider.speechModel(resolved.model.rawModelId),
+    resolvedModelId: resolved.model.id,
+    provider: resolved.gateway.provider,
+  };
+}
+
+export async function resolveImageModelHandle(selection?: string | null) {
+  const resolved = await getResolvedGatewayModel({
+    selection,
+    modality: "image",
+  });
+
+  if (!resolved) {
+    return null;
+  }
+
+  const provider = createGatewayProvider(resolved);
+
+  return {
+    model: provider.imageModel(resolved.model.rawModelId),
+    resolvedModelId: resolved.model.id,
+    provider: resolved.gateway.provider,
+  };
+}
+
+export async function getGatewayById(gatewayId: string) {
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: (table, operators) => operators.eq(table.id, gatewayId),
+  });
+
+  return gateway ? sanitizeGateway(gateway) : null;
+}
+
+export async function listModelsForGateway(gatewayId: string) {
+  return knowledgeDb
+    .select()
+    .from(schema.aiGatewayModels)
+    .where(eq(schema.aiGatewayModels.gatewayId, gatewayId))
+    .orderBy(
+      asc(schema.aiGatewayModels.modality),
+      asc(schema.aiGatewayModels.alias),
+      asc(schema.aiGatewayModels.rawModelId)
+    );
+}
+
+export async function deleteGateway(gatewayId: string) {
+  const [deleted] = await knowledgeDb
+    .delete(schema.aiGateways)
+    .where(eq(schema.aiGateways.id, gatewayId))
+    .returning();
+
+  return deleted ? sanitizeGateway(deleted) : null;
+}
+
+export async function deleteGatewayModel(modelId: string) {
+  const [deleted] = await knowledgeDb
+    .delete(schema.aiGatewayModels)
+    .where(eq(schema.aiGatewayModels.id, modelId))
+    .returning();
+
+  return deleted ?? null;
+}
+
+export async function hasApprovedModelsForModalities(
+  modalities: GatewayModality[]
+) {
+  const rows = await knowledgeDb
+    .select({ modality: schema.aiGatewayModels.modality })
+    .from(schema.aiGatewayModels)
+    .where(
+      and(
+        inArray(schema.aiGatewayModels.modality, modalities),
+        eq(schema.aiGatewayModels.approved, true)
+      )
+    );
+
+  return new Set(rows.map((row) => row.modality as GatewayModality));
+}

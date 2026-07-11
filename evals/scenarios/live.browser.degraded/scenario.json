@@ -1,0 +1,68 @@
+{
+  "$schema": "https://lumicorp.github.io/ruhroh/schemas/scenario-v2.schema.json",
+  "version": "ruhroh_scenario_v2",
+  "id": "live.browser.degraded",
+  "title": "Kestrel Degraded Multi-Source Note",
+  "tier": "release",
+  "kind": "contract_stress",
+  "metadata": {
+    "scenarioVersion": "0.1.0",
+    "provenance": "Migrated from the pre-0.6 in-repository evaluator.",
+    "createdAt": "2026-07-10",
+    "updatedAt": "2026-07-10",
+    "difficulty": "standard",
+    "tags": ["kestrel", "degraded-provider", "research", "evaluator-migration"],
+    "visibility": "public",
+    "expectedRuntimeSeconds": 45,
+    "networkRationale": "The scenario exercises Kestrel's public internet search and weather providers.",
+    "contaminationNotes": "The prompt is a pre-existing Kestrel canary request and contains no answer fixture.",
+    "maintainers": ["kestrel-runtime"],
+    "changelog": ["0.1.0: Migrated the live degraded browser-note behavior to a declarative Ruhroh scenario."],
+    "lifecycle": { "status": "active" }
+  },
+  "userPromptPath": "instruction.md",
+  "assets": [],
+  "run": { "mode": "plan", "timeoutSeconds": 45 },
+  "requires": {
+    "continuity": "native_session",
+    "tools": ["internet.search", "free.weather.forecast"],
+    "network": true
+  },
+  "loop": { "defaultMaxIterations": 2, "stopPolicy": "goal_satisfied_or_max" },
+  "evaluation": {
+    "mode": "agentic_goal_review",
+    "scenarioContext": [
+      "This is a Kestrel runtime behavior check, not a coding task.",
+      "One provider may return degraded or partial data; successful recovery must not invent missing facts."
+    ],
+    "goalRubric": [
+      "The preserved Kestrel event evidence shows at least one internet.search call and one free.weather.forecast call.",
+      "The final response includes usable Ada Lovelace evidence and clearly labels any unavailable or degraded London forecast detail.",
+      "The run reaches a completed user-facing response without MAX_STEPS_EXCEEDED or MODEL_INVOCATION_FAILED errors."
+    ],
+    "evidenceGuidance": [
+      "Inspect the Kestrel job output, finalized payload, and event log retained by the Ruhroh adapter.",
+      "Judge the accuracy and caveats in the delivered response; do not pass on phrase matching alone."
+    ],
+    "calibrationCases": [
+      {
+        "id": "degraded-recovery-pass",
+        "inputSummary": "Both required tools were called, usable evidence was summarized, and degraded forecast data was explicitly caveated.",
+        "expectedStatus": "passed",
+        "rationale": "The runtime preserved useful evidence while making the provider limitation visible."
+      },
+      {
+        "id": "invented-weather-fail",
+        "inputSummary": "The weather provider degraded, but the final response stated unsupported forecast values as facts.",
+        "expectedStatus": "failed",
+        "rationale": "Hiding degradation or fabricating missing evidence violates the user-facing recovery contract."
+      },
+      {
+        "id": "missing-event-evidence-review",
+        "inputSummary": "The response appears caveated, but the preserved artifacts do not prove both required tools ran.",
+        "expectedStatus": "review",
+        "rationale": "The outcome may be acceptable, but parity cannot be claimed without auditable tool evidence."
+      }
+    ]
+  }
+}

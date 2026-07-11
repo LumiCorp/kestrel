@@ -1,0 +1,208 @@
+{
+  "version": "trust_demo_report_v1",
+  "generatedAt": "2026-03-30T02:37:47.253Z",
+  "synthetic": true,
+  "scenarios": [
+    {
+      "scenarioId": "approval-scope-enforcement",
+      "title": "Approval Scope Enforcement",
+      "rationale": "Validate that unattended execution remains blocked outside an explicit approval envelope.",
+      "kestrel": {
+        "system": "kestrel",
+        "scenarioId": "approval-scope-enforcement",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "interaction.requested",
+            "detail": "Approval request emitted with explicit tool/capability scope.",
+            "traceRef": "kestrel:approval-scope-enforcement:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "approval.granted",
+            "detail": "Scoped grant recorded with allowlist.",
+            "traceRef": "kestrel:approval-scope-enforcement:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "run.completed",
+            "detail": "Execution continued only within granted scope.",
+            "traceRef": "kestrel:approval-scope-enforcement:03"
+          }
+        ],
+        "outcome": "success",
+        "auditable": true
+      },
+      "baseline": {
+        "system": "chat_loop_baseline",
+        "scenarioId": "approval-scope-enforcement",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "message.received",
+            "detail": "Natural-language approval interpreted without typed scope.",
+            "traceRef": "chat_loop_baseline:approval-scope-enforcement:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "tool.invoked",
+            "detail": "Tool call proceeded with implicit capability expansion.",
+            "traceRef": "chat_loop_baseline:approval-scope-enforcement:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "run.completed",
+            "detail": "Outcome succeeded but without auditable scoped grant.",
+            "traceRef": "chat_loop_baseline:approval-scope-enforcement:03"
+          }
+        ],
+        "outcome": "partial",
+        "auditable": false
+      },
+      "comparison": {
+        "winner": "kestrel",
+        "reason": "Kestrel preserves an auditable, typed approval envelope for unattended continuation."
+      },
+      "bundleLinks": {
+        "kestrel": "docs/generated/trust-demos/bundles/approval-scope-enforcement-kestrel.json",
+        "baseline": "docs/generated/trust-demos/bundles/approval-scope-enforcement-baseline.json"
+      }
+    },
+    {
+      "scenarioId": "delegation-wait-resume",
+      "title": "Delegation Wait/Resume",
+      "rationale": "Verify child-thread wait propagation and deterministic parent resume under unattended mode.",
+      "kestrel": {
+        "system": "kestrel",
+        "scenarioId": "delegation-wait-resume",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "delegation.spawned",
+            "detail": "Child thread launched with explicit parent linkage.",
+            "traceRef": "kestrel:delegation-wait-resume:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "delegation.waiting",
+            "detail": "Parent thread entered delegation wait with blocker chain.",
+            "traceRef": "kestrel:delegation-wait-resume:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "delegation.completed",
+            "detail": "Child terminal state propagated; parent resumed deterministically.",
+            "traceRef": "kestrel:delegation-wait-resume:03"
+          }
+        ],
+        "outcome": "success",
+        "auditable": true
+      },
+      "baseline": {
+        "system": "chat_loop_baseline",
+        "scenarioId": "delegation-wait-resume",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "task.spawned",
+            "detail": "Background task requested.",
+            "traceRef": "chat_loop_baseline:delegation-wait-resume:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "status.unknown",
+            "detail": "No typed blocker chain for parent/child linkage.",
+            "traceRef": "chat_loop_baseline:delegation-wait-resume:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "manual.recovery",
+            "detail": "Operator intervention required to reconcile outputs.",
+            "traceRef": "chat_loop_baseline:delegation-wait-resume:03"
+          }
+        ],
+        "outcome": "partial",
+        "auditable": false
+      },
+      "comparison": {
+        "winner": "kestrel",
+        "reason": "Kestrel retains parent/child lineage and deterministic wait-resume semantics."
+      },
+      "bundleLinks": {
+        "kestrel": "docs/generated/trust-demos/bundles/delegation-wait-resume-kestrel.json",
+        "baseline": "docs/generated/trust-demos/bundles/delegation-wait-resume-baseline.json"
+      }
+    },
+    {
+      "scenarioId": "replay-reproducibility",
+      "title": "Replay Reproducibility",
+      "rationale": "Compare post-hoc audit depth for unattended runs.",
+      "kestrel": {
+        "system": "kestrel",
+        "scenarioId": "replay-reproducibility",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "run.completed",
+            "detail": "Terminal state persisted with run/session/thread IDs.",
+            "traceRef": "kestrel:replay-reproducibility:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "runtime.bundle.exported",
+            "detail": "Single portable replay bundle exported.",
+            "traceRef": "kestrel:replay-reproducibility:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "doctor.report.generated",
+            "detail": "Doctor summary produced from persisted replay stream.",
+            "traceRef": "kestrel:replay-reproducibility:03"
+          }
+        ],
+        "outcome": "success",
+        "auditable": true
+      },
+      "baseline": {
+        "system": "chat_loop_baseline",
+        "scenarioId": "replay-reproducibility",
+        "unattended": true,
+        "steps": [
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "chat.completed",
+            "detail": "Conversation terminal text produced.",
+            "traceRef": "chat_loop_baseline:replay-reproducibility:01"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "history.exported",
+            "detail": "Message transcript available without transition lineage.",
+            "traceRef": "chat_loop_baseline:replay-reproducibility:02"
+          },
+          {
+            "at": "2026-03-30T02:37:47.253Z",
+            "event": "audit.gap",
+            "detail": "No deterministic replay artifact for runtime reconstruction.",
+            "traceRef": "chat_loop_baseline:replay-reproducibility:03"
+          }
+        ],
+        "outcome": "partial",
+        "auditable": false
+      },
+      "comparison": {
+        "winner": "kestrel",
+        "reason": "Kestrel emits replay and doctor artifacts that can be independently audited."
+      },
+      "bundleLinks": {
+        "kestrel": "docs/generated/trust-demos/bundles/replay-reproducibility-kestrel.json",
+        "baseline": "docs/generated/trust-demos/bundles/replay-reproducibility-baseline.json"
+      }
+    }
+  ]
+}

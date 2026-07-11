@@ -1,0 +1,106 @@
+---
+title: Adding observability
+summary: Wrap `workspace-copilot` with Kestrel-native tracing so the canonical demo exposes run, stream, resume, and subscription spans before you depend on nightly automation in production.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="Step 6">
+This step adds a tracing wrapper around the same `workspace-copilot` agent. The request, route, and workspace contracts do not change. Only the visibility changes.
+</WorkspaceCopilotDemo>
+
+Observability is not an afterthought in Kestrel. The whole point of a durable runtime is that runs are worth inspecting after they finish.
+
+## Why this exists
+
+By the time the example reaches streaming, memory, and scheduled automation, operators need to answer practical questions:
+
+- did the run fail, cancel, or complete?
+- which session and thread did it touch?
+- which route or integration surface started it?
+- which actor and tenant were attached?
+
+The observability package exists to make those answers available without forcing product code to invent its own tracing layer.
+
+## Install the package
+
+```bash
+pnpm add @kestrel-agents/observability @kestrel-agents/sdk
+```
+
+## Create a tracer
+
+```ts
+import { createTracer, InMemoryTraceProcessor } from "@kestrel-agents/observability";
+
+const tracer = createTracer({
+  processors: [new InMemoryTraceProcessor()],
+});
+```
+
+## Wrap the agent
+
+```ts
+import { workspaceCopilotAgent } from "@/lib/workspace-copilot";
+
+export const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
+```
+
+That wrapper instruments:
+
+| Surface | Span kind |
+| --- | --- |
+| `run()` | `run` |
+| `stream()` | `stream` |
+| `resume()` | `resume` |
+| `subscribe()` | `subscription` |
+
+## Example trace-friendly route usage
+
+```ts
+export const POST = createStreamRunRouteHandler({
+  agent: tracedWorkspaceCopilotAgent,
+  resolveContext: async () => workspaceCopilotContext,
+});
+```
+
+The route code does not need to know how traces are assembled. It only needs to use the wrapped agent consistently.
+
+## OTEL export bridge
+
+Kestrel keeps the primary trace model Kestrel-native, then bridges outward when you need vendor-neutral export:
+
+```ts
+import { OpenTelemetryTraceExporter } from "@kestrel-agents/observability";
+
+const exporter = new OpenTelemetryTraceExporter();
+```
+
+That ordering matters. The application contract stays grounded in Kestrel concepts such as run, stream, and subscription instead of forcing OTEL naming back into product code.
+
+## What changes in this step
+
+- `workspace-copilot` now emits traces for `run`, `stream`, `resume`, and `subscribe`
+- the same trace model can cover daytime requests and nightly `kcron` runs
+- routes and operators can inspect failures without inventing ad hoc logs
+
+## Why this matters for Workspace Copilot
+
+When a nightly report is missing, a trace should help you answer whether the failure lived in:
+
+- route entry
+- runner communication
+- runtime execution
+- cancellation
+- downstream export or processing
+
+That is the difference between observability as decoration and observability as operator support.
+
+## What To Read Next
+
+- [Observability package](/packages/observability)
+- [Production operating model](/deploy/production-operating-model)
+- [Reliability](/operations/reliability)

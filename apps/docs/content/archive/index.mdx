@@ -1,0 +1,50 @@
+---
+title: Archive
+summary: Historical design plans and runbooks preserved as part of the repository record, useful when a current Kestrel boundary or operator rule needs its original rationale.
+section: archive
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-03-24
+---
+
+Archive material is not part of the main learning path, but it is still important. Many of Kestrel's sharp edges make more sense once you see the original design trade-offs or the operator runbooks that shaped them.
+
+This section is for readers who need rationale, not current API guarantees.
+
+## How To Use This Section
+
+- Start with the current docs, runtime, operations, or reference sections first.
+- Use archive pages to understand why a current boundary or workflow looks the way it does.
+- If an archive page conflicts with a current root doc, current reference page, or current operations page, the current doc wins.
+
+## Start here if you are...
+
+- working on workspace-local behavior or `kcron`: start with the workspace-local profiles and scheduler plans in the plans archive
+- working on the runner-service boundary: start with the docs-site and web-runner design material
+- touching replay or operations flows: start with the operator runbooks and replay-adjacent plans
+
+## Guided reading paths
+
+- Workspace rationale:
+  [Workspace Copilot docs site design](/archive/plans/2026-03-19-docs-site-design),
+  [workspace-local profiles and kcron design](/archive/plans/2026-03-19-workspace-local-profiles-and-kcron-design)
+- Runner-service rationale:
+  [web runner shutdown design](/archive/plans/2026-03-19-web-runner-shutdown-design),
+  [docs-site design](/archive/plans/2026-03-19-docs-site-design)
+- Replay and operator workflows:
+  [stale run recovery design](/archive/plans/2026-03-18-stale-run-recovery-design),
+  [kestrel MVP operator runbook](/archive/runbooks/2026-02-25-kestrel-mvp-operator-runbook)
+
+## What is here
+
+- design plans
+- migration and operator runbooks
+
+Treat archive pages as historical context, not current contract docs.
+
+## What To Read Next
+
+- [Runtime](/runtime)
+- [Operations](/operations)
+- [Plans index](/archive)

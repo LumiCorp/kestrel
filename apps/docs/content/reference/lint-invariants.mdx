@@ -1,0 +1,34 @@
+---
+title: Lint invariants
+summary: The enforceable repo invariants that protect readability, structured logging, input parsing, and normalized error shapes.
+section: reference
+audience: maintainers
+status: stable
+sourceKind: curated
+internal: true
+updatedAt: 2026-03-20
+---
+
+Lint invariants are one of the ways the repo turns broad guidance into enforceable behavior.
+
+## Current invariants
+
+- `structured-logging`
+- `max-file-size`
+- `parse-boundary`
+- `normalized-error-shape`
+
+## Runtime contract
+
+Invariant checks run via `pnpm run check:invariants` and are included in governance checks.
+
+## When you hit this
+
+Use this page when a review or refactor hits one of these patterns:
+
+- a log call starts growing ad hoc string interpolation instead of explicit fields
+- a file becomes so large that behavior stops being reviewable
+- raw external input crosses a boundary without parsing and validation
+- errors start returning inconsistent shapes that make operator tooling harder to trust
+
+These are small rules, but they compound into real maintainability.

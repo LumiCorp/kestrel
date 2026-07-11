@@ -1,0 +1,65 @@
+---
+title: kcron
+summary: The per-user scheduler daemon surface for workspace automation.
+section: cli
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-06-16
+---
+
+<WorkspaceCopilotDemo step="CLI mechanics">
+In the canonical demo, `kcron` is what turns `workspace-copilot` from an interactive assistant into a nightly review loop that writes to `./reports`.
+</WorkspaceCopilotDemo>
+
+`kcron` is a beta local-automation surface for Kestrel v0.5. Use `run-once` as the first validation path and do not treat daemon scheduling as a stable product promise until the install, uninstall, and failure-mode behavior has been validated on the target machine.
+
+`kcron` is intentionally narrow. The current workspace catalog records identity and the `automationEnabled` flag, but recurring execution is deferred until the central scheduler is rebuilt on that catalog shape.
+
+## Core commands
+
+```bash
+kcron start
+kcron stop
+kcron status
+kcron run-once
+kcron install
+kcron uninstall
+```
+
+## Workspace Copilot workflow
+
+```bash
+kestrel workspace status
+kestrel workspace list
+kcron install
+kcron status
+kcron run-once
+```
+
+`run-once` is the safest first validation step once scheduler execution is available because it proves the configured run path before the schedule matters.
+
+## What each command is for
+
+| Command | Use it for |
+| --- | --- |
+| `install` | install or enable the daemon |
+| `start` | start the scheduler manually |
+| `status` | verify the daemon is healthy |
+| `run-once` | test the exact workspace cron flow now |
+| `stop` | stop scheduling without uninstalling |
+| `uninstall` | remove the scheduler integration entirely |
+
+## Incident checklist: nightly report missing
+
+- [ ] `kestrel workspace status` shows the expected catalog entry
+- [ ] `kestrel workspace list` shows the expected root path
+- [ ] the catalog entry has the intended `automationEnabled` value
+- [ ] the central scheduler implementation is available for recurring runs
+- [ ] run output and replay evidence are inspectable after execution
+
+## What To Read Next
+
+- [Workspace workflows](/cli/workspace-workflows)
+- [Automating common tasks](/build/automating-common-tasks)
+- [Production operating model](/deploy/production-operating-model)

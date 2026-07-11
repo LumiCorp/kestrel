@@ -1,0 +1,134 @@
+---
+title: Operator control workflows
+summary: Use operator inbox, thread views, and control actions to steer, stop, retry, or focus active work from the CLI, the web app, or the SDK.
+section: operations
+audience: maintainers
+status: stable
+sourceKind: curated
+updatedAt: 2026-06-16
+---
+
+Kestrel is not only a request runner. It also exposes a control surface for work that is already in flight or waiting for human input. That surface is built around three protocol calls:
+
+- `operator.inbox`
+- `operator.thread`
+- `operator.control`
+
+Those are the primitives behind the richer workflows in the CLI and the web workbench. This page is the thread-level operator manual: use it when a run has already started and the right move is to inspect or steer the existing thread rather than start over.
+
+## The control loop
+
+```text
+read inbox -> open thread -> apply control action -> inspect operator.controlled event
+```
+
+Use that loop when a run is blocked, a child thread needs attention, or an operator needs to steer the next execution boundary instead of starting a fresh run.
+
+## SDK example
+
+```ts
+import { KestrelClient } from "@kestrel-agents/sdk/runner";
+
+const client = new KestrelClient({
+  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+});
+
+const context = {
+  actor: {
+    actorId: "user-123",
+    actorType: "operator",
+    displayName: "Taylor Example",
+    tenantId: "acme",
+  },
+  tenantId: "acme",
+};
+
+const inbox = await client.getOperatorInbox({ sessionId: "workspace-copilot-nightly" }, context);
+const view = await client.getOperatorThread("thread-main", context);
+
+const controlled = await client.controlOperator(
+  {
+    action: "retry",
+    threadId: "thread-main",
+    message: "Retry after refreshing evidence.",
+  },
+  context,
+);
+```
+
+## Common actions
+
+The repo tests and CLI surface show operator actions such as:
+
+| Action | Use when | Result shape |
+| --- | --- | --- |
+| `retry` | the thread should try again with the same general goal | `operator.controlled` |
+| `steer` | the operator wants to inject new direction | `operator.controlled` |
+| `stop` | the run should stop and wait | `operator.controlled` |
+| `focus_thread` | the operator wants to switch attention to a specific branch | `operator.controlled` |
+| `supersede_child_thread` | a child branch is stale and should be replaced | `operator.controlled` |
+| `resolve_fan_in_checkpoint` | a join point needs explicit operator resolution | `operator.controlled` |
+
+Invalid actions fail deterministically. The protocol tests explicitly verify that an unsupported `operator.control` action returns `runner.error`.
+
+## Workflow: blocked thread to resolution
+
+The operator workflow is usually:
+
+1. read `operator.inbox` for the affected session
+2. open `operator.thread` to see blocker, focus, or checkpoint state
+3. decide whether the narrowest safe action is `retry`, `steer`, `stop`, or `focus_thread`
+4. apply the control action
+5. inspect the resulting `operator.controlled` event before deciding on a second intervention
+
+That sequence is what keeps operator work attached to the same durable thread instead of creating a fresh disconnected run every time the workflow hesitates.
+
+## CLI workflow
+
+In the CLI, the operator surface is mostly command-driven:
+
+```text
+/stop [message]
+/steer <message>
+/retry [reason]
+/focus <threadId>
+/approve [message]
+/reject [message]
+/reply <message>
+```
+
+That CLI flow maps onto the same protocol. The CLI is not inventing local state here. It is a thin operator cockpit over the runner.
+
+## Web workbench workflow
+
+The browser surface follows the same model through `/api/kchat/control`. The web app can:
+
+- read `operator.inbox`
+- load `operator.thread`
+- submit `operator.control`
+- inspect `task.graph`
+- read or update `project.snapshot`
+- request `project.review`
+
+That makes it viable for operators who need the same control-plane features as the CLI, but with browser-native run views and artifact inspection.
+
+The detailed task graph, project snapshot, and project review flows are covered separately in [Review and state workflows](/operations/review-and-state-workflows). This page stays focused on thread-level control and the decision to act on an existing run.
+
+## What to inspect before you control a thread
+
+1. read the operator inbox for the affected session
+2. inspect the thread view and the next action or blocker
+3. confirm whether a child thread or fan-in checkpoint is involved
+4. pick the narrowest control action that moves the workflow forward
+
+## What this means for Workspace Copilot
+
+Workspace Copilot is usually shown as a clean build tutorial, but the useful production lesson is this: if the nightly report blocks on evidence, operator control should steer the existing thread instead of creating a brand-new disconnected run.
+
+## What To Read Next
+
+- [CLI](/cli)
+- [Web workbench](/apps/web)
+- [Review and state workflows](/operations/review-and-state-workflows)
+- [@kestrel-agents/sdk](/packages/sdk)

@@ -1,0 +1,398 @@
+{
+  "version": "kestrel_ruhroh_parity_record_v1",
+  "ruhrohScenarioId": "live.browser.degraded",
+  "executedAt": "2026-07-10T21:35:12.476Z",
+  "fixture": {
+    "executionMode": "deterministic-runtime-output-through-job-contract",
+    "scenarioSha256": "365d9966e52de581c2b9eb41a4b28f5c106f57b59fbc9d6c78efbaab798b2b85",
+    "instructionSha256": "68206573a75d092dc82d9caa8f7edaf42a7abb4878437ef4fbaed5ea7b8e0f5f",
+    "clock": "2026-03-10T15:30:00.000Z",
+    "seed": 227,
+    "legacyFixtureSha256": "e5ea535d7d4bbec49989d7b76cf166c16e1482703a0e090022635bedd9f09a48"
+  },
+  "runtimes": {
+    "kestrel": {
+      "version": "0.5.1",
+      "commit": "c19bebfa3c7001788ab8db9ac9ff0bc64231a108",
+      "dirty": false,
+      "sceneRuntimeSha256": "95dfaadb447ec5a544565a3fc69cc851d39b1e100126a5c01a39be4ba4fc2089"
+    },
+    "ruhroh": {
+      "package": "@kestrel-agents/ruhroh",
+      "version": "0.6.0-beta.0",
+      "packageArtifactSha256": "f8c68df2605d658796387430a7475f7b9c8ee92c5c1d5d1a7c8c635a6022f89f",
+      "source": "installed-package",
+      "commit": null,
+      "dirty": null,
+      "adapterId": "kestrel-cli",
+      "adapterVersion": "0.1.0",
+      "continuityLevel": "native_session",
+      "adapterSha256": "f7477edf5033a19d0eed16837420b3e4625abe803af5ffbcc52d8db156e5c85a",
+      "loopControllerSha256": "0c56740a8486bdde531abdcd3d5f00b0c2e7de9ef6c69ee3380c86ad4b449e7d",
+      "evaluatorMode": "deterministic-fixture-with-independent-semantic-comparison"
+    }
+  },
+  "executions": {
+    "legacy": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Browser-backed degraded note complete with evidence artifacts.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "Ada Lovelace"
+          },
+          "status": "success",
+          "output": {
+            "summary": "Early computing pioneer.",
+            "title": "Ada Lovelace"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "London",
+            "days": 2
+          },
+          "status": "success",
+          "output": {
+            "daily": [],
+            "error": {
+              "code": "provider_degraded",
+              "message": "forecast partial"
+            },
+            "source": "open-meteo"
+          }
+        }
+      ]
+    },
+    "ruhroh": {
+      "outcome": "completed",
+      "terminalStatus": "COMPLETED",
+      "cancelled": false,
+      "failureClassification": "none",
+      "finalText": "Browser-backed degraded note complete with evidence artifacts.",
+      "toolEvidence": [
+        {
+          "toolName": "internet.search",
+          "input": {
+            "query": "Ada Lovelace"
+          },
+          "status": "success",
+          "output": {
+            "summary": "Early computing pioneer.",
+            "title": "Ada Lovelace"
+          }
+        },
+        {
+          "toolName": "free.weather.forecast",
+          "input": {
+            "city": "London",
+            "days": 2
+          },
+          "status": "success",
+          "output": {
+            "daily": [],
+            "error": {
+              "code": "provider_degraded",
+              "message": "forecast partial"
+            },
+            "source": "open-meteo"
+          }
+        }
+      ]
+    }
+  },
+  "contractProbes": {
+    "cancellation": {
+      "expected": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Browser-backed degraded note complete with evidence artifacts.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "summary": "Early computing pioneer.",
+              "title": "Ada Lovelace"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [],
+              "error": {
+                "code": "provider_degraded",
+                "message": "forecast partial"
+              },
+              "source": "open-meteo"
+            }
+          }
+        ]
+      },
+      "ruhroh": {
+        "outcome": "failed",
+        "terminalStatus": "CANCELLED",
+        "cancelled": true,
+        "failureClassification": "cancelled",
+        "finalText": "Browser-backed degraded note complete with evidence artifacts.",
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "summary": "Early computing pioneer.",
+              "title": "Ada Lovelace"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [],
+              "error": {
+                "code": "provider_degraded",
+                "message": "forecast partial"
+              },
+              "source": "open-meteo"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "jobInput",
+      "sha256": "df569d8cb3c3b96007583d4cebcf7da7b853be2b33cd5e4bc62a28a0e226b41f",
+      "sizeBytes": 1085
+    },
+    {
+      "name": "jobOutput",
+      "sha256": "791c4f37bd9ef84af7801a223beab53acbcab4e7ca338e0068ecd78b36d7ddb7",
+      "sizeBytes": 624
+    },
+    {
+      "name": "eventLog",
+      "sha256": "7e34e5b3d9654980fa1f1b6be04ae391bc2b26bf19dad375252c8ce6fe148db6",
+      "sizeBytes": 501
+    },
+    {
+      "name": "transcript",
+      "sha256": "1637e51a20c0e7af472cdbf8f8dda616f1a3d041abcf4115547352d1bf34275d",
+      "sizeBytes": 731
+    },
+    {
+      "name": "adapterResult",
+      "sha256": "82ce0dcc3bf9f8fab2ef628d2f07aea31dcd429e793190b6e7f77b5c4288d8ff",
+      "sizeBytes": 1951
+    },
+    {
+      "name": "runManifest",
+      "sha256": "bd0997bcd1f3b19aa2cb4c38fdec979256a28b8f9bbf7a74f38194b31b36d1fe",
+      "sizeBytes": 5527
+    },
+    {
+      "name": "journey",
+      "sha256": "6cb6c232109608bf4fd5349efe44709fdc90ccfb3d96dd5ca5030e1669d7e1c7",
+      "sizeBytes": 5878
+    },
+    {
+      "name": "evalResult",
+      "sha256": "76fef8f2876e7042e03ff0119e7c32eac047586256f6a3b4656ac6bed7d967c2",
+      "sizeBytes": 1129
+    },
+    {
+      "name": "loopResult",
+      "sha256": "8af677e1eeca51fdc2adfb02f775c5a5df3a7d9d1453570e076109e70174dcea",
+      "sizeBytes": 14798
+    },
+    {
+      "name": "cancellation.jobInput",
+      "sha256": "9439d85a83e6ec1dbde2e7cd5356c6cd63fef7af340cf0dd70f277c1e4dd098f",
+      "sizeBytes": 1123
+    },
+    {
+      "name": "cancellation.jobOutput",
+      "sha256": "c1f83bacafea6f877d184ccc1d43b7e08b22ee241a4c53752dd9b5bcc46e2b6a",
+      "sizeBytes": 624
+    },
+    {
+      "name": "cancellation.eventLog",
+      "sha256": "7e34e5b3d9654980fa1f1b6be04ae391bc2b26bf19dad375252c8ce6fe148db6",
+      "sizeBytes": 501
+    },
+    {
+      "name": "cancellation.transcript",
+      "sha256": "9abf77d7129144df7ed21d896ff7b95824f2e4eaf6f78e6d1a4e08e60262b845",
+      "sizeBytes": 802
+    },
+    {
+      "name": "cancellation.adapterResult",
+      "sha256": "d1d9077a9ed23580483d0d71d9865bcc3afc0757d50813c909de4bb49448e1c7",
+      "sizeBytes": 2079
+    },
+    {
+      "name": "cancellation.runManifest",
+      "sha256": "5c026aee4ecf957932108b680d58959fce69b6a99c2a3ad82b76b036856bab70",
+      "sizeBytes": 5769
+    },
+    {
+      "name": "cancellation.journey",
+      "sha256": "0c47649b868f18aa97c2359fb645725253edb3daf8c9d5086d272c4a28bfc431",
+      "sizeBytes": 6227
+    },
+    {
+      "name": "cancellation.evalResult",
+      "sha256": "374159c46e214f5aaa0417cb1b18fd071979515d49fb0b5c9eb43f0b3aae1ce5",
+      "sizeBytes": 1186
+    },
+    {
+      "name": "cancellation.loopResult",
+      "sha256": "efe161ebb9a6cc262f9814ab06392b47e4832bcdad0cf33dec8a4951b3933151",
+      "sizeBytes": 15638
+    }
+  ],
+  "comparison": {
+    "outcome": {
+      "status": "passed",
+      "legacy": "completed",
+      "ruhroh": "completed",
+      "details": "Terminal success/failure mapping is equivalent."
+    },
+    "evidence": {
+      "status": "passed",
+      "legacy": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "summary": "Early computing pioneer.",
+              "title": "Ada Lovelace"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [],
+              "error": {
+                "code": "provider_degraded",
+                "message": "forecast partial"
+              },
+              "source": "open-meteo"
+            }
+          }
+        ],
+        "finalText": "Browser-backed degraded note complete with evidence artifacts."
+      },
+      "ruhroh": {
+        "toolEvidence": [
+          {
+            "toolName": "internet.search",
+            "input": {
+              "query": "Ada Lovelace"
+            },
+            "status": "success",
+            "output": {
+              "summary": "Early computing pioneer.",
+              "title": "Ada Lovelace"
+            }
+          },
+          {
+            "toolName": "free.weather.forecast",
+            "input": {
+              "city": "London",
+              "days": 2
+            },
+            "status": "success",
+            "output": {
+              "daily": [],
+              "error": {
+                "code": "provider_degraded",
+                "message": "forecast partial"
+              },
+              "source": "open-meteo"
+            }
+          }
+        ],
+        "finalText": "Browser-backed degraded note complete with evidence artifacts.",
+        "evidenceKinds": [
+          "transcript",
+          "event_log",
+          "job_output"
+        ],
+        "artifactNames": [
+          "adapterResult",
+          "evalResult",
+          "eventLog",
+          "jobInput",
+          "jobOutput",
+          "journey",
+          "loopResult",
+          "runManifest",
+          "transcript"
+        ],
+        "adapterId": "kestrel-cli",
+        "continuityLevel": "native_session"
+      },
+      "details": "Tool inputs, outputs, final text, native-session metadata, and retained job artifacts are equivalent."
+    },
+    "cancellation": {
+      "status": "passed",
+      "legacy": {
+        "primary": false,
+        "terminalProbe": true
+      },
+      "ruhroh": {
+        "primary": false,
+        "terminalProbe": true,
+        "outcome": "failed"
+      },
+      "details": "Both the primary state and an explicit same-fixture terminal cancellation probe are equivalent."
+    },
+    "failureClassification": {
+      "status": "passed",
+      "legacy": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "ruhroh": {
+        "primary": "none",
+        "terminalProbe": "cancelled"
+      },
+      "details": "Primary and terminal-cancellation failure classifications are equivalent after contract normalization."
+    }
+  },
+  "status": "passed",
+  "behaviorId": "live.browser.degraded"
+}

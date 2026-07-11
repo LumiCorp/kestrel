@@ -1,0 +1,30 @@
+---
+title: Governance and invariants
+summary: The repo-level guardrail layer that turns design principles into enforceable boundaries, with explicit resistance to heuristic drift and policy shortcuts.
+section: runtime
+audience: maintainers
+status: active
+sourceKind: repo-inferred
+internal: true
+updatedAt: 2026-03-19
+---
+
+The runtime is not protected only by code review. The repository has a governance layer made of instructions, checks, and reference contracts.
+
+## What It Enforces
+
+Across `AGENTS.md`, lint invariants, architecture rules, and release tracks, the repo pushes a consistent policy:
+
+- keep changes reversible
+- parse boundary input before using it
+- preserve deterministic replay semantics
+- prefer shared utilities over local reinvention
+- harden prompts and contracts before touching heuristics
+
+## Why The Heuristic Rule Is So Strong
+
+The codebase has a clear scar history around ad hoc ranking, overlap scoring, and lexical fallback behavior. The current rule is to treat heuristic expansion as a change that deserves explicit user approval.
+
+## Operational Value
+
+These invariants are not bureaucracy. They are what makes a fast-moving agent runtime survivable over time.

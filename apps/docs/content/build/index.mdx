@@ -1,0 +1,53 @@
+---
+title: Build
+summary: Capability-led and tutorial-backed docs for creating the Workspace Copilot agent, proxying OpenAI-compatible HTTP, integrating with Next.js, and automating a workspace.
+section: build
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+Build is the practical path through Kestrel. This section is organized around one shared example, **Workspace Copilot**, so the tutorial sequence feels like one system instead of disconnected snippets.
+
+This section is for integrators who want to go from “what is Kestrel?” to “I can build a real feature with it.”
+
+## Start here if you are...
+
+- trying to understand the full demo before coding: read [Workspace Copilot demo](/build/workspace-copilot-demo)
+- wiring the first SDK surface: read [Building your first agent](/build/building-your-first-agent)
+- migrating an existing chat app with minimal HTTP changes: read [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- exposing the feature through Next.js routes: read [Integrating with Next.js](/build/integrating-with-nextjs)
+- binding the app to a real workspace and scheduler: read [Workspaces and automation](/build/workspaces-and-automation)
+
+## Read this in order
+
+1. [Workspace Copilot demo](/build/workspace-copilot-demo)
+2. [OpenAI-compatible HTTP](/build/openai-compatible-http)
+3. [Building your first agent](/build/building-your-first-agent)
+4. [Running your first streamed request](/build/running-your-first-streamed-request)
+5. [Adding session memory](/build/adding-session-memory)
+6. [Integrating with Next.js](/build/integrating-with-nextjs)
+7. [Next.js route cookbook](/build/nextjs-route-cookbook)
+8. [Adding observability](/build/adding-observability)
+9. [Workspaces and automation](/build/workspaces-and-automation)
+10. [Automating common tasks](/build/automating-common-tasks)
+
+## The fixed demo contract
+
+Every page in this section uses the same example identifiers:
+
+- agent id: `workspace-copilot`
+- profile id: `workspace-copilot`
+- tenant: `acme`
+- actor id: `user-123`
+- routes: `/api/copilot/run`, `/api/copilot/stream`, `/api/copilot/webhook`
+- workspace output root: `./reports`
+- workspace session prefix: `workspace-copilot`
+
+## What To Read Next
+
+- [Workspace Copilot demo](/build/workspace-copilot-demo)
+- [OpenAI-compatible HTTP](/build/openai-compatible-http)
+- [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Running the runner service](/deploy/running-the-runner-service)

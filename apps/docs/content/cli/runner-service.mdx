@@ -1,0 +1,59 @@
+---
+title: Runner service
+summary: The CLI path for starting the runner boundary that the Workspace Copilot app routes call.
+section: cli
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-03-20
+---
+
+<WorkspaceCopilotDemo step="CLI mechanics">
+This is the terminal-side entrypoint for the same runner service used by `/api/copilot/run` and `/api/copilot/stream`.
+</WorkspaceCopilotDemo>
+
+Use this page when you are starting the local HTTP runner service from the terminal instead of through app orchestration.
+
+## Start it
+
+```bash
+kestrel web
+```
+
+The command prints:
+
+- `KESTREL_RUNNER_SERVICE_URL`
+- `KESTREL_RUNNER_SERVICE_TOKEN`
+
+## Common local flow
+
+```bash
+kestrel web
+export KESTREL_RUNNER_SERVICE_URL='http://127.0.0.1:43102'
+export KESTREL_RUNNER_SERVICE_TOKEN='...'
+pnpm dev
+```
+
+## Health and auth checks
+
+```bash
+curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+```
+
+If you provided a custom host, port, or token, confirm the printed exports match the values your app server actually uses.
+
+## When to use this instead of the full Deploy section
+
+Use this page when you just need:
+
+- the startup command
+- the printed env exports
+- a local health check
+
+Use the [Deploy](/deploy) section when you need the broader trust model, application route boundary, and production operator posture.
+
+## What To Read Next
+
+- [Running the runner service](/deploy/running-the-runner-service)
+- [Environment and auth](/deploy/environment-and-auth)
+- [Integrating with Next.js](/build/integrating-with-nextjs)

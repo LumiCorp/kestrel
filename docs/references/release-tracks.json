@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-24T00:00:00.000Z",
+  "tracks": [
+    {
+      "id": "runtime-kernel-and-routing",
+      "title": "Runtime Kernel and Routing",
+      "status": "active",
+      "owner": "runtime-core",
+      "order": 1,
+      "depends_on": [],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run test",
+        "pnpm run prompt-suite",
+        "pnpm run evals:release-check"
+      ],
+      "file_prefixes": [
+        "src/engine/",
+        "src/kestrel/",
+        "src/runtime/",
+        "src/mode/",
+        "src/steps/",
+        "cli/runtime/",
+        "cli/runner/"
+      ]
+    },
+    {
+      "id": "orchestration-and-operator-state",
+      "title": "Orchestration and Operator State",
+      "status": "pending",
+      "owner": "ops-experience",
+      "order": 2,
+      "depends_on": [
+        "runtime-kernel-and-routing"
+      ],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run test",
+        "pnpm run prompt-suite"
+      ],
+      "file_prefixes": [
+        "src/orchestration/",
+        "src/project/",
+        "src/taskGraph/",
+        "src/workspaceCheckpoints/",
+        "cli/app/",
+        "cli/ink/",
+        "cli/protocol/"
+      ]
+    },
+    {
+      "id": "io-tools-and-models",
+      "title": "IO, Tools, and Models",
+      "status": "pending",
+      "owner": "runtime-platform",
+      "order": 3,
+      "depends_on": [
+        "runtime-kernel-and-routing"
+      ],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run test",
+        "pnpm run prompt-suite"
+      ],
+      "file_prefixes": [
+        "src/io/",
+        "src/code/",
+        "src/devshell/",
+        "tools/",
+        "models/"
+      ]
+    },
+    {
+      "id": "apps-and-runner-surfaces",
+      "title": "Apps and Runner Surfaces",
+      "status": "pending",
+      "owner": "product-surfaces",
+      "order": 4,
+      "depends_on": [
+        "orchestration-and-operator-state",
+        "io-tools-and-models"
+      ],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run test",
+        "pnpm run test:ops"
+      ],
+      "file_prefixes": [
+        "src/web/",
+        "apps/web/",
+        "apps/desktop/",
+        "cli/webCommand.ts"
+      ]
+    },
+    {
+      "id": "ruhroh-evaluations-and-quality",
+      "title": "Ruhroh Evaluations and Quality",
+      "status": "pending",
+      "owner": "reliability-evals",
+      "order": 5,
+      "depends_on": [
+        "runtime-kernel-and-routing"
+      ],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run prompt-suite",
+        "pnpm run evals:release-check",
+        "pnpm run check:replay-baseline",
+        "pnpm run bench:smoke"
+      ],
+      "file_prefixes": [
+        "evals/",
+        "src/replay/",
+        "src/governance/",
+        "scripts/check-replay-baseline.ts",
+        "scripts/prompt-suite.ts",
+        "scripts/validate-ruhroh-evals.ts",
+        "tests/fixtures/replay-suite/"
+      ]
+    },
+    {
+      "id": "packages-and-docs",
+      "title": "Packages and Docs",
+      "status": "pending",
+      "owner": "ecosystem-docs",
+      "order": 6,
+      "depends_on": [
+        "io-tools-and-models",
+        "apps-and-runner-surfaces",
+        "ruhroh-evaluations-and-quality"
+      ],
+      "required_checks": [
+        "pnpm run governance:check",
+        "pnpm run docs:drift",
+        "pnpm run docs:test"
+      ],
+      "file_prefixes": [
+        "packages/",
+        "apps/docs/",
+        "docs/",
+        "README.md",
+        "ARCHITECTURE.md",
+        "RELIABILITY.md",
+        "SECURITY.md",
+        "QUALITY_SCORE.md"
+      ]
+    }
+  ]
+}

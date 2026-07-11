@@ -1,0 +1,8 @@
+employee_id,name,primary_role,secondary_roles,max_weekly_hours,preferred_weekly_hours,availability_notes
+E-101,Ava Chen,barista,cashier,32,28,"Cannot open before 07:00 on Wednesday"
+E-102,Mateo Rivera,shift_lead,barista,38,34,"Prefers opening shifts"
+E-103,Priya Shah,manager,shift_lead,40,36,"Unavailable Friday after 15:00"
+E-104,Theo Brooks,barista,cashier,30,24,"Approved time off Wednesday morning"
+E-105,Lina Ortiz,cashier,barista,28,22,"Only available after 10:00 on Tuesday"
+E-106,Samir Patel,barista,,24,20,"Cannot work closing shifts"
+E-107,Nora Kim,shift_lead,cashier,36,30,"Can cover manager duties only with manager approval"

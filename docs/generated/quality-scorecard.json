@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-03-12T04:38:57.833Z",
+  "domains": [
+    {
+      "domain": "runtime",
+      "score": 85,
+      "trend": "up",
+      "confidence": 0.8,
+      "recommended_actions": [
+        "Maintain baseline and monitor weekly."
+      ]
+    },
+    {
+      "domain": "web",
+      "score": 76,
+      "trend": "flat",
+      "confidence": 0.8,
+      "recommended_actions": [
+        "Increase scenario and integration coverage.",
+        "Run doc and code drift cleanup for this domain."
+      ]
+    },
+    {
+      "domain": "tooling",
+      "score": 83,
+      "trend": "up",
+      "confidence": 0.8,
+      "recommended_actions": [
+        "Maintain baseline and monitor weekly."
+      ]
+    }
+  ]
+}
