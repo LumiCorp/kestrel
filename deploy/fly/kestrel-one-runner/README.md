@@ -1,6 +1,6 @@
 # Kestrel One runner on Fly.io
 
-This image is built from the checked-out Kestrel source rather than an npm release. The final image contains only the production deployment created by `pnpm deploy`; it does not contain the source workspace, local environment files, or build dependencies.
+This image is built from the checked-out Kestrel source rather than an npm release. The final image contains only the production deployment created by `pnpm deploy`; it does not contain the source workspace, local environment files, or build dependencies. The smoke check also requires PGlite `0.4.6` so the image cannot downgrade the storage engine that created the existing Fly volume.
 
 From the repository root:
 

@@ -50,6 +50,20 @@ docker exec "$container" test ! -e /app/.env
 docker exec "$container" test -f /app/cli/runtime/gateway-credential-broker.ts
 docker exec "$container" node -e '
   const fs = require("node:fs");
+  const path = require("node:path");
+  let packageRoot = path.dirname(require.resolve("@electric-sql/pglite"));
+  while (!fs.existsSync(path.join(packageRoot, "package.json"))) {
+    packageRoot = path.dirname(packageRoot);
+  }
+  const version = JSON.parse(
+    fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")
+  ).version;
+  if (version !== "0.4.6") {
+    throw new Error(`runner image has incompatible PGlite ${version}`);
+  }
+'
+docker exec "$container" node -e '
+  const fs = require("node:fs");
   const resolved = fs.realpathSync("/app/node_modules/@kestrel-agents/protocol");
   if (!resolved.startsWith("/app/")) {
     throw new Error(`protocol dependency escaped image root: ${resolved}`);
