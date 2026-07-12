@@ -4,6 +4,10 @@ import { classifyDbError } from "@/lib/db/runtime";
 
 export function errorResponse(error: unknown, fallbackStatus = 500) {
   const message = error instanceof Error ? error.message : "Unexpected error";
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String(error.code)
+      : null;
   let status = fallbackStatus;
   let details: unknown;
   const dbError = classifyDbError(error);
@@ -13,8 +17,21 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     details = error.flatten();
   }
 
-  if (message === "Unauthorized") {
+  if (
+    message === "Unauthorized" ||
+    message === "Invalid API key." ||
+    code === "UNAUTHORIZED"
+  ) {
     status = 401;
+  } else if (code === "PROJECT_NOT_FOUND") {
+    status = 404;
+  } else if (code === "PROJECT_FORBIDDEN") {
+    status = 403;
+  } else if (
+    code === "PROJECT_CONTEXT_CONFLICT" ||
+    code === "PROJECT_LAST_OWNER"
+  ) {
+    status = 409;
   } else if (message === "Forbidden") {
     status = 403;
   } else if (message === "Active organization required") {

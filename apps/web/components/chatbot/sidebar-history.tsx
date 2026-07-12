@@ -23,45 +23,45 @@ import {
   useSidebar,
 } from "@/components/chatbot/ui/sidebar";
 import type { Session } from "@/lib/auth-types";
-import type { ChatHistoryEntry } from "@/lib/types";
+import type { ThreadHistoryEntry } from "@/lib/types";
 import { fetcher } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
 import { ChatItem } from "./sidebar-history-item";
 
-type GroupedChats = {
-  today: ChatHistoryEntry[];
-  yesterday: ChatHistoryEntry[];
-  lastWeek: ChatHistoryEntry[];
-  lastMonth: ChatHistoryEntry[];
-  older: ChatHistoryEntry[];
+type GroupedThreads = {
+  today: ThreadHistoryEntry[];
+  yesterday: ThreadHistoryEntry[];
+  lastWeek: ThreadHistoryEntry[];
+  lastMonth: ThreadHistoryEntry[];
+  older: ThreadHistoryEntry[];
 };
 
-export type ChatHistory = {
-  chats: ChatHistoryEntry[];
+export type ThreadHistory = {
+  threads: ThreadHistoryEntry[];
   hasMore: boolean;
 };
 
 const PAGE_SIZE = 20;
 
-const groupChatsByDate = (chats: ChatHistoryEntry[]): GroupedChats => {
+const groupThreadsByDate = (threads: ThreadHistoryEntry[]): GroupedThreads => {
   const now = new Date();
   const oneWeekAgo = subWeeks(now, 1);
   const oneMonthAgo = subMonths(now, 1);
 
-  return chats.reduce(
-    (groups, chat) => {
-      const chatDate = new Date(chat.createdAt);
+  return threads.reduce(
+    (groups, thread) => {
+      const chatDate = new Date(thread.createdAt);
 
       if (isToday(chatDate)) {
-        groups.today.push(chat);
+        groups.today.push(thread);
       } else if (isYesterday(chatDate)) {
-        groups.yesterday.push(chat);
+        groups.yesterday.push(thread);
       } else if (chatDate > oneWeekAgo) {
-        groups.lastWeek.push(chat);
+        groups.lastWeek.push(thread);
       } else if (chatDate > oneMonthAgo) {
-        groups.lastMonth.push(chat);
+        groups.lastMonth.push(thread);
       } else {
-        groups.older.push(chat);
+        groups.older.push(thread);
       }
 
       return groups;
@@ -72,36 +72,36 @@ const groupChatsByDate = (chats: ChatHistoryEntry[]): GroupedChats => {
       lastWeek: [],
       lastMonth: [],
       older: [],
-    } as GroupedChats
+    } as GroupedThreads
   );
 };
 
-export function getChatHistoryPaginationKey(
+export function getThreadHistoryPaginationKey(
   pageIndex: number,
-  previousPageData: ChatHistory
+  previousPageData: ThreadHistory
 ) {
   if (previousPageData && previousPageData.hasMore === false) {
     return null;
   }
 
   if (pageIndex === 0) {
-    return `/api/chats?limit=${PAGE_SIZE}`;
+    return `/api/threads?limit=${PAGE_SIZE}`;
   }
 
-  const firstChatFromPage = previousPageData.chats.at(-1);
+  const firstThreadFromPage = previousPageData.threads.at(-1);
 
-  if (!firstChatFromPage) {
+  if (!firstThreadFromPage) {
     return null;
   }
 
-  return `/api/chats?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}`;
+  return `/api/threads?ending_before=${firstThreadFromPage.id}&limit=${PAGE_SIZE}`;
 }
 
 export function SidebarHistory({ session }: { session: Session | null }) {
   const user = session?.user;
   const { setOpenMobile } = useSidebar();
   const pathname = usePathname();
-  const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
+  const id = pathname?.startsWith("/threads/") ? pathname.split("/")[2] : null;
 
   const {
     data: paginatedChatHistories,
@@ -109,7 +109,7 @@ export function SidebarHistory({ session }: { session: Session | null }) {
     isValidating,
     isLoading,
     mutate,
-  } = useSWRInfinite<ChatHistory>(getChatHistoryPaginationKey, fetcher, {
+  } = useSWRInfinite<ThreadHistory>(getThreadHistoryPaginationKey, fetcher, {
     fallbackData: [],
   });
 
@@ -121,28 +121,30 @@ export function SidebarHistory({ session }: { session: Session | null }) {
     ? paginatedChatHistories.some((page) => page.hasMore === false)
     : false;
 
-  const hasEmptyChatHistory = paginatedChatHistories
-    ? paginatedChatHistories.every((page) => page.chats.length === 0)
+  const hasEmptyThreadHistory = paginatedChatHistories
+    ? paginatedChatHistories.every((page) => page.threads.length === 0)
     : false;
 
   const handleDelete = () => {
     const chatToDelete = deleteId;
-    const isCurrentChat = pathname === `/chat/${chatToDelete}`;
+    const isCurrentChat = pathname === `/threads/${chatToDelete}`;
 
     setShowDeleteDialog(false);
 
-    const deletePromise = fetch(`/api/chats/${chatToDelete}`, {
-      method: "DELETE",
+    const deletePromise = fetch(`/api/threads/${chatToDelete}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
     });
 
     toast.promise(deletePromise, {
-      loading: "Deleting chat...",
+      loading: "Archiving thread...",
       success: () => {
         mutate((chatHistories) => {
           if (chatHistories) {
             return chatHistories.map((chatHistory) => ({
               ...chatHistory,
-              chats: chatHistory.chats.filter(
+              threads: chatHistory.threads.filter(
                 (chat) => chat.id !== chatToDelete
               ),
             }));
@@ -150,12 +152,12 @@ export function SidebarHistory({ session }: { session: Session | null }) {
         });
 
         if (isCurrentChat) {
-          router.replace("/chat");
+          router.replace("/threads");
         }
 
-        return "Chat deleted successfully";
+        return "Thread archived";
       },
-      error: "Failed to delete chat",
+      error: "Failed to archive thread",
     });
   };
 
@@ -164,7 +166,7 @@ export function SidebarHistory({ session }: { session: Session | null }) {
       <SidebarGroup>
         <SidebarGroupContent>
           <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-            Login to save and revisit previous chats!
+            Sign in to save and revisit Threads.
           </div>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -200,12 +202,12 @@ export function SidebarHistory({ session }: { session: Session | null }) {
     );
   }
 
-  if (hasEmptyChatHistory) {
+  if (hasEmptyThreadHistory) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>
           <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-            Your conversations will appear here once you start chatting!
+            Your Threads will appear here once you start a conversation.
           </div>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -220,10 +222,10 @@ export function SidebarHistory({ session }: { session: Session | null }) {
             {paginatedChatHistories &&
               (() => {
                 const chatsFromHistory = paginatedChatHistories.flatMap(
-                  (paginatedChatHistory) => paginatedChatHistory.chats
+                  (paginatedChatHistory) => paginatedChatHistory.threads
                 );
 
-                const groupedChats = groupChatsByDate(chatsFromHistory);
+                const groupedChats = groupThreadsByDate(chatsFromHistory);
 
                 return (
                   <div className="flex flex-col gap-6">
@@ -237,8 +239,8 @@ export function SidebarHistory({ session }: { session: Session | null }) {
                             chat={chat}
                             isActive={chat.id === id}
                             key={chat.id}
-                            onDelete={(chatId) => {
-                              setDeleteId(chatId);
+                            onDelete={(threadId) => {
+                              setDeleteId(threadId);
                               setShowDeleteDialog(true);
                             }}
                             setOpenMobile={setOpenMobile}
@@ -257,8 +259,8 @@ export function SidebarHistory({ session }: { session: Session | null }) {
                             chat={chat}
                             isActive={chat.id === id}
                             key={chat.id}
-                            onDelete={(chatId) => {
-                              setDeleteId(chatId);
+                            onDelete={(threadId) => {
+                              setDeleteId(threadId);
                               setShowDeleteDialog(true);
                             }}
                             setOpenMobile={setOpenMobile}
@@ -277,8 +279,8 @@ export function SidebarHistory({ session }: { session: Session | null }) {
                             chat={chat}
                             isActive={chat.id === id}
                             key={chat.id}
-                            onDelete={(chatId) => {
-                              setDeleteId(chatId);
+                            onDelete={(threadId) => {
+                              setDeleteId(threadId);
                               setShowDeleteDialog(true);
                             }}
                             setOpenMobile={setOpenMobile}
@@ -297,8 +299,8 @@ export function SidebarHistory({ session }: { session: Session | null }) {
                             chat={chat}
                             isActive={chat.id === id}
                             key={chat.id}
-                            onDelete={(chatId) => {
-                              setDeleteId(chatId);
+                            onDelete={(threadId) => {
+                              setDeleteId(threadId);
                               setShowDeleteDialog(true);
                             }}
                             setOpenMobile={setOpenMobile}
@@ -317,8 +319,8 @@ export function SidebarHistory({ session }: { session: Session | null }) {
                             chat={chat}
                             isActive={chat.id === id}
                             key={chat.id}
-                            onDelete={(chatId) => {
-                              setDeleteId(chatId);
+                            onDelete={(threadId) => {
+                              setDeleteId(threadId);
                               setShowDeleteDialog(true);
                             }}
                             setOpenMobile={setOpenMobile}
@@ -341,14 +343,14 @@ export function SidebarHistory({ session }: { session: Session | null }) {
 
           {hasReachedEnd ? (
             <div className="mt-8 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-              You have reached the end of your chat history.
+              You have reached the end of your Thread history.
             </div>
           ) : (
             <div className="mt-8 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400">
               <div className="animate-spin">
                 <LoaderIcon />
               </div>
-              <div>Loading Chats...</div>
+              <div>Loading Threads...</div>
             </div>
           )}
         </SidebarGroupContent>
@@ -357,16 +359,15 @@ export function SidebarHistory({ session }: { session: Session | null }) {
       <AlertDialog onOpenChange={setShowDeleteDialog} open={showDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogTitle>Archive this Thread?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete your
-              chat and remove it from our servers.
+              The Thread will leave active views and can be restored later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete}>
-              Continue
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

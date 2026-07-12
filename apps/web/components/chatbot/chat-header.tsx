@@ -10,11 +10,11 @@ import { useSidebar } from "./ui/sidebar";
 import { VisibilitySelector, type VisibilityType } from "./visibility-selector";
 
 function PureChatHeader({
-  chatId,
+  threadId,
   selectedVisibilityType,
   isReadonly,
 }: {
-  chatId: string;
+  threadId: string;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
 }) {
@@ -31,20 +31,20 @@ function PureChatHeader({
         <Button
           className="order-2 ml-auto h-8 px-2 md:order-1 md:ml-0 md:h-fit md:px-2"
           onClick={() => {
-            router.push("/chat");
+            router.push("/threads/new");
           }}
           variant="outline"
         >
           <PlusIcon />
-          <span className="md:sr-only">New Chat</span>
+          <span className="md:sr-only">New Thread</span>
         </Button>
       )}
 
       {!isReadonly && (
         <VisibilitySelector
-          chatId={chatId}
           className="order-1 md:order-2"
           selectedVisibilityType={selectedVisibilityType}
+          threadId={threadId}
         />
       )}
     </header>
@@ -54,7 +54,7 @@ function PureChatHeader({
 export const ChatHeader = memo(
   PureChatHeader,
   (prevProps, nextProps) =>
-    prevProps.chatId === nextProps.chatId &&
+    prevProps.threadId === nextProps.threadId &&
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
     prevProps.isReadonly === nextProps.isReadonly
 );

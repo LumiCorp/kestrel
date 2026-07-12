@@ -111,10 +111,17 @@ export type KestrelOneAgentResponseInput = {
   session: Session;
   organizationId: string;
   correlation: KestrelOneRequestCorrelation;
-  chatId: string;
+  threadId: string;
   messages: UIMessage[];
   modelId?: string;
   runtimeModel?: KestrelOneRuntimeModelSelection;
+  projectContext?: {
+    projectId: string;
+    contextRevisionId: string;
+    contextRevision: number;
+    grantId: string;
+    systemContext: string;
+  };
   transientTitle?: Promise<string | null> | null;
   onFinishPersist?: (
     messages: UIMessage[],
@@ -153,6 +160,13 @@ export function createKestrelOneAgentResponseFromAgent(
   });
   const latestUserMessage = getLatestUserText(input.messages);
   const history = toKestrelHistory(input.messages.slice(0, -1));
+  if (input.projectContext?.systemContext) {
+    history.unshift({
+      role: "system",
+      text: input.projectContext.systemContext,
+      timestamp: new Date().toISOString(),
+    });
+  }
   const assistantMessageId = crypto.randomUUID();
   const textPartId = crypto.randomUUID();
   const reasoningPartId = crypto.randomUUID();
@@ -182,7 +196,7 @@ export function createKestrelOneAgentResponseFromAgent(
       try {
         const runStream = await input.agent.stream(
           {
-            sessionId: input.chatId,
+            sessionId: input.threadId,
             message: latestUserMessage,
             history,
             clientCapabilities: {
@@ -190,6 +204,14 @@ export function createKestrelOneAgentResponseFromAgent(
                 requestId: input.correlation.requestId,
                 correlationId: input.correlation.correlationId,
                 tenantId: input.organizationId,
+                ...(input.projectContext
+                  ? {
+                      projectId: input.projectContext.projectId,
+                      contextRevisionId: input.projectContext.contextRevisionId,
+                      contextRevision: input.projectContext.contextRevision,
+                      contextGrantId: input.projectContext.grantId,
+                    }
+                  : {}),
                 capabilities: buildKestrelOneCapabilityDescriptors({
                   request: input.request,
                 }),

@@ -5,8 +5,8 @@ import type { ChatFirstTurnHandoff } from "@/lib/types";
 const HANDOFF_KEY_PREFIX = "chat:first-turn:";
 const HANDOFF_TTL_MS = 60_000;
 
-function getStorageKey(chatId: string) {
-  return `${HANDOFF_KEY_PREFIX}${chatId}`;
+function getStorageKey(threadId: string) {
+  return `${HANDOFF_KEY_PREFIX}${threadId}`;
 }
 
 function isValidRecord(value: unknown): value is ChatFirstTurnHandoff {
@@ -17,7 +17,9 @@ function isValidRecord(value: unknown): value is ChatFirstTurnHandoff {
   const candidate = value as Record<string, unknown>;
 
   return (
-    typeof candidate.chatId === "string" &&
+    typeof candidate.threadId === "string" &&
+    (candidate.projectId === undefined ||
+      typeof candidate.projectId === "string") &&
     typeof candidate.messageId === "string" &&
     Array.isArray(candidate.messageParts) &&
     candidate.messageParts.every(
@@ -35,15 +37,18 @@ export function writeChatFirstTurnHandoff(record: ChatFirstTurnHandoff) {
     return;
   }
 
-  sessionStorage.setItem(getStorageKey(record.chatId), JSON.stringify(record));
+  sessionStorage.setItem(
+    getStorageKey(record.threadId),
+    JSON.stringify(record)
+  );
 }
 
-export function readChatFirstTurnHandoff(chatId: string) {
+export function readChatFirstTurnHandoff(threadId: string) {
   if (typeof window === "undefined") {
     return null;
   }
 
-  const raw = sessionStorage.getItem(getStorageKey(chatId));
+  const raw = sessionStorage.getItem(getStorageKey(threadId));
   if (!raw) {
     return null;
   }
@@ -51,26 +56,26 @@ export function readChatFirstTurnHandoff(chatId: string) {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!isValidRecord(parsed)) {
-      sessionStorage.removeItem(getStorageKey(chatId));
+      sessionStorage.removeItem(getStorageKey(threadId));
       return null;
     }
 
     if (Date.now() - parsed.createdAt > HANDOFF_TTL_MS) {
-      sessionStorage.removeItem(getStorageKey(chatId));
+      sessionStorage.removeItem(getStorageKey(threadId));
       return null;
     }
 
     return parsed;
   } catch {
-    sessionStorage.removeItem(getStorageKey(chatId));
+    sessionStorage.removeItem(getStorageKey(threadId));
     return null;
   }
 }
 
-export function clearChatFirstTurnHandoff(chatId: string) {
+export function clearChatFirstTurnHandoff(threadId: string) {
   if (typeof window === "undefined") {
     return;
   }
 
-  sessionStorage.removeItem(getStorageKey(chatId));
+  sessionStorage.removeItem(getStorageKey(threadId));
 }

@@ -2,8 +2,8 @@ import path from "node:path";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { requireKnowledgeDocumentAccess } from "@/lib/knowledge/documents/access";
 import { isInlineRenderableMediaType } from "@/lib/knowledge/documents/shared";
-import { getKnowledgeDocumentById } from "@/lib/knowledge/documents/store";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getStorageAdapter } from "@/lib/storage";
 
@@ -20,16 +20,13 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireActiveOrganization();
+    const { organizationId, session } = await requireActiveOrganization();
     const params = paramsSchema.parse(await context.params);
-    const document = await getKnowledgeDocumentById(organizationId, params.id);
-
-    if (!document) {
-      return NextResponse.json(
-        { error: "Knowledge document not found" },
-        { status: 404 }
-      );
-    }
+    const document = await requireKnowledgeDocumentAccess({
+      organizationId,
+      user: session.user,
+      documentId: params.id,
+    });
 
     const storage = getStorageAdapter();
     const buffer = await storage.getObjectBuffer(document.storageKey);

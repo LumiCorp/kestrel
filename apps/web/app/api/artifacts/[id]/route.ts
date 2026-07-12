@@ -16,7 +16,7 @@ const bodySchema = z.object({
   title: z.string().min(1),
   content: z.string(),
   kind: z.enum(["text", "code", "image", "sheet", "video"]),
-  chatId: z.string().optional(),
+  threadId: z.string().optional(),
 });
 
 const deleteQuerySchema = z.object({
@@ -65,7 +65,7 @@ export async function POST(
       kind: body.kind,
       userId: session.user.id,
       organizationId,
-      chatId: body.chatId ?? null,
+      threadId: body.threadId ?? null,
     });
 
     return NextResponse.json(document);

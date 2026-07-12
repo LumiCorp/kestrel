@@ -6,10 +6,10 @@ import { unstable_serialize } from "swr/infinite";
 import { initialArtifactData, useArtifact } from "@/hooks/use-artifact";
 import { artifactDefinitions } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
-import { getChatHistoryPaginationKey } from "./sidebar-history";
+import { getThreadHistoryPaginationKey } from "./sidebar-history";
 
-export function DataStreamHandler({ chatId }: { chatId: string }) {
-  const { dataStream, setDataStream } = useDataStream(chatId);
+export function DataStreamHandler({ threadId }: { threadId: string }) {
+  const { dataStream, setDataStream } = useDataStream(threadId);
   const { mutate } = useSWRConfig();
 
   const { artifact, setArtifact, setMetadata } = useArtifact();
@@ -25,7 +25,7 @@ export function DataStreamHandler({ chatId }: { chatId: string }) {
     for (const delta of newDeltas) {
       // Handle chat title updates
       if (delta.type === "data-chat-title") {
-        mutate(unstable_serialize(getChatHistoryPaginationKey));
+        mutate(unstable_serialize(getThreadHistoryPaginationKey));
         continue;
       }
       const artifactDefinition = artifactDefinitions.find(

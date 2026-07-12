@@ -6,23 +6,23 @@ import { Response } from "@/components/chatbot/elements/response";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getPublicChatByShareToken } from "@/lib/agent/store";
 import { createMetadata } from "@/lib/metadata";
 import { publicAppUrl } from "@/lib/public-config";
+import { getPublicThreadByShareToken } from "@/lib/threads/store";
 import { convertToUIMessages } from "@/lib/utils";
 
-const getSharedChat = cache(getPublicChatByShareToken);
+const getSharedThread = cache(getPublicThreadByShareToken);
 
-type SharedChatPageProps = {
+type SharedThreadPageProps = {
   params: Promise<{ token: string }>;
 };
 
 export async function generateMetadata({
   params,
-}: SharedChatPageProps): Promise<Metadata> {
+}: SharedThreadPageProps): Promise<Metadata> {
   const { token } = await params;
-  const chat = await getSharedChat(token);
-  const title = chat?.title?.trim() || "Shared Chat";
+  const thread = await getSharedThread(token);
+  const title = thread?.title?.trim() || "Shared Thread";
   const routeUrl = publicAppUrl ? `${publicAppUrl}/shared/${token}` : undefined;
 
   return createMetadata({
@@ -41,30 +41,30 @@ export async function generateMetadata({
   });
 }
 
-export default async function SharedChatPage(props: SharedChatPageProps) {
+export default async function SharedThreadPage(props: SharedThreadPageProps) {
   const { token } = await props.params;
-  const chat = await getSharedChat(token);
+  const thread = await getSharedThread(token);
 
-  if (!chat) {
+  if (!thread) {
     notFound();
   }
 
-  const messages = convertToUIMessages(chat.messages);
+  const messages = convertToUIMessages(thread.messages);
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
-          <Badge variant="outline">Shared Chat</Badge>
+          <Badge variant="outline">Shared Thread</Badge>
           <h1 className="font-semibold text-3xl">
-            {chat.title || "Shared Chat"}
+            {thread.title || "Shared Thread"}
           </h1>
           <p className="text-muted-foreground text-sm">
-            Read-only view shared by {chat.author.name}.
+            Read-only, anonymized transcript shared from Kestrel One.
           </p>
         </div>
         <Button asChild>
-          <Link href="/chat">Start Your Own Chat</Link>
+          <Link href="/threads/new">Start Your Own Thread</Link>
         </Button>
       </div>
 

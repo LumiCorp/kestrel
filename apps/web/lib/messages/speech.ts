@@ -1,10 +1,11 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { generateSpeechForModel } from "@/lib/ai/providers";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
+import { getThreadAccessForUser } from "@/lib/threads/store";
 
 function sanitizeSegment(value: string) {
   return value.replace(/[^A-Za-z0-9._-]/g, "-");
@@ -30,33 +31,29 @@ export async function getPlayableAssistantMessage(input: {
   userId: string;
   organizationId: string;
 }) {
-  const row = await knowledgeDb
+  const [message] = await knowledgeDb
     .select({
-      message: schema.knowledgeMessages,
-      chat: schema.knowledgeChats,
+      message: schema.threadMessages,
     })
-    .from(schema.knowledgeMessages)
-    .innerJoin(
-      schema.knowledgeChats,
-      eq(schema.knowledgeChats.id, schema.knowledgeMessages.chatId)
-    )
-    .where(
-      and(
-        eq(schema.knowledgeMessages.id, input.messageId),
-        eq(schema.knowledgeChats.userId, input.userId),
-        eq(schema.knowledgeChats.organizationId, input.organizationId)
-      )
-    )
+    .from(schema.threadMessages)
+    .where(eq(schema.threadMessages.id, input.messageId))
     .limit(1);
 
-  const match = row[0];
+  const access = message
+    ? await getThreadAccessForUser(
+        message.message.threadId,
+        input.userId,
+        input.organizationId,
+        true
+      )
+    : null;
 
-  if (!match || match.message.role !== "assistant") {
+  if (!(message && access) || message.message.role !== "assistant") {
     return null;
   }
 
-  const parts = Array.isArray(match.message.parts)
-    ? (match.message.parts as Array<Record<string, unknown>>)
+  const parts = Array.isArray(message.message.parts)
+    ? (message.message.parts as Array<Record<string, unknown>>)
     : [];
 
   const text = parts
@@ -78,7 +75,7 @@ export async function getPlayableAssistantMessage(input: {
   }
 
   return {
-    message: match.message,
+    message: message.message,
     text,
   };
 }

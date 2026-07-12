@@ -34,7 +34,7 @@ async function extractTextFromImageWithVision(
   }
 
   const response = await fetch(
-    `${config.baseURL.replace(TRAILING_SLASHES_REGEX, "")}/chat/completions`,
+    `${config.baseURL.replace(TRAILING_SLASHES_REGEX, "")}/threads/completions`,
     {
       method: "POST",
       headers: {

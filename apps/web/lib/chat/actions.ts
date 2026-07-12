@@ -1,13 +1,13 @@
 "use server";
 
 import { generateText, type UIMessage } from "ai";
-import {
-  deleteKnowledgeMessagesByChatIdAfterTimestamp,
-  getKnowledgeMessageByIdForUser,
-} from "@/lib/agent/store";
 import { titlePrompt } from "@/lib/ai/prompts";
 import { resolveRequiredLanguageModel } from "@/lib/ai/providers";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import {
+  deleteThreadMessagesAfterTimestamp,
+  getThreadMessageByIdForUser,
+} from "@/lib/threads/store";
 import { getTextFromMessage } from "@/lib/utils";
 
 export async function generateTitleFromUserMessage({
@@ -35,7 +35,7 @@ export async function generateTitleFromUserMessage({
 
 export async function deleteTrailingMessages({ id }: { id: string }) {
   const { session, organizationId } = await requireActiveOrganization();
-  const message = await getKnowledgeMessageByIdForUser(
+  const message = await getThreadMessageByIdForUser(
     id,
     session.user.id,
     organizationId
@@ -45,8 +45,8 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
     return;
   }
 
-  await deleteKnowledgeMessagesByChatIdAfterTimestamp({
-    chatId: message.chatId,
+  await deleteThreadMessagesAfterTimestamp({
+    threadId: message.threadId,
     timestamp: message.createdAt,
     userId: session.user.id,
     organizationId,

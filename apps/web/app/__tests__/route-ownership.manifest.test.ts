@@ -26,7 +26,7 @@ function listRouteFiles(directory: string): string[] {
       (entry.name === "page.tsx" || entry.name === "route.ts")
     ) {
       files.push(
-        path.relative(packageRoot, absolutePath).replaceAll(path.sep, "/"),
+        path.relative(packageRoot, absolutePath).replaceAll(path.sep, "/")
       );
     }
   }
@@ -40,7 +40,7 @@ function readAppFile(file: string) {
 test("Kestrel-One route ownership manifest classifies every page and API route", () => {
   const actualFiles = listRouteFiles(appRoot);
   const manifestFiles = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
-    (entry) => entry.file,
+    (entry) => entry.file
   ).sort();
 
   assert.deepEqual(manifestFiles, actualFiles);
@@ -50,7 +50,7 @@ test("Kestrel-One route ownership manifest classifies every page and API route",
 test("Kestrel-One primary navigation routes require an authenticated shell", () => {
   assert.deepEqual(
     PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
-    ["/admin", "/chat", "/dashboard", "/knowledge"],
+    ["/admin", "/dashboard", "/knowledge", "/projects", "/threads"]
   );
 
   for (const entry of PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES) {
@@ -61,7 +61,7 @@ test("Kestrel-One primary navigation routes require an authenticated shell", () 
 
 test("Kestrel-One manifest keeps all required route classes visible", () => {
   const classes = new Set(
-    KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map((entry) => entry.access),
+    KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map((entry) => entry.access)
   );
 
   assert.deepEqual([...classes].sort(), [
@@ -87,7 +87,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       assert.match(
         source,
         /\brequireAdmin(?:Organization)?\b/,
-        `${entry.file} must reject non-admin users`,
+        `${entry.file} must reject non-admin users`
       );
       continue;
     }
@@ -96,7 +96,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       assert.match(
         source,
         /\brequire(?:ActiveOrganization|Session)\b/,
-        `${entry.file} must reject unauthenticated callers`,
+        `${entry.file} must reject unauthenticated callers`
       );
       continue;
     }
@@ -105,7 +105,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       assert.match(
         source,
         /\bisLocalDevAuthBypassEnabled\b/,
-        `${entry.file} must stay unavailable outside local dev bypass`,
+        `${entry.file} must stay unavailable outside local dev bypass`
       );
       continue;
     }
@@ -114,12 +114,12 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       assert.match(
         source,
         /\bparseRunnerKnowledgeCapabilityRequest\b/,
-        `${entry.file} must validate runner bearer capability calls`,
+        `${entry.file} must validate runner bearer capability calls`
       );
       assert.match(
         source,
         /\brequireActiveOrganization\b/,
-        `${entry.file} must preserve session-backed app calls`,
+        `${entry.file} must preserve session-backed app calls`
       );
       continue;
     }
@@ -128,7 +128,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       assert.match(
         source,
         /\bparamsSchema\b/,
-        `${entry.file} must validate platform`,
+        `${entry.file} must validate platform`
       );
       assert.match(source, /\bhandle(?:Discord|GitHub)Webhook\b/);
     }
@@ -136,20 +136,20 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
 });
 
 test("Kestrel-One protected page classes are covered by guarded layouts", () => {
-  const chatLayout = readAppFile("app/(chat)/layout.tsx");
+  const workspaceLayout = readAppFile("app/(workspace)/layout.tsx");
   const dashboardLayout = readAppFile("app/dashboard/layout.tsx");
   const knowledgeLayout = readAppFile("app/knowledge/layout.tsx");
   const adminLayout = readAppFile("app/admin/layout.tsx");
   const debugLayout = readAppFile("app/debug/layout.tsx");
 
-  assert.match(chatLayout, /redirect\("\/sign-in"\)/);
+  assert.match(workspaceLayout, /redirect\("\/sign-in"\)/);
   assert.match(dashboardLayout, /\brequireAuthenticatedShell\b/);
   assert.match(knowledgeLayout, /\brequireActiveOrganization:\s*true\b/);
   assert.match(adminLayout, /\brequireAdmin:\s*true\b/);
   assert.match(debugLayout, /\brequireAdmin:\s*true\b/);
 
   const protectedPages = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.filter(
-    (entry) => entry.kind === "page" && entry.access !== "public",
+    (entry) => entry.kind === "page" && entry.access !== "public"
   );
 
   for (const entry of protectedPages) {

@@ -223,12 +223,12 @@ export async function backfillPersonalWorkspaceData() {
       );
 
     await knowledgeDb
-      .update(schema.knowledgeChats)
+      .update(schema.threads)
       .set({ organizationId: personalOrganization.id })
       .where(
         and(
-          eq(schema.knowledgeChats.userId, user.id),
-          isNull(schema.knowledgeChats.organizationId)
+          eq(schema.threads.createdByUserId, user.id),
+          isNull(schema.threads.organizationId)
         )
       );
 

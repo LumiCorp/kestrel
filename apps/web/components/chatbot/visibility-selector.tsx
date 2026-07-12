@@ -28,29 +28,29 @@ const visibilities: Array<{
   {
     id: "private",
     label: "Private",
-    description: "Only you can access this chat",
+    description: "Only authorized workspace members can access this Thread",
     icon: <LockIcon />,
   },
   {
     id: "public",
     label: "Public",
-    description: "Anyone with the link can access this chat",
+    description: "Anyone with the link can access this Thread",
     icon: <GlobeIcon />,
   },
 ];
 
 export function VisibilitySelector({
-  chatId,
+  threadId,
   className,
   selectedVisibilityType,
 }: {
-  chatId: string;
+  threadId: string;
   selectedVisibilityType: VisibilityType;
 } & React.ComponentProps<typeof Button>) {
   const [open, setOpen] = useState(false);
 
   const { visibilityType, setVisibilityType } = useChatVisibility({
-    chatId,
+    threadId,
     initialVisibilityType: selectedVisibilityType,
   });
 

@@ -20,24 +20,24 @@ export async function GET(request: NextRequest) {
     const [messageRows, usageRows] = await Promise.all([
       knowledgeDb
         .select({
-          model: schema.knowledgeMessages.model,
-          inputTokens: schema.knowledgeMessages.inputTokens,
-          outputTokens: schema.knowledgeMessages.outputTokens,
-          durationMs: schema.knowledgeMessages.durationMs,
-          createdAt: schema.knowledgeMessages.createdAt,
+          model: schema.threadMessages.model,
+          inputTokens: schema.threadMessages.inputTokens,
+          outputTokens: schema.threadMessages.outputTokens,
+          durationMs: schema.threadMessages.durationMs,
+          createdAt: schema.threadMessages.createdAt,
         })
-        .from(schema.knowledgeMessages)
+        .from(schema.threadMessages)
         .innerJoin(
-          schema.knowledgeChats,
-          eq(schema.knowledgeMessages.chatId, schema.knowledgeChats.id)
+          schema.threads,
+          eq(schema.threadMessages.threadId, schema.threads.id)
         )
         .where(
           and(
-            eq(schema.knowledgeChats.userId, userId),
-            eq(schema.knowledgeChats.organizationId, organizationId),
-            eq(schema.knowledgeMessages.role, "assistant"),
-            gte(schema.knowledgeMessages.createdAt, startDate),
-            isNotNull(schema.knowledgeMessages.model)
+            eq(schema.threads.createdByUserId, userId),
+            eq(schema.threads.organizationId, organizationId),
+            eq(schema.threadMessages.role, "assistant"),
+            gte(schema.threadMessages.createdAt, startDate),
+            isNotNull(schema.threadMessages.model)
           )
         ),
       knowledgeDb

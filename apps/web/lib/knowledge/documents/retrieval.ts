@@ -36,6 +36,7 @@ async function searchKnowledgeDocumentsLexical(input: {
   organizationId: string;
   query: string;
   limit: number;
+  documentIds?: string[];
 }) {
   const { knowledgeDb } = await import("@/lib/knowledge/db");
   const tokens = tokenizeQuery(input.query);
@@ -62,6 +63,10 @@ async function searchKnowledgeDocumentsLexical(input: {
     input.limit * RAW_RESULT_MULTIPLIER,
     MAX_DOCUMENT_RESULTS * RAW_RESULT_MULTIPLIER
   );
+  if (input.documentIds?.length === 0) {
+    return [];
+  }
+  const documentFilter = buildDocumentFilter(input.documentIds);
 
   const result = await knowledgeDb.execute(sql`
     select
@@ -80,6 +85,7 @@ async function searchKnowledgeDocumentsLexical(input: {
       c.organization_id = ${input.organizationId}
       and d.organization_id = ${input.organizationId}
       and d.status in ('ready', 'partial')
+      ${documentFilter}
       and ${scoreExpression} > 0
     order by ${normalizedScore} desc, c.chunk_index asc
     limit ${rawLimit};
@@ -100,6 +106,7 @@ export async function searchKnowledgeDocuments(input: {
   query: string;
   limit?: number;
   scoreThreshold?: number;
+  documentIds?: string[];
 }) {
   const { knowledgeDb } = await import("@/lib/knowledge/db");
   const [embedding] = await embedKnowledgeTexts([input.query]);
@@ -113,6 +120,7 @@ export async function searchKnowledgeDocuments(input: {
       organizationId: input.organizationId,
       query: input.query,
       limit: documentLimit,
+      documentIds: input.documentIds,
     });
   }
 
@@ -124,6 +132,10 @@ export async function searchKnowledgeDocuments(input: {
     0,
     Math.min(input.scoreThreshold ?? DEFAULT_SCORE_THRESHOLD, 1)
   );
+  if (input.documentIds?.length === 0) {
+    return [];
+  }
+  const documentFilter = buildDocumentFilter(input.documentIds);
 
   const result = await knowledgeDb.execute(sql`
     select
@@ -142,6 +154,7 @@ export async function searchKnowledgeDocuments(input: {
       c.organization_id = ${input.organizationId}
       and d.organization_id = ${input.organizationId}
       and d.status in ('ready', 'partial')
+      ${documentFilter}
     order by c.embedding <=> ${sql.raw(toVectorLiteral(embedding))}
     limit ${rawLimit};
   `);
@@ -163,5 +176,16 @@ export async function searchKnowledgeDocuments(input: {
     organizationId: input.organizationId,
     query: input.query,
     limit: documentLimit,
+    documentIds: input.documentIds,
   });
+}
+
+function buildDocumentFilter(documentIds: string[] | undefined) {
+  if (!documentIds) {
+    return sql`and d.scope = 'organization' and d.project_id is null and d.archived_at is null`;
+  }
+  return sql`and d.archived_at is null and d.id in (${sql.join(
+    documentIds.map((documentId) => sql`${documentId}`),
+    sql`, `
+  )})`;
 }

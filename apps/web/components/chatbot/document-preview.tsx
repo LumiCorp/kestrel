@@ -96,7 +96,7 @@ export function DocumentPreview({
           createdAt: new Date(),
           userId: "noop",
           organizationId: "noop",
-          chatId: null,
+          threadId: null,
         }
       : null;
 

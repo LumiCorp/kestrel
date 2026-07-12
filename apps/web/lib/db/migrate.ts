@@ -27,7 +27,7 @@ const runMigrate = async () => {
     migrationsFolder: "./drizzle/migrations",
     migrationsTable: "__unified_app_migrations",
   });
-  // Bootstrap the legacy knowledge/chat tables before applying follow-up
+  // Bootstrap the legacy knowledge/threads tables before applying follow-up
   // migrations that add foreign keys against them.
   await ensureKnowledgeSchema(connection);
   await migrate(db, {
@@ -44,6 +44,15 @@ const runMigrate = async () => {
 };
 
 async function ensureKnowledgeSchema(connection: Sql) {
+  const canonicalThreadSchema = await connection<
+    Array<{ threadsTable: string | null }>
+  >`
+    SELECT to_regclass('public.threads')::text AS "threadsTable"
+  `;
+  if (canonicalThreadSchema[0]?.threadsTable) {
+    return;
+  }
+
   await connection.unsafe(`
     CREATE EXTENSION IF NOT EXISTS vector;
 

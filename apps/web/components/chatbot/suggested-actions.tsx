@@ -12,7 +12,7 @@ import { Suggestion } from "./elements/suggestion";
 import type { VisibilityType } from "./visibility-selector";
 
 type SuggestedActionsProps = {
-  chatId: string;
+  threadId: string;
   imageEnabled: boolean;
   knowledgeEnabled: boolean;
   onSuggestionSelect: (suggestion: ChatSuggestion) => void;
@@ -22,7 +22,7 @@ type SuggestedActionsProps = {
 };
 
 function PureSuggestedActions({
-  chatId,
+  threadId,
   imageEnabled,
   knowledgeEnabled,
   onSuggestionSelect,
@@ -32,12 +32,12 @@ function PureSuggestedActions({
   const suggestedActions = useMemo(
     () =>
       selectChatSuggestions({
-        seed: chatId,
+        seed: threadId,
         imageEnabled,
         knowledgeEnabled,
         videoEnabled,
       }),
-    [chatId, imageEnabled, knowledgeEnabled, videoEnabled]
+    [threadId, imageEnabled, knowledgeEnabled, videoEnabled]
   );
 
   return (
@@ -79,7 +79,7 @@ function PureSuggestedActions({
 export const SuggestedActions = memo(
   PureSuggestedActions,
   (prevProps, nextProps) => {
-    if (prevProps.chatId !== nextProps.chatId) {
+    if (prevProps.threadId !== nextProps.threadId) {
       return false;
     }
     if (prevProps.imageEnabled !== nextProps.imageEnabled) {

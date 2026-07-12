@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseRunnerKnowledgeCapabilityRequest } from "@/lib/agent/kestrel-capabilities";
@@ -10,7 +11,9 @@ import {
   readKnowledgeToolRequestMetadata,
 } from "@/lib/agent/kestrel-knowledge-tool-observability";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
+import { resolveProjectContextGrant } from "@/lib/projects/context-grants";
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
@@ -27,6 +30,7 @@ export async function POST(request: Request) {
     const result = await executeSearchKnowledgeDocumentsCapability({
       organizationId: resolvedOrganizationId,
       payload,
+      documentIds: resolved.documentIds,
     });
     logKnowledgeToolAuditEvent(
       buildKnowledgeToolAuditEvent({
@@ -36,7 +40,7 @@ export async function POST(request: Request) {
         queryLength,
         resultCount: result.count,
         latencyMs: Date.now() - startedAt,
-      }),
+      })
     );
     return NextResponse.json(result);
   } catch (error) {
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
         resultCount: null,
         latencyMs: Date.now() - startedAt,
         failureClass: classifyKnowledgeToolFailure(error),
-      }),
+      })
     );
 
     if (error instanceof z.ZodError) {
@@ -62,11 +66,34 @@ export async function POST(request: Request) {
 
 async function resolveCapabilityOrganization(request: Request) {
   if (request.headers.has("authorization")) {
-    return parseRunnerKnowledgeCapabilityRequest({
+    const parsed = parseRunnerKnowledgeCapabilityRequest({
       request,
       expectedToken: process.env.KESTREL_ONE_TOOL_TOKEN,
     });
+    if (!parsed.contextGrantId) {
+      return { organizationId: parsed.organizationId };
+    }
+    const resolved = await resolveProjectContextGrant(parsed.contextGrantId);
+    if (!resolved || resolved.grant.organizationId !== parsed.organizationId) {
+      throw Object.assign(new Error("Project context grant is invalid."), {
+        code: "UNAUTHORIZED",
+      });
+    }
+    const documents = await knowledgeDb
+      .select({ id: schema.projectContextDocuments.documentId })
+      .from(schema.projectContextDocuments)
+      .where(
+        eq(
+          schema.projectContextDocuments.contextRevisionId,
+          resolved.grant.contextRevisionId
+        )
+      );
+    return {
+      organizationId: parsed.organizationId,
+      documentIds: documents.map((document) => document.id),
+    };
   }
 
-  return requireActiveOrganization();
+  const active = await requireActiveOrganization();
+  return { organizationId: active.organizationId };
 }

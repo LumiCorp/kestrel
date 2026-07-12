@@ -170,7 +170,7 @@ function renderGenericToolPart(input: {
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
-  chatId,
+  threadId,
   message,
   feedback,
   onFeedbackChange,
@@ -184,7 +184,7 @@ const PurePreviewMessage = ({
   ttsAvailable = true,
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
-  chatId: string;
+  threadId: string;
   message: ChatMessage;
   feedback: MessageFeedback | undefined;
   onFeedbackChange: (
@@ -244,6 +244,11 @@ const PurePreviewMessage = ({
               message.role === "assistant" && mode !== "edit",
           })}
         >
+          {message.role === "user" && message.metadata?.authorName && (
+            <p className="px-1 text-right text-muted-foreground text-xs">
+              {message.metadata.authorName}
+            </p>
+          )}
           {attachmentsFromMessage.length > 0 && (
             <div
               className="flex flex-row justify-end gap-2"
@@ -517,7 +522,6 @@ const PurePreviewMessage = ({
 
           {!isReadonly && (
             <MessageActions
-              chatId={chatId}
               feedback={feedback}
               isLoading={isLoading}
               key={`action-${message.id}`}
@@ -526,6 +530,7 @@ const PurePreviewMessage = ({
               selectedLanguageModelId={selectedLanguageModelId}
               setMode={setMode}
               shouldAutoplaySpeech={shouldAutoplaySpeech}
+              threadId={threadId}
               ttsAvailable={ttsAvailable}
             />
           )}

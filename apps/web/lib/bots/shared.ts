@@ -1,14 +1,14 @@
 import type { RunnerActorMetadata } from "@kestrel-agents/sdk";
 import { generateKestrelOneExternalReply } from "@/lib/agent/kestrel-runtime";
-import {
-  createChatForUser,
-  getChatByExternalThreadId,
-  getKnowledgeMessageByExternalMessageId,
-  saveKnowledgeMessages,
-} from "@/lib/agent/store";
 import type { BotThreadContext } from "@/lib/bots/context";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { getActiveKnowledgeSnapshot } from "@/lib/knowledge/snapshot-store";
+import {
+  createThreadForUser,
+  getThreadByExternalThreadId,
+  getThreadMessageByExternalMessageId,
+  saveThreadMessages,
+} from "@/lib/threads/store";
 
 export const NO_SNAPSHOT_MESSAGE =
   "No active knowledge snapshot is available for this organization yet. Run a sync and activate a snapshot from the admin workspace before using bot integrations.";
@@ -50,7 +50,7 @@ function buildContextualPrompt(prompt: string, context?: BotThreadContext) {
             : comment.author;
           return `${author}: ${comment.body}`;
         }),
-      ].join("\n"),
+      ].join("\n")
     );
   }
 
@@ -79,7 +79,9 @@ export async function getBotActorUserId(organizationId: string) {
   });
 
   if (!member?.userId) {
-    throw new Error("No organization member is available for bot-owned chats");
+    throw new Error(
+      "No organization member is available for bot-owned Threads"
+    );
   }
 
   return member.userId;
@@ -96,10 +98,10 @@ export async function getOrCreateExternalThreadChat(input: {
     input.externalThreadId,
     ...(input.legacyExternalThreadIds ?? []),
   ]) {
-    const existingChat = await getChatByExternalThreadId(
+    const existingChat = await getThreadByExternalThreadId(
       input.organizationId,
       input.origin,
-      externalThreadId,
+      externalThreadId
     );
 
     if (existingChat) {
@@ -107,7 +109,7 @@ export async function getOrCreateExternalThreadChat(input: {
     }
   }
 
-  return createChatForUser({
+  return createThreadForUser({
     id: crypto.randomUUID(),
     userId: await getBotActorUserId(input.organizationId),
     organizationId: input.organizationId,
@@ -119,12 +121,12 @@ export async function getOrCreateExternalThreadChat(input: {
 }
 
 export async function hasProcessedExternalMessage(
-  chatId: string,
-  externalMessageId: string,
+  threadId: string,
+  externalMessageId: string
 ) {
-  const existing = await getKnowledgeMessageByExternalMessageId(
-    chatId,
-    externalMessageId,
+  const existing = await getThreadMessageByExternalMessageId(
+    threadId,
+    externalMessageId
   );
   return Boolean(existing);
 }
@@ -132,7 +134,7 @@ export async function hasProcessedExternalMessage(
 export async function generateExternalReply(input: {
   organizationId: string;
   apiUrl: string;
-  chatId: string;
+  threadId: string;
   prompt: string;
   context?: BotThreadContext;
   actor: RunnerActorMetadata;
@@ -154,7 +156,7 @@ export async function generateExternalReply(input: {
   const generated = await generateKestrelOneExternalReply({
     organizationId: input.organizationId,
     apiUrl: input.apiUrl,
-    sessionId: input.chatId,
+    sessionId: input.threadId,
     prompt: buildContextualPrompt(input.prompt, input.context),
     actor: input.actor,
   });
@@ -165,7 +167,7 @@ export async function generateExternalReply(input: {
 }
 
 export async function saveExternalConversationTurn(input: {
-  chatId: string;
+  threadId: string;
   origin: "github" | "discord";
   inboundText: string;
   inboundExternalMessageId: string;
@@ -174,10 +176,10 @@ export async function saveExternalConversationTurn(input: {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }) {
-  await saveKnowledgeMessages([
+  await saveThreadMessages([
     {
       id: crypto.randomUUID(),
-      chatId: input.chatId,
+      threadId: input.threadId,
       role: "user",
       parts: [{ type: "text", text: input.inboundText }],
       externalMessageId: input.inboundExternalMessageId,
@@ -185,7 +187,7 @@ export async function saveExternalConversationTurn(input: {
     },
     {
       id: crypto.randomUUID(),
-      chatId: input.chatId,
+      threadId: input.threadId,
       role: "assistant",
       parts: [{ type: "text", text: input.replyText }],
       externalMessageId: input.replyExternalMessageId ?? null,

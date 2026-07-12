@@ -9,7 +9,7 @@ import { PreviewMessage, ThinkingMessage } from "./message";
 
 type ArtifactMessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
-  chatId: string;
+  threadId: string;
   status: UseChatHelpers<ChatMessage>["status"];
   feedbackByMessageId: Record<string, MessageFeedback | undefined>;
   onFeedbackChange: (
@@ -25,7 +25,7 @@ type ArtifactMessagesProps = {
 
 function PureArtifactMessages({
   addToolApprovalResponse,
-  chatId,
+  threadId,
   status,
   feedbackByMessageId,
   onFeedbackChange,
@@ -52,7 +52,6 @@ function PureArtifactMessages({
       {messages.map((message, index) => (
         <PreviewMessage
           addToolApprovalResponse={addToolApprovalResponse}
-          chatId={chatId}
           feedback={feedbackByMessageId[message.id]}
           isLoading={status === "streaming" && index === messages.length - 1}
           isReadonly={isReadonly}
@@ -64,6 +63,7 @@ function PureArtifactMessages({
             hasSentMessage && index === messages.length - 1
           }
           setMessages={setMessages}
+          threadId={threadId}
         />
       ))}
 

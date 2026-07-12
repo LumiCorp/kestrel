@@ -281,7 +281,7 @@ function extractMarkdownTableFromHtml(html: string) {
 }
 
 function PureMultimodalInput({
-  chatId,
+  threadId,
   input,
   setInput,
   status,
@@ -296,7 +296,7 @@ function PureMultimodalInput({
   selectedModelId,
   onModelChange,
 }: {
-  chatId: string;
+  threadId: string;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
   status: UseChatHelpers<ChatMessage>["status"];
@@ -595,10 +595,10 @@ function PureMultimodalInput({
     async (file: File): Promise<Attachment | undefined> => {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("chatId", chatId);
+      formData.append("threadId", threadId);
 
       try {
-        const response = await fetch(`/api/upload/${chatId}`, {
+        const response = await fetch(`/api/threads/${threadId}/uploads`, {
           method: "PUT",
           body: formData,
         });
@@ -621,7 +621,7 @@ function PureMultimodalInput({
         toast.error("Failed to upload file, please try again!");
       }
     },
-    [chatId]
+    [threadId]
   );
 
   const handleFileChange = useCallback(
@@ -812,12 +812,12 @@ function PureMultimodalInput({
         mediaModelsResolved &&
         toolCapabilitiesResolved && (
           <SuggestedActions
-            chatId={chatId}
             imageEnabled={imageModels.length > 0}
             knowledgeEnabled={knowledgeEnabled}
             onSuggestionSelect={handleSuggestedAction}
             selectedVisibilityType={selectedVisibilityType}
             sendMessage={sendMessage}
+            threadId={threadId}
             videoEnabled={videoModels.length > 0}
           />
         )}
@@ -1079,7 +1079,7 @@ function PureMultimodalInput({
                       "content-type": "application/json",
                     },
                     body: JSON.stringify({
-                      chatId,
+                      threadId,
                       kind: mediaKind,
                       prompt: mediaPrompt,
                       modelId: mediaModelId,

@@ -181,6 +181,9 @@ export function convertToUIMessages(
     parts: unknown;
     createdAt: Date;
     feedback?: "positive" | "negative" | null;
+    authorUserId?: string | null;
+    authorName?: string | null;
+    authorEmail?: string | null;
   }>
 ): ChatMessage[] {
   return messages.map((message) => ({
@@ -190,6 +193,9 @@ export function convertToUIMessages(
     metadata: {
       createdAt: formatISO(message.createdAt),
       feedback: message.feedback ?? null,
+      authorUserId: message.authorUserId ?? undefined,
+      authorName: message.authorName ?? undefined,
+      authorEmail: message.authorEmail ?? undefined,
     },
   }));
 }

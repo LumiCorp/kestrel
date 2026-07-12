@@ -14,7 +14,7 @@ export type SaveDocumentProps = {
   content: string;
   userId: string;
   organizationId: string;
-  chatId?: string | null;
+  threadId?: string | null;
 };
 
 export type CreateDocumentCallbackProps = {
@@ -105,7 +105,7 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
           kind: config.kind,
           userId: args.session.user.id,
           organizationId,
-          chatId: args.document.chatId,
+          threadId: args.document.threadId,
         });
       }
 

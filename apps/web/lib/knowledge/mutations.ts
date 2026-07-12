@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { requireKnowledgeDocumentAccess } from "@/lib/knowledge/documents/access";
 import {
   createKnowledgeDocumentFromUpload,
   queueKnowledgeDocumentReindex,
@@ -11,10 +12,6 @@ import {
   isKnowledgeDocumentMediaTypeSupported,
   normalizeMediaType,
 } from "@/lib/knowledge/documents/shared";
-import {
-  canManageKnowledgeDocument,
-  getKnowledgeDocumentById,
-} from "@/lib/knowledge/documents/store";
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -166,6 +163,7 @@ export async function uploadKnowledgeDocumentForUser(input: {
   file: File;
   organizationId: string;
   uploaderUserId: string;
+  projectId?: string | null;
 }) {
   const mediaType = normalizeMediaType(input.file.type, input.file.name);
 
@@ -188,18 +186,15 @@ export async function reindexKnowledgeDocumentForUser(input: {
   requestedByUserId: string;
   documentId: string;
 }) {
-  const document = await getKnowledgeDocumentById(
-    input.organizationId,
-    input.documentId
-  );
-
-  if (!document) {
-    throw new Error("Knowledge document not found");
-  }
-
-  if (!canManageKnowledgeDocument(document, input.actorUser)) {
-    throw new Error("Forbidden");
-  }
+  const document = await requireKnowledgeDocumentAccess({
+    organizationId: input.organizationId,
+    user: {
+      id: input.requestedByUserId,
+      role: input.actorUser.role,
+    },
+    documentId: input.documentId,
+    manage: true,
+  });
 
   const run = await queueKnowledgeDocumentReindex({
     organizationId: input.organizationId,
@@ -219,18 +214,12 @@ export async function deleteKnowledgeDocumentForUser(input: {
   organizationId: string;
   documentId: string;
 }) {
-  const document = await getKnowledgeDocumentById(
-    input.organizationId,
-    input.documentId
-  );
-
-  if (!document) {
-    throw new Error("Knowledge document not found");
-  }
-
-  if (!canManageKnowledgeDocument(document, input.actorUser)) {
-    throw new Error("Forbidden");
-  }
+  const document = await requireKnowledgeDocumentAccess({
+    organizationId: input.organizationId,
+    user: { id: input.actorUserId, role: input.actorUser.role },
+    documentId: input.documentId,
+    manage: true,
+  });
 
   await removeKnowledgeDocument({
     organizationId: input.organizationId,

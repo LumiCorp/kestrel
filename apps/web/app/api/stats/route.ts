@@ -31,33 +31,33 @@ export async function GET(request: NextRequest) {
       await Promise.all([
         knowledgeDb
           .select({
-            chatId: schema.knowledgeMessages.chatId,
-            model: schema.knowledgeMessages.model,
-            inputTokens: schema.knowledgeMessages.inputTokens,
-            outputTokens: schema.knowledgeMessages.outputTokens,
-            durationMs: schema.knowledgeMessages.durationMs,
-            feedback: schema.knowledgeMessages.feedback,
-            createdAt: schema.knowledgeMessages.createdAt,
+            threadId: schema.threadMessages.threadId,
+            model: schema.threadMessages.model,
+            inputTokens: schema.threadMessages.inputTokens,
+            outputTokens: schema.threadMessages.outputTokens,
+            durationMs: schema.threadMessages.durationMs,
+            feedback: schema.threadMessages.feedback,
+            createdAt: schema.threadMessages.createdAt,
           })
-          .from(schema.knowledgeMessages)
+          .from(schema.threadMessages)
           .where(
             and(
-              eq(schema.knowledgeMessages.role, "assistant"),
-              gte(schema.knowledgeMessages.createdAt, startDate)
+              eq(schema.threadMessages.role, "assistant"),
+              gte(schema.threadMessages.createdAt, startDate)
             )
           ),
         knowledgeDb
           .select({
-            chatId: schema.knowledgeMessages.chatId,
-            inputTokens: schema.knowledgeMessages.inputTokens,
-            outputTokens: schema.knowledgeMessages.outputTokens,
+            threadId: schema.threadMessages.threadId,
+            inputTokens: schema.threadMessages.inputTokens,
+            outputTokens: schema.threadMessages.outputTokens,
           })
-          .from(schema.knowledgeMessages)
+          .from(schema.threadMessages)
           .where(
             and(
-              eq(schema.knowledgeMessages.role, "assistant"),
-              gte(schema.knowledgeMessages.createdAt, prevStartDate),
-              lt(schema.knowledgeMessages.createdAt, prevEndDate)
+              eq(schema.threadMessages.role, "assistant"),
+              gte(schema.threadMessages.createdAt, prevStartDate),
+              lt(schema.threadMessages.createdAt, prevEndDate)
             )
           ),
         knowledgeDb
@@ -79,14 +79,14 @@ export async function GET(request: NextRequest) {
       ]);
 
     const organizationChatIds = await knowledgeDb
-      .select({ id: schema.knowledgeChats.id })
-      .from(schema.knowledgeChats)
-      .where(eq(schema.knowledgeChats.organizationId, organizationId));
+      .select({ id: schema.threads.id })
+      .from(schema.threads)
+      .where(eq(schema.threads.organizationId, organizationId));
 
     const activeChatIds = new Set(organizationChatIds.map((chat) => chat.id));
 
     const filteredMessages = messagesWithStats.filter((message) => {
-      if (!activeChatIds.has(message.chatId)) {
+      if (!activeChatIds.has(message.threadId)) {
         return false;
       }
       if (sourcesFilter && !sourcesFilter.includes("web")) {
@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
     });
 
     const filteredPreviousMessages = prevMessagesWithStats.filter((message) =>
-      activeChatIds.has(message.chatId)
+      activeChatIds.has(message.threadId)
     );
 
     const filteredUsage = apiUsageData.filter((usage) => {
