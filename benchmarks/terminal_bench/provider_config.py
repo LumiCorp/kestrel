@@ -14,6 +14,12 @@ BENCHMARK_INTERNAL_MODEL_ENV = "KESTREL_BENCHMARK_MODEL"
 DEFAULT_OPENROUTER_BENCHMARK_MODEL = "z-ai/glm-5.2"
 BENCHMARK_INTERACTION_MODE = "build"
 BENCHMARK_ACT_SUBMODE = "full_auto"
+BENCHMARK_GUARDRAILS = {
+    "maxStepsPerRun": 2500,
+    "maxToolCallsPerRun": 1000,
+    "maxModelCallsPerRun": 500,
+    "maxStepVisits": 750,
+}
 
 DEPRECATED_BENCHMARK_ENV: dict[str, str] = {
     "KESTREL_TBENCH_MODEL_PROVIDER": "OpenRouter is the only supported Kestrel benchmark provider; remove this variable.",
@@ -44,6 +50,10 @@ def benchmark_profile_mode() -> dict[str, str]:
         "defaultInteractionMode": BENCHMARK_INTERACTION_MODE,
         "defaultActSubmode": BENCHMARK_ACT_SUBMODE,
     }
+
+
+def benchmark_guardrails() -> dict[str, int]:
+    return dict(BENCHMARK_GUARDRAILS)
 
 
 def assert_benchmark_turn_mode(turn: Mapping[str, object], label: str = "benchmark job turn") -> None:

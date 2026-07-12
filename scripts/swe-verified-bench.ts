@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertBenchmarkTurnMode,
+  benchmarkGuardrails,
   benchmarkProfileMode,
   benchmarkTurnMode,
   benchmarkProviderEnv,
@@ -22,6 +23,10 @@ import {
   loadBenchmarkDotEnv,
   resolveBenchmarkProviderConfig,
 } from "./benchmark-provider-config.js";
+import type {
+  SweWorkspaceBaselineReport,
+  SweWorkspacePatchReport,
+} from "./swe-verified-workspace-patch.js";
 
 type CommandMode = "preflight" | "run" | "evaluate" | "list";
 
@@ -63,6 +68,18 @@ interface SweVerifiedLatestAttemptMetadata {
   evaluator_resolved_instances?: number | undefined;
   evaluator_unresolved_instances?: number | undefined;
   evaluator_report_path?: string | undefined;
+  kestrel_job_status?: string | undefined;
+  kestrel_wait_event_type?: string | undefined;
+  kestrel_wait_reason?: string | undefined;
+  kestrel_process_exit_code?: number | undefined;
+  workspace_patch_status?: string | undefined;
+  workspace_patch_report_path?: string | undefined;
+  workspace_patch_sha256?: string | undefined;
+  workspace_patch_changed_paths?: number | undefined;
+  workspace_patch_excluded_transient_paths?: number | undefined;
+  workspace_baseline_report_path?: string | undefined;
+  workspace_baseline_commit?: string | undefined;
+  workspace_baseline_tree_sha?: string | undefined;
   updated_at: string;
 }
 
@@ -79,6 +96,13 @@ interface SweVerifiedEvaluationResult {
   outputPath: string;
   reportPath: string;
   report: SweVerifiedEvaluationReport;
+}
+
+interface KestrelJobStatusSummary {
+  terminalEventType?: string | undefined;
+  status?: string | undefined;
+  waitEventType?: string | undefined;
+  waitReason?: string | undefined;
 }
 
 interface RuntimeDeps {
@@ -102,10 +126,14 @@ const DEFAULT_TIMEOUT_SEC = 1_800;
 const DEFAULT_MAX_WORKERS = 1;
 const SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT = "/testbed";
 const SWE_VERIFIED_CONTAINER_ATTEMPT_DIR = "/kestrel-attempt";
+const SWE_VERIFIED_CONTAINER_BASELINE_REPO = "/kestrel-baseline";
 const SWE_VERIFIED_CONTAINER_DEV_SHELL_DIR = "/tmp/kestrel-dev-shell";
 const SWE_VERIFIED_RUNNER_SOURCE_DIR_NAME = "kestrel-src";
 const SWE_VERIFIED_RUNNER_IMAGE_DIR_NAME = "runner-image";
 const SWE_VERIFIED_MODEL_PATCH_FILE = "model.patch";
+const SWE_VERIFIED_PATCH_REPORT_FILE = "workspace-patch-report.json";
+const SWE_VERIFIED_BASELINE_REPORT_FILE = "workspace-baseline-report.json";
+const SWE_VERIFIED_BASELINE_OUTPUT_FILE = "workspace-baseline-output.txt";
 const ORACLE_FIELDS = new Set(["patch", "test_patch", "FAIL_TO_PASS", "PASS_TO_PASS"]);
 const SWE_VERIFIED_REQUIRED_PROFILE_TOOLS = [
   "FinalizeAnswer",
@@ -341,6 +369,7 @@ export function buildSweVerifiedJobInput(input: {
         enabled: true,
         envMode: "inherit",
       },
+      guardrails: benchmarkGuardrails(),
       toolAllowlist: [
         "FinalizeAnswer",
         "effect_result_lookup",
@@ -414,6 +443,14 @@ export function assertSweVerifiedJobInputContract(jobInput: Record<string, unkno
   const devShell = asRecord(profile.devShell);
   if (devShell?.enabled !== true) {
     throw new Error("SWE Verified job profile must enable devShell before allowlisting exec_command.");
+  }
+
+  const guardrails = asRecord(profile.guardrails);
+  const expectedGuardrails = benchmarkGuardrails() as Record<string, unknown>;
+  for (const [key, value] of Object.entries(expectedGuardrails)) {
+    if (guardrails?.[key] !== value) {
+      throw new Error(`SWE Verified job profile guardrails.${key} must be ${value}.`);
+    }
   }
 
   if (!Array.isArray(profile.toolAllowlist)) {
@@ -566,6 +603,9 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
   const kestrelOutputPath = path.join(attemptPaths.attemptDir, "kestrel-output.txt");
   const runnerImageDir = path.join(attemptPaths.attemptDir, SWE_VERIFIED_RUNNER_IMAGE_DIR_NAME);
   const modelPatchPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_MODEL_PATCH_FILE);
+  const patchReportPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_PATCH_REPORT_FILE);
+  const baselineReportPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_BASELINE_REPORT_FILE);
+  const baselineOutputPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_BASELINE_OUTPUT_FILE);
   const runScriptPath = path.join(attemptPaths.attemptDir, "run-kestrel.sh");
   let modelSelection: ReturnType<typeof resolveSweVerifiedModelSelection>;
   try {
@@ -723,16 +763,70 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     return dockerBuild.status ?? 1;
   }
 
+  const baselineCapture = deps.spawn("docker", buildSweVerifiedBaselineCaptureArgs({
+    attemptDir: attemptPaths.attemptDir,
+    baselineRepoDir: repoDir,
+    runnerImageTag,
+    sourceBaseCommit: instance.base_commit,
+  }), {
+    cwd: deps.cwd,
+    env: deps.env,
+  });
+  writeFileSync(baselineOutputPath, renderSpawnOutput(baselineCapture), "utf8");
+  let baselineReport: SweWorkspaceBaselineReport;
+  try {
+    baselineReport = readAndValidateWorkspaceBaselineReport({
+      reportPath: baselineReportPath,
+      expectedSourceBaseCommit: instance.base_commit,
+    });
+  } catch (error) {
+    updateLatestAttemptMetadata({
+      cwd: deps.cwd,
+      instanceRoot: attemptPaths.instanceRoot,
+      now: resolveNow(deps),
+      patchPath: modelPatchPath,
+      patchExists: false,
+      terminalStatus: "baseline_capture_failed",
+      evaluatorRan: false,
+      baselineReportPath,
+    });
+    deps.stderr.write(
+      `[bench:swe] prepared workspace baseline capture failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 1;
+  }
+  if (!spawnPassed(baselineCapture) || baselineReport.status === "failed") {
+    updateLatestAttemptMetadata({
+      cwd: deps.cwd,
+      instanceRoot: attemptPaths.instanceRoot,
+      now: resolveNow(deps),
+      patchPath: modelPatchPath,
+      patchExists: false,
+      terminalStatus: "baseline_capture_failed",
+      evaluatorRan: false,
+      baselineReport,
+      baselineReportPath,
+    });
+    deps.stderr.write(
+      `[bench:swe] prepared workspace baseline capture failed at ${String(baselineReport.failureStage)}: ${String(baselineReport.failureMessage)}\n`,
+    );
+    return 1;
+  }
+
   writeSweVerifiedContainerRunScript({
     runScriptPath,
+    sourceBaseCommit: instance.base_commit,
+    baseCommit: baselineReport.baselineCommit as string,
     jobInputPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(jobInputPath)),
     jobOutputPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(jobOutputPath)),
     kestrelOutputPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(kestrelOutputPath)),
     modelPatchPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(modelPatchPath)),
+    patchReportPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(patchReportPath)),
   });
   const kestrel = deps.spawn("docker", buildSweVerifiedDockerRunArgs({
     deps: { ...deps, env: benchmarkEnv },
     attemptDir: attemptPaths.attemptDir,
+    baselineRepoDir: repoDir,
     runnerImageTag,
   }), {
     cwd: deps.cwd,
@@ -746,21 +840,14 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
   if (!existsSync(kestrelOutputPath)) {
     writeFileSync(kestrelOutputPath, renderSpawnOutput(kestrel), "utf8");
   }
-  if (!spawnPassed(kestrel)) {
-    updateLatestAttemptMetadata({
-      cwd: deps.cwd,
-      instanceRoot: attemptPaths.instanceRoot,
-      now: resolveNow(deps),
-      patchPath: modelPatchPath,
-      patchExists: existsSync(modelPatchPath),
-      terminalStatus: "kestrel_failed",
-      evaluatorRan: false,
-    });
-    deps.stderr.write(`[bench:swe] Kestrel run failed. See ${path.relative(deps.cwd, kestrelOutputPath)}\n`);
-    return kestrel.status ?? 1;
-  }
+  let patchReport: SweWorkspacePatchReport;
   try {
-    assertKestrelJobCompleted(jobOutputPath);
+    patchReport = readAndValidateWorkspacePatchReport({
+      reportPath: patchReportPath,
+      patchPath: modelPatchPath,
+      expectedSourceBaseCommit: instance.base_commit,
+      expectedBaselineCommit: baselineReport.baselineCommit as string,
+    });
   } catch (error) {
     updateLatestAttemptMetadata({
       cwd: deps.cwd,
@@ -768,30 +855,57 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
       now: resolveNow(deps),
       patchPath: modelPatchPath,
       patchExists: existsSync(modelPatchPath),
-      terminalStatus: "job_not_completed",
+      terminalStatus: "patch_harvest_failed",
       evaluatorRan: false,
+      patchReportPath,
+      baselineReport,
+      baselineReportPath,
     });
-    deps.stderr.write(
-      `[bench:swe] ${error instanceof Error ? error.message : String(error)} Skipping evaluation.\n`,
-    );
+    deps.stderr.write(`[bench:swe] workspace patch harvesting failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-
-  if (!existsSync(modelPatchPath)) {
+  if (!spawnPassed(kestrel)) {
+    deps.stderr.write(
+      `[bench:swe] warning: container command exited with status ${String(kestrel.status)} after writing a valid workspace patch report.\n`,
+    );
+  }
+  if (patchReport.status === "failed") {
     updateLatestAttemptMetadata({
       cwd: deps.cwd,
       instanceRoot: attemptPaths.instanceRoot,
       now: resolveNow(deps),
       patchPath: modelPatchPath,
       patchExists: false,
-      terminalStatus: "missing_patch",
+      terminalStatus: "patch_harvest_failed",
       evaluatorRan: false,
+      patchReport,
+      patchReportPath,
+      baselineReport,
+      baselineReportPath,
     });
-    deps.stderr.write(`[bench:swe] Kestrel run did not produce ${path.relative(deps.cwd, modelPatchPath)}. Skipping evaluation.\n`);
+    deps.stderr.write(
+      `[bench:swe] workspace patch harvesting failed at ${String(patchReport.failureStage)}: ${String(patchReport.failureMessage)}\n`,
+    );
     return 1;
   }
-  const modelPatch = readFileSync(modelPatchPath, "utf8");
-  if (modelPatch.trim().length === 0) {
+
+  let terminalStatus = patchReport.kestrelExitCode === 0
+    ? "evaluated"
+    : "evaluated_after_kestrel_failure";
+  let kestrelJobSummary: KestrelJobStatusSummary | undefined;
+  try {
+    kestrelJobSummary = readKestrelJobStatus(jobOutputPath);
+    assertKestrelJobCompleted(jobOutputPath);
+  } catch (error) {
+    if (terminalStatus === "evaluated") {
+      terminalStatus = "evaluated_after_nonterminal_job";
+    }
+    deps.stderr.write(
+      `[bench:swe] warning: ${error instanceof Error ? error.message : String(error)} Validated non-empty patches still proceed to evaluation.\n`,
+    );
+  }
+
+  if (patchReport.status === "empty") {
     updateLatestAttemptMetadata({
       cwd: deps.cwd,
       instanceRoot: attemptPaths.instanceRoot,
@@ -800,19 +914,17 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
       patchExists: true,
       terminalStatus: "empty_patch",
       evaluatorRan: false,
+      kestrelJobSummary,
+      patchReport,
+      patchReportPath,
+      baselineReport,
+      baselineReportPath,
     });
-    deps.stderr.write("[bench:swe] Kestrel run produced an empty patch. Skipping evaluation.\n");
+    deps.stderr.write("[bench:swe] workspace export verified that the final submission is empty. Skipping evaluation.\n");
     return 1;
   }
 
-  const inspectionApply = deps.spawn("git", ["-C", repoDir, "apply", "--whitespace=nowarn", modelPatchPath], {
-    cwd: deps.cwd,
-    env: deps.env,
-  });
-  if (!spawnPassed(inspectionApply)) {
-    deps.stderr.write(`[bench:swe] warning: unable to apply model.patch to the host inspection clone; evaluator will still use the container patch.\n${renderSpawnOutput(inspectionApply)}`);
-  }
-
+  const modelPatch = readFileSync(modelPatchPath, "utf8");
   writePrediction({ predictionsPath, instanceId, modelName, modelPatch });
   deps.stdout.write(`[bench:swe] wrote ${path.relative(deps.cwd, predictionsPath)}\n`);
 
@@ -833,9 +945,14 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     now: resolveNow(deps),
     patchPath: modelPatchPath,
     patchExists: true,
-    terminalStatus: evaluation.status === 0 ? "evaluated" : "evaluation_failed",
+    terminalStatus: evaluation.status === 0 ? terminalStatus : "evaluation_failed",
     evaluatorRan: true,
     evaluation,
+    kestrelJobSummary,
+    patchReport,
+    patchReportPath,
+    baselineReport,
+    baselineReportPath,
   });
   return evaluation.status;
 }
@@ -1050,10 +1167,13 @@ function normalizeDockerPlatform(platform: string): string {
 
 function writeSweVerifiedContainerRunScript(input: {
   runScriptPath: string;
+  sourceBaseCommit: string;
+  baseCommit: string;
   jobInputPath: string;
   jobOutputPath: string;
   kestrelOutputPath: string;
   modelPatchPath: string;
+  patchReportPath: string;
 }): void {
   writeFileSync(
     input.runScriptPath,
@@ -1066,21 +1186,61 @@ function writeSweVerifiedContainerRunScript(input: {
       `  --json-out ${shellQuote(input.jobOutputPath)} \\`,
       `  --store sqlite > ${shellQuote(input.kestrelOutputPath)} 2>&1`,
       "kestrel_status=$?",
-      `git -C ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT} diff --binary > ${shellQuote(input.modelPatchPath)} 2>> ${shellQuote(input.kestrelOutputPath)}`,
-      "diff_status=$?",
-      "if [ \"$kestrel_status\" -ne 0 ]; then",
-      "  exit \"$kestrel_status\"",
-      "fi",
-      "exit \"$diff_status\"",
+      "cd /opt/kestrel",
+      "node --import tsx /opt/kestrel/scripts/swe-verified-workspace-patch.ts \\",
+      "  --mode export \\",
+      `  --workspace-root ${shellQuote(SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT)} \\`,
+      `  --baseline-repo ${shellQuote(SWE_VERIFIED_CONTAINER_BASELINE_REPO)} \\`,
+      `  --source-base-commit ${shellQuote(input.sourceBaseCommit)} \\`,
+      `  --base-commit ${shellQuote(input.baseCommit)} \\`,
+      `  --patch-path ${shellQuote(input.modelPatchPath)} \\`,
+      `  --report-path ${shellQuote(input.patchReportPath)} \\`,
+      `  --kestrel-exit-code "$kestrel_status" >> ${shellQuote(input.kestrelOutputPath)} 2>&1`,
+      "export_status=$?",
+      "exit \"$export_status\"",
       "",
     ].join("\n"),
     "utf8",
   );
 }
 
+function buildSweVerifiedBaselineCaptureArgs(input: {
+  attemptDir: string;
+  baselineRepoDir: string;
+  runnerImageTag: string;
+  sourceBaseCommit: string;
+}): string[] {
+  return [
+    "run",
+    "--rm",
+    "-v",
+    `${input.attemptDir}:${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}`,
+    "-v",
+    `${input.baselineRepoDir}:${SWE_VERIFIED_CONTAINER_BASELINE_REPO}`,
+    "-w",
+    "/opt/kestrel",
+    input.runnerImageTag,
+    "node",
+    "--import",
+    "tsx",
+    "/opt/kestrel/scripts/swe-verified-workspace-patch.ts",
+    "--mode",
+    "capture",
+    "--workspace-root",
+    SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
+    "--baseline-repo",
+    SWE_VERIFIED_CONTAINER_BASELINE_REPO,
+    "--source-base-commit",
+    input.sourceBaseCommit,
+    "--report-path",
+    `${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/${SWE_VERIFIED_BASELINE_REPORT_FILE}`,
+  ];
+}
+
 function buildSweVerifiedDockerRunArgs(input: {
   deps: RuntimeDeps;
   attemptDir: string;
+  baselineRepoDir: string;
   runnerImageTag: string;
 }): string[] {
   const args = [
@@ -1088,6 +1248,10 @@ function buildSweVerifiedDockerRunArgs(input: {
     "--rm",
     "-v",
     `${input.attemptDir}:${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}`,
+    "-v",
+    `${input.baselineRepoDir}:${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/workspace/repo:ro`,
+    "-v",
+    `${input.baselineRepoDir}:${SWE_VERIFIED_CONTAINER_BASELINE_REPO}:ro`,
   ];
   const dotEnvPath = path.join(input.deps.cwd, ".env");
   if (existsSync(dotEnvPath)) {
@@ -1472,7 +1636,233 @@ export function validatePredictionFile(input: {
   readRequiredPredictionString(matchingRow, "model_patch");
 }
 
+function readAndValidateWorkspaceBaselineReport(input: {
+  reportPath: string;
+  expectedSourceBaseCommit: string;
+}): SweWorkspaceBaselineReport {
+  if (!existsSync(input.reportPath)) {
+    throw new Error(`workspace baseline report does not exist: ${input.reportPath}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(input.reportPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `workspace baseline report is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const record = asRecord(parsed);
+  if (record?.schemaVersion !== 1) {
+    throw new Error(`workspace baseline report has unsupported schemaVersion: ${String(record?.schemaVersion)}`);
+  }
+  const status = record?.status;
+  if (status !== "captured" && status !== "failed") {
+    throw new Error(`workspace baseline report has invalid status: ${String(status)}`);
+  }
+  if (record?.sourceBaseCommit !== input.expectedSourceBaseCommit) {
+    throw new Error(
+      `workspace baseline source mismatch: expected ${input.expectedSourceBaseCommit}, got ${String(record?.sourceBaseCommit)}`,
+    );
+  }
+  const stages = parseWorkspacePatchStages(record?.stages);
+  const report: SweWorkspaceBaselineReport = {
+    schemaVersion: 1,
+    status,
+    sourceBaseCommit: input.expectedSourceBaseCommit,
+    ...(typeof record.baselineCommit === "string" ? { baselineCommit: record.baselineCommit } : {}),
+    ...(typeof record.baselineTreeSha === "string" ? { baselineTreeSha: record.baselineTreeSha } : {}),
+    excludedTransientPaths: parseStringArray(record.excludedTransientPaths, "excludedTransientPaths"),
+    unsupportedPaths: parseStringArray(record.unsupportedPaths, "unsupportedPaths"),
+    stages,
+    ...(typeof record.failureStage === "string" ? { failureStage: record.failureStage } : {}),
+    ...(typeof record.failureMessage === "string" ? { failureMessage: record.failureMessage } : {}),
+  };
+  if (status === "failed") {
+    if (!stages.some((stage) => stage.status === "failed")) {
+      throw new Error("failed workspace baseline report must identify a failed stage");
+    }
+    return report;
+  }
+  if (
+    report.baselineCommit === undefined ||
+    report.baselineTreeSha === undefined ||
+    !/^[0-9a-f]{40,64}$/u.test(report.baselineCommit) ||
+    !/^[0-9a-f]{40,64}$/u.test(report.baselineTreeSha)
+  ) {
+    throw new Error("captured workspace baseline report is missing valid commit or tree hashes");
+  }
+  if (report.unsupportedPaths.length > 0) {
+    throw new Error("captured workspace baseline report contains unsupported filesystem entries");
+  }
+  if (!stages.some((stage) => stage.name === "publish_baseline" && stage.status === "passed")) {
+    throw new Error("captured workspace baseline report must include a passed publish_baseline stage");
+  }
+  return report;
+}
+
+function readAndValidateWorkspacePatchReport(input: {
+  reportPath: string;
+  patchPath: string;
+  expectedSourceBaseCommit: string;
+  expectedBaselineCommit: string;
+}): SweWorkspacePatchReport {
+  if (!existsSync(input.reportPath)) {
+    throw new Error(`workspace patch report does not exist: ${input.reportPath}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(input.reportPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `workspace patch report is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const record = asRecord(parsed);
+  const validation = asRecord(record?.validation);
+  const status = record?.status;
+  if (record?.schemaVersion !== 1) {
+    throw new Error(`workspace patch report has unsupported schemaVersion: ${String(record?.schemaVersion)}`);
+  }
+  if (status !== "produced" && status !== "empty" && status !== "failed") {
+    throw new Error(`workspace patch report has invalid status: ${String(status)}`);
+  }
+  if (record?.sourceBaseCommit !== input.expectedSourceBaseCommit) {
+    throw new Error(
+      `workspace patch source mismatch: expected ${input.expectedSourceBaseCommit}, got ${String(record?.sourceBaseCommit)}`,
+    );
+  }
+  if (record?.baselineCommit !== input.expectedBaselineCommit) {
+    throw new Error(
+      `workspace patch report baseline mismatch: expected ${input.expectedBaselineCommit}, got ${String(record?.baselineCommit)}`,
+    );
+  }
+  if (!Number.isInteger(record?.kestrelExitCode) || !Number.isInteger(record?.patchBytes) || Number(record?.patchBytes) < 0) {
+    throw new Error("workspace patch report has invalid exit-code or patch-byte fields");
+  }
+  const changedPaths = parseWorkspacePatchChanges(record?.changedPaths);
+  const excludedTransientPaths = parseStringArray(record?.excludedTransientPaths, "excludedTransientPaths");
+  const unsupportedPaths = parseStringArray(record?.unsupportedPaths, "unsupportedPaths");
+  const stages = parseWorkspacePatchStages(record?.stages);
+  if (typeof validation?.applies !== "boolean" || typeof validation?.treeMatches !== "boolean") {
+    throw new Error("workspace patch report has invalid validation fields");
+  }
+  const report: SweWorkspacePatchReport = {
+    schemaVersion: 1,
+    status,
+    sourceBaseCommit: input.expectedSourceBaseCommit,
+    baselineCommit: input.expectedBaselineCommit,
+    kestrelExitCode: Number(record.kestrelExitCode),
+    patchBytes: Number(record.patchBytes),
+    ...(typeof record.patchSha256 === "string" ? { patchSha256: record.patchSha256 } : {}),
+    ...(typeof record.targetTreeSha === "string" ? { targetTreeSha: record.targetTreeSha } : {}),
+    changedPaths,
+    excludedTransientPaths,
+    unsupportedPaths,
+    stages,
+    validation: {
+      applies: validation.applies,
+      treeMatches: validation.treeMatches,
+    },
+    ...(typeof record.failureStage === "string" ? { failureStage: record.failureStage } : {}),
+    ...(typeof record.failureMessage === "string" ? { failureMessage: record.failureMessage } : {}),
+  };
+
+  if (status === "failed") {
+    if (existsSync(input.patchPath)) {
+      throw new Error("failed workspace patch report must not leave model.patch behind");
+    }
+    if (!stages.some((stage) => stage.status === "failed")) {
+      throw new Error("failed workspace patch report must identify a failed stage");
+    }
+    return report;
+  }
+  if (!report.validation.applies || !report.validation.treeMatches) {
+    throw new Error("successful workspace patch report must contain successful patch and tree validation");
+  }
+  if (!stages.some((stage) => stage.name === "validate_patch" && stage.status === "passed")) {
+    throw new Error("successful workspace patch report must include a passed validate_patch stage");
+  }
+  if (!existsSync(input.patchPath)) {
+    throw new Error(`workspace patch report references a missing patch: ${input.patchPath}`);
+  }
+  const patch = readFileSync(input.patchPath);
+  if (patch.length !== report.patchBytes) {
+    throw new Error(`workspace patch byte mismatch: report=${report.patchBytes}, actual=${patch.length}`);
+  }
+  if (report.targetTreeSha === undefined || !/^[0-9a-f]{40,64}$/u.test(report.targetTreeSha)) {
+    throw new Error("workspace patch report is missing a valid target tree hash");
+  }
+  if (status === "empty") {
+    if (patch.length !== 0 || changedPaths.length !== 0 || report.patchSha256 !== undefined) {
+      throw new Error("empty workspace patch report contradicts its patch artifact");
+    }
+    return report;
+  }
+  if (patch.length === 0 || changedPaths.length === 0) {
+    throw new Error("produced workspace patch report must contain a non-empty patch and changed paths");
+  }
+  const actualSha256 = createHash("sha256").update(patch).digest("hex");
+  if (report.patchSha256 !== actualSha256) {
+    throw new Error(`workspace patch SHA-256 mismatch: report=${String(report.patchSha256)}, actual=${actualSha256}`);
+  }
+  return report;
+}
+
+function parseWorkspacePatchChanges(value: unknown): SweWorkspacePatchReport["changedPaths"] {
+  if (!Array.isArray(value)) {
+    throw new Error("workspace patch report changedPaths must be an array");
+  }
+  return value.map((entry, index) => {
+    const record = asRecord(entry);
+    const status = record?.status;
+    if (
+      typeof record?.path !== "string" ||
+      (status !== "A" && status !== "M" && status !== "D" && status !== "T")
+    ) {
+      throw new Error(`workspace patch report changedPaths[${index}] is invalid`);
+    }
+    return { path: record.path, status };
+  });
+}
+
+function parseStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`workspace patch report ${field} must be a string array`);
+  }
+  return value as string[];
+}
+
+function parseWorkspacePatchStages(value: unknown): SweWorkspacePatchReport["stages"] {
+  if (!Array.isArray(value)) {
+    throw new Error("workspace patch report stages must be an array");
+  }
+  return value.map((entry, index) => {
+    const record = asRecord(entry);
+    const status = record?.status;
+    if (typeof record?.name !== "string" || (status !== "passed" && status !== "failed")) {
+      throw new Error(`workspace patch report stages[${index}] is invalid`);
+    }
+    if (record.message !== undefined && typeof record.message !== "string") {
+      throw new Error(`workspace patch report stages[${index}].message is invalid`);
+    }
+    return {
+      name: record.name,
+      status,
+      ...(typeof record.message === "string" ? { message: record.message } : {}),
+    };
+  });
+}
+
 export function assertKestrelJobCompleted(jobOutputPath: string): void {
+  const summary = readKestrelJobStatus(jobOutputPath);
+  if (summary.terminalEventType !== "job.completed" || summary.status !== "COMPLETED") {
+    throw new Error(
+      `Kestrel job did not reach terminal COMPLETED state (terminalEventType=${String(summary.terminalEventType)}, status=${String(summary.status)}).`,
+    );
+  }
+}
+
+function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
   if (!existsSync(jobOutputPath)) {
     throw new Error(`Kestrel run did not produce job output: ${jobOutputPath}.`);
   }
@@ -1486,13 +1876,14 @@ export function assertKestrelJobCompleted(jobOutputPath: string): void {
 
   const output = asRecord(parsed);
   const job = asRecord(output?.job);
-  const terminalEventType = output?.terminalEventType;
-  const status = job?.status;
-  if (terminalEventType !== "job.completed" || status !== "COMPLETED") {
-    throw new Error(
-      `Kestrel job did not reach terminal COMPLETED state (terminalEventType=${String(terminalEventType)}, status=${String(status)}).`,
-    );
-  }
+  const waitFor = asRecord(job?.waitFor);
+  const waitMetadata = asRecord(waitFor?.metadata);
+  return {
+    terminalEventType: typeof output?.terminalEventType === "string" ? output.terminalEventType : undefined,
+    status: typeof job?.status === "string" ? job.status : undefined,
+    waitEventType: typeof waitFor?.eventType === "string" ? waitFor.eventType : undefined,
+    waitReason: typeof waitMetadata?.reason === "string" ? waitMetadata.reason : undefined,
+  };
 }
 
 function loadInstance(input: {
@@ -1651,6 +2042,11 @@ function updateLatestAttemptMetadata(input: {
   terminalStatus: string;
   evaluatorRan: boolean;
   evaluation?: SweVerifiedEvaluationResult | undefined;
+  kestrelJobSummary?: KestrelJobStatusSummary | undefined;
+  patchReport?: SweWorkspacePatchReport | undefined;
+  patchReportPath?: string | undefined;
+  baselineReport?: SweWorkspaceBaselineReport | undefined;
+  baselineReportPath?: string | undefined;
 }): void {
   const latestPath = path.join(input.instanceRoot, "latest.json");
   const previous = readLatestAttemptMetadata(latestPath);
@@ -1666,6 +2062,40 @@ function updateLatestAttemptMetadata(input: {
     model_patch_exists: input.patchExists,
     model_patch_bytes: modelPatchBytes,
     evaluator_ran: input.evaluatorRan,
+    ...(input.kestrelJobSummary?.status !== undefined
+      ? { kestrel_job_status: input.kestrelJobSummary.status }
+      : {}),
+    ...(input.kestrelJobSummary?.waitEventType !== undefined
+      ? { kestrel_wait_event_type: input.kestrelJobSummary.waitEventType }
+      : {}),
+    ...(input.kestrelJobSummary?.waitReason !== undefined
+      ? { kestrel_wait_reason: input.kestrelJobSummary.waitReason }
+      : {}),
+    ...(input.patchReport !== undefined
+      ? {
+          kestrel_process_exit_code: input.patchReport.kestrelExitCode,
+          workspace_patch_status: input.patchReport.status,
+          workspace_patch_changed_paths: input.patchReport.changedPaths.length,
+          workspace_patch_excluded_transient_paths: input.patchReport.excludedTransientPaths.length,
+          ...(input.patchReport.patchSha256 !== undefined
+            ? { workspace_patch_sha256: input.patchReport.patchSha256 }
+            : {}),
+        }
+      : {}),
+    ...(input.patchReportPath !== undefined
+      ? { workspace_patch_report_path: path.relative(input.cwd, input.patchReportPath) }
+      : {}),
+    ...(input.baselineReport?.baselineCommit !== undefined
+      ? {
+          workspace_baseline_commit: input.baselineReport.baselineCommit,
+          ...(input.baselineReport.baselineTreeSha !== undefined
+            ? { workspace_baseline_tree_sha: input.baselineReport.baselineTreeSha }
+            : {}),
+        }
+      : {}),
+    ...(input.baselineReportPath !== undefined
+      ? { workspace_baseline_report_path: path.relative(input.cwd, input.baselineReportPath) }
+      : {}),
     ...(input.evaluation !== undefined
       ? {
           evaluator_status: input.evaluation.status,

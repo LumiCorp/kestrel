@@ -140,6 +140,7 @@ def main() -> int:
         )
         runtime_status = "completed" if completed.returncode == 0 else "failed"
         emit_progress(f"Kestrel runtime exited with status {runtime_status} and code {completed.returncode}")
+        write_debug_job_output(job_out)
         notes = completed.stdout[-2000:]
         payload = runtime_identity_payload(job_out, event_log)
         failure_details = failure_details_payload(
@@ -172,6 +173,7 @@ def main() -> int:
         return completed.returncode
     except subprocess.TimeoutExpired as error:
         emit_progress("Kestrel runtime timed out")
+        write_debug_job_output(job_out)
         payload = runtime_identity_payload(job_out, event_log)
         failure_details = failure_details_payload(
             job_out,
@@ -260,6 +262,17 @@ def write_debug_job_input(job_input: dict[str, Any]) -> None:
             json.dumps(job_input, indent=2) + "\n",
             encoding="utf-8",
         )
+    except OSError:
+        return
+
+
+def write_debug_job_output(
+    job_output_path: Path,
+    destination: Path = Path("/installed-agent/kestrel-cli-job-output.json"),
+) -> None:
+    try:
+        if job_output_path.exists():
+            destination.write_text(job_output_path.read_text(encoding="utf-8"), encoding="utf-8")
     except OSError:
         return
 
@@ -448,6 +461,14 @@ def parse_job_terminal_status(path: Path) -> dict[str, Any]:
     if not isinstance(status, str) or not status:
         return {}
     payload: dict[str, Any] = {"status": status}
+    wait_for = job.get("waitFor") if isinstance(job.get("waitFor"), dict) else {}
+    wait_event_type = wait_for.get("eventType")
+    if isinstance(wait_event_type, str) and wait_event_type:
+        payload["wait_event_type"] = wait_event_type
+    wait_metadata = wait_for.get("metadata") if isinstance(wait_for.get("metadata"), dict) else {}
+    wait_reason = wait_metadata.get("reason")
+    if isinstance(wait_reason, str) and wait_reason:
+        payload["wait_reason"] = wait_reason
     return payload
 
 

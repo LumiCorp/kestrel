@@ -34,6 +34,7 @@ from .cli_task_runner import (
     result_adapter,
     result_dataset,
     result_status_and_failure_kind,
+    write_debug_job_output,
 )
 from .job_input import (
     TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS,
@@ -43,6 +44,7 @@ from .job_input import (
 from .provider_config import (
     assert_benchmark_profile_mode,
     assert_benchmark_turn_mode,
+    benchmark_guardrails,
     benchmark_provider_artifact_payload,
     benchmark_profile_mode,
     benchmark_turn_mode,
@@ -85,6 +87,7 @@ class CliTaskRunnerTest(unittest.TestCase):
         assert_benchmark_profile_mode(profile)
         self.assertEqual(profile["defaultInteractionMode"], "build")
         self.assertEqual(profile["defaultActSubmode"], "full_auto")
+        self.assertEqual(profile["guardrails"], benchmark_guardrails())
         self.assertEqual(profile["toolAllowlist"], TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS)
         self.assertEqual(
             profile["toolAllowlist"],
@@ -420,13 +423,34 @@ class CliTaskRunnerTest(unittest.TestCase):
                         "version": "job_output_v1",
                         "job": {
                             "status": "WAITING",
+                            "waitFor": {
+                                "eventType": "user.reply",
+                                "metadata": {"reason": "max_model_calls_continuation"},
+                            },
                         },
                     }
                 ),
                 encoding="utf-8",
             )
 
-            self.assertEqual(parse_job_terminal_status(job_output), {"status": "WAITING"})
+            self.assertEqual(
+                parse_job_terminal_status(job_output),
+                {
+                    "status": "WAITING",
+                    "wait_event_type": "user.reply",
+                    "wait_reason": "max_model_calls_continuation",
+                },
+            )
+
+    def test_write_debug_job_output_copies_existing_job_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job_output = Path(tmp) / "job-output.json"
+            destination = Path(tmp) / "kestrel-cli-job-output.json"
+            job_output.write_text('{"version":"job_output_v1"}\n', encoding="utf-8")
+
+            write_debug_job_output(job_output, destination)
+
+            self.assertEqual(destination.read_text(encoding="utf-8"), '{"version":"job_output_v1"}\n')
 
     def test_parse_event_log_terminal_status_reads_waiting_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

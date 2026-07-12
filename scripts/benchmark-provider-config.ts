@@ -10,6 +10,12 @@ export const BENCHMARK_MODEL_ENV = "OPENROUTER_MODEL";
 export const DEFAULT_OPENROUTER_BENCHMARK_MODEL = "z-ai/glm-5.2";
 export const BENCHMARK_INTERACTION_MODE = "build" as const;
 export const BENCHMARK_ACT_SUBMODE = "full_auto" as const;
+export const BENCHMARK_GUARDRAILS = {
+  maxStepsPerRun: 2500,
+  maxToolCallsPerRun: 1000,
+  maxModelCallsPerRun: 500,
+  maxStepVisits: 750,
+} as const;
 export const BENCHMARK_DOTENV_PREFER_KEYS = [
   "OPENROUTER_API_KEY",
   "KCHAT_MODEL_TIMEOUT_MS",
@@ -49,6 +55,8 @@ export interface BenchmarkProfileMode {
   defaultActSubmode: typeof BENCHMARK_ACT_SUBMODE;
 }
 
+export type BenchmarkGuardrails = typeof BENCHMARK_GUARDRAILS;
+
 export function benchmarkTurnMode(): BenchmarkTurnMode {
   return {
     interactionMode: BENCHMARK_INTERACTION_MODE,
@@ -61,6 +69,10 @@ export function benchmarkProfileMode(): BenchmarkProfileMode {
     defaultInteractionMode: BENCHMARK_INTERACTION_MODE,
     defaultActSubmode: BENCHMARK_ACT_SUBMODE,
   };
+}
+
+export function benchmarkGuardrails(): BenchmarkGuardrails {
+  return { ...BENCHMARK_GUARDRAILS };
 }
 
 export function loadBenchmarkDotEnv(cwd: string, env: NodeJS.ProcessEnv): void {
