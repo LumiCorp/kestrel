@@ -4,8 +4,11 @@ import {
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
   getProviderSupportedModalities,
+  isKestrelRuntimeLanguageProvider,
   normalizeGatewayModelMetadata,
   normalizeOpenAICompatibleBaseUrl,
+  selectGatewayModelSelection,
+  selectPreferredGatewayModelId,
 } from "./gateway-utils";
 
 test("Lumi is registered with OpenAI-style default modalities", () => {
@@ -16,6 +19,35 @@ test("Lumi is registered with OpenAI-style default modalities", () => {
     "speech",
     "embedding",
   ]);
+});
+
+test("an explicit unavailable model never falls back to the gateway default", () => {
+  const models = [
+    {
+      id: "approved-default",
+      alias: "default",
+      rawModelId: "gpt-5.4",
+      gatewayProvider: "openai" as const,
+      isDefault: true,
+    },
+  ];
+  assert.equal(
+    selectGatewayModelSelection(models, "unapproved-or-missing"),
+    null
+  );
+  assert.equal(
+    selectGatewayModelSelection(models, "approved-default")?.rawModelId,
+    "gpt-5.4"
+  );
+});
+
+test("external Kestrel chat runtime excludes unsupported gateway providers", () => {
+  assert.equal(isKestrelRuntimeLanguageProvider("openai"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("anthropic"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("ollama"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("openrouter"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("lumi"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("replicate"), false);
 });
 
 test("OpenAI-compatible base URLs normalize to /v1 only when needed", () => {
@@ -88,5 +120,25 @@ test("Lumi sync metadata preserves model metadata and defaults protocol", () => 
       metadata: { tier: "prod" },
     }),
     { tier: "prod" }
+  );
+});
+
+test("approved model preference uses explicit selection, then organization default", () => {
+  const models = [
+    { id: "org-default", isDefault: false },
+    { id: "gateway-default", isDefault: true },
+  ];
+
+  assert.equal(
+    selectPreferredGatewayModelId(models, "user-selection", "org-default"),
+    "org-default"
+  );
+  assert.equal(
+    selectPreferredGatewayModelId(models, "gateway-default", "org-default"),
+    "gateway-default"
+  );
+  assert.equal(
+    selectPreferredGatewayModelId(models, null, "missing-model"),
+    "gateway-default"
   );
 });

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { getSafeGatewayAdminError } from "@/lib/ai/gateway-admin-error";
 import {
   deleteGatewayModel,
   GATEWAY_MODALITIES,
@@ -7,7 +8,11 @@ import {
   saveGatewayModel,
 } from "@/lib/ai/gateways";
 import { requireAdmin } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
+
+function safeErrorResponse(error: unknown) {
+  const result = getSafeGatewayAdminError(error);
+  return NextResponse.json(result.body, { status: result.status });
+}
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -15,8 +20,8 @@ const paramsSchema = z.object({
 
 const bodySchema = z.object({
   id: z.string().min(1).optional(),
-  rawModelId: z.string().min(1),
-  alias: z.string().min(1).nullable().optional(),
+  rawModelId: z.string().trim().min(1),
+  alias: z.string().trim().min(1).nullable().optional(),
   modality: z.enum(GATEWAY_MODALITIES),
   approved: z.boolean().optional(),
   isDefault: z.boolean().optional(),
@@ -38,7 +43,7 @@ export async function GET(
     const models = await listModelsForGateway(params.id);
     return NextResponse.json({ models });
   } catch (error) {
-    return errorResponse(error);
+    return safeErrorResponse(error);
   }
 }
 
@@ -56,25 +61,26 @@ export async function POST(
     });
     return NextResponse.json({ model }, { status: body.id ? 200 : 201 });
   } catch (error) {
-    return errorResponse(error, 400);
+    return safeErrorResponse(error);
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  _context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdmin();
+    const params = paramsSchema.parse(await context.params);
     const query = deleteQuerySchema.parse({
       modelId: request.nextUrl.searchParams.get("modelId"),
     });
-    const model = await deleteGatewayModel(query.modelId);
+    const model = await deleteGatewayModel(params.id, query.modelId);
     if (!model) {
       return NextResponse.json({ error: "Model not found" }, { status: 404 });
     }
     return NextResponse.json({ model });
   } catch (error) {
-    return errorResponse(error, 400);
+    return safeErrorResponse(error);
   }
 }

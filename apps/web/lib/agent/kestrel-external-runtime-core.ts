@@ -2,14 +2,15 @@ import type {
   KestrelAgent,
   KestrelAgentTurnInput,
   KestrelRequestContext,
+  RunnerProfile,
   RunnerRunTerminalEvent,
   RunnerTelemetry,
+  RunnerTurnInput,
 } from "@kestrel-agents/sdk";
 import type { UIMessage } from "ai";
 import { extractFinalizedAssistantText } from "@/lib/agent/kestrel-stream-events";
 
-const EMPTY_FINAL_TEXT =
-  "The run completed without a final assistant message.";
+const EMPTY_FINAL_TEXT = "The run completed without a final assistant message.";
 
 export type KestrelOneExternalReplyUsage = {
   inputTokens?: number;
@@ -22,6 +23,29 @@ export type KestrelOneExternalReply = {
   text: string;
   usage: KestrelOneExternalReplyUsage | undefined;
 };
+
+export function createProfileBoundExternalReplyAgent(input: {
+  profile: RunnerProfile;
+  run: (
+    request: { profile: RunnerProfile; turn: RunnerTurnInput },
+    context: KestrelRequestContext
+  ) => Promise<RunnerRunTerminalEvent>;
+}): Pick<KestrelAgent, "run"> {
+  return {
+    run(turn, context) {
+      return input.run(
+        {
+          profile: input.profile,
+          turn: {
+            ...turn,
+            eventType: turn.eventType || "user.message",
+          },
+        },
+        context
+      );
+    },
+  };
+}
 
 export async function generateKestrelOneExternalReplyFromAgent(input: {
   agent: Pick<KestrelAgent, "run">;
@@ -75,7 +99,7 @@ function readTokenUsage(
   terminal: RunnerRunTerminalEvent
 ): KestrelOneExternalReplyUsage | undefined {
   if (terminal.type !== "run.completed") {
-    return undefined;
+    return;
   }
 
   return tokenUsageFromTelemetry(terminal.payload.result.output.telemetry);
@@ -93,7 +117,7 @@ function tokenUsageFromTelemetry(
     outputTokens === undefined &&
     totalTokens === undefined
   ) {
-    return undefined;
+    return;
   }
 
   return {

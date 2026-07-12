@@ -69,6 +69,7 @@ test("Kestrel-One manifest keeps all required route classes visible", () => {
     "authenticated",
     "dev-only",
     "public",
+    "service-boundary",
     "tool-boundary",
     "webhook",
   ]);

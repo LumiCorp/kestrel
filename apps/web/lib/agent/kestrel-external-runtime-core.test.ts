@@ -5,7 +5,10 @@ import type {
   KestrelAgentTurnInput,
   KestrelRequestContext,
 } from "@kestrel-agents/sdk";
-import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
+import {
+  createProfileBoundExternalReplyAgent,
+  generateKestrelOneExternalReplyFromAgent,
+} from "@/lib/agent/kestrel-external-runtime-core";
 
 const context: KestrelRequestContext = {
   actor: {
@@ -118,11 +121,61 @@ test("external replies surface canonical runner failures", async () => {
         (error as { message?: string }).message,
         "The configured model is unavailable."
       );
-      assert.equal(
-        (error as { code?: string }).code,
-        "MODEL_UNAVAILABLE"
-      );
+      assert.equal((error as { code?: string }).code, "MODEL_UNAVAILABLE");
       return true;
     }
   );
+});
+
+test("external bot replies submit the gateway-managed inline profile", async () => {
+  let captured: unknown;
+  const profile = {
+    id: "kestrel-one:model:approved-model",
+    label: "Kestrel One · approved-model",
+    agent: "reference-react",
+    sessionPrefix: "kestrel-one",
+    modelProvider: "openrouter" as const,
+    model: "openai/gpt-5.4",
+    modelCredential: {
+      source: "kestrel-one" as const,
+      gatewayId: "gateway-openrouter",
+      rawModelId: "openai/gpt-5.4",
+    },
+  };
+  const agent = createProfileBoundExternalReplyAgent({
+    profile,
+    async run(request) {
+      captured = request;
+      return {
+        id: "event_123",
+        type: "run.completed",
+        ts: "2026-07-11T12:00:00.000Z",
+        sessionId: request.turn.sessionId,
+        runId: "run_123",
+        payload: {
+          result: {
+            output: {
+              status: "COMPLETED",
+              sessionId: request.turn.sessionId,
+              runId: "run_123",
+              errors: [],
+            },
+            finalizedPayload: { message: "done" },
+          },
+        },
+      };
+    },
+  });
+
+  await agent.run({ sessionId: "chat_123", message: "Summarize" }, context);
+
+  assert.deepEqual(captured, {
+    profile,
+    turn: {
+      sessionId: "chat_123",
+      message: "Summarize",
+      eventType: "user.message",
+    },
+  });
+  assert.equal(JSON.stringify(captured).includes("provider-secret"), false);
 });

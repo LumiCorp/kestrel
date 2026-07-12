@@ -151,6 +151,7 @@ export async function POST(
       organizationId,
       chatId: chat.id,
       messages: body.messages,
+      modelId: body.model,
       transientTitle:
         !chat.title && lastMessage?.role === "user"
           ? generateTitleFromUserMessage({

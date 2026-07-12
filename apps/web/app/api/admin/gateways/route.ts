@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { getSafeGatewayAdminError } from "@/lib/ai/gateway-admin-error";
 import {
   createGateway,
   GATEWAY_PROVIDERS,
@@ -7,11 +8,16 @@ import {
   syncGatewayModels,
 } from "@/lib/ai/gateways";
 import { requireAdmin } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
+
+function safeErrorResponse(error: unknown, fallbackStatus?: number) {
+  const result = getSafeGatewayAdminError(error, fallbackStatus);
+  return NextResponse.json(result.body, { status: result.status });
+}
 
 const bodySchema = z.object({
   provider: z.enum(GATEWAY_PROVIDERS),
-  apiKey: z.string().min(1).nullable().optional(),
+  displayName: z.string().trim().min(1).optional(),
+  apiKey: z.string().trim().min(1).nullable().optional(),
   enabled: z.boolean().optional(),
 });
 
@@ -21,7 +27,7 @@ export async function GET() {
     const gateways = await listAIGatewaysWithModels();
     return NextResponse.json({ gateways });
   } catch (error) {
-    return errorResponse(error);
+    return safeErrorResponse(error);
   }
 }
 
@@ -40,19 +46,18 @@ export async function POST(request: NextRequest) {
         },
         { status: 201 }
       );
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         {
           gateway,
           models: [],
           syncedCount: 0,
-          syncError:
-            error instanceof Error ? error.message : "Model sync failed.",
+          syncError: "Gateway model sync failed.",
         },
         { status: 201 }
       );
     }
   } catch (error) {
-    return errorResponse(error, 400);
+    return safeErrorResponse(error);
   }
 }

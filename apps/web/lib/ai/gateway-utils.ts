@@ -32,6 +32,23 @@ export const GATEWAY_MODALITIES = [
   "embedding",
 ] as const;
 
+const KESTREL_RUNTIME_LANGUAGE_PROVIDERS = new Set<GatewayProtocolProvider>([
+  "anthropic",
+  "lumi",
+  "ollama",
+  "openai",
+  "openrouter",
+]);
+
+const GATEWAY_SELECTION_PRIORITY: Record<GatewayProtocolProvider, number> = {
+  openai: 0,
+  lumi: 1,
+  anthropic: 2,
+  ollama: 3,
+  openrouter: 4,
+  replicate: 5,
+};
+
 const PROVIDER_SUPPORTED_MODALITIES: Record<
   GatewayProtocolProvider,
   GatewayProtocolModality[]
@@ -67,6 +84,77 @@ export function getProviderSupportedModalities(
   provider: GatewayProtocolProvider
 ) {
   return PROVIDER_SUPPORTED_MODALITIES[provider];
+}
+
+export function isKestrelRuntimeLanguageProvider(
+  provider: GatewayProtocolProvider
+): provider is "anthropic" | "lumi" | "ollama" | "openai" | "openrouter" {
+  return KESTREL_RUNTIME_LANGUAGE_PROVIDERS.has(provider);
+}
+
+export function selectPreferredGatewayModelId(
+  models: Array<{ id: string; isDefault: boolean }>,
+  selectedModelId?: string | null,
+  fallbackModelId?: string | null
+) {
+  for (const candidate of [selectedModelId, fallbackModelId]) {
+    if (candidate && models.some((model) => model.id === candidate)) {
+      return candidate;
+    }
+  }
+
+  return models.find((model) => model.isDefault)?.id || models[0]?.id || null;
+}
+
+export function selectGatewayModelSelection<
+  T extends {
+    id: string;
+    alias: string | null;
+    rawModelId: string;
+    gatewayProvider: GatewayProtocolProvider;
+    isDefault: boolean;
+  },
+>(models: T[], selection?: string | null): T | null {
+  if (models.length === 0) {
+    return null;
+  }
+  if (!selection) {
+    return models.find((model) => model.isDefault) || models[0] || null;
+  }
+
+  const explicitMatches = models.filter(
+    (model) =>
+      model.id === selection ||
+      model.alias === selection ||
+      `${model.gatewayProvider}/${model.rawModelId}` === selection
+  );
+  if (explicitMatches.length === 0) {
+    return null;
+  }
+  const exactIdMatches = explicitMatches.filter(
+    (model) => model.id === selection
+  );
+  const exactSourceMatches = explicitMatches.filter(
+    (model) => `${model.gatewayProvider}/${model.rawModelId}` === selection
+  );
+  const candidatePool =
+    exactIdMatches.length > 0
+      ? exactIdMatches
+      : exactSourceMatches.length > 0
+        ? exactSourceMatches
+        : explicitMatches;
+
+  return (
+    [...candidatePool].sort((left, right) => {
+      if (left.isDefault !== right.isDefault) {
+        return left.isDefault ? -1 : 1;
+      }
+      return (
+        GATEWAY_SELECTION_PRIORITY[left.gatewayProvider] -
+        GATEWAY_SELECTION_PRIORITY[right.gatewayProvider]
+      );
+    })[0] || null
+  );
 }
 
 export function getGatewayLanguageProtocol(input: {

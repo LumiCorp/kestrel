@@ -33,6 +33,7 @@
     "create-dev-admin": "tsx scripts/create-dev-admin.ts",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "generate-secret": "tsx scripts/generate-secret.ts",
+    "gateway-credentials:migrate": "tsx scripts/migrate-gateway-credentials.ts",
     "setup": "tsx scripts/setup.ts",
     "fixtures:rag": "pnpm exec tsx scripts/generate-rag-fixtures.ts",
     "test:knowledge-rag:unit": "pnpm exec tsx --test tests/fixtures/knowledge-rag/fixture-corpus.test.ts lib/knowledge/documents/shared.test.ts lib/knowledge/documents/retrieval.test.ts",
