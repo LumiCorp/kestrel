@@ -1215,6 +1215,23 @@ function validateModelCredentialPayload(
       `${path}.model must match ${path}.modelCredential.rawModelId for gateway-managed execution`,
     );
   }
+  const agentStageConfig = ensureObjectPayload(
+    profile.agentStageConfig,
+    `${path}.agentStageConfig`,
+  );
+  const modelByStage = ensureObjectPayload(
+    agentStageConfig.modelByStage,
+    `${path}.agentStageConfig.modelByStage`,
+  );
+  const agentLoopModel = requireNonEmptyString(
+    modelByStage["agent.loop"],
+    `${path}.agentStageConfig.modelByStage.agent.loop`,
+  );
+  if (agentLoopModel.trim() !== rawModelId.trim()) {
+    throw new Error(
+      `${path}.agentStageConfig.modelByStage.agent.loop must match ${path}.modelCredential.rawModelId for gateway-managed execution`,
+    );
+  }
   if (gatewayId.trim() !== reference.gatewayId) {
     throw new Error(`${path}.modelCredential.gatewayId must not contain surrounding whitespace`);
   }

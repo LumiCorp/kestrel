@@ -327,6 +327,40 @@ test("brokered model gateway refreshes once after provider authentication failur
   ]);
 });
 
+test("brokered model gateway refreshes once after provider authorization failure", async () => {
+  let loads = 0;
+  let providerCalls = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async () =>
+      lease({
+        leaseId: `lease-${++loads}`,
+        expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+      }),
+  });
+  const gateway = new BrokeredModelGateway({
+    reference,
+    cache,
+    createProvider: (currentLease) => ({
+      async call<T>() {
+        providerCalls += 1;
+        if (currentLease.leaseId === "lease-1") {
+          throw Object.assign(new Error("provider authorization rejected"), {
+            status: 403,
+          });
+        }
+        return { text: "selected model answered" } as T;
+      },
+    }),
+  });
+
+  const result = await gateway.call<{ text: string }>({ input: "hello" });
+
+  assert.equal(result.text, "selected model answered");
+  assert.equal(loads, 2);
+  assert.equal(providerCalls, 2);
+});
+
 test("managed provider errors cannot expose leased credentials after refresh", async () => {
   let loads = 0;
   const cache = new GatewayCredentialLeaseCache({
