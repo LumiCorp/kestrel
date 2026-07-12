@@ -150,13 +150,27 @@ export function createWebCommandStartupMetadata(
 }
 
 export function formatWebCommandStartupLines(metadata: WebCommandStartupMetadata): string[] {
-  return [
-    JSON.stringify(metadata),
+  const publicMetadata =
+    metadata.tokenSource === "generated"
+      ? metadata
+      : { ...metadata, token: "[redacted]" };
+  const lines = [
+    JSON.stringify(publicMetadata),
     "kestrel web: runner service is ready",
     `export KESTREL_RUNNER_SERVICE_URL=${toShellLiteral(metadata.url)}`,
-    `export KESTREL_RUNNER_SERVICE_TOKEN=${toShellLiteral(metadata.token)}`,
-    "Use these exports in your web app server environment. Press Ctrl+C to stop.",
   ];
+  if (metadata.tokenSource === "generated") {
+    lines.push(
+      `export KESTREL_RUNNER_SERVICE_TOKEN=${toShellLiteral(metadata.token)}`,
+      "Use these exports in your web app server environment. Press Ctrl+C to stop.",
+    );
+  } else {
+    lines.push(
+      "KESTREL_RUNNER_SERVICE_TOKEN is configured; value withheld.",
+      "Use the configured runner service token in your web app server environment. Press Ctrl+C to stop.",
+    );
+  }
+  return lines;
 }
 
 function waitForShutdownSignal(
