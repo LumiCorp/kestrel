@@ -7,7 +7,7 @@ last_verified_at: 2026-07-12
 depends_on:
   - ARCHITECTURE.md
   - SECURITY.md
-  - apps/kestrel-one/README.md
+  - apps/web/README.md
 ---
 
 # Kestrel One Threads and Projects
