@@ -182,6 +182,12 @@ export interface ToolQueueProfileConfig {
   retryCount?: number | undefined;
 }
 
+export interface ModelCredentialReference {
+  source: "kestrel-one";
+  gatewayId: string;
+  rawModelId: string;
+}
+
 export interface TuiProfile {
   id: string;
   label: string;
@@ -197,6 +203,7 @@ export interface TuiProfile {
   environmentCapabilityPackIds?: CapabilityPackId[] | undefined;
   modelProvider?: ModelProviderId | undefined;
   model?: string | undefined;
+  modelCredential?: ModelCredentialReference | undefined;
   modelCapabilities?:
     | {
         visionInputEnabled?: boolean | undefined;

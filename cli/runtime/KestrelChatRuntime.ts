@@ -62,11 +62,9 @@ import type {
   SkillPackDefinition,
   TuiProfile,
 } from "../contracts.js";
+import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
+import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
-import type {
-  ModelGateway,
-  ModelRequest,
-} from "../../src/kestrel/contracts/model-io.js";
 
 import type { SharedToolContext } from "../../tools/index.js";
 import { registerAgent } from "./AgentFactory.js";
@@ -904,28 +902,11 @@ function createDefaultRuntime(
     mcpServers: profile.mcpServers ?? [],
   });
 
-  const timeoutMs = resolveModelTimeoutMs(profile);
-  const retryCount = resolveModelRetryCount(profile);
   const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED");
-  const provider = profile.modelProvider ?? "openrouter";
   const reasoningModel = resolveReasoningModelForProfile(profile);
   const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS");
   const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS");
-  const gatewayOptions = {
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(retryCount !== undefined ? { retryCount } : {}),
-    ...(profile.model !== undefined ? { envConfig: { model: profile.model } } : {}),
-  };
-  const modelGateway = createLazyModelGateway(() =>
-    provider === "openai"
-      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
-      : provider === "anthropic"
-        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
-        : provider === "ollama"
-          ? createOllamaModelGatewayFromEnv(gatewayOptions)
-          : provider === "lmstudio"
-            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
-            : createOpenRouterModelGatewayFromEnv(gatewayOptions));
+  const modelGateway = createModelGatewayForProfile(profile);
 
   const kestrel = new Kestrel({
     store,
@@ -1057,6 +1038,38 @@ function createDefaultRuntime(
   };
 }
 
+export function createModelGatewayForProfile(
+  profile: TuiProfile,
+  options: {
+    createGatewayManaged?: ((profile: TuiProfile) => ModelGateway) | undefined;
+  } = {},
+) {
+  if (profile.modelCredential) {
+    return (options.createGatewayManaged ?? createGatewayManagedModelGateway)(
+      profile,
+    );
+  }
+  const timeoutMs = resolveModelTimeoutMs(profile);
+  const retryCount = resolveModelRetryCount(profile);
+  const provider = profile.modelProvider ?? "openrouter";
+  const gatewayOptions = {
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(retryCount !== undefined ? { retryCount } : {}),
+    ...(profile.model !== undefined
+      ? { envConfig: { model: profile.model } }
+      : {}),
+  };
+  return provider === "openai"
+    ? createOpenAiModelGatewayFromEnv(gatewayOptions)
+    : provider === "anthropic"
+      ? createAnthropicModelGatewayFromEnv(gatewayOptions)
+      : provider === "ollama"
+        ? createOllamaModelGatewayFromEnv(gatewayOptions)
+        : provider === "lmstudio"
+          ? createLmStudioModelGatewayFromEnv(gatewayOptions)
+          : createOpenRouterModelGatewayFromEnv(gatewayOptions);
+}
+
 export function resolveDevShellServiceForProfile(
   profile: TuiProfile,
   env: NodeJS.ProcessEnv = process.env,
@@ -1065,19 +1078,6 @@ export function resolveDevShellServiceForProfile(
     return undefined;
   }
   return createTerminalBenchDevShellServiceFromEnv(env) ?? new LocalDevShellService();
-}
-
-export function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
-  let gateway: ModelGateway | undefined;
-  return {
-    async call<T>(
-      request: ModelRequest,
-      options?: { signal?: AbortSignal | undefined },
-    ): Promise<T> {
-      gateway ??= factory();
-      return await gateway.call<T>(request, options);
-    },
-  };
 }
 
 function requireRuntimeWorkspaceCheckpointService(

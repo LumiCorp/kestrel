@@ -362,6 +362,7 @@ function validateProfile(value: unknown, version: 2 | 3, notices: string[]): Tui
       : undefined;
   const modelProvider = parseModelProvider(item.modelProvider, id);
   const model = typeof item.model === "string" && item.model.trim().length > 0 ? item.model : undefined;
+  const modelCredential = parseModelCredential(item.modelCredential, id);
   const storeDriver = parseStoreDriver(item.storeDriver, id);
   const approvalPolicyPackId = parseApprovalPolicyPackId(item.approvalPolicyPackId, id);
   const defaultInteractionMode = parseDefaultInteractionMode(item.defaultInteractionMode, id);
@@ -394,6 +395,7 @@ function validateProfile(value: unknown, version: 2 | 3, notices: string[]): Tui
     ...(capabilityPacks !== undefined ? { capabilityPacks } : {}),
     ...(modelProvider !== undefined ? { modelProvider } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(modelCredential !== undefined ? { modelCredential } : {}),
     ...(storeDriver !== undefined ? { storeDriver } : {}),
     ...(approvalPolicyPackId !== undefined ? { approvalPolicyPackId } : {}),
     ...(modeSystemV2Enabled !== undefined ? { modeSystemV2Enabled } : {}),
@@ -493,6 +495,7 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
   delete persisted.environmentCapabilityPackIds;
   delete persisted.modelProvider;
   delete persisted.model;
+  delete persisted.modelCredential;
   delete persisted.modelCapabilities;
   delete persisted.agentStageConfig;
   delete persisted.modelTimeoutMs;
@@ -513,6 +516,33 @@ function parseModelProvider(value: unknown, profileId: string): TuiProfile["mode
     return value;
   }
   throw new Error(`Profile '${profileId}' has unsupported modelProvider '${String(value)}'`);
+}
+
+function parseModelCredential(
+  value: unknown,
+  profileId: string,
+): TuiProfile["modelCredential"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Profile '${profileId}' modelCredential must be an object`);
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.source !== "kestrel-one" ||
+    typeof candidate.gatewayId !== "string" ||
+    candidate.gatewayId.trim().length === 0 ||
+    typeof candidate.rawModelId !== "string" ||
+    candidate.rawModelId.trim().length === 0
+  ) {
+    throw new Error(`Profile '${profileId}' has invalid modelCredential`);
+  }
+  return {
+    source: "kestrel-one",
+    gatewayId: candidate.gatewayId.trim(),
+    rawModelId: candidate.rawModelId.trim(),
+  };
 }
 
 function parseStoreDriver(value: unknown, profileId: string): TuiProfile["storeDriver"] {

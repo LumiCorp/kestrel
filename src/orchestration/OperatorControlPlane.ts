@@ -229,83 +229,51 @@ export class OperatorControlPlane {
     limit?: number | undefined;
   } = {}): Promise<OperatorRunIndexView> {
     const limit = Math.max(1, Math.min(input.limit ?? 25, 50));
-    const listedRuns = await this.store.listRuns({
+    const listedRuns = await this.store.listRunSummaries({
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       limit: limit + 1,
     });
     const hasMore = listedRuns.length > limit;
-    const runs = [] as OperatorRunIndexView["runs"];
-    for (const run of listedRuns.slice(0, limit)) {
-      const view = await this.getOperatorRunView(run.runId);
-      if (view === null) {
-        continue;
-      }
-      runs.push({
+    const runs = listedRuns.slice(0, limit).map(({ run, eventCount, threadId }) => {
+      const actionable = run.status === "WAITING" || run.status === "FAILED";
+      return {
         run: {
-          runId: view.run.runId,
-          sessionId: view.run.sessionId,
-          eventType: view.run.eventType,
-          status: view.run.status,
-          startedAt: view.run.startedAt,
-          ...(view.run.completedAt !== undefined ? { completedAt: view.run.completedAt } : {}),
-          ...(view.run.error !== undefined
+          runId: run.runId,
+          sessionId: run.sessionId,
+          eventType: run.eventType,
+          status: run.status,
+          startedAt: run.startedAt,
+          ...(run.completedAt !== undefined ? { completedAt: run.completedAt } : {}),
+          ...(run.error !== undefined
             ? {
                 error: {
-                  code: view.run.error.code,
-                  message: view.run.error.message,
+                  code: run.error.code,
+                  message: run.error.message,
                 },
               }
             : {}),
         },
-        ...(view.threadId !== undefined ? { threadId: view.threadId } : {}),
+        ...(threadId !== undefined ? { threadId } : {}),
         summary: {
-          eventCount: view.summary.eventCount,
-          truncated: view.summary.truncated,
+          eventCount,
+          truncated: false,
         },
         diagnosis: {
-          status: view.diagnosis.status,
-          ...(view.diagnosis.finalStep !== undefined
-            ? { finalStep: view.diagnosis.finalStep }
-            : {}),
-          ...(view.diagnosis.terminalReasonCode !== undefined
-            ? { terminalReasonCode: view.diagnosis.terminalReasonCode }
-            : {}),
-          actionable: view.diagnosis.actionable,
-          ...(view.diagnosis.dominantFailure !== undefined
+          status: run.status,
+          ...(run.error !== undefined ? { terminalReasonCode: run.error.code } : {}),
+          actionable,
+          ...(run.error !== undefined
             ? {
                 dominantFailure: {
-                  classification: view.diagnosis.dominantFailure.classification,
-                  message: view.diagnosis.dominantFailure.message,
-                },
-              }
-            : {}),
-          ...(view.diagnosis.wait !== undefined
-            ? {
-                wait: {
-                  kind: view.diagnosis.wait.kind,
-                  actionable: view.diagnosis.wait.actionable,
-                  ...(view.diagnosis.wait.eventType !== undefined
-                    ? { eventType: view.diagnosis.wait.eventType }
-                    : {}),
-                  ...(view.diagnosis.wait.threadId !== undefined
-                    ? { threadId: view.diagnosis.wait.threadId }
-                    : {}),
-                  ...(view.diagnosis.wait.delegationId !== undefined
-                    ? { delegationId: view.diagnosis.wait.delegationId }
-                    : {}),
-                  ...(view.diagnosis.wait.requestId !== undefined
-                    ? { requestId: view.diagnosis.wait.requestId }
-                    : {}),
-                  ...(view.diagnosis.wait.enteredAt !== undefined
-                    ? { enteredAt: view.diagnosis.wait.enteredAt }
-                    : {}),
+                  classification: "terminal_failure" as const,
+                  message: run.error.message,
                 },
               }
             : {}),
         },
-      });
-    }
+      } satisfies OperatorRunIndexView["runs"][number];
+    });
     return {
       version: OPERATOR_RUN_INDEX_VIEW_VERSION,
       generatedAt: new Date().toISOString(),

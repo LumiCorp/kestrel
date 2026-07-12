@@ -1,7 +1,7 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../kestrel/contracts/execution.js";
-import type { CommitStepInput, CommitStepResult, LegacySessionArchive, OutboxEventRecord, PersistedArtifact, PersistedClaim, PersistedRunRecord, PersistedRunStateRecord, SessionProductStateRecord, SessionRecord, SessionStore } from "../kestrel/contracts/store.js";
+import type { CommitStepInput, CommitStepResult, LegacySessionArchive, OutboxEventRecord, PersistedArtifact, PersistedClaim, PersistedRunRecord, PersistedRunStateRecord, PersistedRunSummaryRecord, SessionProductStateRecord, SessionRecord, SessionStore } from "../kestrel/contracts/store.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -201,6 +201,26 @@ export class InMemorySessionStore implements SessionStore {
         ? filtered.slice(0, Math.max(0, input.limit))
         : filtered;
     return limited.map((run) => this.mapRun(run));
+  }
+
+  async listRunSummaries(input?: {
+    sessionId?: string | undefined;
+    status?: TransitionStatus | "RUNNING" | undefined;
+    limit?: number | undefined;
+  }): Promise<PersistedRunSummaryRecord[]> {
+    const runs = await this.listRuns(input);
+    return runs.map((run) => {
+      const events = this.runEvents.filter((event) => event.runId === run.runId);
+      const threadId = [...events]
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .map((event) => asRecord(event.metadata)?.threadId)
+        .find((value): value is string => typeof value === "string" && value.length > 0);
+      return {
+        run,
+        eventCount: events.length,
+        ...(threadId !== undefined ? { threadId } : {}),
+      };
+    });
   }
 
   async ensureSession(sessionId: string, initialStepAgent?: string): Promise<SessionRecord> {

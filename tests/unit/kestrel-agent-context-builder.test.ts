@@ -391,8 +391,11 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
   assert.match(systemPrompt, /Treat runtime context as the current control packet/u);
   assert.match(systemPrompt, /Build-mode operating loop:/u);
   assert.match(systemPrompt, /implementation-first/u);
+  assert.match(systemPrompt, /treat that concrete file\/path\/artifact as the primary edit target/u);
+  assert.match(systemPrompt, /treat it as validation evidence unless the task explicitly asks you to edit that thing/u);
   assert.match(systemPrompt, /1\. Orient just enough to act\./u);
   assert.match(systemPrompt, /2\. Make the first candidate change\./u);
+  assert.match(systemPrompt, /Do not keep investigating while the primary edit target remains untouched/u);
   assert.match(systemPrompt, /3\. Validate immediately and iterate\./u);
   assert.match(systemPrompt, /4\. Review the final diff\./u);
   assert.match(systemPrompt, /For stateful, interactive, or protocol-driven tasks, maintain a concise observed state model/u);

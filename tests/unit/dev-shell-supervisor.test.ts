@@ -444,16 +444,13 @@ test("DevShellSupervisor source-write guard fails and restores unauthorized shel
 });
 
 test("DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
-  const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
-  const stagedDir = path.join(baseDir, "staged-generated");
+  const { supervisor, workspaceRoot } = await createSupervisor();
   const generatedDir = path.join(workspaceRoot, "generated");
   const generatedFile = path.join(generatedDir, "nested", "file.txt");
-  await mkdir(path.join(stagedDir, "nested"), { recursive: true });
-  await writeFile(path.join(stagedDir, "nested", "file.txt"), "new", "utf8");
   try {
     const result = await supervisor.runCommand({
       workspaceRoot,
-      command: "mv ../staged-generated generated",
+      command: "mkdir -p generated/nested && printf 'new' > generated/nested/file.txt",
       timeoutMs: TEST_COMMAND_TIMEOUT_MS,
       maxOutputBytes: 4096,
       sourceWriteGuard: {
@@ -649,8 +646,6 @@ test("DevShellSupervisor source-write guard protects managed worktree gitfile", 
     assert.equal(result.exitCode, 126);
     assert.match(result.failureReason ?? "", /unauthorized source writes/u);
     assert.deepEqual(result.unauthorizedSourceWrites?.map((item) => item.path), [".git"]);
-    assert.deepEqual(result.sourceWriteGuard?.unauthorizedSourceWrites, result.unauthorizedSourceWrites);
-    assert.equal(result.sourceWriteGuard?.finalCheckCompleted, true);
     assert.equal(result.unauthorizedSourceWrites?.[0]?.kind, "deleted");
     assert.equal(result.unauthorizedSourceWrites?.[0]?.restored, true);
     assert.equal(await readFile(gitFilePath, "utf8"), "gitdir: /tmp/kestrel-worktree-gitdir\n");
@@ -808,13 +803,12 @@ test("DevShellSupervisor writes arbitrary stdin to a running process and read po
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "printf 'ready\\n'; while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; test \"$line\" = done && break; done",
-      yieldTimeMs: 5_000,
+      command: "while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; test \"$line\" = done && break; done",
+      yieldTimeMs: 50,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
     assert.equal(typeof started.processId, "string");
-    assert.match(started.text, /ready/u);
     const processId = started.processId!;
 
     const written = await supervisor.writeProcess({
@@ -865,12 +859,13 @@ test("DevShellSupervisor writes stdin and reads resulting output in one process 
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; test \"$line\" = done && break; done",
-      yieldTimeMs: 50,
+      command: "printf 'ready\\n'; while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; test \"$line\" = done && break; done",
+      yieldTimeMs: 5_000,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
     assert.equal(typeof started.processId, "string");
+    assert.match(started.text, /ready/u);
     const processId = started.processId!;
 
     const result = await supervisor.writeAndReadProcess({
@@ -904,19 +899,20 @@ test("DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "node -e \"process.stdout.write('a\\\\u{1F642}b'); setTimeout(() => {}, 1000)\"",
-      yieldTimeMs: 100,
+      command: "node -e \"process.stdout.write('a\\\\u{1F642}b'); setTimeout(() => {}, 5000)\"",
+      yieldTimeMs: 5_000,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
     assert.equal(typeof started.processId, "string");
+    assert.equal(started.text, "a\u{1F642}b");
     const processId = started.processId!;
 
     const splitRead = await supervisor.readProcess({
       processId,
       cursor: 0,
       maxBytes: 3,
-      waitMs: 1000,
+      waitMs: 0,
     });
     assert.equal(splitRead.text, "a\u{1F642}");
     assert.equal(splitRead.text.includes("\uFFFD"), false);

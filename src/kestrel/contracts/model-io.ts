@@ -147,7 +147,13 @@ export interface ModelResponse<TOutput = unknown> {
   usage?: ModelUsage | undefined;
   rawResponse?: unknown;
   provider: {
-    name: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
+    name:
+      | "openrouter"
+      | "openai"
+      | "anthropic"
+      | "ollama"
+      | "lmstudio"
+      | "lumi";
     model: string;
     endpoint: "chat" | "responses";
     requestId?: string | undefined;

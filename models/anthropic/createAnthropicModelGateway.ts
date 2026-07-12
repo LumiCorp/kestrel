@@ -1,6 +1,8 @@
-import type { ModelGateway, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
-
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import type {
+  ModelGateway,
+  ModelRequest,
+} from "../../src/kestrel/contracts/model-io.js";
 import type { AnthropicEnvConfig } from "../contracts.js";
 import { loadAnthropicEnv } from "./AnthropicEnv.js";
 import { createAnthropicInvoker } from "./AnthropicInvoker.js";
@@ -14,9 +16,14 @@ export interface AnthropicGatewayFactoryOptions {
 }
 
 export function createAnthropicModelGatewayFromEnv(
-  options: AnthropicGatewayFactoryOptions = {},
+  options: AnthropicGatewayFactoryOptions = {}
 ): ModelGateway {
-  const loaded = loadAnthropicEnv(options.env);
+  const loaded = loadAnthropicEnv({
+    ...(options.env ?? process.env),
+    ...(options.envConfig?.apiKey !== undefined
+      ? { ANTHROPIC_API_KEY: options.envConfig.apiKey }
+      : {}),
+  });
   const config: AnthropicEnvConfig = {
     ...loaded,
     ...options.envConfig,
@@ -28,13 +35,21 @@ export function createAnthropicModelGatewayFromEnv(
 
   const invoker = createAnthropicInvoker({
     env: config,
-    ...(options.fetchImpl !== undefined ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.fetchImpl !== undefined
+      ? { fetchImpl: options.fetchImpl }
+      : {}),
   });
 
-  return new RetryingModelGateway(async <T>(request: ModelRequest) => {
-    return (await invoker(request)) as unknown as T;
-  }, {
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options.retryCount !== undefined ? { retryCount: options.retryCount } : {}),
-  });
+  return new RetryingModelGateway(
+    async <T>(request: ModelRequest) =>
+      (await invoker(request)) as unknown as T,
+    {
+      ...(options.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options.retryCount !== undefined
+        ? { retryCount: options.retryCount }
+        : {}),
+    }
+  );
 }

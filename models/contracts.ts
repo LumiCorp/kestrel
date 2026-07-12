@@ -15,7 +15,7 @@ export interface OpenAiEnvConfig {
   apiKey?: string | undefined;
   model: string;
   baseUrl: string;
-  providerName: "openai" | "ollama" | "lmstudio";
+  providerName: "openai" | "ollama" | "lmstudio" | "lumi";
   providerLabel: string;
   organization?: string | undefined;
   project?: string | undefined;
