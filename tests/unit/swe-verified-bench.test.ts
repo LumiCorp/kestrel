@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,12 +19,21 @@ import {
   shouldIncludeSweVerifiedRunnerSourceFile,
 } from "../../scripts/swe-verified-bench.js";
 
+const TEST_SOURCE_BASE_COMMIT = "d16bfe05a744909de4b27f5875fe0d4ed41ce607";
+const TEST_PREPARED_BASELINE_COMMIT = "b".repeat(40);
+const TEST_PREPARED_BASELINE_TREE = "c".repeat(40);
+
 function isSwePrepareImagesCall(command: string, args: readonly string[]): boolean {
   return command === "python3" && String(args[0]).endsWith("swe-verified-prepare-images.py");
 }
 
 function isSweRunEvaluationCall(command: string, args: readonly string[]): boolean {
   return command === "python3" && String(args[0]).endsWith("swe-verified-run-evaluation.py");
+}
+
+function isSweBaselineCaptureCall(command: string, args: readonly string[]): boolean {
+  const modeIndex = args.indexOf("--mode");
+  return command === "docker" && args[0] === "run" && modeIndex >= 0 && args[modeIndex + 1] === "capture";
 }
 
 test("swe verified bench defaults to one verified instance at a time", () => {
@@ -192,6 +202,12 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
     devShell: {
       enabled: true,
       envMode: "inherit",
+    },
+    guardrails: {
+      maxStepsPerRun: 2500,
+      maxToolCallsPerRun: 1000,
+      maxModelCallsPerRun: 500,
+      maxStepVisits: 750,
     },
     toolAllowlist: [
       "FinalizeAnswer",
@@ -665,12 +681,16 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
           if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
           if (command === "git" && args[0] === "ls-files") return passedSpawn("");
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "kestrel ok\n", "utf8");
             writeCompletedJobOutput(attemptDir);
-            writeFileSync(path.join(attemptDir, "model.patch"), "diff --git a/example.py b/example.py\n", "utf8");
+            writeWorkspacePatchArtifacts(attemptDir, "diff --git a/example.py b/example.py\n");
             return passedSpawn("ran\n");
           }
           if (command === "git" && args[0] === "-C" && args[2] === "apply") return passedSpawn("applied\n");
@@ -704,9 +724,16 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
     assert.ok(imageInspectCallIndex > prepareImagesCallIndex);
     assert.ok(dockerBuildCallIndex > imageInspectCallIndex);
     assert.deepEqual(calls[imageInspectCallIndex]?.args, ["image", "inspect", "sweb.eval.x86_64.astropy__astropy-12907:latest"]);
-    const dockerRun = calls.find((call) => call.command === "docker" && call.args[0] === "run");
+    const baselineCaptureRun = calls.find((call) => isSweBaselineCaptureCall(call.command, call.args));
+    assert.ok(baselineCaptureRun);
+    assert.ok(baselineCaptureRun.args.includes("/kestrel-baseline"));
+    const dockerRun = calls.find(
+      (call) => call.command === "docker" && call.args[0] === "run" && !isSweBaselineCaptureCall(call.command, call.args),
+    );
     assert.ok(dockerRun);
     assert.ok(dockerRun.args.includes("/testbed"));
+    assert.ok(dockerRun.args.some((arg) => arg.endsWith(":/kestrel-baseline:ro")));
+    assert.ok(dockerRun.args.some((arg) => arg.endsWith(":/kestrel-attempt/workspace/repo:ro")));
     assert.ok(dockerRun.args.includes("SHELL=/bin/bash"));
     assert.ok(dockerRun.args.includes("DATABASE_URL=postgres://kestrel:kestrel@host.docker.internal:55432/kestrel"));
     assert.ok(dockerRun.args.includes("KESTREL_DISABLE_DOTENV=1"));
@@ -726,6 +753,17 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
       "attempts",
       "20260602T123456789Z",
     );
+    const runScript = readFileSync(path.join(attemptRoot, "run-kestrel.sh"), "utf8");
+    assert.match(runScript, /kestrel_status=\$\?\ncd \/opt\/kestrel\nnode --import tsx/u);
+    assert.match(runScript, /swe-verified-workspace-patch\.ts/u);
+    assert.match(runScript, /--baseline-repo \/kestrel-baseline/u);
+    assert.match(runScript, /--mode export/u);
+    assert.match(runScript, /--source-base-commit d16bfe05a744909de4b27f5875fe0d4ed41ce607/u);
+    assert.match(runScript, new RegExp(`--base-commit ${TEST_PREPARED_BASELINE_COMMIT}`, "u"));
+    assert.match(runScript, /--kestrel-exit-code "\$kestrel_status"/u);
+    assert.doesNotMatch(runScript, /git -C \/testbed diff/u);
+    assert.doesNotMatch(runScript, /falling back/u);
+
     const prediction = JSON.parse(
       readFileSync(path.join(attemptRoot, "predictions.jsonl"), "utf8"),
     ) as { instance_id?: string; model_name_or_path?: string; model_patch?: string };
@@ -755,6 +793,14 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
       evaluator_resolved_instances?: number;
       evaluator_unresolved_instances?: number;
       evaluator_report_path?: string;
+      kestrel_process_exit_code?: number;
+      workspace_patch_status?: string;
+      workspace_patch_report_path?: string;
+      workspace_patch_sha256?: string;
+      workspace_patch_changed_paths?: number;
+      workspace_baseline_report_path?: string;
+      workspace_baseline_commit?: string;
+      workspace_baseline_tree_sha?: string;
     };
     assert.equal(latest.attempt_id, "20260602T123456789Z");
     assert.match(latest.predictions_path ?? "", /attempts\/20260602T123456789Z\/predictions\.jsonl/u);
@@ -766,6 +812,14 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
     assert.equal(latest.evaluator_resolved_instances, 0);
     assert.equal(latest.evaluator_unresolved_instances, 1);
     assert.match(latest.evaluator_report_path ?? "", /attempts\/20260602T123456789Z\/evaluator-report\.json/u);
+    assert.equal(latest.kestrel_process_exit_code, 0);
+    assert.equal(latest.workspace_patch_status, "produced");
+    assert.equal(latest.workspace_patch_changed_paths, 1);
+    assert.equal(latest.workspace_patch_sha256, createHash("sha256").update("diff --git a/example.py b/example.py\n").digest("hex"));
+    assert.match(latest.workspace_patch_report_path ?? "", /workspace-patch-report\.json$/u);
+    assert.match(latest.workspace_baseline_report_path ?? "", /workspace-baseline-report\.json$/u);
+    assert.equal(latest.workspace_baseline_commit, TEST_PREPARED_BASELINE_COMMIT);
+    assert.equal(latest.workspace_baseline_tree_sha, TEST_PREPARED_BASELINE_TREE);
     assert.match(
       readFileSync(path.join(attemptRoot, "evaluator-output.txt"), "utf8"),
       /Instances unresolved: 1/u,
@@ -814,12 +868,16 @@ test("swe verified bench creates a fresh attempt directory for each run by defau
           if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
           if (command === "git" && args[0] === "ls-files") return passedSpawn("");
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "kestrel ok\n", "utf8");
             writeCompletedJobOutput(attemptDir);
-            writeFileSync(path.join(attemptDir, "model.patch"), "diff --git a/example.py b/example.py\n", "utf8");
+            writeWorkspacePatchArtifacts(attemptDir, "diff --git a/example.py b/example.py\n");
             return passedSpawn("ran\n");
           }
           if (command === "git" && args[0] === "-C" && args[2] === "apply") return passedSpawn("applied\n");
@@ -941,12 +999,16 @@ test("swe verified bench source snapshot skips deleted tracked files", async () 
             return passedSpawn("agents/reference-react/src/codingCloseoutPolicy.ts\0");
           }
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "kestrel ok\n", "utf8");
             writeCompletedJobOutput(attemptDir);
-            writeFileSync(path.join(attemptDir, "model.patch"), "diff --git a/example.py b/example.py\n", "utf8");
+            writeWorkspacePatchArtifacts(attemptDir, "diff --git a/example.py b/example.py\n");
             return passedSpawn("ran\n");
           }
           if (command === "git" && args[0] === "-C" && args[2] === "apply") return passedSpawn("applied\n");
@@ -1072,12 +1134,16 @@ test("swe verified bench rejects empty patches before evaluation", async () => {
           if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
           if (command === "git" && args[0] === "ls-files") return passedSpawn("");
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "kestrel ok\n", "utf8");
             writeCompletedJobOutput(attemptDir);
-            writeFileSync(path.join(attemptDir, "model.patch"), "", "utf8");
+            writeWorkspacePatchArtifacts(attemptDir, "");
             return passedSpawn("ran\n");
           }
           if (isSweRunEvaluationCall(command, args)) return failedSpawn("should not evaluate");
@@ -1092,13 +1158,81 @@ test("swe verified bench rejects empty patches before evaluation", async () => {
     );
 
     assert.equal(code, 1);
-    assert.match(stderr, /empty patch/u);
+    assert.match(stderr, /final submission is empty/u);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test("swe verified bench rejects non-terminal Kestrel jobs before evaluation", async () => {
+test("swe verified bench reports patch harvesting failures without evaluation", async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-harvest-failure-"));
+  try {
+    const instancesJsonl = path.join(tmp, "instances.jsonl");
+    writeFileSync(
+      instancesJsonl,
+      JSON.stringify({
+        instance_id: "astropy__astropy-12907",
+        repo: "astropy/astropy",
+        base_commit: "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+        problem_statement: "Fix separability.",
+      }) + "\n",
+      "utf8",
+    );
+
+    let stderr = "";
+    const code = await runSweVerifiedBench(
+      ["run", "--instance-id", "astropy__astropy-12907", "--instances-jsonl", instancesJsonl],
+      {
+        spawn: ((command: string, args: readonly string[]) => {
+          if (command === "git" && args[0] === "clone") return passedSpawn("cloned\n");
+          if (command === "git" && args[0] === "-C" && args[2] === "checkout") return passedSpawn("checked out\n");
+          if (command === "python3" && String(args[0]).endsWith("swe-verified-image-info.py")) {
+            return passedSpawn(JSON.stringify({
+              instance_image_key: "sweb.eval.x86_64.astropy__astropy-12907:latest",
+              platform: "linux/x86_64",
+            }) + "\n");
+          }
+          if (isSwePrepareImagesCall(command, args)) return passedSpawn("images ok\n");
+          if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
+          if (command === "git" && args[0] === "ls-files") return passedSpawn("");
+          if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
+          if (command === "docker" && args[0] === "run") {
+            const mount = String(args[args.indexOf("-v") + 1]);
+            const attemptDir = mount.split(":")[0] as string;
+            writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "harvest failed\n", "utf8");
+            writeCompletedJobOutput(attemptDir);
+            writeWorkspacePatchArtifacts(attemptDir, "", { status: "failed", kestrelExitCode: 0 });
+            return failedSpawn("exporter failed\n");
+          }
+          if (isSweRunEvaluationCall(command, args)) return failedSpawn("should not evaluate");
+          return failedSpawn(`unexpected ${command} ${args.join(" ")}`);
+        }) as unknown as typeof import("node:child_process").spawnSync,
+        env: { HOME: tmp, OPENROUTER_API_KEY: "sk-test" },
+        cwd: tmp,
+        now: () => new Date(Date.UTC(2026, 5, 2, 12, 34, 56, 789)),
+        stdout: { write: () => true },
+        stderr: { write: (chunk: string) => { stderr += chunk; return true; } },
+      },
+    );
+
+    assert.equal(code, 1);
+    assert.match(stderr, /workspace patch harvesting failed at render_patch/u);
+    const latest = JSON.parse(
+      readFileSync(path.join(tmp, "runs", "swe-verified", "kestrel-swe-astropy__astropy-12907", "latest.json"), "utf8"),
+    ) as { terminal_status?: string; workspace_patch_status?: string; evaluator_ran?: boolean };
+    assert.equal(latest.terminal_status, "patch_harvest_failed");
+    assert.equal(latest.workspace_patch_status, "failed");
+    assert.equal(latest.evaluator_ran, false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("swe verified bench evaluates non-empty patches from non-terminal Kestrel jobs", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-non-terminal-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1130,15 +1264,24 @@ test("swe verified bench rejects non-terminal Kestrel jobs before evaluation", a
           if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
           if (command === "git" && args[0] === "ls-files") return passedSpawn("");
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "kestrel waiting\n", "utf8");
-            writeJobOutput(attemptDir, "job.completed", "WAITING");
-            writeFileSync(path.join(attemptDir, "model.patch"), "diff --git a/example.py b/example.py\n", "utf8");
+            writeJobOutput(attemptDir, "job.completed", "WAITING", {
+              kind: "user",
+              eventType: "user.reply",
+              metadata: { reason: "max_model_calls_continuation" },
+            });
+            writeWorkspacePatchArtifacts(attemptDir, "diff --git a/example.py b/example.py\n");
             return passedSpawn("ran\n");
           }
-          if (isSweRunEvaluationCall(command, args)) return failedSpawn("should not evaluate");
+          if (command === "git" && args[0] === "-C" && args[2] === "apply") return passedSpawn("applied\n");
+          if (isSweRunEvaluationCall(command, args)) return passedSpawn("evaluation ok\n");
           return failedSpawn(`unexpected ${command} ${args.join(" ")}`);
         }) as unknown as typeof import("node:child_process").spawnSync,
         env: { HOME: tmp, OPENROUTER_API_KEY: "sk-test" },
@@ -1149,9 +1292,10 @@ test("swe verified bench rejects non-terminal Kestrel jobs before evaluation", a
       },
     );
 
-    assert.equal(code, 1);
+    assert.equal(code, 0);
     assert.match(stderr, /did not reach terminal COMPLETED state/u);
     assert.match(stderr, /status=WAITING/u);
+    assert.match(stderr, /Validated non-empty patches still proceed to evaluation/u);
     const predictionsPath = path.join(
       tmp,
       "runs",
@@ -1161,13 +1305,32 @@ test("swe verified bench rejects non-terminal Kestrel jobs before evaluation", a
       "20260602T123456789Z",
       "predictions.jsonl",
     );
-    assert.equal(existsSync(predictionsPath), false);
+    assert.equal(existsSync(predictionsPath), true);
+    const latest = JSON.parse(
+      readFileSync(
+        path.join(tmp, "runs", "swe-verified", "kestrel-swe-astropy__astropy-12907", "latest.json"),
+        "utf8",
+      ),
+    ) as {
+      terminal_status?: string;
+      evaluator_ran?: boolean;
+      model_patch_exists?: boolean;
+      kestrel_job_status?: string;
+      kestrel_wait_event_type?: string;
+      kestrel_wait_reason?: string;
+    };
+    assert.equal(latest.terminal_status, "evaluated_after_nonterminal_job");
+    assert.equal(latest.evaluator_ran, true);
+    assert.equal(latest.model_patch_exists, true);
+    assert.equal(latest.kestrel_job_status, "WAITING");
+    assert.equal(latest.kestrel_wait_event_type, "user.reply");
+    assert.equal(latest.kestrel_wait_reason, "max_model_calls_continuation");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test("swe verified bench preserves container output when Kestrel fails", async () => {
+test("swe verified bench evaluates a validated patch when Kestrel exits nonzero", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-container-fail-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1199,14 +1362,20 @@ test("swe verified bench preserves container output when Kestrel fails", async (
           if (command === "docker" && args[0] === "image" && args[1] === "inspect") return passedSpawn("image exists\n");
           if (command === "git" && args[0] === "ls-files") return passedSpawn("");
           if (command === "docker" && args[0] === "build") return passedSpawn("built\n");
+          if (isSweBaselineCaptureCall(command, args)) {
+            writeWorkspaceBaselineArtifacts(dockerAttemptDir(args));
+            return passedSpawn("baseline captured\n");
+          }
           if (command === "docker" && args[0] === "run") {
             const mount = String(args[args.indexOf("-v") + 1]);
             const attemptDir = mount.split(":")[0] as string;
             writeFileSync(path.join(attemptDir, "kestrel-output.txt"), "container validation failed\n", "utf8");
-            writeFileSync(path.join(attemptDir, "model.patch"), "diff --git a/example.py b/example.py\n", "utf8");
+            writeWorkspacePatchArtifacts(attemptDir, "diff --git a/example.py b/example.py\n", {
+              kestrelExitCode: 7,
+            });
             return failedSpawn("container failed\n");
           }
-          if (isSweRunEvaluationCall(command, args)) return failedSpawn("should not evaluate");
+          if (isSweRunEvaluationCall(command, args)) return passedSpawn("evaluation ok\n");
           return failedSpawn(`unexpected ${command} ${args.join(" ")}`);
         }) as unknown as typeof import("node:child_process").spawnSync,
         env: { HOME: tmp, OPENROUTER_API_KEY: "sk-test" },
@@ -1217,8 +1386,9 @@ test("swe verified bench preserves container output when Kestrel fails", async (
       },
     );
 
-    assert.equal(code, 1);
-    assert.match(stderr, /Kestrel run failed/u);
+    assert.equal(code, 0);
+    assert.match(stderr, /container command exited with status 1/u);
+    assert.match(stderr, /did not produce job output/u);
     const attemptRoot = path.join(
       tmp,
       "runs",
@@ -1228,6 +1398,12 @@ test("swe verified bench preserves container output when Kestrel fails", async (
       "20260602T123456789Z",
     );
     assert.equal(readFileSync(path.join(attemptRoot, "kestrel-output.txt"), "utf8"), "container validation failed\n");
+    const latest = JSON.parse(
+      readFileSync(path.join(tmp, "runs", "swe-verified", "kestrel-swe-astropy__astropy-12907", "latest.json"), "utf8"),
+    ) as { terminal_status?: string; kestrel_process_exit_code?: number; evaluator_ran?: boolean };
+    assert.equal(latest.terminal_status, "evaluated_after_kestrel_failure");
+    assert.equal(latest.kestrel_process_exit_code, 7);
+    assert.equal(latest.evaluator_ran, true);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -1460,10 +1636,87 @@ function writeCompletedJobOutput(attemptDir: string): void {
   writeJobOutput(attemptDir, "job.completed", "COMPLETED");
 }
 
+function dockerAttemptDir(args: readonly string[]): string {
+  const mount = String(args[args.indexOf("-v") + 1]);
+  return mount.split(":")[0] as string;
+}
+
+function writeWorkspaceBaselineArtifacts(attemptDir: string): void {
+  writeFileSync(
+    path.join(attemptDir, "workspace-baseline-report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      status: "captured",
+      sourceBaseCommit: TEST_SOURCE_BASE_COMMIT,
+      baselineCommit: TEST_PREPARED_BASELINE_COMMIT,
+      baselineTreeSha: TEST_PREPARED_BASELINE_TREE,
+      excludedTransientPaths: [],
+      unsupportedPaths: [],
+      stages: [
+        { name: "verify_source_baseline", status: "passed" },
+        { name: "inventory_baseline", status: "passed" },
+        { name: "stage_baseline", status: "passed" },
+        { name: "publish_baseline", status: "passed" },
+      ],
+    }, null, 2) + "\n",
+    "utf8",
+  );
+}
+
+function writeWorkspacePatchArtifacts(
+  attemptDir: string,
+  patch: string,
+  options: { kestrelExitCode?: number; status?: "produced" | "empty" | "failed" } = {},
+): void {
+  const status = options.status ?? (patch.length > 0 ? "produced" : "empty");
+  const patchPath = path.join(attemptDir, "model.patch");
+  if (status === "failed") {
+    rmSync(patchPath, { force: true });
+  } else {
+    writeFileSync(patchPath, patch, "utf8");
+  }
+  writeFileSync(
+    path.join(attemptDir, "workspace-patch-report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      status,
+      sourceBaseCommit: TEST_SOURCE_BASE_COMMIT,
+      baselineCommit: TEST_PREPARED_BASELINE_COMMIT,
+      kestrelExitCode: options.kestrelExitCode ?? 0,
+      patchBytes: status === "produced" ? Buffer.byteLength(patch) : 0,
+      ...(status === "produced"
+        ? { patchSha256: createHash("sha256").update(patch).digest("hex") }
+        : {}),
+      ...(status !== "failed" ? { targetTreeSha: "a".repeat(40) } : {}),
+      changedPaths: status === "produced" ? [{ path: "example.py", status: "M" }] : [],
+      excludedTransientPaths: [],
+      unsupportedPaths: [],
+      stages: status === "failed"
+        ? [{ name: "render_patch", status: "failed", message: "injected harvest failure" }]
+        : [
+            { name: "verify_baseline", status: "passed" },
+            { name: "inventory_workspace", status: "passed" },
+            { name: "stage_workspace", status: "passed" },
+            { name: "render_patch", status: "passed" },
+            { name: "validate_patch", status: "passed" },
+          ],
+      validation: {
+        applies: status !== "failed",
+        treeMatches: status !== "failed",
+      },
+      ...(status === "failed"
+        ? { failureStage: "render_patch", failureMessage: "injected harvest failure" }
+        : {}),
+    }, null, 2) + "\n",
+    "utf8",
+  );
+}
+
 function writeJobOutput(
   attemptDir: string,
   terminalEventType: "job.completed" | "job.failed",
   status: string,
+  waitFor?: Record<string, unknown>,
 ): void {
   writeFileSync(
     path.join(attemptDir, "job-output.json"),
@@ -1476,6 +1729,7 @@ function writeJobOutput(
         threadId: "thread-under-test",
         runId: "run-under-test",
         status,
+        ...(waitFor !== undefined ? { waitFor } : {}),
       },
     }) + "\n",
     "utf8",

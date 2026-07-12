@@ -11,6 +11,7 @@ try:
         assert_benchmark_profile_mode,
         assert_benchmark_provider_env,
         assert_benchmark_turn_mode,
+        benchmark_guardrails,
         benchmark_profile_mode,
         benchmark_turn_mode,
         resolve_benchmark_provider_config,
@@ -21,6 +22,7 @@ except ImportError:
         assert_benchmark_profile_mode,
         assert_benchmark_provider_env,
         assert_benchmark_turn_mode,
+        benchmark_guardrails,
         benchmark_profile_mode,
         benchmark_turn_mode,
         resolve_benchmark_provider_config,
@@ -70,7 +72,7 @@ def build_terminal_bench_profile() -> dict:
             "checkpointSize": 5,
             "retryCount": 1,
         },
-        "guardrails": {"maxStepVisits": 80},
+        "guardrails": benchmark_guardrails(),
     }
 
 
@@ -155,6 +157,8 @@ def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) ->
         raise AssertionError("Terminal-Bench profile must enable inherited dev shell.")
     if profile.get("toolAllowlist") != TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS:
         raise AssertionError("Terminal-Bench profile tool allowlist drifted.")
+    if profile.get("guardrails") != benchmark_guardrails():
+        raise AssertionError("Terminal-Bench profile guardrails drifted.")
 
     turn = job_input.get("turn")
     if not isinstance(turn, Mapping):

@@ -53,8 +53,17 @@ Key artifacts:
 - `job-input.json`: sanitized Kestrel job input.
 - `job-output.json`: Kestrel runtime output.
 - `kestrel-output.txt`: stdout/stderr from the runtime command.
+- `model.patch`: validated patch reconstructed from the final `/testbed`
+  filesystem against the read-only instance baseline.
+- `workspace-baseline-report.json`: cryptographic commit/tree identity for the
+  prepared image's initial `/testbed` snapshot, captured before the agent runs.
+- `workspace-patch-report.json`: harvesting status, changed and excluded paths,
+  stage results, patch SHA-256, target tree, validation result, and the Kestrel
+  process exit code. This report, not the agent's Git state, authorizes evaluation.
 - `predictions.jsonl`: official SWE-bench prediction row with
   `instance_id`, `model_name_or_path`, and `model_patch`.
+- `evaluator-output.txt` and `evaluator-report.json`: raw and parsed official
+  evaluator results when a validated non-empty patch is available.
 - `../../latest.json`: metadata for the newest attempt, including the latest
   attempt id and artifact paths.
 
