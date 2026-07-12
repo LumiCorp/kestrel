@@ -2,7 +2,7 @@ app = "kestrel-one-runner"
 primary_region = "iad"
 
 [build]
-  dockerfile = "deploy/fly/kestrel-one-runner/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   KESTREL_RUNNER_SERVICE_HOST = "0.0.0.0"

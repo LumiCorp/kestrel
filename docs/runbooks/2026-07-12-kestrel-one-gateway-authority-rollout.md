@@ -132,7 +132,7 @@ The single machine owns the single attached volume, so the immediate replacement
 fly deploy . \
   --app kestrel-one-runner \
   --config deploy/fly/kestrel-one-runner/fly.toml \
-  --dockerfile deploy/fly/kestrel-one-runner/Dockerfile \
+  --dockerfile Dockerfile \
   --ignorefile deploy/fly/kestrel-one-runner/Dockerfile.dockerignore \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}" \
   --image-label "gateway-${RELEASE_SHA}" \
