@@ -36,7 +36,6 @@ import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import { LocalCoreClient } from "../../../src/localCore/client.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import {
-  createWebDemoProfile,
   createWebRunnerAdapter,
   type WebRunnerAdapter,
   type WebRunnerRequestContext,
@@ -96,6 +95,7 @@ import { ManagedRunnerTransport } from "./runnerTransport.js";
 import {
   buildDesktopRunnerEnvironment,
   buildDesktopModelEnvironment,
+  buildDesktopRunnerProfile,
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
 } from "./settingsStore.js";
@@ -698,6 +698,7 @@ function registerIpcHandlers(
           : {},
       ),
     );
+    await resetDesktopRunnerAdapter();
     updateBootState({
       phase: "starting_runtime",
       message: "Applying model policy…",
@@ -755,6 +756,7 @@ function registerIpcHandlers(
           : {}),
       },
       restartRuntime: providerChanged,
+      resetRunnerProfile: providerChanged,
       restartMessage: "Applying model provider…",
     });
   });
@@ -797,6 +799,7 @@ function registerIpcHandlers(
           : {}),
       },
       restartRuntime: true,
+      resetRunnerProfile: true,
       restartMessage: "Applying provider credential…",
     });
   });
@@ -2145,11 +2148,17 @@ function requireDesktopRunnerAdapter(
 ): WebRunnerAdapter {
   if (desktopRunnerAdapter === undefined) {
     desktopRunnerAdapter = createWebRunnerAdapter({
-      profile: createWebDemoProfile("desktop"),
+      profile: buildDesktopRunnerProfile(desktopModelPolicy),
       transportFactory: () => transport,
     });
   }
   return desktopRunnerAdapter;
+}
+
+async function resetDesktopRunnerAdapter(): Promise<void> {
+  const adapter = desktopRunnerAdapter;
+  desktopRunnerAdapter = undefined;
+  await adapter?.close();
 }
 
 async function refreshDesktopCoreState(): Promise<void> {
@@ -2177,6 +2186,7 @@ async function persistDesktopRendererConfiguration(
   input: {
     settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined };
     restartRuntime: boolean;
+    resetRunnerProfile: boolean;
     restartMessage: string;
   },
 ): Promise<DesktopRendererSettings> {
@@ -2203,6 +2213,9 @@ async function persistDesktopRendererConfiguration(
         : {},
     ),
   );
+  if (input.resetRunnerProfile) {
+    await resetDesktopRunnerAdapter();
+  }
   if (input.restartRuntime) {
     updateBootState({
       phase: "starting_runtime",

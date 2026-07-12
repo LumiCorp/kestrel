@@ -1,12 +1,16 @@
 import type {
   DesktopLegacyUiStateEntries,
   DesktopRunHistoryLine,
+  DesktopRunnerEvent,
   DesktopUiStateV1,
 } from "../../src/contracts";
 
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
 const THEME_STORAGE_KEY = "kchat:web:theme-mode";
+export const MAX_PERSISTED_TRANSCRIPT_BYTES = 6 * 1024 * 1024;
+export const MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD = 500;
+const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
 
 export type RendererTheme = "light" | "dark";
 export type RendererMode = "chat" | "plan" | "build";
@@ -21,6 +25,7 @@ export interface RendererThread {
   sessionId: string;
   updatedAt: string;
   transcript: RendererTranscriptLine[];
+  pendingWaitEventType?: string | undefined;
   mode: RendererMode;
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
@@ -128,6 +133,7 @@ export function setRendererTheme(
 export function serializeDesktopRendererState(
   state: DesktopRendererState,
 ): DesktopLegacyUiStateEntries {
+  const persistedTranscripts = compactTranscriptsForPersistence(state.threads);
   const summaries = state.threads.map((thread) => ({
     ...thread.rawSummary,
     id: thread.id,
@@ -143,7 +149,10 @@ export function serializeDesktopRendererState(
     {
       ...thread.rawState,
       sessionId: thread.sessionId,
-      transcript: thread.transcript,
+      transcript: persistedTranscripts.get(thread.id) ?? [],
+      ...(thread.pendingWaitEventType !== undefined
+        ? { pendingWaitEventType: thread.pendingWaitEventType }
+        : { pendingWaitEventType: undefined }),
       interactionMode: thread.mode,
       ...(thread.mode === "build" ? { actSubmode: "safe" } : { actSubmode: undefined }),
     },
@@ -160,6 +169,37 @@ export function toDesktopRunHistory(thread: RendererThread): DesktopRunHistoryLi
   return thread.transcript
     .filter((line) => line.role === "user" || line.role === "assistant" || line.role === "system")
     .map(({ role, text, timestamp }) => ({ role, text, timestamp }));
+}
+
+export function getRendererTurnContinuation(
+  thread: RendererThread,
+): {
+  eventType: string;
+  resumeFromWait?: true | undefined;
+  resumeBlockedRun?: true | undefined;
+} {
+  if (thread.pendingWaitEventType === undefined) {
+    return { eventType: "user.message" };
+  }
+  return {
+    eventType: thread.pendingWaitEventType,
+    resumeFromWait: true,
+    ...(thread.pendingWaitEventType === "user.approval"
+      ? { resumeBlockedRun: true }
+      : {}),
+  };
+}
+
+export function getTerminalWaitEventType(
+  event: DesktopRunnerEvent,
+): string | undefined {
+  if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
+    return undefined;
+  }
+  const eventType = event.payload.result.output.waitFor?.eventType;
+  return typeof eventType === "string" && eventType.trim().length > 0
+    ? eventType.trim()
+    : undefined;
 }
 
 function parseThreadStore(raw: string | undefined): {
@@ -216,11 +256,77 @@ function collectThreads(store: {
       sessionId: rawState.sessionId,
       updatedAt,
       transcript,
+      ...(typeof rawState.pendingWaitEventType === "string" &&
+      rawState.pendingWaitEventType.trim().length > 0
+        ? { pendingWaitEventType: rawState.pendingWaitEventType.trim() }
+        : {}),
       mode,
       rawSummary,
       rawState,
     }];
   }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function compactTranscriptsForPersistence(
+  threads: RendererThread[],
+): Map<string, RendererTranscriptLine[]> {
+  const result = new Map<string, RendererTranscriptLine[]>();
+  let remainingBytes = MAX_PERSISTED_TRANSCRIPT_BYTES;
+
+  for (const thread of threads) {
+    const compacted: RendererTranscriptLine[] = [];
+    const candidates = thread.transcript.slice(
+      -MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD,
+    );
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = compactTranscriptLine(candidates[index]!);
+      const byteLength = serializedByteLength(candidate);
+      if (byteLength > remainingBytes) {
+        continue;
+      }
+      compacted.unshift(candidate);
+      remainingBytes -= byteLength;
+    }
+    result.set(thread.id, compacted);
+  }
+
+  return result;
+}
+
+function compactTranscriptLine(
+  line: RendererTranscriptLine,
+): RendererTranscriptLine {
+  const compacted: RendererTranscriptLine = {
+    role: line.role,
+    text: truncateUtf8(line.text, MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES),
+    timestamp: line.timestamp,
+    ...(line.data !== undefined ? { data: line.data } : {}),
+  };
+  if (serializedByteLength(compacted) <= MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES * 2) {
+    return compacted;
+  }
+  return {
+    role: compacted.role,
+    text: compacted.text,
+    timestamp: compacted.timestamp,
+  };
+}
+
+function serializedByteLength(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(value);
+  if (encoded.byteLength <= maxBytes) {
+    return value;
+  }
+  return new TextDecoder().decode(encoded.slice(0, maxBytes));
 }
 
 function parseTranscriptLine(value: unknown): RendererTranscriptLine[] {
