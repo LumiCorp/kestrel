@@ -98,6 +98,7 @@ export function isInlineRenderableMediaType(mediaType: string) {
 
 export function buildKnowledgeDocumentObjectKey(input: {
   organizationId: string;
+  projectId?: string | null;
   documentId: string;
   filename: string;
 }) {
@@ -108,6 +109,7 @@ export function buildKnowledgeDocumentObjectKey(input: {
 
   return [
     input.organizationId,
+    ...(input.projectId ? ["projects", input.projectId] : ["organization"]),
     input.documentId,
     `${safeName}${safeExtension}`,
   ];

@@ -38,14 +38,14 @@ import { knowledgeDb } from "@/lib/knowledge/db";
 type BotOrigin = "github" | "discord";
 
 type BotThreadState = {
-  chatId: string;
+  threadId: string;
   externalThreadId: string;
   organizationId: string;
   origin: BotOrigin;
 };
 
 type GitHubThreadResolution = {
-  chatId: string;
+  threadId: string;
   context?: BotThreadContext;
   externalThreadId: string;
   inboundExternalMessageId: string;
@@ -55,7 +55,7 @@ type GitHubThreadResolution = {
 };
 
 type DiscordThreadResolution = {
-  chatId: string;
+  threadId: string;
   context?: BotThreadContext;
   externalThreadId: string;
   inboundExternalMessageId: string;
@@ -316,7 +316,7 @@ class UnifiedBotRuntime {
 
     const { targetThread } = resolved;
     const inboundAlreadyProcessed = await hasProcessedExternalMessage(
-      resolved.chatId,
+      resolved.threadId,
       resolved.inboundExternalMessageId
     );
     if (inboundAlreadyProcessed) {
@@ -324,7 +324,7 @@ class UnifiedBotRuntime {
     }
 
     await targetThread.setState({
-      chatId: resolved.chatId,
+      threadId: resolved.threadId,
       externalThreadId: resolved.externalThreadId,
       organizationId: resolved.organizationId,
       origin: resolved.origin,
@@ -342,7 +342,7 @@ class UnifiedBotRuntime {
           this.requestOrigin.getStore() ??
           process.env.BETTER_AUTH_URL ??
           "http://localhost:43103",
-        chatId: resolved.chatId,
+        threadId: resolved.threadId,
         prompt: message.text,
         context: resolved.context,
         actor: {
@@ -356,7 +356,7 @@ class UnifiedBotRuntime {
       const reply = await targetThread.post(generated.text);
 
       await saveExternalConversationTurn({
-        chatId: resolved.chatId,
+        threadId: resolved.threadId,
         origin: resolved.origin,
         inboundText: message.text,
         inboundExternalMessageId: resolved.inboundExternalMessageId,
@@ -430,8 +430,8 @@ class UnifiedBotRuntime {
 
     const threadState = await getThreadState(thread);
     const externalThreadId = thread.id;
-    const chat = threadState?.chatId
-      ? { id: threadState.chatId }
+    const chat = threadState?.threadId
+      ? { id: threadState.threadId }
       : await getOrCreateExternalThreadChat({
           organizationId: source.organizationId,
           origin: "github",
@@ -450,7 +450,7 @@ class UnifiedBotRuntime {
     }
 
     return {
-      chatId: chat.id,
+      threadId: chat.id,
       context,
       externalThreadId,
       inboundExternalMessageId: formatGitHubInboundExternalMessageId(message),
@@ -484,9 +484,9 @@ class UnifiedBotRuntime {
     }).catch(() => null);
 
     const currentThreadState = await getThreadState(thread);
-    if (currentThreadState?.chatId && currentThreadState.organizationId) {
+    if (currentThreadState?.threadId && currentThreadState.organizationId) {
       return {
-        chatId: currentThreadState.chatId,
+        threadId: currentThreadState.threadId,
         context: undefined,
         externalThreadId: currentThreadState.externalThreadId,
         inboundExternalMessageId: formatDiscordExternalMessageId(message.id),
@@ -554,7 +554,7 @@ class UnifiedBotRuntime {
     });
 
     return {
-      chatId: chat.id,
+      threadId: chat.id,
       context: undefined,
       externalThreadId,
       inboundExternalMessageId: formatDiscordExternalMessageId(message.id),

@@ -21,7 +21,7 @@ export function assertUploadPathOwnedByUser(
 
 export function buildUploadPath(parts: {
   userId: string;
-  chatId: string;
+  threadId: string;
   filename: string;
 }) {
   const suffix = crypto.randomUUID().slice(0, 8);
@@ -30,7 +30,7 @@ export function buildUploadPath(parts: {
 
   return [
     getUploadOwnerSegment(parts.userId),
-    sanitizeSegment(parts.chatId),
+    sanitizeSegment(parts.threadId),
     `${sanitizeSegment(basename)}-${suffix}${extension}`,
   ];
 }

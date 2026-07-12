@@ -17,17 +17,17 @@ export async function listAdminUsers() {
       .orderBy(desc(schema.users.createdAt)),
     knowledgeDb
       .select({
-        id: schema.knowledgeChats.id,
-        userId: schema.knowledgeChats.userId,
-        createdAt: schema.knowledgeChats.createdAt,
+        id: schema.threads.id,
+        userId: schema.threads.createdByUserId,
+        createdAt: schema.threads.createdAt,
       })
-      .from(schema.knowledgeChats),
+      .from(schema.threads),
     knowledgeDb
       .select({
-        chatId: schema.knowledgeMessages.chatId,
-        createdAt: schema.knowledgeMessages.createdAt,
+        threadId: schema.threadMessages.threadId,
+        createdAt: schema.threadMessages.createdAt,
       })
-      .from(schema.knowledgeMessages),
+      .from(schema.threadMessages),
   ]);
 
   const chatOwnerById = new Map<string, string>();
@@ -35,6 +35,9 @@ export async function listAdminUsers() {
   const lastSeenByUserId = new Map<string, Date>();
 
   for (const chat of chats) {
+    if (chat.userId === null) {
+      continue;
+    }
     chatOwnerById.set(chat.id, chat.userId);
     chatCountByUserId.set(
       chat.userId,
@@ -50,7 +53,7 @@ export async function listAdminUsers() {
   const messageCountByUserId = new Map<string, number>();
 
   for (const message of messages) {
-    const userId = chatOwnerById.get(message.chatId);
+    const userId = chatOwnerById.get(message.threadId);
     if (!userId) {
       continue;
     }

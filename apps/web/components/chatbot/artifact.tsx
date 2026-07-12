@@ -57,7 +57,7 @@ export type UIArtifact = {
 
 function PureArtifact({
   addToolApprovalResponse,
-  chatId,
+  threadId,
   status,
   sendMessage,
   messages,
@@ -69,7 +69,7 @@ function PureArtifact({
   selectedVisibilityType: _selectedVisibilityType,
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
-  chatId: string;
+  threadId: string;
   status: UseChatHelpers<ChatMessage>["status"];
   messages: ChatMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
@@ -154,7 +154,7 @@ function PureArtifact({
                 title: artifact.title,
                 content: updatedContent,
                 kind: artifact.kind,
-                chatId,
+                threadId,
               }),
             });
 
@@ -358,7 +358,6 @@ function PureArtifact({
                 <ArtifactMessages
                   addToolApprovalResponse={addToolApprovalResponse}
                   artifactStatus={artifact.status}
-                  chatId={chatId}
                   feedbackByMessageId={feedbackByMessageId}
                   isReadonly={isReadonly}
                   messages={messages}
@@ -366,6 +365,7 @@ function PureArtifact({
                   regenerate={regenerate}
                   setMessages={setMessages}
                   status={status}
+                  threadId={threadId}
                 />
               </div>
             </motion.div>

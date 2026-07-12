@@ -13,6 +13,7 @@ export type SearchKnowledgeDocumentsCapabilityInput = z.infer<
 export async function executeSearchKnowledgeDocumentsCapability(input: {
   organizationId: string;
   payload: unknown;
+  documentIds?: string[];
 }) {
   const payload = searchKnowledgeDocumentsCapabilityInputSchema.parse(
     input.payload
@@ -21,6 +22,7 @@ export async function executeSearchKnowledgeDocumentsCapability(input: {
     organizationId: input.organizationId,
     query: payload.query,
     limit: payload.limit,
+    documentIds: input.documentIds,
   });
 
   return {

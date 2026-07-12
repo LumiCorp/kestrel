@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { memo } from "react";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
-import type { ChatHistoryEntry } from "@/lib/types";
+import type { ThreadHistoryEntry } from "@/lib/types";
 import {
   CheckCircleFillIcon,
   GlobeIcon,
   LockIcon,
   MoreHorizontalIcon,
   ShareIcon,
-  TrashIcon,
 } from "./icons";
 import {
   DropdownMenu,
@@ -32,14 +31,14 @@ const PureChatItem = ({
   onDelete,
   setOpenMobile,
 }: {
-  chat: ChatHistoryEntry;
+  chat: ThreadHistoryEntry;
   isActive: boolean;
-  onDelete: (chatId: string) => void;
+  onDelete: (threadId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
   const { visibilityType, setVisibilityType, shareToken, copyShareLink } =
     useChatVisibility({
-      chatId: chat.id,
+      threadId: chat.id,
       initialVisibilityType: chat.visibility,
       initialShareToken: chat.shareToken,
     });
@@ -47,7 +46,7 @@ const PureChatItem = ({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={isActive}>
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+        <Link href={`/threads/${chat.id}`} onClick={() => setOpenMobile(false)}>
           <span>{chat.title}</span>
         </Link>
       </SidebarMenuButton>
@@ -114,8 +113,7 @@ const PureChatItem = ({
             className="cursor-pointer text-destructive focus:bg-destructive/15 focus:text-destructive dark:text-red-500"
             onSelect={() => onDelete(chat.id)}
           >
-            <TrashIcon />
-            <span>Delete</span>
+            <span>Archive</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

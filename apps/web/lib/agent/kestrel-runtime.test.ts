@@ -88,7 +88,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
       requestId: "req_123",
       correlationId: "req_123",
     },
-    chatId: "chat_123",
+    threadId: "chat_123",
     messages: [
       {
         id: "msg_user",
@@ -173,7 +173,7 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
         requestId: "req_123",
         correlationId: "req_123",
       },
-      chatId: "chat_123",
+      threadId: "chat_123",
       messages: [
         {
           id: "msg_user",
@@ -236,7 +236,7 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
       requestId: "req_123",
       correlationId: "req_123",
     },
-    chatId: "chat_123",
+    threadId: "chat_123",
     messages: [
       {
         id: "msg_user",
@@ -256,6 +256,64 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
   assert.equal(countOccurrences(body, "Writing answer."), 1);
   assert.equal(countOccurrences(body, "Final answer"), 1);
   assert.equal(persistedText, "Final answer");
+});
+
+test("createKestrelOneAgentResponse binds Project context to runner capabilities and model-visible history", async () => {
+  let capturedInput: KestrelOneAgentTurnInput | undefined;
+  const agent = fakeAgent({
+    terminal: completedTerminal({ message: "Project answer" }),
+    onStream(input) {
+      capturedInput = input;
+    },
+  });
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/threads/thread_project"),
+    agent,
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: { requestId: "req_123", correlationId: "req_123" },
+    threadId: "thread_project",
+    messages: [
+      {
+        id: "msg_user",
+        role: "user",
+        parts: [{ type: "text", text: "Use our Project context" }],
+      },
+    ],
+    projectContext: {
+      projectId: "project_123",
+      contextRevisionId: "revision_7",
+      contextRevision: 7,
+      grantId: "3f33e85c-a682-4d54-a628-b970d4983f1d",
+      systemContext: "Project: Atlas\n\nProject context revision: 7",
+    },
+  });
+
+  await response.text();
+
+  assert.ok(capturedInput);
+  const kestrelOneCapabilities = capturedInput.clientCapabilities?.kestrelOne as
+    | Record<string, unknown>
+    | undefined;
+  assert.equal(capturedInput.sessionId, "thread_project");
+  assert.deepEqual(capturedInput.history, [
+    {
+      role: "system",
+      text: "Project: Atlas\n\nProject context revision: 7",
+      timestamp: capturedInput.history?.[0]?.timestamp,
+    },
+  ]);
+  assert.deepEqual(kestrelOneCapabilities, {
+    requestId: "req_123",
+    correlationId: "req_123",
+    tenantId: "org_123",
+    projectId: "project_123",
+    contextRevisionId: "revision_7",
+    contextRevision: 7,
+    contextGrantId: "3f33e85c-a682-4d54-a628-b970d4983f1d",
+    capabilities: kestrelOneCapabilities?.capabilities,
+  });
 });
 
 test("createKestrelOneAgentResponse surfaces failed runner output", async () => {
@@ -290,7 +348,7 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
       requestId: "req_123",
       correlationId: "req_123",
     },
-    chatId: "chat_123",
+    threadId: "chat_123",
     messages: [
       {
         id: "msg_user",
@@ -325,7 +383,7 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
       requestId: "req_123",
       correlationId: "req_123",
     },
-    chatId: "chat_123",
+    threadId: "chat_123",
     messages: [
       {
         id: "msg_user",
@@ -370,7 +428,7 @@ test("createKestrelOneAgentResponse shows runner error fallback when no terminal
       requestId: "req_123",
       correlationId: "req_123",
     },
-    chatId: "chat_123",
+    threadId: "chat_123",
     messages: [
       {
         id: "msg_user",

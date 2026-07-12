@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { isAdminUser } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
@@ -28,7 +28,14 @@ export function getKnowledgeDocumentsForOrganization(organizationId: string) {
       schema.users,
       eq(schema.users.id, schema.knowledgeDocuments.uploaderUserId)
     )
-    .where(eq(schema.knowledgeDocuments.organizationId, organizationId))
+    .where(
+      and(
+        eq(schema.knowledgeDocuments.organizationId, organizationId),
+        eq(schema.knowledgeDocuments.scope, "organization"),
+        isNull(schema.knowledgeDocuments.projectId),
+        isNull(schema.knowledgeDocuments.archivedAt)
+      )
+    )
     .orderBy(desc(schema.knowledgeDocuments.createdAt));
 }
 
@@ -47,13 +54,20 @@ export function getKnowledgeDocumentById(
 
 export function getKnowledgeDocumentByChecksum(
   organizationId: string,
-  checksumSha256: string
+  checksumSha256: string,
+  projectId?: string | null
 ) {
   return knowledgeDb.query.knowledgeDocuments.findFirst({
     where: (table, operators) =>
       operators.and(
         operators.eq(table.organizationId, organizationId),
-        operators.eq(table.checksumSha256, checksumSha256)
+        operators.eq(table.checksumSha256, checksumSha256),
+        projectId
+          ? operators.eq(table.projectId, projectId)
+          : operators.and(
+              operators.eq(table.scope, "organization"),
+              operators.isNull(table.projectId)
+            )
       ),
     orderBy: (table, operators) => [operators.desc(table.updatedAt)],
   });
@@ -70,12 +84,15 @@ export async function createKnowledgeDocument(input: {
   sizeBytes: number;
   checksumSha256: string;
   storageKey: string;
+  projectId?: string | null;
 }) {
   const [document] = await knowledgeDb
     .insert(schema.knowledgeDocuments)
     .values({
       id: input.id,
       organizationId: input.organizationId,
+      scope: input.projectId ? "project" : "organization",
+      projectId: input.projectId ?? null,
       uploaderUserId: input.uploaderUserId,
       title: input.title ?? null,
       filename: input.filename,

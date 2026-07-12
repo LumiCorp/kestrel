@@ -8,7 +8,7 @@ import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
 import { MessageSpeechControl } from "./message-speech-control";
 
 export function PureMessageActions({
-  chatId,
+  threadId,
   message,
   feedback,
   onFeedbackChange,
@@ -18,7 +18,7 @@ export function PureMessageActions({
   selectedLanguageModelId,
   ttsAvailable = true,
 }: {
-  chatId: string;
+  threadId: string;
   message: ChatMessage;
   feedback: MessageFeedback | undefined;
   onFeedbackChange: (
@@ -101,7 +101,7 @@ export function PureMessageActions({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              chatId,
+              threadId,
               feedback: nextFeedback,
             }),
           });
@@ -133,7 +133,7 @@ export function PureMessageActions({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              chatId,
+              threadId,
               feedback: nextFeedback,
             }),
           });

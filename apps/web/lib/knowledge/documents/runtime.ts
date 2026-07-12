@@ -27,6 +27,7 @@ function isChecksumConflict(error: unknown) {
 export async function createKnowledgeDocumentFromUpload(input: {
   organizationId: string;
   uploaderUserId: string;
+  projectId?: string | null;
   file: File;
 }) {
   const mediaType = normalizeMediaType(input.file.type, input.file.name);
@@ -34,6 +35,7 @@ export async function createKnowledgeDocumentFromUpload(input: {
   return createKnowledgeDocumentFromBuffer({
     organizationId: input.organizationId,
     uploaderUserId: input.uploaderUserId,
+    projectId: input.projectId,
     filename: input.file.name,
     originalFilename: input.file.name,
     mediaType,
@@ -64,6 +66,7 @@ export async function createKnowledgeDocumentFromStoredUpload(input: {
 async function createKnowledgeDocumentFromBuffer(input: {
   organizationId: string;
   uploaderUserId: string;
+  projectId?: string | null;
   filename: string;
   originalFilename: string;
   mediaType: string;
@@ -74,7 +77,8 @@ async function createKnowledgeDocumentFromBuffer(input: {
     .digest("hex");
   const existingDocument = await getKnowledgeDocumentByChecksum(
     input.organizationId,
-    checksumSha256
+    checksumSha256,
+    input.projectId
   );
 
   if (existingDocument) {
@@ -114,6 +118,7 @@ async function createKnowledgeDocumentFromBuffer(input: {
   const storage = getStorageAdapter();
   const keyParts = buildKnowledgeDocumentObjectKey({
     organizationId: input.organizationId,
+    projectId: input.projectId,
     documentId,
     filename: input.filename,
   });
@@ -125,6 +130,7 @@ async function createKnowledgeDocumentFromBuffer(input: {
     contentType: input.mediaType,
     metadata: {
       organizationId: input.organizationId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
       uploaderUserId: input.uploaderUserId,
     },
   });
@@ -137,6 +143,7 @@ async function createKnowledgeDocumentFromBuffer(input: {
       id: documentId,
       organizationId: input.organizationId,
       uploaderUserId: input.uploaderUserId,
+      projectId: input.projectId,
       filename: input.filename,
       originalFilename: input.originalFilename,
       mediaType: input.mediaType,
@@ -155,7 +162,8 @@ async function createKnowledgeDocumentFromBuffer(input: {
 
     const concurrentDocument = await getKnowledgeDocumentByChecksum(
       input.organizationId,
-      checksumSha256
+      checksumSha256,
+      input.projectId
     );
 
     if (!concurrentDocument) {

@@ -9,6 +9,7 @@ import {
   Cpu,
   CreditCard,
   FolderKanban,
+  FolderOpen,
   KeyRound,
   Logs,
   PlugZap,
@@ -29,9 +30,14 @@ import {
 
 const workspaceItems = [
   {
-    title: "Chat",
-    url: "/chat",
+    title: "Threads",
+    url: "/threads",
     icon: Bot,
+  },
+  {
+    title: "Projects",
+    url: "/projects",
+    icon: FolderOpen,
   },
   {
     title: "Knowledge",

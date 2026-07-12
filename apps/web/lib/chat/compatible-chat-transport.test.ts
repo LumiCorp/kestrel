@@ -44,14 +44,14 @@ test("CompatibleChatTransport ignores malformed events and emits one warning chu
     )) as unknown as typeof fetch;
 
   const transport = new CompatibleChatTransport<UIMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: mockFetch,
   });
 
   const chunks = (await readAllChunks(
     await transport.sendMessages({
       trigger: "submit-message",
-      chatId: "chat-1",
+      chatId: "thread-1",
       messageId: undefined,
       messages: [],
       abortSignal: undefined,
@@ -84,12 +84,12 @@ test("CompatibleChatTransport reconnectToStream returns null for 204 responses",
     })) as unknown as typeof fetch;
 
   const transport = new CompatibleChatTransport<UIMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: mockFetch,
   });
 
   const stream = await transport.reconnectToStream({
-    chatId: "chat-1",
+    chatId: "thread-1",
   });
 
   assert.equal(stream, null);
@@ -111,13 +111,13 @@ test("CompatibleChatTransport reconnectToStream prepends a resumed chunk", async
     )) as unknown as typeof fetch;
 
   const transport = new CompatibleChatTransport<UIMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: mockFetch,
   });
 
   const chunks = (await readAllChunks(
     (await transport.reconnectToStream({
-      chatId: "chat-1",
+      chatId: "thread-1",
     })) as ReadableStream<ChatStreamChunk>
   )) as ChatStreamChunk[];
 
@@ -133,13 +133,13 @@ test("CompatibleChatTransport reconnectToStream degrades to a warning stream on 
   }) as unknown as typeof fetch;
 
   const transport = new CompatibleChatTransport<UIMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: mockFetch,
   });
 
   const chunks = (await readAllChunks(
     (await transport.reconnectToStream({
-      chatId: "chat-1",
+      chatId: "thread-1",
     })) as ReadableStream<ChatStreamChunk>
   )) as ChatStreamChunk[];
 
@@ -182,13 +182,13 @@ test("CompatibleChatTransport reconnectToStream degrades to a warning chunk on r
     )) as unknown as typeof fetch;
 
   const transport = new CompatibleChatTransport<UIMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: mockFetch,
   });
 
   const chunks = (await readAllChunks(
     (await transport.reconnectToStream({
-      chatId: "chat-1",
+      chatId: "thread-1",
     })) as ReadableStream<ChatStreamChunk>
   )) as ChatStreamChunk[];
 

@@ -149,7 +149,7 @@ async function runPrimarySmoke(
       requestId: "req_runtime_smoke",
       correlationId: "corr_runtime_smoke",
     },
-    chatId: "chat_runtime_smoke",
+    threadId: "chat_runtime_smoke",
     messages: [
       {
         id: "msg_user",

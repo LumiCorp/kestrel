@@ -12,7 +12,7 @@ const FORBIDDEN_ERROR_PATTERN = /Forbidden/;
 test("buildUploadPath namespaces uploads under the sanitized user id", () => {
   const pathname = buildUploadPath({
     userId: "user:123",
-    chatId: "chat/456",
+    threadId: "chat/456",
     filename: "Quarterly Report.pdf",
   });
 

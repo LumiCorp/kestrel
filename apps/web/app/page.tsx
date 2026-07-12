@@ -8,7 +8,7 @@ export default async function Home() {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
-  const primaryHref = session?.session ? "/chat" : "/sign-in";
+  const primaryHref = session?.session ? "/threads" : "/sign-in";
   const primaryLabel = session?.session ? "Open Workspace" : "Sign In";
 
   return (

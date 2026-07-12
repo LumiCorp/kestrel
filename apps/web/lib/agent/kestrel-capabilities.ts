@@ -1,13 +1,12 @@
 import { z } from "zod";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
-const runnerCapabilityAuthHeaderSchema = z
-  .string()
-  .regex(/^Bearer\s+\S+$/i);
+const runnerCapabilityAuthHeaderSchema = z.string().regex(/^Bearer\s+\S+$/i);
 
 export const runnerKnowledgeCapabilityRequestSchema = z.object({
   authorization: runnerCapabilityAuthHeaderSchema,
   tenantId: routeIdSchema,
+  contextGrantId: z.string().uuid().optional(),
 });
 
 export type KestrelOneCapabilityDescriptor = {
@@ -16,10 +15,10 @@ export type KestrelOneCapabilityDescriptor = {
   endpoint: {
     method: "POST";
     url: string;
-      auth: {
-        type: "bearer";
-        tokenEnv: "KESTREL_ONE_TOOL_TOKEN";
-      };
+    auth: {
+      type: "bearer";
+      tokenEnv: "KESTREL_ONE_TOOL_TOKEN";
+    };
   };
   input: {
     type: "object";
@@ -44,10 +43,10 @@ export function buildKestrelOneCapabilityDescriptors(input: {
       endpoint: {
         method: "POST",
         url: `${origin}/api/kestrel/tools/search-knowledge-documents`,
-          auth: {
-            type: "bearer",
-            tokenEnv: "KESTREL_ONE_TOOL_TOKEN",
-          },
+        auth: {
+          type: "bearer",
+          tokenEnv: "KESTREL_ONE_TOOL_TOKEN",
+        },
       },
       input: {
         type: "object",
@@ -71,6 +70,8 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
       input.request.headers.get("x-kestrel-tenant-id") ??
       input.request.headers.get("x-organization-id") ??
       "",
+    contextGrantId:
+      input.request.headers.get("x-kestrel-project-context-grant") ?? undefined,
   });
   const actualToken = parsed.authorization.replace(/^Bearer\s+/i, "").trim();
   const expectedToken = input.expectedToken?.trim();
@@ -83,5 +84,6 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
 
   return {
     organizationId: parsed.tenantId,
+    ...(parsed.contextGrantId ? { contextGrantId: parsed.contextGrantId } : {}),
   };
 }

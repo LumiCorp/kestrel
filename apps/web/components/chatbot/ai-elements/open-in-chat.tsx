@@ -96,7 +96,7 @@ const providers = {
   chatgpt: {
     title: "Open in ChatGPT",
     createUrl: (prompt: string) =>
-      `https://chatgpt.com/?${new URLSearchParams({
+      `https://threadsgpt.com/?${new URLSearchParams({
         hints: "search",
         prompt,
       })}`,

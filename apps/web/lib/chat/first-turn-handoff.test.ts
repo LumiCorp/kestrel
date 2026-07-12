@@ -34,7 +34,7 @@ const originalDateNow = Date.now;
 
 function buildRecord(): ChatFirstTurnHandoff {
   return {
-    chatId: "chat-1",
+    threadId: "chat-1",
     messageId: "message-1",
     messageParts: [
       {
@@ -100,7 +100,7 @@ test("first-turn handoff round-trips exact message parts", () => {
 
   writeChatFirstTurnHandoff(record);
 
-  assert.deepEqual(readChatFirstTurnHandoff(record.chatId), record);
+  assert.deepEqual(readChatFirstTurnHandoff(record.threadId), record);
 });
 
 test("first-turn handoff expires after the ttl", () => {
@@ -109,14 +109,14 @@ test("first-turn handoff expires after the ttl", () => {
   writeChatFirstTurnHandoff(record);
   Date.now = () => record.createdAt + 60_001;
 
-  assert.equal(readChatFirstTurnHandoff(record.chatId), null);
+  assert.equal(readChatFirstTurnHandoff(record.threadId), null);
 });
 
 test("first-turn handoff rejects invalid payloads", () => {
   sessionStorageMock.setItem(
     "chat:first-turn:chat-1",
     JSON.stringify({
-      chatId: "chat-1",
+      threadId: "chat-1",
       messageId: "message-1",
       messageParts: [{ text: "missing type" }],
       modelId: "chat-model-1",
@@ -132,7 +132,7 @@ test("first-turn handoff clears by chat id", () => {
   const record = buildRecord();
 
   writeChatFirstTurnHandoff(record);
-  clearChatFirstTurnHandoff(record.chatId);
+  clearChatFirstTurnHandoff(record.threadId);
 
-  assert.equal(readChatFirstTurnHandoff(record.chatId), null);
+  assert.equal(readChatFirstTurnHandoff(record.threadId), null);
 });

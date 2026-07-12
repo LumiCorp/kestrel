@@ -1,11 +1,14 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { updateKnowledgeMessageFeedback } from "@/lib/agent/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import {
+  getThreadAccessForUser,
+  updateThreadMessageFeedback,
+} from "@/lib/threads/store";
 
 const paramsSchema = z.object({
   id: routeIdSchema,
@@ -24,28 +27,25 @@ export async function PATCH(
     const params = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
 
-    const rows = await knowledgeDb
+    const [message] = await knowledgeDb
       .select({
-        messageId: schema.knowledgeMessages.id,
-        role: schema.knowledgeMessages.role,
-        chatId: schema.knowledgeChats.id,
+        messageId: schema.threadMessages.id,
+        role: schema.threadMessages.role,
+        threadId: schema.threadMessages.threadId,
       })
-      .from(schema.knowledgeMessages)
-      .innerJoin(
-        schema.knowledgeChats,
-        eq(schema.knowledgeMessages.chatId, schema.knowledgeChats.id)
-      )
-      .where(
-        and(
-          eq(schema.knowledgeMessages.id, params.id),
-          eq(schema.knowledgeChats.userId, session.user.id),
-          eq(schema.knowledgeChats.organizationId, organizationId)
+      .from(schema.threadMessages)
+      .where(eq(schema.threadMessages.id, params.id))
+      .limit(1);
+    const access = message
+      ? await getThreadAccessForUser(
+          message.threadId,
+          session.user.id,
+          organizationId,
+          true
         )
-      );
+      : null;
 
-    const message = rows[0];
-
-    if (!message) {
+    if (!(message && access)) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
@@ -56,9 +56,9 @@ export async function PATCH(
       );
     }
 
-    const updated = await updateKnowledgeMessageFeedback(
+    const updated = await updateThreadMessageFeedback(
       params.id,
-      message.chatId,
+      message.threadId,
       body.feedback
     );
 

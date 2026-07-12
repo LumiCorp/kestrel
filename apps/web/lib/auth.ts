@@ -52,7 +52,7 @@ const cookieDomain: string | undefined = (() => {
   return `.${process.env.VERCEL_URL}`;
 })();
 
-const localDevOrigins = [3000, 3001, 3100, 43103].flatMap((port) => [
+const localDevOrigins = [3000, 3001, 3100, 43_103].flatMap((port) => [
   `http://localhost:${port}`,
   `http://127.0.0.1:${port}`,
 ]);
@@ -60,7 +60,7 @@ const localDevOrigins = [3000, 3001, 3100, 43103].flatMap((port) => [
 const devBaseUrl =
   process.env.BETTER_AUTH_URL ||
   process.env.NEXT_PUBLIC_APP_URL ||
-    "http://localhost:43103";
+  "http://localhost:43103";
 
 const trustedOrigins = Array.from(
   new Set(

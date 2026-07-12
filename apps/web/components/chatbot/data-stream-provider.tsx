@@ -40,11 +40,11 @@ export function DataStreamProvider({
 }
 
 function getDataStreamScopeKey(pathname: string | null) {
-  if (pathname === "/chat") {
+  if (pathname === "/threads") {
     return "chat:index";
   }
 
-  const chatMatch = pathname?.match(/^\/chat\/([^/?#]+)/);
+  const chatMatch = pathname?.match(/^\/threads\/([^/?#]+)/);
   if (chatMatch) {
     return `chat:${chatMatch[1]}`;
   }

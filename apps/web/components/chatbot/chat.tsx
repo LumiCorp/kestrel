@@ -51,7 +51,7 @@ import { Artifact } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
-import { getChatHistoryPaginationKey } from "./sidebar-history";
+import { getThreadHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
 
@@ -67,11 +67,11 @@ type ChatController = {
 
 function createChatTransport(currentModelIdRef: { current: string }) {
   return new CompatibleChatTransport<ChatMessage>({
-    api: "/api/chats",
+    api: "/api/threads",
     fetch: fetchWithErrorHandlers as typeof fetch,
     prepareSendMessagesRequest(request) {
       return {
-        api: `/api/chats/${request.id}`,
+        api: `/api/threads/${request.id}`,
         body: {
           model: currentModelIdRef.current,
           messages: request.messages,
@@ -81,14 +81,14 @@ function createChatTransport(currentModelIdRef: { current: string }) {
     },
     prepareReconnectToStreamRequest({ id }) {
       return {
-        api: `/api/chats/${id}/stream`,
+        api: `/api/threads/${id}/stream`,
       };
     },
   });
 }
 
 function buildFeedbackByMessageId(input: {
-  chatId: string;
+  threadId: string;
   feedbackOverrides: Record<string, "positive" | "negative" | null>;
   messages: ChatMessage[];
 }) {
@@ -104,7 +104,7 @@ function buildFeedbackByMessageId(input: {
         null;
 
       accumulator[message.id] = {
-        chatId: input.chatId,
+        threadId: input.threadId,
         messageId: message.id,
         feedback,
       };
@@ -164,8 +164,8 @@ function isUserPartsMessage(
   );
 }
 
-function useSharedChatState(initialChatModel: string, chatId: string) {
-  const { setDataStream } = useDataStream(chatId);
+function useSharedChatState(initialChatModel: string, threadId: string) {
+  const { setDataStream } = useDataStream(threadId);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
@@ -255,7 +255,7 @@ function useChatCallbacks(input: {
       input.setDataStream((current) => [...current, dataPart]);
     },
     onFinish: () => {
-      input.mutate(unstable_serialize(getChatHistoryPaginationKey));
+      input.mutate(unstable_serialize(getThreadHistoryPaginationKey));
     },
     onError: (error: unknown) => {
       input.setDataStream([]);
@@ -288,7 +288,7 @@ function useChatCallbacks(input: {
 function ChatShell({
   addToolApprovalResponse,
   attachments,
-  chatId,
+  threadId,
   clearError,
   currentModelId,
   feedbackByMessageId,
@@ -309,7 +309,7 @@ function ChatShell({
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   attachments: Attachment[];
-  chatId: string;
+  threadId: string;
   clearError: () => void;
   currentModelId: string;
   feedbackByMessageId: Record<string, MessageFeedback | undefined>;
@@ -337,14 +337,13 @@ function ChatShell({
     <>
       <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
         <ChatHeader
-          chatId={chatId}
           isReadonly={headerReadonly}
           selectedVisibilityType={selectedVisibilityType}
+          threadId={threadId}
         />
 
         <Messages
           addToolApprovalResponse={addToolApprovalResponse}
-          chatId={chatId}
           feedbackByMessageId={feedbackByMessageId}
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
@@ -355,13 +354,13 @@ function ChatShell({
           setMessages={setMessages}
           showPendingAssistant={showPendingAssistant}
           status={status}
+          threadId={threadId}
         />
 
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
           {!isReadonly && (
             <MultimodalInput
               attachments={attachments}
-              chatId={chatId}
               clearError={clearError}
               input={input}
               messages={messages}
@@ -373,6 +372,7 @@ function ChatShell({
               setInput={setInput}
               setMessages={setMessages}
               status={status}
+              threadId={threadId}
             />
           )}
         </div>
@@ -380,7 +380,6 @@ function ChatShell({
 
       <Artifact
         addToolApprovalResponse={addToolApprovalResponse}
-        chatId={chatId}
         feedbackByMessageId={feedbackByMessageId}
         isReadonly={isReadonly}
         messages={messages}
@@ -390,6 +389,7 @@ function ChatShell({
         sendMessage={sendMessage}
         setMessages={setMessages}
         status={status}
+        threadId={threadId}
       />
     </>
   );
@@ -435,9 +435,11 @@ function ChatAlerts({
 export function BootstrapChat({
   id,
   initialChatModel,
+  projectId,
 }: {
   id: string;
   initialChatModel: string;
+  projectId?: string;
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
@@ -477,7 +479,8 @@ export function BootstrapChat({
     };
 
     writeChatFirstTurnHandoff({
-      chatId: id,
+      threadId: id,
+      ...(projectId ? { projectId } : {}),
       messageId,
       messageParts: userMessage.parts,
       modelId: shared.currentModelIdRef.current,
@@ -485,7 +488,7 @@ export function BootstrapChat({
       pendingAssistant: true,
     });
 
-    router.replace(`/chat/${id}`);
+    router.replace(`/threads/${id}`);
   };
 
   useEffect(() => {
@@ -504,7 +507,6 @@ export function BootstrapChat({
       <ChatShell
         addToolApprovalResponse={async () => {}}
         attachments={shared.attachments}
-        chatId={id}
         clearError={() => {
           shared.setDataStream([]);
         }}
@@ -524,6 +526,7 @@ export function BootstrapChat({
         setMessages={() => {}}
         showPendingAssistant={false}
         status="ready"
+        threadId={id}
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}
@@ -541,6 +544,7 @@ export function Chat({
   initialShareToken,
   initialChatExists,
   isReadonly,
+  canPublish = true,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -549,12 +553,13 @@ export function Chat({
   initialShareToken?: string | null;
   initialChatExists: boolean;
   isReadonly: boolean;
+  canPublish?: boolean;
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
   const { setDataStream } = useDataStream(id);
   const { visibilityType } = useChatVisibility({
-    chatId: id,
+    threadId: id,
     initialVisibilityType,
     initialShareToken,
   });
@@ -564,9 +569,14 @@ export function Chat({
   const hasShownResumedToastRef = useRef(false);
   const hasShownStreamWarningRef = useRef(false);
   const hasStartedHandoffRequestRef = useRef(false);
+  const [chatExists, setChatExists] = useState(initialChatExists);
   const [handoff, setHandoff] = useState<
     ChatFirstTurnHandoff | null | undefined
   >(undefined);
+
+  useEffect(() => {
+    setChatExists(initialChatExists);
+  }, [id, initialChatExists]);
 
   useEffect(() => {
     hasStartedHandoffRequestRef.current = false;
@@ -618,6 +628,14 @@ export function Chat({
       initialChatExists &&
       handoff &&
       controller.messages.some((message) => message.id === handoff.messageId);
+    const hasAssistantResponse = controller.messages.some(
+      (message) => message.role === "assistant"
+    );
+
+    if (hasAssistantResponse) {
+      setChatExists(true);
+    }
+
     if (handoff && hasPersistedFirstUserMessage) {
       clearChatFirstTurnHandoff(id);
       setHandoff(null);
@@ -662,7 +680,9 @@ export function Chat({
     }
 
     hasStartedHandoffRequestRef.current = true;
-    void controller.sendMessage(handoffMessage);
+    void controller.sendMessage(handoffMessage, {
+      body: handoff.projectId ? { projectId: handoff.projectId } : undefined,
+    });
   }, [
     controller.messages,
     controller.sendMessage,
@@ -672,7 +692,7 @@ export function Chat({
   ]);
 
   useEffect(() => {
-    if (initialChatExists || handoff !== null) {
+    if (chatExists || handoff !== null) {
       return;
     }
 
@@ -686,7 +706,7 @@ export function Chat({
 
     const timeoutId = window.setTimeout(() => {
       if (!hasStartedHandoffRequestRef.current) {
-        router.replace("/chat");
+        router.replace("/threads/new");
       }
     }, 400);
 
@@ -696,15 +716,15 @@ export function Chat({
   }, [
     controller.messages.length,
     controller.status,
+    chatExists,
     handoff,
-    initialChatExists,
     router,
   ]);
 
   const feedbackByMessageId = useMemo(
     () =>
       buildFeedbackByMessageId({
-        chatId: id,
+        threadId: id,
         feedbackOverrides: shared.feedbackOverrides,
         messages: controller.messages,
       }),
@@ -720,11 +740,11 @@ export function Chat({
     controller.status === "ready" &&
     !controller.messages.some((message) => message.role === "assistant");
 
-  if (!initialChatExists && handoff === undefined) {
+  if (!chatExists && handoff === undefined) {
     return null;
   }
 
-  if (!(initialChatExists || handoff)) {
+  if (!(chatExists || handoff)) {
     return null;
   }
 
@@ -733,14 +753,13 @@ export function Chat({
       <ChatShell
         addToolApprovalResponse={controller.addToolApprovalResponse}
         attachments={shared.attachments}
-        chatId={id}
         clearError={() => {
           controller.clearError();
           shared.setDataStream([]);
         }}
         currentModelId={shared.currentModelId}
         feedbackByMessageId={feedbackByMessageId}
-        headerReadonly={isReadonly}
+        headerReadonly={isReadonly || !canPublish}
         input={shared.input}
         isReadonly={isReadonly}
         messages={displayMessages}
@@ -759,6 +778,7 @@ export function Chat({
         setMessages={controller.setMessages}
         showPendingAssistant={showPendingAssistant}
         status={controller.status}
+        threadId={id}
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}

@@ -9,7 +9,7 @@ import { PreviewMessage, ThinkingMessage } from "./message";
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
-  chatId: string;
+  threadId: string;
   status: UseChatHelpers<ChatMessage>["status"];
   feedbackByMessageId: Record<string, MessageFeedback | undefined>;
   onFeedbackChange: (
@@ -27,7 +27,7 @@ type MessagesProps = {
 
 function PureMessages({
   addToolApprovalResponse,
-  chatId,
+  threadId,
   status,
   feedbackByMessageId,
   onFeedbackChange,
@@ -101,7 +101,6 @@ function PureMessages({
           {messages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}
-              chatId={chatId}
               feedback={feedbackByMessageId[message.id]}
               isLoading={
                 status === "streaming" && messages.length - 1 === index
@@ -117,6 +116,7 @@ function PureMessages({
               selectedLanguageModelId={selectedModelId}
               setMessages={setMessages}
               shouldAutoplaySpeech={message.id === latestAssistantMessageId}
+              threadId={threadId}
               ttsAvailable={Boolean(ttsAvailable)}
             />
           ))}

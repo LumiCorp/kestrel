@@ -8,7 +8,7 @@ import type { updateDocument } from "./ai/tools/update-document";
 
 export type ChatVisibility = "private" | "public";
 
-export type ChatHistoryEntry = {
+export type ThreadHistoryEntry = {
   id: string;
   title: string | null;
   createdAt: Date;
@@ -17,7 +17,7 @@ export type ChatHistoryEntry = {
 };
 
 export type MessageFeedback = {
-  chatId: string;
+  threadId: string;
   messageId: string;
   feedback: "positive" | "negative" | null;
 };
@@ -30,7 +30,7 @@ export type ArtifactDocument = {
   kind: ArtifactKind;
   userId: string;
   organizationId: string;
-  chatId: string | null;
+  threadId: string | null;
 };
 
 export type ArtifactSuggestion = {
@@ -59,6 +59,9 @@ const kestrelTerminalStatusSchema = z.enum([
 export const messageMetadataSchema = z.object({
   createdAt: z.string().optional(),
   feedback: z.enum(["positive", "negative"]).nullable().optional(),
+  authorUserId: z.string().optional(),
+  authorName: z.string().optional(),
+  authorEmail: z.string().optional(),
   kestrelTerminalStatus: kestrelTerminalStatusSchema.optional(),
 });
 
@@ -124,7 +127,8 @@ export type Attachment = {
 };
 
 export type ChatFirstTurnHandoff = {
-  chatId: string;
+  threadId: string;
+  projectId?: string;
   messageId: string;
   messageParts: ChatMessage["parts"];
   modelId: string;

@@ -7,7 +7,7 @@
 // Note: These tables are filtered out in drizzle.config.ts so migrations
 // won't be generated for them. They're managed by Better Auth itself.
 
-import type { InferSelectModel } from "drizzle-orm";
+import { type InferSelectModel, sql } from "drizzle-orm";
 import {
   boolean,
   customType,
@@ -185,6 +185,126 @@ export const members = pgTable("member", {
 });
 
 /** =========================
+ *  Hosted Projects
+ *  ========================= */
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    currentContextRevision: integer("current_context_revision")
+      .notNull()
+      .default(1),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("projects_org_id_idx").on(table.organizationId),
+    index("projects_created_by_user_id_idx").on(table.createdByUserId),
+    index("projects_updated_at_idx").on(table.updatedAt),
+    index("projects_archived_at_idx").on(table.archivedAt),
+  ]
+);
+
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    organizationMemberId: text("organization_member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "editor", "member"] })
+      .notNull()
+      .default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.organizationMemberId] }),
+    index("project_members_member_id_idx").on(table.organizationMemberId),
+    index("project_members_role_idx").on(table.projectId, table.role),
+  ]
+);
+
+export const projectContextRevisions = pgTable(
+  "project_context_revisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    projectName: text("project_name").notNull(),
+    instructions: text("instructions").notNull().default(""),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_context_revisions_project_revision_idx").on(
+      table.projectId,
+      table.revision
+    ),
+    index("project_context_revisions_created_by_idx").on(table.createdByUserId),
+  ]
+);
+
+export const projectAuditEvents = pgTable(
+  "project_audit_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("project_audit_events_project_created_at_idx").on(
+      table.projectId,
+      table.createdAt
+    ),
+    index("project_audit_events_actor_idx").on(table.actorUserId),
+  ]
+);
+
+/** =========================
  *  invitation
  *  ========================= */
 export const invitations = pgTable("invitation", {
@@ -301,19 +421,22 @@ const vector = customType<{
   },
 });
 
-export const knowledgeChats = pgTable(
-  "chats",
+export const threads = pgTable(
+  "threads",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     title: text("title"),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     origin: text("origin", {
       enum: ["web", "github", "discord", "api"],
     })
@@ -326,28 +449,45 @@ export const knowledgeChats = pgTable(
     activeStreamId: text("active_stream_id"),
     isPublic: boolean("is_public").notNull().default(false),
     shareToken: text("share_token"),
-    ...knowledgeTimestamps,
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    index("knowledge_chats_user_id_idx").on(table.userId),
-    index("knowledge_chats_org_id_idx").on(table.organizationId),
-    index("knowledge_chats_origin_idx").on(table.origin),
-    index("knowledge_chats_external_thread_id_idx").on(table.externalThreadId),
-    uniqueIndex("knowledge_chats_share_token_idx").on(table.shareToken),
+    index("threads_created_by_user_id_idx").on(table.createdByUserId),
+    index("threads_org_id_idx").on(table.organizationId),
+    index("threads_project_id_idx").on(table.projectId),
+    index("threads_origin_idx").on(table.origin),
+    index("threads_external_thread_id_idx").on(table.externalThreadId),
+    index("threads_updated_at_idx").on(table.updatedAt),
+    index("threads_archived_at_idx").on(table.archivedAt),
+    uniqueIndex("threads_share_token_idx").on(table.shareToken),
   ]
 );
 
-export const knowledgeMessages = pgTable(
-  "messages",
+export const threadMessages = pgTable(
+  "thread_messages",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    chatId: text("chat_id")
+    threadId: text("thread_id")
       .notNull()
-      .references(() => knowledgeChats.id, { onDelete: "cascade" }),
+      .references(() => threads.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+    authorUserId: text("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    projectContextRevisionId: text("project_context_revision_id").references(
+      () => projectContextRevisions.id,
+      { onDelete: "set null" }
+    ),
     parts: jsonb("parts"),
+    searchText: text("search_text").notNull().default(""),
     feedback: text("feedback", { enum: ["positive", "negative"] }),
     model: text("model"),
     inputTokens: integer("input_tokens"),
@@ -360,9 +500,14 @@ export const knowledgeMessages = pgTable(
     ...knowledgeTimestamps,
   },
   (table) => [
-    index("knowledge_messages_chat_id_idx").on(table.chatId),
-    uniqueIndex("knowledge_messages_external_message_idx").on(
-      table.chatId,
+    index("thread_messages_thread_id_idx").on(table.threadId),
+    index("thread_messages_author_user_id_idx").on(table.authorUserId),
+    index("thread_messages_context_revision_idx").on(
+      table.projectContextRevisionId
+    ),
+    index("thread_messages_created_at_idx").on(table.createdAt),
+    uniqueIndex("thread_messages_external_message_idx").on(
+      table.threadId,
       table.externalMessageId
     ),
   ]
@@ -871,6 +1016,12 @@ export const knowledgeDocuments = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["organization", "project"] })
+      .notNull()
+      .default("organization"),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     uploaderUserId: text("uploader_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -890,6 +1041,7 @@ export const knowledgeDocuments = pgTable(
     chunkCount: integer("chunk_count").notNull().default(0),
     extractionMetadata: jsonb("extraction_metadata"),
     error: text("error"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...knowledgeTimestamps,
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -897,14 +1049,37 @@ export const knowledgeDocuments = pgTable(
   },
   (table) => [
     index("knowledge_documents_org_id_idx").on(table.organizationId),
+    index("knowledge_documents_project_id_idx").on(table.projectId),
+    index("knowledge_documents_scope_idx").on(table.scope),
     index("knowledge_documents_uploader_user_id_idx").on(table.uploaderUserId),
     index("knowledge_documents_status_idx").on(table.status),
     index("knowledge_documents_created_at_idx").on(table.createdAt),
-    uniqueIndex("knowledge_documents_org_checksum_idx").on(
-      table.organizationId,
-      table.checksumSha256
-    ),
+    uniqueIndex("knowledge_documents_org_checksum_idx")
+      .on(table.organizationId, table.checksumSha256)
+      .where(sql`${table.projectId} is null`),
+    uniqueIndex("knowledge_documents_project_checksum_idx")
+      .on(table.projectId, table.checksumSha256)
+      .where(sql`${table.projectId} is not null`),
     uniqueIndex("knowledge_documents_storage_key_idx").on(table.storageKey),
+  ]
+);
+
+export const projectContextDocuments = pgTable(
+  "project_context_documents",
+  {
+    contextRevisionId: text("context_revision_id")
+      .notNull()
+      .references(() => projectContextRevisions.id, { onDelete: "cascade" }),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.contextRevisionId, table.documentId] }),
+    index("project_context_documents_document_id_idx").on(table.documentId),
   ]
 );
 
@@ -1004,7 +1179,7 @@ export const artifactDocuments = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    chatId: text("chat_id").references(() => knowledgeChats.id, {
+    threadId: text("thread_id").references(() => threads.id, {
       onDelete: "set null",
     }),
   },
@@ -1013,7 +1188,7 @@ export const artifactDocuments = pgTable(
     index("knowledge_artifact_documents_id_idx").on(table.id),
     index("knowledge_artifact_documents_user_id_idx").on(table.userId),
     index("knowledge_artifact_documents_org_id_idx").on(table.organizationId),
-    index("knowledge_artifact_documents_chat_id_idx").on(table.chatId),
+    index("artifact_documents_thread_id_idx").on(table.threadId),
   ]
 );
 
@@ -1025,7 +1200,7 @@ export const messageSpeechAssets = pgTable(
       .$defaultFn(() => crypto.randomUUID()),
     messageId: text("message_id")
       .notNull()
-      .references(() => knowledgeMessages.id, { onDelete: "cascade" }),
+      .references(() => threadMessages.id, { onDelete: "cascade" }),
     modelId: text("model_id").notNull(),
     voice: text("voice").notNull().default("alloy"),
     textHash: text("text_hash").notNull(),
@@ -1066,7 +1241,7 @@ export const mediaGenerationJobs = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    chatId: text("chat_id").references(() => knowledgeChats.id, {
+    threadId: text("thread_id").references(() => threads.id, {
       onDelete: "set null",
     }),
     artifactId: text("artifact_id"),
@@ -1093,7 +1268,7 @@ export const mediaGenerationJobs = pgTable(
   },
   (table) => [
     index("media_generation_jobs_org_id_idx").on(table.organizationId),
-    index("media_generation_jobs_chat_id_idx").on(table.chatId),
+    index("media_generation_jobs_thread_id_idx").on(table.threadId),
     index("media_generation_jobs_status_idx").on(table.status),
     index("media_generation_jobs_kind_idx").on(table.kind),
     index("media_generation_jobs_gateway_id_idx").on(table.gatewayId),
@@ -1213,8 +1388,13 @@ export type Organization = InferSelectModel<typeof organizations>;
 export type Member = InferSelectModel<typeof members>;
 export type Invitation = InferSelectModel<typeof invitations>;
 export type Subscription = InferSelectModel<typeof subscriptions>;
-export type KnowledgeChat = InferSelectModel<typeof knowledgeChats>;
-export type KnowledgeMessage = InferSelectModel<typeof knowledgeMessages>;
+export type Project = InferSelectModel<typeof projects>;
+export type ProjectMember = InferSelectModel<typeof projectMembers>;
+export type ProjectContextRevision = InferSelectModel<
+  typeof projectContextRevisions
+>;
+export type Thread = InferSelectModel<typeof threads>;
+export type ThreadMessage = InferSelectModel<typeof threadMessages>;
 export type Source = InferSelectModel<typeof sources>;
 export type ToolProvider = InferSelectModel<typeof toolProviders>;
 export type ToolCapability = InferSelectModel<typeof toolCapabilities>;

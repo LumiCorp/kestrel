@@ -12,7 +12,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 type CreateMediaJobInput = {
   organizationId: string;
   userId: string;
-  chatId?: string | null;
+  threadId?: string | null;
   kind: "image" | "video";
   prompt: string;
   modelId: string;
@@ -159,7 +159,7 @@ async function materializeCompletedJob(
       content: job.outputUrl,
       userId: job.userId,
       organizationId: job.organizationId,
-      chatId: job.chatId,
+      threadId: job.threadId,
     });
   }
 
@@ -207,7 +207,7 @@ export async function createMediaGenerationJob(input: CreateMediaJobInput) {
       content,
       userId: input.userId,
       organizationId: input.organizationId,
-      chatId: input.chatId,
+      threadId: input.threadId,
     });
 
     const [job] = await knowledgeDb
@@ -216,7 +216,7 @@ export async function createMediaGenerationJob(input: CreateMediaJobInput) {
         id: crypto.randomUUID(),
         organizationId: input.organizationId,
         userId: input.userId,
-        chatId: input.chatId ?? null,
+        threadId: input.threadId ?? null,
         artifactId,
         kind: input.kind,
         gatewayId: resolved.gateway.id,
@@ -254,7 +254,7 @@ export async function createMediaGenerationJob(input: CreateMediaJobInput) {
       id: crypto.randomUUID(),
       organizationId: input.organizationId,
       userId: input.userId,
-      chatId: input.chatId ?? null,
+      threadId: input.threadId ?? null,
       artifactId,
       kind: input.kind,
       gatewayId: resolved.gateway.id,

@@ -7,11 +7,9 @@ import type {
   artifactDocuments,
   artifactSuggestions,
   discordGuildBindings,
-  knowledgeChats,
   knowledgeDocumentChunks,
   knowledgeDocuments,
   knowledgeIngestionRuns,
-  knowledgeMessages,
   knowledgeSnapshots,
   knowledgeSyncRuns,
   mediaGenerationJobs,
@@ -19,17 +17,29 @@ import type {
   organizationToolCapabilities,
   organizationToolConnections,
   organizationToolProviders,
+  projectContextRevisions,
+  projectMembers,
+  projects,
   sources,
+  threadMessages,
+  threads,
   toolCapabilities,
   toolProviders,
   usageStats,
 } from "@/drizzle/schema";
 
-export type DbChat = InferSelectModel<typeof knowledgeChats>;
-export type NewDbChat = InferInsertModel<typeof knowledgeChats>;
+export type DbThread = InferSelectModel<typeof threads>;
+export type NewDbThread = InferInsertModel<typeof threads>;
 
-export type DbMessage = InferSelectModel<typeof knowledgeMessages>;
-export type NewDbMessage = InferInsertModel<typeof knowledgeMessages>;
+export type DbThreadMessage = InferSelectModel<typeof threadMessages>;
+export type NewDbThreadMessage = InferInsertModel<typeof threadMessages>;
+
+export type DbProject = InferSelectModel<typeof projects>;
+export type NewDbProject = InferInsertModel<typeof projects>;
+export type DbProjectMember = InferSelectModel<typeof projectMembers>;
+export type DbProjectContextRevision = InferSelectModel<
+  typeof projectContextRevisions
+>;
 
 export type DbKnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;
 export type NewDbKnowledgeDocument = InferInsertModel<

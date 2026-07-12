@@ -102,9 +102,16 @@ export type KestrelOneAgentResponseInput = {
   agent?: KestrelAgent;
   session: Session;
   organizationId: string;
-  chatId: string;
+  threadId: string;
   messages: UIMessage[];
   modelId?: string;
+  projectContext?: {
+    projectId: string;
+    contextRevisionId: string;
+    contextRevision: number;
+    grantId: string;
+    systemContext: string;
+  };
   transientTitle?: Promise<string | null> | null;
   onFinishPersist?: (
     messages: UIMessage[],
@@ -240,10 +247,11 @@ export async function createKestrelOneAgentResponse(
     session: input.session,
     organizationId: input.organizationId,
     correlation: readRequestCorrelation(input.request),
-    chatId: input.chatId,
+    threadId: input.threadId,
     messages: input.messages,
     modelId: resolvedModel.model.id,
     runtimeModel,
+    projectContext: input.projectContext,
     transientTitle: input.transientTitle,
     onFinishPersist: input.onFinishPersist,
   });
