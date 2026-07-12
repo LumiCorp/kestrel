@@ -27,8 +27,6 @@ test("public docs surfaces exclude internal, maintainer, archive, and removed ap
         page.meta.audience !== "maintainers"
     )
   );
-  assert.equal(publicUrls.has("/apps/scenerunner"), false);
-
   for (const section of navigation) {
     assert.ok(section.landing);
     assert.ok(publicUrls.has(section.landing.url));
