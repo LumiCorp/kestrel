@@ -269,6 +269,7 @@ export class CommandRouter {
         return;
       }
 
+
       const unknownType = (command as { type?: string }).type ?? "unknown";
       const commandId = (command as { id?: string }).id;
       const metadata = typeof commandId === "string" ? { commandId } : undefined;
@@ -301,7 +302,6 @@ export class CommandRouter {
     }
   }
 }
-
 function normalizeDatabaseRuntimeFailure(error: unknown) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (databaseUrl === undefined || databaseUrl.length === 0) {
@@ -1178,6 +1178,48 @@ function validateProfilePayload(value: unknown, path: string): void {
   }
   if (typeof record.agent !== "string" || record.agent.trim().length === 0) {
     throw new Error(`${path}.agent must be a non-empty string`);
+  }
+  validateModelCredentialPayload(record, path);
+}
+
+function validateModelCredentialPayload(
+  profile: Record<string, unknown>,
+  path: string,
+): void {
+  if (profile.modelCredential === undefined) {
+    return;
+  }
+  if (
+    typeof profile.modelCredential !== "object" ||
+    profile.modelCredential === null ||
+    Array.isArray(profile.modelCredential)
+  ) {
+    throw new Error(`${path}.modelCredential must be an object`);
+  }
+
+  const reference = profile.modelCredential as Record<string, unknown>;
+  if (reference.source !== "kestrel-one") {
+    throw new Error(`${path}.modelCredential.source must be 'kestrel-one'`);
+  }
+  const gatewayId = requireNonEmptyString(
+    reference.gatewayId,
+    `${path}.modelCredential.gatewayId`,
+  );
+  const rawModelId = requireNonEmptyString(
+    reference.rawModelId,
+    `${path}.modelCredential.rawModelId`,
+  );
+  const model = requireNonEmptyString(profile.model, `${path}.model`);
+  if (model.trim() !== rawModelId.trim()) {
+    throw new Error(
+      `${path}.model must match ${path}.modelCredential.rawModelId for gateway-managed execution`,
+    );
+  }
+  if (gatewayId.trim() !== reference.gatewayId) {
+    throw new Error(`${path}.modelCredential.gatewayId must not contain surrounding whitespace`);
+  }
+  if (rawModelId.trim() !== reference.rawModelId) {
+    throw new Error(`${path}.modelCredential.rawModelId must not contain surrounding whitespace`);
   }
 }
 

@@ -133,6 +133,12 @@ export interface PersistedRunRecord {
   error?: RuntimeError | undefined;
 }
 
+export interface PersistedRunSummaryRecord {
+  run: PersistedRunRecord;
+  eventCount: number;
+  threadId?: string | undefined;
+}
+
 export interface PersistedRunStateRecord {
   runId: string;
   sessionId: string;
@@ -280,6 +286,11 @@ export interface RunRepository {
     status?: TransitionStatus | "RUNNING" | undefined;
     limit?: number | undefined;
   }): Promise<PersistedRunRecord[]>;
+  listRunSummaries(input?: {
+    sessionId?: string | undefined;
+    status?: TransitionStatus | "RUNNING" | undefined;
+    limit?: number | undefined;
+  }): Promise<PersistedRunSummaryRecord[]>;
   acquireRunLease(runId: string, sessionId: string): Promise<void>;
   releaseRunLease(runId: string, sessionId: string): Promise<void>;
   cancelActiveRun(sessionId: string, error?: RuntimeError): Promise<{ runId?: string | undefined }>;

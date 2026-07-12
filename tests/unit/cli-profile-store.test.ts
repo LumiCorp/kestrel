@@ -135,6 +135,53 @@ test("ProfileStore adds Kestrel-One profile to existing profile files", async ()
   assert.equal(saved.profiles.some((profile) => profile.id === "kestrel-one"), true);
 });
 
+test("ProfileStore never persists transient gateway credential references", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-managed-credential-")
+  );
+  const filePath = path.join(tempDir, "profiles.json");
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      version: 3,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.4",
+          modelCredential: {
+            source: "kestrel-one",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "openai/gpt-5.4",
+          },
+        },
+      ],
+    }),
+    "utf8"
+  );
+
+  const store = new ProfileStore(tempDir);
+  const profiles = await store.load();
+  assert.equal(
+    profiles.find((profile) => profile.id === "reference")?.modelCredential
+      ?.gatewayId,
+    "gateway-openrouter"
+  );
+
+  const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
+    profiles: Array<Record<string, unknown>>;
+  };
+  const reference = persisted.profiles.find(
+    (profile) => profile.id === "reference"
+  );
+  assert.equal(reference?.modelCredential, undefined);
+  assert.equal(reference?.model, undefined);
+  assert.equal(reference?.modelProvider, undefined);
+});
+
 test("parseProfilesFile validates profile shape", () => {
   assert.throws(() => {
     parseProfilesFile(JSON.stringify({ version: 2, profiles: [{ id: "x" }] }));

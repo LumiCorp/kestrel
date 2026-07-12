@@ -16,6 +16,7 @@ import type {
   PersistedArtifact,
   PersistedClaim,
   PersistedRunRecord,
+  PersistedRunSummaryRecord,
   PersistedRunStateRecord,
   OutboxEventRecord,
   PersistedEffect,
@@ -382,6 +383,67 @@ export class PostgresSessionStore implements SessionStore {
       values,
     );
     return result.rows.map((row) => this.mapRunRow(row));
+  }
+
+  async listRunSummaries(input: {
+    sessionId?: string | undefined;
+    status?: TransitionStatus | "RUNNING" | undefined;
+    limit?: number | undefined;
+  } = {}): Promise<PersistedRunSummaryRecord[]> {
+    await this.ensureSchemaV3();
+    const clauses: string[] = [];
+    const values: unknown[] = [];
+    if (input.sessionId !== undefined) {
+      values.push(input.sessionId);
+      clauses.push(`session_id = $${values.length}`);
+    }
+    if (input.status !== undefined) {
+      values.push(input.status);
+      clauses.push(`status = $${values.length}`);
+    }
+    values.push(Math.max(1, Math.min(input.limit ?? 50, 200)));
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const result = await this.db.query<{
+      run_id: string;
+      session_id: string;
+      event_type: string;
+      status: TransitionStatus | "RUNNING";
+      started_at: string;
+      completed_at: string | null;
+      error_json: Record<string, unknown> | null;
+      event_count: number | string;
+      thread_id: string | null;
+    }>(
+      `WITH selected_runs AS (
+         SELECT run_id, session_id, event_type, status, started_at, completed_at, error_json
+           FROM runs
+           ${where}
+          ORDER BY started_at DESC
+          LIMIT $${values.length}
+       )
+       SELECT selected_runs.*,
+              (
+                SELECT COUNT(*)::integer
+                  FROM run_events
+                 WHERE run_events.run_id = selected_runs.run_id
+              ) AS event_count,
+              (
+                SELECT NULLIF(run_events.metadata_json ->> 'threadId', '')
+                  FROM run_events
+                 WHERE run_events.run_id = selected_runs.run_id
+                   AND NULLIF(run_events.metadata_json ->> 'threadId', '') IS NOT NULL
+                 ORDER BY run_events.occurred_at DESC, run_events.id DESC
+                 LIMIT 1
+              ) AS thread_id
+         FROM selected_runs
+        ORDER BY selected_runs.started_at DESC`,
+      values,
+    );
+    return result.rows.map((row) => ({
+      run: this.mapRunRow(row),
+      eventCount: Number(row.event_count),
+      ...(row.thread_id !== null ? { threadId: row.thread_id } : {}),
+    }));
   }
 
   async ensureSession(sessionId: string, initialStepAgent?: string): Promise<SessionRecord> {

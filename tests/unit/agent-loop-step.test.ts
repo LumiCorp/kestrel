@@ -1596,6 +1596,54 @@ test("agent loop retries missing terminal tool calls with control tools only aft
   assert.equal(commands[0]?.name, "finalize");
 });
 
+test("agent loop terminal retry omits ask_user for noninteractive job runs", async () => {
+  const jobContext = context();
+  jobContext.event.type = "job.run";
+  jobContext.event.payload = {
+    ...jobContext.event.payload,
+    interactionMode: "build",
+  };
+  jobContext.session.state.agent = {
+    interactionMode: "build",
+    lastActionResult: {
+      kind: "tool",
+      status: "passed",
+      name: "exec_command",
+      toolName: "exec_command",
+      output: {
+        status: "passed",
+        text: "focused tests passed",
+      },
+    },
+  };
+  const requests: ModelRequest[] = [];
+
+  const transition = await buildStep({ tools: [READ_TEXT_TOOL] })(jobContext, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (requests.length === 1) {
+        return modelResponse({ reason: "The implementation and focused tests are complete." });
+      }
+      return modelResponse({
+        reason: "Finalize the completed noninteractive job.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "Implemented and verified the requested change.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1]?.tools?.map((tool) => tool.name), [
+    "kestrel_finalize",
+    "kestrel_cannot_satisfy",
+  ]);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+});
+
 test("agent loop fails as validation exhausted when terminal-control retry still returns no tool call", async () => {
   const buildContext = context();
   buildContext.event.payload = {
@@ -3574,41 +3622,51 @@ test("agent loop rejects plan-mode external side-effect choices instead of askin
   assert.doesNotMatch(JSON.stringify(agent), /act\.full_auto|switch to act full auto/u);
 });
 
-test("agent loop hides ask_user control tool for noninteractive Terminal-Bench runs", async () => {
-  const terminalBenchContext = context();
-  terminalBenchContext.event.type = "job.run";
-  terminalBenchContext.event.payload = {
-    message: "Create /app/answer.txt.",
+test("agent loop rejects ask_user and preserves a noninteractive retry surface for SWE job runs", async () => {
+  const sweContext = context();
+  sweContext.event.type = "job.run";
+  sweContext.event.payload = {
+    message: "Fix the failing test in /testbed.",
     interactionMode: "build",
     modeSystemV2Enabled: true,
     benchmark: {
-      name: "terminal-bench",
-      taskId: "hello-world",
+      name: "swe-verified",
+      taskId: "pytest-dev__pytest-10051",
       context: {
-        source: "terminal-bench",
-        taskId: "hello-world",
-        workspaceRoot: "/app",
+        source: "swe-verified",
+        taskId: "pytest-dev__pytest-10051",
+        workspaceRoot: "/testbed",
       },
     },
     workspace: {
-      workspaceId: "terminal-bench",
-      workspaceRoot: "/app",
-      label: "Terminal-Bench task container",
+      workspaceId: "swe-verified",
+      workspaceRoot: "/testbed",
+      label: "SWE Verified testbed",
       managedWorktreeRequired: false,
     },
   };
-  terminalBenchContext.session.state.agent = {
+  sweContext.session.state.agent = {
     interactionMode: "build",
     modeSystemV2Enabled: true,
   };
-  let requestToolNames: string[] = [];
+  const requestToolNames: string[][] = [];
 
-  const transition = await buildStep()(terminalBenchContext, {
+  const io = {
     useModel: async (request: ModelRequest) => {
-      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      requestToolNames.push((request.tools ?? []).map((tool) => tool.name));
+      if (requestToolNames.length === 1) {
+        return modelResponse({
+          version: "v1",
+          reason: "Ask the user which implementation to use.",
+          nextAction: {
+            kind: "ask_user",
+            prompt: "Which implementation should I use?",
+          },
+        });
+      }
       return modelResponse({
         version: "v1",
-        reason: "Read the public workspace file.",
+        reason: "Continue from repository evidence instead.",
         nextAction: {
           kind: "tool",
           name: "fs.read_text",
@@ -3616,13 +3674,26 @@ test("agent loop hides ask_user control tool for noninteractive Terminal-Bench r
         },
       });
     },
-  } satisfies StepIO);
+  } satisfies StepIO;
+
+  const rejectedTransition = await buildStep()(sweContext, io);
+  assert.equal(rejectedTransition.status, "RUNNING");
+  assert.equal(rejectedTransition.nextStepAgent, "agent.loop");
+  sweContext.session.state.agent = rejectedTransition.statePatch?.agent as Record<string, unknown>;
+  sweContext.stepIndex += 1;
+  const transition = await buildStep()(sweContext, io);
 
   assert.equal(transition.status, "RUNNING");
-  assert.ok(requestToolNames.includes("kestrel_finalize"));
-  assert.ok(requestToolNames.includes("kestrel_cannot_satisfy"));
-  assert.ok(requestToolNames.includes("kestrel_todo_update"));
-  assert.equal(requestToolNames.includes("kestrel_ask_user"), false);
+  assert.equal(requestToolNames.length, 2);
+  for (const names of requestToolNames) {
+    assert.ok(names.includes("kestrel_finalize"));
+    assert.ok(names.includes("kestrel_todo_update"));
+    assert.equal(names.includes("kestrel_ask_user"), false);
+  }
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const nextAction = agent.nextAction as Record<string, unknown>;
+  assert.equal(nextAction.kind, "tool");
+  assert.equal(nextAction.name, "fs.read_text");
 });
 
 test("agent loop narrows build-mode cannot_satisfy reasons to concrete unavailable blockers", async () => {

@@ -57,6 +57,8 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
 
 class OperatorRunWindowStore extends InMemorySessionStore {
   readonly listRunInputs: Array<Parameters<InMemorySessionStore["listRuns"]>[0]> = [];
+  readonly getRunInputs: string[] = [];
+  readonly replayStreamInputs: Array<Parameters<InMemorySessionStore["getReplayStream"]>[0]> = [];
   private readonly operatorRuns: PersistedRunRecord[];
 
   constructor(runs: PersistedRunRecord[]) {
@@ -65,8 +67,16 @@ class OperatorRunWindowStore extends InMemorySessionStore {
   }
 
   override async getRun(runId: string): Promise<PersistedRunRecord | null> {
+    this.getRunInputs.push(runId);
     const run = this.operatorRuns.find((entry) => entry.runId === runId);
     return run === undefined ? null : structuredClone(run);
+  }
+
+  override async getReplayStream(
+    input: Parameters<InMemorySessionStore["getReplayStream"]>[0],
+  ) {
+    this.replayStreamInputs.push(structuredClone(input));
+    return super.getReplayStream(input);
   }
 
   override async listRuns(
@@ -257,6 +267,8 @@ test("ThreadRuntime derives operator session summaries only from the returned ru
   assert.deepEqual(sessionStore.listRunInputs[0], { limit: 3 });
   assert.equal(index.filters.limit, 2);
   assert.equal(index.hasMore, true);
+  assert.deepEqual(sessionStore.getRunInputs, []);
+  assert.deepEqual(sessionStore.replayStreamInputs, []);
   assert.deepEqual(index.runs.map((entry) => entry.run.runId), ["run-new", "run-mid"]);
   assert.deepEqual(index.sessions, [
     {

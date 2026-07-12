@@ -9,6 +9,53 @@ import {
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 
+test("listRunSummaries projects bounded event aggregates in one query", async () => {
+  const sql = new ScriptedSqlExecutor([
+    {
+      match: /WITH selected_runs AS[\s\S]*SELECT COUNT\(\*\)::integer[\s\S]*metadata_json ->> 'threadId'/,
+      rows: [
+        {
+          run_id: "run-summary",
+          session_id: "session-summary",
+          event_type: "user.message",
+          status: "WAITING",
+          started_at: "2026-07-11T12:00:00.000Z",
+          completed_at: null,
+          error_json: null,
+          event_count: "37",
+          thread_id: "thread-summary",
+        },
+      ],
+    },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  const summaries = await store.listRunSummaries({
+    sessionId: "session-summary",
+    status: "WAITING",
+    limit: 51,
+  });
+
+  assert.deepEqual(sql.queries[0]?.values, ["session-summary", "WAITING", 51]);
+  assert.deepEqual(summaries, [
+    {
+      run: {
+        runId: "run-summary",
+        sessionId: "session-summary",
+        eventType: "user.message",
+        status: "WAITING",
+        startedAt: "2026-07-11T12:00:00.000Z",
+        completedAt: undefined,
+        error: undefined,
+      },
+      eventCount: 37,
+      threadId: "thread-summary",
+    },
+  ]);
+  assert.equal(sql.queries.length, 1);
+  sql.assertExhausted();
+});
+
 test("commitStep wraps writes in transaction and commits", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },

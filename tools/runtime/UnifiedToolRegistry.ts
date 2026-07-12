@@ -690,6 +690,7 @@ function resolveScopedRunContext(
     ...(asRecord(workspace?.commands) !== undefined ? { commands: asRecord(workspace?.commands) as Record<string, string | undefined> } : {}),
   };
   const tenantId = readKestrelOneTenantId(payload);
+  const contextGrantId = readKestrelOneContextGrantId(payload);
   const interactionMode = readInteractionMode(payload);
   const devShellSourceWriteApprovalGrants = readDevShellSourceWriteApprovalGrants(payload);
   const sourceWriteAuthority = resolveDevShellSourceWriteAuthority(workspace, trustedManagedWorktree);
@@ -703,11 +704,12 @@ function resolveScopedRunContext(
       ...baseContext,
       runtime,
       ...(interactionMode !== undefined ? { interactionMode } : {}),
-      ...(tenantId !== undefined
+      ...(tenantId !== undefined || contextGrantId !== undefined
         ? {
             kestrelOne: {
               ...(baseContext.kestrelOne ?? {}),
-              tenantId,
+              ...(tenantId !== undefined ? { tenantId } : {}),
+              ...(contextGrantId !== undefined ? { contextGrantId } : {}),
             },
           }
         : {}),
@@ -880,6 +882,12 @@ function readKestrelOneTenantId(payload: unknown): string | undefined {
   const clientCapabilities = asRecord(asRecord(payload)?.clientCapabilities);
   const kestrelOne = asRecord(clientCapabilities?.kestrelOne);
   return asNonEmptyString(kestrelOne?.tenantId) ?? asNonEmptyString(kestrelOne?.organizationId);
+}
+
+function readKestrelOneContextGrantId(payload: unknown): string | undefined {
+  const clientCapabilities = asRecord(asRecord(payload)?.clientCapabilities);
+  const kestrelOne = asRecord(clientCapabilities?.kestrelOne);
+  return asNonEmptyString(kestrelOne?.contextGrantId);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

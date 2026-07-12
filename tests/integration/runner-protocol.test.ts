@@ -78,9 +78,77 @@ test("CommandRouter emits runner.error for unsupported command type", async () =
   await host.close();
 });
 
+test("run.start rejects a mismatched gateway-managed model reference", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("invalid profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{
+    type: string;
+    commandId?: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        type: string;
+        commandId?: string;
+        payload: Record<string, unknown>;
+      },
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-managed-profile-invalid",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          model: "openai/gpt-5.4",
+          modelCredential: {
+            source: "kestrel-one",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "z-ai/glm-5.2",
+          },
+        },
+        turn: {
+          sessionId: "session-invalid-managed-profile",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.commandId, "cmd-managed-profile-invalid");
+  assert.match(
+    String(events[0]?.payload.message),
+    /model must match .*modelCredential\.rawModelId/,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("run.start emits started/log/completed protocol events", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
+  const managedProfile: TuiProfile = {
+    ...profile,
+    modelProvider: "openrouter",
+    model: "openai/gpt-5.4",
+    modelCredential: {
+      source: "kestrel-one",
+      gatewayId: "gateway-openrouter",
+      rawModelId: "openai/gpt-5.4",
+    },
+  };
+  let receivedProfile: TuiProfile | undefined;
 
   let logListener: ((entry: RunLogEntry) => void) | undefined;
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
@@ -158,7 +226,8 @@ test("run.start emits started/log/completed protocol events", async () => {
     close: async () => {},
   });
 
-  const host = new RunnerHost(writer, (_profile, onRunLog, onProgress, onConsole, onReasoning, _onTaskUpdate, onRunEvent) => {
+  const host = new RunnerHost(writer, (runtimeProfile, onRunLog, onProgress, onConsole, onReasoning, _onTaskUpdate, onRunEvent) => {
+    receivedProfile = runtimeProfile;
     logListener = onRunLog;
     progressListener = onProgress;
     consoleListener = onConsole;
@@ -179,7 +248,7 @@ test("run.start emits started/log/completed protocol events", async () => {
       id: "cmd-1",
       type: "run.start",
       payload: {
-        profile,
+        profile: managedProfile,
         turn: {
           sessionId: "session-1",
           message: "hiya",
@@ -203,6 +272,7 @@ test("run.start emits started/log/completed protocol events", async () => {
     | { clientCapabilities?: { surface?: string | undefined } | undefined }
     | undefined;
   assert.equal(startedPayload?.clientCapabilities?.surface, "tui");
+  assert.deepEqual(receivedProfile?.modelCredential, managedProfile.modelCredential);
   rl.close();
   await host.close();
 });
@@ -1811,6 +1881,7 @@ test("CommandRouter emits runner.error for invalid operator.control payload", as
   await host.close();
 });
 
+
 function asErrorPayload(payload: Record<string, unknown> | undefined): { code?: string | undefined } {
   const error = payload?.error;
   if (typeof error !== "object" || error === null || Array.isArray(error)) {
@@ -1818,7 +1889,6 @@ function asErrorPayload(payload: Record<string, unknown> | undefined): { code?: 
   }
   return error as { code?: string | undefined };
 }
-
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }

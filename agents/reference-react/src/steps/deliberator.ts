@@ -153,16 +153,17 @@ const PLAN_MODE_CONTROL_TOOL_NAMES = [
 
 function controlToolNamesForInteractionMode(input: {
   interactionMode: InteractionMode;
+  eventType: string;
   eventPayload: Record<string, unknown>;
   executableWorkspaceToolsAvailable: boolean;
 }): readonly string[] {
   if (input.interactionMode === "build" && input.executableWorkspaceToolsAvailable) {
-    const buildControlTools = input.eventPayload !== undefined && isNoninteractiveBenchmarkContext(input.eventPayload)
+    const buildControlTools = isNoninteractiveExecutionContext(input.eventType, input.eventPayload)
       ? NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES
       : EXECUTION_MODE_CONTROL_TOOL_NAMES;
     return buildControlTools.filter((name) => name !== "kestrel.cannot_satisfy");
   }
-  if (isNoninteractiveBenchmarkContext(input.eventPayload)) {
+  if (isNoninteractiveExecutionContext(input.eventType, input.eventPayload)) {
     return input.interactionMode === "plan"
       ? PLAN_MODE_CONTROL_TOOL_NAMES.filter((name) => name !== "kestrel.ask_user")
       : NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES;
@@ -191,13 +192,19 @@ function cannotSatisfyReasonCodesForInteractionMode(input: {
   return ["missing_required_capability", "requested_tool_unavailable"];
 }
 
-function terminalControlToolNamesForContext(eventPayload: Record<string, unknown>): readonly string[] {
-  return isNoninteractiveBenchmarkContext(eventPayload)
+function terminalControlToolNamesForContext(
+  eventType: string,
+  eventPayload: Record<string, unknown>,
+): readonly string[] {
+  return isNoninteractiveExecutionContext(eventType, eventPayload)
     ? NONINTERACTIVE_TERMINAL_CONTROL_TOOL_NAMES
     : TERMINAL_CONTROL_TOOL_NAMES;
 }
 
-function isNoninteractiveBenchmarkContext(eventPayload: Record<string, unknown>): boolean {
+function isNoninteractiveExecutionContext(eventType: string, eventPayload: Record<string, unknown>): boolean {
+  if (eventType === "job.run") {
+    return true;
+  }
   const benchmark = asRecord(eventPayload.benchmark) ??
     asRecord(asRecord(eventPayload.metadata)?.benchmark);
   const context = asRecord(benchmark?.context);
@@ -413,6 +420,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const observedCapabilities = extractObservedCapabilitiesFromFeedback(reactState);
     const modeScopedControlToolNames = controlToolNamesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
+      eventType: ctx.event.type,
       eventPayload,
       executableWorkspaceToolsAvailable,
     });
@@ -423,7 +431,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const cannotSatisfyReasonCodes = cannotSatisfyReasonCodesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
     });
-    const terminalControlToolNames = terminalControlToolNamesForContext(eventPayload);
+    const terminalControlToolNames = terminalControlToolNamesForContext(ctx.event.type, eventPayload);
     let activeReactState: Record<string, unknown> = {
       ...reactState,
       modelTranscript: contextRequest.transcript,

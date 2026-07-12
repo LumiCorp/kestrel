@@ -12,6 +12,10 @@ export function createOllamaModelGatewayFromEnv(
   options: OllamaGatewayFactoryOptions = {},
 ): ModelGateway {
   const loaded = loadOllamaEnv(options.env);
+  const hasApiKeyOverride = Object.prototype.hasOwnProperty.call(
+    options.envConfig ?? {},
+    "apiKey",
+  );
   return createOpenAiModelGatewayFromEnv({
     ...options,
     envConfig: {
@@ -21,7 +25,7 @@ export function createOllamaModelGatewayFromEnv(
       providerLabel: "Ollama",
       model: options.envConfig?.model ?? loaded.model,
       baseUrl: options.envConfig?.baseUrl ?? loaded.baseUrl,
-      apiKey: options.envConfig?.apiKey ?? loaded.apiKey,
+      apiKey: hasApiKeyOverride ? options.envConfig?.apiKey : loaded.apiKey,
     },
   });
 }
