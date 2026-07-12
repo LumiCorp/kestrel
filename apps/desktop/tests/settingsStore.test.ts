@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   buildDesktopRunnerEnvironment,
+  buildDesktopRunnerProfile,
   buildDesktopModelEnvironment,
   createDefaultDesktopSettings,
   describeDesktopProviderCredentialRequirement,
@@ -610,6 +611,25 @@ test("buildDesktopModelEnvironment uses the shared model policy instead of Deskt
   assert.equal(env.OPENROUTER_MODEL, undefined);
   assert.equal(env.OPENAI_API_KEY, "openai-key");
   assert.equal(env.OPENAI_MODEL, "gpt-5.4-2026-03-05");
+});
+
+test("buildDesktopRunnerProfile applies the selected model policy to run.start", () => {
+  const profile = buildDesktopRunnerProfile({
+    version: 1,
+    provider: "ollama",
+    model: "qwen3:8b",
+    modelByStage: { "agent.loop": "qwen3:14b" },
+    modelCapabilities: {
+      visionInputEnabled: false,
+    },
+  });
+
+  assert.equal(profile.modelProvider, "ollama");
+  assert.equal(profile.model, "qwen3:8b");
+  assert.equal(
+    profile.agentStageConfig?.modelByStage?.["agent.loop"],
+    "qwen3:14b",
+  );
 });
 
 test("hasConfiguredDesktopProviderCredential follows the selected provider", () => {

@@ -7,7 +7,11 @@ import {
   hasConfiguredDesktopProviderCredential as sharedHasConfiguredDesktopProviderCredential,
 } from "../../../src/desktopShell/onboarding.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
-import type { ResolvedModelPolicy } from "../../../src/profile/modelPolicy.js";
+import {
+  type ResolvedModelPolicy,
+  resolveProfileWithModelPolicy,
+} from "../../../src/profile/modelPolicy.js";
+import { createWebDemoProfile } from "../../../src/web/profile.js";
 import type {
   DesktopCapabilityPackId,
   DesktopDatabaseMode,
@@ -394,6 +398,13 @@ export function buildDesktopModelEnvironment(
   }
 
   return env;
+}
+
+export function buildDesktopRunnerProfile(modelPolicy: ResolvedModelPolicy) {
+  return resolveProfileWithModelPolicy(
+    createWebDemoProfile("desktop"),
+    modelPolicy,
+  );
 }
 
 export function buildDesktopRunnerEnvironment(

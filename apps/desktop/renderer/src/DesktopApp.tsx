@@ -39,6 +39,8 @@ import { ProjectWorkspace } from "./ProjectWorkspace";
 import {
   addRendererThread,
   appendRendererTranscript,
+  getRendererTurnContinuation,
+  getTerminalWaitEventType,
   readDesktopRendererState,
   selectRendererThread,
   serializeDesktopRendererState,
@@ -138,7 +140,9 @@ export function DesktopApp() {
     document.documentElement.style.colorScheme = state.theme;
     void window.kestrelDesktop
       .saveUiState(serializeDesktopRendererState(state))
-      .catch(() => undefined);
+      .catch((cause) => {
+        setError(`Desktop state could not be saved: ${errorMessage(cause)}`);
+      });
   }, [state]);
 
   useEffect(() => {
@@ -159,6 +163,8 @@ export function DesktopApp() {
     const submittedAt = new Date().toISOString();
     const threadId = activeThread.id;
     const history = toDesktopRunHistory(activeThread);
+    const continuation = getRendererTurnContinuation(activeThread);
+    const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     setDraft("");
     setError(undefined);
     setActivity("Starting run");
@@ -166,35 +172,77 @@ export function DesktopApp() {
       threadId,
       sessionId: activeThread.sessionId,
     });
-    setState((current) => current === undefined
-      ? current
-      : appendRendererTranscript(current, threadId, {
-          role: "user",
-          text: message,
-          timestamp: submittedAt,
-        }));
+    setState((current) => {
+      if (current === undefined) {
+        return current;
+      }
+      const appended = appendRendererTranscript(current, threadId, {
+        role: "user",
+        text: message,
+        timestamp: submittedAt,
+      });
+      return updateRendererThread(appended, threadId, (thread) => ({
+        ...thread,
+        pendingWaitEventType: undefined,
+      }));
+    });
 
     try {
       const terminal = await window.kestrelDesktop.runTurn({
         sessionId: activeThread.sessionId,
         message,
-        eventType: "user.message",
+        eventType: continuation.eventType,
+        ...(continuation.resumeFromWait === true
+          ? { resumeFromWait: true }
+          : {}),
+        ...(continuation.resumeBlockedRun === true
+          ? { resumeBlockedRun: true }
+          : {}),
         history,
         interactionMode: activeThread.mode,
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
       });
       const assistantText = extractTerminalMessage(terminal);
+      const pendingWaitEventType = getTerminalWaitEventType(terminal);
       if (assistantText !== undefined) {
+        setState((current) => {
+          if (current === undefined) {
+            return current;
+          }
+          const appended = appendRendererTranscript(current, threadId, {
+            role: "assistant",
+            text: assistantText,
+            timestamp: new Date().toISOString(),
+          });
+          return updateRendererThread(appended, threadId, (thread) => ({
+            ...thread,
+            pendingWaitEventType,
+          }));
+        });
+      } else {
         setState((current) => current === undefined
           ? current
-          : appendRendererTranscript(current, threadId, {
-              role: "assistant",
-              text: assistantText,
-              timestamp: new Date().toISOString(),
-            }));
+          : updateRendererThread(current, threadId, (thread) => ({
+              ...thread,
+              pendingWaitEventType,
+            })));
       }
-      setActivity(terminal.type === "run.cancelled" ? "Cancelled" : "Ready");
+      setActivity(
+        pendingWaitEventType !== undefined
+          ? `Waiting for ${pendingWaitEventType}`
+          : terminal.type === "run.cancelled"
+            ? "Cancelled"
+            : "Ready",
+      );
     } catch (cause) {
+      if (submittedPendingWaitEventType !== undefined) {
+        setState((current) => current === undefined
+          ? current
+          : updateRendererThread(current, threadId, (thread) => ({
+              ...thread,
+              pendingWaitEventType: submittedPendingWaitEventType,
+            })));
+      }
       setError(errorMessage(cause));
       setActivity("Run failed");
     } finally {

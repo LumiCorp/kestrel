@@ -3,9 +3,14 @@ import test from "node:test";
 
 import {
   appendRendererTranscript,
+  getRendererTurnContinuation,
+  getTerminalWaitEventType,
+  MAX_PERSISTED_TRANSCRIPT_BYTES,
+  MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD,
   readDesktopRendererState,
   serializeDesktopRendererState,
 } from "../renderer/src/state.js";
+import type { DesktopRunnerEvent } from "../src/contracts.js";
 
 test("Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
   const state = readDesktopRendererState({
@@ -57,4 +62,101 @@ test("Vite renderer hydrates legacy threads and preserves unknown persisted fiel
   assert.equal(store.summaries[0]?.titleLocked, true);
   assert.equal(store.states["thread-1"]?.runtimeThreadId, "runtime-thread-1");
   assert.equal((store.states["thread-1"]?.transcript as unknown[]).length, 2);
+});
+
+test("Vite renderer persists and resumes the pending wait contract", () => {
+  const state = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    sourceAppVersion: "0.5.1",
+    capturedAt: "2026-07-09T12:00:00.000Z",
+    entries: {
+      "kchat:web:active-thread:v1": "thread-waiting",
+      "kchat:web:threads:v2": JSON.stringify({
+        summaries: [{
+          id: "thread-waiting",
+          title: "Waiting",
+          updatedAt: "2026-07-09T12:00:00.000Z",
+        }],
+        states: {
+          "thread-waiting": {
+            sessionId: "session-waiting",
+            transcript: [],
+            pendingWaitEventType: "user.approval",
+          },
+        },
+      }),
+    },
+  });
+
+  assert.deepEqual(
+    getRendererTurnContinuation(state.threads[0]!),
+    {
+      eventType: "user.approval",
+      resumeFromWait: true,
+      resumeBlockedRun: true,
+    },
+  );
+  const terminal = {
+    type: "run.completed",
+    payload: {
+      result: {
+        output: {
+          status: "WAITING",
+          waitFor: { eventType: "user.reply" },
+        },
+      },
+    },
+  } as DesktopRunnerEvent;
+  assert.equal(getTerminalWaitEventType(terminal), "user.reply");
+
+  assert.deepEqual(
+    getRendererTurnContinuation({
+      ...state.threads[0]!,
+      pendingWaitEventType: "user.reply",
+    }),
+    {
+      eventType: "user.reply",
+      resumeFromWait: true,
+    },
+  );
+
+  const serialized = serializeDesktopRendererState(state);
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    sourceAppVersion: "0.5.1",
+    capturedAt: "2026-07-09T12:01:00.000Z",
+    entries: serialized,
+  });
+  assert.equal(
+    hydrated.threads[0]?.pendingWaitEventType,
+    "user.approval",
+  );
+});
+
+test("Vite renderer bounds persisted transcript history below the UI-state cap", () => {
+  let state = readDesktopRendererState(null);
+  const threadId = state.activeThreadId;
+  for (let index = 0; index < 700; index += 1) {
+    state = appendRendererTranscript(state, threadId, {
+      role: index % 2 === 0 ? "user" : "assistant",
+      text: `${index}: ${"x".repeat(20_000)}`,
+      timestamp: new Date(Date.UTC(2026, 6, 9, 12, 0, index)).toISOString(),
+    });
+  }
+
+  const serialized = serializeDesktopRendererState(state);
+  const threadStore = serialized["kchat:web:threads:v2"]!;
+  const parsed = JSON.parse(threadStore) as {
+    states: Record<string, { transcript: Array<{ text: string }> }>;
+  };
+  const persisted = parsed.states[threadId]!.transcript;
+
+  assert.ok(
+    Buffer.byteLength(threadStore, "utf8") <
+      MAX_PERSISTED_TRANSCRIPT_BYTES + 512 * 1024,
+  );
+  assert.ok(persisted.length <= MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD);
+  assert.match(persisted.at(-1)?.text ?? "", /^699:/u);
 });
