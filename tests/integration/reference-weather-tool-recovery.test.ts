@@ -338,6 +338,61 @@ test("reference harness routes default plan-mode weather asks into tooling route
   assert.equal(result.toolCalls.some((entry) => entry.name === "free.weather.current"), true);
 });
 
+test("reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
+  const result = await runReferenceRecoveryScenario({
+    sessionId: "session-weather-range-1",
+    message: "whats the weather in cincinnati oh between now and wednesday",
+    extractorObjective: "Get Cincinnati weather from now through Wednesday",
+    toolName: "free.weather.forecast",
+    toolInputSchema: {
+      type: "object",
+      properties: {
+        city: { type: "string" },
+        days: { type: "number", minimum: 1, maximum: 10 },
+      },
+      required: ["city", "days"],
+      additionalProperties: false,
+    },
+    capabilityClasses: ["weather.forecast"],
+    toolResult: {
+      source: "open-meteo",
+      latitude: 39.1031,
+      longitude: -84.512,
+      timezone: "America/New_York",
+      requestedDays: 4,
+      granularity: "mixed",
+      target: {
+        time: "2026-07-12T15:00",
+        temperatureC: 27,
+        apparentTemperatureC: 29,
+        precipitationProbabilityPct: 20,
+        precipitationMm: 0,
+        windSpeedKph: 9,
+      },
+      daily: [
+        { date: "2026-07-12", minTemperatureC: 21, maxTemperatureC: 30, precipitationProbabilityPct: 20, precipitationMm: 0, windSpeedKph: 9, weatherCode: 1 },
+        { date: "2026-07-13", minTemperatureC: 22, maxTemperatureC: 32, precipitationProbabilityPct: 30, precipitationMm: 0.5, windSpeedKph: 10, weatherCode: 2 },
+        { date: "2026-07-14", minTemperatureC: 23, maxTemperatureC: 33, precipitationProbabilityPct: 50, precipitationMm: 2.4, windSpeedKph: 14, weatherCode: 61 },
+        { date: "2026-07-15", minTemperatureC: 21, maxTemperatureC: 31, precipitationProbabilityPct: 40, precipitationMm: 1.2, windSpeedKph: 12, weatherCode: 80 },
+      ],
+      nextHours: [
+        { time: "2026-07-12T16:00", temperatureC: 28, apparentTemperatureC: 30, precipitationProbabilityPct: 25, precipitationMm: 0, windSpeedKph: 10 },
+      ],
+    },
+    expectedToolInput: {
+      city: "Cincinnati, OH",
+      days: 4,
+    },
+    expectedLoopEvidence: "maxTemperatureC=31",
+    finalMessage: "Cincinnati stays warm through Wednesday, with highs near 30-33C and the best rain chances Tuesday and Wednesday.",
+  });
+
+  assert.deepEqual(
+    result.toolCalls.map((entry) => entry.name),
+    ["free.weather.forecast", "FinalizeAnswer"],
+  );
+});
+
 test("reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-fx-1",
@@ -444,6 +499,7 @@ async function runReferenceRecoveryScenario(input: {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
+  let observedLoopEvidence = false;
 
   const toolGateway: ToolGateway = {
     async call<T>(name: string, payload: unknown): Promise<T> {
@@ -470,6 +526,16 @@ async function runReferenceRecoveryScenario(input: {
 
     if (schemaName === "kestrel_agent_action" || request.tools !== undefined) {
       if (toolCalls.some((entry) => entry.name === input.toolName)) {
+        const modelVisibleRequest = JSON.stringify({
+          input: request.input,
+          messages: request.messages,
+        });
+        observedLoopEvidence = modelVisibleRequest.includes(input.expectedLoopEvidence);
+        assert.equal(
+          observedLoopEvidence,
+          true,
+          `Expected next model request to include tool evidence '${input.expectedLoopEvidence}'.`,
+        );
         return modelResponse({
           nextAction: {
             kind: "finalize",
@@ -536,6 +602,7 @@ async function runReferenceRecoveryScenario(input: {
   assert.equal(output.status, "COMPLETED", JSON.stringify(output.errors));
   assert.deepEqual(toolCalls.find((entry) => entry.name === input.toolName)?.input, input.expectedToolInput);
   assert.equal(finalized.length, 1);
+  assert.equal(observedLoopEvidence, true);
   assert.equal(input.expectedExecutionLane === undefined || input.expectedExecutionLane === "tooling", true);
 
   return {

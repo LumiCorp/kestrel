@@ -519,6 +519,81 @@ test("Kestrel agent context builder owns tool-result summaries and model context
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
 });
 
+test("Kestrel agent context builder keeps bounded weather facts model-visible", () => {
+  const currentContext = buildKestrelAgentToolModelContext({
+    toolName: "free.weather.current",
+    toolInput: { city: "Cincinnati, OH" },
+    toolOutput: {
+      source: "open-meteo",
+      latitude: 39.1031,
+      longitude: -84.512,
+      temperatureC: 27,
+      apparentTemperatureC: 29,
+      humidityPct: 61,
+      weatherCode: 2,
+      windSpeedKph: 9,
+      observedAt: "2026-07-12T15:00",
+    },
+    rawOutputRef: "tool-output:weather-current",
+    status: "OK",
+  });
+  assert.match(currentContext.text, /temperatureC: 27/u);
+  assert.match(currentContext.text, /condition: partly cloudy/u);
+  assert.match(currentContext.text, /observedAt: 2026-07-12T15:00/u);
+
+  const forecastContext = buildKestrelAgentToolModelContext({
+    toolName: "free.weather.forecast",
+    toolInput: { city: "Cincinnati, OH", days: 4 },
+    toolOutput: {
+      source: "open-meteo",
+      latitude: 39.1031,
+      longitude: -84.512,
+      timezone: "America/New_York",
+      requestedDays: 4,
+      granularity: "mixed",
+      target: {
+        time: "2026-07-12T15:00",
+        temperatureC: 27,
+        apparentTemperatureC: 29,
+        precipitationProbabilityPct: 20,
+        precipitationMm: 0,
+        windSpeedKph: 9,
+      },
+      daily: Array.from({ length: 12 }, (_, index) => ({
+        date: `2026-07-${String(12 + index).padStart(2, "0")}`,
+        minTemperatureC: 20 + index,
+        maxTemperatureC: 30 + index,
+        precipitationProbabilityPct: 10 + index,
+        precipitationMm: index / 10,
+        windSpeedKph: 8 + index,
+        weatherCode: index === 0 ? 3 : 1,
+      })),
+      nextHours: Array.from({ length: 14 }, (_, index) => ({
+        time: `2026-07-12T${String(index).padStart(2, "0")}:00`,
+        temperatureC: 24 + index,
+        apparentTemperatureC: 25 + index,
+        precipitationProbabilityPct: index,
+        precipitationMm: 0,
+        windSpeedKph: 5 + index,
+      })),
+    },
+    rawOutputRef: "tool-output:weather-forecast",
+    status: "OK",
+  });
+
+  assert.match(forecastContext.text, /- target:/u);
+  assert.match(forecastContext.text, /temperatureC=27/u);
+  assert.match(forecastContext.text, /- daily:/u);
+  assert.match(forecastContext.text, /date=2026-07-12/u);
+  assert.match(forecastContext.text, /maxTemperatureC=30/u);
+  assert.match(forecastContext.text, /condition=overcast/u);
+  assert.match(forecastContext.text, /- nextHours:/u);
+  assert.match(forecastContext.text, /\[omitted 2 daily entries\]/u);
+  assert.match(forecastContext.text, /\[omitted 2 hourly entries\]/u);
+  assert.match(forecastContext.text, /Raw output ref: tool-output:weather-forecast/u);
+  assert.ok(forecastContext.text.length <= 12_000);
+});
+
 test("Kestrel agent context builder promotes recent failed tool results as compact evidence", () => {
   const failedToolText = [
     "Tool result: dev.shell.run",

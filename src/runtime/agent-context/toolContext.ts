@@ -66,6 +66,8 @@ const GENERIC_VALUE_PREVIEW_CHARS = 2_000;
 const READ_TEXT_CONTENT_LIMIT = 10_000;
 const LIST_ENTRY_LIMIT = 80;
 const SEARCH_MATCH_LIMIT = 40;
+const WEATHER_DAILY_ENTRY_LIMIT = 10;
+const WEATHER_HOURLY_ENTRY_LIMIT = 12;
 
 const CONTROL_TOOLS: ModelToolSpec[] = [
   {
@@ -389,7 +391,133 @@ function renderToolFacts(
   if (toolName.startsWith("internet.")) {
     return renderInternetFacts(toolName, record, status, error);
   }
+  if (toolName === "free.weather.current" || toolName === "free.weather.forecast") {
+    return renderWeatherFacts(toolName, record, status, error);
+  }
   return renderGenericObjectFacts(record, status, error);
+}
+
+function renderWeatherFacts(
+  toolName: string,
+  output: Record<string, unknown>,
+  status: "OK" | "FAILED",
+  error: unknown,
+): string[] {
+  const common = [
+    ...field("status", asString(output.status) ?? status),
+    ...field("source", output.source),
+    ...field("latitude", output.latitude),
+    ...field("longitude", output.longitude),
+  ];
+  if (toolName === "free.weather.current") {
+    return [
+      ...common,
+      ...field("observedAt", output.observedAt),
+      ...field("temperatureC", output.temperatureC),
+      ...field("apparentTemperatureC", output.apparentTemperatureC),
+      ...field("humidityPct", output.humidityPct),
+      ...field("windSpeedKph", output.windSpeedKph),
+      ...weatherCodeFields(output.weatherCode),
+      ...renderErrorFacts(error),
+    ];
+  }
+
+  const target = asRecord(output.target);
+  const daily = asArray(output.daily)
+    .map(asRecord)
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined);
+  const nextHours = asArray(output.nextHours)
+    .map(asRecord)
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined);
+  return [
+    ...common,
+    ...field("timezone", output.timezone),
+    ...field("requestedDays", output.requestedDays),
+    ...field("granularity", output.granularity),
+    ...(target !== undefined ? ["- target:", `  ${formatWeatherHour(target)}`] : []),
+    ...(daily.length > 0
+      ? [
+          "- daily:",
+          ...daily.slice(0, WEATHER_DAILY_ENTRY_LIMIT).map((entry) => `  ${formatWeatherDay(entry)}`),
+          ...(daily.length > WEATHER_DAILY_ENTRY_LIMIT
+            ? [`[omitted ${daily.length - WEATHER_DAILY_ENTRY_LIMIT} daily entries]`]
+            : []),
+        ]
+      : []),
+    ...(nextHours.length > 0
+      ? [
+          "- nextHours:",
+          ...nextHours.slice(0, WEATHER_HOURLY_ENTRY_LIMIT).map((entry) => `  ${formatWeatherHour(entry)}`),
+          ...(nextHours.length > WEATHER_HOURLY_ENTRY_LIMIT
+            ? [`[omitted ${nextHours.length - WEATHER_HOURLY_ENTRY_LIMIT} hourly entries]`]
+            : []),
+        ]
+      : []),
+    ...renderErrorFacts(error),
+  ];
+}
+
+function formatWeatherDay(entry: Record<string, unknown>): string {
+  return formatWeatherValues([
+    ["date", entry.date],
+    ["minTemperatureC", entry.minTemperatureC],
+    ["maxTemperatureC", entry.maxTemperatureC],
+    ["precipitationProbabilityPct", entry.precipitationProbabilityPct],
+    ["precipitationMm", entry.precipitationMm],
+    ["windSpeedKph", entry.windSpeedKph],
+    ["weatherCode", entry.weatherCode],
+    ["condition", describeWeatherCode(entry.weatherCode)],
+  ]);
+}
+
+function formatWeatherHour(entry: Record<string, unknown>): string {
+  return formatWeatherValues([
+    ["time", entry.time],
+    ["temperatureC", entry.temperatureC],
+    ["apparentTemperatureC", entry.apparentTemperatureC],
+    ["precipitationProbabilityPct", entry.precipitationProbabilityPct],
+    ["precipitationMm", entry.precipitationMm],
+    ["windSpeedKph", entry.windSpeedKph],
+    ["weatherCode", entry.weatherCode],
+    ["condition", describeWeatherCode(entry.weatherCode)],
+  ]);
+}
+
+function formatWeatherValues(entries: Array<[string, unknown]>): string {
+  return entries
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${formatScalar(value)}`)
+    .join(", ");
+}
+
+function weatherCodeFields(value: unknown): string[] {
+  return [
+    ...field("weatherCode", value),
+    ...field("condition", describeWeatherCode(value)),
+  ];
+}
+
+function describeWeatherCode(value: unknown): string | undefined {
+  if (typeof value !== "number" || Number.isFinite(value) === false) {
+    return undefined;
+  }
+  const code = Math.trunc(value);
+  if (code === 0) return "clear sky";
+  if (code === 1) return "mainly clear";
+  if (code === 2) return "partly cloudy";
+  if (code === 3) return "overcast";
+  if (code === 45 || code === 48) return "fog";
+  if (code === 51 || code === 53 || code === 55) return "drizzle";
+  if (code === 56 || code === 57) return "freezing drizzle";
+  if (code === 61 || code === 63 || code === 65) return "rain";
+  if (code === 66 || code === 67) return "freezing rain";
+  if (code === 71 || code === 73 || code === 75) return "snowfall";
+  if (code === 77) return "snow grains";
+  if (code === 80 || code === 81 || code === 82) return "rain showers";
+  if (code === 85 || code === 86) return "snow showers";
+  if (code === 95) return "thunderstorm";
+  if (code === 96 || code === 99) return "thunderstorm with hail";
+  return "unknown";
 }
 
 function renderRepoTraceFacts(
