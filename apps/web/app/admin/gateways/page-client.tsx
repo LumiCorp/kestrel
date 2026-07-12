@@ -43,6 +43,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { getProviderSupportedModalities } from "@/lib/ai/gateway-utils";
 import { cn } from "@/lib/utils";
 
 type Gateway = {
@@ -98,6 +99,26 @@ type ModelDraft = {
   isDefault: boolean;
   protocol: GatewayLanguageProtocol;
 };
+
+type NewModelDraft = {
+  alias: string;
+  modality: GatewayModel["modality"];
+  protocol: GatewayLanguageProtocol;
+  rawModelId: string;
+};
+
+function getEmptyNewModelDraft(gateway: Gateway): NewModelDraft {
+  return {
+    alias: "",
+    modality: getProviderSupportedModalities(gateway.provider)[0],
+    protocol: "openai",
+    rawModelId: "",
+  };
+}
+
+function formatModalityLabel(modality: GatewayModel["modality"]) {
+  return `${modality.charAt(0).toUpperCase()}${modality.slice(1)}`;
+}
 
 function isMetadataRecord(
   value: GatewayModel["metadata"]
@@ -410,7 +431,12 @@ function GatewayDetailPane({
   onRefresh: () => void;
 }) {
   const [apiKey, setApiKey] = useState("");
+  const [addingModel, setAddingModel] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [isAddModelOpen, setIsAddModelOpen] = useState(false);
+  const [newModelDraft, setNewModelDraft] = useState<NewModelDraft>(() =>
+    getEmptyNewModelDraft(bundle.gateway)
+  );
   const [savingModelId, setSavingModelId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [modalityFilter, setModalityFilter] = useState<
@@ -422,6 +448,11 @@ function GatewayDetailPane({
   const [modelDrafts, setModelDrafts] = useState<Record<string, ModelDraft>>(
     {}
   );
+
+  useEffect(() => {
+    setIsAddModelOpen(false);
+    setNewModelDraft(getEmptyNewModelDraft(bundle.gateway));
+  }, [bundle.gateway.id]);
 
   useEffect(() => {
     setModelDrafts(
@@ -513,6 +544,58 @@ function GatewayDetailPane({
       );
     } finally {
       setSavingModelId(null);
+    }
+  }
+
+  async function addModel() {
+    const rawModelId = newModelDraft.rawModelId.trim();
+    if (!rawModelId) {
+      toast.error("Provider model ID is required.");
+      return;
+    }
+
+    try {
+      setAddingModel(true);
+      const response = await fetch(
+        `/api/admin/gateways/${bundle.gateway.id}/models`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            rawModelId,
+            alias: newModelDraft.alias.trim() || null,
+            modality: newModelDraft.modality,
+            approved: true,
+            isDefault: false,
+            description: null,
+            metadata:
+              bundle.gateway.provider === "lumi" &&
+              newModelDraft.modality === "language"
+                ? { protocol: newModelDraft.protocol }
+                : null,
+          }),
+        }
+      );
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to add model.");
+      }
+
+      toast.success("Model added and approved.");
+      setNewModelDraft(getEmptyNewModelDraft(bundle.gateway));
+      setIsAddModelOpen(false);
+      setFilter("");
+      setModalityFilter("all");
+      setApprovalFilter("all");
+      onRefresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add model."
+      );
+    } finally {
+      setAddingModel(false);
     }
   }
 
@@ -678,11 +761,19 @@ function GatewayDetailPane({
           <div>
             <div className="font-medium text-sm">Model Catalog</div>
             <div className="text-muted-foreground text-xs">
-              Approve models for runtime, assign aliases, set defaults, or
-              remove imported entries.
+              Add provider model IDs, approve models for runtime, assign
+              aliases, set defaults, or remove imported entries.
             </div>
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <Button
+              className="h-10"
+              onClick={() => setIsAddModelOpen((current) => !current)}
+              variant={isAddModelOpen ? "secondary" : "default"}
+            >
+              <Plus className="mr-2 size-4" />
+              Add model
+            </Button>
             <div className="relative">
               <Filter className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-3 size-4 text-muted-foreground" />
               <Input
@@ -731,6 +822,123 @@ function GatewayDetailPane({
             </Badge>
           </div>
         </div>
+
+        {isAddModelOpen ? (
+          <div
+            className="mb-4 rounded-md border border-border/70 bg-background p-4"
+            data-testid="add-gateway-model-form"
+          >
+            <div className="grid gap-4 xl:grid-cols-[minmax(240px,1.4fr)_minmax(200px,1fr)_180px_minmax(200px,1fr)_auto] xl:items-end">
+              <div className="space-y-2">
+                <Label htmlFor={`new-model-id-${bundle.gateway.id}`}>
+                  Provider model ID
+                </Label>
+                <Input
+                  id={`new-model-id-${bundle.gateway.id}`}
+                  onChange={(event) =>
+                    setNewModelDraft((current) => ({
+                      ...current,
+                      rawModelId: event.target.value,
+                    }))
+                  }
+                  placeholder="provider/model-name"
+                  value={newModelDraft.rawModelId}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`new-model-alias-${bundle.gateway.id}`}>
+                  Alias (optional)
+                </Label>
+                <Input
+                  id={`new-model-alias-${bundle.gateway.id}`}
+                  onChange={(event) =>
+                    setNewModelDraft((current) => ({
+                      ...current,
+                      alias: event.target.value,
+                    }))
+                  }
+                  placeholder="Friendly model alias"
+                  value={newModelDraft.alias}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Modality</Label>
+                <Select
+                  onValueChange={(modality: GatewayModel["modality"]) =>
+                    setNewModelDraft((current) => ({
+                      ...current,
+                      modality,
+                    }))
+                  }
+                  value={newModelDraft.modality}
+                >
+                  <SelectTrigger aria-label="Model modality">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getProviderSupportedModalities(
+                      bundle.gateway.provider
+                    ).map((modality) => (
+                      <SelectItem key={modality} value={modality}>
+                        {formatModalityLabel(modality)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {bundle.gateway.provider === "lumi" &&
+              newModelDraft.modality === "language" ? (
+                <div className="space-y-2">
+                  <Label>Protocol</Label>
+                  <Select
+                    onValueChange={(protocol: GatewayLanguageProtocol) =>
+                      setNewModelDraft((current) => ({
+                        ...current,
+                        protocol,
+                      }))
+                    }
+                    value={newModelDraft.protocol}
+                  >
+                    <SelectTrigger aria-label="Model protocol">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">OpenAI-compatible</SelectItem>
+                      <SelectItem value="anthropic">
+                        Anthropic messages
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="hidden xl:block" />
+              )}
+              <div className="flex gap-2">
+                <Button
+                  disabled={addingModel || !newModelDraft.rawModelId.trim()}
+                  onClick={() => void addModel()}
+                >
+                  {addingModel ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="mr-2 size-4" />
+                  )}
+                  Add approved model
+                </Button>
+                <Button
+                  disabled={addingModel}
+                  onClick={() => {
+                    setNewModelDraft(getEmptyNewModelDraft(bundle.gateway));
+                    setIsAddModelOpen(false);
+                  }}
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-md border border-border/70 bg-background">
           <Table>

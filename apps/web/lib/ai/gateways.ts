@@ -7,12 +7,26 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getDefaultAIModel } from "./config";
 import {
+  decryptGatewayCredential,
+  encryptGatewayCredential,
+} from "./gateway-credential-crypto";
+import {
+  normalizeGatewayStoredCredential,
+  resolveGatewayEnvironmentCredential,
+  selectGatewayCredentialEnvVarForCreate,
+  selectGatewayCredentialEnvVarForUpdate,
+  shouldClearStoredGatewayCredentialForUpdate,
+} from "./gateway-credential-source";
+import {
   GATEWAY_MODALITIES,
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
   getProviderSupportedModalities as getSharedProviderSupportedModalities,
+  isKestrelRuntimeLanguageProvider,
   normalizeGatewayModelMetadata,
   normalizeOpenAICompatibleBaseUrl,
+  selectGatewayModelSelection,
+  selectPreferredGatewayModelId,
 } from "./gateway-utils";
 import type { ChatModel } from "./models";
 
@@ -31,15 +45,6 @@ export type GatewayCatalogModel = ChatModel & {
   gatewayProvider: GatewayProvider;
   isDefault: boolean;
   metadata: Record<string, unknown> | null;
-};
-
-const GATEWAY_SELECTION_PRIORITY: Record<GatewayProvider, number> = {
-  openai: 0,
-  lumi: 1,
-  anthropic: 2,
-  ollama: 3,
-  openrouter: 4,
-  replicate: 5,
 };
 
 const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
@@ -106,19 +111,19 @@ function getDefaultApiKeyEnvVar(provider: GatewayProvider) {
   }
 }
 
-function getGatewayApiKey(gateway: GatewayRecord) {
+export function getGatewayApiKey(
+  gateway: Pick<GatewayRecord, "apiKey" | "apiKeyEnvVar" | "id" | "provider">
+) {
   if (gateway.apiKey?.trim()) {
-    return gateway.apiKey.trim();
+    return decryptGatewayCredential({
+      gatewayId: gateway.id,
+      encrypted: gateway.apiKey.trim(),
+    });
   }
 
-  const envVar =
-    gateway.apiKeyEnvVar?.trim() || getDefaultApiKeyEnvVar(gateway.provider);
-
-  if (!envVar) {
-    return null;
-  }
-
-  return process.env[envVar]?.trim() || null;
+  return resolveGatewayEnvironmentCredential({
+    apiKeyEnvVar: gateway.apiKeyEnvVar,
+  });
 }
 
 function getOpenAICompatibleBaseUrl(gateway: GatewayRecord) {
@@ -170,12 +175,7 @@ async function fetchProviderJson<T>(
   const json = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const message =
-      (json as { error?: { message?: string }; detail?: string }).error
-        ?.message ||
-      (json as { detail?: string }).detail ||
-      `Model sync failed (${response.status})`;
-    throw new Error(message);
+    throw new Error(`Gateway model sync failed (${response.status}).`);
   }
 
   return json as T;
@@ -439,7 +439,12 @@ function sanitizeGateway(gateway: GatewayRecord) {
   return {
     ...gateway,
     apiKey: null,
-    hasApiKey: Boolean(getGatewayApiKey(gateway)),
+    hasApiKey: Boolean(
+      gateway.apiKey?.trim() ||
+        resolveGatewayEnvironmentCredential({
+          apiKeyEnvVar: gateway.apiKeyEnvVar,
+        })
+    ),
   };
 }
 
@@ -528,26 +533,24 @@ export async function getApprovedLanguageModels() {
   return listApprovedModels("language");
 }
 
+export async function getApprovedKestrelRuntimeLanguageModels() {
+  const models = await getApprovedLanguageModels();
+  return models.filter((model) =>
+    isKestrelRuntimeLanguageProvider(model.gatewayProvider)
+  );
+}
+
 export async function resolvePreferredLanguageModelId(
-  selectedModelId?: string | null
+  selectedModelId?: string | null,
+  fallbackModelId?: string | null
 ) {
-  const languageModels = await getApprovedLanguageModels();
-
-  if (selectedModelId) {
-    const matching = languageModels.find(
-      (model) => model.id === selectedModelId
-    );
-    if (matching) {
-      return matching.id;
-    }
-
-    return selectedModelId;
-  }
-
+  const languageModels = await getApprovedKestrelRuntimeLanguageModels();
   return (
-    languageModels.find((model) => model.isDefault)?.id ||
-    languageModels[0]?.id ||
-    getDefaultAIModel()
+    selectPreferredGatewayModelId(
+      languageModels,
+      selectedModelId,
+      fallbackModelId
+    ) || getDefaultAIModel()
   );
 }
 
@@ -588,49 +591,7 @@ export async function resolveGatewayModelSelection(input: {
 }) {
   const models = await listApprovedModels(input.modality);
 
-  if (models.length === 0) {
-    return null;
-  }
-
-  if (input.selection) {
-    const explicitMatches = models.filter(
-      (model) =>
-        model.id === input.selection ||
-        model.alias === input.selection ||
-        `${model.gatewayProvider}/${model.rawModelId}` === input.selection
-    );
-
-    if (explicitMatches.length > 0) {
-      const exactIdMatches = explicitMatches.filter(
-        (model) => model.id === input.selection
-      );
-      const exactSourceMatches = explicitMatches.filter(
-        (model) =>
-          `${model.gatewayProvider}/${model.rawModelId}` === input.selection
-      );
-      const candidatePool =
-        exactIdMatches.length > 0
-          ? exactIdMatches
-          : exactSourceMatches.length > 0
-            ? exactSourceMatches
-            : explicitMatches;
-
-      return [...candidatePool].sort((left, right) => {
-        if (left.isDefault !== right.isDefault) {
-          return left.isDefault ? -1 : 1;
-        }
-
-        return (
-          GATEWAY_SELECTION_PRIORITY[left.gatewayProvider] -
-          GATEWAY_SELECTION_PRIORITY[right.gatewayProvider]
-        );
-      })[0];
-    }
-
-    return null;
-  }
-
-  return models.find((model) => model.isDefault) || models[0];
+  return selectGatewayModelSelection(models, input.selection);
 }
 
 export async function createGateway(input: {
@@ -643,16 +604,26 @@ export async function createGateway(input: {
   supportedModalities?: GatewayModality[];
   metadata?: Record<string, unknown> | null;
 }) {
+  const gatewayId = crypto.randomUUID();
+  const apiKey = normalizeGatewayStoredCredential(input.apiKey);
   const [gateway] = await knowledgeDb
     .insert(schema.aiGateways)
     .values({
-      id: crypto.randomUUID(),
+      id: gatewayId,
       provider: input.provider,
       displayName: input.displayName || getProviderDisplayName(input.provider),
       baseUrl: input.baseUrl || getDefaultBaseUrl(input.provider),
-      apiKeyEnvVar:
-        input.apiKeyEnvVar || getDefaultApiKeyEnvVar(input.provider),
-      apiKey: input.apiKey || null,
+      apiKeyEnvVar: selectGatewayCredentialEnvVarForCreate({
+        apiKey,
+        apiKeyEnvVar: input.apiKeyEnvVar,
+        defaultApiKeyEnvVar: getDefaultApiKeyEnvVar(input.provider),
+      }),
+      apiKey: apiKey
+        ? encryptGatewayCredential({
+            gatewayId,
+            plaintext: apiKey,
+          })
+        : null,
       enabled: input.enabled ?? true,
       supportedModalities:
         input.supportedModalities ||
@@ -678,6 +649,15 @@ export async function updateGateway(
     metadata: Record<string, unknown> | null;
   }>
 ) {
+  const apiKey = normalizeGatewayStoredCredential(input.apiKey);
+  const apiKeyEnvVar = selectGatewayCredentialEnvVarForUpdate({
+    apiKey,
+    apiKeyEnvVar: input.apiKeyEnvVar,
+  });
+  const clearStoredApiKey = shouldClearStoredGatewayCredentialForUpdate({
+    apiKey,
+    apiKeyEnvVar: input.apiKeyEnvVar,
+  });
   const [gateway] = await knowledgeDb
     .update(schema.aiGateways)
     .set({
@@ -685,10 +665,19 @@ export async function updateGateway(
         ? { displayName: input.displayName }
         : {}),
       ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
-      ...(input.apiKeyEnvVar !== undefined
-        ? { apiKeyEnvVar: input.apiKeyEnvVar }
-        : {}),
-      ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+      ...(apiKeyEnvVar !== undefined ? { apiKeyEnvVar } : {}),
+      ...(clearStoredApiKey
+        ? { apiKey: null }
+        : apiKey !== undefined
+          ? {
+              apiKey: apiKey
+                ? encryptGatewayCredential({
+                    gatewayId,
+                    plaintext: apiKey,
+                  })
+                : null,
+            }
+          : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       ...(input.supportedModalities !== undefined
         ? { supportedModalities: input.supportedModalities }
@@ -835,9 +824,17 @@ export async function saveGatewayModel(input: {
         metadata,
         updatedAt: new Date(),
       })
-      .where(eq(schema.aiGatewayModels.id, input.id))
+      .where(
+        and(
+          eq(schema.aiGatewayModels.id, input.id),
+          eq(schema.aiGatewayModels.gatewayId, input.gatewayId)
+        )
+      )
       .returning();
 
+    if (!updated) {
+      throw new Error("Gateway model not found");
+    }
     return updated;
   }
 
@@ -872,6 +869,12 @@ async function getResolvedGatewayModel(input: {
 }): Promise<ResolvedGatewayModel | null> {
   const selection = await resolveGatewayModelSelection(input);
 
+  return hydrateResolvedGatewayModel(selection);
+}
+
+async function hydrateResolvedGatewayModel(
+  selection: GatewayCatalogModel | null | undefined
+): Promise<ResolvedGatewayModel | null> {
   if (!selection?.gatewayId) {
     return null;
   }
@@ -895,6 +898,15 @@ export async function getResolvedGatewayExecutionModel(input: {
   modality: GatewayModality;
 }) {
   return getResolvedGatewayModel(input);
+}
+
+export async function getResolvedKestrelRuntimeExecutionModel(input: {
+  selection?: string | null;
+}) {
+  const models = await getApprovedKestrelRuntimeLanguageModels();
+  return hydrateResolvedGatewayModel(
+    selectGatewayModelSelection(models, input.selection)
+  );
 }
 
 function createOpenAICompatibleProvider(gateway: GatewayRecord): ProviderV3 {
@@ -1102,10 +1114,15 @@ export async function deleteGateway(gatewayId: string) {
   return deleted ? sanitizeGateway(deleted) : null;
 }
 
-export async function deleteGatewayModel(modelId: string) {
+export async function deleteGatewayModel(gatewayId: string, modelId: string) {
   const [deleted] = await knowledgeDb
     .delete(schema.aiGatewayModels)
-    .where(eq(schema.aiGatewayModels.id, modelId))
+    .where(
+      and(
+        eq(schema.aiGatewayModels.id, modelId),
+        eq(schema.aiGatewayModels.gatewayId, gatewayId)
+      )
+    )
     .returning();
 
   return deleted ?? null;

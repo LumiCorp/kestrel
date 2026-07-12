@@ -12,6 +12,7 @@ import {
   type UIMessage,
 } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
+import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
 import {
   extractFinalizedAssistantText,
   type KestrelTerminalStatus,
@@ -76,8 +77,9 @@ export type KestrelOneRunnerStream = RunnerStream<
 export type KestrelOneAgent = {
   stream: (
     input: KestrelOneAgentTurnInput,
-    context: KestrelOneRequestContext
-  ) => KestrelOneRunnerStream;
+    context: KestrelOneRequestContext,
+    runtimeModel?: KestrelOneRuntimeModelSelection
+  ) => KestrelOneRunnerStream | Promise<KestrelOneRunnerStream>;
   close: () => Promise<void>;
 };
 
@@ -111,6 +113,8 @@ export type KestrelOneAgentResponseInput = {
   correlation: KestrelOneRequestCorrelation;
   chatId: string;
   messages: UIMessage[];
+  modelId?: string;
+  runtimeModel?: KestrelOneRuntimeModelSelection;
   transientTitle?: Promise<string | null> | null;
   onFinishPersist?: (
     messages: UIMessage[],
@@ -176,7 +180,7 @@ export function createKestrelOneAgentResponseFromAgent(
       };
 
       try {
-        const runStream = input.agent.stream(
+        const runStream = await input.agent.stream(
           {
             sessionId: input.chatId,
             message: latestUserMessage,
@@ -193,7 +197,8 @@ export function createKestrelOneAgentResponseFromAgent(
             },
             signal: input.request.signal,
           },
-          context
+          context,
+          input.runtimeModel
         );
 
         streamResult = await writeKestrelRunnerEventsToUi({
@@ -235,7 +240,9 @@ export function createKestrelOneAgentResponseFromAgent(
         ],
         {
           model:
-            process.env.KESTREL_ONE_PROFILE_ID?.trim() || DEFAULT_PROFILE_ID,
+            input.modelId ||
+            process.env.KESTREL_ONE_PROFILE_ID?.trim() ||
+            DEFAULT_PROFILE_ID,
           title: title ?? null,
           errorMessage: streamResult.errorMessage,
           failureVisible: streamResult.failureVisible,

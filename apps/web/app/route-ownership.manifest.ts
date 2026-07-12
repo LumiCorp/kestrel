@@ -4,6 +4,7 @@ export type KestrelOneRouteOwner =
   | "artifacts"
   | "auth"
   | "chat"
+  | "credential-boundary"
   | "dashboard"
   | "debug"
   | "dev"
@@ -31,6 +32,7 @@ export type KestrelOneRouteAccess =
   | "authenticated"
   | "dev-only"
   | "public"
+  | "service-boundary"
   | "tool-boundary"
   | "webhook";
 
@@ -41,6 +43,7 @@ export type KestrelOneUnauthorizedBehavior =
   | "dev-not-found"
   | "public"
   | "redirect-sign-in"
+  | "service-bearer"
   | "webhook-validation";
 
 export interface KestrelOneRouteOwnershipEntry {
@@ -349,6 +352,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "tool-boundary",
     "tool-boundary",
     "bearer-or-session",
+  ),
+  api(
+    "app/api/kestrel/gateway-credentials/lease/route.ts",
+    "/api/kestrel/gateway-credentials/lease",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer",
   ),
 
   api(

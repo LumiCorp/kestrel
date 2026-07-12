@@ -24,6 +24,7 @@ function isDatabasePressureHigh(databaseHealth: DbHealthResult) {
 
 export function buildHealthResponsePayload(input: {
   databaseHealth: DbHealthResult;
+  credentialAuthorityHealth?: { ok: boolean; code: string | null } | undefined;
   environment?: string;
   responseTimeMs: number;
   uptimeSeconds: number;
@@ -32,11 +33,14 @@ export function buildHealthResponsePayload(input: {
   const degraded = input.databaseHealth.ok
     ? isDatabasePressureHigh(input.databaseHealth)
     : false;
-  const status = input.databaseHealth.ok
-    ? degraded
-      ? "degraded"
-      : "healthy"
-    : "unhealthy";
+  const credentialAuthorityHealthy =
+    input.credentialAuthorityHealth?.ok ?? true;
+  const status =
+    input.databaseHealth.ok && credentialAuthorityHealthy
+      ? degraded
+        ? "degraded"
+        : "healthy"
+      : "unhealthy";
   const statusCode = status === "unhealthy" ? 503 : 200;
 
   return {
@@ -52,6 +56,14 @@ export function buildHealthResponsePayload(input: {
           error: input.databaseHealth.details,
           diagnostics: input.databaseHealth.diagnostics,
         },
+        ...(input.credentialAuthorityHealth
+          ? {
+              gatewayCredentialAuthority: {
+                ready: input.credentialAuthorityHealth.ok,
+                code: input.credentialAuthorityHealth.code,
+              },
+            }
+          : {}),
       },
       responseTime: `${input.responseTimeMs}ms`,
       uptime: input.uptimeSeconds,
