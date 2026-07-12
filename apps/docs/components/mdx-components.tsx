@@ -2,6 +2,8 @@ import Link from "next/link";
 import React from "react";
 import type { ComponentPropsWithoutRef } from "react";
 
+import { CodeBlock } from "@/components/CodeBlock";
+
 function Paragraph(props: ComponentPropsWithoutRef<"p">) {
   return <p {...props} className={`doc-paragraph ${props.className ?? ""}`.trim()} />;
 }
@@ -19,7 +21,7 @@ function Blockquote(props: ComponentPropsWithoutRef<"blockquote">) {
 }
 
 function Pre(props: ComponentPropsWithoutRef<"pre">) {
-  return <pre {...props} className={`doc-pre ${props.className ?? ""}`.trim()} />;
+  return <CodeBlock>{props.children}</CodeBlock>;
 }
 
 function InlineCode(props: ComponentPropsWithoutRef<"code">) {

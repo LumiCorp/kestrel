@@ -9,6 +9,7 @@ export const SEARCH_STORE_FIELDS = [
   "title",
   "summary",
   "section",
+  "navSection",
   "internal",
   "sourceKind",
   "pageKind",
@@ -43,16 +44,6 @@ function haystackIncludesAllTerms(haystack: string, terms: string[]) {
   return terms.every((term) => normalized.includes(term));
 }
 
-function isArchiveIntent(query: string) {
-  const normalized = normalizeText(query);
-  if (/\b20\d{2}-\d{2}-\d{2}\b/.test(normalized)) {
-    return true;
-  }
-  return ["archive", "historical", "history", "plan", "plans", "runbook", "runbooks", "roadmap", "design"].some(
-    (term) => normalized.includes(term),
-  );
-}
-
 function toEntry(document: SearchDocument): SearchResultEntry {
   return {
     id: document.id,
@@ -60,6 +51,7 @@ function toEntry(document: SearchDocument): SearchResultEntry {
     title: document.title,
     summary: document.summary,
     section: document.section,
+    navSection: document.navSection,
     internal: document.internal,
     sourceKind: document.sourceKind,
     pageKind: document.pageKind,
@@ -93,7 +85,6 @@ function rerankSearchCandidate(candidate: SearchResultCandidate, query: string) 
   const title = candidate.title;
   const headingsText = candidate.headings.join(" ");
   const capabilitiesText = candidate.capabilities.join(" ");
-  const archiveIntent = isArchiveIntent(query);
 
   let score = (candidate.score ?? 0) * 100;
   score += candidate.priority * 10;
@@ -102,8 +93,6 @@ function rerankSearchCandidate(candidate: SearchResultCandidate, query: string) 
     score += 200;
   } else if (candidate.sourceKind === "repo-inferred") {
     score += 100;
-  } else if (archiveIntent) {
-    score += 40;
   } else {
     score -= 400;
   }
@@ -118,7 +107,7 @@ function rerankSearchCandidate(candidate: SearchResultCandidate, query: string) 
     score += 60;
   } else if (candidate.pageKind === "landing") {
     score -= 20;
-  } else if (!archiveIntent) {
+  } else {
     score -= 150;
   }
 
@@ -156,6 +145,7 @@ export function searchWithIndex(engine: Pick<MiniSearch<SearchDocument>, "search
       title: String(match.title),
       summary: String(match.summary),
       section: match.section as SearchDocument["section"],
+      navSection: match.navSection as SearchDocument["navSection"],
       internal: Boolean(match.internal),
       sourceKind: match.sourceKind as SearchDocument["sourceKind"],
       pageKind: match.pageKind as SearchDocument["pageKind"],
