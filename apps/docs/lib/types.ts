@@ -15,6 +15,8 @@ export const DOCS_SECTIONS = [
 ] as const;
 
 export type DocsSection = (typeof DOCS_SECTIONS)[number];
+export const DOCS_NAV_SECTIONS = ["desktop", "build", "deploy", "reference"] as const;
+export type DocsNavSection = (typeof DOCS_NAV_SECTIONS)[number];
 
 export const DOCS_AUDIENCES = ["everyone", "evaluators", "integrators", "maintainers"] as const;
 export const DOCS_STATUSES = ["stable", "active", "draft"] as const;
@@ -31,13 +33,14 @@ export type SearchCapability =
   | "project review"
   | "task graph"
   | "project snapshot"
-  | "evaluation"
+  | "scene replay"
   | "workspace automation"
   | "cli"
   | "profiles, code mode, and mcp"
   | "runner service"
   | "nextjs"
   | "artifact inspection"
+  | "evaluation"
   | "runtime";
 
 export interface TocItem {
@@ -52,6 +55,7 @@ export interface SearchDocument {
   title: string;
   summary: string;
   section: DocsSection;
+  navSection: DocsNavSection;
   headings: string[];
   fullText: string;
   internal: boolean;
@@ -67,6 +71,7 @@ export interface SearchResultEntry {
   title: string;
   summary: string;
   section: DocsSection;
+  navSection: DocsNavSection;
   internal: boolean;
   sourceKind: SourceKind;
   pageKind: SearchPageKind;
@@ -86,6 +91,7 @@ export interface DocsPageMeta {
   internal: boolean;
   archive: boolean;
   updatedAt: string;
+  sourceUrl: string;
   toc: TocItem[];
   related: string[];
   archiveGroup?: ArchiveGroup;
@@ -121,8 +127,11 @@ export interface NavEntry {
 }
 
 export interface NavGroup {
-  section: DocsSection;
+  section: DocsNavSection;
   title: string;
   landing: NavEntry | null;
-  entries: NavEntry[];
+  groups: Array<{
+    title: string;
+    entries: NavEntry[];
+  }>;
 }

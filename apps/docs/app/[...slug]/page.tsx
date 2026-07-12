@@ -57,13 +57,17 @@ function SectionListing({ pages, currentUrl }: { pages: Awaited<ReturnType<typeo
 }
 
 export async function generateStaticParams() {
-  const { pageRegistry } = await import("@/lib/content-registry");
-  return pageRegistry
+  const { getPublicPages } = await import("@/lib/content");
+  const pages = await getPublicPages();
+  return pages
+    .map((page) => page.meta)
     .filter((page) => page.slug.length > 0)
     .map((page) => ({
       slug: page.slug,
     }));
 }
+
+export const dynamicParams = false;
 
 export async function generateMetadata(props: {
   params: Promise<{ slug: string[] }>;

@@ -1,65 +1,70 @@
 import Link from "next/link";
 
-import type { RenderedPage } from "@/lib/types";
+const capabilities = [
+  ["Durable sessions", "Keep agent work and context coherent across turns."],
+  ["Operator control", "Stop, steer, and recover active work without losing the thread."],
+  ["Evidence and replay", "Inspect what happened and reproduce behavior with durable evidence."],
+  ["Workspace automation", "Run repeatable work close to the project state it depends on."],
+] as const;
 
-interface HomePageProps {
-  page: RenderedPage;
-}
-
-const startHereCollections = [
-  {
-    title: "Start With Desktop",
-    description: "See the flagship Kestrel product surface first, then branch into the suite around it.",
-    links: [
-      { href: "/apps/desktop", label: "Desktop app" },
-      { href: "/docs/quickstart", label: "Quickstart" },
-      { href: "/docs/why-kestrel", label: "Why Kestrel" },
-    ],
-  },
-  {
-    title: "Use Companion Surfaces",
-    description: "Move into the browser product, terminal workflows, and evaluation tooling once the Desktop story is clear.",
-    links: [
-      { href: "/apps/web", label: "Web app" },
-      { href: "/cli", label: "CLI" },
-      { href: "/operations/evaluations", label: "Ruhroh evaluations" },
-    ],
-  },
-  {
-    title: "Extend The Suite",
-    description: "Use the runner service, packages, and operations docs when you need to embed or extend Kestrel beyond the flagship app.",
-    links: [
-      { href: "/packages/sdk", label: "SDK reference" },
-      { href: "/deploy/running-the-runner-service", label: "Runner service" },
-      { href: "/operations", label: "Operations" },
-    ],
-  },
-];
-
-export function HomePage({ page }: HomePageProps) {
+export function HomePage() {
   return (
     <div className="home-flow">
-      <section className="home-intro">
-        <div className="home-kicker">Open runtime platform for durable agents</div>
-        <h2 className="home-title">{page.meta.title}</h2>
-        <p className="home-summary">{page.meta.summary}</p>
+      <section className="home-hero">
+        <div className="home-kicker">Kestrel Documentation</div>
+        <h1>Build agents you can inspect, steer, and replay.</h1>
+        <p>
+          Kestrel brings a local Desktop workspace and a durable developer platform together, so agent work stays
+          visible, controllable, and repeatable.
+        </p>
       </section>
-      <article className="doc-prose doc-prose-home">{page.content}</article>
-      <section className="start-grid" aria-label="Start here">
-        {startHereCollections.map((collection) => (
-          <section key={collection.title} className="start-card">
-            <h3>{collection.title}</h3>
-            <p>{collection.description}</p>
-            <div className="start-links">
-              {collection.links.map((link) => (
-                <Link key={link.href} href={link.href} className="start-link">
-                  {link.label}
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))}
+
+      <section className="path-grid" aria-label="Choose how to start">
+        <article className="path-card path-card-desktop">
+          <span className="path-number">01</span>
+          <h2>Use Kestrel Desktop</h2>
+          <p>Work in local projects with persistent sessions, workspace context, and operator control.</p>
+          <div className="path-actions">
+            <Link className="primary-action" href="/apps/desktop">Explore Desktop</Link>
+            <Link className="secondary-action" href="/docs/quickstart">Run locally</Link>
+          </div>
+        </article>
+        <article className="path-card path-card-build">
+          <span className="path-number">02</span>
+          <h2>Build with Kestrel</h2>
+          <p>Add durable agent execution with the SDK, server-owned APIs, Next.js helpers, and observability.</p>
+          <div className="path-actions">
+            <Link className="primary-action" href="/build/building-your-first-agent">Build your first agent</Link>
+            <Link className="secondary-action" href="/build">View build guides</Link>
+          </div>
+        </article>
       </section>
+
+      <section className="capability-section">
+        <div className="section-heading-row">
+          <div>
+            <span className="home-kicker">Why Kestrel</span>
+            <h2>Control is part of the product.</h2>
+          </div>
+          <Link href="/docs/why-kestrel">Read the product point of view</Link>
+        </div>
+        <div className="capability-grid">
+          {capabilities.map(([title, description]) => (
+            <article key={title}>
+              <h3>{title}</h3>
+              <p>{description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <nav className="home-secondary-nav" aria-label="More ways to explore">
+        <Link href="/deploy">Deploy Kestrel</Link>
+        <Link href="/cli">CLI reference</Link>
+        <Link href="/docs/core-concepts">Core concepts</Link>
+        <Link href="/docs/faq">FAQ</Link>
+        <a href="https://github.com/LumiCorp/kestrel">GitHub</a>
+      </nav>
     </div>
   );
 }

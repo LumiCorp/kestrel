@@ -10,7 +10,7 @@ import remarkGfm from "remark-gfm";
 import { mdxComponents } from "@/components/mdx-components";
 import { findPageSpec, pageRegistry } from "@/lib/content-registry";
 import { buildRouteMap, extractToc, normalizeMarkdownLinks, stripMarkdown } from "@/lib/markdown";
-import { createPageUrl, getSectionTitle, resolveDocsAppRoot, resolveRepoRoot } from "@/lib/site";
+import { createPageUrl, REPO_BLOB_BASE_URL, resolveDocsAppRoot, resolveRepoRoot } from "@/lib/site";
 import {
   DOCS_AUDIENCES,
   DOCS_SECTIONS,
@@ -18,6 +18,7 @@ import {
   SOURCE_KINDS,
   type DocsAudience,
   type DocsPageMeta,
+  type DocsNavSection,
   type DocsSection,
   type DocsStatus,
   type NavEntry,
@@ -165,6 +166,7 @@ function buildMeta(spec: RegisteredPageSpec, frontmatter: Frontmatter, rawConten
     internal: spec.internal ?? parsed.internal,
     archive: spec.archive ?? false,
     updatedAt: parsed.updatedAt,
+    sourceUrl: `${REPO_BLOB_BASE_URL}/${spec.sourcePath ?? `apps/docs/content/${spec.filePath}`}`,
     toc: extractToc(rawContent),
     related: spec.related ?? [],
     archiveGroup: spec.archiveGroup,
@@ -233,12 +235,21 @@ export const getAllPages = cache(async () => {
   return pages.sort((left, right) => left.meta.url.localeCompare(right.meta.url));
 });
 
+export function isPublicDocsPage(meta: DocsPageMeta) {
+  return !meta.internal && !meta.archive && meta.section !== "archive" && meta.audience !== "maintainers";
+}
+
+export const getPublicPages = cache(async () => {
+  const pages = await getAllPages();
+  return pages.filter((page) => isPublicDocsPage(page.meta));
+});
+
 export const getPageMetaBySlug = cache(async (slug: string[]) => {
   const spec = findPageSpec(slug);
   if (!spec) {
     return null;
   }
-  const pages = await getAllPages();
+  const pages = await getPublicPages();
   return pages.find((page) => page.meta.url === createPageUrl(slug))?.meta ?? null;
 });
 
@@ -271,64 +282,56 @@ export const getRenderedPageBySlug = cache(async (slug: string[]): Promise<Rende
 });
 
 export const getNavigation = cache(async (): Promise<NavGroup[]> => {
-  const pages = await getAllPages();
-  const sidebarPages = pages.filter((page) => page.spec.includeInSidebar ?? page.meta.slug.length > 1);
-  const sectionOrder: DocsSection[] = [
-    "home",
-    "docs",
-    "build",
-    "deploy",
-    "apps",
-    "packages",
-    "cli",
-    "runtime",
-    "operations",
-    "reference",
-    "archive",
+  const pages = await getPublicPages();
+  const byUrl = new Map(pages.map((page) => [page.meta.url, page.meta]));
+  const entry = (url: string): NavEntry => {
+    const page = byUrl.get(url);
+    if (!page) throw new Error(`Public docs navigation references missing or excluded page '${url}'.`);
+    return { title: page.title, url, summary: page.summary, internal: false, sourceKind: page.sourceKind };
+  };
+  const group = (section: DocsNavSection, title: string, landingUrl: string, groups: Array<[string, string[]]>): NavGroup => ({
+    section,
+    title,
+    landing: entry(landingUrl),
+    groups: groups.map(([groupTitle, urls]) => ({ title: groupTitle, entries: urls.map(entry) })),
+  });
+
+  return [
+    group("desktop", "Desktop", "/apps/desktop", [
+      ["Start here", ["/apps/desktop", "/docs/quickstart", "/docs/why-kestrel", "/docs/core-concepts", "/docs/faq"]],
+      ["Work locally", ["/cli/workspace-workflows", "/cli/kchat", "/cli/kcron"]],
+      ["Companion surfaces", ["/apps/web"]],
+    ]),
+    group("build", "Build", "/build", [
+      ["Start building", ["/build", "/build/workspace-copilot-demo", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
+      ["Integrate", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability"]],
+      ["Automate", ["/build/workspaces-and-automation", "/build/automating-common-tasks"]],
+    ]),
+    group("deploy", "Deploy", "/deploy", [
+      ["Deploy Kestrel", ["/deploy", "/deploy/running-the-runner-service", "/deploy/environment-and-auth", "/deploy/deployment-troubleshooting", "/cli/runner-service"]],
+    ]),
+    group("reference", "Reference", "/reference", [
+      ["Concepts", ["/reference", "/reference/terminology", "/docs/architecture-overview", "/docs/runtime-model"]],
+      ["CLI", ["/cli", "/cli/command-suite", "/cli/profiles-code-mode-and-mcp"]],
+      ["Packages", ["/packages", "/packages/sdk", "/packages/next", "/packages/observability"]],
+    ]),
   ];
-
-  return sectionOrder
-    .map((section) => {
-      const landingPage = sidebarPages.find((page) => page.meta.section === section && page.meta.slug.length <= 1);
-      const entries = sidebarPages
-        .filter((page) => page.meta.section === section && page.meta.slug.length > 1 && !(page.meta.archive && page.meta.slug[1] !== undefined))
-        .map<NavEntry>((page) => ({
-          title: page.meta.title,
-          url: page.meta.url,
-          summary: page.meta.summary,
-          internal: page.meta.internal,
-          sourceKind: page.meta.sourceKind,
-        }));
-
-      if (!landingPage && entries.length === 0) {
-        return null;
-      }
-
-      return {
-        section,
-        title: getSectionTitle(section),
-        landing: landingPage
-          ? {
-              title: landingPage.meta.title,
-              url: landingPage.meta.url,
-              summary: landingPage.meta.summary,
-              internal: landingPage.meta.internal,
-              sourceKind: landingPage.meta.sourceKind,
-            }
-          : null,
-        entries,
-      };
-    })
-    .filter((group): group is NavGroup => group !== null);
 });
 
+export function getNavSectionForUrl(url: string): DocsNavSection {
+  if (url.startsWith("/build")) return "build";
+  if (url.startsWith("/deploy") || url === "/cli/runner-service") return "deploy";
+  if (url.startsWith("/packages") || url === "/reference" || url.startsWith("/reference/") || url === "/cli" || url === "/cli/command-suite" || url === "/cli/profiles-code-mode-and-mcp" || url === "/docs/architecture-overview" || url === "/docs/runtime-model") return "reference";
+  return "desktop";
+}
+
 export const getSectionPages = cache(async (section: DocsSection) => {
-  const pages = await getAllPages();
+  const pages = await getPublicPages();
   return pages.filter((page) => page.meta.section === section && page.meta.url !== "/");
 });
 
 export const getRelatedPages = cache(async (meta: DocsPageMeta) => {
-  const pages = await getAllPages();
+  const pages = await getPublicPages();
   const relatedByExplicitSlug = meta.related
     .map((slug) => pages.find((page) => page.meta.url === `/${slug}`)?.meta ?? null)
     .filter((page): page is DocsPageMeta => page !== null);
@@ -344,13 +347,14 @@ export const getRelatedPages = cache(async (meta: DocsPageMeta) => {
 });
 
 export const getSearchDocuments = cache(async (): Promise<SearchDocument[]> => {
-  const pages = await getAllPages();
+  const pages = await getPublicPages();
   return pages.map((page) => ({
     id: page.meta.url,
     url: page.meta.url,
     title: page.meta.title,
     summary: page.meta.summary,
     section: page.meta.section,
+    navSection: getNavSectionForUrl(page.meta.url),
     headings: page.meta.toc.map((item) => item.text),
     fullText: stripMarkdown(page.rawContent),
     internal: page.meta.internal,

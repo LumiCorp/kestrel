@@ -73,11 +73,6 @@ test("full-text search finds pages by title and body content", async () => {
     memoryMatches.some((result) => result.url === "/build/adding-session-memory" || result.url === "/packages/sdk"),
   );
 
-  const replayMatches = searchWithIndex(index, "replay");
-  assert.ok(
-    replayMatches.some((result) => result.url === "/runtime/store-and-replay" || result.url === "/operations/evaluations"),
-  );
-
   const runtimeMatches = searchWithIndex(index, "runtime");
   assert.ok(
     runtimeMatches[0]?.url === "/docs/runtime-model" || runtimeMatches[0]?.url === "/runtime/store-and-replay",
@@ -96,10 +91,10 @@ test("full-text search finds pages by title and body content", async () => {
   );
 
   const reviewMatches = searchWithIndex(index, "project review");
-  assert.equal(reviewMatches[0]?.url, "/operations/review-and-state-workflows");
+  assert.equal(reviewMatches[0]?.url, "/packages/sdk");
   assert.ok(
     reviewMatches.some(
-      (result) => result.url === "/operations/review-and-state-workflows" || result.url === "/apps/web",
+      (result) => result.url === "/packages/sdk" || result.url === "/apps/web",
     ),
   );
 
@@ -123,9 +118,6 @@ test("full-text search finds pages by title and body content", async () => {
     ),
   );
 
-  const evaluationMatches = searchWithIndex(index, "Ruhroh evaluations");
-  assert.ok(evaluationMatches.some((result) => result.url === "/operations/evaluations"));
-
   const modelsMatches = searchWithIndex(index, "v1 models");
   assert.equal(modelsMatches[0]?.url, "/build/openai-compatible-http");
 
@@ -147,13 +139,10 @@ test("full-text search finds pages by title and body content", async () => {
   );
 
   const artifactInspectionMatches = searchWithIndex(index, "artifact inspection");
-  assert.equal(artifactInspectionMatches[0]?.url, "/operations/artifact-inspection");
+  assert.equal(artifactInspectionMatches[0]?.url, "/apps/web");
 
   const cliMatches = searchWithIndex(index, "CLI terminal");
   assert.equal(cliMatches[0]?.url, "/cli/kchat");
-
-  const ownershipMatches = searchWithIndex(index, "ownership ledger");
-  assert.ok(ownershipMatches.some((result) => result.url === "/operations/evaluations"));
 
   const workspaceAutomationMatches = searchWithIndex(index, "workspace automation");
   assert.ok(

@@ -7,7 +7,7 @@ export const REPO_TREE_BASE_URL = `${REPO_HTTP_URL}/tree/main`;
 
 export const SITE_TITLE = "Kestrel Docs";
 export const SITE_DESCRIPTION =
-  "Editorial documentation for the Kestrel Suite, led by Kestrel Desktop and supported by companion surfaces, packages, and runtime operations.";
+  "Use Kestrel Desktop or build durable agents you can inspect, steer, and replay.";
 
 export function resolveDocsAppRoot() {
   const cwd = process.cwd();

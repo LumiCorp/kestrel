@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-
-import { DocsShell } from "../components/DocsShell";
 import { pageRegistry } from "../lib/content-registry";
 import { getAllPages, getNavigation, getRenderedPageBySlug } from "../lib/content";
 import { resolveDocsAppRoot } from "../lib/site";
@@ -356,26 +352,13 @@ test("curated docs content tree has no unregistered mdx files", async () => {
   assert.deepEqual(unregistered, [], `found unregistered content files: ${unregistered.join(", ")}`);
 });
 
-test("representative docs page renders with metadata badges and prose", async () => {
-  const [page, navigation] = await Promise.all([
-    getRenderedPageBySlug(["runtime", "governance-and-invariants"]),
-    getNavigation(),
+test("representative docs page exposes metadata and prose", async () => {
+  const page = await getRenderedPageBySlug([
+    "runtime",
+    "governance-and-invariants",
   ]);
 
   assert.ok(page, "expected runtime governance page to exist");
-  const html = renderToStaticMarkup(
-    createElement(
-      DocsShell,
-      {
-        currentUrl: page.meta.url,
-        navigation,
-        pageMeta: page.meta,
-        toc: page.meta.toc,
-      },
-      page.content,
-    ),
-  );
-
-  assert.match(html, /repo-inferred/);
-  assert.match(html, /Governance and invariants/);
+  assert.equal(page.meta.sourceKind, "repo-inferred");
+  assert.match(page.rawContent, /What It Enforces/iu);
 });

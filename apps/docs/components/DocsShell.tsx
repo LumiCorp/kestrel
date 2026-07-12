@@ -1,7 +1,9 @@
 import Link from "next/link";
-import React, { type ReactNode } from "react";
+import React from "react";
+import type { ReactNode } from "react";
 
-import { SITE_TITLE } from "@/lib/site";
+import { SiteChrome } from "@/components/SiteChrome";
+import { getNavSectionForUrl } from "@/lib/content";
 import type { DocsPageMeta, NavGroup, TocItem } from "@/lib/types";
 
 interface DocsShellProps {
@@ -12,102 +14,73 @@ interface DocsShellProps {
   toc?: TocItem[];
   sectionListing?: ReactNode;
   relatedListing?: ReactNode;
+  renderChrome?: boolean;
 }
 
-function MetaBadge({ label }: { label: string }) {
-  return <span className="meta-badge">{label}</span>;
+function LocalNavigation({ currentUrl, navigation }: { currentUrl: string; navigation: NavGroup[] }) {
+  const activeSection = getNavSectionForUrl(currentUrl);
+  const section = navigation.find((candidate) => candidate.section === activeSection) ?? navigation[0];
+  if (!section) return null;
+
+  return (
+    <aside className="local-sidebar" aria-label={`${section.title} documentation`}>
+      <div className="local-sidebar-inner">
+        <Link className="local-sidebar-title" href={section.landing?.url ?? "/"}>{section.title}</Link>
+        {section.groups.map((group) => (
+          <nav className="local-nav-group" key={group.title} aria-label={group.title}>
+            <span className="local-nav-group-title">{group.title}</span>
+            {group.entries.map((entry) => (
+              <Link key={entry.url} href={entry.url} aria-current={currentUrl === entry.url ? "page" : undefined}>
+                {entry.title}
+              </Link>
+            ))}
+          </nav>
+        ))}
+      </div>
+    </aside>
+  );
 }
 
 export function DocsShell(props: DocsShellProps) {
-  const { children, currentUrl, navigation, pageMeta, toc = [], sectionListing, relatedListing } = props;
+  const { children, currentUrl, navigation, pageMeta, toc = [], sectionListing, relatedListing, renderChrome = true } = props;
+  const isWidePage = !pageMeta;
+  const navSection = getNavSectionForUrl(currentUrl);
 
   return (
     <div className="site-frame">
-      <aside className="site-sidebar" aria-label="Primary">
-        <div className="sidebar-inner">
-          <Link href="/" className="brandmark">
-            <span className="brandmark-kicker">Kestrel</span>
-            <strong>{SITE_TITLE}</strong>
-          </Link>
-          <p className="sidebar-copy">
-            Durable runtime documentation for product teams, integrators, and maintainers.
-          </p>
-          <nav className="sidebar-nav">
-            <Link href="/search" className={`nav-search-link ${currentUrl === "/search" ? "is-active" : ""}`}>
-              Search
-            </Link>
-            {navigation.map((group) => (
-              <section key={group.section} className="nav-group">
-                <div className="nav-group-title">{group.title}</div>
-                {group.landing ? (
-                  <Link
-                    href={group.landing.url}
-                    className={`nav-link nav-link-landing ${currentUrl === group.landing.url ? "is-active" : ""}`}
-                  >
-                    {group.landing.title}
-                  </Link>
-                ) : null}
-                {group.entries.map((entry) => (
-                  <Link
-                    key={entry.url}
-                    href={entry.url}
-                    className={`nav-link ${currentUrl === entry.url ? "is-active" : ""}`}
-                  >
-                    {entry.title}
-                  </Link>
-                ))}
-              </section>
-            ))}
-          </nav>
-        </div>
-      </aside>
-      <div className="site-column">
-        <header className="site-header">
-          <div className="site-header-copy">
-            <span className="header-kicker">Editorial docs</span>
-            <h1 className="site-header-title">{pageMeta?.title ?? SITE_TITLE}</h1>
-          </div>
-          <Link href="/search" className="header-search-link">
-            Search the docs
-          </Link>
-        </header>
-        <div className="site-body">
-          <main id="app-main" className="content-column">
-            {pageMeta ? (
-              <div className="article-meta">
-                <div className="article-badges">
-                  <MetaBadge label={pageMeta.section} />
-                  {pageMeta.internal ? <MetaBadge label="internal" /> : null}
-                  {pageMeta.archive ? <MetaBadge label="archived" /> : null}
-                  {pageMeta.sourceKind === "repo-inferred" ? <MetaBadge label="repo-inferred" /> : null}
-                </div>
-                <p className="article-summary">{pageMeta.summary}</p>
+      {renderChrome ? <SiteChrome navigation={navigation} currentUrl={currentUrl} activeSection={pageMeta ? navSection : undefined} /> : null}
+      <div className={`site-body ${isWidePage ? "site-body-wide" : ""}`}>
+        {pageMeta ? <LocalNavigation currentUrl={currentUrl} navigation={navigation} /> : null}
+        <main id="app-main" className="content-column">
+          {pageMeta ? (
+            <header className="article-header">
+              <div className="article-kicker">{navSection}</div>
+              <h1>{pageMeta.title}</h1>
+              <p className="article-summary">{pageMeta.summary}</p>
+              <div className="article-details">
+                <span>Updated {pageMeta.updatedAt}</span>
+                <a href={pageMeta.sourceUrl}>View source</a>
               </div>
-            ) : null}
-            <article className="doc-prose">{children}</article>
-            {sectionListing}
-            {relatedListing}
-          </main>
+            </header>
+          ) : null}
+          <article className={pageMeta ? "doc-prose" : "wide-page-content"}>{children}</article>
+          {sectionListing}
+          {relatedListing}
+        </main>
+        {pageMeta && toc.length > 0 ? (
           <aside className="toc-column" aria-label="On this page">
-            {toc.length > 0 ? (
-              <div className="toc-card">
-                <div className="toc-title">On this page</div>
-                <ol className="toc-list">
-                  {toc.map((item) => (
-                    <li key={item.id} className={`toc-item toc-level-${item.level}`}>
-                      <a href={`#${item.id}`}>{item.text}</a>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ) : (
-              <div className="toc-card toc-card-muted">
-                <div className="toc-title">This page</div>
-                <p className="toc-empty">The page is intentionally compact.</p>
-              </div>
-            )}
+            <div className="toc-card">
+              <div className="toc-title">On this page</div>
+              <ol className="toc-list">
+                {toc.map((item) => (
+                  <li key={item.id} className={`toc-item toc-level-${item.level}`}>
+                    <a href={`#${item.id}`}>{item.text}</a>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </aside>
-        </div>
+        ) : null}
       </div>
     </div>
   );
