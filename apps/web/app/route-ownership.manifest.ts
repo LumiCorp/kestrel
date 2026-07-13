@@ -788,6 +788,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
+    "app/api/threads/[id]/workspace/route.ts",
+    "/api/threads/:id/workspace",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/threads/[id]/workspace/[...path]/route.ts",
     "/api/threads/:id/workspace/:path*",
     "environments",

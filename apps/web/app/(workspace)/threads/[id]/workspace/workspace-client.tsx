@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StandaloneWorkspaceSetup } from "./standalone-workspace-setup";
 
 type TreeEntry = {
   name: string;
@@ -53,7 +54,27 @@ type EnvironmentActivation = {
   status: "pending" | "ready" | "failed";
 };
 
-export function WorkspaceClient({ threadId }: { threadId: string }) {
+export function WorkspaceClient({
+  standalone,
+  threadId,
+}: {
+  standalone: boolean;
+  threadId: string;
+}) {
+  const [configured, setConfigured] = useState(!standalone);
+  const handleConfigured = useCallback(() => setConfigured(true), []);
+  if (!configured) {
+    return (
+      <StandaloneWorkspaceSetup
+        onConfigured={handleConfigured}
+        threadId={threadId}
+      />
+    );
+  }
+  return <ConnectedWorkspaceClient threadId={threadId} />;
+}
+
+function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
   const base = `/api/threads/${threadId}/workspace`;
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<TreeEntry[]>([]);

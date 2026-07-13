@@ -73,11 +73,13 @@ test(
     const projectId = `project-${suffix}`;
     const projectThreadId = `thread-project-${suffix}`;
     const scratchThreadId = `thread-scratch-${suffix}`;
+    const configuredScratchThreadId = `thread-configured-scratch-${suffix}`;
     const revisionId = `revision-${suffix}`;
     const repositoryResourceId = crypto.randomUUID();
     const githubAccountId = `github-account-${suffix}`;
     const githubConnectionId = crypto.randomUUID();
     const environmentGrantId = crypto.randomUUID();
+    const repositoryReadGrantId = crypto.randomUUID();
     const projectRestrictionId = crypto.randomUUID();
     const actorRestrictionId = crypto.randomUUID();
     const agentRestrictionId = crypto.randomUUID();
@@ -135,6 +137,10 @@ test(
           ),
           (
             ${scratchThreadId}, 'Scratch Environment Thread', ${userA},
+            ${organizationA}, NULL
+          ),
+          (
+            ${configuredScratchThreadId}, 'Configured Scratch Thread', ${userA},
             ${organizationA}, NULL
           )
       `;
@@ -429,11 +435,59 @@ test(
       INSERT INTO "environment_capability_grants" (
         "id", "environment_id", "provider_key", "capability_key",
         "resource_id", "approval_mode"
-      ) VALUES (
-        ${environmentGrantId}, ${createdEnvironment.environment.id}, 'github',
-        'issue.write', ${repositoryResourceId}, 'auto'
-      )
+      ) VALUES
+        (
+          ${environmentGrantId}, ${createdEnvironment.environment.id}, 'github',
+          'issue.write', ${repositoryResourceId}, 'auto'
+        ),
+        (
+          ${repositoryReadGrantId}, ${createdEnvironment.environment.id},
+          'github', 'repository.read', ${repositoryResourceId}, 'auto'
+        )
     `;
+
+    const configuredScratchWorkspace =
+      await environmentStore.createOrConfigureStandaloneThreadWorkspace({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        threadId: configuredScratchThreadId,
+        userId: userA,
+        source: { type: "github", resourceId: repositoryResourceId },
+      });
+    assert.equal(
+      configuredScratchWorkspace.binding.threadId,
+      configuredScratchThreadId
+    );
+    assert.equal(configuredScratchWorkspace.binding.source, "thread");
+    assert.equal(
+      configuredScratchWorkspace.workspace.standaloneThreadId,
+      configuredScratchThreadId
+    );
+    assert.equal(configuredScratchWorkspace.workspace.sourceType, "github");
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceResourceId,
+      repositoryResourceId
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceRepository,
+      "acme/support"
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceDefaultBranch,
+      "main"
+    );
+    assert.equal(configuredScratchWorkspace.operation.status, "queued");
+    const resolvedConfiguredScratch =
+      await environmentStore.resolveOrCreateThreadExecutionBinding({
+        organizationId: organizationA,
+        threadId: configuredScratchThreadId,
+        userId: userA,
+      });
+    assert.equal(resolvedConfiguredScratch.created, false);
+    assert.equal(
+      resolvedConfiguredScratch.workspace.id,
+      configuredScratchWorkspace.workspace.id
+    );
     await sql`
       INSERT INTO "project_capability_restrictions" (
         "id", "project_id", "provider_key", "capability_key", "resource_id",
