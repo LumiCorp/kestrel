@@ -15,7 +15,11 @@ import type {
   ReplayResult,
 } from "../replay/RunReplayService.js";
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
-import type { LocalCoreStatus } from "./contracts.js";
+import {
+  parseLocalCoreDesktopExecutionConfig,
+  type LocalCoreDesktopExecutionConfig,
+  type LocalCoreStatus,
+} from "./contracts.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -52,6 +56,17 @@ export class LocalCoreClient {
 
   async patchSettings(patch: Record<string, unknown>): Promise<unknown> {
     return await this.patch("/v1/settings", patch);
+  }
+
+  async desktopExecutionConfig(): Promise<LocalCoreDesktopExecutionConfig> {
+    const response = await this.get("/v1/desktop/execution-config");
+    return parseLocalCoreDesktopExecutionConfig(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "executionConfig",
+        "Desktop execution config",
+      ),
+    );
   }
 
   async desktopSettings<TSettings = Record<string, unknown>>(): Promise<{

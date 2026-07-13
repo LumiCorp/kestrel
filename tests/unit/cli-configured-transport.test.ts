@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LocalCoreRunnerTransport } from "../../cli/client/LocalCoreRunnerTransport.js";
+import { LocalCoreRunnerTransport } from "../../src/localCore/index.js";
 import { RemoteRunnerTransport } from "../../cli/client/RemoteRunnerTransport.js";
 import { createConfiguredRunnerTransport } from "../../cli/client/configuredTransport.js";
 
