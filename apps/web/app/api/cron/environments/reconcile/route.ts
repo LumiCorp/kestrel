@@ -32,6 +32,10 @@ export async function GET(request: Request) {
         { status: error.status, headers: NO_STORE_HEADERS }
       );
     }
+    console.error(
+      "[environment-reconcile] scheduled reconciliation failed",
+      error
+    );
     return Response.json(
       {
         ok: false,
