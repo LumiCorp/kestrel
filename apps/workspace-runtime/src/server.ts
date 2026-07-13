@@ -4,6 +4,7 @@ import {
   type KestrelRequestContext,
 } from "@kestrel-agents/sdk/runner";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream } from "node:fs";
 import {
   cp,
   mkdir,
@@ -14,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
@@ -63,6 +65,29 @@ const server = createServer(async (request, response) => {
         path: request.url ?? url.pathname,
         authorization: `Bearer ${runnerToken}`,
       });
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/git/push-agent-branch"
+    ) {
+      const body = parseJson(await readBody(request, 100_000));
+      if (
+        !isRecord(body) ||
+        typeof body.promotionId !== "string" ||
+        !body.promotionId.trim() ||
+        typeof body.candidateFingerprint !== "string" ||
+        !body.candidateFingerprint.trim()
+      ) {
+        throw new WorkspaceRequestError(400, "GITHUB_PUSH_INPUT_INVALID");
+      }
+      const result = await pushManagedCandidateBranch({
+        ticket,
+        authorization: request.headers.authorization ?? "",
+        promotionId: body.promotionId,
+        candidateFingerprint: body.candidateFingerprint,
+      });
+      writeJson(response, 200, result);
       return;
     }
     if (request.method === "GET" && url.pathname === "/v1/apps") {
@@ -470,6 +495,143 @@ async function initializeGitHubSource(authorization: string) {
   }
 }
 
+async function pushManagedCandidateBranch(input: {
+  ticket: ReturnType<typeof authorizeWorkspaceRequest>;
+  authorization: string;
+  promotionId: string;
+  candidateFingerprint: string;
+}) {
+  if (!(config.sourceResourceId && config.controlPlaneUrl)) {
+    throw new WorkspaceRequestError(500, "WORKSPACE_SOURCE_NOT_CONFIGURED");
+  }
+  const preview = await withRunnerClient(
+    (client, context) =>
+      client.previewWorkspacePromotion(
+        {
+          sessionId: input.ticket.threadId,
+          promotionId: input.promotionId,
+        },
+        context
+      ),
+    input.ticket
+  );
+  const promotion = preview.preview?.promotion;
+  const worktreeRoot = readRecordString(promotion, "managedWorktreeRoot");
+  const baseHead = readRecordString(promotion, "baseHead");
+  if (
+    preview.preview?.status !== "ready" ||
+    preview.preview.candidateFingerprint !== input.candidateFingerprint ||
+    promotion?.runId !== input.ticket.runId ||
+    !worktreeRoot ||
+    !baseHead
+  ) {
+    throw new WorkspaceRequestError(409, "GITHUB_PUSH_CANDIDATE_CHANGED");
+  }
+  const temporaryRoot = await mkdtemp("/tmp/kestrel-git-bundle-");
+  const bundlePath = path.join(temporaryRoot, "candidate.bundle");
+  const indexPath = path.join(temporaryRoot, "candidate.index");
+  const bundleRef = `refs/kestrel/bundles/${input.ticket.runId}`;
+  try {
+    const candidateEnvironment = {
+      GIT_INDEX_FILE: indexPath,
+      GIT_AUTHOR_NAME: "Kestrel Agent",
+      GIT_AUTHOR_EMAIL: "agent@kestrel.invalid",
+      GIT_COMMITTER_NAME: "Kestrel Agent",
+      GIT_COMMITTER_EMAIL: "agent@kestrel.invalid",
+    };
+    await runProcess(
+      "git",
+      ["read-tree", baseHead],
+      worktreeRoot,
+      candidateEnvironment
+    );
+    await runProcess(
+      "git",
+      ["add", "-A", "--", "."],
+      worktreeRoot,
+      candidateEnvironment
+    );
+    const candidateTree = (
+      await runProcessOutput(
+        "git",
+        ["write-tree"],
+        worktreeRoot,
+        candidateEnvironment
+      )
+    ).trim();
+    const candidateCommit = (
+      await runProcessOutput(
+        "git",
+        [
+          "commit-tree",
+          candidateTree,
+          "-p",
+          baseHead,
+          "-m",
+          `Kestrel candidate ${input.ticket.runId}`,
+        ],
+        worktreeRoot,
+        candidateEnvironment
+      )
+    ).trim();
+    await runProcess(
+      "git",
+      ["update-ref", bundleRef, candidateCommit],
+      worktreeRoot,
+      {}
+    );
+    await runProcess(
+      "git",
+      ["bundle", "create", bundlePath, bundleRef, `^${baseHead}`],
+      worktreeRoot,
+      {}
+    );
+    const bundleStream = Readable.toWeb(
+      createReadStream(bundlePath)
+    ) as ReadableStream<Uint8Array>;
+    const pushResponse = await fetch(
+      new URL("/api/runtime/github/push", config.controlPlaneUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: input.authorization,
+          "content-type": "application/x-git-bundle",
+          "x-kestrel-resource-id": config.sourceResourceId,
+          "x-kestrel-candidate-fingerprint": input.candidateFingerprint,
+        },
+        body: bundleStream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }
+    );
+    const payload = (await pushResponse.json()) as {
+      branch?: string;
+      repository?: string;
+      error?: { code?: string };
+    };
+    if (!(pushResponse.ok && payload.branch)) {
+      throw new WorkspaceRequestError(
+        pushResponse.status,
+        payload.error?.code ?? "GITHUB_PUSH_FAILED"
+      );
+    }
+    return payload;
+  } finally {
+    await runProcess(
+      "git",
+      ["update-ref", "-d", bundleRef],
+      worktreeRoot,
+      {}
+    ).catch(() => {});
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function readRecordString(value: unknown, key: string) {
+  if (!isRecord(value)) return null;
+  const field = value[key];
+  return typeof field === "string" && field.trim() ? field : null;
+}
+
 function runProcess(
   command: string,
   args: string[],
@@ -490,6 +652,29 @@ function runProcess(
         reject(
           new WorkspaceRequestError(502, "WORKSPACE_SOURCE_CLONE_FAILED")
         );
+    });
+  });
+}
+
+function runProcessOutput(
+  command: string,
+  args: string[],
+  cwd: string,
+  extraEnv: Record<string, string>
+) {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: { ...process.env, ...extraEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.resume();
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve(Buffer.concat(stdout).toString("utf8"));
+      else reject(new WorkspaceRequestError(502, "WORKSPACE_GIT_COMMAND_FAILED"));
     });
   });
 }

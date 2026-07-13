@@ -6,7 +6,13 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getThreadAccessForUser } from "@/lib/threads/store";
 
-const ALLOWED_PATHS = new Set(["apps", "files", "tree", "terminal/exec"]);
+const ALLOWED_PATHS = new Set([
+  "apps",
+  "files",
+  "git/push-agent-branch",
+  "tree",
+  "terminal/exec",
+]);
 
 type WorkspaceApplicationPayload = {
   id: string;

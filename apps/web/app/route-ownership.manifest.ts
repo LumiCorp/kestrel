@@ -442,6 +442,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/github/push/route.ts",
+    "/api/runtime/github/push",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/admin/api-keys/route.ts",
     "/api/admin/api-keys",
     ADMIN_API.owner,

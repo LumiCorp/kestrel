@@ -77,6 +77,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
   const [promotionPreview, setPromotionPreview] =
     useState<WorkspacePromotionPreview | null>(null);
   const [acceptingPromotion, setAcceptingPromotion] = useState(false);
+  const [pushingPromotion, setPushingPromotion] = useState(false);
 
   const loadPromotions = useCallback(async () => {
     const response = await fetch(`${base}/promotions`, { cache: "no-store" });
@@ -403,6 +404,36 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
     }
   }
 
+  async function pushPromotion() {
+    const preview = promotionPreview;
+    if (!(preview?.candidateFingerprint && preview.status === "ready")) return;
+    setPushingPromotion(true);
+    setStatus("Pushing candidate to its Kestrel agent branch…");
+    try {
+      const response = await fetch(`${base}/git/push-agent-branch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          promotionId: preview.promotion.promotionId,
+          candidateFingerprint: preview.candidateFingerprint,
+        }),
+      });
+      const payload = (await response.json()) as {
+        branch?: string;
+        repository?: string;
+        error?: { code?: string };
+      };
+      if (!(response.ok && payload.branch)) {
+        throw new Error(payload.error?.code ?? "Candidate branch push failed.");
+      }
+      setStatus(
+        `Pushed ${payload.repository ?? "repository"}#${payload.branch}`
+      );
+    } finally {
+      setPushingPromotion(false);
+    }
+  }
+
   return (
     <main className="flex h-dvh min-w-0 flex-col bg-background">
       <header className="flex h-12 items-center gap-3 border-b px-3">
@@ -546,26 +577,49 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
                   </div>
                 ))}
               </div>
-              <Button
-                className="w-full"
-                disabled={
-                  promotionPreview.status !== "ready" ||
-                  !promotionPreview.candidateFingerprint ||
-                  acceptingPromotion
-                }
-                onClick={() =>
-                  void acceptPromotion().catch((error: unknown) =>
-                    setStatus(
-                      error instanceof Error
-                        ? error.message
-                        : "Candidate acceptance failed."
+              <div className="grid gap-2">
+                <Button
+                  className="w-full"
+                  disabled={
+                    promotionPreview.status !== "ready" ||
+                    !promotionPreview.candidateFingerprint ||
+                    pushingPromotion
+                  }
+                  onClick={() =>
+                    void pushPromotion().catch((error: unknown) =>
+                      setStatus(
+                        error instanceof Error
+                          ? error.message
+                          : "Candidate branch push failed."
+                      )
                     )
-                  )
-                }
-                size="sm"
-              >
-                {acceptingPromotion ? "Accepting…" : "Accept candidate"}
-              </Button>
+                  }
+                  size="sm"
+                  variant="outline"
+                >
+                  {pushingPromotion ? "Pushing…" : "Push agent branch"}
+                </Button>
+                <Button
+                  className="w-full"
+                  disabled={
+                    promotionPreview.status !== "ready" ||
+                    !promotionPreview.candidateFingerprint ||
+                    acceptingPromotion
+                  }
+                  onClick={() =>
+                    void acceptPromotion().catch((error: unknown) =>
+                      setStatus(
+                        error instanceof Error
+                          ? error.message
+                          : "Candidate acceptance failed."
+                      )
+                    )
+                  }
+                  size="sm"
+                >
+                  {acceptingPromotion ? "Accepting…" : "Accept candidate"}
+                </Button>
+              </div>
             </div>
           ) : null}
         </aside>
