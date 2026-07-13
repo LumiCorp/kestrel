@@ -52,6 +52,9 @@ export interface EnvironmentProvisioningRepository {
     environmentId: string;
     appName: string;
     networkName: string;
+    gatewayMachineId: string;
+    routerUrl: string;
+    routerImage: string;
     runtimeImage: string;
   }): Promise<void>;
   failEnvironment(input: {
@@ -104,6 +107,7 @@ export class EnvironmentProvisioner {
   private readonly provider: EnvironmentInfrastructureProvider;
   private readonly repository: EnvironmentProvisioningRepository;
   private readonly runtimeImage: string;
+  private readonly routerImage: string;
   private readonly ticketPublicKey: string;
   private readonly controlPlaneUrl: string;
   private readonly credentialBrokerToken: string;
@@ -112,6 +116,7 @@ export class EnvironmentProvisioner {
     repository: EnvironmentProvisioningRepository;
     provider: EnvironmentInfrastructureProvider;
     runtimeImage: string;
+    routerImage: string;
     ticketPublicKey: string;
     controlPlaneUrl: string;
     credentialBrokerToken: string;
@@ -120,12 +125,16 @@ export class EnvironmentProvisioner {
       repository,
       provider,
       runtimeImage,
+      routerImage,
       ticketPublicKey,
       controlPlaneUrl,
       credentialBrokerToken,
     } = input;
     if (!runtimeImage.trim()) {
       throw new Error("Workspace runtime image is not configured.");
+    }
+    if (!routerImage.trim()) {
+      throw new Error("Environment router image is not configured.");
     }
     if (!ticketPublicKey.includes("BEGIN PUBLIC KEY")) {
       throw new Error("Environment ticket public key is not configured.");
@@ -139,6 +148,7 @@ export class EnvironmentProvisioner {
     this.repository = repository;
     this.provider = provider;
     this.runtimeImage = runtimeImage;
+    this.routerImage = routerImage;
     this.ticketPublicKey = ticketPublicKey;
     this.controlPlaneUrl = controlPlaneUrl;
     this.credentialBrokerToken = credentialBrokerToken;
@@ -231,16 +241,39 @@ export class EnvironmentProvisioner {
       environment.flyAppName ?? flyEnvironmentAppName(environment.id);
     const networkName = flyEnvironmentNetworkName(environment.id);
     await this.provider.ensureEnvironmentApp({ appName, networkName });
+    const gateway = await this.provider.ensureEnvironmentGateway({
+      appName,
+      environmentId: environment.id,
+      region: environment.region,
+      runtimeImage: this.routerImage,
+      ticketPublicKey: this.ticketPublicKey,
+    });
+    if (gateway.state !== "started") {
+      await this.provider.waitForMachine({
+        appName,
+        machineId: gateway.machineId,
+        state: "started",
+        timeoutSeconds: 60,
+      });
+    }
     await this.repository.completeEnvironment({
       environmentId: environment.id,
       appName,
       networkName,
+      gatewayMachineId: gateway.machineId,
+      routerUrl: gateway.routerUrl,
+      routerImage: this.routerImage,
       runtimeImage: this.runtimeImage,
     });
     await this.repository.completeOperation({
       operationId: operation.id,
       stage: "environment.activation.ready",
-      result: { appName, networkName },
+      result: {
+        appName,
+        networkName,
+        gatewayMachineId: gateway.machineId,
+        routerUrl: gateway.routerUrl,
+      },
     });
   }
 
@@ -644,6 +677,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           status: "ready",
           flyAppName: input.appName,
           flyNetworkName: input.networkName,
+          flyGatewayMachineId: input.gatewayMachineId,
+          routerUrl: input.routerUrl,
+          routerImage: input.routerImage,
           runtimeImage: input.runtimeImage,
           lastHealthAt: new Date(),
           failureCode: null,
@@ -693,6 +729,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             isDefault: false,
             flyAppName: null,
             flyNetworkName: null,
+            flyGatewayMachineId: null,
+            routerUrl: null,
+            routerImage: null,
             archivedAt: now,
             updatedAt: now,
           })

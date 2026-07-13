@@ -1,12 +1,21 @@
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import {
   authorizeEnvironmentHttpRequest,
   authorizeEnvironmentRequest,
   authorizeEnvironmentSubscription,
 } from "./router.js";
+import { proxyWorkspaceRequest } from "./proxy.js";
 
 const port = readPort(process.env.PORT);
 const publicKey = process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
+const expectedAppName = required(
+  process.env.KESTREL_ENVIRONMENT_APP_NAME,
+  "KESTREL_ENVIRONMENT_APP_NAME"
+);
 
 createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
@@ -29,8 +38,9 @@ createServer(async (request, response) => {
       pathname,
       method: request.method ?? "GET",
       publicKey,
+      expectedAppName,
     });
-    writeDecision(response, decision);
+    await applyDecision(request, response, decision);
     return;
   }
   const body = await readJsonBody(request);
@@ -44,17 +54,24 @@ createServer(async (request, response) => {
         authorization: request.headers.authorization,
         body: body.value,
         publicKey,
+        expectedAppName,
       })
     : authorizeEnvironmentRequest({
         authorization: request.headers.authorization,
         body: body.value,
         publicKey,
+        expectedAppName,
       });
-  writeDecision(response, decision);
+  await applyDecision(request, response, decision, body.raw);
 }).listen(port);
 
-function writeDecision(response: import("node:http").ServerResponse, decision: ReturnType<typeof authorizeEnvironmentRequest>) {
-  if (decision.status !== 204) {
+async function applyDecision(
+  request: IncomingMessage,
+  response: ServerResponse,
+  decision: ReturnType<typeof authorizeEnvironmentRequest>,
+  bufferedBody?: Buffer
+) {
+  if (decision.status !== 200) {
     process.stdout.write(
       `${JSON.stringify({
         type: "environment.router.denied",
@@ -67,16 +84,16 @@ function writeDecision(response: import("node:http").ServerResponse, decision: R
     response.end(JSON.stringify({ error: { code: decision.code } }));
     return;
   }
-  response.writeHead(204, {
-    "fly-replay": decision.flyReplay,
-    "x-kestrel-environment-id": decision.ticket.environmentId,
-    "x-kestrel-workspace-id": decision.ticket.workspaceId,
+  await proxyWorkspaceRequest({
+    request,
+    response,
+    targetUrl: decision.targetUrl,
+    bufferedBody,
   });
-  response.end();
 }
 
 async function readJsonBody(request: NodeJS.ReadableStream): Promise<
-  | { ok: true; value: unknown }
+  | { ok: true; value: unknown; raw: Buffer }
   | { ok: false; code: string }
 > {
   const chunks: Buffer[] = [];
@@ -87,8 +104,9 @@ async function readJsonBody(request: NodeJS.ReadableStream): Promise<
     if (length > 2_000_000) return { ok: false, code: "REQUEST_TOO_LARGE" };
     chunks.push(buffer);
   }
+  const raw = Buffer.concat(chunks);
   try {
-    return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+    return { ok: true, value: JSON.parse(raw.toString("utf8")), raw };
   } catch {
     return { ok: false, code: "REQUEST_JSON_INVALID" };
   }
@@ -100,4 +118,9 @@ function readPort(value: string | undefined) {
     throw new Error("PORT must be a valid TCP port.");
   }
   return parsed;
+}
+
+function required(value: string | undefined, name: string) {
+  if (!value?.trim()) throw new Error(`${name} is required.`);
+  return value.trim();
 }

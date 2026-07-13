@@ -5,7 +5,7 @@ import {
 } from "@lumi/kestrel-environment-auth";
 
 export type RouterDecision =
-  | { status: 204; flyReplay: string; ticket: EnvironmentExecutionTicket }
+  | { status: 200; targetUrl: string; ticket: EnvironmentExecutionTicket }
   | { status: 400 | 401 | 403; code: string };
 
 export function authorizeEnvironmentHttpRequest(input: {
@@ -13,11 +13,13 @@ export function authorizeEnvironmentHttpRequest(input: {
   pathname: string;
   method: string;
   publicKey: string;
+  expectedAppName?: string | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer({
     authorization: input.authorization,
     publicKey: input.publicKey,
+    expectedAppName: input.expectedAppName,
     ...(input.now === undefined ? {} : { now: input.now }),
   });
   if ("status" in verified) return verified;
@@ -26,8 +28,8 @@ export function authorizeEnvironmentHttpRequest(input: {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
   return {
-    status: 204,
-    flyReplay: replayTarget(verified.ticket),
+    status: 200,
+    targetUrl: workspaceTarget(verified.ticket),
     ticket: verified.ticket,
   };
 }
@@ -44,6 +46,7 @@ export function authorizeEnvironmentSubscription(input: {
   authorization: string | undefined;
   body: unknown;
   publicKey: string;
+  expectedAppName?: string | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer(input);
@@ -61,8 +64,8 @@ export function authorizeEnvironmentSubscription(input: {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
   return {
-    status: 204,
-    flyReplay: replayTarget(verified.ticket),
+    status: 200,
+    targetUrl: workspaceTarget(verified.ticket),
     ticket: verified.ticket,
   };
 }
@@ -71,6 +74,7 @@ export function authorizeEnvironmentRequest(input: {
   authorization: string | undefined;
   body: unknown;
   publicKey: string;
+  expectedAppName?: string | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer(input);
@@ -89,8 +93,8 @@ export function authorizeEnvironmentRequest(input: {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
   return {
-    status: 204,
-    flyReplay: replayTarget(ticket),
+    status: 200,
+    targetUrl: workspaceTarget(ticket),
     ticket,
   };
 }
@@ -98,18 +102,26 @@ export function authorizeEnvironmentRequest(input: {
 function verifyBearer(input: {
   authorization: string | undefined;
   publicKey: string;
+  expectedAppName?: string | undefined;
   now?: number;
-}): { ticket: EnvironmentExecutionTicket } | { status: 401; code: string } {
+}):
+  | { ticket: EnvironmentExecutionTicket }
+  | { status: 401 | 403; code: string } {
   const token = readBearer(input.authorization);
   if (!token) return { status: 401, code: "ENVIRONMENT_TICKET_REQUIRED" };
   try {
-    return {
-      ticket: verifyEnvironmentExecutionTicket({
-        token,
-        publicKey: input.publicKey,
-        ...(input.now === undefined ? {} : { now: input.now }),
-      }),
-    };
+    const ticket = verifyEnvironmentExecutionTicket({
+      token,
+      publicKey: input.publicKey,
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
+    if (
+      input.expectedAppName &&
+      ticket.flyAppName !== input.expectedAppName
+    ) {
+      return { status: 403, code: "ENVIRONMENT_APP_MISMATCH" };
+    }
+    return { ticket };
   } catch (error) {
     return {
       status: 401,
@@ -121,8 +133,9 @@ function verifyBearer(input: {
   }
 }
 
-function replayTarget(ticket: EnvironmentExecutionTicket) {
-  return `app=${ticket.flyAppName};instance=${ticket.flyMachineId}`;
+function workspaceTarget(ticket: EnvironmentExecutionTicket) {
+  const host = `${ticket.flyMachineId}.vm.${ticket.flyAppName}.internal`;
+  return `http://${host}:43104`;
 }
 
 function workspaceHttpCapability(method: string, pathname: string) {

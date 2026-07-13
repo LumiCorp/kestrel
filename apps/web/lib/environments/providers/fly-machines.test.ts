@@ -132,7 +132,108 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   assert.equal(machineBody.config.env.OPENAI_API_KEY, undefined);
   assert.equal(machineBody.config.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(machineBody.config.env.OPENROUTER_API_KEY, undefined);
-  assert.equal(machineBody.config.services[0].internal_port, 43_104);
+  assert.equal(machineBody.config.services, undefined);
+});
+
+test("Environment gateway owns public ingress while Workspace Machines remain private", async () => {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init: init ?? {} });
+      const path = String(url);
+      if (path.endsWith("/ip_assignments") && init?.method === "GET") {
+        return Response.json({ ips: [] });
+      }
+      if (path.endsWith("/ip_assignments") && init?.method === "POST") {
+        return Response.json({ ip: "203.0.113.1", shared: true });
+      }
+      if (path.includes("/machines?")) return Response.json([]);
+      return Response.json({
+        id: "gateway-machine-1",
+        state: "started",
+        region: "iad",
+        config: {
+          metadata: {
+            kestrel_environment_gateway: "true",
+            kestrel_environment_id: "environment-1",
+          },
+        },
+      });
+    }) as typeof fetch,
+  });
+  const gateway = await client.ensureEnvironmentGateway({
+    appName: "kestrel-env-abc",
+    environmentId: "environment-1",
+    region: "iad",
+    runtimeImage: "registry.fly.io/router@sha256:abc",
+    ticketPublicKey:
+      "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+  });
+  assert.equal(gateway.routerUrl, "https://kestrel-env-abc.fly.dev");
+  assert.equal(gateway.sharedIp, "203.0.113.1");
+  const ipCreate = requests.find(
+    ({ url, init }) => url.endsWith("/ip_assignments") && init.method === "POST"
+  );
+  assert.deepEqual(JSON.parse(String(ipCreate?.init.body)), {
+    type: "shared_v4",
+  });
+  const machineCreate = requests.find(
+    ({ url, init }) => url.endsWith("/machines") && init.method === "POST"
+  );
+  const machineBody = JSON.parse(String(machineCreate?.init.body));
+  assert.equal(machineBody.config.image, "registry.fly.io/router@sha256:abc");
+  assert.equal(machineBody.config.services[0].internal_port, 8080);
+  assert.equal(machineBody.config.services[0].min_machines_running, 1);
+  assert.equal(
+    machineBody.config.env.KESTREL_ENVIRONMENT_APP_NAME,
+    "kestrel-env-abc"
+  );
+});
+
+test("Environment gateway rejects an existing Machine with stale immutable configuration", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.endsWith("/ip_assignments")) {
+        return Response.json({
+          ips: [{ ip: "203.0.113.1", shared: true }],
+        });
+      }
+      return Response.json([
+        {
+          id: "gateway-machine-1",
+          state: "started",
+          region: "iad",
+          config: {
+            image: "registry.fly.io/router@sha256:stale",
+            env: {
+              KESTREL_ENVIRONMENT_APP_NAME: "kestrel-env-abc",
+              KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: "old-key",
+            },
+            metadata: {
+              kestrel_environment_gateway: "true",
+              kestrel_environment_id: "environment-1",
+            },
+            services: [{}],
+          },
+        },
+      ]);
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    client.ensureEnvironmentGateway({
+      appName: "kestrel-env-abc",
+      environmentId: "environment-1",
+      region: "iad",
+      runtimeImage: "registry.fly.io/router@sha256:current",
+      ticketPublicKey: "current-key",
+    }),
+    /immutable ingress contract/u
+  );
 });
 
 test("Fly rejection discards provider response bodies", async () => {

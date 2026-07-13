@@ -33,6 +33,9 @@ test("Environment migration establishes the hosted ownership graph", () => {
 
 test("Environment migration pins isolation and lazy Workspace invariants", () => {
   assert.match(migration, /environments_org_default_idx/u);
+  assert.match(migration, /fly_gateway_machine_id/u);
+  assert.match(migration, /router_url/u);
+  assert.match(migration, /router_image/u);
   assert.match(migration, /environment_workspaces_owner_check/u);
   assert.match(migration, /environment_workspaces_source_check/u);
   assert.match(migration, /environment_workspaces_project_idx/u);

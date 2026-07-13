@@ -3,6 +3,7 @@ import {
   type EnvironmentInfrastructureProvider,
   type EnvironmentProviderApp,
   EnvironmentProviderError,
+  type EnvironmentProviderGateway,
   type EnvironmentProviderInventory,
   type EnvironmentProviderMachine,
   type EnvironmentProviderVolume,
@@ -23,6 +24,16 @@ const appDetailsSchema = z.object({
 
 const appCreateSchema = z.object({ id: z.string().min(1) });
 
+const ipAssignmentSchema = z.object({
+  ip: z.string().min(1),
+  shared: z.boolean().optional(),
+  service_name: z.string().optional(),
+});
+
+const ipAssignmentsSchema = z.object({
+  ips: z.array(ipAssignmentSchema),
+});
+
 const volumeSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -38,7 +49,10 @@ const machineSchema = z.object({
   instance_id: z.string().min(1).optional(),
   config: z
     .object({
+      image: z.string().min(1).optional(),
+      env: z.record(z.string(), z.string()).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
+      services: z.array(z.unknown()).optional(),
     })
     .passthrough()
     .optional(),
@@ -123,6 +137,92 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       organizationSlug: this.organizationSlug,
       network: input.networkName,
     };
+  }
+
+  async ensureEnvironmentGateway(input: {
+    appName: string;
+    environmentId: string;
+    region: string;
+    runtimeImage: string;
+    ticketPublicKey: string;
+  }): Promise<EnvironmentProviderGateway> {
+    const sharedIp = await this.ensureEnvironmentSharedIp(input.appName);
+    const listed = parseResponse(
+      z.array(machineSchema),
+      await this.request(
+        `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_environment_gateway=true`,
+        { method: "GET" }
+      )
+    );
+    const existing = listed.find(
+      (machine) =>
+        machine.config?.metadata?.kestrel_environment_gateway === "true" &&
+        machine.config.metadata.kestrel_environment_id === input.environmentId
+    );
+    if (
+      existing &&
+      (existing.config?.image !== input.runtimeImage ||
+        existing.config.env?.KESTREL_ENVIRONMENT_APP_NAME !== input.appName ||
+        existing.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY !==
+          input.ticketPublicKey ||
+        !existing.config.services?.length)
+    ) {
+      throw new EnvironmentProviderError(
+        "FLY_RESOURCE_CONFLICT",
+        "Existing Environment gateway Machine does not satisfy the immutable ingress contract."
+      );
+    }
+    const machine = existing
+      ? toMachine(existing)
+      : toMachine(
+          parseResponse(
+            machineSchema,
+            await this.request(
+              `/apps/${encodeURIComponent(input.appName)}/machines`,
+              {
+                method: "POST",
+                body: jsonBody({
+                  name: environmentGatewayMachineName(input.environmentId),
+                  region: input.region,
+                  skip_launch: false,
+                  config: environmentGatewayMachineConfig(input),
+                }),
+              }
+            )
+          )
+        );
+    if (machine.region !== input.region) {
+      throw new EnvironmentProviderError(
+        "FLY_RESOURCE_CONFLICT",
+        "Existing Environment gateway Machine is in a different region."
+      );
+    }
+    return {
+      machineId: machine.id,
+      state: machine.state,
+      region: machine.region,
+      routerUrl: `https://${input.appName}.fly.dev`,
+      sharedIp,
+    };
+  }
+
+  private async ensureEnvironmentSharedIp(appName: string) {
+    const path = `/apps/${encodeURIComponent(appName)}/ip_assignments`;
+    const assignments = parseResponse(
+      ipAssignmentsSchema,
+      await this.request(path, { method: "GET" })
+    );
+    const existing = assignments.ips.find(
+      (assignment) => assignment.shared === true
+    );
+    if (existing) return existing.ip;
+    return parseResponse(
+      ipAssignmentSchema,
+      await this.request(path, {
+        method: "POST",
+        body: jsonBody({ type: "shared_v4" }),
+      })
+    ).ip;
   }
 
   async ensureWorkspaceVolume(input: {
@@ -528,21 +628,6 @@ function workspaceMachineConfig(
     },
     mounts: [{ volume: input.volumeId, path: "/workspace" }],
     restart: { policy: "on-failure", max_retries: 3 },
-    services: [
-      {
-        protocol: "tcp",
-        internal_port: KESTREL_WORKSPACE_SERVICE_PORT,
-        auto_stop_machines: "stop",
-        auto_start_machines: true,
-        min_machines_running: 0,
-        ports: [{ port: 80, handlers: ["http"] }],
-        concurrency: {
-          type: "requests",
-          soft_limit: 20,
-          hard_limit: 40,
-        },
-      },
-    ],
     checks: {
       workspace: {
         type: "http",
@@ -552,6 +637,54 @@ function workspaceMachineConfig(
         interval: "15s",
         timeout: "10s",
         grace_period: "30s",
+      },
+    },
+  };
+}
+
+function environmentGatewayMachineConfig(input: {
+  appName: string;
+  environmentId: string;
+  runtimeImage: string;
+  ticketPublicKey: string;
+}) {
+  return {
+    image: input.runtimeImage,
+    auto_destroy: false,
+    env: {
+      KESTREL_ENVIRONMENT_APP_NAME: input.appName,
+      KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
+      PORT: "8080",
+    },
+    metadata: {
+      kestrel_environment_gateway: "true",
+      kestrel_environment_id: input.environmentId,
+    },
+    guest: { cpu_kind: "shared", cpus: 1, memory_mb: 512 },
+    restart: { policy: "on-failure", max_retries: 3 },
+    services: [
+      {
+        protocol: "tcp",
+        internal_port: 8080,
+        auto_stop_machines: "off",
+        auto_start_machines: true,
+        min_machines_running: 1,
+        ports: [
+          { port: 80, handlers: ["http"] },
+          { port: 443, handlers: ["tls", "http"] },
+        ],
+        concurrency: { type: "requests", soft_limit: 50, hard_limit: 100 },
+      },
+    ],
+    checks: {
+      gateway: {
+        type: "http",
+        port: 8080,
+        method: "GET",
+        path: "/health",
+        interval: "15s",
+        timeout: "10s",
+        grace_period: "15s",
       },
     },
   };
@@ -586,6 +719,10 @@ function workspaceVolumeName(workspaceId: string): string {
 
 function workspaceMachineName(workspaceId: string): string {
   return `ws-${compactId(workspaceId, 20)}`;
+}
+
+function environmentGatewayMachineName(environmentId: string): string {
+  return `gateway-${compactId(environmentId, 20)}`;
 }
 
 function replacementWorkspaceVolumeName(

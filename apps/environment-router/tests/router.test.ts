@@ -94,7 +94,7 @@ test("router binds event subscriptions to the ticket Thread", () => {
         filter: { sessionId: "thread-1" },
       },
     }).status,
-    204
+    200
   );
   assert.equal(
     authorizeEnvironmentSubscription({
@@ -117,7 +117,7 @@ test("router authorizes Workspace HTTP APIs by exact method and path", () => {
     now: 1_100,
     method: "GET",
     pathname: "/v1/tree",
-  }).status, 204);
+  }).status, 200);
   assert.equal(authorizeEnvironmentHttpRequest({
     authorization: `Bearer ${token}`,
     publicKey,
@@ -142,7 +142,7 @@ test("router authorizes interactive PTY session operations exactly", () => {
         publicKey,
         now: 1100,
       }).status,
-      204
+      200
     );
   }
   assert.equal(
@@ -171,7 +171,7 @@ test("router authorizes candidate preview and acceptance by exact path", () => {
         publicKey,
         now: 1100,
       }).status,
-      204
+      200
     );
   }
   assert.equal(
@@ -197,13 +197,27 @@ test("router authorizes the exact tenant and Thread into a signed Fly App", () =
       payload: { turn: { sessionId: "thread-1" } },
     },
   });
-  assert.equal(decision.status, 204);
-  if (decision.status === 204) {
+  assert.equal(decision.status, 200);
+  if (decision.status === 200) {
     assert.equal(
-      decision.flyReplay,
-      "app=kestrel-env-1;instance=machine-1"
+      decision.targetUrl,
+      "http://machine-1.vm.kestrel-env-1.internal:43104"
     );
   }
+});
+
+test("router rejects a ticket issued for another Environment gateway", () => {
+  assert.equal(
+    authorizeEnvironmentHttpRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      expectedAppName: "kestrel-env-2",
+      now: 1_100,
+      method: "GET",
+      pathname: "/v1/tree",
+    }).status,
+    403
+  );
 });
 
 test("router rejects cross-organization and cross-Thread commands", () => {

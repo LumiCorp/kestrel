@@ -26,6 +26,14 @@ export type EnvironmentProviderMachine = {
   instanceId?: string | undefined;
 };
 
+export type EnvironmentProviderGateway = {
+  machineId: string;
+  state: string;
+  region: string;
+  routerUrl: string;
+  sharedIp: string;
+};
+
 export type EnvironmentProviderInventory = {
   machines: Array<{
     id: string;
@@ -59,6 +67,13 @@ export interface EnvironmentInfrastructureProvider {
     appName: string;
     networkName: string;
   }): Promise<EnvironmentProviderApp>;
+  ensureEnvironmentGateway(input: {
+    appName: string;
+    environmentId: string;
+    region: string;
+    runtimeImage: string;
+    ticketPublicKey: string;
+  }): Promise<EnvironmentProviderGateway>;
   ensureWorkspaceVolume(input: {
     appName: string;
     workspaceId: string;

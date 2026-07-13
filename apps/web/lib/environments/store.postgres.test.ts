@@ -17,7 +17,6 @@ test(
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
     process.env.KESTREL_ENVIRONMENTS_ENABLED = "true";
-    process.env.KESTREL_ENVIRONMENT_ROUTER_URL = "http://127.0.0.1:43106";
 
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
@@ -163,6 +162,9 @@ test(
         "status" = 'ready',
         "fly_app_name" = ${`kestrel-test-${suffix}`},
         "fly_network_name" = ${`kestrel-test-${suffix}`},
+        "fly_gateway_machine_id" = ${`gateway-${suffix}`},
+        "router_url" = 'https://environment.example',
+        "router_image" = 'registry.example/kestrel-router@sha256:test',
         "runtime_image" = 'registry.example/kestrel-workspace@sha256:test'
       WHERE "id" = ${createdEnvironment.environment.id}
     `;
@@ -185,6 +187,7 @@ test(
     });
     assert.equal(route.environmentId, createdEnvironment.environment.id);
     assert.equal(route.workspaceId, projectBinding.workspace.id);
+    assert.equal(route.baseUrl, "https://environment.example");
 
     const ticket = auth.verifyEnvironmentExecutionTicket({
       publicKey: publicKey.export({ format: "pem", type: "spki" }).toString(),

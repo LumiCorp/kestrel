@@ -12,6 +12,7 @@ export async function processEnvironmentOperation(operationId: string) {
       organizationSlug: process.env.KESTREL_FLY_ORGANIZATION_SLUG ?? "",
     }),
     runtimeImage: process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE ?? "",
+    routerImage: process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE ?? "",
     ticketPublicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
     credentialBrokerToken:

@@ -24,6 +24,10 @@ export async function reconcileHostedEnvironments() {
       await processEnvironmentOperation(operation.id);
     } catch {}
   }
+  const environmentGatewayCount = await reconcileEnvironmentGateways(
+    provider,
+    now
+  );
   const workspaces = await knowledgeDb
     .select({
       workspace: schema.environmentWorkspaces,
@@ -77,8 +81,73 @@ export async function reconcileHostedEnvironments() {
   await createDueDailyBackup(now);
   return {
     queuedOperationCount: queuedOperations.length,
+    environmentGatewayCount,
     workspaceCount: workspaces.length,
   };
+}
+
+async function reconcileEnvironmentGateways(
+  provider: FlyMachinesClient,
+  now: Date
+) {
+  const environments = await knowledgeDb.query.environments.findMany({
+    where: (table, { and, inArray, isNotNull, isNull }) =>
+      and(
+        inArray(table.status, ["ready", "degraded"]),
+        isNotNull(table.flyAppName),
+        isNotNull(table.routerImage),
+        isNull(table.archivedAt)
+      ),
+  });
+  const ticketPublicKey =
+    process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
+  for (const environment of environments) {
+    if (!(environment.flyAppName && environment.routerImage)) continue;
+    try {
+      const gateway = await provider.ensureEnvironmentGateway({
+        appName: environment.flyAppName,
+        environmentId: environment.id,
+        region: environment.region,
+        runtimeImage: environment.routerImage,
+        ticketPublicKey,
+      });
+      if (gateway.state !== "started") {
+        await provider.startMachine({
+          appName: environment.flyAppName,
+          machineId: gateway.machineId,
+        });
+        await provider.waitForMachine({
+          appName: environment.flyAppName,
+          machineId: gateway.machineId,
+          state: "started",
+          timeoutSeconds: 60,
+        });
+      }
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          status: "ready",
+          flyGatewayMachineId: gateway.machineId,
+          routerUrl: gateway.routerUrl,
+          lastHealthAt: now,
+          failureCode: null,
+          failureMessage: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.environments.id, environment.id));
+    } catch {
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          status: "degraded",
+          failureCode: "ENVIRONMENT_GATEWAY_RECONCILE_FAILED",
+          failureMessage: "Environment gateway reconciliation failed.",
+          updatedAt: now,
+        })
+        .where(eq(schema.environments.id, environment.id));
+    }
+  }
+  return environments.length;
 }
 
 async function cleanupOrphanedEnvironmentResources(
@@ -105,11 +174,14 @@ async function cleanupOrphanedEnvironmentResources(
         and(eq(table.environmentId, environment.id), isNull(table.deletedAt)),
       columns: { flyMachineId: true, flyVolumeId: true },
     });
-    const activeMachineIds = new Set(
-      workspaces.flatMap((workspace) =>
+    const activeMachineIds = new Set([
+      ...(environment.flyGatewayMachineId
+        ? [environment.flyGatewayMachineId]
+        : []),
+      ...workspaces.flatMap((workspace) =>
         workspace.flyMachineId ? [workspace.flyMachineId] : []
-      )
-    );
+      ),
+    ]);
     const activeVolumeIds = new Set(
       workspaces.flatMap((workspace) =>
         workspace.flyVolumeId ? [workspace.flyVolumeId] : []

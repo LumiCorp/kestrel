@@ -114,18 +114,22 @@ assert.ok(
 const routerDecision = await fetch(new URL("/v1/tree", routerUrl), {
 	headers: authorization,
 });
-assert.equal(routerDecision.status, 204);
+assert.equal(routerDecision.status, 502);
 assert.equal(
-	routerDecision.headers.get("fly-replay"),
-	"app=app-canary;instance=machine-canary",
+	((await routerDecision.json()) as { error: { code: string } }).error.code,
+	"ENVIRONMENT_WORKSPACE_UNAVAILABLE",
 );
+
+const crossEnvironmentRouter = await fetch(new URL("/v1/tree", routerUrl), {
+	headers: {
+		authorization: `Bearer ${signTicket({ flyAppName: "app-other" })}`,
+	},
+});
+assert.equal(crossEnvironmentRouter.status, 403);
 assert.equal(
-	routerDecision.headers.get("x-kestrel-environment-id"),
-	identity.environmentId,
-);
-assert.equal(
-	routerDecision.headers.get("x-kestrel-workspace-id"),
-	identity.workspaceId,
+	((await crossEnvironmentRouter.json()) as { error: { code: string } }).error
+		.code,
+	"ENVIRONMENT_APP_MISMATCH",
 );
 
 const crossTenantRouter = await fetch(new URL("/commands", routerUrl), {

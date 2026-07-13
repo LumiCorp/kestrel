@@ -1,4 +1,6 @@
-app = "kestrel-environment-router"
+# Image-development example only. Kestrel One provisions one gateway Machine
+# inside each Environment App and supplies the Environment-specific settings.
+app = "kestrel-environment-router-image"
 primary_region = "iad"
 
 [build]
@@ -7,7 +9,7 @@ primary_region = "iad"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 1
 

@@ -246,6 +246,7 @@ export async function restoreWorkspaceBackup(input: {
     !(
       environment?.flyAppName &&
       environment.runtimeImage &&
+      environment.routerUrl &&
       workspace?.flyMachineId &&
       workspace.flyVolumeId &&
       binding
@@ -254,6 +255,7 @@ export async function restoreWorkspaceBackup(input: {
     throw new Error("Workspace replacement target is unavailable.");
   }
   const flyAppName = environment.flyAppName;
+  const routerUrl = environment.routerUrl;
   const runtimeImage = environment.runtimeImage;
   const oldMachineId = workspace.flyMachineId;
   const oldVolumeId = workspace.flyVolumeId;
@@ -356,6 +358,7 @@ export async function restoreWorkspaceBackup(input: {
         actorId: input.actorUserId,
         flyAppName,
         flyMachineId: replacementMachine.id,
+        routerUrl,
         capabilities: ["workspace.backups.restore", "workspace.apps.read"],
       });
     await uploadBackupArchive({

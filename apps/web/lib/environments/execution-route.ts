@@ -137,7 +137,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     status: "ready",
   });
   return {
-    baseUrl: requireRouterUrl(),
+    baseUrl: environment.routerUrl,
     authToken: token,
     runId,
     environmentId: environment.id,
@@ -186,12 +186,18 @@ async function waitForExecutionResources(input: {
     if (
       environment.status === "ready" &&
       environment.flyAppName &&
+      environment.routerUrl &&
+      environment.flyGatewayMachineId &&
       workspace.status === "ready" &&
       workspace.flyMachineId &&
       workspace.runtimeImage
     ) {
       return {
-        environment: { id: environment.id, flyAppName: environment.flyAppName },
+        environment: {
+          id: environment.id,
+          flyAppName: environment.flyAppName,
+          routerUrl: environment.routerUrl,
+        },
         workspace: {
           id: workspace.id,
           flyMachineId: workspace.flyMachineId,
@@ -245,6 +251,7 @@ export function createEnvironmentMachineRoute(input: {
   agentId?: string | undefined;
   flyAppName: string;
   flyMachineId: string;
+  routerUrl: string;
   capabilities?: string[] | undefined;
 }) {
   const now = Math.floor(Date.now() / 1000);
@@ -269,7 +276,7 @@ export function createEnvironmentMachineRoute(input: {
       nonce: crypto.randomUUID(),
     },
   });
-  return { baseUrl: requireRouterUrl(), authToken, runId };
+  return { baseUrl: input.routerUrl, authToken, runId };
 }
 
 async function recordEnvironmentExecution(input: {
@@ -460,10 +467,4 @@ export function describeEnvironmentActivation(input: {
     detail: "Checking Workspace health…",
     status: "pending",
   };
-}
-
-function requireRouterUrl() {
-  const value = process.env.KESTREL_ENVIRONMENT_ROUTER_URL?.trim();
-  if (!value) throw new Error("Environment router URL is not configured.");
-  return value;
 }

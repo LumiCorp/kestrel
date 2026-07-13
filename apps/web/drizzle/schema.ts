@@ -785,6 +785,9 @@ export const environments = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     flyAppName: text("fly_app_name"),
     flyNetworkName: text("fly_network_name"),
+    flyGatewayMachineId: text("fly_gateway_machine_id"),
+    routerUrl: text("router_url"),
+    routerImage: text("router_image"),
     runtimeTemplate: text("runtime_template")
       .notNull()
       .default("kestrel-standard-v1"),

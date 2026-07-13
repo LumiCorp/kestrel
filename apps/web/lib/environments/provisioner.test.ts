@@ -117,6 +117,16 @@ function fixture(type: string, workspaceId: string | null = null) {
         network: "network-name",
       };
     },
+    async ensureEnvironmentGateway() {
+      calls.push("provider:gateway");
+      return {
+        machineId: "gateway-machine-id",
+        state: "created",
+        region: "iad",
+        routerUrl: "https://app-name.fly.dev",
+        sharedIp: "203.0.113.1",
+      };
+    },
     async ensureWorkspaceVolume() {
       calls.push("provider:volume");
       return {
@@ -175,6 +185,7 @@ function createProvisioner(
     repository,
     provider,
     runtimeImage: "registry.example/runtime@sha256:abc",
+    routerImage: "registry.example/router@sha256:def",
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
@@ -189,6 +200,8 @@ test("Environment provisioning durably follows requested through ready", async (
   assert.deepEqual(calls, [
     "environment:provisioning",
     "provider:app",
+    "provider:gateway",
+    "provider:wait",
     "environment:ready",
     "operation:completed",
   ]);

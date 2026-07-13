@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { uploadBackupArchive } from "./backup-transfer";
 
-test("backup transfer stays below Fly Replay request limits and refreshes tickets", async () => {
+test("backup transfer stays within bounded gateway requests and refreshes tickets", async () => {
   const requests: Array<{
     pathname: string;
     method: string;
