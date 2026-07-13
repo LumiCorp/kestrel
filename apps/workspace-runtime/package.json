@@ -1,0 +1,23 @@
+{
+  "name": "@kestrel/workspace-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel-agents/sdk build && tsc -p tsconfig.json",
+    "canary:local": "tsx scripts/local-canary.ts",
+    "start": "node dist/server.js",
+    "test": "pnpm --filter @lumi/kestrel-environment-auth build && node --import tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @kestrel-agents/sdk build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kestrel-agents/kestrel": "0.5.1",
+    "@kestrel-agents/sdk": "workspace:*",
+    "@lumi/kestrel-environment-auth": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
