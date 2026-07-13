@@ -1,9 +1,11 @@
-import { Resend } from "resend";
-
-// Only initialize Resend if API key is provided
-const resendApiKey = process.env.RESEND_API_KEY;
-
-export const resend = resendApiKey ? new Resend(resendApiKey) : null;
-
-export const isEmailEnabled = () =>
-  !!resendApiKey && !!process.env.BETTER_AUTH_EMAIL;
+/**
+ * Compatibility entrypoint for the Resend-backed email boundary.
+ *
+ * Provider clients are intentionally created from the dynamically resolved
+ * platform configuration in service.ts; this module must not capture secrets
+ * at process startup.
+ */
+export {
+  deliverTransactionalEmail,
+  sendEmailIntegrationTest,
+} from "./service";

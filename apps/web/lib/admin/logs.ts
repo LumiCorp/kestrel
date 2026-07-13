@@ -158,3 +158,12 @@ export async function listRecentAdminEvents(
     limit,
   });
 }
+
+export async function listRecentPlatformEmailEvents(limit = 10) {
+  return knowledgeDb.query.adminEventLogs.findMany({
+    where: (table, { and: all, eq: equals, isNull: nullValue }) =>
+      all(nullValue(table.organizationId), equals(table.category, "email")),
+    orderBy: (table, { desc }) => [desc(table.createdAt)],
+    limit,
+  });
+}

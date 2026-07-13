@@ -1346,6 +1346,36 @@ export const adminEventLogs = pgTable(
   ]
 );
 
+export const platformEmailConfig = pgTable("platform_email_config", {
+  id: text("id").primaryKey().notNull(),
+  provider: text("provider", { enum: ["resend"] })
+    .notNull()
+    .default("resend"),
+  enabled: boolean("enabled").notNull().default(false),
+  credentialSource: text("credential_source", {
+    enum: ["stored", "environment"],
+  })
+    .notNull()
+    .default("environment"),
+  encryptedApiKey: text("encrypted_api_key"),
+  fromName: text("from_name").notNull().default("Kestrel One"),
+  fromEmail: text("from_email").notNull(),
+  replyTo: text("reply_to"),
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+  lastTestMessageId: text("last_test_message_id"),
+  lastTestConfigFingerprint: text("last_test_config_fingerprint"),
+  lastErrorCode: text("last_error_code"),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const adminApiKeys = pgTable(
   "admin_api_keys",
   {
@@ -1413,6 +1443,7 @@ export type UsageStat = InferSelectModel<typeof usageStats>;
 export type ArtifactDocument = InferSelectModel<typeof artifactDocuments>;
 export type ArtifactSuggestion = InferSelectModel<typeof artifactSuggestions>;
 export type AdminEventLog = InferSelectModel<typeof adminEventLogs>;
+export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeSnapshot = InferSelectModel<typeof knowledgeSnapshots>;
 export type KnowledgeSyncRun = InferSelectModel<typeof knowledgeSyncRuns>;
