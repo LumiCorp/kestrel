@@ -10,6 +10,8 @@ specifications.
 
 - **Kestrel** owns the runtime, local services, public clients, packages, and
   product surfaces in this repository.
+- **Kestrel CLI** is a Local Core client. Interactive, job, operator, web-proxy,
+  and evidence commands do not launch or reconstruct a second local runtime.
 - **Kestrel One** is the canonical hosted web product under `apps/web`.
 - **Kestrel Desktop** is the independent local UI surface. The target
   architecture makes it a Local Core client; its current compatibility path
@@ -62,11 +64,11 @@ Model-backed flows require `OPENROUTER_API_KEY`. Internet-backed flows require
 `TAVILY_API_KEY`. Kestrel One also requires its hosted service configuration;
 see `apps/web/.env.example`.
 
-Desktop starts or connects to Local Core through the transitional
-managed-database path. Local Core's 0.6 default is embedded PGlite; external
-PostgreSQL remains an explicit advanced deployment choice. Migration of every
-legacy local runner path and removal of compatibility packaging are tracked in
-the local platform architecture plan.
+The CLI starts or attaches to Local Core and uses its authenticated Unix socket
+for execution and evidence. Desktop still uses the transitional managed-runner
+path. Local Core's 0.6 default is embedded PGlite; external PostgreSQL remains
+an explicit advanced deployment choice. Desktop cutover and removal of
+compatibility packaging are tracked in the local platform architecture plan.
 
 ## Registry Install
 

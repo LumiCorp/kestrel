@@ -289,6 +289,19 @@ class ControlledExitTransport implements ProtocolTransport {
   }
 }
 
+class RejectingCaptureTransport implements ProtocolTransport {
+  sent: string[] = [];
+
+  start(): void {}
+
+  send(line: string): void {
+    this.sent.push(line);
+    throw new Error("captured command");
+  }
+
+  async stop(): Promise<void> {}
+}
+
 test("ProtocolClient resolves runner.ping command", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
@@ -331,6 +344,123 @@ test("ProtocolClient resolves run.start command with completed response", async 
   assert.equal(response.payload.result.output.status, "COMPLETED");
   assert.equal(response.payload.result.assistantText, "done");
   assert.equal(seenEventTypes.includes("run.progress"), true);
+
+  await client.close();
+});
+
+test("ProtocolClient merges caller metadata over defaults without dropping other defaults", async () => {
+  const transport = new MockTransport();
+  const client = new ProtocolClient(transport, {
+    defaultMetadata: {
+      actor: {
+        actorId: "kestrel-cli",
+        actorType: "end_user",
+        displayName: "Kestrel CLI",
+      },
+      tenantId: "local-tenant",
+    },
+    defaultExecutionDurability: "continue_on_disconnect",
+  });
+  const profile = {
+    id: "reference",
+    label: "Reference",
+    agent: "reference-react" as const,
+    sessionPrefix: "reference",
+  };
+
+  await client.sendCommand("run.start", {
+    profile,
+    turn: {
+      sessionId: "s-metadata",
+      message: "merge metadata",
+      eventType: "user.message",
+      stepAgent: "react.deliberate",
+    },
+  }, {
+    actor: {
+      actorId: "operator-1",
+      actorType: "operator",
+      displayName: "Operator One",
+    },
+    profile,
+  });
+
+  const runCommand = JSON.parse(transport.sent[0] ?? "{}") as {
+    metadata?: Record<string, unknown> | undefined;
+  };
+  assert.deepEqual(runCommand.metadata, {
+    actor: {
+      actorId: "operator-1",
+      actorType: "operator",
+      displayName: "Operator One",
+    },
+    tenantId: "local-tenant",
+    profile,
+    durability: "continue_on_disconnect",
+  });
+
+  await client.sendCommand("runner.ping", { nonce: "abc" }, {
+    actor: undefined,
+  });
+  const pingCommand = JSON.parse(transport.sent[1] ?? "{}") as {
+    metadata?: Record<string, unknown> | undefined;
+  };
+  assert.deepEqual(pingCommand.metadata, {
+    actor: {
+      actorId: "kestrel-cli",
+      actorType: "end_user",
+      displayName: "Kestrel CLI",
+    },
+    tenantId: "local-tenant",
+  });
+
+  await client.close();
+});
+
+test("ProtocolClient applies default execution durability to job.run", async () => {
+  const transport = new RejectingCaptureTransport();
+  const client = new ProtocolClient(transport, {
+    defaultMetadata: {
+      actor: {
+        actorId: "kestrel-cli",
+        actorType: "end_user",
+        displayName: "Kestrel CLI",
+      },
+    },
+    defaultExecutionDurability: "continue_on_disconnect",
+  });
+
+  await assert.rejects(
+    client.sendCommand("job.run", {
+      profile: {
+        id: "reference",
+        label: "Reference",
+        agent: "reference-react",
+        sessionPrefix: "reference",
+      },
+      input: {
+        version: "job_input_v1",
+        turn: {
+          sessionId: "session-job-metadata",
+          message: "run unattended",
+          eventType: "job.run",
+        },
+      },
+    }),
+    /captured command/u,
+  );
+
+  const command = JSON.parse(transport.sent[0] ?? "{}") as {
+    metadata?: Record<string, unknown> | undefined;
+  };
+  assert.deepEqual(command.metadata, {
+    actor: {
+      actorId: "kestrel-cli",
+      actorType: "end_user",
+      displayName: "Kestrel CLI",
+    },
+    durability: "continue_on_disconnect",
+  });
 
   await client.close();
 });

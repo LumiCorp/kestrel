@@ -17,6 +17,11 @@ const TARGET_PLATFORM = "darwin";
 const TARGET_ARCH = "arm64";
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const CLI_RESOURCE_DIRECTORIES = ["cli", "src", "agents", "tools", "db", "scripts", "models", "bin"] as const;
+const CLI_EXCLUDED_RUNTIME_PATHS = [
+  "cli/client/InProcessRunnerTransport.ts",
+  "cli/client/RunnerProcess.ts",
+  "cli/runner/main.ts",
+] as const;
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const rootPackageJson = readPackageJson(path.join(repoRoot, "package.json"));
@@ -28,6 +33,9 @@ const outDir = path.join(cliDir, "out");
 const npmCacheDir = path.join(cliDir, ".npm-cache");
 const artifactName = `kestrel-cli-${rootPackageJson.version}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`;
 const artifactPath = path.join(outDir, artifactName);
+const excludedRuntimePaths = new Set(
+  CLI_EXCLUDED_RUNTIME_PATHS.map((relativePath) => path.resolve(repoRoot, relativePath)),
+);
 
 if (process.platform !== TARGET_PLATFORM || process.arch !== TARGET_ARCH) {
   throw new Error(
@@ -90,9 +98,13 @@ function copyCliRuntimeResources(): void {
     }
     cpSync(sourcePath, path.join(libexecDir, relativePath), {
       recursive: true,
-      filter: shouldCopyDesktopResourceEntry,
+      filter: shouldCopyCliRuntimeResourceEntry,
     });
   }
+}
+
+function shouldCopyCliRuntimeResourceEntry(entry: string): boolean {
+  return shouldCopyDesktopResourceEntry(entry) && excludedRuntimePaths.has(path.resolve(entry)) === false;
 }
 
 function prepareCliPostgresBundle(): void {

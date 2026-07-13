@@ -7,6 +7,7 @@ import {
   generateRunnerServiceToken,
   parseWebCommandArgs,
   resolveWebCommandConfig,
+  resolveWebCommandLocalCoreTarget,
 } from "../../cli/webCommand.js";
 import { DEFAULT_KESTREL_RUNNER_SERVICE_PORT } from "../../src/config/localDev.js";
 
@@ -49,6 +50,29 @@ test("resolveWebCommandConfig accepts env-provided token and port", () => {
   assert.equal(resolved.port, 43144);
   assert.equal(resolved.token, "env-token");
   assert.equal(resolved.tokenSource, "provided");
+});
+
+test("resolveWebCommandLocalCoreTarget requires the ready Core socket and private token", () => {
+  assert.deepEqual(resolveWebCommandLocalCoreTarget({
+    KESTREL_LOCAL_CORE_API_SOCKET: " /tmp/kestrel-core.sock ",
+    KESTREL_LOCAL_CORE_API_TOKEN: " core-private-token ",
+  }), {
+    socketPath: "/tmp/kestrel-core.sock",
+    authToken: "core-private-token",
+  });
+
+  assert.throws(
+    () => resolveWebCommandLocalCoreTarget({
+      KESTREL_LOCAL_CORE_API_SOCKET: "/tmp/kestrel-core.sock",
+    }),
+    /already-ready Local Core API socket and token/u,
+  );
+  assert.throws(
+    () => resolveWebCommandLocalCoreTarget({
+      KESTREL_LOCAL_CORE_API_TOKEN: "core-private-token",
+    }),
+    /already-ready Local Core API socket and token/u,
+  );
 });
 
 test("formatWebCommandStartupLines redacts a provided token from startup output", () => {

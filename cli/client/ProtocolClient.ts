@@ -29,6 +29,11 @@ export interface RunnerExitDiagnostics {
   recentStderr: string[];
 }
 
+export interface ProtocolClientOptions {
+  defaultMetadata?: RunnerCommandMetadata | undefined;
+  defaultExecutionDurability?: RunnerCommandMetadata["durability"] | undefined;
+}
+
 interface ProtocolClientRunnerError extends Error {
   code?: string | undefined;
   details?: Record<string, unknown> | undefined;
@@ -46,6 +51,8 @@ interface ProtocolTransport {
 
 export class ProtocolClient {
   private readonly transport: ProtocolTransport;
+  private readonly defaultMetadata: RunnerCommandMetadata | undefined;
+  private readonly defaultExecutionDurability: RunnerCommandMetadata["durability"] | undefined;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Set<(event: RunnerEvent) => void>();
   private readonly recentStderr: string[] = [];
@@ -53,8 +60,13 @@ export class ProtocolClient {
   private closed = false;
   private lastProcessError: string | undefined;
 
-  constructor(transport: ProtocolTransport = createDefaultTransport()) {
+  constructor(
+    transport: ProtocolTransport = createDefaultTransport(),
+    options: ProtocolClientOptions = {},
+  ) {
     this.transport = transport;
+    this.defaultMetadata = options.defaultMetadata;
+    this.defaultExecutionDurability = options.defaultExecutionDurability;
   }
 
   start(): void {
@@ -107,11 +119,18 @@ export class ProtocolClient {
       throw new Error(`Protocol command id '${commandId}' is already in use`);
     }
 
+    const effectiveMetadata = mergeRunnerCommandMetadata({
+      defaults: this.defaultMetadata,
+      command: metadata,
+      executionDurability: isExecutionCommand(type)
+        ? this.defaultExecutionDurability
+        : undefined,
+    });
     const command: RunnerCommandEnvelope<TType> = {
       id: commandId,
       type,
       payload,
-      ...(metadata !== undefined ? { metadata } : {}),
+      ...(effectiveMetadata !== undefined ? { metadata: effectiveMetadata } : {}),
     };
     const serializedCommand = JSON.stringify(parseRunnerCommandV2(command));
 
@@ -252,9 +271,44 @@ export class ProtocolClient {
   }
 }
 
+function isExecutionCommand(type: RunnerCommandType): boolean {
+  return type === "run.start" || type === "job.run";
+}
+
+function mergeRunnerCommandMetadata(input: {
+  defaults?: RunnerCommandMetadata | undefined;
+  command?: RunnerCommandMetadata | undefined;
+  executionDurability?: RunnerCommandMetadata["durability"] | undefined;
+}): RunnerCommandMetadata | undefined {
+  const actor = input.command?.actor ?? input.defaults?.actor;
+  const tenantId = input.command?.tenantId ?? input.defaults?.tenantId;
+  const profile = input.command?.profile ?? input.defaults?.profile;
+  const durability = input.command?.durability
+    ?? input.executionDurability
+    ?? input.defaults?.durability;
+
+  if (
+    actor === undefined
+    && tenantId === undefined
+    && profile === undefined
+    && durability === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(actor !== undefined ? { actor } : {}),
+    ...(tenantId !== undefined ? { tenantId } : {}),
+    ...(profile !== undefined ? { profile } : {}),
+    ...(durability !== undefined ? { durability } : {}),
+  };
+}
+
 function createDefaultTransport(): ProtocolTransport {
-  const { RunnerProcess } = protocolClientRequire("./RunnerProcess.js") as typeof import("./RunnerProcess.js");
-  return new RunnerProcess();
+  const { createConfiguredRunnerTransport } = protocolClientRequire(
+    "./configuredTransport.js",
+  ) as typeof import("./configuredTransport.js");
+  return createConfiguredRunnerTransport();
 }
 
 const MAX_RECENT_STDERR_LINES = 32;

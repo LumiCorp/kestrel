@@ -18,6 +18,7 @@ import type {
 } from "../contracts.js";
 import type { SessionStore } from "../session/SessionStore.js";
 import type { WorkspaceStore } from "../workspace/WorkspaceStore.js";
+import type { LocalCoreClient } from "../../src/localCore/client.js";
 
 export interface TuiAppOptions {
   cwd: string;
@@ -25,7 +26,6 @@ export interface TuiAppOptions {
   sessionName?: string | undefined;
   freshSessionName?: string | undefined;
   kestrelHome?: string | undefined;
-  runnerMode?: "child" | "inprocess";
   scripted?: boolean;
 }
 
@@ -41,6 +41,7 @@ export interface TuiAppContext {
   readonly uiStore: UiStore;
   readonly selectors: ReturnType<typeof createUiDerivedSelectors>;
   getRuntimeSettings(): RuntimeSettingsFile;
+  getLocalCoreClient?(): LocalCoreClient | undefined;
   getSessionsFile(): SessionsFile;
   setSessionsFile(sessionsFile: SessionsFile): void;
   getActiveWorkspace(): ResolvedWorkspace | undefined;

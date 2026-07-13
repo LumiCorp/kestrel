@@ -24,6 +24,7 @@ import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import { KcronStateStore } from "../../cli/kcron/state.js";
 import { readRuntimeSettings, writeRuntimeSettings } from "../../cli/config/RuntimeSettings.js";
+import { createConfiguredCliProtocolClient } from "../../cli/client/configuredClient.js";
 import { KestrelClient as KestrelSdkClient } from "../../packages/sdk/src/runner.js";
 import {
   EXECUTION_PROTOCOL_VERSION,
@@ -73,6 +74,20 @@ test("Local Core API serves health/status with bearer token auth", async () => {
       }), { nonce: "local-core-sdk" });
     } finally {
       await sdk.close();
+    }
+
+    const cli = createConfiguredCliProtocolClient({
+      KESTREL_LOCAL_CORE_API_SOCKET: server.socketPath,
+      KESTREL_LOCAL_CORE_API_TOKEN: server.token,
+    });
+    try {
+      const pong = await cli.sendCommand("runner.ping", {
+        nonce: "local-core-cli",
+      });
+      assert.equal(pong.type, "runner.pong");
+      assert.equal(pong.payload.nonce, "local-core-cli");
+    } finally {
+      await cli.close();
     }
 
     const runs = await client.runs() as { runs?: unknown[] | undefined };
@@ -496,6 +511,128 @@ test("Local Core replays durable execution events to the SDK after restart", asy
       await secondServer.close();
     }
   } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("CLI disconnect leaves a durable Core run available to another client", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-cli-disconnect-"));
+  let releaseRun: (() => void) | undefined;
+  const runCanFinish = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: () => ({
+      async runTurn(turn) {
+        await runCanFinish;
+        return {
+          assistantText: "The CLI disconnected, but Core completed the run.",
+          finalizedPayload: { durable: true },
+          output: {
+            status: "COMPLETED" as const,
+            sessionId: turn.sessionId,
+            runId: turn.runId ?? "run-cli-disconnect",
+            errors: [],
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 0,
+              modelCalls: 0,
+              durationMs: 1,
+            },
+          },
+        };
+      },
+      async close() {},
+    }),
+  });
+
+  try {
+    const cli = createConfiguredCliProtocolClient({
+      KESTREL_LOCAL_CORE_API_SOCKET: server.socketPath,
+      KESTREL_LOCAL_CORE_API_TOKEN: server.token,
+    });
+    let startedEventId: string | undefined;
+    let resolveStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const unsubscribe = cli.onEvent((event) => {
+      if (event.type === "run.started") {
+        startedEventId = event.id;
+        resolveStarted?.();
+      }
+    });
+    const pending = cli.sendCommand("run.start", {
+      profile: {
+        id: "reference",
+        label: "Reference",
+        agent: "reference-react",
+        sessionPrefix: "reference",
+      },
+      turn: {
+        sessionId: "session-cli-disconnect",
+        runId: "run-cli-disconnect",
+        message: "finish after I leave",
+        eventType: "user.message",
+      },
+    }).catch((error: unknown) => error);
+
+    await withTimeout(started, 5_000, "Timed out waiting for the CLI run to start.");
+    assert.ok(startedEventId);
+    unsubscribe();
+    await cli.close();
+    releaseRun?.();
+    await pending;
+
+    const sdk = new KestrelSdkClient({
+      target: {
+        kind: "local",
+        socketPath: server.socketPath,
+        authToken: server.token,
+      },
+    });
+    try {
+      const replay = sdk.subscribe({
+        runId: "run-cli-disconnect",
+        sinceEventId: startedEventId,
+      }, {
+        actor: {
+          actorId: "cli-disconnect-observer",
+          actorType: "operator",
+        },
+      });
+      const iterator = replay[Symbol.asyncIterator]();
+      let completed = false;
+      for (let index = 0; index < 8 && completed === false; index += 1) {
+        const next = await withTimeout(
+          iterator.next(),
+          5_000,
+          "Timed out waiting for the durable CLI run terminal event.",
+        );
+        if (next.done) {
+          break;
+        }
+        completed = next.value?.type === "run.completed";
+      }
+      assert.equal(completed, true);
+      await replay.cancel();
+      await replay.result;
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    releaseRun?.();
+    await server.close();
     await rm(home, { recursive: true, force: true });
   }
 });

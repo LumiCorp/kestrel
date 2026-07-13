@@ -10,7 +10,6 @@ interface CliArgs {
   profileId?: string;
   sessionName?: string;
   freshSessionName?: string;
-  runnerMode?: "child" | "inprocess";
   scripted?: boolean;
 }
 
@@ -35,7 +34,6 @@ async function main(): Promise<void> {
     ...(args.profileId !== undefined ? { profileId: args.profileId } : {}),
     ...(args.sessionName !== undefined ? { sessionName: args.sessionName } : {}),
     ...(args.freshSessionName !== undefined ? { freshSessionName: args.freshSessionName } : {}),
-    ...(args.runnerMode !== undefined ? { runnerMode: args.runnerMode } : {}),
     ...(args.scripted === true ? { scripted: true } : {}),
   });
 
@@ -88,11 +86,6 @@ export function parseArgs(args: string[]): CliArgs {
       continue;
     }
 
-    if (token === "--inprocess-runner") {
-      parsed.runnerMode = "inprocess";
-      continue;
-    }
-
     if (token === "--scripted") {
       parsed.scripted = true;
       continue;
@@ -122,15 +115,15 @@ export function formatKestrelHelp(): string {
     "  status",
     "  workspace status|list",
     "  web [--host <host>] [--port <port>] [--token <token>]",
-    "  job run --json-in <file> --json-out <file> [--profile <id>] [--store auto|postgres|sqlite]",
-    "  setup [--profile <id>] [--store auto|postgres|sqlite]",
-    "  runtime bundle --run-id|--thread-id <id> --out <file> [--store auto|postgres|sqlite]",
+    "  job run --json-in <file> --json-out <file> [--profile <id>]",
+    "  setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
+    "  runtime <replay|doctor> <query> [--json]",
+    "  runtime bundle <query> --out <file>",
     "",
     "Options:",
     "  --profile <id>",
     "  --session <name>",
     "  --new-session <name>",
-    "  --inprocess-runner",
     "  --scripted",
     "  --version",
     "  --help",

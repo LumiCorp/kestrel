@@ -1310,7 +1310,6 @@ function buildSweVerifiedDockerRunArgs(input: {
     "-e",
     "KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000",
     "-e",
-    "KESTREL_RUNNER_PROCESS_MODE=inprocess",
     "-e",
     "KESTREL_MODEL_PROMPT_DUMP=1",
     "-e",

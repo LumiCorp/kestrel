@@ -6,7 +6,6 @@ import { formatKestrelHelp, isHelpArgs, isVersionArgs, parseArgs } from "../../c
 test("parseArgs accepts --scripted alongside existing flags", () => {
   const parsed = parseArgs([
     "--scripted",
-    "--inprocess-runner",
     "--new-session",
     "ops-root-live",
     "--profile",
@@ -14,9 +13,15 @@ test("parseArgs accepts --scripted alongside existing flags", () => {
   ]);
 
   assert.equal(parsed.scripted, true);
-  assert.equal(parsed.runnerMode, "inprocess");
   assert.equal(parsed.freshSessionName, "ops-root-live");
   assert.equal(parsed.profileId, "reference");
+});
+
+test("parseArgs rejects the removed embedded-runner escape hatch", () => {
+  assert.throws(
+    () => parseArgs(["--inprocess-runner"]),
+    /Unknown argument '--inprocess-runner'/u,
+  );
 });
 
 test("parseArgs defaults scripted mode to false when omitted", () => {

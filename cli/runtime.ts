@@ -8,10 +8,8 @@ import {
   renderRuntimeStateGraphMermaid,
 } from "../agents/reference-react/src/graph.js";
 import { formatDoctorInspection, formatReplayInspection } from "./runtime/inspectionFormatting.js";
-import { RunReplayService } from "../src/replay/RunReplayService.js";
 import { cleanupDevShellServices } from "../src/devshell/cleanup.js";
-import { createSessionStoreFromEnv, type StoreDriver } from "../src/store/createSessionStore.js";
-import { writeRuntimeReplayBundle } from "./runtime/replayBundle.js";
+import { ensureCliLocalCoreReady } from "./localCoreShell.js";
 
 async function main(): Promise<void> {
   const [, , command, ...args] = process.argv;
@@ -83,22 +81,15 @@ async function runGraph(args: string[]): Promise<void> {
 }
 
 async function runReplay(args: string[]): Promise<void> {
+  rejectClientOwnedStoreSelection(args);
   const query = readReplayQuery(args);
-  const storeDriver = readStoreDriver(args);
-  const handle = createSessionStoreFromEnv({
-    ...(storeDriver !== undefined ? { driver: storeDriver } : {}),
-  });
-  try {
-    const replay = await new RunReplayService(handle.store).replay(query);
-    if (args.includes("--json")) {
-      process.stdout.write(`${JSON.stringify(replay, null, 2)}\n`);
-      return;
-    }
-    for (const line of formatReplayInspection(replay)) {
-      process.stdout.write(`${line}\n`);
-    }
-  } finally {
-    await handle.close();
+  const replay = await (await requireLocalCoreClient()).runtimeReplay(query);
+  if (args.includes("--json")) {
+    process.stdout.write(`${JSON.stringify(replay, null, 2)}\n`);
+    return;
+  }
+  for (const line of formatReplayInspection(replay)) {
+    process.stdout.write(`${line}\n`);
   }
 }
 
@@ -107,45 +98,32 @@ async function runDoctor(args: string[]): Promise<void> {
     await runCleanupShells(args.slice(1));
     return;
   }
+  rejectClientOwnedStoreSelection(args);
   const query = readReplayQuery(args);
-  const storeDriver = readStoreDriver(args);
-  const handle = createSessionStoreFromEnv({
-    ...(storeDriver !== undefined ? { driver: storeDriver } : {}),
-  });
-  try {
-    const service = new RunReplayService(handle.store);
-    const replay = await service.replay(query);
-    const report = service.doctor(replay);
-    if (args.includes("--json")) {
-      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-      return;
-    }
-    for (const line of formatDoctorInspection(report)) {
-      process.stdout.write(`${line}\n`);
-    }
-  } finally {
-    await handle.close();
+  const report = await (await requireLocalCoreClient()).runtimeDoctor(query);
+  if (args.includes("--json")) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+  for (const line of formatDoctorInspection(report)) {
+    process.stdout.write(`${line}\n`);
   }
 }
 
 async function runBundle(args: string[]): Promise<void> {
+  rejectClientOwnedStoreSelection(args);
   const query = readReplayQuery(args);
   const outPath = readArg(args, "--out");
   if (outPath === undefined || outPath.trim().length === 0) {
     throw new Error("Expected --out <file> for runtime bundle export.");
   }
-  const storeDriver = readStoreDriver(args);
-  const handle = createSessionStoreFromEnv({
-    ...(storeDriver !== undefined ? { driver: storeDriver } : {}),
-  });
-  try {
-    const bundle = await writeRuntimeReplayBundle(handle.store, query, outPath);
-    process.stdout.write(
-      `runtime bundle exported: ${outPath} run=${bundle.focus.runId ?? "n/a"} thread=${bundle.focus.threadId ?? "n/a"}\n`,
-    );
-  } finally {
-    await handle.close();
-  }
+  const bundle = await (await requireLocalCoreClient()).runtimeBundle(query);
+  const target = resolve(process.cwd(), outPath);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(bundle, null, 2)}\n`, "utf8");
+  process.stdout.write(
+    `runtime bundle exported: ${outPath} run=${bundle.focus.runId ?? "n/a"} thread=${bundle.focus.threadId ?? "n/a"}\n`,
+  );
 }
 
 function readReplayQuery(args: string[]): {
@@ -189,15 +167,20 @@ function readNumberArg(args: string[], name: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function readStoreDriver(args: string[]): StoreDriver | undefined {
-  const value = readArg(args, "--store");
-  if (value === undefined) {
-    return undefined;
+async function requireLocalCoreClient() {
+  const status = await ensureCliLocalCoreReady();
+  if (status.client === undefined) {
+    throw new Error("Runtime inspection requires the authenticated Local Core API.");
   }
-  if (value === "auto" || value === "postgres" || value === "sqlite") {
-    return value;
+  return status.client;
+}
+
+function rejectClientOwnedStoreSelection(args: string[]): void {
+  if (args.some((value) => value === "--store" || value.startsWith("--store="))) {
+    throw new Error(
+      "Runtime inspection no longer accepts --store; Local Core owns persistence selection.",
+    );
   }
-  throw new Error(`Unsupported store driver '${value}'. Expected auto|postgres|sqlite.`);
 }
 
 function printUsage(): void {

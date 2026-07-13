@@ -19,7 +19,12 @@ export async function runRuntimeCli(input: {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, commandArgs, {
       cwd: process.cwd(),
-      env: input.env,
+      env: {
+        ...input.env,
+        // The repository-wide unit gate runs with the in-process Core shortcut.
+        // Runtime CLI subprocesses must still exercise the real authenticated Core client.
+        KESTREL_LOCAL_CORE_DIRECT: "0",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

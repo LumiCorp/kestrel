@@ -21,6 +21,8 @@ import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } f
 import { buildSupportBundle } from "../diagnostics/supportBundle.js";
 import type { SessionStore as RuntimeSessionStore } from "../kestrel/contracts/store.js";
 import { ModelPolicyStore } from "../profile/modelPolicy.js";
+import { RunReplayService, type ReplayQuery } from "../replay/RunReplayService.js";
+import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
   DesktopManagedProjectRun,
   DesktopPackageManager,
@@ -625,6 +627,28 @@ async function handleRequest(input: {
       });
       return;
     }
+    if (method === "POST" && url.pathname === "/v1/runtime/replay") {
+      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
+      const query = normalizeReplayQueryBody(await readJsonBody(input.request));
+      const replay = await new RunReplayService(runtimeStore).replay(query);
+      writeJson(input.response, 200, { ok: true, replay });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime/doctor") {
+      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
+      const query = normalizeReplayQueryBody(await readJsonBody(input.request));
+      const service = new RunReplayService(runtimeStore);
+      const replay = await service.replay(query);
+      writeJson(input.response, 200, { ok: true, doctor: service.doctor(replay) });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime/bundle") {
+      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
+      const query = normalizeReplayQueryBody(await readJsonBody(input.request));
+      const { bundle } = await buildRuntimeReplayBundle(runtimeStore, query);
+      writeJson(input.response, 200, { ok: true, bundle });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/desktop/project-launcher") {
       const projectPath = normalizeString(url.searchParams.get("projectPath"));
       if (projectPath === undefined) {
@@ -856,6 +880,98 @@ function normalizeNumberField(value: unknown, field: string): number {
     throw new Error(`Request body field '${field}' must be a number.`);
   }
   return Math.floor(candidate);
+}
+
+function requireRuntimeStore(store: RuntimeSessionStore | undefined): RuntimeSessionStore {
+  if (store === undefined) {
+    throw new LocalCoreApiRequestError(
+      503,
+      "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+      "Local Core execution is unavailable until Core is healthy.",
+    );
+  }
+  return store;
+}
+
+function normalizeReplayQueryBody(value: unknown): ReplayQuery {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidReplayQuery("Request body must be an object with 'query'.");
+  }
+  const candidate = (value as Record<string, unknown>).query;
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+    throw invalidReplayQuery("Request body field 'query' must be an object.");
+  }
+  const record = candidate as Record<string, unknown>;
+  const runId = normalizeReplayQueryString(record, "runId");
+  const sessionId = normalizeReplayQueryString(record, "sessionId");
+  const threadId = normalizeReplayQueryString(record, "threadId");
+  const delegationId = normalizeReplayQueryString(record, "delegationId");
+  if (runId === undefined && sessionId === undefined && threadId === undefined && delegationId === undefined) {
+    throw invalidReplayQuery("Replay query requires runId, sessionId, threadId, or delegationId.");
+  }
+  const fromTimestamp = normalizeReplayQueryTimestamp(record, "fromTimestamp");
+  const toTimestamp = normalizeReplayQueryTimestamp(record, "toTimestamp");
+  if (
+    fromTimestamp !== undefined
+    && toTimestamp !== undefined
+    && Date.parse(fromTimestamp) > Date.parse(toTimestamp)
+  ) {
+    throw invalidReplayQuery("Replay query fromTimestamp must not be after toTimestamp.");
+  }
+  const limit = normalizeReplayQueryLimit(record.limit);
+  return {
+    ...(runId !== undefined ? { runId } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(delegationId !== undefined ? { delegationId } : {}),
+    ...(fromTimestamp !== undefined ? { fromTimestamp } : {}),
+    ...(toTimestamp !== undefined ? { toTimestamp } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  };
+}
+
+function normalizeReplayQueryString(
+  record: Record<string, unknown>,
+  field: keyof ReplayQuery,
+): string | undefined {
+  const value = record[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = normalizeString(value);
+  if (normalized === undefined) {
+    throw invalidReplayQuery(`Replay query field '${field}' must be a non-empty string.`);
+  }
+  return normalized;
+}
+
+function normalizeReplayQueryTimestamp(
+  record: Record<string, unknown>,
+  field: "fromTimestamp" | "toTimestamp",
+): string | undefined {
+  const value = normalizeReplayQueryString(record, field);
+  if (value === undefined) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isFinite(timestamp) === false) {
+    throw invalidReplayQuery(`Replay query field '${field}' must be a valid timestamp.`);
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeReplayQueryLimit(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || Number.isSafeInteger(value) === false || value <= 0) {
+    throw invalidReplayQuery("Replay query field 'limit' must be a positive integer.");
+  }
+  return value;
+}
+
+function invalidReplayQuery(message: string): LocalCoreApiRequestError {
+  return new LocalCoreApiRequestError(400, "LOCAL_CORE_RUNTIME_QUERY_INVALID", message);
 }
 
 function normalizePackageManager(value: unknown): DesktopPackageManager | undefined {

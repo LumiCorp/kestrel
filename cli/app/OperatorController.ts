@@ -1,5 +1,7 @@
-import { createSessionStoreFromEnv, type ToolExecutionClass } from "../../src/index.js";
-import { writeDoctorReport } from "../runtime/replayBundle.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import type { ToolExecutionClass } from "../../src/index.js";
 import type { OperatorCheckpointSummary } from "../contracts.js";
 import type {
   OperatorControlledEventPayload,
@@ -173,16 +175,18 @@ export class OperatorController {
         );
         return;
       }
-      const storeHandle = createSessionStoreFromEnv();
-      try {
-        const report = await writeDoctorReport(storeHandle.store, { runId }, outPath);
-        await this.context.appendHistoryLine(
-          "system",
-          `Doctor report exported to '${outPath}' status=${report.status}.`,
-        );
-      } finally {
-        await storeHandle.close();
+      const core = this.context.getLocalCoreClient?.();
+      if (core === undefined) {
+        throw new Error("Doctor export requires the authenticated Local Core API.");
       }
+      const report = await core.runtimeDoctor({ runId });
+      const target = path.resolve(this.context.options.cwd, outPath);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      await this.context.appendHistoryLine(
+        "system",
+        `Doctor report exported to '${outPath}' status=${report.status}.`,
+      );
       return;
     }
 

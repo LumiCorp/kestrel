@@ -52,7 +52,7 @@ test("sqlite store init failures are normalized and do not leak unhandled reject
   }
 });
 
-test("runtime cli reports deterministic sqlite init failures", async () => {
+test("runtime cli does not open a client-selected sqlite store", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-cli-sqlite-init-"));
   const sqlitePath = path.join(root, "runtime.db");
   await writeFile(sqlitePath, "not-a-directory", "utf8");
@@ -68,7 +68,7 @@ test("runtime cli reports deterministic sqlite init failures", async () => {
   });
 
   assert.notEqual(result.exitCode, 0);
-  assert.match(result.stderr, /Failed to initialize local runtime store/u);
+  assert.match(result.stderr, /Local Core owns persistence selection/u);
   assert.doesNotMatch(result.stderr, /\[object Object\]/u);
 });
 

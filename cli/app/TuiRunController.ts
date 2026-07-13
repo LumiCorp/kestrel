@@ -17,6 +17,7 @@ import {
   extractWaitPrompt,
 } from "./waitForPrompt.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
+import { toCoreExecutionProfile } from "../client/coreExecutionProfile.js";
 import {
   createTuiClientCapabilities,
   DEFAULT_ACT_SUBMODE,
@@ -93,7 +94,9 @@ export class TuiRunController {
     const eventType = pendingWait?.eventType ?? "user.message";
     const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
     const activeSkillPack = getSkillPackById(state.activeSession.activeSkillPackId);
-    const effectiveProfile = applySkillPackToProfile(state.activeProfile, activeSkillPack);
+    const effectiveProfile = toCoreExecutionProfile(
+      applySkillPackToProfile(state.activeProfile, activeSkillPack),
+    );
     const workspace = await this.context.refreshWorkspaceForActiveSession();
     const baseHistorySource =
       pendingWait !== undefined
