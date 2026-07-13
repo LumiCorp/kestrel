@@ -450,11 +450,11 @@ export class EnvironmentProvisioner {
         "Workspace stop target is unavailable."
       );
     }
-    assertWorkspaceOperationTransition(
-      workspaceStatusSchema.parse(workspace.status),
-      "stopping"
-    );
-    await this.repository.setWorkspaceStopping(workspace.id);
+    const workspaceStatus = workspaceStatusSchema.parse(workspace.status);
+    if (workspaceStatus !== "stopping") {
+      assertWorkspaceOperationTransition(workspaceStatus, "stopping");
+      await this.repository.setWorkspaceStopping(workspace.id);
+    }
     await this.provider.stopMachine({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,

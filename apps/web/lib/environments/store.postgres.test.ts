@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
 
@@ -22,6 +22,25 @@ test(
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
       .export({ format: "pem", type: "pkcs8" })
       .toString();
+    process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = publicKey
+      .export({ format: "pem", type: "spki" })
+      .toString();
+    process.env.FLY_API_TOKEN = "FlyV1 test";
+    process.env.KESTREL_FLY_ORGANIZATION_SLUG = "test-org";
+    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE = `registry.fly.io/kestrel-test@sha256:${"a".repeat(64)}`;
+    process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE = `registry.fly.io/kestrel-test@sha256:${"b".repeat(64)}`;
+    process.env.KESTREL_WORKSPACE_BACKUP_KEY =
+      randomBytes(32).toString("base64");
+    process.env.KESTREL_WORKSPACE_BACKUP_KEY_ID = "test-backup-v1";
+    process.env.KESTREL_ONE_APP_URL = "https://kestrel.example";
+    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN = "broker-secret";
+    process.env.KESTREL_ONE_TOOL_TOKEN = "tool-secret";
+    process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
+    process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+      "test-key": randomBytes(32).toString("base64"),
+    });
+    Reflect.deleteProperty(process.env, "KESTREL_RUNNER_SERVICE_URL");
+    Reflect.deleteProperty(process.env, "KESTREL_RUNNER_SERVICE_TOKEN");
 
     const [
       { resetDbRuntimeForTests },
@@ -261,6 +280,67 @@ test(
       effectiveCapabilities: execution?.effectiveCapabilities,
     });
     assert.ok(execution?.effectiveCapabilities.includes("route:run.stream"));
+
+    const idleAt = new Date("2026-07-13T12:00:00.000Z");
+    const idleOperation = await environmentStore.requestWorkspaceIdleStop({
+      organizationId: organizationA,
+      environmentId: createdEnvironment.environment.id,
+      workspaceId: projectBinding.workspace.id,
+      machineId: `machine-${suffix}`,
+      lastActivityAt: idleAt,
+    });
+    assert.equal(idleOperation?.type, "workspace.stop");
+    assert.deepEqual(idleOperation?.input, {
+      reason: "idle_timeout",
+      lastActivityAt: idleAt.toISOString(),
+      machineId: `machine-${suffix}`,
+    });
+    const [idleWorkspace] = await sql<
+      Array<{ status: string; lastActivityAt: Date }>
+    >`
+      SELECT "status", "last_activity_at" AS "lastActivityAt"
+      FROM "environment_workspaces"
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    assert.equal(idleWorkspace?.status, "stopping");
+    assert.equal(
+      idleWorkspace?.lastActivityAt.toISOString(),
+      idleAt.toISOString()
+    );
+    await assert.rejects(
+      environmentStore.requestWorkspaceIdleStop({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        machineId: "another-machine",
+        lastActivityAt: idleAt,
+      }),
+      /does not match the provisioned Machine/u
+    );
+    await sql`
+      DELETE FROM "environment_operations"
+      WHERE "id" = ${idleOperation?.id ?? ""}
+    `;
+    await sql`
+      UPDATE "environment_workspaces"
+      SET "status" = 'stopped'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    await assert.rejects(
+      environmentStore.requestWorkspaceIdleStop({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        machineId: `machine-${suffix}`,
+        lastActivityAt: idleAt,
+      }),
+      /cannot enter idle stop from 'stopped'/u
+    );
+    await sql`
+      UPDATE "environment_workspaces"
+      SET "status" = 'ready'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
 
     const [preservedThread] = await sql<
       Array<{ id: string; projectId: string | null }>

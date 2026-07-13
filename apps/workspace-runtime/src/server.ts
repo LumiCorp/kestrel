@@ -20,6 +20,7 @@ import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
+import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
@@ -38,10 +39,19 @@ let runnerReady: Promise<void> | null = null;
 let sourceInitialization: Promise<void> | null = null;
 let lastActivityAt = Date.now();
 let activeRequests = 0;
+let idleNotificationInFlight = false;
+let idleStopAccepted = false;
+let drainingForIdleStop = false;
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     writeJson(response, 200, { ok: true, workspaceId: config.workspaceId });
+    return;
+  }
+  if (drainingForIdleStop) {
+    writeJson(response, 503, {
+      error: { code: "WORKSPACE_IDLE_STOPPING" },
+    });
     return;
   }
   activeRequests += 1;
@@ -344,11 +354,31 @@ const server = createServer(async (request, response) => {
 server.listen(config.port, config.listenHost);
 const idleTimer = setInterval(() => {
   if (
+    !idleNotificationInFlight &&
+    !idleStopAccepted &&
     activeRequests === 0 &&
     terminals.activeCount === 0 &&
     Date.now() - lastActivityAt >= config.idleTimeoutMinutes * 60_000
   ) {
-    shutdown(0);
+    const reportedLastActivityAt = new Date(lastActivityAt);
+    idleNotificationInFlight = true;
+    drainingForIdleStop = true;
+    void notifyWorkspaceIdle({
+      controlPlaneUrl: config.controlPlaneUrl,
+      authorizationToken: config.credentialBrokerToken,
+      organizationId: config.organizationId,
+      environmentId: config.environmentId,
+      workspaceId: config.workspaceId,
+      machineId: config.machineId,
+      lastActivityAt: reportedLastActivityAt,
+    })
+      .then((accepted) => {
+        idleStopAccepted = accepted;
+        if (!accepted) drainingForIdleStop = false;
+      })
+      .finally(() => {
+        idleNotificationInFlight = false;
+      });
   }
 }, 30_000);
 idleTimer.unref();
@@ -799,7 +829,10 @@ function readConfig() {
     machineId: required("FLY_MACHINE_ID"),
     ticketPublicKey: required("KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY"),
     profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel-one",
-    controlPlaneUrl: process.env.KESTREL_CONTROL_PLANE_URL?.trim() ?? "",
+    controlPlaneUrl: required("KESTREL_CONTROL_PLANE_URL"),
+    credentialBrokerToken: required(
+      "KESTREL_ONE_CREDENTIAL_BROKER_TOKEN"
+    ),
     sourceType: process.env.KESTREL_WORKSPACE_SOURCE_TYPE?.trim() ?? "blank",
     sourceResourceId:
       process.env.KESTREL_WORKSPACE_SOURCE_RESOURCE_ID?.trim() ?? "",

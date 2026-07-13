@@ -469,7 +469,7 @@ export async function requestWorkspaceStart(input: {
   workspaceId: string;
   userId: string;
 }) {
-  const lockKey = `kestrel:workspace:start:${input.workspaceId}`;
+  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
@@ -516,6 +516,98 @@ export async function requestWorkspaceStart(input: {
         updatedAt: now,
       })
       .returning();
+    return operation;
+  });
+}
+
+export async function requestWorkspaceIdleStop(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  machineId: string;
+  lastActivityAt: Date;
+}) {
+  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.flyMachineId, input.machineId),
+          isNull(table.deletedAt)
+        ),
+    });
+    if (!workspace) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_FORBIDDEN",
+        "Workspace idle identity does not match the provisioned Machine."
+      );
+    }
+    const active = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          eq(table.type, "workspace.stop"),
+          inArray(table.status, ["queued", "running"])
+        ),
+    });
+    if (active) return active;
+    if (workspace.status !== "ready") {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        `Workspace cannot enter idle stop from '${workspace.status}'.`
+      );
+    }
+    const operationId = crypto.randomUUID();
+    const now = new Date();
+    const [updatedWorkspace] = await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "stopping",
+        lastActivityAt: input.lastActivityAt,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.environmentWorkspaces.id, workspace.id),
+          eq(schema.environmentWorkspaces.status, "ready")
+        )
+      )
+      .returning({ id: schema.environmentWorkspaces.id });
+    if (!updatedWorkspace) {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        "Workspace lifecycle changed before the idle stop was accepted."
+      );
+    }
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: operationId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        type: "workspace.stop",
+        status: "queued",
+        stage: "environment.machine.stopping",
+        idempotencyKey: `workspace.idle-stop:${workspace.id}:${input.lastActivityAt.toISOString()}`,
+        input: {
+          reason: "idle_timeout",
+          lastActivityAt: input.lastActivityAt.toISOString(),
+          machineId: input.machineId,
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!operation) {
+      throw new Error("Workspace idle stop operation could not be created.");
+    }
     return operation;
   });
 }

@@ -346,6 +346,35 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
   ]);
 });
 
+test("Workspace idle stop continues from the control-plane stopping state", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.stop",
+    "workspace-id"
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "stopping",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    sourceType: "blank",
+    sourceResourceId: null,
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.stopMachine = async () => {
+    calls.push("provider:stop");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "provider:stop",
+    "provider:wait",
+    "workspace:stopped",
+    "operation:completed",
+  ]);
+});
+
 test("Workspace deletion removes the Machine before its volume", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.delete",

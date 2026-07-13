@@ -87,6 +87,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     organizationId: input.organizationId,
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
+    actorUserId: input.actorUserId,
     onProgress: input.onProgress,
   });
   const now = Math.floor(Date.now() / 1000);
@@ -151,10 +152,12 @@ async function waitForExecutionResources(input: {
   organizationId: string;
   environmentId: string;
   workspaceId: string;
+  actorUserId: string;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   const deadline = Date.now() + 90_000;
   let lastDetail = "";
+  let startRequested = false;
   while (Date.now() < deadline) {
     const [environment, workspace] = await Promise.all([
       knowledgeDb.query.environments.findFirst({
@@ -206,6 +209,21 @@ async function waitForExecutionResources(input: {
           runtimeImage: workspace.runtimeImage,
         },
       };
+    }
+    if (
+      !startRequested &&
+      (workspace.status === "stopped" || workspace.status === "degraded")
+    ) {
+      const operation = await requestWorkspaceStart({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        userId: input.actorUserId,
+      });
+      if (operation?.status === "queued") {
+        await enqueueEnvironmentOperation(operation.id);
+      }
+      startRequested = true;
     }
     const progress = describeEnvironmentActivation({
       environmentStatus: environment.status,
@@ -424,6 +442,13 @@ export function describeEnvironmentActivation(input: {
       stage: "environment.activation.failed",
       detail: input.failureMessage?.trim() || "Environment activation failed.",
       status: "failed",
+    };
+  }
+  if (input.workspaceStatus === "stopping") {
+    return {
+      stage: "environment.machine.starting",
+      detail: "Finishing the Workspace sleep transition…",
+      status: "pending",
     };
   }
   if (

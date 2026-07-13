@@ -449,6 +449,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/environments/idle/route.ts",
+    "/api/runtime/environments/idle",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/admin/api-keys/route.ts",
     "/api/admin/api-keys",
     ADMIN_API.owner,

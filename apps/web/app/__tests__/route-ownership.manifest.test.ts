@@ -124,6 +124,15 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       continue;
     }
 
+    if (entry.access === "service-boundary") {
+      assert.match(
+        source,
+        /\b(?:authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|verifyEnvironmentExecutionTicket)\b/,
+        `${entry.file} must validate its service credential`
+      );
+      continue;
+    }
+
     if (entry.access === "webhook") {
       assert.match(
         source,
