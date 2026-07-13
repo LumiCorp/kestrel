@@ -46,6 +46,11 @@ test("Environment migration pins isolation and lazy Workspace invariants", () =>
     migration,
     /environment_run_executions[\s\S]*effective_capabilities/u
   );
+  assert.doesNotMatch(
+    migration,
+    /(?:ALTER TABLE|UPDATE|DELETE FROM|INSERT INTO) "threads"/u
+  );
+  assert.doesNotMatch(migration, /INSERT INTO "thread_execution_bindings"/u);
 });
 
 test("Environment migration makes provider operations and grants auditable", () => {

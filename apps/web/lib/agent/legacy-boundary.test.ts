@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../..",
+  "../.."
 );
 
 function listSourceFiles(directory: string): string[] {
@@ -23,7 +23,7 @@ function listSourceFiles(directory: string): string[] {
 
     if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name)) {
       files.push(
-        path.relative(packageRoot, absolutePath).replaceAll(path.sep, "/"),
+        path.relative(packageRoot, absolutePath).replaceAll(path.sep, "/")
       );
     }
   }
@@ -51,18 +51,20 @@ test("Kestrel-One adapts the public SDK agent without an unknown cast", () => {
 test("Kestrel-One no longer contains a legacy agent runtime", () => {
   assert.equal(
     fs.existsSync(path.join(packageRoot, "lib/agent/generate.ts")),
-    false,
+    false
   );
   assert.equal(
     fs.existsSync(path.join(packageRoot, "lib/agent/legacy")),
-    false,
+    false
   );
 });
 
 test("Kestrel-One production source has no legacy agent imports", () => {
   const imports = listSourceFiles(packageRoot)
     .filter((file) => !file.startsWith("lib/agent/legacy/"))
-    .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
+    .filter(
+      (file) => !(file.endsWith(".test.ts") || file.endsWith(".test.tsx"))
+    )
     .filter((file) => /(?:^|\/)(app|components|lib)\//.test(file))
     .flatMap((file) => {
       const source = readPackageFile(file);
@@ -70,4 +72,21 @@ test("Kestrel-One production source has no legacy agent imports", () => {
     });
 
   assert.deepEqual(imports, []);
+});
+
+test("legacy global runner configuration is only referenced by the hosted cutover guard", () => {
+  const references = listSourceFiles(packageRoot)
+    .filter(
+      (file) => !(file.endsWith(".test.ts") || file.endsWith(".test.tsx"))
+    )
+    .filter((file) => /(?:^|\/)(app|components|lib)\//.test(file))
+    .flatMap((file) => {
+      const source = readPackageFile(file);
+      return source.includes("KESTREL_RUNNER_SERVICE_URL") ||
+        source.includes("KESTREL_RUNNER_SERVICE_TOKEN")
+        ? [file]
+        : [];
+    });
+
+  assert.deepEqual(references, ["lib/environments/config.ts"]);
 });
