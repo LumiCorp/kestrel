@@ -31,11 +31,16 @@ test("organization feature flags are tenant-owned and administrator-attributed",
     /REFERENCES "organization"\("id"\) ON DELETE CASCADE/u
   );
   assert.match(migration, /REFERENCES "user"\("id"\) ON DELETE RESTRICT/u);
-  assert.deepEqual(journal.entries.at(-1), {
-    idx: 16,
-    version: "7",
-    when: 1_783_944_000_000,
-    tag: "0016_organization_feature_flags",
-    breakpoints: true,
-  });
+  assert.deepEqual(
+    journal.entries.find(
+      (entry) => entry.tag === "0016_organization_feature_flags"
+    ),
+    {
+      idx: 16,
+      version: "7",
+      when: 1_783_944_000_000,
+      tag: "0016_organization_feature_flags",
+      breakpoints: true,
+    }
+  );
 });

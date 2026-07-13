@@ -8,6 +8,11 @@ import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { auth } from "@/lib/auth";
 import {
+  consumeGitHubActionApproval,
+  GitHubActionApprovalError,
+  type GitHubMutationOperation,
+} from "@/lib/integrations/github-action-approvals";
+import {
   authorizeGitHubCapability,
   type GitHubCapability,
   GitHubPolicyError,
@@ -76,11 +81,19 @@ export async function POST(request: Request) {
       capability,
       requireRunExecution: true,
     });
-    if (
-      policy.approvalMode === "ask" &&
-      request.headers.get("x-kestrel-runtime-approval") !== "confirmed"
-    ) {
-      throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
+    let consumedApprovalId: string | null = null;
+    if (policy.approvalMode === "ask") {
+      consumedApprovalId = readApprovalId(
+        request.headers.get("x-kestrel-approval-id")
+      );
+      await consumeGitHubActionApproval({
+        identity: ticket,
+        runtimeApprovalId: consumedApprovalId,
+        resourceId: policy.resource.id,
+        repository: input.repository,
+        operation: input.operation as GitHubMutationOperation,
+        payload: input,
+      });
     }
     const credential = await auth.api.getAccessToken({
       body: {
@@ -108,6 +121,7 @@ export async function POST(request: Request) {
         repository: input.repository,
         capability,
         approvalMode: policy.approvalMode,
+        approvalId: consumedApprovalId,
         loggingMode: policy.loggingMode,
       },
     });
@@ -116,7 +130,10 @@ export async function POST(request: Request) {
       { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {
-    if (error instanceof GitHubPolicyError) {
+    if (
+      error instanceof GitHubPolicyError ||
+      error instanceof GitHubActionApprovalError
+    ) {
       if (ticket) {
         await logAdminEvent({
           organizationId: ticket.organizationId,
@@ -137,7 +154,14 @@ export async function POST(request: Request) {
       }
       return NextResponse.json(
         { error: { code: error.code } },
-        { status: error.status }
+        {
+          status:
+            error instanceof GitHubPolicyError
+              ? error.status
+              : error.code === "GITHUB_APPROVAL_BINDING_MISMATCH"
+                ? 403
+                : 409,
+        }
       );
     }
     return errorResponse(error, 400);
@@ -252,4 +276,12 @@ function readBearer(value: string | null) {
   const match = value?.match(/^Bearer ([^\s]+)$/u);
   if (!match?.[1]) throw new Error("Environment execution ticket is required.");
   return match[1];
+}
+
+function readApprovalId(value: string | null) {
+  const approvalId = value?.trim();
+  if (!approvalId || approvalId.length > 500) {
+    throw new GitHubActionApprovalError("GITHUB_APPROVAL_REQUIRED");
+  }
+  return approvalId;
 }

@@ -24,7 +24,7 @@ test("GitHub mutation tools require external confirmation while reads and agent-
   );
 });
 
-test("GitHub action tools send the signed execution ticket and confirmation only for approved mutations", async () => {
+test("GitHub action tools send the signed execution ticket and exact approval ID only for mutations", async () => {
   const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
   const fetchImpl: typeof fetch = async (_input, init) => {
     requests.push({
@@ -38,6 +38,11 @@ test("GitHub action tools send the signed execution ticket and confirmation only
     kestrelOne: {
       appUrl: "https://kestrel.example",
       executionTicket: "signed-environment-ticket",
+    },
+    runtime: {
+      runId: "runtime-run",
+      sessionId: "thread-1",
+      approvalId: "runtime-run:4:abc123",
     },
   };
 
@@ -56,12 +61,13 @@ test("GitHub action tools send the signed execution ticket and confirmation only
     "Bearer signed-environment-ticket"
   );
   assert.equal(
-    requests[0]?.headers.get("x-kestrel-runtime-approval"),
+    requests[0]?.headers.get("x-kestrel-approval-id"),
     null
   );
   assert.equal(requests[1]?.body.operation, "issue.create");
   assert.equal(
-    requests[1]?.headers.get("x-kestrel-runtime-approval"),
-    "confirmed"
+    requests[1]?.headers.get("x-kestrel-approval-id"),
+    "runtime-run:4:abc123"
   );
+  assert.equal(requests[1]?.headers.get("x-kestrel-runtime-approval"), null);
 });

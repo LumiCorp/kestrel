@@ -34,6 +34,7 @@ import {
   resolveEnvironmentExecutionRoute,
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
+import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 
@@ -92,6 +93,13 @@ export type KestrelOneAgentResponseInput = {
   organizationId: string;
   threadId: string;
   messages: UIMessage[];
+  approvalDecision?:
+    | {
+        approvalId: string;
+        approved: boolean;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   projectContext?: {
     projectId: string;
@@ -183,7 +191,21 @@ function createModelAwareKestrelOneAgent(input: {
                 context
               );
           routed.attachCancel(() => downstream.cancel());
-          for await (const event of downstream) routed.push(event);
+          for await (const event of downstream) {
+            await recordGitHubActionApprovalRequest({
+              identity: {
+                organizationId: input.organizationId,
+                environmentId: route.environmentId,
+                workspaceId: route.workspaceId,
+                threadId: input.threadId,
+                actorId: input.actorUserId,
+                agentId: getKestrelOneProfileId(),
+              },
+              requestedExecutionId: route.runId,
+              event,
+            });
+            routed.push(event);
+          }
           const terminal = await downstream.result;
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
@@ -403,6 +425,7 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     messages: input.messages,
+    approvalDecision: input.approvalDecision,
     modelId: resolvedModel.model.id,
     runtimeModel,
     projectContext: input.projectContext,

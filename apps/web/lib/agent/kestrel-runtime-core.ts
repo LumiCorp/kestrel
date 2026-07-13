@@ -113,6 +113,13 @@ export type KestrelOneAgentResponseInput = {
   correlation: KestrelOneRequestCorrelation;
   threadId: string;
   messages: UIMessage[];
+  approvalDecision?:
+    | {
+        approvalId: string;
+        approved: boolean;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   runtimeModel?: KestrelOneRuntimeModelSelection;
   projectContext?: {
@@ -158,7 +165,11 @@ export function createKestrelOneAgentResponseFromAgent(
     organizationId: input.organizationId,
     correlation: input.correlation,
   });
-  const latestUserMessage = getLatestUserText(input.messages);
+  const latestUserMessage = input.approvalDecision
+    ? input.approvalDecision.approved
+      ? "approve"
+      : "deny"
+    : getLatestUserText(input.messages);
   const history = toKestrelHistory(input.messages.slice(0, -1));
   if (input.projectContext?.systemContext) {
     history.unshift({
@@ -191,6 +202,12 @@ export function createKestrelOneAgentResponseFromAgent(
         errorMessage: null as string | null,
         failureVisible: false,
         terminalStatus: "empty" as KestrelTerminalStatus,
+        approvalRequests: [] as Array<{
+          approvalId: string;
+          toolCallId: string;
+          toolName: string;
+          input: Record<string, unknown>;
+        }>,
       };
 
       try {
@@ -198,6 +215,9 @@ export function createKestrelOneAgentResponseFromAgent(
           {
             sessionId: input.threadId,
             message: latestUserMessage,
+            eventType: input.approvalDecision
+              ? "user.approval"
+              : "user.message",
             history,
             clientCapabilities: {
               kestrelOne: {
@@ -257,7 +277,19 @@ export function createKestrelOneAgentResponseFromAgent(
           {
             id: assistantMessageId,
             role: "assistant",
-            parts: [{ type: "text", text: streamResult.finalText }],
+            parts: [
+              ...(streamResult.finalText
+                ? [{ type: "text" as const, text: streamResult.finalText }]
+                : []),
+              ...streamResult.approvalRequests.map((approval) => ({
+                type: "dynamic-tool" as const,
+                toolName: approval.toolName,
+                toolCallId: approval.toolCallId,
+                state: "approval-requested" as const,
+                approval: { id: approval.approvalId },
+                input: approval.input,
+              })),
+            ],
           },
         ],
         {

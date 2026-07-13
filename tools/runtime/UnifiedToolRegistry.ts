@@ -524,7 +524,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       runContext.payload,
       this.defaultAllowlist,
       this.builtInContext,
-      resolveRuntimeToolRunContext(runContext.runId, runContext.sessionId, runContext.payload),
+      resolveRuntimeToolRunContext(
+        runContext.runId,
+        runContext.sessionId,
+        runContext.payload,
+        runContext.sessionState,
+      ),
       hasTrustedManagedWorktreeBinding(
         runContext.runId,
         runContext.sessionState,
@@ -802,6 +807,7 @@ function resolveRuntimeToolRunContext(
   runId: string,
   sessionId: string,
   payload: unknown,
+  sessionState: unknown,
 ): RuntimeToolRunContext {
   const payloadRecord = asRecord(payload);
   const orchestration = asRecord(payloadRecord?.orchestration);
@@ -818,15 +824,25 @@ function resolveRuntimeToolRunContext(
     asNonEmptyString(orchestration?.rootDelegationId) ?? asNonEmptyString(metadata?.rootDelegationId);
   const delegationDepth =
     asFiniteNumber(orchestration?.delegationDepth) ?? asFiniteNumber(metadata?.delegationDepth);
+  const approvalId = readPendingApprovalId(sessionState);
   return {
     runId,
     sessionId,
+    ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
   };
+}
+
+function readPendingApprovalId(state: unknown): string | undefined {
+  const stateRecord = asRecord(state);
+  const pendingApproval =
+    asRecord(asRecord(asRecord(stateRecord?.agent)?.exec)?.pendingApproval) ??
+    asRecord(asRecord(asRecord(stateRecord?.react)?.exec)?.pendingApproval);
+  return asNonEmptyString(pendingApproval?.approvalId);
 }
 
 function hasTrustedManagedWorktreeBinding(runId: string, state: unknown, payload: unknown, sessionId: string): boolean {

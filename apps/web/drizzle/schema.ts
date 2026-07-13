@@ -519,7 +519,7 @@ export const threadMessages = pgTable(
     }),
     projectContextRevisionId: text("project_context_revision_id").references(
       () => projectContextRevisions.id,
-      { onDelete: "set null" }
+      { onDelete: "restrict" }
     ),
     parts: jsonb("parts"),
     searchText: text("search_text").notNull().default(""),
@@ -1077,6 +1077,113 @@ export const environmentRunExecutions = pgTable(
     index("environment_run_executions_org_created_idx").on(
       table.organizationId,
       table.createdAt
+    ),
+  ]
+);
+
+export const githubActionApprovals = pgTable(
+  "github_action_approvals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => environmentWorkspaces.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    requestedExecutionId: text("requested_execution_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    consumedExecutionId: text("consumed_execution_id").references(
+      () => environmentRunExecutions.id,
+      { onDelete: "set null" }
+    ),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    agentId: text("agent_id").notNull(),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => toolConnectionResources.id, { onDelete: "restrict" }),
+    repository: text("repository").notNull(),
+    operation: text("operation", {
+      enum: [
+        "issue.create",
+        "pull_request.create",
+        "pull_request.merge",
+        "release.create",
+        "workflow.dispatch",
+      ],
+    }).notNull(),
+    runtimeApprovalId: text("runtime_approval_id").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "denied", "consumed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    decidedByUserId: text("decided_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("github_action_approvals_runtime_idx").on(
+      table.organizationId,
+      table.runtimeApprovalId
+    ),
+    index("github_action_approvals_thread_status_idx").on(
+      table.organizationId,
+      table.threadId,
+      table.status
+    ),
+    index("github_action_approvals_expiry_idx").on(
+      table.status,
+      table.expiresAt
+    ),
+    index("github_action_approvals_execution_idx").on(
+      table.requestedExecutionId
+    ),
+    check(
+      "github_action_approvals_operation_check",
+      sql`${table.operation} in ('issue.create', 'pull_request.create', 'pull_request.merge', 'release.create', 'workflow.dispatch')`
+    ),
+    check(
+      "github_action_approvals_status_check",
+      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`
+    ),
+    check(
+      "github_action_approvals_payload_hash_check",
+      sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`
+    ),
+    check(
+      "github_action_approvals_lifecycle_check",
+      sql`(
+        (${table.status} = 'pending' and ${table.decidedAt} is null and ${table.decidedByUserId} is null and ${table.consumedAt} is null and ${table.consumedExecutionId} is null)
+        or
+        (${table.status} in ('approved', 'denied') and ${table.decidedAt} is not null and ${table.decidedByUserId} is not null and ${table.consumedAt} is null and ${table.consumedExecutionId} is null)
+        or
+        (${table.status} = 'consumed' and ${table.decidedAt} is not null and ${table.decidedByUserId} is not null and ${table.consumedAt} is not null and ${table.consumedExecutionId} is not null)
+        or
+        (${table.status} = 'expired' and ${table.consumedAt} is null and ${table.consumedExecutionId} is null)
+      )`
     ),
   ]
 );

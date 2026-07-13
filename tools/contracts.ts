@@ -88,6 +88,7 @@ export interface DelegationTaskSpawnRequest {
 export interface RuntimeToolRunContext {
   runId: string;
   sessionId: string;
+  approvalId?: string | undefined;
   threadId?: string | undefined;
   activeTaskId?: string | undefined;
   delegationId?: string | undefined;

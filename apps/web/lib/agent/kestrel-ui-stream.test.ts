@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writeKestrelRunnerEventsToUi } from "@/lib/agent/kestrel-ui-stream";
 import type { KestrelStreamEventForUi } from "@/lib/agent/kestrel-stream-events";
+import { writeKestrelRunnerEventsToUi } from "@/lib/agent/kestrel-ui-stream";
 
 test("writeKestrelRunnerEventsToUi keeps runner error in reasoning but completed terminal text wins", async () => {
   const writer = createChunkWriter();
@@ -50,7 +50,8 @@ test("writeKestrelRunnerEventsToUi translates thrown runner errors into reasonin
   assert.equal(result.errorMessage, "Subscription denied.");
   assert.equal(countOccurrences(output, "Subscription denied."), 2);
   assert.ok(
-    output.indexOf("reasoning-end") < output.lastIndexOf("Subscription denied."),
+    output.indexOf("reasoning-end") <
+      output.lastIndexOf("Subscription denied."),
     "reasoning should close before the fallback assistant text"
   );
 });
@@ -127,9 +128,58 @@ test("writeKestrelRunnerEventsToUi suppresses duplicate and blank progress but p
   assert.equal(countOccurrences(output, "Working."), 2);
 });
 
+test("writeKestrelRunnerEventsToUi emits a structured approval request without fallback text", async () => {
+  const writer = createChunkWriter();
+  const result = await writeKestrelRunnerEventsToUi({
+    writer,
+    assistantMessageId: "msg_approval",
+    textPartId: "text_approval",
+    reasoningPartId: "reasoning_approval",
+    emptyFinalText: "Unexpected fallback",
+    events: streamFromEvents([
+      {
+        type: "run.waiting",
+        payload: {
+          waitFor: {
+            eventType: "user.approval",
+            metadata: {
+              approvalId: "runtime-run:4:abc123",
+              toolName: "kestrel_one.github_issue_create",
+              toolInput: {
+                repository: "acme/widgets",
+                title: "Canary",
+              },
+            },
+          },
+        },
+      },
+    ]),
+  });
+
+  assert.equal(result.finalText, "");
+  assert.deepEqual(result.approvalRequests, [
+    {
+      approvalId: "runtime-run:4:abc123",
+      toolCallId: "approval:runtime-run:4:abc123",
+      toolName: "kestrel_one.github_issue_create",
+      input: { repository: "acme/widgets", title: "Canary" },
+    },
+  ]);
+  assert.deepEqual(
+    writer.chunks
+      .filter((chunk) => chunk.type.startsWith("tool-"))
+      .map((chunk) => chunk.type),
+    ["tool-input-available", "tool-approval-request"]
+  );
+  assert.doesNotMatch(JSON.stringify(writer.chunks), /Unexpected fallback/u);
+});
+
 function createChunkWriter() {
-  const chunks: Array<{ type: string; delta?: string; messageMetadata?: unknown }> =
-    [];
+  const chunks: Array<{
+    type: string;
+    delta?: string;
+    messageMetadata?: unknown;
+  }> = [];
   return {
     chunks,
     write(chunk: { type: string; delta?: string; messageMetadata?: unknown }) {
@@ -144,7 +194,9 @@ async function* streamFromEvents(events: KestrelStreamEventForUi[]) {
   }
 }
 
-async function* throwingStream(error: unknown): AsyncIterable<KestrelStreamEventForUi> {
+async function* throwingStream(
+  error: unknown
+): AsyncIterable<KestrelStreamEventForUi> {
   yield { type: "run.progress", payload: { update: { message: "Starting." } } };
   throw error;
 }
