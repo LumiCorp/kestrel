@@ -10,6 +10,7 @@ import {
   CreditCard,
   FolderKanban,
   FolderOpen,
+  HardDriveDownload,
   KeyRound,
   Logs,
   Mail,
@@ -44,6 +45,11 @@ const workspaceItems = [
     title: "Knowledge",
     url: "/knowledge",
     icon: FolderKanban,
+  },
+  {
+    title: "Model Deployments",
+    url: "/model-deployments",
+    icon: HardDriveDownload,
   },
 ];
 
@@ -80,6 +86,11 @@ const adminItems = [
     title: "Gateways",
     url: "/admin/gateways",
     icon: Cpu,
+  },
+  {
+    title: "Deployments",
+    url: "/admin/deployments",
+    icon: HardDriveDownload,
   },
   {
     title: "Tools",

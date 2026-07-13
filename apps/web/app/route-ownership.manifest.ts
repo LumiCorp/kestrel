@@ -201,6 +201,14 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     { primaryNavigation: true }
   ),
   page(
+    "app/(workspace)/model-deployments/page.tsx",
+    "/model-deployments",
+    "models",
+    "authenticated",
+    "redirect-sign-in",
+    { primaryNavigation: true }
+  ),
+  page(
     "app/(workspace)/projects/[id]/page.tsx",
     "/projects/:id",
     "projects",
@@ -326,6 +334,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.unauthorized
   ),
   page(
+    "app/admin/deployments/page.tsx",
+    "/admin/deployments",
+    ADMIN_PAGE.owner,
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized
+  ),
+  page(
     "app/admin/integrations/page.tsx",
     "/admin/integrations",
     "integrations",
@@ -441,6 +456,41 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized
   ),
   api(
+    "app/api/admin/runpod/connection/route.ts",
+    "/api/admin/runpod/connection",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/deployment-profiles/route.ts",
+    "/api/admin/deployment-profiles",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/deployment-profiles/[id]/route.ts",
+    "/api/admin/deployment-profiles/:id",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/model-deployments/route.ts",
+    "/api/admin/model-deployments",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/organizations/[id]/runpod-policy/route.ts",
+    "/api/admin/organizations/:id/runpod-policy",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
     "app/api/admin/gateways/[id]/route.ts",
     "/api/admin/gateways/:id",
     ADMIN_API.owner,
@@ -450,6 +500,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/gateways/[id]/models/route.ts",
     "/api/admin/gateways/:id/models",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/gateways/[id]/models/[modelId]/validate/route.ts",
+    "/api/admin/gateways/:id/models/:modelId/validate",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
@@ -740,6 +797,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/models/approved/route.ts",
     "/api/models/approved",
+    "models",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/model-deployments/route.ts",
+    "/api/model-deployments",
+    "models",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/model-deployments/[id]/route.ts",
+    "/api/model-deployments/:id",
+    "models",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/model-deployments/access/route.ts",
+    "/api/model-deployments/access",
     "models",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
