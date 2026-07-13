@@ -12,6 +12,7 @@ import {
   FolderOpen,
   KeyRound,
   Logs,
+  Mail,
   PlugZap,
   User,
   Users,
@@ -84,6 +85,11 @@ const adminItems = [
     title: "Tools",
     url: "/admin/tools",
     icon: PlugZap,
+  },
+  {
+    title: "Integrations",
+    url: "/admin/integrations",
+    icon: Mail,
   },
   {
     title: "Users",

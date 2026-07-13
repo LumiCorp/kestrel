@@ -326,6 +326,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.unauthorized
   ),
   page(
+    "app/admin/integrations/page.tsx",
+    "/admin/integrations",
+    "integrations",
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized
+  ),
+  page(
+    "app/admin/integrations/email/page.tsx",
+    "/admin/integrations/email",
+    "integrations",
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized
+  ),
+  page(
     "app/admin/logs/page.tsx",
     "/admin/logs",
     ADMIN_PAGE.owner,
@@ -403,7 +417,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/kestrel/gateway-credentials/lease",
     "credential-boundary",
     "service-boundary",
-    "service-bearer",
+    "service-bearer"
   ),
   api(
     "app/api/admin/api-keys/route.ts",
@@ -444,6 +458,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/admin/gateways/[id]/sync/route.ts",
     "/api/admin/gateways/:id/sync",
     ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/integrations/email/route.ts",
+    "/api/admin/integrations/email",
+    "integrations",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/integrations/email/test/route.ts",
+    "/api/admin/integrations/email/test",
+    "integrations",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),

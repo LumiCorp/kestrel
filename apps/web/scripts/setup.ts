@@ -337,6 +337,7 @@ BETTER_AUTH_URL=http://127.0.0.1:43103
 # Uncomment and configure if you want email functionality
 # RESEND_API_KEY=re_your_key
 # BETTER_AUTH_EMAIL=noreply@yourdomain.com
+# BETTER_AUTH_REPLY_TO=support@yourdomain.com
 
 # Social Providers (optional)
 # NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_client_id
