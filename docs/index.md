@@ -35,6 +35,7 @@ This index maps the repo-level source-of-truth docs. Use it to find the canonica
 - [Plans Index](docs/PLANS.md)
 - [Kestrel One app README](apps/web/README.md)
 - [Kestrel-One production readiness evidence](docs/references/kestrel-one-production-readiness-evidence.md)
+- [Kestrel One Environment canary evidence](docs/references/kestrel-one-environment-canary-evidence.md)
 - [Packaged desktop first-run capability audit](docs/analysis/2026-06-03-packaged-desktop-first-run-capability-audit.md)
 - [Kestrel Local Core shell model](docs/plans/2026-06-17-kestrel-local-core-shell-model.md)
 - [Kestrel Local Core beta migration evidence](docs/runbooks/2026-06-17-local-core-beta-migration-evidence.md)
