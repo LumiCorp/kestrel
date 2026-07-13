@@ -35,11 +35,11 @@ Environment provisioning, GitHub OAuth proof, and execution cutover.
 - The authenticated Fly organization is `personal`. Its only retained App is
   the legacy `kestrel-one-runner`; no managed organization Environment exists
   yet.
-- A read-only production schema probe on 2026-07-13 confirmed that none of the
-  required `environments`, `environment_workspaces`,
-  `organization_feature_flags`, `user_tool_connections`,
-  `user_tool_connection_resources`, or `github_action_approvals` relations
-  exist yet. Migrations `0014` through `0017` remain one unapplied set.
+- The production data was explicitly declared disposable for this rollout, so
+  no backup or restoration gate applies. Migrations `0014` through `0017` were
+  applied as one ordered set on 2026-07-13. A subsequent read-only schema probe
+  confirmed all required Environment, user OAuth, organization feature flag,
+  and GitHub approval-ledger relations are present.
 - `apps/web` runs database migrations as the first part of `pnpm build`.
   Therefore, authorizing a production deployment also authorizes every pending
   migration unless migrations are applied explicitly first.
@@ -48,7 +48,9 @@ Environment provisioning, GitHub OAuth proof, and execution cutover.
 
 ## Invariants
 
-1. Take and verify a recoverable database backup before migration `0014`.
+1. Treat the existing production data as disposable for this rollout. Apply
+   migrations `0014` through `0017` as one ordered set; do not split their
+   dependent Environment and approval-ledger relations.
 2. Keep `KESTREL_ENVIRONMENTS_ENABLED=false` and retain both legacy runner
    values during the dark deployment and Environment provisioning phases.
 3. Use one Kestrel-owned GitHub **OAuth App**, not a GitHub App installation.
@@ -97,10 +99,11 @@ App whose authorization callback is
 Keep the existing credential-broker, tool-token, and gateway-encryption values.
 Keep both legacy runner values during this phase.
 
-## Phase 2: Authorize and Apply Migrations
+## Phase 2: Apply Migrations
 
 Migration authorization covers `0014_hosted_environments.sql` through
-`0017_github_action_approvals.sql`. After confirming the database backup:
+`0017_github_action_approvals.sql`. The production data is disposable, so no
+backup is required:
 
 ```sh
 vercel env run -e production --cwd apps/web -- pnpm db:migrate
@@ -113,8 +116,8 @@ runtime configuration, OAuth origins, and the presence of the Environment,
 user OAuth, organization feature flag, and GitHub approval-ledger relations. It
 intentionally permits the legacy runner when the deployment flag is false.
 
-Stop if migration fails, a required relation is absent, or the backup cannot be
-restored. Do not attempt the production deployment as a migration retry.
+Stop if migration fails or a required relation is absent. Do not attempt the
+production deployment as a migration retry.
 
 ## Phase 3: Deploy Dark and Provision the Default Environment
 
