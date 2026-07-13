@@ -28,8 +28,21 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
   } else if (code === "PROJECT_FORBIDDEN") {
     status = 403;
   } else if (
+    code === "ENVIRONMENT_NOT_FOUND" ||
+    code === "ENVIRONMENT_BINDING_NOT_FOUND"
+  ) {
+    status = 404;
+  } else if (
+    code === "ENVIRONMENT_FORBIDDEN" ||
+    code === "WORKSPACE_SOURCE_FORBIDDEN"
+  ) {
+    status = 403;
+  } else if (
     code === "PROJECT_CONTEXT_CONFLICT" ||
-    code === "PROJECT_LAST_OWNER"
+    code === "PROJECT_LAST_OWNER" ||
+    code === "ENVIRONMENT_INVALID_TRANSITION" ||
+    code === "WORKSPACE_INVALID_TRANSITION" ||
+    code === "ENVIRONMENT_UNAVAILABLE"
   ) {
     status = 409;
   } else if (message === "Forbidden") {

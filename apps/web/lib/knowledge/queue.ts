@@ -3,6 +3,8 @@ import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
 const KNOWLEDGE_SYNC_QUEUE = "knowledge.sync";
+const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
+const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
 
 async function createBoss() {
   if (!knowledgeQueueState.databaseUrl) {
@@ -17,6 +19,9 @@ async function createBoss() {
   await boss.start();
   await boss.createQueue(KNOWLEDGE_SYNC_QUEUE);
   await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE);
+  await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE);
+  await boss.createQueue(ENVIRONMENT_RECONCILE_QUEUE);
+  await boss.schedule(ENVIRONMENT_RECONCILE_QUEUE, "*/5 * * * *", {});
   return boss;
 }
 
@@ -56,6 +61,26 @@ export async function getKnowledgeBoss() {
         }
       }
     );
+    await boss.work(
+      ENVIRONMENT_OPERATION_QUEUE,
+      async (jobs: Array<{ data?: unknown }>) => {
+        const { processEnvironmentOperation } = await import(
+          "@/lib/environments/process-runtime"
+        );
+        for (const job of jobs) {
+          const payload = job.data as { operationId?: string } | null;
+          if (payload?.operationId) {
+            await processEnvironmentOperation(payload.operationId);
+          }
+        }
+      }
+    );
+    await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
+      const { reconcileHostedEnvironments } = await import(
+        "@/lib/environments/reconcile"
+      );
+      await reconcileHostedEnvironments();
+    });
   }
 
   return boss;
@@ -71,4 +96,17 @@ export async function enqueueKnowledgeDocumentRun(runId: string) {
   await boss.send(KNOWLEDGE_DOCUMENT_QUEUE, { runId });
 }
 
-export { KNOWLEDGE_SYNC_QUEUE };
+export async function enqueueEnvironmentOperation(operationId: string) {
+  const boss = await getKnowledgeBoss();
+  await boss.send(
+    ENVIRONMENT_OPERATION_QUEUE,
+    { operationId },
+    { retryLimit: 20, retryDelay: 3, retryBackoff: true }
+  );
+}
+
+export {
+  ENVIRONMENT_OPERATION_QUEUE,
+  ENVIRONMENT_RECONCILE_QUEUE,
+  KNOWLEDGE_SYNC_QUEUE,
+};
