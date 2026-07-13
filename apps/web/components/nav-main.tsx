@@ -10,6 +10,7 @@ import {
   CreditCard,
   FolderKanban,
   FolderOpen,
+  HardDrive,
   KeyRound,
   Logs,
   PlugZap,
@@ -79,6 +80,11 @@ const adminItems = [
     title: "Gateways",
     url: "/admin/gateways",
     icon: Cpu,
+  },
+  {
+    title: "Environments",
+    url: "/admin/environments",
+    icon: HardDrive,
   },
   {
     title: "Tools",

@@ -58,6 +58,18 @@ export function applyKestrelOneModelToProfile(
     label: `${profile.label} · ${selection.id}`,
     modelProvider: selection.provider,
     model: selection.model,
+    agentStageConfig: {
+      ...((profile.agentStageConfig as Record<string, unknown> | undefined) ??
+        {}),
+      modelByStage: {
+        ...((
+          profile.agentStageConfig as
+            | { modelByStage?: Record<string, string> }
+            | undefined
+        )?.modelByStage ?? {}),
+        "agent.loop": selection.model,
+      },
+    },
     modelCredential: {
       source: "kestrel-one",
       gatewayId: selection.gatewayId,

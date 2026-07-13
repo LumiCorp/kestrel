@@ -1,11 +1,7 @@
 import "server-only";
 
 import { readRequestCorrelation } from "@kestrel-agents/next";
-import {
-  createAgent,
-  type KestrelAgent,
-  type RunnerActorMetadata,
-} from "@kestrel-agents/sdk";
+import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
   KestrelClient,
   type KestrelRequestContext,
@@ -34,20 +30,12 @@ import {
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
+import {
+  resolveEnvironmentExecutionRoute,
+  updateEnvironmentExecutionStatus,
+} from "@/lib/environments/execution-route";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
-const DEFAULT_AGENT_ID = "kestrel-one";
-const DEFAULT_AGENT_NAME = "Kestrel One";
-
-export function createKestrelOneAgent() {
-  return createAgent({
-    id: process.env.KESTREL_ONE_AGENT_ID?.trim() || DEFAULT_AGENT_ID,
-    name: process.env.KESTREL_ONE_AGENT_NAME?.trim() || DEFAULT_AGENT_NAME,
-    profileId: getKestrelOneProfileId(),
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
-  });
-}
 
 class KestrelOneRunnerClient extends KestrelClient {
   runWithProfile(
@@ -119,48 +107,183 @@ export type KestrelOneAgentResponseInput = {
   ) => Promise<void>;
 };
 
-function createModelAwareKestrelOneAgent(): KestrelOneAgent {
-  const client = new KestrelOneRunnerClient({
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
-  });
-
+function createModelAwareKestrelOneAgent(input: {
+  organizationId: string;
+  threadId: string;
+  actorUserId: string;
+  projectContextRevisionId?: string | undefined;
+}): KestrelOneAgent {
+  const clients = new Set<KestrelOneRunnerClient>();
   return {
-    async stream(input, context, runtimeModel) {
-      const { signal, ...turn } = input;
-      const normalizedTurn = {
-        ...turn,
-        eventType: turn.eventType || "user.message",
-      };
-
-      if (!runtimeModel) {
-        return client.streamRun(
-          {
-            profileId: getKestrelOneProfileId(),
-            turn: normalizedTurn,
-            ...(signal ? { signal } : {}),
-          },
-          context
-        );
-      }
-
-      const baseProfile = await client.getProfile(
-        getKestrelOneProfileId(),
-        context
-      );
-      return client.streamRunWithProfile(
-        {
-          profile: applyKestrelOneModelToProfile(baseProfile, runtimeModel),
-          turn: normalizedTurn,
-          ...(signal ? { signal } : {}),
-        },
-        context
-      );
+    stream(turnInput, context, runtimeModel) {
+      const routed = new EnvironmentRoutedRunnerStream();
+      void (async () => {
+        let client: KestrelOneRunnerClient | null = null;
+        let executionId: string | null = null;
+        try {
+          const route = await resolveEnvironmentExecutionRoute({
+            organizationId: input.organizationId,
+            threadId: input.threadId,
+            actorUserId: input.actorUserId,
+            agentId: getKestrelOneProfileId(),
+            recordExecution: {
+              projectContextRevisionId: input.projectContextRevisionId,
+            },
+            onProgress: (progress) =>
+              routed.push({
+                id: crypto.randomUUID(),
+                type: "run.progress",
+                ts: new Date().toISOString(),
+                payload: { update: { message: progress.detail } },
+              }),
+          });
+          executionId = route.runId;
+          await updateEnvironmentExecutionStatus({
+            organizationId: input.organizationId,
+            executionId,
+            status: "running",
+          });
+          client = new KestrelOneRunnerClient({
+            baseUrl: route.baseUrl,
+            authToken: route.authToken,
+          });
+          clients.add(client);
+          const { signal, ...turn } = turnInput;
+          const normalizedTurn = {
+            ...turn,
+            eventType: turn.eventType || "user.message",
+            clientCapabilities: {
+              ...(turn.clientCapabilities ?? {}),
+              kestrelOne: {
+                ...((turn.clientCapabilities?.kestrelOne as
+                  | Record<string, unknown>
+                  | undefined) ?? {}),
+                executionTicket: route.authToken,
+              },
+            },
+          };
+          const downstream = runtimeModel
+            ? client.streamRunWithProfile(
+                {
+                  profile: applyKestrelOneModelToProfile(
+                    await client.getProfile(getKestrelOneProfileId(), context),
+                    runtimeModel
+                  ),
+                  turn: normalizedTurn,
+                  ...(signal ? { signal } : {}),
+                },
+                context
+              )
+            : client.streamRun(
+                {
+                  profileId: getKestrelOneProfileId(),
+                  turn: normalizedTurn,
+                  ...(signal ? { signal } : {}),
+                },
+                context
+              );
+          routed.attachCancel(() => downstream.cancel());
+          for await (const event of downstream) routed.push(event);
+          const terminal = await downstream.result;
+          await updateEnvironmentExecutionStatus({
+            organizationId: input.organizationId,
+            executionId,
+            status: terminalExecutionStatus(terminal),
+          });
+          routed.complete(terminal);
+        } catch (error) {
+          if (executionId) {
+            await updateEnvironmentExecutionStatus({
+              organizationId: input.organizationId,
+              executionId,
+              status: "failed",
+            }).catch(() => {});
+          }
+          routed.fail(error);
+        } finally {
+          if (client) {
+            clients.delete(client);
+            await client.close();
+          }
+        }
+      })();
+      return routed;
     },
-    close() {
-      return client.close();
+    async close() {
+      await Promise.all([...clients].map((client) => client.close()));
+      clients.clear();
     },
   };
+}
+
+class EnvironmentRoutedRunnerStream
+  implements
+    RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>,
+    AsyncIterator<RunnerRunStreamEvent>
+{
+  readonly result: Promise<RunnerRunTerminalEvent>;
+  private resolveResult!: (value: RunnerRunTerminalEvent) => void;
+  private rejectResult!: (error: unknown) => void;
+  private readonly queue: RunnerRunStreamEvent[] = [];
+  private readonly waiters: Array<{
+    resolve: (value: IteratorResult<RunnerRunStreamEvent>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private cancelImpl: () => Promise<void> = async () => {};
+  private finished = false;
+
+  constructor() {
+    this.result = new Promise((resolve, reject) => {
+      this.resolveResult = resolve;
+      this.rejectResult = reject;
+    });
+    void this.result.catch(() => {});
+  }
+
+  push(event: RunnerRunStreamEvent) {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter.resolve({ value: event, done: false });
+    else this.queue.push(event);
+  }
+
+  attachCancel(cancel: () => Promise<void>) {
+    this.cancelImpl = cancel;
+  }
+
+  complete(event: RunnerRunTerminalEvent) {
+    this.resolveResult(event);
+    this.finishWaiters();
+  }
+
+  fail(error: unknown) {
+    this.rejectResult(error);
+    this.finished = true;
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error);
+  }
+
+  cancel() {
+    return this.cancelImpl();
+  }
+
+  next(): Promise<IteratorResult<RunnerRunStreamEvent>> {
+    const event = this.queue.shift();
+    if (event) return Promise.resolve({ value: event, done: false });
+    if (this.finished) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve, reject) =>
+      this.waiters.push({ resolve, reject })
+    );
+  }
+
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+
+  private finishWaiters() {
+    this.finished = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.resolve({ value: undefined, done: true });
+    }
+  }
 }
 
 export async function generateKestrelOneExternalReply(input: {
@@ -170,9 +293,16 @@ export async function generateKestrelOneExternalReply(input: {
   prompt: string;
   actor: RunnerActorMetadata;
 }) {
+  const route = await resolveEnvironmentExecutionRoute({
+    organizationId: input.organizationId,
+    threadId: input.sessionId,
+    actorUserId: input.actor.actorId,
+    agentId: getKestrelOneProfileId(),
+    recordExecution: {},
+  });
   const client = new KestrelOneRunnerClient({
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+    baseUrl: route.baseUrl,
+    authToken: route.authToken,
   });
   const context: KestrelRequestContext = {
     actor: input.actor,
@@ -180,6 +310,11 @@ export async function generateKestrelOneExternalReply(input: {
   };
 
   try {
+    await updateEnvironmentExecutionStatus({
+      organizationId: input.organizationId,
+      executionId: route.runId,
+      status: "running",
+    });
     const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({});
     if (!resolvedModel) {
       throw new Error(
@@ -196,7 +331,7 @@ export async function generateKestrelOneExternalReply(input: {
       baseProfile,
       toKestrelOneRuntimeModelSelection(resolvedModel.model)
     );
-    return await generateKestrelOneExternalReplyFromAgent({
+    const result = await generateKestrelOneExternalReplyFromAgent({
       agent: createProfileBoundExternalReplyAgent({
         profile,
         run: (request, requestContext) =>
@@ -208,12 +343,26 @@ export async function generateKestrelOneExternalReply(input: {
       clientCapabilities: {
         kestrelOne: {
           tenantId: input.organizationId,
+          executionTicket: route.authToken,
           capabilities: buildKestrelOneCapabilityDescriptors({
             request: new Request(new URL("/", input.apiUrl)),
           }),
         },
       },
     });
+    await updateEnvironmentExecutionStatus({
+      organizationId: input.organizationId,
+      executionId: route.runId,
+      status: "completed",
+    });
+    return result;
+  } catch (error) {
+    await updateEnvironmentExecutionStatus({
+      organizationId: input.organizationId,
+      executionId: route.runId,
+      status: externalFailureExecutionStatus(error),
+    }).catch(() => {});
+    throw error;
   } finally {
     await client.close();
   }
@@ -238,7 +387,12 @@ export async function createKestrelOneAgentResponse(
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)
-    : createModelAwareKestrelOneAgent();
+    : createModelAwareKestrelOneAgent({
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+        actorUserId: input.session.user.id,
+        projectContextRevisionId: input.projectContext?.contextRevisionId,
+      });
 
   return createKestrelOneAgentResponseFromAgent({
     request: input.request,
@@ -255,4 +409,22 @@ export async function createKestrelOneAgentResponse(
     transientTitle: input.transientTitle,
     onFinishPersist: input.onFinishPersist,
   });
+}
+
+function terminalExecutionStatus(
+  terminal: RunnerRunTerminalEvent
+): "completed" | "failed" | "cancelled" {
+  if (terminal.type === "run.cancelled") return "cancelled";
+  if (terminal.type === "run.failed") return "failed";
+  return "completed";
+}
+
+function externalFailureExecutionStatus(
+  error: unknown
+): "failed" | "cancelled" {
+  return error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: unknown }).code === "RUN_CANCELLED"
+    ? "cancelled"
+    : "failed";
 }

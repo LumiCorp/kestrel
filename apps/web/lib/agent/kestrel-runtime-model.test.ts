@@ -31,6 +31,12 @@ test("runtime model selection preserves the base profile contract", () => {
       sessionPrefix: "kestrel-one",
       toolAllowlist: ["kestrel_one.search_knowledge_documents"],
       guardrails: { maxStepVisits: 80 },
+      agentStageConfig: {
+        modelByStage: {
+          "agent.loop": "z-ai/glm-5.2",
+          "future.stage": "preserved-model",
+        },
+      },
     },
     {
       id: "preferred-model",
@@ -47,6 +53,12 @@ test("runtime model selection preserves the base profile contract", () => {
     source: "kestrel-one",
     gatewayId: "gateway-openai",
     rawModelId: "gpt-5.4",
+  });
+  assert.deepEqual(profile.agentStageConfig, {
+    modelByStage: {
+      "agent.loop": "gpt-5.4",
+      "future.stage": "preserved-model",
+    },
   });
   assert.equal(JSON.stringify(profile).includes("provider-secret"), false);
   assert.deepEqual(profile.toolAllowlist, [
