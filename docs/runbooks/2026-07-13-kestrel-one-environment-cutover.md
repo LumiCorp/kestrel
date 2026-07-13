@@ -162,9 +162,11 @@ pnpm --filter @kestrel/kestrel-one canary:github:oauth
 ```
 
 The proof must show the linked provider login, synchronized repository
-selection, actor-authorized pull, and exact candidate-bound agent-branch push.
-The broad OAuth token must remain encrypted in Kestrel One and absent from all
-Workspace, Machine, response, and log surfaces.
+selection, and the actor's current pull and push permissions. The broad OAuth
+token must remain encrypted in Kestrel One and absent from all Workspace,
+Machine, response, and log surfaces. This OAuth canary does not claim that a
+Git proxy fetch or candidate-bound push occurred; those are post-cutover
+Workspace proofs.
 
 ## Phase 5: Preflight and Execute Cutover
 
@@ -203,6 +205,20 @@ Prove all of the following before declaring the cutover complete:
 - stop and start preserve the filesystem;
 - a user-linked repository can fetch and push only through the policy-enforcing
   Git proxy and action broker;
+- the designated canary Thread has `issue.write` configured in `ask` mode, and
+  the non-mutating approval-ledger canary succeeds:
+
+  ```sh
+  KESTREL_ONE_CANARY_URL=<canonical-origin> \
+  KESTREL_ONE_CANARY_COOKIE=<authenticated-cookie> \
+  KESTREL_ONE_CANARY_REPOSITORY=<owner/repository> \
+  KESTREL_ONE_CANARY_THREAD_ID=<workspace-backed-thread-id> \
+  pnpm --filter @kestrel/kestrel-one canary:github:approval
+  ```
+
+  The canary must emit the exact structured issue request, persist the
+  initiating user's denial in the approval ledger, and leave the GitHub
+  mutation unauthorized. It deliberately does not create an issue.
 - denied, revoked, cross-tenant, and missing-consent GitHub requests fail
   closed; and
 - no hosted execution reads either legacy runner value.

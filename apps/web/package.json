@@ -42,6 +42,7 @@
     "test:environment:postgres": "node -e \"if (!process.env.KESTREL_ENVIRONMENT_DB_TEST_URL) throw new Error('KESTREL_ENVIRONMENT_DB_TEST_URL is required')\" && node --conditions=react-server --import tsx --test lib/environments/*.postgres.test.ts",
     "canary:environment:fly": "tsx scripts/environment-fly-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",
+    "canary:github:approval": "tsx scripts/github-approval-canary.ts",
     "preflight:environment:hosted": "tsx scripts/hosted-environment-preflight.ts",
     "test:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test",
     "test:unit": "pnpm run check:kestrel-boundary && node --import tsx --test lib/**/*.test.ts app/**/*.test.ts",
