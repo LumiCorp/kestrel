@@ -13,6 +13,8 @@ import {
   RUNNER_STREAMING_COMMAND_TYPES,
   isRunnerEventAllowedForCommand,
   isRunnerExpectedResponseEvent,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
   isRunnerStreamingCommandType,
   isRunnerTerminalResponseEvent,
   parseRunnerCommandV2,
@@ -272,6 +274,19 @@ test("Execution Protocol v2 correlates command responses and shared workspace op
   });
   assert.equal(isRunnerEventAllowedForCommand("job.run", runtimeProgress), true);
   assert.equal(isRunnerTerminalResponseEvent(runtimeProgress.type), false);
+
+  const runTerminal = parseRunnerEventV2({
+    id: "event-run-terminal",
+    type: "run.completed",
+    ts: "2026-07-13T12:00:00.000Z",
+    commandId: "command-run",
+    payload: { result: terminalResult },
+  });
+  assert.equal(isRunnerRunStreamEvent(runtimeProgress), true);
+  assert.equal(isRunnerRunTerminalEvent(runtimeProgress), false);
+  assert.equal(isRunnerRunStreamEvent(runTerminal), true);
+  assert.equal(isRunnerRunTerminalEvent(runTerminal), true);
+  assert.equal(isRunnerRunStreamEvent(progress), false);
 });
 
 test("canonical command parser accepts every registered discriminant", () => {

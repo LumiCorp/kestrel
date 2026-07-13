@@ -4,6 +4,8 @@ import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
   KestrelClient,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
   type KestrelRequestContext,
   type RunnerProfile,
   type RunnerRunStreamEvent,
@@ -66,6 +68,8 @@ class KestrelOneRunnerClient extends KestrelClient {
       context,
       {
         signal: input.signal,
+        isStreamEvent: isRunnerRunStreamEvent,
+        isTerminalEvent: isRunnerRunTerminalEvent,
         onCancel: async (runId, commandId) => {
           await this.cancelRun(
             {

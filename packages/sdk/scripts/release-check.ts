@@ -110,9 +110,14 @@ try {
   });
 
   writeFileSync(path.join(fixtureDir, "contract-check.ts"), `
+import {
+  KestrelClient,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
+} from "@kestrel-agents/sdk/runner";
 import type {
   JobRunCommandPayload,
-  KestrelClient,
+  KestrelRequestContext,
   McpStatusCommandPayload,
   ProjectActionCommandPayload,
   RunStartCommandPayload,
@@ -120,6 +125,10 @@ import type {
   RunnerJobRunResultV1,
   RunnerProfile,
   RunnerResponseByCommandType,
+  RunnerRunStreamEvent,
+  RunnerRunTerminalEvent,
+  RunnerStream,
+  RunnerTurnInput,
   WorkspaceCheckpointEventPayload,
 } from "@kestrel-agents/sdk/runner";
 
@@ -152,6 +161,24 @@ const validAction: ProjectActionCommandPayload = {
   branchName: "feature/contracts",
 };
 void [validRun, validNestedJob, validMcp, validAction];
+
+class CustomRunClient extends KestrelClient {
+  streamWithProfile(
+    input: { profile: RunnerProfile; turn: RunnerTurnInput },
+    context: KestrelRequestContext,
+  ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
+    return this.createStream(
+      "run.start",
+      { profile: input.profile, turn: input.turn },
+      context,
+      {
+        isStreamEvent: isRunnerRunStreamEvent,
+        isTerminalEvent: isRunnerRunTerminalEvent,
+      },
+    );
+  }
+}
+void CustomRunClient;
 
 function assertWorkspacePayloadTypes(payload: WorkspaceCheckpointEventPayload): void {
   const checkpointId: string | undefined = payload.checkpoint?.checkpoint.checkpointId;

@@ -23,7 +23,6 @@ import type {
   RunnerCommandPayloadByType,
   RunnerCommandType,
   RunnerEvent,
-  RunnerEventEnvelope,
   RunnerJobStreamEvent,
   RunnerJobTerminalEvent,
   RunnerOperatorInboxSnapshot,
@@ -72,9 +71,10 @@ import { ProtocolClient } from "./internal/ProtocolClient.js";
 import { RemoteRunnerTransport } from "./internal/RemoteRunnerTransport.js";
 import { consumeSseEventPayloads, parseRunnerEvent } from "./internal/runnerSse.js";
 import {
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
   parseRunnerHealthV1,
   RUNNER_JOB_STREAM_EVENT_TYPES,
-  RUNNER_RUN_STREAM_EVENT_TYPES,
   type RunnerHealthV1,
 } from "@kestrel-agents/protocol";
 
@@ -242,7 +242,7 @@ export class KestrelClient {
       {
         signal: input.signal,
         isStreamEvent: isRunnerRunStreamEvent,
-        isTerminalEvent: isTerminalRunEvent,
+        isTerminalEvent: isRunnerRunTerminalEvent,
         onCancel: async (runId, commandId) => {
           await this.cancelRun({
             sessionId: input.turn.sessionId,
@@ -757,20 +757,8 @@ function toCommandMetadata(context: KestrelRequestContext): RunnerCommandMetadat
   };
 }
 
-function isTerminalRunEvent(event: RunnerEventEnvelope): event is RunnerRunTerminalEvent {
-  return event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled";
-}
-
 function isTerminalJobEvent(event: RunnerJobStreamEvent): event is RunnerJobTerminalEvent {
   return event.type === "job.completed" || event.type === "job.failed";
-}
-
-function isRunnerRunStreamEvent(
-  event: RunnerEventEnvelope,
-): event is RunnerRunStreamEvent {
-  return (RUNNER_RUN_STREAM_EVENT_TYPES as readonly string[]).includes(
-    event.type,
-  );
 }
 
 function isRunnerJobStreamEvent(event: RunnerEvent): event is RunnerJobStreamEvent {

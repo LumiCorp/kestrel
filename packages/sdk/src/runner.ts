@@ -19,6 +19,8 @@ export {
   RUNNER_STREAMING_COMMAND_TYPES,
   RunnerProtocolContractError,
   createRunnerHealthV1,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
   isRunnerStreamingCommandType,
   parseRunnerCommandV2,
   parseRunnerEventV2,

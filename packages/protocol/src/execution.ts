@@ -1180,6 +1180,9 @@ const RUNNER_TERMINAL_RESPONSE_EVENT_TYPE_SET: ReadonlySet<string> = new Set([
 const RUNNER_RUN_STREAM_EVENT_TYPE_SET: ReadonlySet<string> = new Set(
   RUNNER_RUN_STREAM_EVENT_TYPES,
 );
+const RUNNER_RUN_TERMINAL_EVENT_TYPE_SET: ReadonlySet<string> = new Set(
+  RUNNER_RUN_TERMINAL_EVENT_TYPES,
+);
 const RUNNER_JOB_STREAM_EVENT_TYPE_SET: ReadonlySet<string> = new Set(
   RUNNER_JOB_STREAM_EVENT_TYPES,
 );
@@ -1188,6 +1191,18 @@ export function isRunnerTerminalResponseEvent(
   type: unknown,
 ): type is RunnerEventType {
   return typeof type === "string" && RUNNER_TERMINAL_RESPONSE_EVENT_TYPE_SET.has(type);
+}
+
+export function isRunnerRunStreamEvent(
+  event: RunnerEvent,
+): event is RunnerRunStreamEvent {
+  return RUNNER_RUN_STREAM_EVENT_TYPE_SET.has(event.type);
+}
+
+export function isRunnerRunTerminalEvent(
+  event: RunnerRunStreamEvent,
+): event is RunnerRunTerminalEvent {
+  return RUNNER_RUN_TERMINAL_EVENT_TYPE_SET.has(event.type);
 }
 
 export function isRunnerExpectedResponseEvent(
