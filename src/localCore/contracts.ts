@@ -1,6 +1,7 @@
-export const LOCAL_CORE_MANIFEST_VERSION = 1;
+export const LOCAL_CORE_MANIFEST_VERSION = 2;
 export const LOCAL_CORE_LOCK_VERSION = 1;
 export const LOCAL_CORE_SCHEMA_VERSION = 1;
+export const LOCAL_CORE_STATE_EPOCH = "0.6";
 
 export type KestrelCoreHomeSource =
   | "default"
@@ -8,15 +9,24 @@ export type KestrelCoreHomeSource =
   | "isolated_dev_home";
 
 export interface KestrelCoreHomeResolution {
+  productRootPath: string;
   homePath: string;
+  stateEpoch: typeof LOCAL_CORE_STATE_EPOCH;
   source: KestrelCoreHomeSource;
   isolated: boolean;
   platform: NodeJS.Platform;
 }
 
-export type LocalCoreDatabaseMode = "managed" | "external" | "unavailable";
+export type LocalCoreConfiguredDatabaseMode = "pglite" | "external";
+
+// `managed` remains accepted at legacy call sites while the CLI and Desktop
+// migrate to the explicit `pglite` spelling. It is never persisted in a v2
+// manifest and always normalizes to `pglite` at the Core boundary.
+export type LocalCoreDatabaseMode = LocalCoreConfiguredDatabaseMode | "managed" | "unavailable";
 
 export interface LocalCorePaths {
+  productRootPath: string;
+  stateRootPath: string;
   corePath: string;
   manifestPath: string;
   lockPath: string;
@@ -28,6 +38,7 @@ export interface LocalCorePaths {
   workspaceRegistryPath: string;
   logsPath: string;
   diagnosticsPath: string;
+  pgliteDataPath: string;
   postgresDataPath: string;
   postgresSocketPath: string;
   postgresMetadataPath: string;
@@ -36,10 +47,11 @@ export interface LocalCorePaths {
 
 export interface LocalCoreManifest {
   version: typeof LOCAL_CORE_MANIFEST_VERSION;
+  stateEpoch: string;
   coreVersion: string;
   schemaVersion: number;
   homePath: string;
-  dbMode: LocalCoreDatabaseMode;
+  dbMode: LocalCoreConfiguredDatabaseMode;
   capabilities: string[];
   paths: LocalCorePaths;
   createdAt: string;
@@ -49,6 +61,8 @@ export interface LocalCoreManifest {
 export interface LocalCoreLock {
   version: typeof LOCAL_CORE_LOCK_VERSION;
   ownerPid: number;
+  /** Identifies the specific Core authority instance, not merely its process. */
+  authorityId?: string | undefined;
   ownerExecutable: string;
   coreVersion: string;
   schemaVersion?: number | undefined;
@@ -106,6 +120,7 @@ export interface LocalCoreDatabaseStatus {
   initialized: boolean;
   running: boolean;
   identityVerified: boolean;
+  pglitePath?: string | undefined;
   dataPath?: string | undefined;
   socketPath?: string | undefined;
   metadataPath?: string | undefined;
@@ -150,9 +165,11 @@ export interface EnsureLocalCoreReadyOptions {
   coreVersion: string;
   schemaVersion?: number | undefined;
   ownerExecutable?: string | undefined;
+  lockOwnerPid?: number | undefined;
+  lockAuthorityId?: string | undefined;
   now?: Date | undefined;
   isPidAlive?: ((pid: number) => boolean) | undefined;
-  databaseMode?: "managed" | "external" | undefined;
+  databaseMode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
   allowInheritedDatabaseUrl?: boolean | undefined;
   postgresBundleRootPath?: string | undefined;

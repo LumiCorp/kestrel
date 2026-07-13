@@ -20,10 +20,14 @@ import { COMMAND_MODE_COMMANDS } from "./contractMatrix.js";
 import { ProfileStore } from "./config/ProfileStore.js";
 import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "./config/RuntimeSettings.js";
 import { resolveKestrelHome } from "./config/kestrelHome.js";
-import type { JobOutputV1 } from "./job/contracts.js";
+import type { JobInputV1, JobOutputV1 } from "./job/contracts.js";
 import { parseJobInputV1 } from "./job/contracts.js";
 import { buildJobReplayPointer } from "./job/contracts.js";
-import type { OperatorControlCommandPayload, RunnerEvent } from "./protocol/contracts.js";
+import type {
+  JobRunCommandPayload,
+  OperatorControlCommandPayload,
+  RunnerEvent,
+} from "./protocol/contracts.js";
 import { writeDoctorReport, writeRuntimeReplayBundle } from "./runtime/replayBundle.js";
 import { runWebCommand } from "./webCommand.js";
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
@@ -376,62 +380,12 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       await mkdir(path.dirname(eventLogPath), { recursive: true });
     }
     const commandId = randomUUID();
-    let resolveRunCompleted:
-      | ((event: Extract<RunnerEvent, { type: "run.progress" }>) => void)
-      | undefined;
-    const runCompleted = new Promise<Extract<RunnerEvent, { type: "run.progress" }>>((resolve) => {
-      resolveRunCompleted = resolve;
-    });
-    const unsubscribeRunCompleted = client.onEvent((event) => {
-      if (
-        event.commandId === commandId &&
-        event.type === "run.progress" &&
-        event.payload.update.code === "RUN_COMPLETED"
-      ) {
-        resolveRunCompleted?.(event);
-      }
-    });
-    const commandPayload = {
-      profile: effectiveProfile,
-      input: {
-        ...input,
-        turn: {
-          ...input.turn,
-          eventType: input.turn.eventType ?? "job.run",
-        },
-      },
-    };
-    const response = await Promise.race([
-      client.sendCommandWithId(commandId, "job.run", commandPayload),
-      runCompleted,
-    ]);
-    unsubscribeRunCompleted();
-    if (response.type === "run.progress") {
-      const threadId = response.threadId ?? response.sessionId ?? input.turn.sessionId;
-      const runId = response.runId ?? response.payload.update.runId;
-      const replay = buildJobReplayPointer({
-        sessionId: input.turn.sessionId,
-        threadId,
-        runId,
-      });
-      const output: JobOutputV1 = {
-        version: "job_output_v1",
-        terminalEventType: "job.completed",
-        job: {
-          version: "job_run_result_v1",
-          sessionId: input.turn.sessionId,
-          threadId,
-          runId,
-          status: "COMPLETED",
-          replay,
-        },
-      };
-      await writeJson(resolveFromCwd(cwd, jsonOut), output);
-      process.stdout.write(
-        `job completed session=${output.job.sessionId} thread=${output.job.threadId} run=${output.job.runId}\n`,
-      );
-      return;
-    }
+    const commandPayload = buildResolvedJobRunCommandPayload(input, effectiveProfile);
+    const response = await client.sendCommandWithId(
+      commandId,
+      "job.run",
+      commandPayload,
+    );
     if (response.type !== "job.completed" && response.type !== "job.failed") {
       throw new Error(`Unexpected job response '${response.type}'.`);
     }
@@ -451,6 +405,26 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
     unsubscribe?.();
     await client.close();
   }
+}
+
+export function buildResolvedJobRunCommandPayload(
+  input: JobInputV1,
+  effectiveProfile: TuiProfile,
+): JobRunCommandPayload {
+  return {
+    profile: effectiveProfile,
+    input: {
+      version: input.version,
+      turn: {
+        ...input.turn,
+        eventType: input.turn.eventType ?? "job.run",
+      },
+      ...(input.storeDriver !== undefined ? { storeDriver: input.storeDriver } : {}),
+      ...(input.approvalPolicyPackId !== undefined
+        ? { approvalPolicyPackId: input.approvalPolicyPackId }
+        : {}),
+    },
+  };
 }
 
 async function runOperatorCommand(args: string[], cwd: string): Promise<void> {

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+import {
+  isRunnerEventAllowedForCommand,
+  isRunnerTerminalResponseEvent,
+} from "@kestrel-agents/protocol";
 
 import type {
   RunnerCommand,
@@ -13,8 +16,10 @@ import type {
   RunnerResponseByCommandType,
 } from "../contracts.js";
 import { KestrelProtocolError, toKestrelError } from "../errors.js";
+import { parseRunnerEvent } from "./runnerSse.js";
 
 interface PendingRequest {
+  commandType: RunnerCommandType;
   resolve: (event: RunnerEvent) => void;
   reject: (error: Error) => void;
 }
@@ -74,6 +79,7 @@ export class ProtocolClient {
 
     return new Promise<RunnerResponseByCommandType[TType]>((resolve, reject) => {
       this.pending.set(commandId, {
+        commandType: type,
         resolve: (event) => {
           resolve(event as RunnerResponseByCommandType[TType]);
         },
@@ -129,16 +135,35 @@ export class ProtocolClient {
       return;
     }
 
-    if (isRunnerEventEnvelope(decoded) === false) {
-      return;
-    }
-
     let event: RunnerEvent;
     try {
-      event = validateV2TerminalResult(decoded);
+      const parsed = parseRunnerEvent(trimmed);
+      if (parsed === undefined) {
+        return;
+      }
+      event = parsed;
     } catch (error) {
-      event = createProtocolErrorEvent(decoded, error);
+      const protocolError = createProtocolErrorEvent(decoded, error);
+      if (protocolError === undefined) {
+        return;
+      }
+      event = protocolError;
     }
+    const correlatedPending = event.commandId === undefined
+      ? undefined
+      : this.pending.get(event.commandId);
+    if (
+      correlatedPending !== undefined
+      && isRunnerEventAllowedForCommand(correlatedPending.commandType, event) === false
+    ) {
+      event = createProtocolErrorEvent(
+        event,
+        new Error(
+          `Command '${correlatedPending.commandType}' received unexpected event '${event.type}'.`,
+        ),
+      ) as RunnerEvent;
+    }
+
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -156,7 +181,7 @@ export class ProtocolClient {
       return;
     }
 
-    if (isTerminalResponseEvent(event.type)) {
+    if (isRunnerTerminalResponseEvent(event.type)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
         pending.reject(toKestrelError(event.payload));
@@ -175,66 +200,34 @@ export class ProtocolClient {
   }
 }
 
-function validateV2TerminalResult(event: RunnerEvent): RunnerEvent {
-  if (
-    event.type === "run.completed" ||
-    event.type === "run.failed" ||
-    event.type === "run.cancelled" ||
-    event.type === "operator.controlled"
-  ) {
-    return {
-      ...event,
-      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
-    } as unknown as RunnerEvent;
+function createProtocolErrorEvent(value: unknown, cause: unknown): RunnerEvent | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
   }
-  return event;
-}
-
-function createProtocolErrorEvent(event: RunnerEvent, cause: unknown): RunnerEvent {
+  const event = value as Record<string, unknown>;
+  if (typeof event.commandId !== "string" || event.commandId.length === 0) {
+    return undefined;
+  }
   const detail = cause instanceof Error ? cause.message : String(cause);
   return {
-    ...event,
+    id: typeof event.id === "string" && event.id.length > 0
+      ? event.id
+      : `runner-error-${event.commandId}`,
     type: "runner.error",
+    ts: typeof event.ts === "string" && event.ts.length > 0
+      ? event.ts
+      : new Date().toISOString(),
+    commandId: event.commandId,
     payload: {
       code: "RUNNER_PROTOCOL_INVALID",
-      message: `Invalid ${event.type} terminal payload: ${detail}`,
-      details: { eventType: event.type },
+      message: `Invalid runner event: ${detail}`,
+      details: {
+        eventType: typeof event.type === "string" ? event.type : "unknown",
+      },
     },
   } as RunnerEvent;
 }
 
-function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.type === "string" &&
-    typeof record.ts === "string" &&
-    record.payload !== undefined
-  );
-}
-
-function isTerminalResponseEvent(type: RunnerEventType): boolean {
-  return (
-    type === "profile.listed" ||
-    type === "profile.loaded" ||
-    type === "run.completed" ||
-    type === "run.failed" ||
-    type === "run.cancelled" ||
-    type === "runner.error" ||
-    type === "runner.pong" ||
-    type === "session.described" ||
-    type === "session.state" ||
-    type === "operator.inbox" ||
-    type === "operator.thread" ||
-    type === "operator.controlled" ||
-    type === "task.graph" ||
-    type === "workspace.checkpoint" ||
-    type === "project.snapshot" ||
-    type === "project.review" ||
-    type === "mcp.status" ||
-    type === "mcp.refreshed"
-  );
+export function isTerminalResponseEvent(type: RunnerEventType): boolean {
+  return isRunnerTerminalResponseEvent(type);
 }

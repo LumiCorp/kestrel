@@ -19,7 +19,7 @@ export const DESKTOP_RESOURCE_DIRECTORIES = [
   "scripts",
 ];
 
-export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = ["agents", "src", "cli"] as const;
+export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = ["agents", "src", "cli", "db"] as const;
 const EXCLUDED_BASENAMES = new Set([
   "test-results",
   "tsconfig.tsbuildinfo",

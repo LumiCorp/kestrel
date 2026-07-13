@@ -108,7 +108,7 @@ function spawnDaemon(input: {
   platform?: NodeJS.Platform | undefined;
   coreVersion: string;
   schemaVersion?: number | undefined;
-  databaseMode?: "managed" | "external" | undefined;
+  databaseMode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
   allowInheritedDatabaseUrl?: boolean | undefined;
   postgresBundleRootPath?: string | undefined;

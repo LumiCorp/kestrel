@@ -50,6 +50,20 @@ test("CommandRouter emits runner.error for invalid command JSON", async () => {
   await host.close();
 });
 
+test("EventWriter rejects unknown event discriminants before serialization", () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+
+  assert.throws(
+    () => (writer.emit as (type: string, payload: unknown) => void)(
+      "runner.unsupported",
+      {},
+    ),
+    /runner event/i,
+  );
+  assert.equal(output.read(), null);
+});
+
 test("CommandRouter emits runner.error for unsupported command type", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -82,6 +96,42 @@ test("CommandRouter emits runner.error for unsupported command type", async () =
   assert.equal(events[0]?.type, "runner.error");
   assert.equal(events[0]?.commandId, "cmd-unknown-1");
   assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  rl.close();
+  await host.close();
+});
+
+test("CommandRouter rejects malformed command envelopes before dispatch", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("malformed commands must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+
+  const events: Array<{
+    type: string;
+    commandId?: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as {
+      type: string;
+      commandId?: string;
+      payload: Record<string, unknown>;
+    });
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-malformed-envelope",
+    type: "runner.ping",
+  }));
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.commandId, "cmd-malformed-envelope");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(String(events[0]?.payload.message), /payload/i);
   rl.close();
   await host.close();
 });
@@ -935,7 +985,7 @@ test("job.run emits started/progress/completed events with replay pointers", asy
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
-      assistantText: null,
+      assistantText: "Job completed.",
       output: {
         status: "COMPLETED",
         sessionId: "session-job-1",
@@ -1035,6 +1085,10 @@ test("job.run emits started/progress/completed events with replay pointers", asy
           sessionId?: string;
         };
       };
+      result?: {
+        assistantText?: string | null;
+        finalizedPayload?: unknown;
+      };
     };
     replay?: {
       replayQuery?: {
@@ -1058,6 +1112,10 @@ test("job.run emits started/progress/completed events with replay pointers", asy
     "session-job-1"
   );
   assert.equal(completedPayload.replay?.replayQuery?.runId, "run-job-1");
+  assert.equal(completedPayload.output?.result?.assistantText, "Job completed.");
+  assert.deepEqual(completedPayload.output?.result?.finalizedPayload, {
+    message: "done",
+  });
   rl.close();
   await host.close();
 });
@@ -1222,6 +1280,13 @@ test("job.run failure preserves resolved thread identity in progress and replay 
           sessionId?: string;
         };
       };
+      result?: {
+        assistantText?: string | null;
+        output?: {
+          status?: string;
+          errors?: Array<{ code?: string; message?: string }>;
+        };
+      };
     };
     replay?: {
       replayQuery?: {
@@ -1254,6 +1319,12 @@ test("job.run failure preserves resolved thread identity in progress and replay 
   assert.equal(failedPayload.replay?.replayQuery?.threadId, "thread-job-fail");
   assert.equal(failedPayload.error?.code, "RUNNER_RUNTIME_ERROR");
   assert.match(failedPayload.error?.message ?? "", /boom/u);
+  assert.equal(failedPayload.output?.result?.assistantText, null);
+  assert.equal(failedPayload.output?.result?.output?.status, "FAILED");
+  assert.equal(
+    failedPayload.output?.result?.output?.errors?.[0]?.code,
+    "RUNNER_RUNTIME_ERROR",
+  );
   rl.close();
   await host.close();
 });
@@ -1302,10 +1373,10 @@ test("CommandRouter emits runner.error for invalid job.run payload", async () =>
   await tick();
 
   assert.equal(events[0]?.type, "runner.error");
-  assert.equal(events[0]?.payload.code, "RUNNER_RUNTIME_ERROR");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
   assert.match(
     events[0]?.payload.message ?? "",
-    /job input version must be 'job_input_v1'/u
+    /payload\.input\.version must be 'job_input_v1'/u
   );
   rl.close();
   await host.close();
@@ -1853,6 +1924,363 @@ test("mcp.refresh emits refreshed event from tool runtime refresh hook", async (
   await host.close();
 });
 
+test("profile replacement waits for in-flight commands and shutdown drains retired runtime close", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let releaseFirstStatus: (() => void) | undefined;
+  const firstStatus = new Promise<void>((resolve) => {
+    releaseFirstStatus = resolve;
+  });
+  let markFirstStatusStarted: (() => void) | undefined;
+  const firstStatusStarted = new Promise<void>((resolve) => {
+    markFirstStatusStarted = resolve;
+  });
+  let markFirstCloseStarted: (() => void) | undefined;
+  const firstCloseStarted = new Promise<void>((resolve) => {
+    markFirstCloseStarted = resolve;
+  });
+  let releaseFirstClose: (() => void) | undefined;
+  const firstClose = new Promise<void>((resolve) => {
+    releaseFirstClose = resolve;
+  });
+  let firstClosed = false;
+  let runtimeCount = 0;
+  const host = new RunnerHost(writer, () => {
+    runtimeCount += 1;
+    const runtimeNumber = runtimeCount;
+    return {
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      getToolRuntimeStatus: async () => {
+        if (runtimeNumber === 1) {
+          markFirstStatusStarted?.();
+          await firstStatus;
+        }
+        return {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          providers: {},
+        };
+      },
+      close: async () => {
+        if (runtimeNumber === 1) {
+          firstClosed = true;
+          markFirstCloseStarted?.();
+          await firstClose;
+        }
+      },
+    };
+  });
+  const router = new CommandRouter(host, writer);
+
+  const firstCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-mcp-status-old-profile",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await firstStatusStarted;
+
+  const replacementProfile = { ...profile, label: "Replacement" };
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mcp-status-new-profile",
+    type: "mcp.status",
+    payload: { profile: replacementProfile },
+  }));
+  assert.equal(runtimeCount, 2);
+  assert.equal(firstClosed, false);
+
+  releaseFirstStatus?.();
+  await firstCommand;
+  await firstCloseStarted;
+  assert.equal(firstClosed, true);
+
+  let closeSettled = false;
+  const closePromise = host.close().then(() => {
+    closeSettled = true;
+  });
+  await tick();
+  assert.equal(closeSettled, false);
+  releaseFirstClose?.();
+  await closePromise;
+  assert.equal(closeSettled, true);
+});
+
+test("retired profile runtime closes while an unrelated profile run remains active", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const longProfile: TuiProfile = {
+    ...profile,
+    id: "long-running",
+    label: "Long running",
+    sessionPrefix: "long-running",
+  };
+  let markLongRunStarted: (() => void) | undefined;
+  const longRunStarted = new Promise<void>((resolve) => {
+    markLongRunStarted = resolve;
+  });
+  let releaseLongRun: (() => void) | undefined;
+  const longRunGate = new Promise<void>((resolve) => {
+    releaseLongRun = resolve;
+  });
+  let longRunSettled = false;
+  let markOldStatusStarted: (() => void) | undefined;
+  const oldStatusStarted = new Promise<void>((resolve) => {
+    markOldStatusStarted = resolve;
+  });
+  let releaseOldStatus: (() => void) | undefined;
+  const oldStatusGate = new Promise<void>((resolve) => {
+    releaseOldStatus = resolve;
+  });
+  let markOldRuntimeClosed: (() => void) | undefined;
+  const oldRuntimeClosed = new Promise<void>((resolve) => {
+    markOldRuntimeClosed = resolve;
+  });
+
+  const host = new RunnerHost(writer, (runtimeProfile) => {
+    if (runtimeProfile.id === longProfile.id) {
+      return {
+        runTurn: async (turn) => {
+          markLongRunStarted?.();
+          await longRunGate;
+          return {
+            assistantText: "Long run completed.",
+            finalizedPayload: null,
+            output: {
+              status: "COMPLETED",
+              sessionId: turn.sessionId,
+              runId: "run-long-profile",
+              errors: [],
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
+            },
+          };
+        },
+        close: async () => {},
+      };
+    }
+
+    const isOldRuntime = runtimeProfile.label === profile.label;
+    return {
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      getToolRuntimeStatus: async () => {
+        if (isOldRuntime) {
+          markOldStatusStarted?.();
+          await oldStatusGate;
+        }
+        return {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          providers: {},
+        };
+      },
+      close: async () => {
+        if (isOldRuntime) {
+          markOldRuntimeClosed?.();
+        }
+      },
+    };
+  });
+  const router = new CommandRouter(host, writer);
+
+  const longCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-long-unrelated-run",
+    type: "run.start",
+    payload: {
+      profile: longProfile,
+      turn: {
+        sessionId: "session-long-unrelated-run",
+        message: "stay active",
+        eventType: "user.message",
+      },
+    },
+  })).finally(() => {
+    longRunSettled = true;
+  });
+  await longRunStarted;
+
+  const oldStatusCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-old-profile-status",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await oldStatusStarted;
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-replacement-profile-status",
+    type: "mcp.status",
+    payload: { profile: { ...profile, label: "Replacement profile" } },
+  }));
+
+  releaseOldStatus?.();
+  await oldStatusCommand;
+  await oldRuntimeClosed;
+  assert.equal(longRunSettled, false);
+
+  releaseLongRun?.();
+  await longCommand;
+  await host.close();
+});
+
+test("runtime leases share object identity across profile aliases and close singletons once", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let singletonCloseCalls = 0;
+  let replacementCloseCalls = 0;
+  const singletonRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      singletonCloseCalls += 1;
+    },
+  };
+  const replacementRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      replacementCloseCalls += 1;
+    },
+  };
+  const host = new RunnerHost(writer, (runtimeProfile) =>
+    runtimeProfile.label === "Replacement primary"
+      ? replacementRuntime
+      : singletonRuntime);
+  const router = new CommandRouter(host, writer);
+  const secondaryProfile: TuiProfile = {
+    ...profile,
+    id: "secondary",
+    label: "Secondary",
+    sessionPrefix: "secondary",
+  };
+
+  for (const [id, runtimeProfile] of [
+    ["cmd-singleton-primary", profile],
+    ["cmd-singleton-secondary", secondaryProfile],
+    ["cmd-replace-primary", { ...profile, label: "Replacement primary" }],
+  ] as const) {
+    await router.acceptLine(JSON.stringify({
+      id,
+      type: "mcp.status",
+      payload: { profile: runtimeProfile },
+    }));
+  }
+
+  assert.equal(singletonCloseCalls, 0);
+  await host.close();
+  assert.equal(singletonCloseCalls, 1);
+  assert.equal(replacementCloseCalls, 1);
+});
+
+test("a leased retired runtime can be reused by another profile before close begins", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let statusCalls = 0;
+  let markFirstStatusStarted: (() => void) | undefined;
+  const firstStatusStarted = new Promise<void>((resolve) => {
+    markFirstStatusStarted = resolve;
+  });
+  let releaseFirstStatus: (() => void) | undefined;
+  const firstStatusGate = new Promise<void>((resolve) => {
+    releaseFirstStatus = resolve;
+  });
+  let oldRuntimeCloseCalls = 0;
+  let replacementCloseCalls = 0;
+  const oldRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        markFirstStatusStarted?.();
+        await firstStatusGate;
+      }
+      return {
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+        providers: {},
+      };
+    },
+    close: async () => {
+      oldRuntimeCloseCalls += 1;
+    },
+  };
+  const replacementRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      replacementCloseCalls += 1;
+    },
+  };
+  const host = new RunnerHost(writer, (runtimeProfile) =>
+    runtimeProfile.label === "Replacement"
+      ? replacementRuntime
+      : oldRuntime);
+  const router = new CommandRouter(host, writer);
+
+  const firstStatusCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-first",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await firstStatusStarted;
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-replacement",
+    type: "mcp.status",
+    payload: { profile: { ...profile, label: "Replacement" } },
+  }));
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-alias",
+    type: "mcp.status",
+    payload: {
+      profile: {
+        ...profile,
+        id: "revived-alias",
+        label: "Revived alias",
+        sessionPrefix: "revived-alias",
+      },
+    },
+  }));
+  assert.equal(oldRuntimeCloseCalls, 0);
+
+  releaseFirstStatus?.();
+  await firstStatusCommand;
+  assert.equal(oldRuntimeCloseCalls, 0);
+
+  await host.close();
+  assert.equal(oldRuntimeCloseCalls, 1);
+  assert.equal(replacementCloseCalls, 1);
+});
+
 test("operator commands emit inbox, thread, run, and controlled responses", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -2301,7 +2729,7 @@ test("task graph commands emit graph snapshots through the runner protocol", asy
   await host.close();
 });
 
-test("CommandRouter enforces explicit bounded operator.runs filters", async () => {
+test("CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -2329,17 +2757,17 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
     {
       id: "cmd-operator-runs-limit",
       payload: { limit: 51 },
-      message: /integer from 1 to 50/,
+      message: /integer (?:from|between) 1 (?:to|and) 50/,
     },
     {
       id: "cmd-operator-runs-fraction",
       payload: { limit: 1.5 },
-      message: /integer from 1 to 50/,
+      message: /integer (?:from|between) 1 (?:to|and) 50/,
     },
     {
       id: "cmd-operator-runs-status",
       payload: { status: "STALLED" },
-      message: /status is invalid/,
+      message: /status (?:is invalid|must be one of)/,
     },
     {
       id: "cmd-operator-runs-session",
@@ -2349,7 +2777,7 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
     {
       id: "cmd-operator-runs-unknown",
       payload: { cursor: "next" },
-      message: /unsupported filters: cursor/,
+      message: /(?:unsupported filters: cursor|payload\.cursor is not supported)/,
     },
   ];
   for (const query of invalidQueries) {
@@ -2366,7 +2794,7 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
   assert.equal(events.length, invalidQueries.length);
   for (const [index, query] of invalidQueries.entries()) {
     assert.equal(events[index]?.type, "runner.error");
-    assert.equal(events[index]?.payload.code, "RUNNER_RUNTIME_ERROR");
+    assert.equal(events[index]?.payload.code, "INVALID_COMMAND");
     assert.match(events[index]?.payload.message ?? "", query.message);
   }
   rl.close();
@@ -2411,8 +2839,8 @@ test("CommandRouter emits runner.error for invalid operator.control payload", as
   await tick();
 
   assert.equal(events[0]?.type, "runner.error");
-  assert.equal(events[0]?.payload.code, "RUNNER_RUNTIME_ERROR");
-  assert.match(events[0]?.payload.message ?? "", /payload\.action is invalid/);
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(events[0]?.payload.message ?? "", /payload\.action must be one of/);
   rl.close();
   await host.close();
 });

@@ -2,6 +2,7 @@ import {
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
+import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 import { parseTaskAction } from "../../src/missionControl/contracts.js";
 import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
 import { parseProductProjectBoardAction } from "../../src/project/contracts.js";
@@ -45,7 +46,6 @@ import type {
   WorkspacePromotionUndoLatestCommandPayload,
 } from "../protocol/contracts.js";
 import {
-  isRunnerCommandEnvelope,
   RUN_STARTED_ACT_SUBMODES,
   RUN_STARTED_INTERACTION_MODES,
 } from "../protocol/contracts.js";
@@ -83,16 +83,25 @@ export class CommandRouter {
       return;
     }
 
-    if (isRunnerCommandEnvelope(decoded) === false) {
+    let command: RunnerCommand;
+    try {
+      command = parseRunnerCommandV2(decoded) as RunnerCommand;
+    } catch (error) {
+      const commandId = readCommandId(decoded);
       this.writer.emit("runner.error", {
         code: "INVALID_COMMAND",
-        message: "Command envelope must include id, type, payload",
-      });
+        message: error instanceof Error
+          ? error.message
+          : "Command envelope must include id, type, payload",
+      }, commandId === undefined ? undefined : { commandId });
       return;
     }
 
-    const command = decoded as RunnerCommand;
-    await this.dispatch(command, options);
+    try {
+      await this.host.executeCommand(() => this.dispatch(command, options));
+    } catch (error) {
+      this.emitCommandFailure(command, error);
+    }
   }
 
   private async dispatch(
@@ -370,25 +379,38 @@ export class CommandRouter {
       );
       return;
     } catch (error) {
-      const runtimeError = asRuntimeError(error);
-      const normalizedFailure = normalizeDatabaseRuntimeFailure(error);
-      const details = {
-        runtimeCode: runtimeError.code,
-        ...(runtimeError.details !== undefined ? runtimeError.details : {}),
-        ...(normalizedFailure?.details ?? {}),
-      };
-      this.writer.emit(
-        "runner.error",
-        {
-          code: normalizedFailure?.code ?? "RUNNER_RUNTIME_ERROR",
-          message: normalizedFailure?.message ?? runtimeError.message,
-          details,
-        },
-        { commandId: command.id }
-      );
+      this.emitCommandFailure(command, error);
     }
   }
+
+  private emitCommandFailure(command: RunnerCommand, error: unknown): void {
+    const runtimeError = asRuntimeError(error);
+    const normalizedFailure = normalizeDatabaseRuntimeFailure(error);
+    const details = {
+      runtimeCode: runtimeError.code,
+      ...(runtimeError.details !== undefined ? runtimeError.details : {}),
+      ...(normalizedFailure?.details ?? {}),
+    };
+    this.writer.emit(
+      "runner.error",
+      {
+        code: normalizedFailure?.code ?? "RUNNER_RUNTIME_ERROR",
+        message: normalizedFailure?.message ?? runtimeError.message,
+        details,
+      },
+      { commandId: command.id },
+    );
+  }
 }
+
+function readCommandId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const id = (value as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
+}
+
 function normalizeDatabaseRuntimeFailure(error: unknown) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (databaseUrl === undefined || databaseUrl.length === 0) {
@@ -923,6 +945,10 @@ function validateProjectActionPayload(
 function validateGitProjectActionPayload(
   record: Record<string, unknown>
 ): ProjectActionCommandPayload {
+  const taskId =
+    typeof record.taskId === "string" && record.taskId.trim().length > 0
+      ? { taskId: record.taskId }
+      : {};
   switch (record.type) {
     case "branch.create":
     case "branch.switch":
@@ -937,6 +963,7 @@ function validateGitProjectActionPayload(
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         branchName: record.branchName,
       } as ProjectActionCommandPayload;
     case "worktree.create":
@@ -959,6 +986,7 @@ function validateGitProjectActionPayload(
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         branchName: record.branchName,
         targetPath: record.targetPath,
       } as ProjectActionCommandPayload;
@@ -974,12 +1002,14 @@ function validateGitProjectActionPayload(
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         message: record.message,
       } as ProjectActionCommandPayload;
     case "git.push":
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         ...(typeof record.branchName === "string"
           ? { branchName: record.branchName }
           : {}),
@@ -996,6 +1026,7 @@ function validateGitProjectActionPayload(
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         title: record.title,
         ...(typeof record.body === "string" ? { body: record.body } : {}),
         ...(typeof record.baseBranch === "string"
@@ -1014,6 +1045,7 @@ function validateGitProjectActionPayload(
       return {
         type: record.type,
         sessionId: record.sessionId,
+        ...taskId,
         pullRequestNumber: record.pullRequestNumber,
       } as ProjectActionCommandPayload;
     default:
@@ -1169,6 +1201,9 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   if (hasProfileObject === false && hasProfileId === false) {
     throw new Error("run.start payload must include profile or profileId");
   }
+  if (hasProfileObject && hasProfileId) {
+    throw new Error("run.start payload must include only one of profile or profileId");
+  }
   if (typeof turn !== "object" || turn === null || Array.isArray(turn)) {
     throw new Error("run.start payload.turn must be an object");
   }
@@ -1290,19 +1325,22 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   if (turnRecord.projectContext !== undefined) {
     validateProjectContextPayload(turnRecord.projectContext, "run.start payload.turn.projectContext");
   }
-  return {
-    ...(hasProfileObject
-      ? { profile: profile as NonNullable<RunStartCommandPayload["profile"]> }
+  const normalizedTurn: RunStartCommandPayload["turn"] = {
+    ...(turn as RunStartCommandPayload["turn"]),
+    ...(mcpContext !== undefined ? { mcpContext } : {}),
+    ...(mcpAuthorization !== undefined
+      ? { mcpAuthorization: { executionTicket: mcpAuthorization } }
       : {}),
-    ...(hasProfileId ? { profileId: profileId as string } : {}),
-    turn: {
-      ...(turn as RunStartCommandPayload["turn"]),
-      ...(mcpContext !== undefined ? { mcpContext } : {}),
-      ...(mcpAuthorization !== undefined
-        ? { mcpAuthorization: { executionTicket: mcpAuthorization } }
-        : {}),
-    },
   };
+  return hasProfileObject
+    ? {
+        profile: profile as NonNullable<RunStartCommandPayload["profile"]>,
+        turn: normalizedTurn,
+      }
+    : {
+        profileId: profileId as string,
+        turn: normalizedTurn,
+      };
 }
 
 function validateProjectContextPayload(value: unknown, label: string): void {
@@ -1334,29 +1372,56 @@ function validateJobRunPayload(value: unknown): JobRunCommandPayload {
     Array.isArray(record.profile) === false;
   const hasProfileId =
     typeof record.profileId === "string" && record.profileId.trim().length > 0;
-  if (
-    hasProfileObject === false &&
-    hasProfileId === false &&
-    input.profile === undefined &&
-    input.profileId === undefined
-  ) {
+  const referenceCount = Number(hasProfileObject)
+    + Number(hasProfileId)
+    + Number(input.profile !== undefined)
+    + Number(input.profileId !== undefined);
+  if (referenceCount === 0) {
     throw new Error(
       "job.run payload must include profile/profileId or input.profile/input.profileId"
+    );
+  }
+  if (referenceCount > 1) {
+    throw new Error(
+      "job.run payload must include exactly one profile reference across the payload and input"
     );
   }
   if (hasProfileObject) {
     validateProfilePayload(record.profile, "job.run payload.profile");
   }
-  return {
-    ...(hasProfileObject
-      ? {
-          profile: record.profile as NonNullable<
-            JobRunCommandPayload["profile"]
-          >,
-        }
+  const inputBase = {
+    version: input.version,
+    turn: input.turn,
+    ...(input.storeDriver !== undefined ? { storeDriver: input.storeDriver } : {}),
+    ...(input.approvalPolicyPackId !== undefined
+      ? { approvalPolicyPackId: input.approvalPolicyPackId }
       : {}),
-    ...(hasProfileId ? { profileId: String(record.profileId) } : {}),
-    input,
+  };
+  if (hasProfileObject) {
+    return {
+      profile: record.profile as NonNullable<JobRunCommandPayload["profile"]>,
+      input: inputBase,
+    };
+  }
+  if (hasProfileId) {
+    return {
+      profileId: String(record.profileId),
+      input: inputBase,
+    };
+  }
+  if (input.profile !== undefined) {
+    return {
+      input: {
+        ...inputBase,
+        profile: input.profile,
+      },
+    };
+  }
+  return {
+    input: {
+      ...inputBase,
+      profileId: input.profileId as string,
+    },
   };
 }
 
@@ -1508,14 +1573,6 @@ function validateOperatorRunsPayload(
     throw new Error("operator.runs payload must be an object");
   }
   const record = value as Record<string, unknown>;
-  const unsupportedFilters = Object.keys(record).filter(
-    (key) => key !== "sessionId" && key !== "status" && key !== "limit"
-  );
-  if (unsupportedFilters.length > 0) {
-    throw new Error(
-      `operator.runs payload contains unsupported filters: ${unsupportedFilters.sort().join(", ")}`
-    );
-  }
   if (
     record.sessionId !== undefined &&
     (typeof record.sessionId !== "string" ||
@@ -1831,10 +1888,7 @@ function validateModelCredentialPayload(
 function validateProfileReference(
   record: Record<string, unknown>,
   path: string
-): {
-  profile?: McpStatusCommandPayload["profile"];
-  profileId?: string;
-} {
+): McpStatusCommandPayload {
   const profile = record.profile;
   const profileId = record.profileId;
   const hasProfileObject =
@@ -1846,13 +1900,13 @@ function validateProfileReference(
   if (hasProfileObject === false && hasProfileId === false) {
     throw new Error(`${path} must include profile or profileId`);
   }
+  if (hasProfileObject && hasProfileId) {
+    throw new Error(`${path} must include only one of profile or profileId`);
+  }
   if (hasProfileObject) {
     validateProfilePayload(profile, `${path}.profile`);
   }
-  return {
-    ...(hasProfileObject
-      ? { profile: profile as NonNullable<McpStatusCommandPayload["profile"]> }
-      : {}),
-    ...(hasProfileId ? { profileId: profileId as string } : {}),
-  };
+  return hasProfileObject
+    ? { profile: profile as NonNullable<McpStatusCommandPayload["profile"]> }
+    : { profileId: profileId as string };
 }

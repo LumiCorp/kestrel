@@ -84,6 +84,7 @@ class MockTransport implements ProtocolTransport {
           commandId: command.id,
           payload: {
             sessionId: command.payload.sessionId,
+            version: 1,
             threadId: "thread-sdk-1",
           },
         }),

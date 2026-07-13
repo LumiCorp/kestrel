@@ -26,6 +26,7 @@ test("resolveDesktopLibexecRoot points packaged Local Core bootstrap at bundled 
 
 test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
   const repoRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-config-"));
+  const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   try {
     writeFileSync(path.join(repoRoot, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n", "utf8");
     const config = resolveDesktopPathConfig({
@@ -37,12 +38,12 @@ test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
     assert.equal(config.repoRoot, repoRoot);
     assert.equal(config.bootHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "boot.html"));
     assert.equal(config.rendererHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "renderer", "index.html"));
-    assert.equal(config.runtimeLogPath, path.join("/tmp/kestrel-user", "core", "logs", "desktop-runtime.log"));
+    assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
     assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
     assert.equal(config.postgresBundleRootPath, path.join(repoRoot, "apps", "desktop", "resources", "postgres-bundle"));
-    assert.equal(config.postgresDataPath, path.join("/tmp/kestrel-user", "core", "postgres", "data"));
-    assert.equal(config.postgresLogPath, path.join("/tmp/kestrel-user", "core", "logs", "desktop-postgres.log"));
-    assert.equal(config.postgresMetadataPath, path.join("/tmp/kestrel-user", "core", "postgres", "metadata.json"));
+    assert.equal(config.postgresDataPath, path.join(stateRoot, "core", "postgres", "data"));
+    assert.equal(config.postgresLogPath, path.join(stateRoot, "core", "logs", "desktop-postgres.log"));
+    assert.equal(config.postgresMetadataPath, path.join(stateRoot, "core", "postgres", "metadata.json"));
     assert.equal(config.isPackaged, false);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
@@ -51,6 +52,7 @@ test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
 
 test("resolveDesktopPathConfig uses packaged resource paths in production", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
+  const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   const config = resolveDesktopPathConfig({
     cwd: "/ignored",
     resourcesPath,
@@ -61,18 +63,19 @@ test("resolveDesktopPathConfig uses packaged resource paths in production", () =
   assert.equal(config.repoRoot, path.join(resourcesPath, "kestrel-repo"));
   assert.equal(config.bootHtmlPath, path.join(resourcesPath, "static", "boot.html"));
   assert.equal(config.rendererHtmlPath, path.join(resourcesPath, "static", "renderer", "index.html"));
-  assert.equal(config.runtimeLogPath, path.join("/tmp/kestrel-user", "core", "logs", "desktop-runtime.log"));
+  assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
   assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
   assert.equal(config.postgresBundleRootPath, path.join(resourcesPath, "postgres-bundle"));
-  assert.equal(config.postgresDataPath, path.join("/tmp/kestrel-user", "core", "postgres", "data"));
-  assert.equal(config.postgresLogPath, path.join("/tmp/kestrel-user", "core", "logs", "desktop-postgres.log"));
-  assert.equal(config.postgresMetadataPath, path.join("/tmp/kestrel-user", "core", "postgres", "metadata.json"));
+  assert.equal(config.postgresDataPath, path.join(stateRoot, "core", "postgres", "data"));
+  assert.equal(config.postgresLogPath, path.join(stateRoot, "core", "logs", "desktop-postgres.log"));
+  assert.equal(config.postgresMetadataPath, path.join(stateRoot, "core", "postgres", "metadata.json"));
   assert.equal(config.isPackaged, true);
 });
 
 test("resolveDesktopPathConfig can root shell state in Kestrel Local Core", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
   const localCoreHomePath = "/tmp/kestrel-core";
+  const stateRoot = path.join(localCoreHomePath, "state", "0.6");
   const config = resolveDesktopPathConfig({
     cwd: "/ignored",
     resourcesPath,
@@ -82,10 +85,10 @@ test("resolveDesktopPathConfig can root shell state in Kestrel Local Core", () =
   });
 
   assert.equal(config.runtimeHomePath, localCoreHomePath);
-  assert.equal(config.runtimeLogPath, path.join(localCoreHomePath, "core", "logs", "desktop-runtime.log"));
-  assert.equal(config.settingsPath, path.join(localCoreHomePath, "settings", "desktop-settings.json"));
-  assert.equal(config.projectRunLedgerPath, path.join(localCoreHomePath, "workspaces", "desktop-project-runs.json"));
-  assert.equal(config.postgresDataPath, path.join(localCoreHomePath, "core", "postgres", "data"));
-  assert.equal(config.postgresLogPath, path.join(localCoreHomePath, "core", "logs", "desktop-postgres.log"));
-  assert.equal(config.postgresMetadataPath, path.join(localCoreHomePath, "core", "postgres", "metadata.json"));
+  assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
+  assert.equal(config.settingsPath, path.join(stateRoot, "settings", "desktop-settings.json"));
+  assert.equal(config.projectRunLedgerPath, path.join(stateRoot, "workspaces", "desktop-project-runs.json"));
+  assert.equal(config.postgresDataPath, path.join(stateRoot, "core", "postgres", "data"));
+  assert.equal(config.postgresLogPath, path.join(stateRoot, "core", "logs", "desktop-postgres.log"));
+  assert.equal(config.postgresMetadataPath, path.join(stateRoot, "core", "postgres", "metadata.json"));
 });

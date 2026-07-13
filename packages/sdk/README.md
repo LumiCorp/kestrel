@@ -1,6 +1,7 @@
 # @kestrel-agents/sdk
 
-TypeScript SDK for server-side applications that talk to a Kestrel-compatible runner service.
+TypeScript SDK for server-side applications that talk to Kestrel Local Core or
+a remote Kestrel-compatible runner service.
 
 This is the main application-facing package for teams extending or embedding the Kestrel Suite beyond the flagship Desktop app. It covers:
 
@@ -48,8 +49,8 @@ bun add @kestrel-agents/sdk
 ## Requirements
 
 - Node.js 20 or newer
-- a reachable runner service URL
-- a runner service token when the target requires authentication
+- an explicit local Unix-socket target or remote runner-service URL
+- the target's bearer token when authentication is required
 
 ## Create an Agent
 
@@ -112,6 +113,46 @@ const terminal = await stream.result;
 
 If the caller cancels the stream, the SDK cancels that exact run and `stream.result` resolves with `run.cancelled`.
 
+## Run a Durable Job
+
+```ts
+import { KestrelClient } from "@kestrel-agents/sdk/runner";
+
+const client = new KestrelClient({
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
+});
+
+const job = client.streamJob(
+  {
+    profileId: "support",
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "session-123",
+        message: "Deploy the approved release",
+      },
+    },
+  },
+  context,
+);
+
+for await (const event of job) {
+  console.log(event.type, event.payload);
+}
+
+const terminal = await job.result;
+console.log(terminal.payload.output.result.assistantText);
+console.log(terminal.payload.output.result.finalizedPayload);
+```
+
+Every job terminal contains the same explicit `assistantText` and
+`finalizedPayload` result contract as an interactive run. The SDK does not infer
+assistant text from structured payloads.
+
 ## Resume a Blocked Run
 
 ```ts
@@ -170,18 +211,23 @@ Check runner compatibility before enabling runtime-dependent product controls:
 
 ```ts
 import {
+  EXECUTION_PROTOCOL_VERSION,
   KestrelClient,
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_EVENT_CONTRACT_VERSION,
 } from "@kestrel-agents/sdk/runner";
 
 const client = new KestrelClient({
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+  },
 });
 const health = await client.getHealth();
 
 if (
+  health.contracts.execution !== EXECUTION_PROTOCOL_VERSION ||
   health.contracts.command !== RUNNER_COMMAND_CONTRACT_VERSION ||
   health.contracts.events !== RUNNER_EVENT_CONTRACT_VERSION
 ) {
@@ -191,6 +237,26 @@ if (
 
 `getHealth()` rejects unversioned or malformed responses. The health payload
 also exposes the runner service version and machine-readable capabilities.
+
+Trusted Node.js applications on the same machine can connect to Local Core
+without starting or embedding a runtime:
+
+```ts
+const client = new KestrelClient({
+  target: {
+    kind: "local",
+    socketPath: process.env.KESTREL_LOCAL_CORE_API_SOCKET!,
+    authToken: process.env.KESTREL_LOCAL_CORE_API_TOKEN!,
+  },
+});
+```
+
+The socket and token are credentials owned by Local Core. Keep them in a
+trusted server or desktop main process; never expose them to browser code.
+Callers that need runs to outlive a disconnected client can set
+`durability: "continue_on_disconnect"` in request context, retain the last
+event id, and reconnect with `sinceEventId`. An unknown or expired cursor is an
+explicit protocol error and must not silently replay unrelated history.
 
 ## Errors
 

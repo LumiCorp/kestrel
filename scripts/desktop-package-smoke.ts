@@ -167,8 +167,9 @@ try {
   if (output.length > 0) {
     process.stderr.write(`[desktop-package-smoke] main process output:\n${output}\n`);
   }
-  printDiagnosticLog(path.join(coreHome, "core", "logs", "postgres.log"), "postgres");
-  printDiagnosticLog(path.join(coreHome, "core", "logs", "desktop-runtime.log"), "runtime");
+  const corePaths = resolveLocalCorePaths(coreHome);
+  printDiagnosticLog(corePaths.postgresLogPath, "postgres");
+  printDiagnosticLog(path.join(corePaths.logsPath, "desktop-runtime.log"), "runtime");
   process.stderr.write(
     `[desktop-package-smoke] main exit=${JSON.stringify(mainExit ?? null)} isolatedState=${smokeRoot}\n`,
   );
@@ -397,8 +398,12 @@ function listPackagedDesktopProcessIds(packagedPath: string): number[] {
 }
 
 async function stopIsolatedLocalCore(homePath: string): Promise<void> {
-  const lockPath = path.join(homePath, "core", "lock.json");
+  const paths = resolveLocalCorePaths(homePath);
+  const lockPath = paths.lockPath;
   if (existsSync(lockPath) === false) {
+    if (existsSync(paths.apiSocketPath)) {
+      throw new Error(`Packaged Desktop smoke found a Local Core socket without its ownership lock: ${paths.apiSocketPath}`);
+    }
     return;
   }
   let ownerPid: number | undefined;

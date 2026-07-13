@@ -172,7 +172,9 @@ function buildManagedLocalCoreStatus(input: {
     state: input.state,
     summary: input.summary,
     home: {
+      productRootPath: coreHome,
       homePath: coreHome,
+      stateEpoch: "0.6",
       source: "explicit_core_home",
       isolated: false,
       platform: "darwin",
@@ -244,11 +246,12 @@ test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
   process.env.KESTREL_HOME = relativeHome;
   try {
     const bootstrap = await bootstrapTuiApp({ cwd, scripted: true });
-    assert.equal(bootstrap.home, expandedHome);
-    assert.equal(bootstrap.profileStore.getBaseDir(), expandedHome);
+    const stateHome = path.join(expandedHome, "state", "0.6");
+    assert.equal(bootstrap.home, stateHome);
+    assert.equal(bootstrap.profileStore.getBaseDir(), stateHome);
     assert.equal(
       bootstrap.diagnosticsStore.getFilePath(),
-      path.join(expandedHome, "logs", "tui-diagnostics.log"),
+      path.join(stateHome, "logs", "tui-diagnostics.log"),
     );
   } finally {
     if (previousHome === undefined) {
@@ -285,10 +288,11 @@ test("bootstrapTuiApp defaults to shared Local Core home", async () => {
   process.env.DATABASE_URL = "postgres://host-machine.example/kestrel";
   try {
     const bootstrap = await bootstrapTuiApp({ cwd, scripted: true });
-    assert.equal(bootstrap.home, coreHome);
+    const stateHome = path.join(coreHome, "state", "0.6");
+    assert.equal(bootstrap.home, stateHome);
     assert.equal(bootstrap.localCoreStatus.home.source, "explicit_core_home");
-    assert.equal(bootstrap.profileStore.getBaseDir(), coreHome);
-    assert.equal(process.env.KESTREL_HOME, coreHome);
+    assert.equal(bootstrap.profileStore.getBaseDir(), stateHome);
+    assert.equal(process.env.KESTREL_HOME, stateHome);
     assert.equal(process.env.DATABASE_URL, undefined);
     assert.match(bootstrap.startupNotices.join("\n"), /Kestrel Local Core (healthy|blocked)/u);
   } finally {
@@ -326,7 +330,9 @@ test("applyLocalCoreShellEnvironment exports the Core database URL for runner st
     state: "healthy",
     summary: "Kestrel Local Core ready.",
     home: {
+      productRootPath: coreHome,
       homePath: coreHome,
+      stateEpoch: "0.6",
       source: "explicit_core_home",
       isolated: false,
       platform: "darwin",
@@ -428,7 +434,7 @@ test("formatCliLocalCoreStatus reports isolated dev homes visibly", async () => 
   try {
     const bootstrap = await bootstrapTuiApp({ cwd, scripted: true });
     const rendered = formatCliLocalCoreStatus(bootstrap.localCoreStatus);
-    assert.equal(bootstrap.home, isolatedHome);
+    assert.equal(bootstrap.home, path.join(isolatedHome, "state", "0.6"));
     assert.equal(bootstrap.localCoreStatus.home.source, "isolated_dev_home");
     assert.match(rendered, /Home source: isolated_dev_home \(isolated\/dev\)/u);
   } finally {

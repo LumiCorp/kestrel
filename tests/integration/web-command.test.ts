@@ -15,6 +15,13 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  RUNNER_CAPABILITIES,
+  RUNNER_COMMAND_CONTRACT_VERSION,
+  RUNNER_EVENT_CONTRACT_VERSION,
+} from "../../packages/protocol/src/index.js";
+
 const execFileAsync = promisify(execFile);
 const CURL_REQUEST_TIMEOUT_SECONDS = "5";
 const CURL_STREAM_TIMEOUT_SECONDS = "15";
@@ -40,23 +47,11 @@ test("kestrel web prints env exports and answers curl health checks", async (t) 
       version: "0.5.1",
     },
     contracts: {
-      command: "runner-command-v1",
-      events: "dotted-runtime-events-v2",
+      execution: EXECUTION_PROTOCOL_VERSION,
+      command: RUNNER_COMMAND_CONTRACT_VERSION,
+      events: RUNNER_EVENT_CONTRACT_VERSION,
     },
-    capabilities: [
-      "events.subscribe",
-      "mcp.refresh",
-      "operator.control",
-      "operator.inspect",
-      "profile.read",
-      "project.manage",
-      "run.cancel",
-      "run.resume",
-      "run.stream",
-      "session.read",
-      "task.graph",
-      "workspace.checkpoint",
-    ],
+    capabilities: [...RUNNER_CAPABILITIES],
   });
 });
 

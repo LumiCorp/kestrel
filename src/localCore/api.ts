@@ -1,12 +1,17 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import type { RunnerHost, RunnerProfileProvider } from "../../cli/runner/RunnerHost.js";
+import {
+  createRunnerServiceHttpHandler,
+  type RunnerServiceHttpHandler,
+} from "../../cli/runner/RunnerService.js";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import { DiagnosticLogStore, type DiagnosticLogEntry } from "../../cli/diagnostics/DiagnosticLogStore.js";
@@ -14,6 +19,7 @@ import { KcronStateStore, type KcronStateFile } from "../../cli/kcron/state.js";
 import type { SessionsFile, TuiHistoryRecord, TuiProfile, UiState, WorkspacesFile } from "../../cli/contracts.js";
 import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "../../cli/config/RuntimeSettings.js";
 import { buildSupportBundle } from "../diagnostics/supportBundle.js";
+import type { SessionStore as RuntimeSessionStore } from "../kestrel/contracts/store.js";
 import { ModelPolicyStore } from "../profile/modelPolicy.js";
 import type {
   DesktopManagedProjectRun,
@@ -33,9 +39,12 @@ import {
 } from "./desktopProjectRuns.js";
 import { DesktopUiStateStore } from "./desktopUiState.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
+import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
+import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
 import { ensureLocalCoreReady } from "./ready.js";
+import { closeLocalCoreStore, ensureLocalCoreStore } from "./store.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
@@ -55,49 +64,320 @@ interface ProjectRunEventClient {
 export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOptions {
   idleTimeoutMs?: number | undefined;
   heartbeatMs?: number | undefined;
+  executionRuntimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
 }
+
+interface LocalCoreExecutionBundle {
+  handler: RunnerServiceHttpHandler;
+  store: RuntimeSessionStore;
+}
+
+const activeLocalCoreAuthorities = new Set<string>();
 
 export async function startLocalCoreApiServer(
   options: StartLocalCoreApiServerOptions,
 ): Promise<LocalCoreApiServer> {
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
-  await mkdir(paths.corePath, { recursive: true });
-  await mkdir(path.dirname(paths.apiSocketPath), { recursive: true });
-  await rm(paths.apiSocketPath, { force: true });
-  const token = await ensureApiToken(paths.apiTokenPath);
+  await mkdir(paths.stateRootPath, { recursive: true, mode: 0o700 });
+  await chmod(paths.stateRootPath, 0o700);
+  await mkdir(paths.corePath, { recursive: true, mode: 0o700 });
+  await chmod(paths.corePath, 0o700);
+  const authorityKey = await realpath(paths.stateRootPath);
+  const authorityId = randomBytes(16).toString("hex");
+  if (activeLocalCoreAuthorities.has(authorityKey)) {
+    throw new Error(`Kestrel Local Core already has an active authority for '${authorityKey}'.`);
+  }
+  activeLocalCoreAuthorities.add(authorityKey);
 
-  const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
-  let status = await ensureLocalCoreReady(readyOptions);
+  let ownsLock = false;
+  let socketPrepared = false;
+  let executionBundle: LocalCoreExecutionBundle | undefined;
+  let projectRunRegistry: DesktopProjectRunRegistry | undefined;
+  let server: http.Server | undefined;
+  let heartbeat: NodeJS.Timeout | undefined;
+  let idleTimeout: NodeJS.Timeout | undefined;
+  let restartPromise: Promise<LocalCoreStatus> | undefined;
+  let closePromise: Promise<void> | undefined;
   const projectRunEventClients = new Set<ProjectRunEventClient>();
-  const projectRunRegistry = new DesktopProjectRunRegistry({
-    ledger: createDesktopProjectRunLedger({
-      ledgerPath: path.join(paths.workspaceRegistryPath, "desktop-project-runs.json"),
-    }),
-    onRunsChanged(runs) {
-      broadcastProjectRuns(projectRunEventClients, runs);
-    },
-  });
-  await withLocalCoreDaemonStoreOwnership(async () => {
-    await projectRunRegistry.hydrate();
-  });
-  const server = http.createServer(async (request, response) => {
+
+  try {
+    const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
+    let status = await ensureLocalCoreReady({
+      ...readyOptions,
+      lockOwnerPid: process.pid,
+      lockAuthorityId: authorityId,
+    });
+    assertLocalCoreApiOwnership(status, authorityId);
+    ownsLock = true;
+
+    await rm(paths.apiSocketPath, { force: true });
+    socketPrepared = true;
+    const token = await ensureApiToken(paths.apiTokenPath);
+    executionBundle = await createExecutionBundle({
+      status,
+      options,
+      token,
+    });
+
+    projectRunRegistry = new DesktopProjectRunRegistry({
+      ledger: createDesktopProjectRunLedger({
+        ledgerPath: path.join(paths.workspaceRegistryPath, "desktop-project-runs.json"),
+      }),
+      onRunsChanged(runs) {
+        broadcastProjectRuns(projectRunEventClients, runs);
+      },
+    });
     await withLocalCoreDaemonStoreOwnership(async () => {
-      await handleRequest({
-        request,
-        response,
-        token,
-        status,
-        updateStatus(next) {
+      await projectRunRegistry!.hydrate();
+    });
+
+    const restartExecution = (): Promise<LocalCoreStatus> => {
+      if (closePromise !== undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_SHUTTING_DOWN",
+          "Local Core is shutting down.",
+        );
+      }
+      if (restartPromise !== undefined) {
+        return restartPromise;
+      }
+      const operation = (async () => {
+        const previous = executionBundle;
+        if (previous?.handler.hasActiveExecutions() === true) {
+          throw new LocalCoreApiRequestError(
+            409,
+            "LOCAL_CORE_EXECUTION_ACTIVE",
+            "Local Core cannot restart its execution store while a run is active.",
+          );
+        }
+
+        executionBundle = undefined;
+        status = markExecutionRestarting(status);
+        try {
+          await previous?.handler.close({ abortActiveRuns: false });
+          await closeLocalCoreStore(home.homePath);
+
+          const next = await ensureLocalCoreReady({
+            ...await resolveCoreOwnedReadyOptions(home.homePath, options),
+            lockOwnerPid: process.pid,
+            lockAuthorityId: authorityId,
+          });
+          assertLocalCoreApiOwnership(next, authorityId);
           status = next;
-        },
-        ensureOptions: options,
-        projectRunRegistry,
-        projectRunEventClients,
+          const nextBundle = await createExecutionBundle({
+            status: next,
+            options,
+            token,
+          });
+          executionBundle = nextBundle;
+          return next;
+        } catch (error) {
+          status = markExecutionUnavailable(status, error);
+          throw error;
+        }
+      })();
+      let wrappedOperation: Promise<LocalCoreStatus>;
+      wrappedOperation = operation.finally(() => {
+        if (restartPromise === wrappedOperation) {
+          restartPromise = undefined;
+        }
+      });
+      restartPromise = wrappedOperation;
+      return wrappedOperation;
+    };
+
+    server = http.createServer(async (request, response) => {
+      if (isRuntimeV2Request(request.url)) {
+        const activeExecution = executionBundle;
+        if (activeExecution === undefined) {
+          writeJson(response, 503, errorBody(
+            "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+            status.lastError?.message ?? "Local Core execution is unavailable until Core is healthy.",
+          ));
+          return;
+        }
+        activeExecution.handler.handle(request, response);
+        return;
+      }
+      await withLocalCoreDaemonStoreOwnership(async () => {
+        await handleRequest({
+          request,
+          response,
+          token,
+          status,
+          ensureOptions: options,
+          getRuntimeStore: () => executionBundle?.store,
+          restartExecution,
+          projectRunRegistry: projectRunRegistry!,
+          projectRunEventClients,
+        });
       });
     });
-  });
 
+    await listenOnSocket(server, paths.apiSocketPath);
+
+    heartbeat = setInterval(() => {
+      void writeCoreLockHeartbeat({
+        homePath: home.homePath,
+        coreVersion: options.coreVersion,
+        authorityId,
+      }).catch(() => undefined);
+    }, options.heartbeatMs ?? 5_000);
+    heartbeat.unref();
+
+    const closeOnce = (): Promise<void> => {
+      if (closePromise !== undefined) {
+        return closePromise;
+      }
+      if (idleTimeout !== undefined) {
+        clearTimeout(idleTimeout);
+      }
+      closePromise = (async () => {
+        await restartPromise?.catch(() => undefined);
+        const activeExecution = executionBundle;
+        executionBundle = undefined;
+        await closeServer({
+          server: server!,
+          heartbeat,
+          socketPath: paths.apiSocketPath,
+          homePath: home.homePath,
+          coreVersion: options.coreVersion,
+          authorityId,
+          executionHandler: activeExecution?.handler,
+          projectRunRegistry: projectRunRegistry!,
+          projectRunEventClients,
+        });
+      })().finally(() => {
+        activeLocalCoreAuthorities.delete(authorityKey);
+      });
+      return closePromise;
+    };
+
+    const scheduleIdleTimeout = () => {
+      if (options.idleTimeoutMs === undefined || options.idleTimeoutMs <= 0) {
+        return;
+      }
+      idleTimeout = setTimeout(() => {
+        if (
+          projectRunRegistry?.hasActiveRuns() === true
+          || executionBundle?.handler.hasActiveExecutions() === true
+        ) {
+          scheduleIdleTimeout();
+          return;
+        }
+        void closeOnce();
+      }, options.idleTimeoutMs);
+      idleTimeout.unref();
+    };
+    scheduleIdleTimeout();
+
+    return {
+      get status() {
+        return status;
+      },
+      socketPath: paths.apiSocketPath,
+      tokenPath: paths.apiTokenPath,
+      token,
+      close: closeOnce,
+    };
+  } catch (error) {
+    if (idleTimeout !== undefined) {
+      clearTimeout(idleTimeout);
+    }
+    if (heartbeat !== undefined) {
+      clearInterval(heartbeat);
+    }
+    await cleanupFailedLocalCoreStartup({
+      server,
+      executionHandler: executionBundle?.handler,
+      projectRunRegistry,
+      projectRunEventClients,
+      homePath: home.homePath,
+      coreVersion: options.coreVersion,
+      authorityId,
+      socketPath: paths.apiSocketPath,
+      ownsLock,
+      socketPrepared,
+    });
+    activeLocalCoreAuthorities.delete(authorityKey);
+    throw error;
+  }
+}
+
+async function createExecutionBundle(input: {
+  status: LocalCoreStatus;
+  options: StartLocalCoreApiServerOptions;
+  token: string;
+}): Promise<LocalCoreExecutionBundle | undefined> {
+  if (input.status.state === "blocked") {
+    return undefined;
+  }
+  const storeHandle = await ensureLocalCoreStore({
+    homePath: input.status.home.homePath,
+    mode: input.status.dbMode === "external" ? "external" : "pglite",
+    ...(input.status.databaseUrl !== undefined
+      ? { externalDatabaseUrl: input.status.databaseUrl }
+      : {}),
+  });
+  const handler = createRunnerServiceHttpHandler({
+    pathPrefix: "/runtime/v2",
+    authToken: input.token,
+    serviceVersion: input.options.coreVersion,
+    runtimeFactory: input.options.executionRuntimeFactory
+      ?? createLocalCoreRunnerRuntimeFactory(storeHandle.store),
+    profileProvider: createLocalCoreProfileProvider(input.status.home.homePath),
+    eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
+  });
+  try {
+    await handler.ready();
+    return { handler, store: storeHandle.store };
+  } catch (error) {
+    await handler.close({ abortActiveRuns: true }).catch(() => undefined);
+    await closeLocalCoreStore(input.status.home.homePath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function assertLocalCoreApiOwnership(status: LocalCoreStatus, authorityId: string): void {
+  if (
+    status.lock.state === "live"
+    && status.lock.lock.ownerPid === process.pid
+    && status.lock.lock.authorityId === authorityId
+  ) {
+    return;
+  }
+  const owner = status.lock.state === "live" || status.lock.state === "incompatible"
+    ? ` Owner pid: ${status.lock.lock.ownerPid}.`
+    : "";
+  throw new Error(`Kestrel Local Core API could not acquire sole execution authority.${owner}`);
+}
+
+function markExecutionRestarting(status: LocalCoreStatus): LocalCoreStatus {
+  return {
+    ...status,
+    state: "starting",
+    summary: "Kestrel Local Core execution is restarting.",
+    lastError: undefined,
+  };
+}
+
+function markExecutionUnavailable(status: LocalCoreStatus, error: unknown): LocalCoreStatus {
+  const cause = error instanceof Error ? error.message : String(error);
+  return {
+    ...status,
+    state: "blocked",
+    summary: "Kestrel Local Core execution is unavailable.",
+    lastError: {
+      code: "LOCAL_CORE_EXECUTION_INIT_FAILED",
+      message: `Kestrel Local Core could not initialize its execution authority: ${cause}`,
+      details: { cause },
+    },
+  };
+}
+
+async function listenOnSocket(server: http.Server, socketPath: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       server.off("listening", onListening);
@@ -109,63 +389,63 @@ export async function startLocalCoreApiServer(
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(paths.apiSocketPath);
+    server.listen(socketPath);
   });
+}
 
-  const heartbeat = setInterval(() => {
-    void writeCoreLockHeartbeat({
-      homePath: home.homePath,
-      coreVersion: options.coreVersion,
+async function cleanupFailedLocalCoreStartup(input: {
+  server?: http.Server | undefined;
+  executionHandler?: RunnerServiceHttpHandler | undefined;
+  projectRunRegistry?: DesktopProjectRunRegistry | undefined;
+  projectRunEventClients: Set<ProjectRunEventClient>;
+  homePath: string;
+  coreVersion: string;
+  authorityId: string;
+  socketPath: string;
+  ownsLock: boolean;
+  socketPrepared: boolean;
+}): Promise<void> {
+  const cleanup: Promise<unknown>[] = [];
+  for (const client of input.projectRunEventClients) {
+    client.response.end();
+  }
+  input.projectRunEventClients.clear();
+  if (input.projectRunRegistry !== undefined) {
+    cleanup.push(input.projectRunRegistry.stopAll());
+  }
+  if (input.executionHandler !== undefined) {
+    cleanup.push(input.executionHandler.close({ abortActiveRuns: true }));
+  }
+  if (input.server !== undefined) {
+    cleanup.push(new Promise<void>((resolve) => {
+      input.server!.close(() => resolve());
+      input.server!.closeAllConnections?.();
+    }));
+  }
+  await Promise.allSettled(cleanup);
+  await closeLocalCoreStore(input.homePath).catch(() => undefined);
+  if (input.socketPrepared) {
+    await rm(input.socketPath, { force: true }).catch(() => undefined);
+  }
+  if (input.ownsLock) {
+    await releaseCoreLock({
+      homePath: input.homePath,
+      coreVersion: input.coreVersion,
+      authorityId: input.authorityId,
     }).catch(() => undefined);
-  }, options.heartbeatMs ?? 5_000);
-  heartbeat.unref();
+  }
+}
 
-  let idleTimeout: NodeJS.Timeout | undefined;
-  const scheduleIdleTimeout = () => {
-    if (options.idleTimeoutMs === undefined || options.idleTimeoutMs <= 0) {
-      return;
-    }
-    idleTimeout = setTimeout(() => {
-      if (projectRunRegistry.hasActiveRuns()) {
-        scheduleIdleTimeout();
-        return;
-      }
-      void closeServer({
-        server,
-        heartbeat,
-        socketPath: paths.apiSocketPath,
-        homePath: home.homePath,
-        coreVersion: options.coreVersion,
-        projectRunRegistry,
-        projectRunEventClients,
-      });
-    }, options.idleTimeoutMs);
-    idleTimeout.unref();
-  };
-  scheduleIdleTimeout();
+class LocalCoreApiRequestError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
 
-  return {
-    get status() {
-      return status;
-    },
-    socketPath: paths.apiSocketPath,
-    tokenPath: paths.apiTokenPath,
-    token,
-    async close() {
-      if (idleTimeout !== undefined) {
-        clearTimeout(idleTimeout);
-      }
-      await closeServer({
-        server,
-        heartbeat,
-        socketPath: paths.apiSocketPath,
-        homePath: home.homePath,
-        coreVersion: options.coreVersion,
-        projectRunRegistry,
-        projectRunEventClients,
-      });
-    },
-  };
+  constructor(statusCode: number, code: string, message: string) {
+    super(message);
+    this.name = "LocalCoreApiRequestError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
 }
 
 let localCoreDaemonStoreOwnershipDepth = 0;
@@ -197,8 +477,9 @@ async function handleRequest(input: {
   response: ServerResponse;
   token: string;
   status: LocalCoreStatus;
-  updateStatus(status: LocalCoreStatus): void;
   ensureOptions: StartLocalCoreApiServerOptions;
+  getRuntimeStore(): RuntimeSessionStore | undefined;
+  restartExecution(): Promise<LocalCoreStatus>;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
 }): Promise<void> {
@@ -330,7 +611,18 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/runs") {
-      writeJson(input.response, 200, { ok: true, runs: [] });
+      const runtimeStore = input.getRuntimeStore();
+      if (runtimeStore === undefined) {
+        writeJson(input.response, 503, errorBody(
+          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+          "Local Core execution is unavailable until Core is healthy.",
+        ));
+        return;
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        runs: await runtimeStore.listRunSummaries({ limit: 100 }),
+      });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/project-launcher") {
@@ -489,14 +781,12 @@ async function handleRequest(input: {
       return;
     }
     if (method === "POST" && url.pathname === "/v1/restart") {
-      const next = await ensureLocalCoreReady(await resolveCoreOwnedReadyOptions(input.status.home.homePath, input.ensureOptions));
-      input.updateStatus(next);
+      const next = await input.restartExecution();
       writeJson(input.response, 200, { ok: true, status: next });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/repair") {
-      const next = await ensureLocalCoreReady(await resolveCoreOwnedReadyOptions(input.status.home.homePath, input.ensureOptions));
-      input.updateStatus(next);
+      const next = await input.restartExecution();
       writeJson(input.response, 200, { ok: true, status: next });
       return;
     }
@@ -513,8 +803,9 @@ async function handleRequest(input: {
 
     writeJson(input.response, 404, errorBody("LOCAL_CORE_API_NOT_FOUND", `Unknown Local Core API endpoint: ${method} ${url.pathname}`));
   } catch (error) {
-    writeJson(input.response, 500, errorBody(
-      "LOCAL_CORE_API_ERROR",
+    const requestError = error instanceof LocalCoreApiRequestError ? error : undefined;
+    writeJson(input.response, requestError?.statusCode ?? 500, errorBody(
+      requestError?.code ?? "LOCAL_CORE_API_ERROR",
       error instanceof Error ? error.message : String(error),
     ));
   }
@@ -735,9 +1026,9 @@ async function resolveCoreOwnedReadyOptions(
   const settingsDatabaseMode = settings.databaseMode === "external"
     ? "external"
     : settings.databaseMode === "default"
-      ? "managed"
+      ? "pglite"
       : undefined;
-  const databaseMode = settingsDatabaseMode ?? options.databaseMode ?? "managed";
+  const databaseMode = settingsDatabaseMode ?? options.databaseMode ?? "pglite";
   const externalDatabaseUrl = settingsDatabaseMode === "external"
     ? settingsDatabaseUrl
     : settingsDatabaseUrl ?? options.externalDatabaseUrl;
@@ -934,24 +1225,87 @@ function errorBody(code: string, message: string): Record<string, unknown> {
 
 async function closeServer(input: {
   server: http.Server;
-  heartbeat: NodeJS.Timeout;
+  heartbeat?: NodeJS.Timeout | undefined;
   socketPath: string;
   homePath: string;
   coreVersion: string;
+  authorityId: string;
+  executionHandler?: RunnerServiceHttpHandler | undefined;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
 }): Promise<void> {
-  clearInterval(input.heartbeat);
+  const errors: Error[] = [];
+  if (input.heartbeat !== undefined) {
+    clearInterval(input.heartbeat);
+  }
   for (const client of input.projectRunEventClients) {
-    client.response.end();
+    try {
+      client.response.end();
+    } catch (error) {
+      errors.push(asError(error));
+    }
   }
   input.projectRunEventClients.clear();
-  await input.projectRunRegistry.stopAll();
-  await new Promise<void>((resolve) => {
-    input.server.close(() => resolve());
+  await input.projectRunRegistry.stopAll().catch((error) => {
+    errors.push(asError(error));
   });
-  await releaseCoreLock({ homePath: input.homePath, coreVersion: input.coreVersion });
-  await rm(input.socketPath, { force: true });
+  const serverClosed = new Promise<void>((resolve, reject) => {
+    input.server.close((error) => {
+      if (error !== undefined && error !== null) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+    input.server.closeIdleConnections?.();
+  });
+  await input.executionHandler?.close({ abortActiveRuns: true }).catch((error) => {
+    errors.push(asError(error));
+  });
+  input.server.closeAllConnections?.();
+  await serverClosed.catch((error) => {
+    errors.push(asError(error));
+  });
+  await closeLocalCoreStore(input.homePath).catch((error) => {
+    errors.push(asError(error));
+  });
+  await rm(input.socketPath, { force: true }).catch((error) => {
+    errors.push(asError(error));
+  });
+  await releaseCoreLock({
+    homePath: input.homePath,
+    coreVersion: input.coreVersion,
+    authorityId: input.authorityId,
+  }).catch((error) => {
+    errors.push(asError(error));
+  });
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "Kestrel Local Core shutdown failed.");
+  }
+}
+
+function createLocalCoreProfileProvider(homePath: string): RunnerProfileProvider {
+  const store = new ProfileStore(homePath);
+  return {
+    async listProfiles() {
+      return await store.load();
+    },
+    async getProfile(profileId) {
+      return store.findById(await store.load(), profileId);
+    },
+  };
+}
+
+function isRuntimeV2Request(url: string | undefined): boolean {
+  const pathname = new URL(url ?? "/", "http://local-core").pathname;
+  return pathname === "/runtime/v2" || pathname.startsWith("/runtime/v2/");
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function normalizeString(value: unknown): string | undefined {

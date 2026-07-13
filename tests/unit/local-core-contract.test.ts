@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,17 +10,22 @@ import {
   ensureLocalCoreReady,
   readCoreLock,
   readCoreManifest,
+  releaseCoreLock,
   resolveKestrelCoreHome,
   resolveLocalCorePaths,
   writeCoreManifest,
 } from "../../src/localCore/index.js";
+import { closeLocalCoreStore } from "../../src/localCore/store.js";
 
-test("resolveKestrelCoreHome uses the macOS product root by default", () => {
+test("resolveKestrelCoreHome isolates the default macOS product root in the 0.6 state epoch", () => {
   const resolved = resolveKestrelCoreHome({}, "darwin");
+  const productRoot = path.join(os.homedir(), "Library", "Application Support", "Kestrel");
 
   assert.equal(resolved.source, "default");
   assert.equal(resolved.isolated, false);
-  assert.equal(resolved.homePath, path.join(os.homedir(), "Library", "Application Support", "Kestrel"));
+  assert.equal(resolved.productRootPath, productRoot);
+  assert.equal(resolved.homePath, path.join(productRoot, "state", "0.6"));
+  assert.equal(resolved.stateEpoch, "0.6");
 });
 
 test("resolveKestrelCoreHome treats KESTREL_HOME as explicit isolated dev state", () => {
@@ -28,7 +33,8 @@ test("resolveKestrelCoreHome treats KESTREL_HOME as explicit isolated dev state"
 
   assert.equal(resolved.source, "isolated_dev_home");
   assert.equal(resolved.isolated, true);
-  assert.equal(resolved.homePath, path.join(os.homedir(), "kestrel-isolated"));
+  assert.equal(resolved.productRootPath, path.join(os.homedir(), "kestrel-isolated"));
+  assert.equal(resolved.homePath, path.join(os.homedir(), "kestrel-isolated", "state", "0.6"));
 });
 
 test("resolveKestrelCoreHome gives explicit Core home precedence over isolated dev KESTREL_HOME", () => {
@@ -39,7 +45,16 @@ test("resolveKestrelCoreHome gives explicit Core home precedence over isolated d
 
   assert.equal(resolved.source, "explicit_core_home");
   assert.equal(resolved.isolated, false);
-  assert.equal(resolved.homePath, path.join(os.homedir(), "Library", "Application Support", "Kestrel"));
+  assert.equal(resolved.productRootPath, path.join(os.homedir(), "Library", "Application Support", "Kestrel"));
+  assert.equal(resolved.homePath, path.join(os.homedir(), "Library", "Application Support", "Kestrel", "state", "0.6"));
+});
+
+test("resolveKestrelCoreHome keeps an already canonical state root stable", () => {
+  const stateRoot = "/tmp/kestrel-product/state/0.6";
+  const resolved = resolveKestrelCoreHome({ KESTREL_CORE_HOME: stateRoot }, "darwin");
+
+  assert.equal(resolved.productRootPath, "/tmp/kestrel-product");
+  assert.equal(resolved.homePath, stateRoot);
 });
 
 test("Core manifest round-trips canonical paths", async () => {
@@ -47,21 +62,48 @@ test("Core manifest round-trips canonical paths", async () => {
   try {
     const manifest = createCoreManifest({
       homePath: home,
-      coreVersion: "0.5.0-beta.0",
-      capabilities: ["shell.status", "local-core.contract.v1"],
+      coreVersion: "0.6.0",
+      capabilities: ["shell.status", "local-core.contract.v2"],
       now: new Date("2026-06-17T12:00:00.000Z"),
     });
 
     await writeCoreManifest(home, manifest);
     const restored = await readCoreManifest(home);
+    const canonicalPaths = resolveLocalCorePaths(
+      await realpath(resolveLocalCorePaths(home).stateRootPath),
+    );
 
-    assert.equal(restored?.coreVersion, "0.5.0-beta.0");
+    assert.equal(restored?.version, 2);
+    assert.equal(restored?.stateEpoch, "0.6");
+    assert.equal(restored?.coreVersion, "0.6.0");
     assert.equal(restored?.schemaVersion, 1);
-    assert.deepEqual(restored?.capabilities, ["local-core.contract.v1", "shell.status"]);
-    assert.equal(restored?.paths.manifestPath, resolveLocalCorePaths(home).manifestPath);
-    assert.equal(restored?.paths.apiSocketPath, resolveLocalCorePaths(home).apiSocketPath);
-    assert.equal(restored?.paths.apiTokenPath, resolveLocalCorePaths(home).apiTokenPath);
+    assert.equal(restored?.dbMode, "pglite");
+    assert.deepEqual(restored?.capabilities, ["local-core.contract.v2", "shell.status"]);
+    assert.equal(restored?.paths.manifestPath, canonicalPaths.manifestPath);
+    assert.equal(restored?.paths.apiSocketPath, canonicalPaths.apiSocketPath);
+    assert.equal(restored?.paths.apiTokenPath, canonicalPaths.apiTokenPath);
   } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Core manifest accepts another path spelling for the same physical state root", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcmanifest-real-"));
+  const alias = `${home}-alias`;
+  await symlink(home, alias, "dir");
+  try {
+    await writeCoreManifest(home, createCoreManifest({
+      homePath: home,
+      coreVersion: "0.6.0",
+    }));
+
+    const restored = await readCoreManifest(alias);
+    const canonicalStateRoot = await realpath(resolveLocalCorePaths(home).stateRootPath);
+
+    assert.equal(restored?.homePath, canonicalStateRoot);
+    assert.equal(restored?.paths.stateRootPath, canonicalStateRoot);
+  } finally {
+    await rm(alias, { force: true });
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -109,6 +151,87 @@ test("readCoreLock classifies missing, live, stale, incompatible, and invalid lo
   }
 });
 
+test("readCoreLock treats dead or expired old-version owners as stale before version incompatibility", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-version-precedence-"));
+  try {
+    const acquired = await acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel.app",
+      ownerPid: 101,
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    });
+    assert.equal(acquired.state, "live");
+
+    assert.equal((await readCoreLock({
+      homePath: home,
+      currentCoreVersion: "0.6.1",
+      now: new Date("2026-07-13T12:00:10.000Z"),
+      isPidAlive: () => true,
+    })).state, "incompatible");
+    assert.equal((await readCoreLock({
+      homePath: home,
+      currentCoreVersion: "0.6.1",
+      now: new Date("2026-07-13T12:00:10.000Z"),
+      isPidAlive: () => false,
+    })).state, "stale");
+    assert.equal((await readCoreLock({
+      homePath: home,
+      currentCoreVersion: "0.6.1",
+      now: new Date("2026-07-13T12:01:00.000Z"),
+    })).state, "stale");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("acquireCoreLock recovers a dead old-version lock without stealing a live old-version owner", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-upgrade-"));
+  const staleHome = path.join(root, "stale-owner");
+  const liveHome = path.join(root, "live-owner");
+  try {
+    await acquireCoreLock({
+      homePath: staleHome,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel.app",
+      ownerPid: 101,
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    });
+    const recovered = await acquireCoreLock({
+      homePath: staleHome,
+      coreVersion: "0.6.1",
+      ownerExecutable: "/usr/local/bin/kestrel",
+      ownerPid: 202,
+      now: new Date("2026-07-13T12:00:10.000Z"),
+      isPidAlive: () => false,
+    });
+    assert.equal(recovered.state, "live");
+    assert.equal(recovered.lock.coreVersion, "0.6.1");
+    assert.equal(recovered.lock.ownerPid, 202);
+
+    await acquireCoreLock({
+      homePath: liveHome,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel.app",
+      ownerPid: 303,
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    });
+    const blocked = await acquireCoreLock({
+      homePath: liveHome,
+      coreVersion: "0.6.1",
+      ownerExecutable: "/usr/local/bin/kestrel",
+      ownerPid: 404,
+      now: new Date("2026-07-13T12:00:10.000Z"),
+      isPidAlive: () => true,
+    });
+    assert.equal(blocked.state, "incompatible");
+    assert.equal(blocked.lock.coreVersion, "0.6.0");
+    assert.equal(blocked.lock.ownerPid, 303);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("acquireCoreLock uses one shared owner under concurrent shell attempts", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-concurrent-"));
   try {
@@ -136,81 +259,231 @@ test("acquireCoreLock uses one shared owner under concurrent shell attempts", as
   }
 });
 
-test("ensureLocalCoreReady creates shared contract directories and status", async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-ready-"));
+test("concurrent stale-lock recovery elects one authority without deleting the winner", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-stale-concurrent-"));
+  const paths = resolveLocalCorePaths(home);
+  const acquisitionPath = `${paths.lockPath}.acquire`;
   try {
-    const status = await ensureLocalCoreReady({
-      env: { KESTREL_CORE_HOME: home },
-      platform: "darwin",
-      coreVersion: "0.5.0-beta.0",
-      databaseMode: "external",
-      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
-      now: new Date("2026-06-17T12:00:00.000Z"),
+    await acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel-old.app",
+      ownerPid: 101,
+      authorityId: "stale-authority",
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    });
+    await writeFile(acquisitionPath, "test-held-acquisition\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
     });
 
-    assert.equal(status.state, "healthy");
-    assert.equal(status.home.homePath, home);
-    assert.equal(status.home.source, "explicit_core_home");
-    assert.equal(status.dbMode, "external");
-    assert.equal(status.database.managed, false);
-    assert.equal(status.databaseUrl, "postgres://kestrel:kestrel@example.invalid/kestrel");
-    assert.equal(status.lock.state, "live");
-    assert.equal(status.manifest?.coreVersion, "0.5.0-beta.0");
-    assert.match(await readFile(resolveLocalCorePaths(home).manifestPath, "utf8"), /local-core\.contract\.v1/u);
+    const attempts = [
+      acquireCoreLock({
+        homePath: home,
+        coreVersion: "0.6.0",
+        ownerExecutable: "/usr/local/bin/kestrel-a",
+        ownerPid: 201,
+        authorityId: "authority-a",
+        isPidAlive: (pid) => pid !== 101,
+      }),
+      acquireCoreLock({
+        homePath: home,
+        coreVersion: "0.6.0",
+        ownerExecutable: "/usr/local/bin/kestrel-b",
+        ownerPid: 202,
+        authorityId: "authority-b",
+        isPidAlive: (pid) => pid !== 101,
+      }),
+    ] as const;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId, "stale-authority");
+    await rm(acquisitionPath, { force: true });
+
+    const [first, second] = await Promise.all(attempts);
+    assert.equal(first.state, "live");
+    assert.equal(second.state, "live");
+    if (first.state !== "live" || second.state !== "live") {
+      assert.fail("Both stale-lock contenders must observe the elected live authority.");
+    }
+    assert.equal(first.lock.authorityId, second.lock.authorityId);
+    assert.equal(first.lock.ownerPid, second.lock.ownerPid);
+    const persisted = JSON.parse(await readFile(paths.lockPath, "utf8")) as {
+      authorityId?: string | undefined;
+      ownerPid?: number | undefined;
+    };
+    assert.equal(persisted.authorityId, first.lock.authorityId);
+    assert.equal(persisted.ownerPid, first.lock.ownerPid);
+    await assert.rejects(readFile(acquisitionPath, "utf8"), { code: "ENOENT" });
   } finally {
+    await rm(acquisitionPath, { force: true });
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test("ensureLocalCoreReady accepts the 0.5.0 manifest for the 0.5.1 bridge without rewriting it", async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-051-bridge-"));
+test("release racing stale-lock recovery cannot delete the replacement authority", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-release-race-"));
+  const paths = resolveLocalCorePaths(home);
+  const acquisitionPath = `${paths.lockPath}.acquire`;
+  try {
+    await acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel-old.app",
+      ownerPid: 101,
+      authorityId: "old-authority",
+    });
+    await writeFile(acquisitionPath, "test-held-acquisition\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+
+    const release = releaseCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerPid: 101,
+      authorityId: "old-authority",
+    });
+    const replacement = acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/usr/local/bin/kestrel-new",
+      ownerPid: 202,
+      authorityId: "replacement-authority",
+      isPidAlive: (pid) => pid !== 101,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId, "old-authority");
+    await rm(acquisitionPath, { force: true });
+
+    const [, replacementResult] = await Promise.all([release, replacement] as const);
+    assert.equal(replacementResult.state, "live");
+    if (replacementResult.state !== "live") {
+      assert.fail("Stale-lock recovery must install a replacement authority.");
+    }
+    assert.equal(replacementResult.lock.authorityId, "replacement-authority");
+    const persisted = JSON.parse(await readFile(paths.lockPath, "utf8")) as {
+      authorityId?: string | undefined;
+      ownerPid?: number | undefined;
+    };
+    assert.equal(persisted.authorityId, "replacement-authority");
+    assert.equal(persisted.ownerPid, 202);
+  } finally {
+    await rm(acquisitionPath, { force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("ensureLocalCoreReady blocks an unreachable external database", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-ready-"));
+  const databaseUrl = "postgres://kestrel:kestrel@127.0.0.1:1/kestrel?connect_timeout=1";
+  try {
+    const status = await ensureLocalCoreReady({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.5.0-beta.0",
+      databaseMode: "external",
+      externalDatabaseUrl: databaseUrl,
+      now: new Date("2026-06-17T12:00:00.000Z"),
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.home.productRootPath, home);
+    assert.equal(status.home.homePath, path.join(home, "state", "0.6"));
+    assert.equal(status.home.source, "explicit_core_home");
+    assert.equal(status.dbMode, "external");
+    assert.equal(status.database.managed, false);
+    assert.equal(status.database.initialized, false);
+    assert.equal(status.database.running, false);
+    assert.equal(status.database.identityVerified, false);
+    assert.equal(status.databaseUrl, databaseUrl);
+    assert.equal(status.lastError?.code, "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED");
+    assert.equal(status.lock.state, "live");
+    assert.equal(status.manifest?.coreVersion, "0.5.0-beta.0");
+    assert.match(await readFile(resolveLocalCorePaths(home).manifestPath, "utf8"), /local-core\.contract\.v2/u);
+  } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("ensureLocalCoreReady updates executable metadata without changing compatible epoch state", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-version-update-"));
   try {
     await writeCoreManifest(home, createCoreManifest({
       homePath: home,
-      coreVersion: "0.5.0-beta.0",
+      coreVersion: "0.6.0",
       now: new Date("2026-06-17T12:00:00.000Z"),
     }));
-    const manifestBefore = await readFile(resolveLocalCorePaths(home).manifestPath, "utf8");
 
     const status = await ensureLocalCoreReady({
       env: { KESTREL_CORE_HOME: home },
       platform: "darwin",
-      coreVersion: "0.5.1",
-      databaseMode: "external",
-      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+      coreVersion: "0.6.1",
       now: new Date("2026-07-10T12:00:00.000Z"),
     });
 
     assert.equal(status.state, "healthy");
-    assert.equal(status.manifest?.coreVersion, "0.5.0-beta.0");
-    assert.equal(
-      await readFile(resolveLocalCorePaths(home).manifestPath, "utf8"),
-      manifestBefore,
-    );
+    assert.equal(status.manifest?.coreVersion, "0.6.1");
+    assert.equal(status.manifest?.stateEpoch, "0.6");
+    assert.equal(status.manifest?.createdAt, "2026-06-17T12:00:00.000Z");
+    assert.equal(status.manifest?.updatedAt, "2026-07-10T12:00:00.000Z");
   } finally {
+    await closeLocalCoreStore(home);
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test("ensureLocalCoreReady blocks versions outside the explicit 0.5.1 bridge", async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-incompatible-"));
+test("ensureLocalCoreReady blocks an incompatible state schema independently of executable version", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-schema-incompatible-"));
   try {
     await writeCoreManifest(home, createCoreManifest({
       homePath: home,
-      coreVersion: "0.5.0-beta.1",
+      coreVersion: "0.6.0",
+      schemaVersion: 2,
     }));
 
     const status = await ensureLocalCoreReady({
       env: { KESTREL_CORE_HOME: home },
       platform: "darwin",
-      coreVersion: "0.5.1",
+      coreVersion: "0.6.1",
+      schemaVersion: 1,
       databaseMode: "external",
       externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
     });
 
     assert.equal(status.state, "blocked");
-    assert.equal(status.lastError?.code, "LOCAL_CORE_MANIFEST_VERSION_INCOMPATIBLE");
+    assert.equal(status.lastError?.code, "LOCAL_CORE_SCHEMA_VERSION_INCOMPATIBLE");
   } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("ensureLocalCoreReady blocks a manifest from a different state epoch", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-epoch-incompatible-"));
+  try {
+    await writeCoreManifest(home, {
+      ...createCoreManifest({
+        homePath: home,
+        coreVersion: "0.6.0",
+      }),
+      stateEpoch: "0.5",
+    });
+
+    const status = await ensureLocalCoreReady({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.1",
+      databaseMode: "external",
+      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.lastError?.code, "LOCAL_CORE_STATE_EPOCH_INCOMPATIBLE");
+  } finally {
+    await closeLocalCoreStore(home);
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -233,6 +506,7 @@ test("ensureLocalCoreReady does not silently use inherited DATABASE_URL for exte
     assert.equal(status.lastError?.code, "LOCAL_CORE_EXTERNAL_DATABASE_URL_REQUIRED");
     assert.equal(status.databaseUrl, undefined);
   } finally {
+    await closeLocalCoreStore(home);
     await rm(home, { recursive: true, force: true });
   }
 });

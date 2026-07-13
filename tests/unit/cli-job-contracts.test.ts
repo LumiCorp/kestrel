@@ -83,6 +83,34 @@ test("job output can carry wait continuation details", () => {
           reason: "max_model_calls_continuation",
         },
       },
+      result: {
+        assistantText: null,
+        output: {
+          status: "WAITING",
+          sessionId: "session-waiting",
+          runId: "run-waiting",
+          waitFor: {
+            kind: "user",
+            eventType: "user.reply",
+            metadata: {
+              reason: "max_model_calls_continuation",
+            },
+          },
+          quality: {
+            citationCoverage: 0,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          errors: [],
+          telemetry: {
+            stepsExecuted: 0,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 0,
+          },
+        },
+      },
       replay: {
         version: "job_replay_pointer_v1",
         sessionId: "session-waiting",

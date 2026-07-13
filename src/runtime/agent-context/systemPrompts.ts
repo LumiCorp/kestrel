@@ -148,6 +148,7 @@ export type ReferenceReactPromptVariant =
 export interface DeliberatorPromptInput {
   interactionMode: InteractionMode;
   promptVariant?: string | undefined;
+  systemInstructions?: readonly string[] | undefined;
 }
 
 const PROMPT_BY_VARIANT: Record<ReferenceReactPromptVariant, string> = {
@@ -175,6 +176,15 @@ export function buildDeliberatorSystemPrompt(input: DeliberatorPromptInput): str
     SHARED_DELIBERATOR_PROMPT,
     "",
     PROMPT_BY_VARIANT[variant],
+    ...(input.systemInstructions !== undefined && input.systemInstructions.length > 0
+      ? [
+          "",
+          "Application system instructions:",
+          ...input.systemInstructions.map(
+            (instruction, index) => `${index + 1}. ${instruction}`,
+          ),
+        ]
+      : []),
   ].join("\n");
 }
 

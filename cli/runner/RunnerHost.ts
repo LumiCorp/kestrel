@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
   buildPersistedRuntimeEventFromReasoningUpdate,
@@ -86,6 +88,14 @@ const EMPTY_TOOL_RUNTIME_STATUS: ToolRuntimeStatus = {
 interface RuntimeEntry {
   key: string;
   runtime: RunnerRuntime;
+  lease: RuntimeLease;
+}
+
+interface RuntimeLease {
+  runtime: RunnerRuntime;
+  activeUsers: number;
+  ownerCount: number;
+  state: "active" | "retired" | "closing" | "closed";
 }
 
 interface ActiveRunEntry {
@@ -361,6 +371,14 @@ export class RunnerHost {
   >();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
+  private readonly activeExecutions = new Set<Promise<void>>();
+  private readonly runtimeUsage = new AsyncLocalStorage<Set<RuntimeLease>>();
+  private readonly runtimeLeases = new WeakMap<RunnerRuntime, RuntimeLease>();
+  private readonly retiredRuntimes = new Set<RuntimeLease>();
+  private readonly retiredRuntimeClosures = new Set<Promise<void>>();
+  private readonly retiredRuntimeCloseFailures: unknown[] = [];
+  private closePromise: Promise<void> | undefined;
+  private closing = false;
 
   constructor(
     writer: RunnerEventSink,
@@ -416,7 +434,20 @@ export class RunnerHost {
     this.writer.emit("profile.loaded", { profile }, { commandId });
   }
 
-  async runStart(
+  runStart(
+    commandId: string,
+    payload: { profile?: TuiProfile | undefined; profileId?: string | undefined; turn: RunTurnInput },
+    metadata?: RunnerCommandMetadata | undefined,
+  ): Promise<void> {
+    if (this.closing) {
+      return Promise.reject(new Error("Runner host is closing and cannot accept new executions."));
+    }
+    return this.trackExecution(this.withRuntimeUsage(
+      () => this.executeRunStart(commandId, payload, metadata),
+    ));
+  }
+
+  private async executeRunStart(
     commandId: string,
     payload: {
       profile?: TuiProfile | undefined;
@@ -426,6 +457,7 @@ export class RunnerHost {
     metadata?: RunnerCommandMetadata | undefined
   ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "run.start");
+    this.assertAcceptingExecutions();
     const tenantId = metadata?.actor?.tenantId ?? metadata?.tenantId;
     if (profile.modelCredential) {
       if (!tenantId) {
@@ -688,7 +720,18 @@ export class RunnerHost {
     }
   }
 
-  async jobRun(
+  jobRun(commandId: string, payload: JobRunCommandPayload): Promise<void> {
+    if (this.closing) {
+      return Promise.reject(
+        new Error("Runner host is closing and cannot accept new executions.")
+      );
+    }
+    return this.trackExecution(this.withRuntimeUsage(
+      () => this.executeJobRun(commandId, payload),
+    ));
+  }
+
+  private async executeJobRun(
     commandId: string,
     payload: JobRunCommandPayload
   ): Promise<void> {
@@ -701,6 +744,7 @@ export class RunnerHost {
       },
       "job.run"
     );
+    this.assertAcceptingExecutions();
     const profile: TuiProfile = {
       ...resolvedProfile,
       ...(payload.input.storeDriver !== undefined
@@ -788,6 +832,7 @@ export class RunnerHost {
           ? { waitFor: result.output.waitFor }
           : {}),
         replay,
+        result,
       };
 
       this.writer.emit(
@@ -863,6 +908,12 @@ export class RunnerHost {
         runId,
       });
       const failure = this.normalizeTerminalError(error);
+      const result = buildNonResponsiveTerminalResult({
+        status: "FAILED",
+        sessionId: turn.sessionId,
+        runId,
+        error: failure,
+      });
       this.writer.emit(
         "job.failed",
         {
@@ -873,6 +924,7 @@ export class RunnerHost {
             runId,
             status: "FAILED",
             replay,
+            result,
             error: failure,
           },
           replay,
@@ -1852,38 +1904,196 @@ export class RunnerHost {
     );
   }
 
-  async close(
-    options: { abortActiveRuns?: boolean | undefined } = {}
-  ): Promise<void> {
+  hasActiveExecutions(): boolean {
+    return this.activeExecutions.size > 0;
+  }
+
+  executeCommand(operation: () => Promise<void>): Promise<void> {
+    if (this.closing) {
+      return Promise.reject(
+        new Error("Runner host is closing and cannot accept new commands.")
+      );
+    }
+
+    return this.trackExecution(this.withRuntimeUsage(operation));
+  }
+
+  close(options: { abortActiveRuns?: boolean | undefined } = {}): Promise<void> {
+    this.closePromise ??= this.closeInternal(options);
+    return this.closePromise;
+  }
+
+  private async closeInternal(options: {
+    abortActiveRuns?: boolean | undefined;
+  }): Promise<void> {
+    this.closing = true;
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
         active.cancelRequested = true;
         active.abortController.abort();
       }
     }
-    const closeAll = [...this.runtimes.values()].map((entry) =>
-      entry.runtime.close()
+    await Promise.allSettled([...this.activeExecutions]);
+    this.closeUnusedRetiredRuntimes(true);
+    const currentLeases = new Set(
+      [...this.runtimes.values()].map((entry) => entry.lease),
     );
-    await Promise.all(closeAll);
+    const closeResults = await Promise.allSettled(
+      [...currentLeases].map(async (lease) => {
+        lease.state = "closing";
+        try {
+          await lease.runtime.close();
+        } finally {
+          lease.state = "closed";
+        }
+      }),
+    );
+    await Promise.allSettled([...this.retiredRuntimeClosures]);
+    const runtimeCloseFailure = closeResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    const retiredRuntimeCloseFailure = this.retiredRuntimeCloseFailures[0];
     this.runtimes.clear();
+    this.retiredRuntimes.clear();
+    this.retiredRuntimeClosures.clear();
+    this.retiredRuntimeCloseFailures.length = 0;
     this.commandBySession.clear();
     this.commandTypeBySession.clear();
     this.threadIdBySession.clear();
+    if (runtimeCloseFailure !== undefined) {
+      throw runtimeCloseFailure.reason;
+    }
+    if (retiredRuntimeCloseFailure !== undefined) {
+      throw retiredRuntimeCloseFailure;
+    }
+  }
+
+  private trackExecution(execution: Promise<void>): Promise<void> {
+    const tracked = execution.finally(() => {
+      this.activeExecutions.delete(tracked);
+    });
+    this.activeExecutions.add(tracked);
+    return tracked;
+  }
+
+  private async withRuntimeUsage<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.runtimeUsage.getStore() !== undefined) {
+      return await operation();
+    }
+    const leases = new Set<RuntimeLease>();
+    return await this.runtimeUsage.run(leases, async () => {
+      try {
+        return await operation();
+      } finally {
+        for (const lease of leases) {
+          this.releaseRuntime(lease);
+        }
+        leases.clear();
+      }
+    });
+  }
+
+  private registerRuntimeUsage(entry: RuntimeEntry): void {
+    const leases = this.runtimeUsage.getStore();
+    if (leases === undefined || leases.has(entry.lease)) {
+      return;
+    }
+    leases.add(entry.lease);
+    entry.lease.activeUsers += 1;
+  }
+
+  private releaseRuntime(lease: RuntimeLease): void {
+    lease.activeUsers = Math.max(0, lease.activeUsers - 1);
+    this.closeRetiredRuntimeIfUnused(lease);
+  }
+
+  private retireRuntime(entry: RuntimeEntry): void {
+    const lease = entry.lease;
+    lease.ownerCount = Math.max(0, lease.ownerCount - 1);
+    if (lease.ownerCount > 0) {
+      return;
+    }
+    lease.state = "retired";
+    this.retiredRuntimes.add(lease);
+    this.closeRetiredRuntimeIfUnused(lease);
+  }
+
+  private closeUnusedRetiredRuntimes(force = false): void {
+    for (const lease of this.retiredRuntimes) {
+      this.closeRetiredRuntimeIfUnused(lease, force);
+    }
+  }
+
+  private closeRetiredRuntimeIfUnused(lease: RuntimeLease, force = false): void {
+    if (
+      lease.state !== "retired"
+      || lease.ownerCount > 0
+      || (force === false && lease.activeUsers > 0)
+      || this.retiredRuntimes.delete(lease) === false
+    ) {
+      return;
+    }
+    lease.state = "closing";
+    let closePromise: Promise<void>;
+    try {
+      closePromise = Promise.resolve(lease.runtime.close());
+    } catch (error) {
+      closePromise = Promise.reject(error);
+    }
+    const trackedClose = closePromise
+      .catch((error: unknown) => {
+        this.retiredRuntimeCloseFailures.push(error);
+      })
+      .finally(() => {
+        lease.state = "closed";
+        this.retiredRuntimeClosures.delete(trackedClose);
+      });
+    this.retiredRuntimeClosures.add(trackedClose);
+  }
+
+  private acquireRuntimeLease(runtime: RunnerRuntime): RuntimeLease {
+    const existing = this.runtimeLeases.get(runtime);
+    if (existing !== undefined) {
+      if (existing.state === "closing" || existing.state === "closed") {
+        throw new Error(
+          "Runner runtime factory returned an instance that has already begun closing.",
+        );
+      }
+      if (existing.state === "retired") {
+        this.retiredRuntimes.delete(existing);
+        existing.state = "active";
+      }
+      existing.ownerCount += 1;
+      return existing;
+    }
+
+    const lease: RuntimeLease = {
+      runtime,
+      activeUsers: 0,
+      ownerCount: 1,
+      state: "active",
+    };
+    this.runtimeLeases.set(runtime, lease);
+    return lease;
+  }
+
+  private assertAcceptingExecutions(): void {
+    if (this.closing) {
+      throw new Error("Runner host is closing and cannot accept new executions.");
+    }
   }
 
   private getRuntime(profile: TuiProfile): RunnerRuntime {
     const key = JSON.stringify(profile);
     const existing = this.runtimes.get(profile.id);
     if (existing !== undefined && existing.key === key) {
+      this.registerRuntimeUsage(existing);
       return existing.runtime;
     }
 
     if (existing !== undefined && this.hasActiveRunForProfile(profile.id)) {
+      this.registerRuntimeUsage(existing);
       return existing.runtime;
-    }
-
-    if (existing !== undefined) {
-      void existing.runtime.close();
     }
 
     const runtime = this.runtimeFactory(
@@ -1908,8 +2118,24 @@ export class RunnerHost {
       }
     );
 
-    this.runtimes.set(profile.id, { key, runtime });
-    return runtime;
+    let entry: RuntimeEntry;
+    if (existing !== undefined && existing.runtime === runtime) {
+      existing.key = key;
+      entry = existing;
+    } else {
+      const lease = this.acquireRuntimeLease(runtime);
+      if (existing !== undefined) {
+        this.retireRuntime(existing);
+      }
+      entry = {
+        key,
+        runtime,
+        lease,
+      };
+    }
+    this.runtimes.set(profile.id, entry);
+    this.registerRuntimeUsage(entry);
+    return entry.runtime;
   }
 
   private hasActiveRunForProfile(profileId: string): boolean {
@@ -1939,7 +2165,11 @@ export class RunnerHost {
     if (profile !== undefined) {
       return [this.getRuntime(profile)];
     }
-    return [...this.runtimes.values()].map((entry) => entry.runtime);
+    const entries = [...this.runtimes.values()];
+    for (const entry of entries) {
+      this.registerRuntimeUsage(entry);
+    }
+    return entries.map((entry) => entry.runtime);
   }
 
   private async resolveProfileOrThrow(
