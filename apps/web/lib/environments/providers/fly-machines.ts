@@ -27,7 +27,7 @@ const appCreateSchema = z.object({ id: z.string().min(1) });
 const ipAssignmentSchema = z.object({
   ip: z.string().min(1),
   shared: z.boolean().optional(),
-  service_name: z.string().optional(),
+  service_name: z.string().nullable().optional(),
 });
 
 const ipAssignmentsSchema = z.object({
@@ -479,14 +479,43 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     state: "started" | "stopped" | "destroyed";
     timeoutSeconds?: number;
   }) {
-    const query = new URLSearchParams({ state: input.state });
-    if (input.timeoutSeconds !== undefined) {
-      query.set("timeout", String(input.timeoutSeconds));
+    const instanceId =
+      input.state === "stopped"
+        ? parseResponse(
+            machineSchema,
+            await this.request(
+              `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+              { method: "GET" }
+            )
+          ).instance_id
+        : undefined;
+    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1_000;
+    while (true) {
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((deadline - Date.now()) / 1_000)
+      );
+      const query = new URLSearchParams({
+        state: input.state,
+        timeout: String(Math.min(remainingSeconds, 60)),
+      });
+      if (instanceId) query.set("instance_id", instanceId);
+      try {
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
+          { method: "GET" }
+        );
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof EnvironmentProviderError) ||
+          error.status !== 408 ||
+          Date.now() >= deadline
+        ) {
+          throw error;
+        }
+      }
     }
-    await this.request(
-      `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
-      { method: "GET" }
-    );
   }
 
   async createVolumeSnapshot(input: { appName: string; volumeId: string }) {

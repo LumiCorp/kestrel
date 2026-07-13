@@ -30,46 +30,50 @@ const environmentA = canaryIdentity();
 const environmentB = canaryIdentity();
 const createdApps: string[] = [];
 
-try {
-  const a = await provisionCanaryEnvironment(environmentA);
-  const b = await provisionCanaryEnvironment(environmentB);
-  await assertGatewayBoundary(a);
-  await assertGatewayBoundary(b);
-  await assertCrossNetworkIsolation(a, b);
-  await assertPersistence(a);
-  await assertBackupRestore(a);
-  process.stdout.write(
-    `${JSON.stringify({
-      ok: true,
-      region,
-      environments: [
-        summarize(a),
-        summarize(b),
-      ],
-      proofs: [
-        "dedicated_custom_networks",
-        "gateway_only_public_ingress",
-        "signed_private_routing",
-        "cross_network_dns_isolation",
-        "stop_start_persistence",
-        "replacement_volume_backup_restore",
-        "idempotent_provider_ensure",
-      ],
-    })}\n`
-  );
-} finally {
-  for (const appName of createdApps.reverse()) {
-    await provider.deleteEnvironmentApp({ appName }).catch(() => undefined);
-  }
-  for (const appName of createdApps) {
-    const response = await flyRequest(`/apps/${encodeURIComponent(appName)}`, {
-      method: "GET",
-    });
-    if (response.status !== 404) {
-      throw new Error(`Fly canary cleanup did not delete ${appName}.`);
+async function main() {
+  try {
+    const a = await provisionCanaryEnvironment(environmentA);
+    const b = await provisionCanaryEnvironment(environmentB);
+    await assertGatewayBoundary(a);
+    await assertGatewayBoundary(b);
+    await assertCrossNetworkIsolation(a, b);
+    await assertPersistence(a);
+    await assertBackupRestore(a);
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        region,
+        environments: [summarize(a), summarize(b)],
+        proofs: [
+          "dedicated_custom_networks",
+          "gateway_only_public_ingress",
+          "signed_private_routing",
+          "cross_network_dns_isolation",
+          "stop_start_persistence",
+          "replacement_volume_backup_restore",
+          "idempotent_provider_ensure",
+        ],
+      })}\n`
+    );
+  } finally {
+    for (const appName of createdApps.reverse()) {
+      await provider.deleteEnvironmentApp({ appName }).catch(() => undefined);
+    }
+    for (const appName of createdApps) {
+      const response = await flyRequest(`/apps/${encodeURIComponent(appName)}`, {
+        method: "GET",
+      });
+      if (response.status !== 404) {
+        throw new Error(`Fly canary cleanup did not delete ${appName}.`);
+      }
     }
   }
 }
+
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
 type CanaryIdentity = ReturnType<typeof canaryIdentity>;
 type CanaryEnvironment = Awaited<ReturnType<typeof provisionCanaryEnvironment>>;

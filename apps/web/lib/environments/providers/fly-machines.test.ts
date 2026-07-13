@@ -15,6 +15,57 @@ test("Fly resource names are deterministic and provider-safe", () => {
   );
 });
 
+test("Fly waits split long deadlines into accepted request windows", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return requests.length === 1
+        ? new Response(null, { status: 408 })
+        : Response.json({});
+    }) as typeof fetch,
+  });
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "started",
+    timeoutSeconds: 90,
+  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[0] ?? "", /[?&]timeout=60(?:&|$)/u);
+});
+
+test("Fly stopped waits bind the current Machine instance", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (!String(url).includes("/wait?")) {
+        return Response.json({
+          id: "machine-1",
+          instance_id: "instance-1",
+          state: "stopping",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch,
+  });
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "stopped",
+    timeoutSeconds: 60,
+  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[1] ?? "", /[?&]instance_id=instance-1(?:&|$)/u);
+});
+
 test("Environment App creation always supplies the custom network", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
@@ -147,7 +198,13 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
         return Response.json({ ips: [] });
       }
       if (path.endsWith("/ip_assignments") && init?.method === "POST") {
-        return Response.json({ ip: "203.0.113.1", shared: true });
+        return Response.json({
+          created_at: null,
+          ip: "203.0.113.1",
+          region: null,
+          service_name: null,
+          shared: false,
+        });
       }
       if (path.includes("/machines?")) return Response.json([]);
       return Response.json({
