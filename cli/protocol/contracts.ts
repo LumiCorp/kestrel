@@ -18,6 +18,8 @@ import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/index.js";
 import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
@@ -67,6 +69,9 @@ export type RunnerCommandType =
   | "workspace.checkpoint.diff"
   | "workspace.checkpoint.restore"
   | "workspace.checkpoint.cleanup"
+  | "workspace.promotion.list"
+  | "workspace.promotion.preview"
+  | "workspace.promotion.apply"
   | "workspace.promotion.undo_latest"
   | "project.snapshot.get"
   | "project.snapshot.update"
@@ -282,6 +287,21 @@ export interface WorkspacePromotionUndoLatestCommandPayload {
   reason?: string | undefined;
 }
 
+export interface WorkspacePromotionListCommandPayload {
+  sessionId: string;
+}
+
+export interface WorkspacePromotionPreviewCommandPayload {
+  sessionId: string;
+  promotionId: string;
+}
+
+export interface WorkspacePromotionApplyCommandPayload {
+  sessionId: string;
+  promotionId: string;
+  candidateFingerprint: string;
+}
+
 export interface ProjectSnapshotUpdateCommandPayload {
   sessionId: string;
   snapshot: ProductProjectSnapshot;
@@ -330,6 +350,9 @@ export interface RunnerCommandPayloadByType {
   "workspace.checkpoint.diff": WorkspaceCheckpointDiffCommandPayload;
   "workspace.checkpoint.restore": WorkspaceCheckpointRestoreCommandPayload;
   "workspace.checkpoint.cleanup": WorkspaceCheckpointCleanupCommandPayload;
+  "workspace.promotion.list": WorkspacePromotionListCommandPayload;
+  "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
+  "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "workspace.promotion.undo_latest": WorkspacePromotionUndoLatestCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
@@ -573,7 +596,17 @@ export interface TaskGraphEventPayload {
 
 export interface WorkspaceCheckpointEventPayload {
   sessionId: string;
-  operation: "capture" | "list" | "inspect" | "diff" | "restore" | "cleanup" | "promotion.undo_latest";
+  operation:
+    | "capture"
+    | "list"
+    | "inspect"
+    | "diff"
+    | "restore"
+    | "cleanup"
+    | "promotion.list"
+    | "promotion.preview"
+    | "promotion.apply"
+    | "promotion.undo_latest";
   checkpoint?: WorkspaceCheckpointDetail | undefined;
   checkpoints?: WorkspaceCheckpointRecord[] | undefined;
   diff?: WorkspaceDiffRecord | undefined;
@@ -582,6 +615,9 @@ export interface WorkspaceCheckpointEventPayload {
   deletedCheckpoints?: WorkspaceCheckpointRecord[] | undefined;
   remainingCheckpointCount?: number | undefined;
   remainingBytes?: number | undefined;
+  promotions?: WorkspacePromotionRecord[] | undefined;
+  preview?: WorkspacePromotionPreview | undefined;
+  promotion?: WorkspacePromotionRecord | undefined;
 }
 
 export interface ProjectSnapshotEventPayload {

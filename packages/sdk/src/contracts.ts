@@ -179,6 +179,7 @@ export interface RunnerEventSubscriptionFilter {
 export interface KestrelRequestContext {
   actor: RunnerActorMetadata;
   tenantId?: string | undefined;
+  profile?: RunnerProfile | undefined;
 }
 
 export interface KestrelClientOptions {
@@ -343,6 +344,21 @@ export interface WorkspaceCheckpointCleanupCommandPayload {
   policyOverride?: Record<string, unknown> | undefined;
 }
 
+export interface WorkspacePromotionListCommandPayload {
+  sessionId: string;
+}
+
+export interface WorkspacePromotionPreviewCommandPayload {
+  sessionId: string;
+  promotionId: string;
+}
+
+export interface WorkspacePromotionApplyCommandPayload {
+  sessionId: string;
+  promotionId: string;
+  candidateFingerprint: string;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -392,6 +408,9 @@ export type RunnerCommandType =
   | "workspace.checkpoint.diff"
   | "workspace.checkpoint.restore"
   | "workspace.checkpoint.cleanup"
+  | "workspace.promotion.list"
+  | "workspace.promotion.preview"
+  | "workspace.promotion.apply"
   | "project.snapshot.get"
   | "project.snapshot.update"
   | "project.action"
@@ -419,6 +438,9 @@ export interface RunnerCommandPayloadByType {
   "workspace.checkpoint.diff": WorkspaceCheckpointDiffCommandPayload;
   "workspace.checkpoint.restore": WorkspaceCheckpointRestoreCommandPayload;
   "workspace.checkpoint.cleanup": WorkspaceCheckpointCleanupCommandPayload;
+  "workspace.promotion.list": WorkspacePromotionListCommandPayload;
+  "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
+  "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -622,9 +644,37 @@ export interface RunnerWorkspaceCleanupRecord extends Record<string, unknown> {
   trigger: string;
 }
 
+export interface RunnerWorkspacePromotionRecord
+  extends Record<string, unknown> {
+  promotionId: string;
+  sessionId: string;
+  runId: string;
+  status: string;
+  changedFiles: string[];
+  candidateFingerprint?: string | undefined;
+}
+
+export interface RunnerWorkspacePromotionPreview
+  extends Record<string, unknown> {
+  promotion: RunnerWorkspacePromotionRecord;
+  status: "ready" | "empty" | "blocked";
+  changedFiles: string[];
+  candidateFingerprint?: string | undefined;
+  diff: RunnerWorkspaceDiffRecord;
+}
+
 export interface WorkspaceCheckpointEventPayload {
   sessionId: string;
-  operation: "capture" | "list" | "inspect" | "diff" | "restore" | "cleanup";
+  operation:
+    | "capture"
+    | "list"
+    | "inspect"
+    | "diff"
+    | "restore"
+    | "cleanup"
+    | "promotion.list"
+    | "promotion.preview"
+    | "promotion.apply";
   checkpoint?: RunnerWorkspaceCheckpointDetail | undefined;
   checkpoints?: RunnerWorkspaceCheckpointRecord[] | undefined;
   diff?: RunnerWorkspaceDiffRecord | undefined;
@@ -633,6 +683,9 @@ export interface WorkspaceCheckpointEventPayload {
   deletedCheckpoints?: RunnerWorkspaceCheckpointRecord[] | undefined;
   remainingCheckpointCount?: number | undefined;
   remainingBytes?: number | undefined;
+  promotions?: RunnerWorkspacePromotionRecord[] | undefined;
+  preview?: RunnerWorkspacePromotionPreview | undefined;
+  promotion?: RunnerWorkspacePromotionRecord | undefined;
 }
 
 export interface ProjectSnapshotEventPayload {
@@ -721,6 +774,9 @@ export interface RunnerResponseByCommandType {
   "workspace.checkpoint.diff": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.checkpoint.restore": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.checkpoint.cleanup": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.list": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.preview": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.apply": RunnerEventEnvelope<"workspace.checkpoint">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;

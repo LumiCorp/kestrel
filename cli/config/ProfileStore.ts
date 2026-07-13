@@ -60,7 +60,16 @@ const DELEGATION_TOOL_NAMES = [
   "delegate.get_child_result",
 ] as const;
 const KESTREL_ONE_PROFILE_ID = "kestrel-one";
-const KESTREL_ONE_TOOL_NAME = "kestrel_one.search_knowledge_documents";
+const KESTREL_ONE_TOOL_NAMES = [
+  "kestrel_one.search_knowledge_documents",
+  "kestrel_one.github_repository_read",
+  "kestrel_one.github_push_agent_branch",
+  "kestrel_one.github_issue_create",
+  "kestrel_one.github_pull_request_create",
+  "kestrel_one.github_pull_request_merge",
+  "kestrel_one.github_release_create",
+  "kestrel_one.github_workflow_dispatch",
+] as const;
 
 function createDefaultCliProfile(input: {
   id: string;
@@ -114,7 +123,7 @@ const DEFAULT_PROFILES: TuiProfile[] = [
     label: "Kestrel-One",
     sessionPrefix: "kestrel-one",
     default: false,
-    extraToolAllowlist: [KESTREL_ONE_TOOL_NAME],
+    extraToolAllowlist: [...KESTREL_ONE_TOOL_NAMES],
   }),
 ];
 
@@ -436,8 +445,10 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
   const codeMode = resolvedProfile.codeMode;
   const devShell = resolvedProfile.devShell;
   const toolAllowlist = [...resolvedProfile.toolAllowlist];
-  if (profile.id === KESTREL_ONE_PROFILE_ID && toolAllowlist.includes(KESTREL_ONE_TOOL_NAME) === false) {
-    toolAllowlist.push(KESTREL_ONE_TOOL_NAME);
+  if (profile.id === KESTREL_ONE_PROFILE_ID) {
+    for (const toolName of KESTREL_ONE_TOOL_NAMES) {
+      if (!toolAllowlist.includes(toolName)) toolAllowlist.push(toolName);
+    }
   }
   if (hasCanonicalSelection === false && legacyExtraTools !== undefined) {
     for (const toolName of legacyExtraTools) {

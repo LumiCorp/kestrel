@@ -262,6 +262,12 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
                   ? "list"
                   : body.type === "workspace.checkpoint.inspect"
                     ? "inspect"
+                    : body.type === "workspace.promotion.list"
+                      ? "promotion.list"
+                      : body.type === "workspace.promotion.preview"
+                        ? "promotion.preview"
+                        : body.type === "workspace.promotion.apply"
+                          ? "promotion.apply"
                     : "capture",
             checkpoint: {
               checkpoint: {
@@ -290,6 +296,41 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
             deletedCheckpoints: [],
             remainingCheckpointCount: 1,
             remainingBytes: 0,
+            promotions: [
+              {
+                promotionId: "promotion-1",
+                sessionId: "session-sdk-1",
+                runId: "run-1",
+                status: "pending_review",
+                changedFiles: ["app.ts"],
+                candidateFingerprint: "fingerprint-1",
+              },
+            ],
+            preview: {
+              promotion: {
+                promotionId: "promotion-1",
+                sessionId: "session-sdk-1",
+                runId: "run-1",
+                status: "pending_review",
+                changedFiles: ["app.ts"],
+                candidateFingerprint: "fingerprint-1",
+              },
+              status: "ready",
+              changedFiles: ["app.ts"],
+              candidateFingerprint: "fingerprint-1",
+              diff: {
+                diffId: "diff-1",
+                sessionId: "session-sdk-1",
+                files: [],
+              },
+            },
+            promotion: {
+              promotionId: "promotion-1",
+              sessionId: "session-sdk-1",
+              runId: "run-1",
+              status: "promoted",
+              changedFiles: ["app.ts"],
+            },
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -307,6 +348,22 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
   }, context);
   const restore = await client.restoreWorkspaceCheckpoint({ sessionId: "session-sdk-1", checkpointId: "checkpoint-1" }, context);
   const cleanup = await client.cleanupWorkspaceCheckpoints({ sessionId: "session-sdk-1", reason: "trim" }, context);
+  const promotions = await client.listWorkspacePromotions(
+    { sessionId: "session-sdk-1" },
+    { ...context, profile }
+  );
+  const preview = await client.previewWorkspacePromotion(
+    { sessionId: "session-sdk-1", promotionId: "promotion-1" },
+    context
+  );
+  const applied = await client.applyWorkspacePromotion(
+    {
+      sessionId: "session-sdk-1",
+      promotionId: "promotion-1",
+      candidateFingerprint: "fingerprint-1",
+    },
+    context
+  );
 
   assert.equal(capture.checkpoint?.checkpoint.checkpointId, "checkpoint-1");
   assert.deepEqual(list.checkpoints, []);
@@ -314,6 +371,13 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
   assert.equal(diff.diff?.diffId, "diff-1");
   assert.equal(restore.restore?.restoreId, "restore-1");
   assert.equal(cleanup.cleanup?.cleanupId, "cleanup-1");
+  assert.equal(promotions.promotions?.[0]?.promotionId, "promotion-1");
+  assert.equal(
+    (requests[6]?.metadata as { profile?: { id?: string } }).profile?.id,
+    "reference"
+  );
+  assert.equal(preview.preview?.candidateFingerprint, "fingerprint-1");
+  assert.equal(applied.promotion?.status, "promoted");
   assert.deepEqual(requests.map((request) => request.type), [
     "workspace.checkpoint.capture",
     "workspace.checkpoint.list",
@@ -321,6 +385,9 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
     "workspace.checkpoint.diff",
     "workspace.checkpoint.restore",
     "workspace.checkpoint.cleanup",
+    "workspace.promotion.list",
+    "workspace.promotion.preview",
+    "workspace.promotion.apply",
   ]);
   await client.close();
 });

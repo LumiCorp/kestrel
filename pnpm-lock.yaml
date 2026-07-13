@@ -222,6 +222,22 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
+  apps/environment-router:
+    dependencies:
+      '@lumi/kestrel-environment-auth':
+        specifier: workspace:*
+        version: link:../../packages/environment-auth
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.11
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
   apps/web:
     dependencies:
       '@ai-sdk/anthropic':
@@ -290,6 +306,9 @@ importers:
       '@kestrel-agents/sdk':
         specifier: 0.5.1
         version: link:../../packages/sdk
+      '@lumi/kestrel-environment-auth':
+        specifier: workspace:*
+        version: link:../../packages/environment-auth
       '@napi-rs/canvas':
         specifier: 0.1.80
         version: 0.1.80
@@ -699,6 +718,40 @@ importers:
       ultracite:
         specifier: 6.3.2
         version: 6.3.2(effect@3.20.0)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
+
+  apps/workspace-runtime:
+    dependencies:
+      '@kestrel-agents/kestrel':
+        specifier: 0.5.1
+        version: link:../..
+      '@kestrel-agents/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@lumi/kestrel-environment-auth':
+        specifier: workspace:*
+        version: link:../../packages/environment-auth
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.11
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
+  packages/environment-auth:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.11
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
 
   packages/next:
     dependencies:

@@ -40,6 +40,9 @@ import type {
   WorkspaceCheckpointInspectCommandPayload,
   WorkspaceCheckpointListCommandPayload,
   WorkspaceCheckpointRestoreCommandPayload,
+  WorkspacePromotionApplyCommandPayload,
+  WorkspacePromotionListCommandPayload,
+  WorkspacePromotionPreviewCommandPayload,
   RunnerSessionDescription,
   RunnerProjectReviewDetail,
   RunnerProjectSnapshot,
@@ -49,6 +52,8 @@ import type {
   RunnerWorkspaceCleanupRecord,
   RunnerWorkspaceDiffRecord,
   RunnerWorkspaceRestoreRecord,
+  RunnerWorkspacePromotionPreview,
+  RunnerWorkspacePromotionRecord,
 } from "./contracts.js";
 import { KestrelConfigurationError, KestrelHttpError, KestrelProtocolError, toKestrelError } from "./errors.js";
 import { BufferedRunnerStream } from "./RunnerStream.js";
@@ -368,6 +373,51 @@ export class KestrelClient {
     return event.payload;
   }
 
+  async listWorkspacePromotions(
+    input: WorkspacePromotionListCommandPayload,
+    context: KestrelRequestContext
+  ): Promise<{
+    sessionId: string;
+    promotions?: RunnerWorkspacePromotionRecord[] | undefined;
+  }> {
+    const event = await this.sendCommand(
+      "workspace.promotion.list",
+      input,
+      context
+    );
+    return event.payload;
+  }
+
+  async previewWorkspacePromotion(
+    input: WorkspacePromotionPreviewCommandPayload,
+    context: KestrelRequestContext
+  ): Promise<{
+    sessionId: string;
+    preview?: RunnerWorkspacePromotionPreview | undefined;
+  }> {
+    const event = await this.sendCommand(
+      "workspace.promotion.preview",
+      input,
+      context
+    );
+    return event.payload;
+  }
+
+  async applyWorkspacePromotion(
+    input: WorkspacePromotionApplyCommandPayload,
+    context: KestrelRequestContext
+  ): Promise<{
+    sessionId: string;
+    promotion?: RunnerWorkspacePromotionRecord | undefined;
+  }> {
+    const event = await this.sendCommand(
+      "workspace.promotion.apply",
+      input,
+      context
+    );
+    return event.payload;
+  }
+
   async getProjectSnapshot(
     input: ProjectSnapshotGetCommandPayload,
     context: KestrelRequestContext,
@@ -575,6 +625,7 @@ function toCommandMetadata(context: KestrelRequestContext): RunnerCommandMetadat
   return {
     actor: context.actor,
     ...(context.tenantId !== undefined ? { tenantId: context.tenantId } : {}),
+    ...(context.profile !== undefined ? { profile: context.profile } : {}),
   };
 }
 

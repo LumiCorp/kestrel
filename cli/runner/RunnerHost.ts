@@ -13,6 +13,8 @@ import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/index.js";
 import {
@@ -65,6 +67,9 @@ import type {
   WorkspaceCheckpointDiffCommandPayload,
   WorkspaceCheckpointInspectCommandPayload,
   WorkspaceCheckpointListCommandPayload,
+  WorkspacePromotionApplyCommandPayload,
+  WorkspacePromotionListCommandPayload,
+  WorkspacePromotionPreviewCommandPayload,
   WorkspacePromotionUndoLatestCommandPayload,
   WorkspaceCheckpointRestoreCommandPayload,
 } from "../protocol/contracts.js";
@@ -135,6 +140,12 @@ export interface RunnerRuntime {
     sessionId: string;
   } & import("../../src/workspaceCheckpoints/contracts.js").WorkspaceCheckpointCleanupResult>) | undefined;
   restoreLatestWorkspacePromotion?: ((input: WorkspacePromotionUndoLatestCommandPayload) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>) | undefined;
+  listWorkspacePromotions?: ((input: WorkspacePromotionListCommandPayload) => Promise<{ sessionId: string; promotions: WorkspacePromotionRecord[] }>) | undefined;
+  previewWorkspacePromotion?: ((input: WorkspacePromotionPreviewCommandPayload) => Promise<{ sessionId: string; preview: WorkspacePromotionPreview }>) | undefined;
+  applyWorkspacePromotion?: ((input: WorkspacePromotionApplyCommandPayload & { appliedBy?: string | undefined }) => Promise<{
+    sessionId: string;
+    promotion: WorkspacePromotionRecord;
+  }>) | undefined;
   getSessionState?: ((sessionId: string) => Promise<{
     session: {
       sessionId: string;
@@ -1166,6 +1177,101 @@ export class RunnerHost {
       code: "RUNNER_RUNTIME_ERROR",
       message: "Workspace promotion undo is unavailable.",
     }, { commandId });
+  }
+
+  async workspacePromotionList(
+    commandId: string,
+    payload: WorkspacePromotionListCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.listWorkspacePromotions === "function") {
+        const response = await runtime.listWorkspacePromotions(payload);
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "promotion.list",
+            promotions: response.promotions,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace promotion listing is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async workspacePromotionPreview(
+    commandId: string,
+    payload: WorkspacePromotionPreviewCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.previewWorkspacePromotion === "function") {
+        const response = await runtime.previewWorkspacePromotion(payload);
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "promotion.preview",
+            preview: response.preview,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace promotion preview is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async workspacePromotionApply(
+    commandId: string,
+    payload: WorkspacePromotionApplyCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.applyWorkspacePromotion === "function") {
+        const response = await runtime.applyWorkspacePromotion({
+          ...payload,
+          ...(metadata?.actor?.actorId
+            ? { appliedBy: metadata.actor.actorId }
+            : {}),
+        });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "promotion.apply",
+            promotion: response.promotion,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace promotion acceptance is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async projectSnapshotUpdate(

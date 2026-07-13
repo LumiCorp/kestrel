@@ -410,6 +410,28 @@ export class WorkspaceCheckpointService {
     return input.promotion;
   }
 
+  async listPromotions(input: {
+    sessionId: string;
+  }): Promise<WorkspacePromotionRecord[]> {
+    await this.store.ensureSession(input.sessionId);
+    const snapshot = await this.readStateSnapshot(input.sessionId);
+    return [...snapshot.state.promotions].sort((left, right) => {
+      const byCreated = right.createdAt.localeCompare(left.createdAt);
+      return byCreated !== 0
+        ? byCreated
+        : right.promotionId.localeCompare(left.promotionId);
+    });
+  }
+
+  async getPromotion(input: {
+    sessionId: string;
+    promotionId: string;
+  }): Promise<WorkspacePromotionRecord | undefined> {
+    return (await this.listPromotions(input)).find(
+      (promotion) => promotion.promotionId === input.promotionId
+    );
+  }
+
   async restoreLatestPromotion(input: RestoreLatestWorkspacePromotionInput): Promise<WorkspaceRestoreRecord> {
     await this.store.ensureSession(input.sessionId);
     const snapshot = await this.readStateSnapshot(input.sessionId);
@@ -879,10 +901,12 @@ export class WorkspaceCheckpointService {
       await writeFile(afterPath, await this.readSourceContent(after));
       try {
         const output = await this.runner.run("git", ["diff", "--no-index", "--unified=3", "--", beforePath, afterPath], tempRoot);
-        return output
-          .split("\n")
-          .filter((line) => line.startsWith("@@") || line.startsWith("+") || line.startsWith("-") || line.startsWith(" "));
+        return parseTextDiff(output);
       } catch (error) {
+        const output = readCommandStdout(error);
+        if (readCommandExitCode(error) === 1 && output !== undefined) {
+          return parseTextDiff(output);
+        }
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("exit code 1")) {
           return [];
@@ -1175,6 +1199,36 @@ export class WorkspaceCheckpointService {
       metadata: input.metadata,
     });
   }
+}
+
+function parseTextDiff(output: string): string[] {
+  return output
+    .split("\n")
+    .filter(
+      (line) =>
+        line.startsWith("@@") ||
+        line.startsWith("+") ||
+        line.startsWith("-") ||
+        line.startsWith(" ")
+    );
+}
+
+function readCommandExitCode(error: unknown): number | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "number"
+    ? error.code
+    : undefined;
+}
+
+function readCommandStdout(error: unknown): string | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "stdout" in error &&
+    typeof error.stdout === "string"
+    ? error.stdout
+    : undefined;
 }
 
 function requireWorkspaceRoot(setup: ProductProjectSetupState): string {

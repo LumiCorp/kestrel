@@ -19,6 +19,7 @@ const CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
   "code.execute",
   "mcp.invoke",
   "delegation.control",
+  "external.confirm",
 ];
 
 export interface ApprovalPolicyPack {
@@ -36,7 +37,7 @@ const APPROVAL_POLICY_PACKS: Record<ApprovalPolicyPack["id"], ApprovalPolicyPack
     label: "Developer",
     defaultDeny: true,
     allowedToolClasses: ["read_only", "sandboxed_only", "external_side_effect"],
-    allowedCapabilities: ["workspace.read", "workspace.write", "shell.exec", "network.call", "mcp.invoke"],
+    allowedCapabilities: ["workspace.read", "workspace.write", "shell.exec", "network.call", "mcp.invoke", "external.confirm"],
     strictApprovalPerCall: false,
   },
   ci_bot: {

@@ -153,6 +153,7 @@ export async function checkToolPolicyGate(input: {
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
+      requiredApprovalCapabilities: input.requiredApprovalCapabilities,
       io: input.io,
     });
     if (approvalTransition !== undefined) {
@@ -190,11 +191,14 @@ export async function checkToolBatchPolicyGate(input: {
 }): Promise<PolicyGateResult> {
   if (
     input.modeSystemV2Enabled &&
-    needsPerCallApproval({
-      interactionMode: input.interactionMode,
-      actSubmode: input.actSubmode,
-      executionPolicy: input.executionPolicy,
-    })
+    (requiresExplicitToolApproval({
+        interactionMode: input.interactionMode,
+        actSubmode: input.actSubmode,
+        executionPolicy: input.executionPolicy,
+        requiredApprovalCapabilities: input.items.flatMap(
+          (item) => input.toolApprovalCapabilitiesByName[item.name] ?? []
+        ),
+      }))
   ) {
     return {
       kind: "blocked",
@@ -295,6 +299,7 @@ export function checkToolBatchChunkPolicyGate(input: {
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
   executionPolicy: ExecutionPolicy | undefined;
+  requiredApprovalCapabilities?: readonly string[] | undefined;
 }): PolicyGateResult {
   if (input.modeSystemV2Enabled === false) {
     return { kind: "allowed" };
@@ -452,13 +457,15 @@ async function maybeRequireToolApproval(input: {
   model?: string | undefined;
   io: StepIO;
   executionPolicy: ExecutionPolicy | undefined;
+  requiredApprovalCapabilities?: readonly string[] | undefined;
 }): Promise<Transition | undefined> {
   if (
-    needsPerCallApproval({
+    !requiresExplicitToolApproval({
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
-    }) === false
+      requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+    })
   ) {
     return undefined;
   }
@@ -593,6 +600,18 @@ async function maybeRequireToolApproval(input: {
       },
     },
   });
+}
+
+export function requiresExplicitToolApproval(input: {
+  interactionMode: CanonicalInteractionMode;
+  actSubmode: ActSubmode;
+  executionPolicy: ExecutionPolicy | undefined;
+  requiredApprovalCapabilities?: readonly string[] | undefined;
+}) {
+  return (
+    input.requiredApprovalCapabilities?.includes("external.confirm") === true ||
+    needsPerCallApproval(input)
+  );
 }
 
 async function maybeRequireManagedWorktreeApproval(input: {

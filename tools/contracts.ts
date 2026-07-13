@@ -165,6 +165,7 @@ export interface SharedToolContext {
     toolToken?: string | undefined;
     tenantId?: string | undefined;
     contextGrantId?: string | undefined;
+    executionTicket?: string | undefined;
   } | undefined;
 }
 

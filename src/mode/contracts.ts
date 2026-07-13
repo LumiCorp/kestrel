@@ -11,7 +11,8 @@ export type ApprovalCapabilityClass =
   | "network.call"
   | "code.execute"
   | "mcp.invoke"
-  | "delegation.control";
+  | "delegation.control"
+  | "external.confirm";
 
 export interface ExecutionPolicyOverride {
   toolClassPolicy?: Partial<Record<ToolExecutionClass, boolean>> | undefined;
@@ -45,6 +46,7 @@ export const APPROVAL_CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
   "code.execute",
   "mcp.invoke",
   "delegation.control",
+  "external.confirm",
 ];
 
 export function isInteractionMode(value: unknown): value is InteractionMode {

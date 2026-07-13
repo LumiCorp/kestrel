@@ -27,6 +27,36 @@ const REQUIRED_TOOL: ModelToolSpec = {
   },
 };
 
+const OPTIONAL_TOOL: ModelToolSpec = {
+  name: "weather.current",
+  description: "Read current weather.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      city: { type: "string" },
+      latitude: { type: "number" },
+    },
+  },
+};
+
+const UNION_TOOL: ModelToolSpec = {
+  name: "exec_command",
+  description: "Run or continue one command.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      command: { type: "string" },
+      sessionId: { type: "string" },
+    },
+    oneOf: [
+      { required: ["command"] },
+      { required: ["sessionId"] },
+    ],
+  },
+};
+
 test("createOpenRouterModelGatewayFromEnv validates required OPENROUTER_API_KEY", () => {
   assert.throws(
     () =>
@@ -462,6 +492,52 @@ test("createOpenAiModelGatewayFromEnv preserves required tool choice", async () 
   assert.equal(requests[0]?.body.tool_choice, "required");
   assert.equal(requests[0]?.body.parallel_tool_calls, false);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
+  const mappedTools = requests[0]?.body.tools as
+    | Array<{ function?: { strict?: boolean } }>
+    | undefined;
+  assert.equal(mappedTools?.[0]?.function?.strict, true);
+});
+
+test("createOpenAiModelGatewayFromEnv does not claim strict mode for optional tool schemas", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const gateway = createOpenAiModelGatewayFromEnv({
+    env: {
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5-mini",
+    },
+    fetchImpl: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      return new Response(
+        JSON.stringify({
+          model: "gpt-5-mini",
+          choices: [{ message: { content: "done" } }],
+        }),
+        { status: 200 }
+      );
+    },
+    retryCount: 0,
+  });
+
+  await gateway.call({
+    input: "hello",
+    tools: [OPTIONAL_TOOL, UNION_TOOL],
+  });
+
+  const tools = requestBody?.tools as
+    | Array<{
+        function?: {
+          parameters?: Record<string, unknown>;
+          strict?: boolean;
+        };
+      }>
+    | undefined;
+  assert.equal(tools?.[0]?.function?.strict, undefined);
+  assert.equal(tools?.[1]?.function?.strict, undefined);
+  assert.equal(tools?.[1]?.function?.parameters?.type, "object");
+  assert.equal(tools?.[1]?.function?.parameters?.oneOf, undefined);
 });
 
 test("createAnthropicModelGatewayFromEnv validates required ANTHROPIC_API_KEY", () => {

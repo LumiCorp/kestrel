@@ -27,6 +27,9 @@ import type {
   WorkspaceCheckpointDiffCommandPayload,
   WorkspaceCheckpointInspectCommandPayload,
   WorkspaceCheckpointListCommandPayload,
+  WorkspacePromotionApplyCommandPayload,
+  WorkspacePromotionListCommandPayload,
+  WorkspacePromotionPreviewCommandPayload,
   WorkspacePromotionUndoLatestCommandPayload,
   WorkspaceCheckpointRestoreCommandPayload,
 } from "../protocol/contracts.js";
@@ -220,6 +223,38 @@ export class CommandRouter {
       if (command.type === "workspace.promotion.undo_latest") {
         const payload = validateWorkspacePromotionUndoLatestPayload(command.payload);
         await this.host.workspacePromotionUndoLatest(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "workspace.promotion.list") {
+        const payload = validateWorkspacePromotionListPayload(command.payload);
+        await this.host.workspacePromotionList(
+          command.id,
+          payload,
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "workspace.promotion.preview") {
+        const payload = validateWorkspacePromotionPreviewPayload(
+          command.payload
+        );
+        await this.host.workspacePromotionPreview(
+          command.id,
+          payload,
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "workspace.promotion.apply") {
+        const payload = validateWorkspacePromotionApplyPayload(command.payload);
+        await this.host.workspacePromotionApply(
+          command.id,
+          payload,
+          command.metadata
+        );
         return;
       }
 
@@ -502,6 +537,54 @@ function validateWorkspacePromotionUndoLatestPayload(value: unknown): WorkspaceP
   return {
     sessionId: requireNonEmptyString(record.sessionId, "workspace.promotion.undo_latest payload.sessionId"),
     ...(readOptionalNonEmptyString(record.reason) !== undefined ? { reason: readOptionalNonEmptyString(record.reason) } : {}),
+  };
+}
+
+function validateWorkspacePromotionListPayload(
+  value: unknown
+): WorkspacePromotionListCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.promotion.list");
+  return {
+    sessionId: requireNonEmptyString(
+      record.sessionId,
+      "workspace.promotion.list payload.sessionId"
+    ),
+  };
+}
+
+function validateWorkspacePromotionPreviewPayload(
+  value: unknown
+): WorkspacePromotionPreviewCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.promotion.preview");
+  return {
+    sessionId: requireNonEmptyString(
+      record.sessionId,
+      "workspace.promotion.preview payload.sessionId"
+    ),
+    promotionId: requireNonEmptyString(
+      record.promotionId,
+      "workspace.promotion.preview payload.promotionId"
+    ),
+  };
+}
+
+function validateWorkspacePromotionApplyPayload(
+  value: unknown
+): WorkspacePromotionApplyCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.promotion.apply");
+  return {
+    sessionId: requireNonEmptyString(
+      record.sessionId,
+      "workspace.promotion.apply payload.sessionId"
+    ),
+    promotionId: requireNonEmptyString(
+      record.promotionId,
+      "workspace.promotion.apply payload.promotionId"
+    ),
+    candidateFingerprint: requireNonEmptyString(
+      record.candidateFingerprint,
+      "workspace.promotion.apply payload.candidateFingerprint"
+    ),
   };
 }
 

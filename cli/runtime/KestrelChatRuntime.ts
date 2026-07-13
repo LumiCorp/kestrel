@@ -63,7 +63,10 @@ import type {
   TuiProfile,
 } from "../contracts.js";
 import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
-import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelGateway,
+  ModelRequest,
+} from "../../src/kestrel/contracts/model-io.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 
 import type { SharedToolContext } from "../../tools/index.js";
@@ -91,6 +94,8 @@ import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/workspaceCheckpoints/contracts.js";
 export type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
@@ -118,6 +123,7 @@ interface RuntimeBootstrap {
   taskGraphStore?: ProductTaskGraphStore | undefined;
   projectStore?: ProductProjectStateStore | undefined;
   workspaceCheckpointService?: WorkspaceCheckpointService | undefined;
+  managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   close: () => Promise<void>;
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
@@ -225,6 +231,12 @@ export class KestrelChatRuntime {
             resolver: new WorkspaceContextResolver({
               getProjectSnapshot: (input) => this.getProjectSnapshot(input),
             }),
+            ...(bootstrap.managedTaskWorktreeService !== undefined
+              ? {
+                  managedWorktreeService:
+                    bootstrap.managedTaskWorktreeService,
+                }
+              : {}),
           })
         : undefined;
     this.entryStepAgent = bootstrap.entryStepAgent;
@@ -567,6 +579,34 @@ export class KestrelChatRuntime {
     reason?: string | undefined;
   }): Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }> {
     return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).restoreLatestPromotion(input);
+  }
+
+  async listWorkspacePromotions(input: {
+    sessionId: string;
+  }): Promise<{ sessionId: string; promotions: WorkspacePromotionRecord[] }> {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).listPromotions(input);
+  }
+
+  async previewWorkspacePromotion(input: {
+    sessionId: string;
+    promotionId: string;
+  }): Promise<{ sessionId: string; preview: WorkspacePromotionPreview }> {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).previewPromotion(input);
+  }
+
+  async applyWorkspacePromotion(input: {
+    sessionId: string;
+    promotionId: string;
+    candidateFingerprint: string;
+    appliedBy?: string | undefined;
+  }) {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).applyPromotion(input);
   }
 
   async getProjectReviewDetail(input: { sessionId: string; target: ProductReviewTarget }): Promise<{ sessionId: string; detail: ProductReviewDetail }> {
@@ -1024,6 +1064,9 @@ function createDefaultRuntime(
     taskGraphStore,
     projectStore,
     workspaceCheckpointService,
+    ...(managedTaskWorktreeService !== undefined
+      ? { managedTaskWorktreeService }
+      : {}),
     entryStepAgent: registration.entryStepAgent,
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
@@ -1059,15 +1102,30 @@ export function createModelGatewayForProfile(
       ? { envConfig: { model: profile.model } }
       : {}),
   };
-  return provider === "openai"
-    ? createOpenAiModelGatewayFromEnv(gatewayOptions)
-    : provider === "anthropic"
-      ? createAnthropicModelGatewayFromEnv(gatewayOptions)
-      : provider === "ollama"
-        ? createOllamaModelGatewayFromEnv(gatewayOptions)
-        : provider === "lmstudio"
-          ? createLmStudioModelGatewayFromEnv(gatewayOptions)
-          : createOpenRouterModelGatewayFromEnv(gatewayOptions);
+  return createLazyModelGateway(() =>
+    provider === "openai"
+      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
+      : provider === "anthropic"
+        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
+        : provider === "ollama"
+          ? createOllamaModelGatewayFromEnv(gatewayOptions)
+          : provider === "lmstudio"
+            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
+            : createOpenRouterModelGatewayFromEnv(gatewayOptions)
+  );
+}
+
+function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
+  let delegate: ModelGateway | undefined;
+  return {
+    async call<T>(
+      request: ModelRequest,
+      options?: { signal?: AbortSignal | undefined }
+    ): Promise<T> {
+      delegate ??= factory();
+      return await delegate.call<T>(request, options);
+    },
+  };
 }
 
 export function resolveDevShellServiceForProfile(

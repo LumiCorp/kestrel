@@ -29,6 +29,7 @@ import { buildFilesystemInspectionActionKey } from "../../agents/reference-react
 import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultDuplicates.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
 
 function buildExecConfig() {
   return {
@@ -870,6 +871,134 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(lastCheckpoint.substate, "dispatch");
   assert.equal(lastCheckpoint.currentStepAgent, "agent.exec.wait_approval");
   assert.equal(workingPlan.status, "dispatching");
+});
+
+test("GitHub external confirmation resumes only the exact approved mutation", async () => {
+  const definition = kestrelOneGitHubIssueCreateTool.definition;
+  const toolInput = {
+    repository: "acme/support",
+    title: "Escalate the customer incident",
+    body: "Created by the Kestrel agent after explicit approval.",
+  };
+  const config = {
+    ...buildExecConfig(),
+    capabilityManifestProvider: () => [
+      {
+        name: definition.name,
+        freshnessClass: definition.capability.freshnessClass,
+        capabilityClasses: [...definition.capability.capabilityClasses],
+        approvalCapabilities: [
+          ...(definition.capability.approvalCapabilities ?? []),
+        ],
+        executionClass: definition.capability.executionClass,
+      },
+    ],
+  };
+  const dispatchStep = createExecDispatchStep(config);
+  const waitApprovalStep = createExecWaitApprovalStep(config);
+  const modePayload = {
+    modeSystemV2Enabled: true,
+    interactionMode: "build",
+    actSubmode: "full_auto",
+  };
+  let inlineToolCalls = 0;
+
+  const approvalWait = await dispatchStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: {
+          agent: {
+            nextAction: {
+              kind: "tool",
+              name: definition.name,
+              input: toolInput,
+            },
+          },
+        },
+      },
+      event: {
+        ...buildContext().event,
+        payload: modePayload,
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async () => {
+        inlineToolCalls += 1;
+        throw new Error("GitHub mutation must not run before approval");
+      },
+    }
+  );
+
+  assert.equal(approvalWait.status, "WAITING");
+  assert.equal(approvalWait.waitFor?.eventType, "user.approval");
+  assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
+  assert.deepEqual(approvalWait.waitFor?.metadata?.toolInput, toolInput);
+  assert.equal(inlineToolCalls, 0);
+  const waitingAgent = approvalWait.statePatch?.agent as Record<
+    string,
+    unknown
+  >;
+  const waitingExec = waitingAgent.exec as Record<string, unknown>;
+  const pendingApproval = waitingExec.pendingApproval as Record<
+    string,
+    unknown
+  >;
+  assert.equal(pendingApproval.toolName, definition.name);
+  assert.equal(
+    pendingApproval.approvalId,
+    approvalWait.waitFor?.metadata?.approvalId
+  );
+
+  const resumed = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: waitingAgent },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-approval",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          message: "approve",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async () => {
+        inlineToolCalls += 1;
+        throw new Error("durable GitHub mutation must not run inline");
+      },
+    }
+  );
+
+  assert.equal(resumed.status, "RUNNING");
+  assert.equal(resumed.nextStepAgent, "agent.exec.wait_effect");
+  assert.equal(resumed.effects?.length, 1);
+  assert.equal(resumed.effects?.[0]?.type, "execute_tool_call");
+  assert.deepEqual(resumed.effects?.[0]?.payload, {
+    toolName: definition.name,
+    toolInput,
+  });
+  const resumedAgent = resumed.statePatch?.agent as Record<string, unknown>;
+  const resumedExec = resumedAgent.exec as Record<string, unknown>;
+  assert.equal(resumedExec.pendingApproval, undefined);
+  assert.deepEqual(resumedExec.pendingToolCall, {
+    name: definition.name,
+    input: toolInput,
+    idempotencyKey: resumed.effects?.[0]?.idempotencyKey,
+  });
+  assert.equal(inlineToolCalls, 0);
 });
 
 test("exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {

@@ -57,6 +57,15 @@ import { internetSearchTool } from "./internet/search.js";
 import { internetSearchAdvancedTool } from "./internet/searchAdvanced.js";
 import { internetUsageTool } from "./internet/usage.js";
 import { kestrelOneSearchKnowledgeDocumentsTool } from "./kestrelOne/searchKnowledgeDocuments.js";
+import {
+  kestrelOneGitHubIssueCreateTool,
+  kestrelOneGitHubPullRequestCreateTool,
+  kestrelOneGitHubPullRequestMergeTool,
+  kestrelOneGitHubReleaseCreateTool,
+  kestrelOneGitHubRepositoryReadTool,
+  kestrelOneGitHubWorkflowDispatchTool,
+} from "./kestrelOne/githubActions.js";
+import { kestrelOneGitHubPushAgentBranchTool } from "./kestrelOne/githubPushAgentBranch.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -104,6 +113,13 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   delegateGetChildResultTool,
   projectTaskProposeTool,
   kestrelOneSearchKnowledgeDocumentsTool,
+  kestrelOneGitHubRepositoryReadTool,
+  kestrelOneGitHubPushAgentBranchTool,
+  kestrelOneGitHubIssueCreateTool,
+  kestrelOneGitHubPullRequestCreateTool,
+  kestrelOneGitHubPullRequestMergeTool,
+  kestrelOneGitHubReleaseCreateTool,
+  kestrelOneGitHubWorkflowDispatchTool,
 ];
 
 export const BALANCED_STARTER_TOOL_NAMES = [
