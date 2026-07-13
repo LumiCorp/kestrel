@@ -1,0 +1,74 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const migration = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "migrations/0014_hosted_environments.sql"
+  ),
+  "utf8"
+);
+
+test("Environment migration establishes the hosted ownership graph", () => {
+  for (const table of [
+    "environments",
+    "environment_workspaces",
+    "project_environment_bindings",
+    "thread_execution_bindings",
+    "environment_run_executions",
+    "environment_operations",
+    "environment_applications",
+    "workspace_backups",
+    "tool_connection_resources",
+    "environment_capability_grants",
+    "project_capability_restrictions",
+    "environment_capability_subject_restrictions",
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE "${table}"`, "u"));
+  }
+});
+
+test("Environment migration pins isolation and lazy Workspace invariants", () => {
+  assert.match(migration, /environments_org_default_idx/u);
+  assert.match(migration, /environment_workspaces_owner_check/u);
+  assert.match(migration, /environment_workspaces_source_check/u);
+  assert.match(migration, /environment_workspaces_project_idx/u);
+  assert.match(migration, /environment_workspaces_thread_idx/u);
+  assert.match(migration, /thread_execution_bindings[\s\S]*thread_id/u);
+  assert.match(migration, /environment_run_executions[\s\S]*runtime_image/u);
+  assert.match(
+    migration,
+    /environment_run_executions[\s\S]*effective_capabilities/u
+  );
+});
+
+test("Environment migration makes provider operations and grants auditable", () => {
+  assert.match(migration, /environment_operations_idempotency_idx/u);
+  assert.match(migration, /provider_request_id/u);
+  assert.match(migration, /environment_capability_grants_capability_fk/u);
+  assert.match(migration, /tool_connection_resources_installation_idx/u);
+  assert.match(migration, /project_capability_restrictions_capability_fk/u);
+  assert.match(migration, /environment_capability_subject_capability_fk/u);
+  assert.match(migration, /workspace_backups_expiry_idx/u);
+  for (const capability of [
+    "repository.read",
+    "repository.push_agent_branch",
+    "pull_request.write",
+    "issue.write",
+    "merge.write",
+    "release.write",
+    "workflow.dispatch",
+  ]) {
+    assert.match(migration, new RegExp(`'github', '${capability}'`, "u"));
+  }
+});
+
+test("registered applications remain private and sandbox-port bounded", () => {
+  assert.match(migration, /environment_applications_audience_check/u);
+  assert.match(migration, /"audience" = 'workspace'/u);
+  assert.match(migration, /environment_applications_port_check/u);
+  assert.match(migration, /BETWEEN 1024 AND 65535/u);
+});
