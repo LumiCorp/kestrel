@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -23,8 +22,18 @@ export class GitHubPolicyError extends Error {
   }
 }
 
+type GitHubPolicyIdentity = {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  threadId: string;
+  runId: string;
+  actorId: string;
+  agentId: string;
+};
+
 export async function authorizeGitHubCapability(input: {
-  ticket: EnvironmentExecutionTicket;
+  ticket: GitHubPolicyIdentity;
   repository: string;
   capability: GitHubCapability;
   requireRunExecution?: boolean | undefined;

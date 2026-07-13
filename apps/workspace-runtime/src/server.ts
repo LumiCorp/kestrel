@@ -20,6 +20,7 @@ import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
+import { requestGitHubToolCredential } from "./github-credentials.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
@@ -496,6 +497,12 @@ async function initializeGitHubSource(authorization: string) {
     config.controlPlaneUrl
   );
   try {
+    const credential = await requestGitHubToolCredential({
+      controlPlaneUrl: config.controlPlaneUrl,
+      executionAuthorization: authorization,
+      resourceId: config.sourceResourceId,
+      operation: "git.upload_pack",
+    });
     await runProcess(
       "git",
       [
@@ -511,7 +518,7 @@ async function initializeGitHubSource(authorization: string) {
       {
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "http.extraHeader",
-        GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
+        GIT_CONFIG_VALUE_0: `Authorization: ${credential.authorization}`,
         GIT_TERMINAL_PROMPT: "0",
       }
     );
@@ -620,12 +627,19 @@ async function pushManagedCandidateBranch(input: {
     const bundleStream = Readable.toWeb(
       createReadStream(bundlePath)
     ) as ReadableStream<Uint8Array>;
+    const credential = await requestGitHubToolCredential({
+      controlPlaneUrl: config.controlPlaneUrl,
+      executionAuthorization: input.authorization,
+      resourceId: config.sourceResourceId,
+      operation: "repository.push_agent_branch",
+      candidateFingerprint: input.candidateFingerprint,
+    });
     const pushResponse = await fetch(
       new URL("/api/runtime/github/push", config.controlPlaneUrl),
       {
         method: "POST",
         headers: {
-          authorization: input.authorization,
+          authorization: credential.authorization,
           "content-type": "application/x-git-bundle",
           "x-kestrel-resource-id": config.sourceResourceId,
           "x-kestrel-candidate-fingerprint": input.candidateFingerprint,

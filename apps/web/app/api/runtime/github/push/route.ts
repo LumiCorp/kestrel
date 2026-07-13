@@ -5,8 +5,8 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
-  type EnvironmentExecutionTicket,
-  verifyEnvironmentExecutionTicket,
+  type EnvironmentToolCredentialTicket,
+  verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -21,6 +21,10 @@ import {
   authorizeGitHubCapability,
   GitHubPolicyError,
 } from "@/lib/integrations/github-policy";
+import {
+  githubToolCredentialMatchesRequest,
+  githubToolCredentialRequestSchema,
+} from "@/lib/integrations/github-tool-credential-contract";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -32,10 +36,10 @@ const headersSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  let ticket: EnvironmentExecutionTicket | null = null;
+  let ticket: EnvironmentToolCredentialTicket | null = null;
   let temporaryRoot: string | null = null;
   try {
-    const verifiedTicket = verifyEnvironmentExecutionTicket({
+    const verifiedTicket = verifyEnvironmentToolCredential({
       token: readBearer(request.headers.get("authorization")),
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
@@ -52,6 +56,19 @@ export async function POST(request: Request) {
         "x-kestrel-candidate-fingerprint"
       ),
     });
+    const credentialRequest = githubToolCredentialRequestSchema.parse({
+      operation: "repository.push_agent_branch",
+      resourceId: input.resourceId,
+      candidateFingerprint: input.candidateFingerprint,
+    });
+    if (
+      !githubToolCredentialMatchesRequest({
+        ticket: verifiedTicket,
+        request: credentialRequest,
+      })
+    ) {
+      throw new GitHubPolicyError("GITHUB_CREDENTIAL_SCOPE_DENIED");
+    }
     const resource = await knowledgeDb.query.toolConnectionResources.findFirst({
       where: (table, { and, eq }) =>
         and(
@@ -206,6 +223,8 @@ function runGit(
 
 function readBearer(value: string | null) {
   const match = value?.match(/^Bearer ([^\s]+)$/u);
-  if (!match?.[1]) throw new Error("Environment execution ticket is required.");
+  if (!match?.[1]) {
+    throw new Error("A scoped GitHub credential is required.");
+  }
   return match[1];
 }

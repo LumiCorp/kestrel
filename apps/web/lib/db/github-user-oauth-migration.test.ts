@@ -18,6 +18,7 @@ test("GitHub OAuth migration assigns connections to users and auth accounts", ()
   assert.match(migration, /"auth_account_id" text NOT NULL/u);
   assert.match(migration, /user_tool_connections_org_provider_user_idx/u);
   assert.match(migration, /REFERENCES "account"\("id"\)/u);
+  assert.doesNotMatch(migration, /(?:access|refresh)[_-]?token/iu);
 });
 
 test("GitHub OAuth migration records actor-specific repository access", () => {
