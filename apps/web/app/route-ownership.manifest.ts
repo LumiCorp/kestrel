@@ -435,8 +435,8 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
-    "app/api/runtime/github/token/route.ts",
-    "/api/runtime/github/token",
+    "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
+    "/api/runtime/github/git/[resourceId]/[...gitPath]",
     "credential-boundary",
     "service-boundary",
     "service-bearer"
@@ -507,20 +507,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
     "/api/admin/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/integrations/github/install/route.ts",
-    "/api/admin/integrations/github/install",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/integrations/github/callback/route.ts",
-    "/api/admin/integrations/github/callback",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized

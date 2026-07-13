@@ -32,11 +32,12 @@ export async function authorizeGitHubCapability(input: {
   const { ticket } = input;
   const [connection, environment, workspace, thread, resource] =
     await Promise.all([
-      knowledgeDb.query.organizationToolConnections.findFirst({
+      knowledgeDb.query.userToolConnections.findFirst({
         where: (table, { and, eq }) =>
           and(
             eq(table.organizationId, ticket.organizationId),
             eq(table.providerKey, "github"),
+            eq(table.userId, ticket.actorId),
             eq(table.status, "connected")
           ),
       }),
@@ -55,7 +56,7 @@ export async function authorizeGitHubCapability(input: {
             eq(table.environmentId, ticket.environmentId),
             eq(table.organizationId, ticket.organizationId)
           ),
-        columns: { id: true },
+        columns: { id: true, sourceResourceId: true },
       }),
       knowledgeDb.query.threads.findFirst({
         where: (table, { and, eq }) =>
@@ -78,6 +79,25 @@ export async function authorizeGitHubCapability(input: {
     ]);
   if (!(connection && environment && workspace && thread && resource)) {
     throw new GitHubPolicyError("GITHUB_CONTEXT_DENIED");
+  }
+  if (workspace.sourceResourceId !== resource.id) {
+    throw new GitHubPolicyError("GITHUB_PROJECT_RESOURCE_DENIED");
+  }
+  const actorResourceAccess =
+    await knowledgeDb.query.userToolConnectionResources.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.connectionId, connection.id),
+          eq(table.resourceId, resource.id)
+        ),
+    });
+  if (
+    !actorResourceAccess ||
+    (input.capability === "repository.read" && !actorResourceAccess.canPull) ||
+    (input.capability === "repository.push_agent_branch" &&
+      !actorResourceAccess.canPush)
+  ) {
+    throw new GitHubPolicyError("GITHUB_ACTOR_RESOURCE_DENIED");
   }
   const binding = await knowledgeDb.query.threadExecutionBindings.findFirst({
     where: (table, { and, eq }) =>
@@ -107,12 +127,12 @@ export async function authorizeGitHubCapability(input: {
     if (!execution) throw new GitHubPolicyError("GITHUB_RUN_DENIED");
   }
   const grant = await knowledgeDb.query.environmentCapabilityGrants.findFirst({
-    where: (table, { and, eq }) =>
+    where: (table, { and, eq, isNull, or }) =>
       and(
         eq(table.environmentId, ticket.environmentId),
         eq(table.providerKey, "github"),
         eq(table.capabilityKey, input.capability),
-        eq(table.resourceId, resource.id)
+        or(eq(table.resourceId, resource.id), isNull(table.resourceId))
       ),
   });
   if (!grant) throw new GitHubPolicyError("GITHUB_CAPABILITY_DENIED");
@@ -208,23 +228,10 @@ export async function authorizeGitHubCapability(input: {
     throw new GitHubPolicyError("GITHUB_CAPABILITY_DENIED");
   }
   return {
+    connection,
     resource,
-    installationId: readInstallationId(resource.metadata),
     approvalMode,
     loggingMode: grant.loggingMode,
     projectId: thread.projectId,
   };
-}
-
-function readInstallationId(metadata: unknown) {
-  if (
-    typeof metadata !== "object" ||
-    metadata === null ||
-    !("installationId" in metadata) ||
-    typeof metadata.installationId !== "number" ||
-    !Number.isSafeInteger(metadata.installationId)
-  ) {
-    throw new GitHubPolicyError("GITHUB_INSTALLATION_INVALID", 500);
-  }
-  return metadata.installationId;
 }

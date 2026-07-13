@@ -43,6 +43,7 @@ export interface EnvironmentProvisioningRepository {
     flyMachineId: string | null;
     flyVolumeId: string | null;
     sourceType: "blank" | "github";
+    sourceResourceId: string | null;
     sourceRepository: string | null;
     sourceDefaultBranch: string | null;
   } | null>;
@@ -328,6 +329,9 @@ export class EnvironmentProvisioner {
       credentialBrokerToken: this.credentialBrokerToken,
       source: {
         type: workspace.sourceType,
+        ...(workspace.sourceResourceId
+          ? { resourceId: workspace.sourceResourceId }
+          : {}),
         ...(workspace.sourceRepository
           ? { repository: workspace.sourceRepository }
           : {}),
@@ -647,6 +651,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             flyMachineId: true,
             flyVolumeId: true,
             sourceType: true,
+            sourceResourceId: true,
             sourceRepository: true,
             sourceDefaultBranch: true,
           },

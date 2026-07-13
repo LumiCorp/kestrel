@@ -6,7 +6,7 @@ import { Octokit } from "@octokit/rest";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { mintGitHubInstallationToken } from "@/lib/integrations/github-app";
+import { auth } from "@/lib/auth";
 import {
   authorizeGitHubCapability,
   type GitHubCapability,
@@ -82,12 +82,14 @@ export async function POST(request: Request) {
     ) {
       throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
     }
-    const credential = await mintGitHubInstallationToken({
-      installationId: policy.installationId,
-      repository: input.repository,
-      capability,
+    const credential = await auth.api.getAccessToken({
+      body: {
+        providerId: "github",
+        accountId: policy.connection.providerAccountId,
+        userId: ticket.actorId,
+      },
     });
-    const client = new Octokit({ auth: credential.token });
+    const client = new Octokit({ auth: credential.accessToken });
     const [owner, repo] = input.repository.split("/") as [string, string];
     const result = await executeAction(client, { owner, repo, input });
     await logAdminEvent({

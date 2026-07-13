@@ -5,14 +5,12 @@ import {
 } from "@kestrel-agents/sdk/runner";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import {
-  chmod,
   cp,
   mkdir,
   mkdtemp,
   readdir,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
@@ -432,42 +430,15 @@ async function initializeGitHubSource(authorization: string) {
   try {
     if ((await stat(path.join(config.workspaceRoot, ".git"))).isDirectory()) return;
   } catch {}
-  if (!(config.sourceRepository && config.controlPlaneUrl)) {
+  if (!(config.sourceResourceId && config.controlPlaneUrl)) {
     throw new WorkspaceRequestError(500, "WORKSPACE_SOURCE_NOT_CONFIGURED");
-  }
-  const credentialResponse = await fetch(
-    new URL("/api/runtime/github/token", config.controlPlaneUrl),
-    {
-      method: "POST",
-      headers: {
-        authorization,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        repository: config.sourceRepository,
-        capability: "repository.read",
-      }),
-    }
-  );
-  const credential = (await credentialResponse.json()) as {
-    token?: string;
-    error?: { code?: string };
-  };
-  if (!(credentialResponse.ok && credential.token)) {
-    throw new WorkspaceRequestError(
-      credentialResponse.status,
-      credential.error?.code ?? "GITHUB_CREDENTIAL_UNAVAILABLE"
-    );
   }
   const temporaryRoot = await mkdtemp("/tmp/kestrel-source-");
   const cloneRoot = path.join(temporaryRoot, "repository");
-  const askPassPath = path.join(temporaryRoot, "askpass.sh");
-  await writeFile(
-    askPassPath,
-    '#!/bin/sh\ncase "$1" in *Username*) echo x-access-token ;; *) echo "$KESTREL_GITHUB_TOKEN" ;; esac\n',
-    "utf8"
+  const proxyUrl = new URL(
+    `/api/runtime/github/git/${config.sourceResourceId}`,
+    config.controlPlaneUrl
   );
-  await chmod(askPassPath, 0o700);
   try {
     await runProcess(
       "git",
@@ -477,14 +448,15 @@ async function initializeGitHubSource(authorization: string) {
           ? ["--branch", config.sourceDefaultBranch]
           : []),
         "--",
-        `https://github.com/${config.sourceRepository}.git`,
+        proxyUrl.toString(),
         cloneRoot,
       ],
       "/tmp",
       {
-        GIT_ASKPASS: askPassPath,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.extraHeader",
+        GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
         GIT_TERMINAL_PROMPT: "0",
-        KESTREL_GITHUB_TOKEN: credential.token,
       }
     );
     for (const entry of await readdir(cloneRoot)) {
@@ -494,7 +466,6 @@ async function initializeGitHubSource(authorization: string) {
       });
     }
   } finally {
-    delete credential.token;
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
@@ -640,6 +611,8 @@ function readConfig() {
     profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel-one",
     controlPlaneUrl: process.env.KESTREL_CONTROL_PLANE_URL?.trim() ?? "",
     sourceType: process.env.KESTREL_WORKSPACE_SOURCE_TYPE?.trim() ?? "blank",
+    sourceResourceId:
+      process.env.KESTREL_WORKSPACE_SOURCE_RESOURCE_ID?.trim() ?? "",
     sourceRepository:
       process.env.KESTREL_WORKSPACE_SOURCE_REPOSITORY?.trim() ?? "",
     sourceDefaultBranch:

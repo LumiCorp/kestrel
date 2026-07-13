@@ -56,6 +56,7 @@ export type WorkspaceMachineProvisioningInput = {
   credentialBrokerToken: string;
   source: {
     type: "blank" | "github";
+    resourceId?: string | undefined;
     repository?: string | undefined;
     defaultBranch?: string | undefined;
   };

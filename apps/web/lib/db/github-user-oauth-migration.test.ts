@@ -37,5 +37,7 @@ test("Workspace sources reference repository resources, not installations", () =
     migration,
     /DROP INDEX "tool_connection_resources_installation_idx"/u
   );
+  assert.match(migration, /"resource_type" = 'installation'/u);
+  assert.match(migration, /"connectionModel":"user_oauth"/u);
   assert.match(migration, /"source_resource_id" IS NOT NULL/u);
 });

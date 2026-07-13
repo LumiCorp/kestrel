@@ -605,6 +605,9 @@ function workspaceMachineConfig(
       KESTREL_ONE_APP_URL: input.controlPlaneUrl,
       KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: input.credentialBrokerToken,
       KESTREL_WORKSPACE_SOURCE_TYPE: input.source.type,
+      ...(input.source.resourceId
+        ? { KESTREL_WORKSPACE_SOURCE_RESOURCE_ID: input.source.resourceId }
+        : {}),
       ...(input.source.repository
         ? { KESTREL_WORKSPACE_SOURCE_REPOSITORY: input.source.repository }
         : {}),

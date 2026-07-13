@@ -19,6 +19,19 @@ ALTER TABLE "environment_workspaces"
 
 DROP INDEX "tool_connection_resources_installation_idx";
 
+DELETE FROM "tool_connection_resources"
+WHERE "provider_key" = 'github' AND "resource_type" = 'installation';
+
+UPDATE "organization_tool_connections"
+SET
+  "auth_source" = 'oauth',
+  "status" = 'not_configured',
+  "account_id" = NULL,
+  "credential_ref" = NULL,
+  "metadata" = '{"connectionModel":"user_oauth"}'::jsonb,
+  "updated_at" = now()
+WHERE "provider_key" = 'github';
+
 CREATE TABLE "user_tool_connections" (
   "id" text PRIMARY KEY NOT NULL,
   "organization_id" text NOT NULL,

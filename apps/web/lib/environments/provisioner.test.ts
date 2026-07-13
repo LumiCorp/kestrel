@@ -47,6 +47,7 @@ function fixture(type: string, workspaceId: string | null = null) {
             flyMachineId: null,
             flyVolumeId: null,
             sourceType: "blank",
+            sourceResourceId: null,
             sourceRepository: null,
             sourceDefaultBranch: null,
           }
@@ -291,6 +292,7 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
     sourceType: "blank",
+    sourceResourceId: null,
     sourceRepository: null,
     sourceDefaultBranch: null,
   });
@@ -321,6 +323,7 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
     sourceType: "blank",
+    sourceResourceId: null,
     sourceRepository: null,
     sourceDefaultBranch: null,
   });
@@ -350,6 +353,7 @@ test("Workspace deletion removes the Machine before its volume", async () => {
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
     sourceType: "blank",
+    sourceResourceId: null,
     sourceRepository: null,
     sourceDefaultBranch: null,
   });

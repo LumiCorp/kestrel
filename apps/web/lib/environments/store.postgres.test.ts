@@ -53,6 +53,8 @@ test(
     const scratchThreadId = `thread-scratch-${suffix}`;
     const revisionId = `revision-${suffix}`;
     const repositoryResourceId = crypto.randomUUID();
+    const githubAccountId = `github-account-${suffix}`;
+    const githubConnectionId = crypto.randomUUID();
     const environmentGrantId = crypto.randomUUID();
     const projectRestrictionId = crypto.randomUUID();
     const actorRestrictionId = crypto.randomUUID();
@@ -252,8 +254,8 @@ test(
         "organization_id", "provider_key", "auth_source", "status",
         "account_id", "metadata"
       ) VALUES (
-        ${organizationA}, 'github', 'github_app', 'connected', 'installation-42',
-        ${sql.json({ installationId: 42 })}
+        ${organizationA}, 'github', 'oauth', 'connected', NULL,
+        ${sql.json({ connectionModel: "user_oauth" })}
       )
     `;
     await sql`
@@ -263,8 +265,44 @@ test(
       ) VALUES (
         ${repositoryResourceId}, ${organizationA}, 'github',
         'repository:acme/support', 'repository', 'acme/support',
-        ${sql.json({ installationId: 42 })}
+        ${sql.json({ defaultBranch: "main", private: true })}
       )
+    `;
+    await sql`
+      INSERT INTO "account" (
+        "id", "accountId", "providerId", "userId", "scope",
+        "createdAt", "updatedAt"
+      ) VALUES (
+        ${githubAccountId}, 'github-user-42', 'github', ${userA}, 'repo',
+        ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "user_tool_connections" (
+        "id", "organization_id", "provider_key", "user_id",
+        "auth_account_id", "status", "provider_account_id", "provider_login",
+        "scopes"
+      ) VALUES (
+        ${githubConnectionId}, ${organizationA}, 'github', ${userA},
+        ${githubAccountId}, 'connected', 'github-user-42', 'environment-user-a',
+        ${sql.json(["repo"])}
+      )
+    `;
+    await sql`
+      INSERT INTO "user_tool_connection_resources" (
+        "connection_id", "resource_id", "can_pull", "can_push", "can_admin"
+      ) VALUES (
+        ${githubConnectionId}, ${repositoryResourceId}, true, true, false
+      )
+    `;
+    await sql`
+      UPDATE "environment_workspaces"
+      SET
+        "source_type" = 'github',
+        "source_resource_id" = ${repositoryResourceId},
+        "source_repository" = 'acme/support',
+        "source_default_branch" = 'main'
+      WHERE "id" = ${projectBinding.workspace.id}
     `;
     await sql`
       INSERT INTO "environment_capability_grants" (
@@ -311,7 +349,7 @@ test(
     const authorization =
       await githubPolicy.authorizeGitHubCapability(authorizationInput);
     assert.equal(authorization.resource.id, repositoryResourceId);
-    assert.equal(authorization.installationId, 42);
+    assert.equal(authorization.connection.id, githubConnectionId);
     assert.equal(authorization.approvalMode, "ask");
 
     const assertGitHubDenied = async (code: string) => {
@@ -355,15 +393,15 @@ test(
       WHERE "id" = ${projectRestrictionId}
     `;
     await sql`
-      UPDATE "organization_tool_connections"
+      UPDATE "user_tool_connections"
       SET "status" = 'disconnected'
-      WHERE "organization_id" = ${organizationA} AND "provider_key" = 'github'
+      WHERE "id" = ${githubConnectionId}
     `;
     await assertGitHubDenied("GITHUB_CONTEXT_DENIED");
     await sql`
-      UPDATE "organization_tool_connections"
+      UPDATE "user_tool_connections"
       SET "status" = 'connected'
-      WHERE "organization_id" = ${organizationA} AND "provider_key" = 'github'
+      WHERE "id" = ${githubConnectionId}
     `;
     await sql`
       DELETE FROM "environment_capability_grants"
