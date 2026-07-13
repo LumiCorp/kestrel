@@ -58,10 +58,15 @@ export async function inspectHostedEnvironmentSchemaReadiness(input: {
 }): Promise<HostedEnvironmentSchemaReadiness> {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
+    const requiredRelations = REQUIRED_HOSTED_ENVIRONMENT_RELATIONS.map(
+      (relation) => [relation] as const
+    );
     const rows = await sql<Array<{ relation: string }>>`
+      WITH required("relation") AS (
+        VALUES ${sql(requiredRelations)}
+      )
       SELECT required."relation"
-      FROM unnest(${sql.array([...REQUIRED_HOSTED_ENVIRONMENT_RELATIONS])}::text[])
-        AS required("relation")
+      FROM required
       WHERE to_regclass(format('public.%I', required."relation")) IS NULL
       ORDER BY required."relation"
     `;

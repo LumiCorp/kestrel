@@ -28,6 +28,11 @@ Environment provisioning, GitHub OAuth proof, and execution cutover.
 - The production project still has `KESTREL_RUNNER_SERVICE_URL` and
   `KESTREL_RUNNER_SERVICE_TOKEN` and does not yet have the complete Environment
   or GitHub OAuth configuration.
+- A read-only production schema probe on 2026-07-13 confirmed that none of the
+  required `environments`, `environment_workspaces`,
+  `organization_feature_flags`, `user_tool_connections`,
+  `user_tool_connection_resources`, or `github_action_approvals` relations
+  exist yet. Migrations `0014` through `0017` remain one unapplied set.
 - `apps/web` runs database migrations as the first part of `pnpm build`.
   Therefore, authorizing a production deployment also authorizes every pending
   migration unless migrations are applied explicitly first.
