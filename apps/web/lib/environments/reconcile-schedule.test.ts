@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   ENVIRONMENT_RECONCILE_CRON,
   runScheduledEnvironmentReconciliation,
@@ -7,6 +10,24 @@ import {
 
 test("hosted Environment reconciliation runs every minute", () => {
   assert.equal(ENVIRONMENT_RECONCILE_CRON, "* * * * *");
+});
+
+test("Vercel invokes the authenticated Environment reconciliation route every minute", () => {
+  const config = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../vercel.json"
+      ),
+      "utf8"
+    )
+  ) as { crons?: Array<{ path?: string; schedule?: string }> };
+  assert.deepEqual(config.crons, [
+    {
+      path: "/api/cron/environments/reconcile",
+      schedule: ENVIRONMENT_RECONCILE_CRON,
+    },
+  ]);
 });
 
 test("scheduled Environment reconciliation uses the shared advisory lock", async () => {
