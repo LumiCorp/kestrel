@@ -47,6 +47,14 @@ test("Kestrel-One route ownership manifest classifies every page and API route",
   assert.equal(new Set(manifestFiles).size, manifestFiles.length);
 });
 
+test("Kestrel-One route ownership manifest assigns one owner per route", () => {
+  const routeOwners = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
+    (entry) => `${entry.kind}:${entry.route}`
+  );
+
+  assert.equal(new Set(routeOwners).size, routeOwners.length);
+});
+
 test("Kestrel-One primary navigation routes require an authenticated shell", () => {
   assert.deepEqual(
     PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),

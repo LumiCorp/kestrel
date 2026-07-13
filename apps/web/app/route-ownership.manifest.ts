@@ -165,13 +165,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
 
   page(
-    "app/(workspace)/page.tsx",
-    "/",
-    "threads",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-  page(
     "app/(workspace)/threads/page.tsx",
     "/threads",
     "threads",
