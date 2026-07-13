@@ -2,8 +2,7 @@ import {
   authorizeEnvironmentReconcileCron,
   EnvironmentReconcileCronError,
 } from "@/lib/environments/cron-contract";
-import { reconcileHostedEnvironments } from "@/lib/environments/reconcile";
-import { withEnvironmentReconcileLock } from "@/lib/environments/reconcile-lock";
+import { runScheduledEnvironmentReconciliation } from "@/lib/environments/reconcile-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -19,9 +18,7 @@ export async function GET(request: Request) {
       authorization: request.headers.get("authorization"),
       expectedSecret: process.env.CRON_SECRET,
     });
-    const reconciliation = await withEnvironmentReconcileLock({
-      run: reconcileHostedEnvironments,
-    });
+    const reconciliation = await runScheduledEnvironmentReconciliation();
     return Response.json(
       reconciliation.acquired
         ? { ok: true, acquired: true, result: reconciliation.result }
