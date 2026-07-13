@@ -80,12 +80,16 @@ const snapshotResponseSchema = z.object({
   }),
 });
 
+const MACHINE_START_RETRY_INTERVAL_MS = 1000;
+const MACHINE_START_RETRY_ATTEMPTS = 10;
+
 export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   private readonly token: string;
   private readonly organizationSlug: string;
   private readonly apiBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly healthPollIntervalMs: number;
+  private readonly sleepImpl: (milliseconds: number) => Promise<void>;
 
   constructor(input: {
     token: string;
@@ -93,6 +97,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     apiBaseUrl?: string | undefined;
     fetchImpl?: typeof fetch | undefined;
     healthPollIntervalMs?: number | undefined;
+    sleepImpl?: ((milliseconds: number) => Promise<void>) | undefined;
   }) {
     this.token = requireConfigured(input.token, "Fly API token");
     this.organizationSlug = requireConfigured(
@@ -105,6 +110,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     this.fetchImpl = input.fetchImpl ?? fetch;
     this.healthPollIntervalMs = input.healthPollIntervalMs ?? 1000;
+    this.sleepImpl = input.sleepImpl ?? sleep;
   }
 
   async ensureEnvironmentApp(input: {
@@ -435,10 +441,53 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 
   async startMachine(input: { appName: string; machineId: string }) {
-    await this.request(
-      `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/start`,
-      { method: "POST" }
-    );
+    const startPath =
+      `/apps/${encodeURIComponent(input.appName)}/machines/` +
+      `${encodeURIComponent(input.machineId)}/start`;
+    let retriesRemaining = MACHINE_START_RETRY_ATTEMPTS;
+    while (true) {
+      try {
+        await this.request(startPath, { method: "POST" });
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof EnvironmentProviderError) ||
+          error.status !== 412
+        ) {
+          throw error;
+        }
+        const machine = await this.getMachine(input);
+        if (
+          machine?.state === "started" ||
+          machine?.state === "starting" ||
+          machine?.state === "restarting"
+        ) {
+          return;
+        }
+        if (machine?.state === "stopping") {
+          await this.waitForMachine({
+            ...input,
+            state: "stopped",
+            timeoutSeconds: 60,
+          });
+        } else if (machine?.state !== "stopped") {
+          throw new EnvironmentProviderError(
+            "FLY_PROVIDER_REJECTED",
+            `Fly Machine start was rejected while the authoritative Machine state was ${machine?.state ?? "unavailable"}.`,
+            412
+          );
+        }
+        if (retriesRemaining === 0) {
+          throw new EnvironmentProviderError(
+            "FLY_PROVIDER_REJECTED",
+            "Fly Machine remained stopped after 10 bounded start retries.",
+            412
+          );
+        }
+        retriesRemaining -= 1;
+        await this.sleepImpl(MACHINE_START_RETRY_INTERVAL_MS);
+      }
+    }
   }
 
   async stopMachine(input: { appName: string; machineId: string }) {
@@ -665,6 +714,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     }
     return response.json().catch(() => ({}));
   }
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function flyEnvironmentAppName(environmentId: string): string {
