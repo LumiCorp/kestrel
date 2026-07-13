@@ -194,6 +194,24 @@ Environment, or active Environment execution. Inspect the candidate, then use
 
 Prove all of the following before declaring the cutover complete:
 
+Run the deterministic authenticated Workspace canary against a designated
+Thread and a port reserved for its supervised application:
+
+```sh
+KESTREL_ONE_CANARY_URL=<canonical-origin> \
+KESTREL_ONE_CANARY_COOKIE=<authenticated-cookie> \
+KESTREL_ONE_CANARY_THREAD_ID=<workspace-backed-thread-id> \
+KESTREL_ONE_CANARY_APP_PORT=<unused-workspace-port> \
+pnpm --filter @kestrel/kestrel-one canary:environment:workspace
+```
+
+The canary must retain the Thread, Environment, and Workspace identities while
+proving activation, live tree and optimistic file editing, stale-write
+rejection, audited terminal and PTY traffic, and supervised private application
+start, proxy, and stop. It removes its temporary file and leaves its reusable
+canary application stopped. It does not claim sleep persistence, candidate
+promotion, or GitHub push; those remain deliberate proofs below.
+
 - a Project Thread and a standalone Thread retain their existing identities;
 - each resolves through the enabled organization's default Environment;
 - the first run lazily provisions the correct persistent Workspace;
