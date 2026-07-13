@@ -7,6 +7,7 @@ export interface McpToolPresentationMetadata {
   provider: string;
   toolFamily: string;
   capabilityClasses: string[];
+  approvalMode?: "auto" | "ask" | undefined;
 }
 
 export interface McpServerCommonConfig {
@@ -46,6 +47,8 @@ export interface McpDiscoveredTool {
   inputSchema: Record<string, unknown>;
   presentation?: McpToolPresentationMetadata | undefined;
   allowlisted?: boolean | undefined;
+  protocolKind?: "tool" | "resource" | "resource_template" | "prompt" | undefined;
+  protocolTarget?: string | undefined;
 }
 
 export interface McpServerStatus {

@@ -8,6 +8,7 @@ export type KestrelOneRouteOwner =
   | "dashboard"
   | "debug"
   | "dev"
+  | "environments"
   | "files"
   | "health"
   | "integrations"
@@ -193,6 +194,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in"
   ),
   page(
+    "app/(workspace)/threads/[id]/workspace/page.tsx",
+    "/threads/:id/workspace",
+    "environments",
+    "authenticated",
+    "redirect-sign-in"
+  ),
+  page(
     "app/(workspace)/projects/page.tsx",
     "/projects",
     "projects",
@@ -216,6 +224,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in"
   ),
   page(
+    "app/(workspace)/projects/[id]/workspace/page.tsx",
+    "/projects/:id/workspace",
+    "environments",
+    "authenticated",
+    "redirect-sign-in"
+  ),
+  page(
     "app/(workspace)/projects/[id]/threads/new/page.tsx",
     "/projects/:id/threads/new",
     "projects",
@@ -226,6 +241,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/(workspace)/search/page.tsx",
     "/search",
     "threads",
+    "authenticated",
+    "redirect-sign-in"
+  ),
+  page(
+    "app/(workspace)/settings/environments/page.tsx",
+    "/settings/environments",
+    "environments",
     "authenticated",
     "redirect-sign-in"
   ),
@@ -322,6 +344,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/admin/docs/[slug]/page.tsx",
     "/admin/docs/:slug",
+    ADMIN_PAGE.owner,
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized
+  ),
+  page(
+    "app/admin/environments/page.tsx",
+    "/admin/environments",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized
@@ -435,6 +464,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/github/action/route.ts",
+    "/api/runtime/github/action",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
+    "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
+    "/api/runtime/github/git/[resourceId]/[...gitPath]",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
+    "app/api/runtime/github/push/route.ts",
+    "/api/runtime/github/push",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/admin/api-keys/route.ts",
     "/api/admin/api-keys",
     ADMIN_API.owner,
@@ -444,6 +494,132 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/api-keys/[id]/route.ts",
     "/api/admin/api-keys/:id",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/route.ts",
+    "/api/admin/environments",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/route.ts",
+    "/api/admin/environments/:id",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/operations/route.ts",
+    "/api/admin/environments/:id/operations",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/capabilities/subjects/route.ts",
+    "/api/admin/environments/:id/capabilities/subjects",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/capabilities/route.ts",
+    "/api/admin/environments/:id/capabilities",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/workspaces/route.ts",
+    "/api/admin/environments/:id/workspaces",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/workspaces/[workspaceId]/backups/route.ts",
+    "/api/admin/environments/:id/workspaces/:workspaceId/backups",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
+    "/api/admin/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/capabilities/[capabilityId]/route.ts",
+    "/api/admin/environments/:id/mcp/capabilities/:capabilityId",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/credentials/route.ts",
+    "/api/admin/environments/:id/mcp/credentials",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/credentials/[credentialId]/route.ts",
+    "/api/admin/environments/:id/mcp/credentials/:credentialId",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/health/route.ts",
+    "/api/admin/environments/:id/mcp/health",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/oauth/start/route.ts",
+    "/api/admin/environments/:id/mcp/oauth/start",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/oauth/callback/route.ts",
+    "/api/admin/environments/:id/mcp/oauth/callback",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/servers/route.ts",
+    "/api/admin/environments/:id/mcp/servers",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/servers/[serverId]/route.ts",
+    "/api/admin/environments/:id/mcp/servers/:serverId",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/servers/[serverId]/discover/route.ts",
+    "/api/admin/environments/:id/mcp/servers/:serverId/discover",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/mcp/servers/[serverId]/snapshots/[snapshotId]/route.ts",
+    "/api/admin/environments/:id/mcp/servers/:serverId/snapshots/:snapshotId",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
@@ -631,6 +807,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied"
   ),
   api(
+    "app/api/integrations/github/route.ts",
+    "/api/integrations/github",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/connect/route.ts",
+    "/api/integrations/github/connect",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/repositories/route.ts",
+    "/api/integrations/github/repositories",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/sync/route.ts",
+    "/api/integrations/github/sync",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/sandbox/shell/route.ts",
     "/api/sandbox/shell",
     "sandbox",
@@ -714,6 +918,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/threads/[id]/stream/route.ts",
     "/api/threads/:id/stream",
     "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/environment/route.ts",
+    "/api/threads/:id/environment",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/mcp/interactions/route.ts",
+    "/api/threads/:id/mcp/interactions",
+    "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/mcp/interactions/[checkpointId]/route.ts",
+    "/api/threads/:id/mcp/interactions/:checkpointId",
+    "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/workspace/[...path]/route.ts",
+    "/api/threads/:id/workspace/:path*",
+    "environments",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
@@ -902,6 +1134,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/projects/[id]/files/route.ts",
     "/api/projects/:id/files",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/environment/route.ts",
+    "/api/projects/:id/environment",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/workspace/route.ts",
+    "/api/projects/:id/workspace",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/capabilities/route.ts",
+    "/api/projects/:id/capabilities",
     "projects",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized

@@ -113,6 +113,55 @@
       "when": 1783897200000,
       "tag": "0015_managed_runpod_deployments",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1783900800000,
+      "tag": "0016_hosted_environments",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783904400000,
+      "tag": "0017_github_user_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783908000000,
+      "tag": "0018_environment_project_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783911600000,
+      "tag": "0019_hosted_mcp_control_plane",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783915200000,
+      "tag": "0020_environment_router_upgrade",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783918800000,
+      "tag": "0021_mcp_interaction_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783922400000,
+      "tag": "0022_mcp_sampling_processing_deadline",
+      "breakpoints": true
     }
   ]
 }

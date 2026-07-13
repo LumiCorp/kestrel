@@ -119,3 +119,25 @@ test("non-managed profiles retain their environment-backed provider behavior", (
     }
   }
 });
+
+test("non-model runtime surfaces initialize before environment provider credentials are present", async () => {
+  const original = process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  try {
+    const gateway = createModelGatewayForProfile({
+      ...BASE_PROFILE,
+      modelProvider: "openrouter",
+      model: "openai/gpt-5.4",
+    });
+    await assert.rejects(
+      gateway.call({ input: "model admission should resolve credentials now" }),
+      /OPENROUTER_API_KEY is required/u
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = original;
+    }
+  }
+});

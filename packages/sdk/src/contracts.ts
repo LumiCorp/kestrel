@@ -45,7 +45,13 @@ export interface RunnerProfile {
   label: string;
   agent: string;
   sessionPrefix: string;
-  modelProvider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  modelProvider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   defaultInteractionMode?: "chat" | "plan" | "build" | undefined;
@@ -95,6 +101,20 @@ export interface RunnerTurnAttachment {
   text?: string | undefined;
 }
 
+export interface RunnerMcpContext {
+  gatewayUrl: string;
+  grantId: string;
+  protocolVersion: "2025-11-25";
+  organizationId: string;
+  environmentId: string;
+  projectId?: string | undefined;
+  threadId: string;
+}
+
+export interface RunnerMcpAuthorization {
+  executionTicket: string;
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -106,16 +126,20 @@ export interface RunnerTurnInput {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  mcpContext?: RunnerMcpContext | undefined;
+  mcpAuthorization?: RunnerMcpAuthorization | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
   history?: RunnerHistoryEntry[] | undefined;
   projectContext?: RunnerProjectContext | undefined;
   manualCompaction?: boolean | undefined;
-  autoCompaction?: {
-    enabled?: boolean | undefined;
-    state?: string | undefined;
-    suppressOnce?: boolean | undefined;
-  } | undefined;
+  autoCompaction?:
+    | {
+        enabled?: boolean | undefined;
+        state?: string | undefined;
+        suppressOnce?: boolean | undefined;
+      }
+    | undefined;
   workspace?: Record<string, unknown> | undefined;
   skillPack?: Record<string, unknown> | undefined;
 }
@@ -196,6 +220,7 @@ export interface RunnerEventSubscriptionFilter {
 export interface KestrelRequestContext {
   actor: RunnerActorMetadata;
   tenantId?: string | undefined;
+  profile?: RunnerProfile | undefined;
 }
 
 export interface KestrelClientOptions {
@@ -213,7 +238,7 @@ export interface RunnerPingCommandPayload {
   nonce?: string | undefined;
 }
 
-export interface ProfileListCommandPayload {}
+export type ProfileListCommandPayload = {};
 
 export interface ProfileGetCommandPayload {
   profileId: string;
@@ -282,7 +307,13 @@ export interface OperatorControlCommandPayload {
   rolePrompt?: string | undefined;
   goal?: string | undefined;
   profileId?: string | undefined;
-  provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  provider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   skillPackId?: string | undefined;
   maxTurns?: number | undefined;
@@ -360,6 +391,21 @@ export interface WorkspaceCheckpointCleanupCommandPayload {
   policyOverride?: Record<string, unknown> | undefined;
 }
 
+export interface WorkspacePromotionListCommandPayload {
+  sessionId: string;
+}
+
+export interface WorkspacePromotionPreviewCommandPayload {
+  sessionId: string;
+  promotionId: string;
+}
+
+export interface WorkspacePromotionApplyCommandPayload {
+  sessionId: string;
+  promotionId: string;
+  candidateFingerprint: string;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -409,6 +455,9 @@ export type RunnerCommandType =
   | "workspace.checkpoint.diff"
   | "workspace.checkpoint.restore"
   | "workspace.checkpoint.cleanup"
+  | "workspace.promotion.list"
+  | "workspace.promotion.preview"
+  | "workspace.promotion.apply"
   | "project.snapshot.get"
   | "project.snapshot.update"
   | "project.action"
@@ -436,6 +485,9 @@ export interface RunnerCommandPayloadByType {
   "workspace.checkpoint.diff": WorkspaceCheckpointDiffCommandPayload;
   "workspace.checkpoint.restore": WorkspaceCheckpointRestoreCommandPayload;
   "workspace.checkpoint.cleanup": WorkspaceCheckpointCleanupCommandPayload;
+  "workspace.promotion.list": WorkspacePromotionListCommandPayload;
+  "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
+  "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -446,7 +498,9 @@ export interface RunnerCommandPayloadByType {
   "mcp.refresh": McpRefreshCommandPayload;
 }
 
-export interface RunnerCommandEnvelope<TType extends RunnerCommandType = RunnerCommandType> {
+export interface RunnerCommandEnvelope<
+  TType extends RunnerCommandType = RunnerCommandType,
+> {
   id: string;
   type: TType;
   payload: RunnerCommandPayloadByType[TType];
@@ -479,7 +533,9 @@ export type RunnerEventType =
   | "mcp.status"
   | "mcp.refreshed";
 
-export interface RunnerEventEnvelope<TType extends RunnerEventType = RunnerEventType> {
+export interface RunnerEventEnvelope<
+  TType extends RunnerEventType = RunnerEventType,
+> {
   id: string;
   type: TType;
   ts: string;
@@ -505,6 +561,7 @@ export interface RunStartedEventPayload {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerTurnInput["interactionMode"];
   actSubmode?: RunnerTurnInput["actSubmode"];
+  mcpContext?: RunnerMcpContext | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
 }
@@ -612,12 +669,14 @@ export interface TaskGraphEventPayload {
   graph: RunnerTaskGraph;
 }
 
-export interface RunnerWorkspaceCheckpointRecord extends Record<string, unknown> {
+export interface RunnerWorkspaceCheckpointRecord
+  extends Record<string, unknown> {
   checkpointId: string;
   sessionId: string;
 }
 
-export interface RunnerWorkspaceCheckpointDetail extends Record<string, unknown> {
+export interface RunnerWorkspaceCheckpointDetail
+  extends Record<string, unknown> {
   checkpoint: RunnerWorkspaceCheckpointRecord;
   files: Array<Record<string, unknown>>;
 }
@@ -641,9 +700,37 @@ export interface RunnerWorkspaceCleanupRecord extends Record<string, unknown> {
   trigger: string;
 }
 
+export interface RunnerWorkspacePromotionRecord
+  extends Record<string, unknown> {
+  promotionId: string;
+  sessionId: string;
+  runId: string;
+  status: string;
+  changedFiles: string[];
+  candidateFingerprint?: string | undefined;
+}
+
+export interface RunnerWorkspacePromotionPreview
+  extends Record<string, unknown> {
+  promotion: RunnerWorkspacePromotionRecord;
+  status: "ready" | "empty" | "blocked";
+  changedFiles: string[];
+  candidateFingerprint?: string | undefined;
+  diff: RunnerWorkspaceDiffRecord;
+}
+
 export interface WorkspaceCheckpointEventPayload {
   sessionId: string;
-  operation: "capture" | "list" | "inspect" | "diff" | "restore" | "cleanup";
+  operation:
+    | "capture"
+    | "list"
+    | "inspect"
+    | "diff"
+    | "restore"
+    | "cleanup"
+    | "promotion.list"
+    | "promotion.preview"
+    | "promotion.apply";
   checkpoint?: RunnerWorkspaceCheckpointDetail | undefined;
   checkpoints?: RunnerWorkspaceCheckpointRecord[] | undefined;
   diff?: RunnerWorkspaceDiffRecord | undefined;
@@ -652,6 +739,9 @@ export interface WorkspaceCheckpointEventPayload {
   deletedCheckpoints?: RunnerWorkspaceCheckpointRecord[] | undefined;
   remainingCheckpointCount?: number | undefined;
   remainingBytes?: number | undefined;
+  promotions?: RunnerWorkspacePromotionRecord[] | undefined;
+  preview?: RunnerWorkspacePromotionPreview | undefined;
+  promotion?: RunnerWorkspacePromotionRecord | undefined;
 }
 
 export interface ProjectSnapshotEventPayload {
@@ -740,6 +830,9 @@ export interface RunnerResponseByCommandType {
   "workspace.checkpoint.diff": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.checkpoint.restore": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.checkpoint.cleanup": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.list": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.preview": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.promotion.apply": RunnerEventEnvelope<"workspace.checkpoint">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;

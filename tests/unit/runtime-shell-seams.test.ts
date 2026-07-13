@@ -38,7 +38,7 @@ test("default turn executor delegates threaded payload preparation to runtime se
   const threadedExecutorSource = await readFile(THREADED_EXECUTOR_SOURCE, "utf8");
   const executorBody = sectionBetween(source, "function createDefaultRuntime(", "\nexport function resolveDevShellServiceForProfile(");
   const compileIndex = threadedExecutorSource.indexOf("compileRuntimeTurn(");
-  const runIndex = threadedExecutorSource.indexOf("this.runKernel({");
+  const runIndex = threadedExecutorSource.search(/this\.runKernel\(\s*\{/u);
 
   assert.match(executorBody, /new RuntimeThreadedTurnExecutor/u);
   assert.match(executorBody, /threadedTurnExecutor\.executeTurn/u);

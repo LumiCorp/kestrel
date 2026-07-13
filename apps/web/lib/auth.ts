@@ -3,6 +3,7 @@ import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
 import { stripe } from "@better-auth/stripe";
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import {
   admin,
@@ -19,6 +20,7 @@ import { Stripe } from "stripe";
 import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
+import { isDisallowedGithubSignIn } from "./auth-policy";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
 import { reactResetPasswordEmail } from "./email/reset-password";
@@ -82,6 +84,9 @@ const adminUserIds = (process.env.ADMIN_USER_IDS ?? "")
 
 const stripeConfigStatus = getStripeBillingConfigStatus();
 const stripeEnvConfigured = stripeConfigStatus.isReady;
+const githubOAuthConfigured = Boolean(
+  process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+);
 
 export const auth = betterAuth({
   appName: "Kestrel One",
@@ -103,9 +108,37 @@ export const auth = betterAuth({
     },
   },
   account: {
+    encryptOAuthTokens: true,
     accountLinking: {
       trustedProviders: ["kestrel-one"],
+      disableImplicitLinking: true,
+      allowDifferentEmails: true,
+      updateUserInfoOnLink: false,
     },
+  },
+  socialProviders: githubOAuthConfigured
+    ? {
+        github: {
+          clientId: process.env.GITHUB_CLIENT_ID as string,
+          clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+          scope: ["repo"],
+          disableImplicitSignUp: true,
+        },
+      }
+    : undefined,
+  hooks: {
+    before: createAuthMiddleware(async (context) => {
+      if (
+        isDisallowedGithubSignIn({
+          path: context.path,
+          body: context.body,
+        })
+      ) {
+        throw new APIError("BAD_REQUEST", {
+          message: "GitHub is available only as a linked organizational tool.",
+        });
+      }
+    }),
   },
   emailAndPassword: {
     enabled: true,

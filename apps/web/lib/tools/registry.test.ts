@@ -18,7 +18,7 @@ test("tool registry includes seeded built-in and external providers", () => {
   assert.ok(providers.some((provider) => provider.key === "source.youtube"));
 });
 
-test("github and discord providers stay connection-only until runtime tools exist", () => {
+test("GitHub exposes Environment-scoped broker capabilities while source adapters stay connection-only", () => {
   const github = getToolProviderDefinition("github");
   const discord = getToolProviderDefinition("discord");
   const githubSources = getToolProviderDefinition("source.github");
@@ -28,7 +28,21 @@ test("github and discord providers stay connection-only until runtime tools exis
   assert.ok(discord);
   assert.ok(githubSources);
   assert.ok(youtubeSources);
-  assert.equal(github?.capabilities.length, 0);
+  assert.deepEqual(
+    github?.capabilities.map((capability) => [
+      capability.key,
+      capability.defaultPolicy.approvalMode,
+    ]),
+    [
+      ["repository.read", "auto"],
+      ["repository.push_agent_branch", "auto"],
+      ["pull_request.write", "ask"],
+      ["issue.write", "ask"],
+      ["merge.write", "ask"],
+      ["release.write", "ask"],
+      ["workflow.dispatch", "ask"],
+    ]
+  );
   assert.equal(discord?.capabilities.length, 0);
   assert.equal(githubSources?.capabilities.length, 0);
   assert.equal(youtubeSources?.capabilities.length, 0);

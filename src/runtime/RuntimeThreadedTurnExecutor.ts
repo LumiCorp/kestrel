@@ -1,17 +1,8 @@
 import { randomUUID } from "node:crypto";
-
-import type {
-  NormalizedOutput,
-} from "../kestrel/contracts/execution.js";
+import { DEFAULT_BALANCED_TOOL_ALLOWLIST } from "../../tools/createDefaultToolGateway.js";
 import type { RuntimeEvent } from "../kestrel/contracts/events.js";
+import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
-import type {
-  AssemblyBundleRecord,
-  SubmitTurnInput,
-  ThreadAssemblyRecord,
-  TurnExecutionInput,
-  TurnExecutionResult,
-} from "../orchestration/contracts.js";
 import type {
   ActSubmode,
   ExecutionPolicyOverride,
@@ -21,42 +12,57 @@ import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
 } from "../mode/contracts.js";
-import { DEFAULT_BALANCED_TOOL_ALLOWLIST } from "../../tools/createDefaultToolGateway.js";
-import { readWaitResumeStepAgent } from "./waitState.js";
+import type {
+  AssemblyBundleRecord,
+  SubmitTurnInput,
+  ThreadAssemblyRecord,
+  TurnExecutionInput,
+  TurnExecutionResult,
+} from "../orchestration/contracts.js";
 import {
   compileRuntimeTurn,
   type RuntimeTurnInput,
   type RuntimeTurnSkillPack,
 } from "./RuntimeTurn.js";
+import { readWaitResumeStepAgent } from "./waitState.js";
 
 export interface RuntimeThreadedTurnExecutorOptions {
   entryStepAgent: string;
-  defaults?: {
-    defaultInteractionMode?: InteractionMode | undefined;
-    defaultActSubmode?: ActSubmode | undefined;
-    defaultToolAllowlist?: string[] | undefined;
-    toolBatchCheckpointSize?: number | undefined;
-  } | undefined;
+  defaults?:
+    | {
+        defaultInteractionMode?: InteractionMode | undefined;
+        defaultActSubmode?: ActSubmode | undefined;
+        defaultToolAllowlist?: string[] | undefined;
+        toolBatchCheckpointSize?: number | undefined;
+      }
+    | undefined;
   getSession(sessionId: string): Promise<SessionRecord | null>;
   runKernel(
     event: RuntimeEvent,
-    options?: { signal?: AbortSignal | undefined },
+    options?: { signal?: AbortSignal | undefined }
   ): Promise<NormalizedOutput>;
-  refreshToolRuntime(): Promise<unknown>;
-  resolveAvailableToolAllowlist(names: string[]): string[];
-  resolveSkillPackById?: ((skillPackId: string) => RuntimeTurnSkillPack | undefined) | undefined;
-  handleCapabilityLoss?: ((input: {
-    threadId: string;
-    availableToolNames: string[];
-  }) => Promise<{
-    record: ThreadAssemblyRecord;
-    bundle?: AssemblyBundleRecord | undefined;
-  } | null>) | undefined;
+  refreshToolRuntime(input?: RuntimeTurnInput | undefined): Promise<unknown>;
+  resolveAvailableToolAllowlist(
+    names: string[],
+    input?: RuntimeTurnInput | undefined,
+    options?: { includeGrantedMcpTools?: boolean | undefined } | undefined
+  ): string[];
+  resolveSkillPackById?:
+    | ((skillPackId: string) => RuntimeTurnSkillPack | undefined)
+    | undefined;
+  handleCapabilityLoss?:
+    | ((input: { threadId: string; availableToolNames: string[] }) => Promise<{
+        record: ThreadAssemblyRecord;
+        bundle?: AssemblyBundleRecord | undefined;
+      } | null>)
+    | undefined;
 }
 
 export class RuntimeThreadedTurnExecutor {
   private readonly entryStepAgent: string;
-  private readonly defaults: NonNullable<RuntimeThreadedTurnExecutorOptions["defaults"]>;
+  private readonly defaults: NonNullable<
+    RuntimeThreadedTurnExecutorOptions["defaults"]
+  >;
   private readonly getSession: RuntimeThreadedTurnExecutorOptions["getSession"];
   private readonly runKernel: RuntimeThreadedTurnExecutorOptions["runKernel"];
   private readonly refreshToolRuntime: RuntimeThreadedTurnExecutorOptions["refreshToolRuntime"];
@@ -97,11 +103,21 @@ export class RuntimeThreadedTurnExecutor {
       this.defaults.defaultActSubmode ??
       DEFAULT_ACT_SUBMODE;
     const requestedToolAllowlist = Array.isArray(runtimeAssembly?.toolAllowlist)
-      ? runtimeAssembly.toolAllowlist.filter((value): value is string => typeof value === "string")
-      : this.defaults.defaultToolAllowlist ?? [...DEFAULT_BALANCED_TOOL_ALLOWLIST];
+      ? runtimeAssembly.toolAllowlist.filter(
+          (value): value is string => typeof value === "string"
+        )
+      : (this.defaults.defaultToolAllowlist ?? [
+          ...DEFAULT_BALANCED_TOOL_ALLOWLIST,
+        ]);
 
-    await this.refreshToolRuntime();
-    const effectiveToolAllowlist = this.resolveAvailableToolAllowlist(requestedToolAllowlist);
+    await this.refreshToolRuntime(baseRuntimeTurn);
+    const effectiveToolAllowlist = this.resolveAvailableToolAllowlist(
+      requestedToolAllowlist,
+      baseRuntimeTurn,
+      {
+        includeGrantedMcpTools: !Array.isArray(runtimeAssembly?.toolAllowlist),
+      }
+    );
     const effectiveAssembly = await this.resolveEffectiveAssembly({
       input,
       runtimeAssembly,
@@ -118,25 +134,34 @@ export class RuntimeThreadedTurnExecutor {
         effectiveAssembly,
       }),
       {
-        defaultInteractionMode: this.defaults.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
-        defaultActSubmode: this.defaults.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
-        modeSystemV2Enabled: baseRuntimeTurn?.modeSystemV2Enabled ?? orchestrationMetadata?.modeSystemV2Enabled === true,
+        defaultInteractionMode:
+          this.defaults.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
+        defaultActSubmode:
+          this.defaults.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+        modeSystemV2Enabled:
+          baseRuntimeTurn?.modeSystemV2Enabled ??
+          orchestrationMetadata?.modeSystemV2Enabled === true,
         toolBatchCheckpointSize:
           asFiniteNumber(baseRuntimeTurn?.metadata?.toolBatchCheckpointSize) ??
           asFiniteNumber(orchestrationMetadata?.toolBatchCheckpointSize) ??
           this.defaults.toolBatchCheckpointSize ??
           5,
-      },
+      }
     );
-    const output = await this.runKernel({
-      id: runtimeTurn.input.runId ?? randomUUID(),
-      type: input.eventType,
-      sessionId: input.sessionId,
-      ...(threadedStepAgent !== undefined ? { stepAgent: threadedStepAgent } : {}),
-      payload: runtimeTurn.payload,
-    }, {
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    });
+    const output = await this.runKernel(
+      {
+        id: runtimeTurn.input.runId ?? randomUUID(),
+        type: input.eventType,
+        sessionId: input.sessionId,
+        ...(threadedStepAgent !== undefined
+          ? { stepAgent: threadedStepAgent }
+          : {}),
+        payload: runtimeTurn.payload,
+      },
+      {
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      }
+    );
     const session = await this.getSession(input.sessionId);
     const agentState = asRecord(session?.state.agent);
     const finalOutput = agentState?.finalOutput;
@@ -163,7 +188,9 @@ export class RuntimeThreadedTurnExecutor {
   }> {
     let bundleId = input.runtimeAssembly?.bundleId;
     let specialistIds = Array.isArray(input.runtimeAssembly?.specialistIds)
-      ? input.runtimeAssembly.specialistIds.filter((value): value is string => typeof value === "string")
+      ? input.runtimeAssembly.specialistIds.filter(
+          (value): value is string => typeof value === "string"
+        )
       : [];
     let contextPolicyId = asString(input.runtimeAssembly?.contextPolicyId);
     let approvalPolicyId = asString(input.runtimeAssembly?.approvalPolicyId);
@@ -202,15 +229,20 @@ export class RuntimeThreadedTurnExecutor {
       approvalPolicyId?: string | undefined;
     };
   }): RuntimeTurnInput {
-    const skillPackId = asString(input.baseRuntimeTurn?.metadata?.skillPackId) ??
+    const skillPackId =
+      asString(input.baseRuntimeTurn?.metadata?.skillPackId) ??
       asString(input.input.metadata?.skillPackId);
-    const skillPack = skillPackId !== undefined
-      ? input.baseRuntimeTurn?.skillPack ?? this.resolveSkillPackById?.(skillPackId)
-      : undefined;
+    const skillPack =
+      skillPackId !== undefined
+        ? (input.baseRuntimeTurn?.skillPack ??
+          this.resolveSkillPackById?.(skillPackId))
+        : undefined;
     const executionPolicy =
       input.baseRuntimeTurn?.executionPolicy ??
       (asRecord(input.orchestrationMetadata?.executionPolicy) !== undefined
-        ? asRecord(input.orchestrationMetadata?.executionPolicy) as ExecutionPolicyOverride
+        ? (asRecord(
+            input.orchestrationMetadata?.executionPolicy
+          ) as ExecutionPolicyOverride)
         : undefined);
     const projectContext = input.baseRuntimeTurn?.projectContext ??
       readRuntimeTurnProjectContext(input.input.metadata?.projectContext);
@@ -219,7 +251,9 @@ export class RuntimeThreadedTurnExecutor {
       sessionId: input.input.sessionId,
       message: input.input.message,
       eventType: input.input.eventType,
-      ...(input.input.attachments !== undefined ? { attachments: input.input.attachments } : {}),
+      ...(input.input.attachments !== undefined
+        ? { attachments: input.input.attachments }
+        : {}),
       ...(input.input.stepAgent !== undefined
         ? { stepAgent: input.input.stepAgent }
         : input.baseRuntimeTurn?.stepAgent !== undefined
@@ -228,8 +262,12 @@ export class RuntimeThreadedTurnExecutor {
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       ...(executionPolicy !== undefined ? { executionPolicy } : {}),
-      ...(input.input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
-      ...(input.input.manualCompaction === true ? { manualCompaction: true } : {}),
+      ...(input.input.resumeBlockedRun === true
+        ? { resumeBlockedRun: true }
+        : {}),
+      ...(input.input.manualCompaction === true
+        ? { manualCompaction: true }
+        : {}),
       ...(input.input.autoCompaction !== undefined
         ? { autoCompaction: input.input.autoCompaction }
         : input.baseRuntimeTurn?.autoCompaction !== undefined
@@ -243,7 +281,10 @@ export class RuntimeThreadedTurnExecutor {
       ...(input.baseRuntimeTurn?.history !== undefined
         ? { history: input.baseRuntimeTurn.history }
         : Array.isArray(input.orchestrationMetadata?.history)
-          ? { history: input.orchestrationMetadata.history as RuntimeTurnInput["history"] }
+          ? {
+              history: input.orchestrationMetadata
+                .history as RuntimeTurnInput["history"],
+            }
           : {}),
       ...(projectContext !== undefined ? { projectContext } : {}),
       ...(skillPack !== undefined ? { skillPack } : {}),
@@ -307,7 +348,9 @@ export function resolveRuntimeThreadedStepAgent(input: {
   if (input.eventType === "operator.steer") {
     return input.inputStepAgent ?? input.entryStepAgent;
   }
-  const persistedResumeStepAgent = readResumeStepAgentFromSession(input.session?.state);
+  const persistedResumeStepAgent = readResumeStepAgentFromSession(
+    input.session?.state
+  );
   if (input.inputStepAgent !== undefined) {
     if (
       input.eventType !== "user.message" &&
@@ -337,11 +380,17 @@ function asInteractionMode(value: unknown): InteractionMode | undefined {
 }
 
 function asActSubmode(value: unknown): ActSubmode | undefined {
-  return value === "strict" || value === "safe" || value === "full_auto" ? value : undefined;
+  return value === "strict" || value === "safe" || value === "full_auto"
+    ? value
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray(value) === false
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -353,5 +402,7 @@ function asString(value: unknown): string | undefined {
 }
 
 function asFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }

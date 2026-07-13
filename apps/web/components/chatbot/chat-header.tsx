@@ -1,5 +1,6 @@
 "use client";
 
+import { FolderCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo } from "react";
 import { useWindowSize } from "usehooks-ts";
@@ -46,6 +47,16 @@ function PureChatHeader({
           selectedVisibilityType={selectedVisibilityType}
           threadId={threadId}
         />
+      )}
+      {!isReadonly && (
+        <Button
+          className="order-3 ml-auto h-8 px-2"
+          onClick={() => router.push(`/threads/${threadId}/workspace`)}
+          variant="outline"
+        >
+          <FolderCode className="size-4" />
+          <span className="hidden sm:inline">Workspace</span>
+        </Button>
       )}
     </header>
   );

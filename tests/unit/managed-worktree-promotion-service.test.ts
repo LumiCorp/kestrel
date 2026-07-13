@@ -12,6 +12,11 @@ import { ManagedWorktreePromotionService } from "../../src/workspace/ManagedWork
 import { WorkspaceCheckpointService } from "../../src/workspaceCheckpoints/service.js";
 import { readWorkspaceCheckpointState } from "../../src/workspaceCheckpoints/state.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  RuntimeWorkspaceCheckpointService,
+  WorkspaceContextResolver,
+} from "../../src/workspace/RuntimeWorkspaceServices.js";
+import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -385,6 +390,84 @@ test("ManagedWorktreePromotionService reuses the locked promotion transaction fo
     assert.equal(applied.promotion.status, "promoted");
     assert.equal(applied.promotion.promotionId, pending.promotion.promotionId);
     assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "manual\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Runtime Workspace promotion contract previews an isolated candidate and applies only its exact fingerprint", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-runtime-contract-"));
+  try {
+    const repo = path.join(root, "repo");
+    const home = path.join(root, "home");
+    await initRepo(repo);
+    const store = new InMemorySessionStore();
+    await store.ensureSession("session-1");
+    const managedService = new ManagedTaskWorktreeService({ homeDir: home });
+    const checkpointService = new WorkspaceCheckpointService(store);
+    const promotionService = new ManagedWorktreePromotionService({
+      managedWorktreeService: managedService,
+      checkpointService,
+    });
+    const provisioned = await managedService.provision({
+      sessionId: "session-1",
+      runId: "run-1",
+      sourceWorkspaceRoot: repo,
+      taskKey: "feature",
+      triggeringTool: "dev.shell.run",
+    });
+    await writeFile(
+      path.join(provisioned.binding.worktreeRoot, "app.txt"),
+      "candidate\n",
+      "utf8"
+    );
+    const pending = await promotionService.finalizeTerminalRun({
+      sessionId: "session-1",
+      runId: "run-1",
+      terminalStatus: "COMPLETED",
+      binding: provisioned.binding,
+      finalOutput: { data: { completionState: "implemented_not_verified" } },
+    });
+    const runtime = new RuntimeWorkspaceCheckpointService({
+      checkpointService,
+      managedWorktreeService: managedService,
+      resolver: new WorkspaceContextResolver({
+        getProjectSnapshot: async () => ({
+          sessionId: "session-1",
+          snapshot: createEmptyProjectSnapshot(),
+        }),
+      }),
+    });
+
+    const listed = await runtime.listPromotions({ sessionId: "session-1" });
+    assert.equal(listed.promotions[0]?.promotionId, pending.promotion.promotionId);
+    const previewed = await runtime.previewPromotion({
+      sessionId: "session-1",
+      promotionId: pending.promotion.promotionId,
+    });
+    assert.equal(previewed.preview.status, "ready");
+    assert.deepEqual(previewed.preview.changedFiles, ["app.txt"]);
+    assert.equal(previewed.preview.diff.files[0]?.path, "app.txt");
+    assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "clean\n");
+
+    const stale = await runtime.applyPromotion({
+      sessionId: "session-1",
+      promotionId: pending.promotion.promotionId,
+      candidateFingerprint: "stale-fingerprint",
+    });
+    assert.equal(stale.promotion.status, "blocked");
+    assert.equal(stale.promotion.blockedReason, "candidate_changed");
+    assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "clean\n");
+
+    const applied = await runtime.applyPromotion({
+      sessionId: "session-1",
+      promotionId: pending.promotion.promotionId,
+      candidateFingerprint: previewed.preview.candidateFingerprint!,
+      appliedBy: "user-1",
+    });
+    assert.equal(applied.promotion.status, "promoted");
+    assert.equal(applied.promotion.appliedBy, "user-1");
+    assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "candidate\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

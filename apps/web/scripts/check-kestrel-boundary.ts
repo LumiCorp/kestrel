@@ -27,6 +27,7 @@ const sourceExtensions = new Set([
   ".ts",
   ".tsx",
 ]);
+const allowedSharedKestrelPackages = new Set(["@kestrel/mcp-security"]);
 const failures: string[] = [];
 let dependencies: Record<string, string> = {};
 
@@ -148,6 +149,9 @@ function validateModuleSpecifier(filePath: string, specifier: string): void {
     return;
   }
   if (specifier.startsWith("@kestrel/")) {
+    if (allowedSharedKestrelPackages.has(specifier)) {
+      return;
+    }
     failures.push(
       `${path.relative(appRoot, filePath)} imports another Kestrel product: ${specifier}`,
     );

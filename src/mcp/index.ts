@@ -10,4 +10,12 @@ export type {
   McpStdioServerConfig,
   McpToolPresentationMetadata,
 } from "./contracts.js";
-export { McpClientManager, buildNamespacedToolName } from "./McpClientManager.js";
+export type { HostedMcpContext } from "./hosted-contracts.js";
+export {
+  HOSTED_MCP_PROTOCOL_VERSION,
+  parseHostedMcpContext,
+} from "./hosted-contracts.js";
+export {
+  buildNamespacedToolName,
+  McpClientManager,
+} from "./McpClientManager.js";

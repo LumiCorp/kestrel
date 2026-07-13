@@ -23,6 +23,7 @@ test("Kestrel-One knowledge tool sends bearer auth and tenant headers", async ()
     kestrelOne: {
       appUrl: "https://one.example.test",
       toolToken: "tool-token",
+      executionTicket: "environment-ticket",
       tenantId: "org_123",
     },
   });
@@ -40,7 +41,7 @@ test("Kestrel-One knowledge tool sends bearer auth and tenant headers", async ()
   );
   assert.equal(capturedInit?.method, "POST");
   assert.deepEqual(capturedInit?.headers, {
-    authorization: "Bearer tool-token",
+    authorization: "Bearer environment-ticket",
     "content-type": "application/json",
     "x-kestrel-tenant-id": "org_123",
     "x-organization-id": "org_123",

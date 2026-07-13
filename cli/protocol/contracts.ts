@@ -1,3 +1,4 @@
+import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
 import type {
   ClientCapabilities,
   McpStatusSnapshot,
@@ -10,33 +11,19 @@ import type {
   ProgressUpdateV1,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
-  RunToolUpdateV1,
   RunLogEntry,
+  RunToolUpdateV1,
   ToolExecutionClass,
   WorkspaceCheckpointCleanupPolicy,
   WorkspaceCheckpointCleanupResult,
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/index.js";
-import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
-import type { DelegationTaskMeta, TuiProfile } from "../contracts.js";
-import type { JobInputV1, JobReplayPointerV1, JobRunResultV1 } from "../job/contracts.js";
-import type { OperatorAssemblySummary } from "../contracts.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
-
-import type {
-  OperatorChildBlockerChainSummary,
-  OperatorCheckpointSummary,
-  OperatorChildBlockerSummary,
-  OperatorFanInDispositionSummary,
-  OperatorSupervisionSummary,
-  OperatorSupervisedChildSummary,
-  OperatorInboxSummary,
-  OperatorSteeringSummary,
-} from "../contracts.js";
-import type { RunTurnInput, RunTurnResult } from "../runtime/KestrelChatRuntime.js";
 import type {
   OperatorInboxSnapshot,
   OperatorRunIndexView,
@@ -45,6 +32,28 @@ import type {
   OperatorThreadView,
 } from "../../src/orchestration/contracts.js";
 import type { VisibleTodoState } from "../../src/runtime/visibleTodos.js";
+import type {
+  DelegationTaskMeta,
+  OperatorAssemblySummary,
+  OperatorCheckpointSummary,
+  OperatorChildBlockerChainSummary,
+  OperatorChildBlockerSummary,
+  OperatorFanInDispositionSummary,
+  OperatorInboxSummary,
+  OperatorSteeringSummary,
+  OperatorSupervisedChildSummary,
+  OperatorSupervisionSummary,
+  TuiProfile,
+} from "../contracts.js";
+import type {
+  JobInputV1,
+  JobReplayPointerV1,
+  JobRunResultV1,
+} from "../job/contracts.js";
+import type {
+  RunTurnInput,
+  RunTurnResult,
+} from "../runtime/KestrelChatRuntime.js";
 
 export type RunnerCommandType =
   | "profile.list"
@@ -67,6 +76,9 @@ export type RunnerCommandType =
   | "workspace.checkpoint.diff"
   | "workspace.checkpoint.restore"
   | "workspace.checkpoint.cleanup"
+  | "workspace.promotion.list"
+  | "workspace.promotion.preview"
+  | "workspace.promotion.apply"
   | "workspace.promotion.undo_latest"
   | "project.snapshot.get"
   | "project.snapshot.update"
@@ -106,7 +118,9 @@ export interface RunnerEventSubscriptionRequest {
   metadata?: RunnerCommandMetadata | undefined;
 }
 
-export interface RunnerCommandEnvelope<TType extends RunnerCommandType = RunnerCommandType> {
+export interface RunnerCommandEnvelope<
+  TType extends RunnerCommandType = RunnerCommandType,
+> {
   id: string;
   type: TType;
   payload: RunnerCommandPayloadByType[TType];
@@ -125,7 +139,7 @@ export interface JobRunCommandPayload {
   input: JobInputV1;
 }
 
-export interface ProfileListCommandPayload {}
+export type ProfileListCommandPayload = {};
 
 export interface ProfileGetCommandPayload {
   profileId: string;
@@ -203,7 +217,13 @@ export interface OperatorControlCommandPayload {
   rolePrompt?: string | undefined;
   goal?: string | undefined;
   profileId?: string | undefined;
-  provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  provider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   skillPackId?: string | undefined;
   maxTurns?: number | undefined;
@@ -282,6 +302,21 @@ export interface WorkspacePromotionUndoLatestCommandPayload {
   reason?: string | undefined;
 }
 
+export interface WorkspacePromotionListCommandPayload {
+  sessionId: string;
+}
+
+export interface WorkspacePromotionPreviewCommandPayload {
+  sessionId: string;
+  promotionId: string;
+}
+
+export interface WorkspacePromotionApplyCommandPayload {
+  sessionId: string;
+  promotionId: string;
+  candidateFingerprint: string;
+}
+
 export interface ProjectSnapshotUpdateCommandPayload {
   sessionId: string;
   snapshot: ProductProjectSnapshot;
@@ -330,6 +365,9 @@ export interface RunnerCommandPayloadByType {
   "workspace.checkpoint.diff": WorkspaceCheckpointDiffCommandPayload;
   "workspace.checkpoint.restore": WorkspaceCheckpointRestoreCommandPayload;
   "workspace.checkpoint.cleanup": WorkspaceCheckpointCleanupCommandPayload;
+  "workspace.promotion.list": WorkspacePromotionListCommandPayload;
+  "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
+  "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "workspace.promotion.undo_latest": WorkspacePromotionUndoLatestCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
@@ -366,7 +404,9 @@ export type RunnerEventType =
   | "mcp.status"
   | "mcp.refreshed";
 
-export interface RunnerEventEnvelope<TType extends RunnerEventType = RunnerEventType> {
+export interface RunnerEventEnvelope<
+  TType extends RunnerEventType = RunnerEventType,
+> {
   id: string;
   type: TType;
   ts: string;
@@ -385,13 +425,13 @@ export type RunnerEvent = {
   [K in RunnerEventType]: RunnerEventEnvelope<K>;
 }[RunnerEventType];
 
-export const RUN_STARTED_INTERACTION_MODES = [
-  "chat",
-  "plan",
-  "build",
-] as const;
+export const RUN_STARTED_INTERACTION_MODES = ["chat", "plan", "build"] as const;
 
-export const RUN_STARTED_ACT_SUBMODES = ["strict", "safe", "full_auto"] as const;
+export const RUN_STARTED_ACT_SUBMODES = [
+  "strict",
+  "safe",
+  "full_auto",
+] as const;
 
 export interface RunStartedEventPayload {
   sessionId: string;
@@ -401,14 +441,26 @@ export interface RunStartedEventPayload {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  mcpContext?:
+    | import("../../src/mcp/hosted-contracts.js").HostedMcpContext
+    | undefined;
   clientCapabilities?: ClientCapabilities | undefined;
   executionPolicy?:
     | {
-        toolClassPolicy?: Partial<Record<"read_only" | "sandboxed_only" | "external_side_effect", boolean>> | undefined;
+        toolClassPolicy?:
+          | Partial<
+              Record<
+                "read_only" | "sandboxed_only" | "external_side_effect",
+                boolean
+              >
+            >
+          | undefined;
         capabilityPolicy?: Record<string, boolean> | undefined;
-        approvalPolicy?: {
-          strictApprovalPerCall?: boolean | undefined;
-        } | undefined;
+        approvalPolicy?:
+          | {
+              strictApprovalPerCall?: boolean | undefined;
+            }
+          | undefined;
       }
     | undefined;
 }
@@ -511,9 +563,15 @@ export interface SessionDescribedEventPayload {
   latestCheckpointDisposition?: OperatorCheckpointSummary["status"] | undefined;
   latestFanInDisposition?: OperatorFanInDispositionSummary | undefined;
   latestSteering?: OperatorSteeringSummary | undefined;
-  latestReasoning?: import("../contracts.js").OperatorReasoningSummary | undefined;
-  latestAdaptation?: import("../contracts.js").OperatorAdaptationSummary | undefined;
-  latestEvidenceRecovery?: import("../contracts.js").OperatorEvidenceRecoverySummary | undefined;
+  latestReasoning?:
+    | import("../contracts.js").OperatorReasoningSummary
+    | undefined;
+  latestAdaptation?:
+    | import("../contracts.js").OperatorAdaptationSummary
+    | undefined;
+  latestEvidenceRecovery?:
+    | import("../contracts.js").OperatorEvidenceRecoverySummary
+    | undefined;
   supervision?: OperatorSupervisionSummary | undefined;
   nextAction?: string | undefined;
   visibleTodos?: VisibleTodoState | undefined;
@@ -575,7 +633,17 @@ export interface TaskGraphEventPayload {
 
 export interface WorkspaceCheckpointEventPayload {
   sessionId: string;
-  operation: "capture" | "list" | "inspect" | "diff" | "restore" | "cleanup" | "promotion.undo_latest";
+  operation:
+    | "capture"
+    | "list"
+    | "inspect"
+    | "diff"
+    | "restore"
+    | "cleanup"
+    | "promotion.list"
+    | "promotion.preview"
+    | "promotion.apply"
+    | "promotion.undo_latest";
   checkpoint?: WorkspaceCheckpointDetail | undefined;
   checkpoints?: WorkspaceCheckpointRecord[] | undefined;
   diff?: WorkspaceDiffRecord | undefined;
@@ -584,6 +652,9 @@ export interface WorkspaceCheckpointEventPayload {
   deletedCheckpoints?: WorkspaceCheckpointRecord[] | undefined;
   remainingCheckpointCount?: number | undefined;
   remainingBytes?: number | undefined;
+  promotions?: WorkspacePromotionRecord[] | undefined;
+  preview?: WorkspacePromotionPreview | undefined;
+  promotion?: WorkspacePromotionRecord | undefined;
 }
 
 export interface ProjectSnapshotEventPayload {
@@ -640,7 +711,9 @@ export interface RunnerEventPayloadByType {
   "mcp.refreshed": McpRefreshedEventPayload;
 }
 
-export function isRunnerCommandEnvelope(value: unknown): value is RunnerCommand {
+export function isRunnerCommandEnvelope(
+  value: unknown
+): value is RunnerCommand {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }

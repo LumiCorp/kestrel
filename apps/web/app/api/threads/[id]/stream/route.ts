@@ -8,6 +8,7 @@ import {
   createKestrelOneRequestContext,
   type KestrelOneRequestContext,
 } from "@/lib/agent/kestrel-runtime-core";
+import { resolveEnvironmentExecutionRoute } from "@/lib/environments/execution-route";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
@@ -42,9 +43,14 @@ export async function GET(
       );
     }
 
+    const environmentRoute = await resolveEnvironmentExecutionRoute({
+      organizationId,
+      threadId: params.id,
+      actorUserId: user.id,
+    });
     const client = new KestrelClient({
-      baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL,
-      authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+      baseUrl: environmentRoute.baseUrl,
+      authToken: environmentRoute.authToken,
     });
     const runnerContext = createKestrelOneRequestContext({
       session,

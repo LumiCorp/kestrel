@@ -158,6 +158,17 @@ export interface WorkspacePromotionRecord {
   undoneBy?: string | undefined;
 }
 
+export interface WorkspacePromotionPreview {
+  promotion: WorkspacePromotionRecord;
+  status: "ready" | "empty" | "blocked";
+  changedFiles: string[];
+  conflictPaths: string[];
+  invalidPaths: string[];
+  candidateFingerprint?: string | undefined;
+  blockedReason?: string | undefined;
+  diff: WorkspaceDiffRecord;
+}
+
 export interface WorkspaceCheckpointCleanupRecord {
   cleanupId: string;
   sessionId: string;

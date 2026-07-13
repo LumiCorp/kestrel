@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { getStorageAdapter } from "@/lib/storage";
 import { type ProjectRole, requireProjectRole } from "./access";
 import { cleanupProjectBlobKeys } from "./blob-cleanup";
@@ -39,6 +40,7 @@ export async function listProjectsForUser(input: {
 export async function createProject(input: {
   organizationId: string;
   userId: string;
+  environmentId?: string;
   name: string;
   description?: string | null;
   instructions?: string;
@@ -60,11 +62,51 @@ export async function createProject(input: {
   const now = new Date();
 
   return knowledgeDb.transaction(async (tx) => {
+    const environment = await tx.query.environments.findFirst({
+      where: (table, { and, eq, isNull, notInArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          input.environmentId
+            ? eq(table.id, input.environmentId)
+            : eq(table.isDefault, true),
+          isNull(table.archivedAt),
+          notInArray(table.status, ["deleting", "deleted"])
+        ),
+    });
+    if (!environment) {
+      throw Object.assign(
+        new Error(
+          input.environmentId
+            ? "Selected Environment is unavailable."
+            : "The organization default Environment is unavailable."
+        ),
+        { code: "ENVIRONMENT_NOT_FOUND" }
+      );
+    }
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`
+    );
+    const currentEnvironment = await tx.query.environments.findFirst({
+      where: (table, { and, eq, isNull, notInArray }) =>
+        and(
+          eq(table.id, environment.id),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.archivedAt),
+          notInArray(table.status, ["deleting", "deleted"])
+        ),
+      columns: { id: true },
+    });
+    if (!currentEnvironment) {
+      throw Object.assign(new Error("Selected Environment is unavailable."), {
+        code: "ENVIRONMENT_NOT_FOUND",
+      });
+    }
     const [project] = await tx
       .insert(schema.projects)
       .values({
         id: projectId,
         organizationId: input.organizationId,
+        environmentId: environment.id,
         createdByUserId: input.userId,
         name: input.name,
         description: input.description ?? null,
@@ -123,6 +165,7 @@ export async function getProjectDetail(input: {
     members,
     organizationDocuments,
     organizationMembers,
+    auditEvents,
   ] = await Promise.all([
     knowledgeDb.query.projectContextRevisions.findFirst({
       where: (table, { and, eq }) =>
@@ -140,6 +183,11 @@ export async function getProjectDetail(input: {
     access.role === "owner"
       ? listOrganizationMembers(input.organizationId)
       : Promise.resolve([]),
+    knowledgeDb.query.projectAuditEvents.findMany({
+      where: (table, { eq }) => eq(table.projectId, access.project.id),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: 50,
+    }),
   ]);
 
   return {
@@ -150,6 +198,7 @@ export async function getProjectDetail(input: {
     members,
     organizationDocuments,
     organizationMembers,
+    auditEvents,
   };
 }
 

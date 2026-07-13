@@ -1,0 +1,20 @@
+{
+  "name": "@kestrel/environment-router",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @lumi/kestrel-environment-auth build && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "pnpm --filter @lumi/kestrel-environment-auth build && node --import tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@lumi/kestrel-environment-auth": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

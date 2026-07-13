@@ -63,7 +63,10 @@ import type {
   TuiProfile,
 } from "../contracts.js";
 import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
-import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelGateway,
+  ModelRequest,
+} from "../../src/kestrel/contracts/model-io.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 
 import type { SharedToolContext } from "../../tools/index.js";
@@ -91,6 +94,8 @@ import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/workspaceCheckpoints/contracts.js";
 export type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
@@ -118,9 +123,13 @@ interface RuntimeBootstrap {
   taskGraphStore?: ProductTaskGraphStore | undefined;
   projectStore?: ProductProjectStateStore | undefined;
   workspaceCheckpointService?: WorkspaceCheckpointService | undefined;
+  managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   close: () => Promise<void>;
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
+  prepareHostedMcpRuntime?:
+    | ((input: Pick<RunTurnInput, "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
+    | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -190,6 +199,7 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<unknown | undefined>)
     | undefined;
   private readonly turnCoordinator: RuntimeTurnCoordinatorService;
+  private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
 
   private finalizedPayload: unknown;
 
@@ -225,11 +235,18 @@ export class KestrelChatRuntime {
             resolver: new WorkspaceContextResolver({
               getProjectSnapshot: (input) => this.getProjectSnapshot(input),
             }),
+            ...(bootstrap.managedTaskWorktreeService !== undefined
+              ? {
+                  managedWorktreeService:
+                    bootstrap.managedTaskWorktreeService,
+                }
+              : {}),
           })
         : undefined;
     this.entryStepAgent = bootstrap.entryStepAgent;
     this.closePool = bootstrap.close;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
+    this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
     this.forceModeSystemV2 = profile.agent === "reference-react";
     this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
     this.defaultExecutionPolicy = buildExecutionPolicyFromPack(profile.approvalPolicyPackId);
@@ -296,7 +313,20 @@ export class KestrelChatRuntime {
           }
         : {}),
     };
-    const result = await this.turnCoordinator.runTurn(authorizedInput, options);
+    const { mcpAuthorization, ...persistableInput } = authorizedInput;
+    if (mcpAuthorization !== undefined) {
+      if (persistableInput.mcpContext === undefined) {
+        throw new Error("mcpAuthorization requires mcpContext");
+      }
+      if (this.prepareHostedMcpRuntime === undefined) {
+        throw new Error("Hosted MCP runtime preparation is unavailable");
+      }
+      await this.prepareHostedMcpRuntime({
+        mcpContext: persistableInput.mcpContext,
+        mcpAuthorization,
+      });
+    }
+    const result = await this.turnCoordinator.runTurn(persistableInput, options);
     if (result.finalizedPayload !== undefined) {
       this.finalizedPayload = result.finalizedPayload;
     }
@@ -567,6 +597,34 @@ export class KestrelChatRuntime {
     reason?: string | undefined;
   }): Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }> {
     return requireRuntimeWorkspaceCheckpointService(this.runtimeWorkspaceCheckpointService).restoreLatestPromotion(input);
+  }
+
+  async listWorkspacePromotions(input: {
+    sessionId: string;
+  }): Promise<{ sessionId: string; promotions: WorkspacePromotionRecord[] }> {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).listPromotions(input);
+  }
+
+  async previewWorkspacePromotion(input: {
+    sessionId: string;
+    promotionId: string;
+  }): Promise<{ sessionId: string; preview: WorkspacePromotionPreview }> {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).previewPromotion(input);
+  }
+
+  async applyWorkspacePromotion(input: {
+    sessionId: string;
+    promotionId: string;
+    candidateFingerprint: string;
+    appliedBy?: string | undefined;
+  }) {
+    return requireRuntimeWorkspaceCheckpointService(
+      this.runtimeWorkspaceCheckpointService
+    ).applyPromotion(input);
   }
 
   async getProjectReviewDetail(input: { sessionId: string; target: ProductReviewTarget }): Promise<{ sessionId: string; detail: ProductReviewDetail }> {
@@ -991,8 +1049,21 @@ function createDefaultRuntime(
     },
     getSession: (sessionId) => kestrel.getSession(sessionId),
     runKernel: (event, runOptions) => kestrel.run(event, runOptions),
-    refreshToolRuntime: () => toolRegistry.refreshRuntime(),
-    resolveAvailableToolAllowlist: (allowlist) => toolRegistry.resolveAvailableAllowlist(allowlist),
+    refreshToolRuntime: (input) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.refreshForRuntimeTurn(input)
+        : toolRegistry.refreshRuntime(),
+    resolveAvailableToolAllowlist: (allowlist, input, options) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.resolveAvailableAllowlistForRuntimeTurn(
+            allowlist,
+            input,
+            {
+              includeGrantedMcpTools:
+                options?.includeGrantedMcpTools === true,
+            }
+          )
+        : toolRegistry.resolveAvailableAllowlist(allowlist),
     resolveSkillPackById: (skillPackId) => getSkillPackById(skillPackId),
     handleCapabilityLoss: (input) => {
       if (threadRuntime === undefined) {
@@ -1024,11 +1095,16 @@ function createDefaultRuntime(
     taskGraphStore,
     projectStore,
     workspaceCheckpointService,
+    ...(managedTaskWorktreeService !== undefined
+      ? { managedTaskWorktreeService }
+      : {}),
     entryStepAgent: registration.entryStepAgent,
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;
     },
+    prepareHostedMcpRuntime: (input) =>
+      toolRegistry.refreshForRuntimeTurn(input),
     close: async () =>
       closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
@@ -1059,15 +1135,30 @@ export function createModelGatewayForProfile(
       ? { envConfig: { model: profile.model } }
       : {}),
   };
-  return provider === "openai"
-    ? createOpenAiModelGatewayFromEnv(gatewayOptions)
-    : provider === "anthropic"
-      ? createAnthropicModelGatewayFromEnv(gatewayOptions)
-      : provider === "ollama"
-        ? createOllamaModelGatewayFromEnv(gatewayOptions)
-        : provider === "lmstudio"
-          ? createLmStudioModelGatewayFromEnv(gatewayOptions)
-          : createOpenRouterModelGatewayFromEnv(gatewayOptions);
+  return createLazyModelGateway(() =>
+    provider === "openai"
+      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
+      : provider === "anthropic"
+        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
+        : provider === "ollama"
+          ? createOllamaModelGatewayFromEnv(gatewayOptions)
+          : provider === "lmstudio"
+            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
+            : createOpenRouterModelGatewayFromEnv(gatewayOptions)
+  );
+}
+
+function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
+  let delegate: ModelGateway | undefined;
+  return {
+    async call<T>(
+      request: ModelRequest,
+      options?: { signal?: AbortSignal | undefined }
+    ): Promise<T> {
+      delegate ??= factory();
+      return await delegate.call<T>(request, options);
+    },
+  };
 }
 
 export function resolveDevShellServiceForProfile(

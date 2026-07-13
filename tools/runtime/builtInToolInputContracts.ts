@@ -55,6 +55,13 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "delegate.get_child_result": { mode: "schema-only" },
   "task.propose": { mode: "schema-only" },
   "kestrel_one.search_knowledge_documents": { mode: "schema-only" },
+  "kestrel_one.github_repository_read": { mode: "schema-only" },
+  "kestrel_one.github_push_agent_branch": { mode: "schema-only" },
+  "kestrel_one.github_issue_create": { mode: "schema-only" },
+  "kestrel_one.github_pull_request_create": { mode: "schema-only" },
+  "kestrel_one.github_pull_request_merge": { mode: "schema-only" },
+  "kestrel_one.github_release_create": { mode: "schema-only" },
+  "kestrel_one.github_workflow_dispatch": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
 export function validateBuiltInToolInputContract(name: string, input: unknown): void {

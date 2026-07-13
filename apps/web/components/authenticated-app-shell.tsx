@@ -25,6 +25,7 @@ export function AuthenticatedAppShell({
     <SidebarProvider>
       <AppSidebar
         activeOrganization={activeOrganization}
+        canManageOrganization={isAdmin}
         isAdmin={isAdmin}
         session={session}
       />

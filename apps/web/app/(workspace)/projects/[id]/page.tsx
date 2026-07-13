@@ -1,9 +1,11 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppPage } from "@/components/app-page";
 import {
   ProjectHomeClient,
   type ProjectHomeData,
 } from "@/components/projects/project-home-client";
+import { Button } from "@/components/ui/button";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getProjectDetail } from "@/lib/projects/store";
 import { listThreadsForUser } from "@/lib/threads/store";
@@ -40,6 +42,14 @@ export default async function ProjectPage({
     organizationDocuments: detail.organizationDocuments,
     members: detail.members,
     organizationMembers: detail.organizationMembers,
+    auditEvents: detail.auditEvents.map((event) => ({
+      id: event.id,
+      actorUserId: event.actorUserId,
+      action: event.action,
+      targetType: event.targetType,
+      targetId: event.targetId,
+      createdAt: event.createdAt.toISOString(),
+    })),
     threads: threads.map((thread) => ({
       id: thread.id,
       title: thread.title || "New thread",
@@ -49,7 +59,7 @@ export default async function ProjectPage({
   };
   return (
     <AppPage className="mx-auto w-full max-w-6xl p-6">
-      <header>
+      <header className="relative">
         <p className="text-muted-foreground text-sm capitalize">
           {detail.role} · context revision{" "}
           {detail.project.currentContextRevision}
@@ -58,6 +68,9 @@ export default async function ProjectPage({
         <p className="mt-1 text-muted-foreground">
           {detail.project.description || "Shared Project workspace"}
         </p>
+        <Button asChild className="absolute top-0 right-0" variant="outline">
+          <Link href={`/projects/${id}/workspace`}>Configure Workspace</Link>
+        </Button>
       </header>
       <ProjectHomeClient initial={initial} />
     </AppPage>
