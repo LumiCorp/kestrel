@@ -1,0 +1,371 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  type EnvironmentInfrastructureProvider,
+  EnvironmentProviderError,
+} from "./providers/contracts";
+import {
+  EnvironmentProvisioner,
+  type EnvironmentProvisioningRepository,
+  type ProvisioningOperation,
+} from "./provisioner";
+
+function fixture(type: string, workspaceId: string | null = null) {
+  const calls: string[] = [];
+  let operation: ProvisioningOperation | null = {
+    id: "operation-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    workspaceId,
+    type,
+  };
+  const repository: EnvironmentProvisioningRepository = {
+    async claimOperation() {
+      const claimed = operation;
+      operation = null;
+      return claimed;
+    },
+    async getEnvironment() {
+      return {
+        id: "environment-id",
+        organizationId: "organization-id",
+        region: "iad",
+        status: type === "environment.provision" ? "requested" : "ready",
+        flyAppName:
+          type === "environment.provision" ? null : "kestrel-env-existing",
+        runtimeImage: "registry.example/runtime@sha256:abc",
+        idleTimeoutMinutes: 15,
+      };
+    },
+    async getWorkspace() {
+      return workspaceId
+        ? {
+            id: workspaceId,
+            organizationId: "organization-id",
+            environmentId: "environment-id",
+            status: "requested",
+            flyMachineId: null,
+            flyVolumeId: null,
+            sourceType: "blank",
+            sourceRepository: null,
+            sourceDefaultBranch: null,
+          }
+        : null;
+    },
+    async setEnvironmentProvisioning() {
+      calls.push("environment:provisioning");
+    },
+    async setEnvironmentDeleting() {
+      calls.push("environment:deleting");
+    },
+    async completeEnvironment() {
+      calls.push("environment:ready");
+    },
+    async failEnvironment(input) {
+      calls.push(`environment:failed:${input.code}`);
+    },
+    async completeEnvironmentDelete() {
+      calls.push("environment:deleted");
+    },
+    async setWorkspaceProvisioning() {
+      calls.push("workspace:provisioning");
+    },
+    async completeWorkspace() {
+      calls.push("workspace:ready");
+    },
+    async failWorkspace(input) {
+      calls.push(`workspace:failed:${input.code}`);
+    },
+    async setWorkspaceStarting() {
+      calls.push("workspace:starting");
+    },
+    async setWorkspaceStopping() {
+      calls.push("workspace:stopping");
+    },
+    async setWorkspaceDeleting() {
+      calls.push("workspace:deleting");
+    },
+    async completeWorkspaceStart() {
+      calls.push("workspace:ready");
+    },
+    async completeWorkspaceStop() {
+      calls.push("workspace:stopped");
+    },
+    async completeWorkspaceDelete() {
+      calls.push("workspace:deleted");
+    },
+    async completeWorkspaceRebuild() {
+      calls.push("workspace:rebuilt");
+    },
+    async completeOperation() {
+      calls.push("operation:completed");
+    },
+    async failOperation(input) {
+      calls.push(`operation:failed:${input.code}`);
+    },
+    async deferOperation(input) {
+      calls.push(`operation:deferred:${input.message}`);
+    },
+  };
+  const provider: EnvironmentInfrastructureProvider = {
+    async ensureEnvironmentApp() {
+      calls.push("provider:app");
+      return {
+        id: "app-id",
+        name: "app-name",
+        organizationSlug: "fly-org",
+        network: "network-name",
+      };
+    },
+    async ensureWorkspaceVolume() {
+      calls.push("provider:volume");
+      return {
+        id: "volume-id",
+        name: "volume-name",
+        region: "iad",
+        sizeGb: 20,
+        encrypted: true,
+      };
+    },
+    async ensureWorkspaceMachine() {
+      calls.push("provider:machine");
+      return { id: "machine-id", state: "created", region: "iad" };
+    },
+    async createReplacementWorkspaceVolume() {
+      return {
+        id: "replacement-volume-id",
+        name: "replacement-volume",
+        region: "iad",
+        sizeGb: 20,
+        encrypted: true,
+      };
+    },
+    async createReplacementWorkspaceMachine() {
+      return { id: "replacement-machine-id", state: "started", region: "iad" };
+    },
+    async getMachine() {
+      return null;
+    },
+    async startMachine() {},
+    async stopMachine() {},
+    async deleteMachine() {},
+    async deleteVolume() {},
+    async deleteEnvironmentApp() {},
+    async listEnvironmentResources() {
+      return { machines: [], volumes: [] };
+    },
+    async waitForMachine() {
+      calls.push("provider:wait");
+    },
+    async createVolumeSnapshot() {
+      return { id: "snapshot-id", state: "prepare" };
+    },
+    async updateMachineImage() {
+      return { id: "machine-id", state: "started", region: "iad" };
+    },
+  };
+  return { repository, provider, calls };
+}
+
+function createProvisioner(
+  repository: EnvironmentProvisioningRepository,
+  provider: EnvironmentInfrastructureProvider
+) {
+  return new EnvironmentProvisioner({
+    repository,
+    provider,
+    runtimeImage: "registry.example/runtime@sha256:abc",
+    ticketPublicKey:
+      "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+    controlPlaneUrl: "https://kestrel.example",
+    credentialBrokerToken: "credential-broker-token",
+  });
+}
+
+test("Environment provisioning durably follows requested through ready", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  const provisioner = createProvisioner(repository, provider);
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "provider:app",
+    "environment:ready",
+    "operation:completed",
+  ]);
+  assert.equal(await provisioner.process("operation-id"), "not_claimed");
+});
+
+test("Workspace provisioning persists provider resources only after readiness", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.provision",
+    "workspace-id"
+  );
+  const provisioner = createProvisioner(repository, provider);
+  await provisioner.process("operation-id");
+  assert.deepEqual(calls, [
+    "workspace:provisioning",
+    "provider:volume",
+    "provider:machine",
+    "provider:wait",
+    "workspace:ready",
+    "operation:completed",
+  ]);
+});
+
+test("Provider failures are reflected on the resource and operation", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  provider.ensureEnvironmentApp = async () => {
+    throw Object.assign(new Error("Fly rejected the request."), {
+      code: "FLY_PROVIDER_REJECTED",
+    });
+  };
+  const provisioner = createProvisioner(repository, provider);
+  await provisioner.process("operation-id");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "environment:failed:FLY_PROVIDER_REJECTED",
+    "operation:failed:FLY_PROVIDER_REJECTED",
+  ]);
+});
+
+test("transient Fly failures return the durable operation to its retry queue", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  provider.ensureEnvironmentApp = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_UNAVAILABLE",
+      "Fly is temporarily unavailable."
+    );
+  };
+  const provisioner = createProvisioner(repository, provider);
+  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:deferred:Fly is temporarily unavailable.",
+  ]);
+});
+
+test("Workspace provisioning defers without poisoning state until its Environment is ready", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.provision",
+    "workspace-id"
+  );
+  repository.getEnvironment = async () => ({
+    id: "environment-id",
+    organizationId: "organization-id",
+    region: "iad",
+    status: "provisioning",
+    flyAppName: null,
+    runtimeImage: null,
+    idleTimeoutMinutes: 15,
+  });
+  const provisioner = createProvisioner(repository, provider);
+  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.deepEqual(calls, [
+    "operation:deferred:Environment must be ready before its Workspace can be provisioned.",
+  ]);
+});
+
+test("Workspace start wakes the existing Machine without reprovisioning storage", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.start",
+    "workspace-id"
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "stopped",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    sourceType: "blank",
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.startMachine = async () => {
+    calls.push("provider:start");
+  };
+  const provisioner = createProvisioner(repository, provider);
+  await provisioner.process("operation-id");
+  assert.deepEqual(calls, [
+    "workspace:starting",
+    "provider:start",
+    "provider:wait",
+    "workspace:ready",
+    "operation:completed",
+  ]);
+});
+
+test("Workspace stop retains its Machine and persistent volume", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.stop",
+    "workspace-id"
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "ready",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    sourceType: "blank",
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.stopMachine = async () => {
+    calls.push("provider:stop");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "workspace:stopping",
+    "provider:stop",
+    "provider:wait",
+    "workspace:stopped",
+    "operation:completed",
+  ]);
+});
+
+test("Workspace deletion removes the Machine before its volume", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.delete",
+    "workspace-id"
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "stopped",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    sourceType: "blank",
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.deleteMachine = async () => {
+    calls.push("provider:delete-machine");
+  };
+  provider.deleteVolume = async () => {
+    calls.push("provider:delete-volume");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "workspace:deleting",
+    "provider:delete-machine",
+    "provider:delete-volume",
+    "workspace:deleted",
+    "operation:completed",
+  ]);
+});
+
+test("Environment deletion removes the owning Fly App idempotently", async () => {
+  const { repository, provider, calls } = fixture("environment.delete");
+  provider.deleteEnvironmentApp = async () => {
+    calls.push("provider:delete-app");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "environment:deleting",
+    "provider:delete-app",
+    "environment:deleted",
+    "operation:completed",
+  ]);
+});

@@ -39,11 +39,13 @@
     "test:knowledge-rag:unit": "pnpm exec tsx --test tests/fixtures/knowledge-rag/fixture-corpus.test.ts lib/knowledge/documents/shared.test.ts lib/knowledge/documents/retrieval.test.ts",
     "test:knowledge-page:unit": "pnpm exec tsx --test app/knowledge/knowledge-explorer.test.ts",
     "test:knowledge-rag:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test tests/e2e/knowledge-rag.test.ts",
+    "test:environment:postgres": "node -e \"if (!process.env.KESTREL_ENVIRONMENT_DB_TEST_URL) throw new Error('KESTREL_ENVIRONMENT_DB_TEST_URL is required')\" && node --conditions=react-server --import tsx --test lib/environments/store.postgres.test.ts",
     "test:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test",
     "test:unit": "pnpm run check:kestrel-boundary && node --import tsx --test lib/**/*.test.ts app/**/*.test.ts",
     "test": "pnpm run test:unit"
   },
   "dependencies": {
+    "@lumi/kestrel-environment-auth": "workspace:*",
     "@ai-sdk/anthropic": "3.0.58",
     "@ai-sdk/gateway": "3.0.66",
     "@ai-sdk/openai": "3.0.41",
