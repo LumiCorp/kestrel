@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createAgent, type KestrelMemorySnapshot } from "../src/index.js";
+import {
+  createAgent,
+  type KestrelAgentDefinition,
+  type KestrelMemorySnapshot,
+} from "../src/index.js";
 
 const context = {
   actor: {
@@ -13,9 +17,22 @@ const context = {
   tenantId: "internal",
 };
 
+function createRemoteAgent(
+  definition: Omit<KestrelAgentDefinition, "target"> & {
+    baseUrl: string;
+    fetchImpl: typeof fetch;
+  },
+) {
+  const { baseUrl, fetchImpl, ...agent } = definition;
+  return createAgent({
+    ...agent,
+    target: { kind: "remote", baseUrl, fetchImpl },
+  });
+}
+
 test("createAgent runs and resumes with the configured profile", async () => {
   const requests: Array<Record<string, unknown>> = [];
-  const agent = createAgent({
+  const agent = createRemoteAgent({
     id: "support",
     profileId: "support-profile",
     baseUrl: "http://runner.internal",
@@ -112,7 +129,7 @@ test("agent session memory reads and writes through task graph state", async () 
   let lastGraphPayload: Record<string, unknown> | undefined;
   let version = 1;
 
-  const agent = createAgent({
+  const agent = createRemoteAgent({
     id: "support",
     profileId: "support-profile",
     baseUrl: "http://runner.internal",

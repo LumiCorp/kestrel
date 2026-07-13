@@ -88,8 +88,11 @@ if (process.env.KESTREL_LOCAL_CANARY_VERIFY_RESTORED === "true") {
 }
 
 const runnerClient = new KestrelClient({
-	baseUrl: workspaceUrl.toString(),
-	authToken: token,
+	target: {
+		kind: "remote",
+		baseUrl: workspaceUrl.toString(),
+		authToken: token,
+	},
 });
 try {
 	const profile = await runnerClient.getProfile("kestrel-one", {

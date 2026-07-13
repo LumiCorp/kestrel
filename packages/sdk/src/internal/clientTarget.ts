@@ -15,62 +15,55 @@ export function resolveClientTarget(
   options: KestrelClientOptions,
   runtime: { isNode: boolean } = { isNode: isNodeRuntime() },
 ): ResolvedClientTarget {
-  if (options.target !== undefined) {
-    if (
-      options.baseUrl !== undefined ||
-      options.authToken !== undefined ||
-      options.fetchImpl !== undefined
-    ) {
+  if (
+    typeof options === "object" &&
+    options !== null &&
+    ("baseUrl" in options || "authToken" in options || "fetchImpl" in options)
+  ) {
+    throw new KestrelConfigurationError(
+      "KestrelClient no longer accepts top-level baseUrl, authToken, or fetchImpl options; set them on an explicit target.",
+    );
+  }
+  if (
+    typeof options !== "object" ||
+    options === null ||
+    typeof options.target !== "object" ||
+    options.target === null
+  ) {
+    throw new KestrelConfigurationError(
+      "KestrelClient requires an explicit local or remote target.",
+    );
+  }
+  const target = options.target;
+  if (target.kind === "local") {
+    if (runtime.isNode === false) {
       throw new KestrelConfigurationError(
-        "KestrelClient target cannot be combined with legacy baseUrl, authToken, or fetchImpl options.",
+        "KestrelClient local targets require a Node.js server runtime.",
       );
     }
-    if (options.target.kind === "local") {
-      if (runtime.isNode === false) {
-        throw new KestrelConfigurationError(
-          "KestrelClient local targets require a Node.js server runtime.",
-        );
-      }
-      return {
-        kind: "local",
-        socketPath: requireNonEmptyString(options.target.socketPath, "target.socketPath"),
-        authToken: requireNonEmptyString(options.target.authToken, "target.authToken"),
-      };
-    }
     return {
-      kind: "remote",
-      baseUrl: requireNonEmptyString(options.target.baseUrl, "target.baseUrl"),
-      ...(options.target.authToken !== undefined
-        ? { authToken: requireNonEmptyString(options.target.authToken, "target.authToken") }
-        : {}),
-      fetchImpl: options.target.fetchImpl ?? fetch,
+      kind: "local",
+      socketPath: requireNonEmptyString(target.socketPath, "target.socketPath"),
+      authToken: requireNonEmptyString(target.authToken, "target.authToken"),
     };
   }
-
+  if (target.kind !== "remote") {
+    throw new KestrelConfigurationError(
+      "KestrelClient target.kind must be either local or remote.",
+    );
+  }
   return {
     kind: "remote",
-    baseUrl: options.baseUrl === undefined
-      ? resolveBaseUrlFromEnv()
-      : requireNonEmptyString(options.baseUrl, "baseUrl"),
-    ...(options.authToken !== undefined
-      ? { authToken: requireNonEmptyString(options.authToken, "authToken") }
+    baseUrl: requireNonEmptyString(target.baseUrl, "target.baseUrl"),
+    ...(target.authToken !== undefined
+      ? { authToken: requireNonEmptyString(target.authToken, "target.authToken") }
       : {}),
-    fetchImpl: options.fetchImpl ?? fetch,
+    fetchImpl: target.fetchImpl ?? fetch,
   };
 }
 
-function resolveBaseUrlFromEnv(): string {
-  const baseUrl = process.env.KESTREL_RUNNER_SERVICE_URL?.trim();
-  if (baseUrl === undefined || baseUrl.length === 0) {
-    throw new KestrelConfigurationError(
-      "KestrelClient requires target, baseUrl, or KESTREL_RUNNER_SERVICE_URL.",
-    );
-  }
-  return baseUrl;
-}
-
-function requireNonEmptyString(value: string, field: string): string {
-  if (value.trim().length === 0) {
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new KestrelConfigurationError(`KestrelClient ${field} must be a non-empty string.`);
   }
   return value;

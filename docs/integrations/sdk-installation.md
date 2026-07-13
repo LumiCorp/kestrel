@@ -40,11 +40,10 @@ The package is intended for server-side Node.js environments such as Next.js rou
 
 The SDK needs:
 
-- a runner service base URL
-- a bearer token for service-to-service authentication
+- an explicit execution target: a remote runner service or Local Core
 - actor metadata for the authenticated user or operator making the request
 
-Example environment variables:
+Remote targets use a base URL and may use a bearer token for service-to-service authentication. Local targets use the Core socket path and its client token. For example, a remote deployment can provide:
 
 ```bash
 export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
@@ -59,8 +58,11 @@ import { createAgent } from "@kestrel-agents/sdk";
 const agent = createAgent({
   id: "support-agent",
   profileId: "support",
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
 });
 ```
 

@@ -11,6 +11,7 @@ import {
   KestrelClient,
   KestrelConfigurationError,
   KestrelProtocolError,
+  type KestrelClientOptions,
   type RunnerEvent,
 } from "../src/runner.js";
 import { resolveClientTarget } from "../src/internal/clientTarget.js";
@@ -714,7 +715,24 @@ test("local KestrelClient rejects unary responses with a mismatched command id",
   await client.close();
 });
 
-test("KestrelClient rejects ambiguous targets and local targets outside Node", () => {
+test("KestrelClient requires an explicit target and rejects local targets outside Node", () => {
+  const originalRunnerUrl = process.env.KESTREL_RUNNER_SERVICE_URL;
+  process.env.KESTREL_RUNNER_SERVICE_URL = "http://environment-must-not-be-used.internal";
+  try {
+    assert.throws(
+      () => new KestrelClient({} as KestrelClientOptions),
+      (error: unknown) =>
+        error instanceof KestrelConfigurationError &&
+        /requires an explicit local or remote target/u.test(error.message),
+    );
+  } finally {
+    if (originalRunnerUrl === undefined) {
+      delete process.env.KESTREL_RUNNER_SERVICE_URL;
+    } else {
+      process.env.KESTREL_RUNNER_SERVICE_URL = originalRunnerUrl;
+    }
+  }
+
   assert.throws(
     () => new KestrelClient({
       target: {
@@ -722,10 +740,10 @@ test("KestrelClient rejects ambiguous targets and local targets outside Node", (
         baseUrl: "http://runner.internal",
       },
       baseUrl: "http://legacy.internal",
-    }),
+    } as unknown as KestrelClientOptions),
     (error: unknown) =>
       error instanceof KestrelConfigurationError &&
-      /cannot be combined with legacy/u.test(error.message),
+      /no longer accepts top-level baseUrl/u.test(error.message),
   );
 
   assert.throws(

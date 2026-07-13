@@ -115,6 +115,7 @@ import {
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
 } from "@kestrel-agents/sdk/runner";
+import { createAgent } from "@kestrel-agents/sdk";
 import type {
   JobRunCommandPayload,
   KestrelRequestContext,
@@ -161,6 +162,34 @@ const validAction: ProjectActionCommandPayload = {
   branchName: "feature/contracts",
 };
 void [validRun, validNestedJob, validMcp, validAction];
+
+const explicitRemoteClient = new KestrelClient({
+  target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+});
+const explicitLocalClient = new KestrelClient({
+  target: { kind: "local", socketPath: "/tmp/kestrel-core.sock", authToken: "token" },
+});
+const explicitRemoteAgent = createAgent({
+  id: "contract-check",
+  profileId: "reference",
+  target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+});
+// @ts-expect-error KestrelClient requires an explicit target
+const missingClientTarget = new KestrelClient({});
+// @ts-expect-error createAgent requires an explicit target
+const missingAgentTarget = createAgent({ id: "missing-target", profileId: "reference" });
+const legacyClientTarget = new KestrelClient({
+  // @ts-expect-error top-level connection fields are not part of the public SDK contract
+  baseUrl: "http://127.0.0.1:1",
+});
+void [
+  explicitRemoteClient,
+  explicitLocalClient,
+  explicitRemoteAgent,
+  missingClientTarget,
+  missingAgentTarget,
+  legacyClientTarget,
+];
 
 class CustomRunClient extends KestrelClient {
   streamWithProfile(
@@ -294,7 +323,34 @@ void [
   const runnerModule = await import(pathToFileURL(path.join(installedPackageDir, "dist", "runner.js")).href);
   assert.equal(typeof entryModule.createAgent, "function", "packed SDK root does not export createAgent.");
   assert.equal(typeof runnerModule.KestrelClient, "function", "packed SDK runner subpath does not export KestrelClient.");
-  void entryModule.createAgent({ id: "release-check", profileId: "reference", baseUrl: "http://127.0.0.1:1" });
+  const originalRunnerUrl = process.env.KESTREL_RUNNER_SERVICE_URL;
+  process.env.KESTREL_RUNNER_SERVICE_URL = "http://environment-must-not-be-used.internal";
+  try {
+    assert.throws(
+      () => new runnerModule.KestrelClient({}),
+      /requires an explicit local or remote target/u,
+      "packed SDK must not infer its target from process environment",
+    );
+    assert.throws(
+      () => new runnerModule.KestrelClient({
+        target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+        authToken: "legacy-token",
+      }),
+      /no longer accepts top-level baseUrl, authToken, or fetchImpl options/u,
+      "packed SDK must reject legacy top-level connection options",
+    );
+  } finally {
+    if (originalRunnerUrl === undefined) {
+      delete process.env.KESTREL_RUNNER_SERVICE_URL;
+    } else {
+      process.env.KESTREL_RUNNER_SERVICE_URL = originalRunnerUrl;
+    }
+  }
+  void entryModule.createAgent({
+    id: "release-check",
+    profileId: "reference",
+    target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+  });
   const remoteClient = new runnerModule.KestrelClient({
     target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
   });

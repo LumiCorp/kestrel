@@ -12,6 +12,7 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
   createRunnerHealthV1,
+  type KestrelRemoteTarget,
   type RunnerProfile,
   type RunnerSessionDescription,
   type RunnerSessionState,
@@ -38,6 +39,15 @@ const context = {
   },
   tenantId: "internal",
 };
+
+function createRemoteClient(target: Omit<KestrelRemoteTarget, "kind">): KestrelClient {
+  return new KestrelClient({
+    target: {
+      kind: "remote",
+      ...target,
+    },
+  });
+}
 
 class ControlledProtocolTransport implements ProtocolTransport {
   private handlers?: {
@@ -88,7 +98,7 @@ function completedResult(sessionId: string, runId: string) {
 
 test("KestrelClient reads and validates runner health", async () => {
   const requests: Array<{ url: string; headers: Headers }> = [];
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal/path?secret=value",
     authToken: "secret-token",
     fetchImpl: async (input, init) => {
@@ -132,7 +142,7 @@ test("SDK session contracts preserve typed operator and continuation fields", ()
 });
 
 test("KestrelClient rejects unversioned runner health", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => Response.json({ ok: true }),
   });
@@ -147,7 +157,7 @@ test("KestrelClient rejects unversioned runner health", async () => {
 
 test("KestrelClient lists profiles and runs using profileId", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     authToken: "secret-token",
     fetchImpl: async (input, init) => {
@@ -254,7 +264,7 @@ test("KestrelClient streams jobs and exposes operator run and promotion undo com
       bundle: "kestrel runtime bundle --run-id run-job-sdk",
     },
   };
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -429,7 +439,7 @@ test("KestrelClient does not dispatch a job for an already-aborted signal", asyn
 });
 
 test("KestrelClient streamRun stays request-scoped", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -494,7 +504,7 @@ test("KestrelClient streamRun stays request-scoped", async () => {
 
 test("KestrelClient exposes workspace checkpoint helpers", async () => {
   const requests: Array<Record<string, unknown>> = [];
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -651,7 +661,7 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
   const requests: Array<Record<string, unknown>> = [];
   let runController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let runCommandId = "";
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -745,7 +755,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
   const requests: Array<Record<string, unknown>> = [];
   let runController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let runCommandId = "";
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -860,7 +870,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
 });
 
 test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal event", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const command = JSON.parse(String(init?.body)) as { id: string };
@@ -899,7 +909,7 @@ test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal ev
 });
 
 test("RemoteRunnerTransport rejects a terminal SSE event without a command id", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
       `event: run.completed\ndata: ${JSON.stringify({
@@ -949,7 +959,7 @@ test("RemoteRunnerTransport rejects a terminal SSE event without a command id", 
 });
 
 test("RemoteRunnerTransport rejects a nonterminal SSE event for another command", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
       `event: run.started\ndata: ${JSON.stringify({
@@ -991,7 +1001,7 @@ test("RemoteRunnerTransport rejects mismatched terminal events without cross-set
   const victimReady = new Promise<void>((resolve) => {
     markVictimReady = resolve;
   });
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const command = JSON.parse(String(init?.body)) as {
@@ -1371,7 +1381,7 @@ test("RemoteRunnerTransport rejects unary responses with a mismatched command id
 test("KestrelClient subscribe uses filtered SSE subscriptions", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   let closed = false;
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -1438,7 +1448,7 @@ test("KestrelClient subscribe uses filtered SSE subscriptions", async () => {
 });
 
 test("KestrelClient subscribe surfaces runner errors through async iteration", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
       `event: runner.error\ndata: ${JSON.stringify({
@@ -1477,7 +1487,7 @@ test("KestrelClient subscribe surfaces runner errors through async iteration", a
 });
 
 test("KestrelClient getSessionState returns an atomic session snapshot", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -1518,7 +1528,7 @@ test("KestrelClient getSessionState returns an atomic session snapshot", async (
 });
 
 test("KestrelClient preserves structured HTTP and service errors", async () => {
-  const client = new KestrelClient({
+  const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;

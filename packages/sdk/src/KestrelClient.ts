@@ -84,7 +84,7 @@ export class KestrelClient {
   private readonly localTransport: LocalRunnerTransport | undefined;
   private readonly subscriptionControllers = new Set<AbortController>();
 
-  constructor(options: KestrelClientOptions = {}) {
+  constructor(options: KestrelClientOptions) {
     this.target = resolveClientTarget(options);
     if (this.target.kind === "local") {
       this.localTransport = new LocalRunnerTransport(this.target);
