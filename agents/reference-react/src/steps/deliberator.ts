@@ -678,6 +678,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     decisionTrace: undefined,
     loopGuard: undefined,
     terminal: undefined,
+    assistantText: null,
     finalOutput: undefined,
     activeTurnIntent: undefined,
     phase: undefined,

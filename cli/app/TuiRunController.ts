@@ -53,11 +53,13 @@ export interface TuiRunControllerContext extends TuiAppContext {
   handleTaskUpdatedEvent(
     task: DelegationTaskMeta,
     kind: "spawned" | "waiting" | "completed" | "failed",
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
   ): Promise<void>;
   syncBackgroundSessionProgress(sessionId: string): Promise<void>;
   syncBackgroundSessionResult(
     output: NormalizedOutput,
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void>;
@@ -338,41 +340,20 @@ export class TuiRunController {
       }
 
       const parsedFinalize = parseFinalizePayload(response.payload.result.finalizedPayload);
-      if (parsedFinalize.ok === false || parsedFinalize.payload === undefined) {
-        const error = parsedFinalize.error ?? "FinalizeAnswer payload missing";
-        await this.context.appendHistoryLine(
-          "system",
-          `Finalize payload validation error: ${error}`,
-          {
-            rawFinalizePayload: asRecord(response.payload.result.finalizedPayload) ?? {},
-          },
-          output,
-        );
+      const assistantText = response.payload.result.assistantText;
+      if (assistantText !== null) {
+        const structuredData = parsedFinalize.ok && parsedFinalize.payload !== undefined
+          ? parsedFinalize.payload.data
+          : undefined;
         await this.context.appendHistoryLine(
           "assistant",
-          "[Invalid finalize payload]",
-          {
-            rawFinalizePayload: asRecord(response.payload.result.finalizedPayload) ?? {},
-          },
+          assistantText,
+          structuredData,
           output,
         );
-        await this.appendTerminalHandoffDiagnostics({
-          scope: "terminal_handoff.final_message_appended",
-          summary: "TUI appended invalid finalize payload markers for the active run.",
-          details: {
-            ...(terminalResponseMeta ?? {}),
-            branch: "invalid_finalize_payload",
-            parseError: error,
-          },
-        });
-      } else {
-        await this.context.appendHistoryLine(
-          "assistant",
-          parsedFinalize.payload.message,
-          parsedFinalize.payload.data,
-          output,
-        );
-        const reportingGroundingNotice = buildFinalizeReportingGroundingNotice(parsedFinalize.payload.data);
+        const reportingGroundingNotice = structuredData === undefined
+          ? undefined
+          : buildFinalizeReportingGroundingNotice(structuredData);
         if (reportingGroundingNotice !== undefined) {
           await this.context.appendHistoryLine("system", reportingGroundingNotice, undefined, output);
         }
@@ -382,7 +363,7 @@ export class TuiRunController {
           details: {
             ...(terminalResponseMeta ?? {}),
             branch: "assistant_message",
-            messageLength: parsedFinalize.payload.message.length,
+            messageLength: assistantText.length,
           },
         });
       }
@@ -546,7 +527,12 @@ export class TuiRunController {
     }
 
     if (event.type === "task.updated") {
-      void this.context.handleTaskUpdatedEvent(event.payload.task, event.payload.kind, event.payload.finalizedPayload);
+      void this.context.handleTaskUpdatedEvent(
+        event.payload.task,
+        event.payload.kind,
+        event.payload.assistantText,
+        event.payload.finalizedPayload,
+      );
       this.context.pushRunLog({
         timestamp: new Date().toISOString(),
         level: event.payload.kind === "failed" ? "ERROR" : "INFO",
@@ -576,6 +562,7 @@ export class TuiRunController {
       });
       void this.context.syncBackgroundSessionResult(
         output,
+        event.payload.result.assistantText,
         event.payload.result.finalizedPayload,
         event.payload.result.operatorAffordance,
       );

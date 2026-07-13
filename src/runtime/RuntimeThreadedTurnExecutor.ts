@@ -138,9 +138,12 @@ export class RuntimeThreadedTurnExecutor {
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
     });
     const session = await this.getSession(input.sessionId);
-    const finalOutput = asRecord(session?.state.agent)?.finalOutput;
+    const agentState = asRecord(session?.state.agent);
+    const finalOutput = agentState?.finalOutput;
+    const assistantText = readAssistantText(agentState?.assistantText);
     return {
       output,
+      assistantText: output.status === "COMPLETED" ? assistantText : null,
       ...(session !== null ? { session } : {}),
       ...(output.status === "COMPLETED" && finalOutput !== undefined
         ? { finalizedPayload: finalOutput }
@@ -258,6 +261,14 @@ export class RuntimeThreadedTurnExecutor {
       },
     };
   }
+}
+
+function readAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export function resolveRuntimeThreadedStepAgent(input: {

@@ -43,6 +43,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
             sessionId: "session-agent-1",
             payload: {
               result: {
+                assistantText: null,
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-agent-1",

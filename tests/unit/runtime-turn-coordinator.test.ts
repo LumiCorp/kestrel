@@ -36,6 +36,7 @@ test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns",
       submitTurn: async (input) => {
         submitted.push(input);
         return {
+          assistantText: null,
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -102,6 +103,7 @@ test("RuntimeTurnCoordinatorService forwards attachments on ordinary thread turn
       submitTurn: async (input) => {
         submitted.push(input);
         return {
+          assistantText: null,
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -169,6 +171,7 @@ test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and att
         resumedAttachments = input.attachments;
         resumedRuntimeTurn = input.runtimeTurn;
         return {
+          assistantText: null,
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -410,6 +413,7 @@ test("RuntimeTurnCoordinatorService reads finalized payload and builds operator 
     threadRuntime: {
       ensureMainThreadForSession: async () => threadRecord("thread-main"),
       submitTurn: async (input) => ({
+        assistantText: null,
         thread: threadRecord(input.threadId),
         output: output("COMPLETED"),
       }),
@@ -453,6 +457,54 @@ test("RuntimeTurnCoordinatorService reads finalized payload and builds operator 
   assert.equal(statusLookups, 1);
 });
 
+test("RuntimeTurnCoordinatorService preserves an explicit null finalized payload", async () => {
+  let persistedPayloadReads = 0;
+  const coordinator = new RuntimeTurnCoordinatorService({
+    defaults: {
+      defaultInteractionMode: "chat",
+      defaultActSubmode: "safe",
+      modeSystemV2Enabled: true,
+      toolBatchCheckpointSize: 5,
+    },
+    threadRuntime: {
+      ensureMainThreadForSession: async () => threadRecord("thread-main"),
+      submitTurn: async (input) => ({
+        assistantText: "Done.",
+        finalizedPayload: null,
+        thread: threadRecord(input.threadId),
+        output: output("COMPLETED"),
+      }),
+      resumeBlockedTurn: async () => {
+        throw new Error("not used");
+      },
+      getThreadStatus: async () => ({
+        thread: threadRecord("thread-main"),
+        openRequests: [],
+        activeGrants: [],
+        contextCheckpoints: [],
+        delegations: [],
+      }),
+    } as Pick<ThreadRuntimePort, "ensureMainThreadForSession" | "submitTurn" | "resumeBlockedTurn" | "getThreadStatus">,
+    directRun: async () => {
+      throw new Error("not used");
+    },
+    getSession: async () => sessionRecord("session-coordinator"),
+    readFinalizedPayload: async () => {
+      persistedPayloadReads += 1;
+      return { stale: true };
+    },
+  });
+
+  const result = await coordinator.runTurn({
+    sessionId: "session-coordinator",
+    message: "finish",
+    eventType: "user.message",
+  });
+
+  assert.equal(result.finalizedPayload, null);
+  assert.equal(persistedPayloadReads, 0);
+});
+
 test("RuntimeTurnCoordinatorService builds source-owned operator affordance by default", async () => {
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -464,6 +516,7 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
     threadRuntime: {
       ensureMainThreadForSession: async () => threadRecord("thread-main"),
       submitTurn: async (input) => ({
+        assistantText: null,
         thread: threadRecord(input.threadId),
         output: output("WAITING", {
           waitFor: {

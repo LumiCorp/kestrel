@@ -4,10 +4,11 @@ import { normalizeTimestampString } from "./timestamps.js";
 const SUBMITTED_HISTORY_WINDOW_LIMIT = 64;
 
 export interface SubmittedHistoryLine {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   timestamp: string;
   attachments?: RunTurnAttachment[] | undefined;
+  data?: { kind: "runtime.waiting_prompt" } | undefined;
 }
 
 export function normalizeSubmittedHistory(history: unknown): SubmittedHistoryLine[] | undefined {
@@ -47,7 +48,9 @@ function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | un
   if (isRecord(line) === false) {
     return undefined;
   }
-  if (line.role !== "user" && line.role !== "assistant") {
+  const data = isRecord(line.data) ? line.data : undefined;
+  const isRuntimeWaitingPrompt = line.role === "system" && data?.kind === "runtime.waiting_prompt";
+  if (line.role !== "user" && line.role !== "assistant" && isRuntimeWaitingPrompt === false) {
     return undefined;
   }
   if (typeof line.text !== "string" || typeof line.timestamp !== "string") {
@@ -58,10 +61,11 @@ function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | un
   }
 
   return {
-    role: line.role,
+    role: line.role as SubmittedHistoryLine["role"],
     text: line.text,
     timestamp: normalizeTimestampString(line.timestamp),
     ...(Array.isArray(line.attachments) ? { attachments: line.attachments as RunTurnAttachment[] } : {}),
+    ...(isRuntimeWaitingPrompt ? { data: { kind: "runtime.waiting_prompt" as const } } : {}),
   };
 }
 

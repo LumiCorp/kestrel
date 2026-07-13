@@ -64,12 +64,18 @@ test("root package exposes public product scripts and a broad monorepo test gate
 });
 
 test("runtime package publishes only the public executable boundary", async () => {
+  const rawPackage = await readFile(path.join(ROOT, "package.json"), "utf8");
   const pkg = await readPackage(path.join(ROOT, "package.json"));
   const files = pkg.files ?? [];
 
   assert.equal(pkg.main, "dist/src/index.js");
   assert.equal(pkg.types, "dist/src/index.d.ts");
-  assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "0.5.1");
+  assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
+  assert.equal(
+    [...rawPackage.matchAll(/"@kestrel-agents\/protocol"\s*:/gu)].length,
+    1,
+    "runtime package must declare the protocol dependency exactly once",
+  );
   assert.equal(
     pkg.scripts?.["runtime:release-check"],
     "pnpm run build && node --import tsx scripts/check-runtime-package.ts",

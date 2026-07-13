@@ -693,6 +693,7 @@ test("ThreadRuntime appends completed assistant output to durable thread history
       finalizedPayload: {
         message: "Final answer from the runtime.",
       },
+      assistantText: "Final answer from the runtime.",
     },
   ]);
 
@@ -834,6 +835,11 @@ test("ThreadRuntime preserves submitted history and appends the waiting assistan
     "fix the landing page mounting issue",
     "try again",
     "Need user input",
+  ]);
+  assert.deepEqual(persistedHistory.map((line) => (line as { role?: string }).role), [
+    "user",
+    "user",
+    "system",
   ]);
 });
 

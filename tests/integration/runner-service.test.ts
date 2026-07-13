@@ -163,6 +163,7 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
       runTurn: async () => {
         capturedProfileId = resolvedProfile.id;
         return {
+          assistantText: "  profile response  ",
           output: {
             status: "COMPLETED",
             sessionId: "session-profile-id",
@@ -238,6 +239,8 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
     });
     assert.equal(runResponse.statusCode, 200);
     assert.match(runResponse.body, /event: run\.completed/);
+    assert.match(runResponse.body, /"assistantText":"profile response"/u);
+    assert.doesNotMatch(runResponse.body, /  profile response  /u);
     assert.equal(capturedProfileId, "reference");
   } finally {
     await service.close();
@@ -255,6 +258,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
     runTurn: async () => {
       taskUpdateListener?.({
         kind: "waiting",
+        assistantText: null,
         task: {
           taskId: "task-1",
           parentSessionId: "session-1",
@@ -297,6 +301,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
         message: "Reasoning in progress.",
       });
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: "session-1",
@@ -553,6 +558,7 @@ test("runner service streams filtered subscription events over /events/stream", 
       runTurn: async () => {
         onTaskUpdate({
           kind: "waiting",
+          assistantText: null,
           task: {
             taskId: "task-subscribe-1",
             parentSessionId: "session-subscribe",
@@ -568,6 +574,7 @@ test("runner service streams filtered subscription events over /events/stream", 
           },
         });
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-subscribe",
@@ -689,6 +696,7 @@ test("runner service cancels active runs when a stream disconnects", async () =>
           options?.signal?.addEventListener("abort", onAbort, { once: true });
         });
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-disconnect",
@@ -786,6 +794,7 @@ test("runner service keeps durable runs active when a stream disconnects", async
         }, { once: true });
         await finishRunTurn;
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-durable-disconnect",

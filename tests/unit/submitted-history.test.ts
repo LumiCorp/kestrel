@@ -14,6 +14,12 @@ test("normalizeSubmittedHistory keeps conversation rows and drops UI-only rows",
       timestamp: "2026-05-13T12:00:00.000Z",
     },
     {
+      role: "system",
+      text: "Would you like me to proceed?",
+      timestamp: "2026-05-13T12:00:30.000Z",
+      data: { kind: "runtime.waiting_prompt" },
+    },
+    {
       role: "user",
       text: "fix the app",
       timestamp: "2026-05-13T12:01:00.000Z",
@@ -40,10 +46,44 @@ test("normalizeSubmittedHistory keeps conversation rows and drops UI-only rows",
   assert.deepEqual(
     history?.map((line) => ({ role: line.role, text: line.text })),
     [
+      { role: "system", text: "Would you like me to proceed?" },
       { role: "user", text: "fix the app" },
       { role: "assistant", text: "I need the project path." },
     ],
   );
+});
+
+test("tagged runtime waiting prompts survive repeated history normalization", () => {
+  const initial = [
+    {
+      role: "user",
+      text: "Build the app",
+      timestamp: "2026-05-13T12:00:00.000Z",
+    },
+    {
+      role: "system",
+      text: "Would you like me to begin implementation?",
+      timestamp: "2026-05-13T12:01:00.000Z",
+      data: { kind: "runtime.waiting_prompt" },
+    },
+    {
+      role: "user",
+      text: "Yes",
+      timestamp: "2026-05-13T12:02:00.000Z",
+    },
+  ];
+
+  const once = normalizeSubmittedHistory(initial);
+  const twice = normalizeSubmittedHistory(once);
+
+  assert.deepEqual(twice, once);
+  assert.deepEqual(buildModelHistoryWindow(twice), once);
+  assert.deepEqual(twice?.[1], {
+    role: "system",
+    text: "Would you like me to begin implementation?",
+    timestamp: "2026-05-13T12:01:00.000Z",
+    data: { kind: "runtime.waiting_prompt" },
+  });
 });
 
 test("normalizeSubmittedHistory preserves attachments on retained rows", () => {

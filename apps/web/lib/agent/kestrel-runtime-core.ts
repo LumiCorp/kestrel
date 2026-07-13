@@ -13,10 +13,7 @@ import {
 } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
-import {
-  extractFinalizedAssistantText,
-  type KestrelTerminalStatus,
-} from "@/lib/agent/kestrel-stream-events";
+import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
 import { writeKestrelRunnerEventsToUi } from "@/lib/agent/kestrel-ui-stream";
 import type { Session } from "@/lib/auth-types";
 
@@ -230,8 +227,6 @@ export function createKestrelOneAgentResponseFromAgent(
           assistantMessageId,
           textPartId,
           reasoningPartId,
-          emptyFinalText:
-            "The run completed without a final assistant message.",
         });
       } finally {
         if (input.ownsAgent) {
@@ -326,5 +321,3 @@ function getMessageText(message: UIMessage): string {
     .join("\n")
     .trim();
 }
-
-export { extractFinalizedAssistantText };

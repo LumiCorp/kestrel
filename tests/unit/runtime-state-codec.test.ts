@@ -169,6 +169,7 @@ test("runtime state validation rejects legacy execution ledger", () => {
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       executionLedger: "- [ ] Old markdown progress",
     },
   });
@@ -185,6 +186,7 @@ test("runtime state validation rejects agent evidence ledger as legacy progress 
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       evidenceLedger: [],
     },
   });
@@ -231,6 +233,7 @@ test("runtime state validation rejects invalid plan metadata", () => {
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       plan: {
         path: "../PLAN.md",
         status: "approved",
@@ -250,6 +253,7 @@ test("runtime state validation rejects non-object agent nextAction", () => {
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       nextAction: "[Circular]",
     },
   });
@@ -266,6 +270,7 @@ test("runtime state validation accepts object agent nextAction", () => {
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       nextAction: {
         kind: "tool",
         name: "fs.read_text",
@@ -277,6 +282,42 @@ test("runtime state validation accepts object agent nextAction", () => {
   });
 
   assert.equal(error, undefined);
+});
+
+test("runtime state migration initializes historical assistant text to null without payload inference", () => {
+  const state = decodeRuntimeSessionState({
+    runtime: { schemaVersion: 1 },
+    agent: {
+      observations: [],
+      exec: {},
+      finalOutput: {
+        message: "legacy payload text must remain structured",
+        content: "not an assistant response",
+      },
+      assistantText: "untrusted pre-v2 text",
+    },
+  });
+
+  assert.equal(state.runtime.schemaVersion, CURRENT_RUNTIME_STATE_SCHEMA_VERSION);
+  assert.equal(state.agent.assistantText, null);
+  assert.deepEqual(state.agent.finalOutput, {
+    message: "legacy payload text must remain structured",
+    content: "not an assistant response",
+  });
+});
+
+test("v2 runtime state requires explicit non-empty assistant text or null", () => {
+  const missing = validateRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: { observations: [], exec: {} },
+  });
+  assert.match(missing?.message ?? "", /assistantText/u);
+
+  const empty = validateRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: { observations: [], exec: {}, assistantText: "   " },
+  });
+  assert.match(empty?.message ?? "", /non-empty string/u);
 });
 
 test("runtime state codec preserves migratedAt for already-canonical state", () => {

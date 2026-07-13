@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Writable } from "node:stream";
 
+import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+
 import type {
   RunnerEventEnvelope,
   RunnerEventPayloadByType,
@@ -37,6 +39,7 @@ export class EventWriter implements RunnerEventSink {
       commandId?: string | undefined;
     } = {},
   ): void {
+    const normalizedPayload = normalizeRunnerEventPayload(type, payload);
     const event: RunnerEventEnvelope<TType> = {
       id: randomUUID(),
       type,
@@ -45,9 +48,24 @@ export class EventWriter implements RunnerEventSink {
       ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
       ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
       ...(options.commandId !== undefined ? { commandId: options.commandId } : {}),
-      payload,
+      payload: normalizedPayload,
     };
 
     this.output.write(`${JSON.stringify(event)}\n`);
   }
+}
+
+export function normalizeRunnerEventPayload<TType extends RunnerEventType>(
+  type: TType,
+  payload: RunnerEventPayloadByType[TType],
+): RunnerEventPayloadByType[TType] {
+  if (
+    type === "run.completed" ||
+    type === "run.failed" ||
+    type === "run.cancelled" ||
+    type === "operator.controlled"
+  ) {
+    return parseRunnerTerminalPayloadV2(type, payload) as unknown as RunnerEventPayloadByType[TType];
+  }
+  return payload;
 }

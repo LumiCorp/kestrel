@@ -21,6 +21,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
       toolBatchCheckpointSize: 7,
     },
     getSession: async () => sessionRecord("session-threaded", {
+      assistantText: "done",
       finalOutput: { message: "done" },
     }),
     runKernel: async (input) => {
@@ -118,6 +119,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
     approvalPolicyId: "approval:review",
   });
   assert.deepEqual(result.finalizedPayload, { message: "done" });
+  assert.equal(result.assistantText, "done");
 });
 
 test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {

@@ -182,6 +182,7 @@ export interface ThreadWaitDescriptor {
 export interface SubmitTurnResult {
   thread: ThreadRecord;
   output: NormalizedOutput;
+  assistantText: string | null;
   session?: SessionRecord | undefined;
   wait?: ThreadWaitDescriptor | undefined;
   finalizedPayload?: unknown | undefined;
@@ -794,6 +795,7 @@ export interface TurnExecutionInput extends SubmitTurnInput {
 
 export interface TurnExecutionResult {
   output: NormalizedOutput;
+  assistantText?: string | null | undefined;
   session?: SessionRecord | undefined;
   finalizedPayload?: unknown | undefined;
 }

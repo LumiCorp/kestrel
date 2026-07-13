@@ -202,6 +202,7 @@ function createFakeAgent(seen: Array<{ input: KestrelAgentTurnInput; context: Ke
         runId: `run-${seen.length}`,
         payload: {
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: input.sessionId,
@@ -222,6 +223,7 @@ function createFakeAgent(seen: Array<{ input: KestrelAgentTurnInput; context: Ke
         runId: `run-${seen.length}`,
         payload: {
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: input.sessionId,

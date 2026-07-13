@@ -61,6 +61,7 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
 
           if (resumed) {
             return {
+              assistantText: null,
               output: {
                 status: "COMPLETED",
                 sessionId: input.sessionId,
@@ -83,6 +84,7 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
           }
 
           return {
+            assistantText: null,
             output: {
               status: "WAITING",
               sessionId: input.sessionId,

@@ -112,6 +112,7 @@ test("RunnerHost preserves waitFor in job completed output", async () => {
     async close() {},
     async runTurn(input) {
       return {
+        assistantText: null,
         output: {
           status: "WAITING",
           sessionId: input.sessionId,

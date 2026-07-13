@@ -1,4 +1,5 @@
 import type { ClientCapabilities } from "../clientCapabilities.js";
+import type { RunnerResultV2 } from "@kestrel-agents/protocol";
 import type {
   ExecutionPolicyOverride,
   InteractionMode,
@@ -62,11 +63,7 @@ export interface RuntimeTurnInput {
   skillPack?: RuntimeTurnSkillPack | undefined;
 }
 
-export interface RuntimeTurnResult {
-  output: NormalizedOutput;
-  finalizedPayload?: unknown | undefined;
-  operatorAffordance?: unknown | undefined;
-}
+export interface RuntimeTurnResult extends RunnerResultV2<NormalizedOutput> {}
 
 export interface RuntimeTurnCoordinator {
   runTurn(input: RuntimeTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RuntimeTurnResult>;

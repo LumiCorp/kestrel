@@ -471,6 +471,7 @@ export class ExecutionEngine {
           session,
           currentStepAgent: session.currentStepAgent ?? lastStepAgent,
         });
+        session = await this.runLifecycleController.resetFinalizationArtifacts(session);
         session = await this.maybeResetContinuationStateForFreshTurn(runId, event, session);
         lastStepAgent = session.currentStepAgent ?? lastStepAgent;
         const managedWorktreeRunContext = await this.prepareManagedWorktreeRunContext(runId, event, session);
@@ -2690,7 +2691,7 @@ export class ExecutionEngine {
     const nextAction = this.asRecord(reactState.nextAction);
     const nextIfApproved = buildContinuationNextActions(nextAction, currentStep);
     const partialAnswer = buildContinuationPartialAnswer(
-      this.asRecord(reactState.finalOutput),
+      this.asString(reactState.assistantText),
       lastObservation,
       completedSoFar,
     );

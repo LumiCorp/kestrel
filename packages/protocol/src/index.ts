@@ -1,7 +1,7 @@
 export const RUNNER_HEALTH_VERSION = "runner-health-v1" as const;
 export const RUNNER_SERVICE_NAME = "kestrel-runner" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v1" as const;
-export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v1" as const;
+export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v2" as const;
 
 export const RUNNER_RUN_STREAM_EVENT_TYPES = [
   "run.started",
@@ -46,6 +46,55 @@ export class RunnerProtocolContractError extends Error {
     super(message);
     this.name = "RunnerProtocolContractError";
   }
+}
+
+export interface RunnerResultV2<TOutput = unknown> {
+  output: TOutput;
+  assistantText: string | null;
+  finalizedPayload?: unknown | undefined;
+  operatorAffordance?: unknown | undefined;
+}
+
+export function parseRunnerResultV2<TOutput = unknown>(value: unknown): RunnerResultV2<TOutput> {
+  const result = requireRecord(value, "runner result");
+  if (Object.prototype.hasOwnProperty.call(result, "assistantText") === false) {
+    throw new RunnerProtocolContractError("runner result.assistantText is required");
+  }
+  const assistantText = parseAssistantText(result.assistantText);
+  if (Object.prototype.hasOwnProperty.call(result, "output") === false) {
+    throw new RunnerProtocolContractError("runner result.output is required");
+  }
+  return {
+    ...result,
+    output: result.output as TOutput,
+    assistantText,
+    ...(Object.prototype.hasOwnProperty.call(result, "finalizedPayload")
+      ? { finalizedPayload: result.finalizedPayload }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(result, "operatorAffordance")
+      ? { operatorAffordance: result.operatorAffordance }
+      : {}),
+  };
+}
+
+export function parseRunnerTerminalPayloadV2(
+  type: string,
+  value: unknown,
+): Record<string, unknown> {
+  const payload = requireRecord(value, `${type} payload`);
+  if (type === "run.completed" || type === "run.failed" || type === "run.cancelled") {
+    return {
+      ...payload,
+      result: parseRunnerResultV2(payload.result),
+    };
+  }
+  if (type === "operator.controlled" && payload.result !== undefined) {
+    return {
+      ...payload,
+      result: parseRunnerResultV2(payload.result),
+    };
+  }
+  return payload;
 }
 
 export interface RunnerHealthV1 {
@@ -99,6 +148,16 @@ export function parseRunnerHealthV1(value: unknown): RunnerHealthV1 {
   if (!Array.isArray(root.capabilities) || root.capabilities.some((entry) => typeof entry !== "string" || entry.length === 0)) {
     throw new RunnerProtocolContractError("runner health.capabilities must be an array of non-empty strings");
   }
+  if (contracts.command !== RUNNER_COMMAND_CONTRACT_VERSION) {
+    throw new RunnerProtocolContractError(
+      `runner health.contracts.command must be '${RUNNER_COMMAND_CONTRACT_VERSION}'`,
+    );
+  }
+  if (contracts.events !== RUNNER_EVENT_CONTRACT_VERSION) {
+    throw new RunnerProtocolContractError(
+      `runner health.contracts.events must be '${RUNNER_EVENT_CONTRACT_VERSION}'`,
+    );
+  }
 
   return {
     version: RUNNER_HEALTH_VERSION,
@@ -125,6 +184,18 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 function requireNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new RunnerProtocolContractError(`${label} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function parseAssistantText(value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new RunnerProtocolContractError(
+      "runner result.assistantText must be null or a non-empty string",
+    );
   }
   return value.trim();
 }

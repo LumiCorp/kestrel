@@ -1,4 +1,4 @@
-import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
+import type { RunnerResultV2, RunnerRunStreamEventType } from "@kestrel-agents/protocol";
 
 export type RunnerActorType = "end_user" | "operator" | "service";
 
@@ -156,12 +156,7 @@ export interface RunnerRunOutput {
   [key: string]: unknown;
 }
 
-export interface RunnerRunResult {
-  output: RunnerRunOutput;
-  finalizedPayload?: unknown;
-  operatorAffordance?: unknown;
-  [key: string]: unknown;
-}
+export interface RunnerRunResult extends RunnerResultV2<RunnerRunOutput> {}
 
 export interface RunnerCommandMetadata {
   actor?: RunnerActorMetadata | undefined;
@@ -515,6 +510,7 @@ export interface RunToolEventPayload {
 export interface RunCancelledEventPayload {
   sessionId: string;
   runId?: string | undefined;
+  result: RunnerRunResult;
 }
 
 export interface RunCompletedEventPayload {
@@ -522,7 +518,7 @@ export interface RunCompletedEventPayload {
 }
 
 export interface RunFailedEventPayload {
-  result?: RunnerRunResult | undefined;
+  result: RunnerRunResult;
   error: RunnerRunError;
 }
 
@@ -584,6 +580,7 @@ export interface OperatorControlledEventPayload {
 export interface TaskUpdatedEventPayload {
   task: RunnerDelegationTask;
   kind: "spawned" | "waiting" | "completed" | "failed";
+  assistantText: string | null;
   finalizedPayload?: unknown | undefined;
 }
 

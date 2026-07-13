@@ -396,6 +396,7 @@ function buildOutput(input: {
 
 function buildResult(thread: ThreadRecord, output: NormalizedOutput): SubmitTurnResult {
   return {
+    assistantText: null,
     thread,
     output,
   };

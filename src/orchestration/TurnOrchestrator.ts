@@ -85,7 +85,7 @@ export class TurnOrchestrator {
     const updatedAt = new Date().toISOString();
     const metadata = appendAssistantHistory({
       metadata: mergeSubmittedHistoryMetadata((latestThread ?? runningThread).metadata, submittedMetadata),
-      finalizedPayload: execution.finalizedPayload,
+      assistantText: execution.assistantText ?? null,
       status: execution.output.status,
       waitFor: execution.output.waitFor,
       timestamp: updatedAt,
@@ -105,6 +105,7 @@ export class TurnOrchestrator {
     const result: SubmitTurnResult = {
       thread: updatedThread,
       output: execution.output,
+      assistantText: execution.assistantText ?? null,
       ...(execution.session !== undefined ? { session: execution.session } : {}),
       ...(request !== undefined && execution.output.waitFor !== undefined
         ? {
@@ -266,25 +267,24 @@ function mapOutputStatus(status: SubmitTurnResult["output"]["status"]): ThreadRe
 
 function appendAssistantHistory(input: {
   metadata?: Record<string, unknown> | undefined;
-  finalizedPayload?: unknown | undefined;
+  assistantText: string | null;
   status: SubmitTurnResult["output"]["status"];
   waitFor?: SubmitTurnResult["output"]["waitFor"] | undefined;
   timestamp: string;
 }): Record<string, unknown> | undefined {
-  const text =
-    input.status === "COMPLETED"
-      ? extractFinalizedAssistantText(input.finalizedPayload)
-      : input.status === "WAITING"
-        ? extractWaitPromptText(input.waitFor)
-        : undefined;
-  if (text === undefined) {
+  const entry = input.status === "COMPLETED" && input.assistantText !== null
+    ? { role: "assistant" as const, text: input.assistantText }
+    : input.status === "WAITING"
+      ? readWaitingPrompt(input.waitFor)
+      : undefined;
+  if (entry === undefined) {
     return input.metadata;
   }
 
   const metadata = input.metadata ?? {};
   const history = Array.isArray(metadata.history) ? metadata.history : [];
   const last = history[history.length - 1];
-  if (isRecord(last) && last.role === "assistant" && last.text === text) {
+  if (isRecord(last) && last.role === entry.role && last.text === entry.text) {
     return metadata;
   }
 
@@ -293,58 +293,28 @@ function appendAssistantHistory(input: {
     history: [
       ...history,
       {
-        role: "assistant",
-        text,
+        role: entry.role,
+        text: entry.text,
         timestamp: input.timestamp,
+        ...(entry.role === "system" ? { data: { kind: "runtime.waiting_prompt" } } : {}),
       },
     ],
   };
 }
 
-function extractWaitPromptText(waitFor: SubmitTurnResult["output"]["waitFor"] | undefined): string | undefined {
+function readWaitingPrompt(
+  waitFor: SubmitTurnResult["output"]["waitFor"] | undefined,
+): { role: "system"; text: string } | undefined {
   if (isRecord(waitFor) === false) {
     return undefined;
   }
   const metadata = isRecord(waitFor.metadata) ? waitFor.metadata : undefined;
-  return (
-    (metadata !== undefined ? extractStringField(metadata, "prompt") : undefined) ??
-    extractStringField(waitFor, "prompt")
-  );
-}
-
-function extractFinalizedAssistantText(payload: unknown): string | undefined {
-  if (typeof payload === "string") {
-    return normalizeAssistantText(payload);
-  }
-  if (isRecord(payload)) {
-    const direct = extractStringField(payload, "message") ?? extractStringField(payload, "text");
-    if (direct !== undefined) {
-      return direct;
-    }
-
-    const data = payload.data;
-    if (isRecord(data)) {
-      const nested = extractStringField(data, "message") ?? extractStringField(data, "text");
-      if (nested !== undefined) {
-        return nested;
-      }
-      const finalizeInput = data.finalizeInput;
-      if (isRecord(finalizeInput)) {
-        return extractStringField(finalizeInput, "message") ?? extractStringField(finalizeInput, "text");
-      }
-    }
-  }
-  return undefined;
-}
-
-function extractStringField(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" ? normalizeAssistantText(value) : undefined;
-}
-
-function normalizeAssistantText(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  const prompt = metadata !== undefined && typeof metadata.prompt === "string"
+    ? metadata.prompt.trim()
+    : typeof waitFor.prompt === "string"
+      ? waitFor.prompt.trim()
+      : "";
+  return prompt.length > 0 ? { role: "system", text: prompt } : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

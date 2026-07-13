@@ -34,6 +34,18 @@ const context = {
   tenantId: "internal",
 };
 
+function cancelledResult(sessionId: string, runId: string) {
+  return {
+    assistantText: null,
+    output: {
+      status: "FAILED",
+      sessionId,
+      runId,
+      errors: [],
+    },
+  };
+}
+
 test("KestrelClient reads and validates runner health", async () => {
   const requests: Array<{ url: string; headers: Headers }> = [];
   const client = new KestrelClient({
@@ -119,6 +131,7 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
             sessionId: "session-sdk-1",
             payload: {
               result: {
+                assistantText: null,
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-sdk-1",
@@ -200,6 +213,7 @@ test("KestrelClient streamRun stays request-scoped", async () => {
             sessionId: "session-sdk-1",
             payload: {
               result: {
+                assistantText: null,
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-sdk-1",
@@ -345,6 +359,7 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
             sessionId: "session-sdk-1",
             payload: {
               sessionId: "session-sdk-1",
+              result: cancelledResult("session-sdk-1", runCommandId),
             },
           })}\n\n`,
         ));
@@ -358,6 +373,7 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
             sessionId: "session-sdk-1",
             payload: {
               sessionId: "session-sdk-1",
+              result: cancelledResult("session-sdk-1", runCommandId),
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -439,6 +455,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
             payload: {
               sessionId: "session-sdk-2",
               runId: "run-sdk-2",
+              result: cancelledResult("session-sdk-2", "run-sdk-2"),
             },
           })}\n\n`,
         ));
@@ -454,6 +471,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
             payload: {
               sessionId: "session-sdk-2",
               runId: "run-sdk-2",
+              result: cancelledResult("session-sdk-2", "run-sdk-2"),
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },

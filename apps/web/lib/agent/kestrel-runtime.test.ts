@@ -11,7 +11,6 @@ import type {
 import {
   createKestrelOneAgentResponseFromAgent,
   createKestrelOneRequestContext,
-  extractFinalizedAssistantText,
 } from "@/lib/agent/kestrel-runtime-core";
 import type { Session } from "@/lib/auth-types";
 
@@ -44,15 +43,6 @@ test("createKestrelOneRequestContext maps session and organization into runner c
   });
 });
 
-test("extractFinalizedAssistantText reads common finalized payload shapes", () => {
-  assert.equal(extractFinalizedAssistantText(" done "), "done");
-  assert.equal(extractFinalizedAssistantText({ message: "hello" }), "hello");
-  assert.equal(
-    extractFinalizedAssistantText({ data: { text: "nested" } }),
-    "nested"
-  );
-});
-
 test("createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   let capturedContext: KestrelOneRequestContext | undefined;
@@ -64,7 +54,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
         terminalStatus: string;
       }
     | undefined;
-  const terminal = completedTerminal({ message: "Runtime answer" });
+  const terminal = completedTerminal("Runtime answer", { message: "Structured answer data" });
   const agent = fakeAgent({
     terminal,
     onStream(input, context) {
@@ -164,7 +154,7 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
         method: "POST",
       }),
       agent: fakeAgent({
-        terminal: completedTerminal({ message: "Runtime answer" }),
+        terminal: completedTerminal("Runtime answer", { message: "Structured answer data" }),
       }),
       ownsAgent: false,
       session,
@@ -205,7 +195,7 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
 
 test("createKestrelOneAgentResponse dedupes progress and persists only final assistant text", async () => {
   let persistedText = "";
-  const terminal = completedTerminal({ message: "Final answer" });
+  const terminal = completedTerminal("Final answer", { message: "Structured answer data" });
   const agent = fakeAgent({
     terminal,
     events: [
@@ -261,7 +251,7 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
 test("createKestrelOneAgentResponse binds Project context to runner capabilities and model-visible history", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({
-    terminal: completedTerminal({ message: "Project answer" }),
+    terminal: completedTerminal("Project answer", { message: "Structured project data" }),
     onStream(input) {
       capturedInput = input;
     },
@@ -363,8 +353,8 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
     },
   });
 
-  assert.match(await response.text(), /Runner failed/);
-  assert.equal(persistedText, "Runner failed");
+  assert.doesNotMatch(await response.text(), /Runner failed/);
+  assert.equal(persistedText, "");
   assert.equal(persistedMeta?.failureVisible, true);
   assert.equal(persistedMeta?.terminalStatus, "failed");
 });
@@ -399,15 +389,12 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
 
   const body = await response.text();
 
-  assert.equal(
-    countOccurrences(body, "The run was cancelled before it finished."),
-    1
-  );
-  assert.equal(persistedText, "The run was cancelled before it finished.");
+  assert.equal(countOccurrences(body, "The run was cancelled before it finished."), 0);
+  assert.equal(persistedText, "");
 });
 
 test("createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives", async () => {
-  const terminal = completedTerminal(null);
+  const terminal = completedTerminal(null, { message: "must not be displayed" });
   const response = createKestrelOneAgentResponseFromAgent({
     request: new Request("http://example.test/api/chats/chat_123", {
       method: "POST",
@@ -440,14 +427,11 @@ test("createKestrelOneAgentResponse shows runner error fallback when no terminal
 
   const body = await response.text();
 
-  assert.equal(countOccurrences(body, "Runner boundary failed."), 2);
-  assert.ok(
-    body.indexOf("reasoning-end") < body.lastIndexOf("Runner boundary failed."),
-    "reasoning should close before the terminal fallback assistant text"
-  );
+  assert.equal(countOccurrences(body, "Runner boundary failed."), 1);
 });
 
 function completedTerminal(
+  assistantText: string | null,
   finalizedPayload: unknown
 ): KestrelOneRunnerTerminalEvent {
   return {
@@ -456,6 +440,7 @@ function completedTerminal(
     ts: "2026-05-06T00:00:00.000Z",
     payload: {
       result: {
+        assistantText,
         finalizedPayload,
         output: {
           status: "COMPLETED",

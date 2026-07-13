@@ -466,6 +466,7 @@ export interface RunToolEventPayload {
 export interface RunCancelledEventPayload {
   sessionId: string;
   runId?: string | undefined;
+  result: RunTurnResult;
 }
 
 export interface RunCompletedEventPayload {
@@ -473,7 +474,7 @@ export interface RunCompletedEventPayload {
 }
 
 export interface RunFailedEventPayload {
-  result?: RunTurnResult | undefined;
+  result: RunTurnResult;
   error: {
     code: string;
     message: string;
@@ -562,6 +563,7 @@ export interface ProfileLoadedEventPayload {
 export interface TaskUpdatedEventPayload {
   task: DelegationTaskMeta;
   kind: "spawned" | "waiting" | "completed" | "failed";
+  assistantText: string | null;
   finalizedPayload?: unknown | undefined;
 }
 

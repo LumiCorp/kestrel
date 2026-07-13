@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+
 import type {
   RunnerCommand,
   RunnerCommandMetadata,
@@ -130,7 +132,7 @@ export class ProtocolClient {
       return;
     }
 
-    const event = decoded;
+    const event = validateV2TerminalResult(decoded);
     for (const listener of this.listeners) {
       listener(event);
     }
@@ -161,6 +163,21 @@ export class ProtocolClient {
     }
     this.pending.clear();
   }
+}
+
+function validateV2TerminalResult(event: RunnerEvent): RunnerEvent {
+  if (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled" ||
+    event.type === "operator.controlled"
+  ) {
+    return {
+      ...event,
+      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
+    } as unknown as RunnerEvent;
+  }
+  return event;
 }
 
 function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {

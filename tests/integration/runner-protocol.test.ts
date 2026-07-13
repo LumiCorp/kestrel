@@ -318,6 +318,7 @@ test("run.start emits started/log/completed protocol events", async () => {
         },
       });
       return {
+        assistantText: "  done  ",
         output: {
           status: "COMPLETED",
           sessionId: "session-1",
@@ -391,6 +392,8 @@ test("run.start emits started/log/completed protocol events", async () => {
     | { clientCapabilities?: { surface?: string | undefined } | undefined }
     | undefined;
   assert.equal(startedPayload?.clientCapabilities?.surface, "tui");
+  const completedResult = (events.at(-1)?.payload as { result?: { assistantText?: string } } | undefined)?.result;
+  assert.equal(completedResult?.assistantText, "done");
   assert.deepEqual(receivedProfile?.modelCredential, managedProfile.modelCredential);
   rl.close();
   await host.close();
@@ -401,6 +404,7 @@ test("run.start accepts build interactionMode and forwards it in run.started", a
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,
@@ -470,6 +474,7 @@ test("run.start fails closed when runtime returns a different runId than request
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,
@@ -543,6 +548,7 @@ test("run.start treats finalized assistant payload as completed under the accept
         durationMs: 1,
       }));
       return {
+        assistantText: "done",
         output: {
           status: "COMPLETED",
           sessionId: input.sessionId,
@@ -608,6 +614,7 @@ test("run.start forwards actor metadata into runtime turn input", async () => {
     runTurn: async (input) => {
       capturedActor = input.actor;
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: input.sessionId,
@@ -670,6 +677,7 @@ test("job.run emits started/progress/completed events with replay pointers", asy
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: "session-job-1",
@@ -799,6 +807,7 @@ test("job.run runtime_progress events preserve resolved thread identity", async 
         persist: true,
       });
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: "session-job-progress",
@@ -1004,6 +1013,7 @@ test("workspace checkpoint commands dispatch through CommandRouter", async () =>
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: "unused",
@@ -1293,6 +1303,7 @@ test("run.cancel clears a persisted active run when no in-process run is active"
   let cancelledSessionId: string | undefined;
   const runtime: RunnerRuntime = {
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "FAILED",
         sessionId: input.sessionId,

@@ -102,11 +102,15 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
           options,
         );
 
-    const finalizedPayload = result.finalizedPayload ??
-      (result.output.status === "COMPLETED"
+    const finalizedPayload = result.finalizedPayload !== undefined
+      ? result.finalizedPayload
+      : result.output.status === "COMPLETED"
         ? await this.readFinalizedPayload?.(input.sessionId)
-        : undefined);
+        : undefined;
     const session = result.session ?? await this.getSession?.(input.sessionId);
+    const assistantText = result.output.status === "COMPLETED"
+      ? readAssistantText(asRecord(session?.state.agent)?.assistantText)
+      : null;
     const affordanceInput = {
       session,
       turn: {
@@ -135,6 +139,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
 
     return {
       output: result.output,
+      assistantText,
       ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
       ...(operatorAffordance !== undefined ? { operatorAffordance } : {}),
     };
@@ -259,4 +264,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
+}
+
+function readAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

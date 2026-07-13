@@ -40,6 +40,16 @@ function makeCompletedOutput(sessionId: string, runId: string): NormalizedOutput
   };
 }
 
+function makeFailedResult(runId: string) {
+  return {
+    assistantText: null,
+    output: {
+      ...makeCompletedOutput("session-1", runId),
+      status: "FAILED" as const,
+    },
+  };
+}
+
 let eventSequence = 0;
 
 function makeRunnerEvent<TType extends RunnerEvent["type"]>(
@@ -124,13 +134,20 @@ function createRunHarness(input: {
       sendCommand: input.sendCommand ?? (async (type: string, payload: Record<string, unknown>) => {
         commands.push({ type, payload });
         if (type === "run.cancel") {
-          return makeRunnerEvent({ type: "run.cancelled", payload: { sessionId: activeSession.sessionId } });
+          return makeRunnerEvent({
+            type: "run.cancelled",
+            payload: {
+              sessionId: activeSession.sessionId,
+              result: makeFailedResult("run-start-1"),
+            },
+          });
         }
         return makeRunnerEvent({
           type: "run.completed",
           commandId: "command-1",
           payload: {
             result: {
+              assistantText: "done",
               output: makeCompletedOutput(activeSession.sessionId, "run-start-1"),
               finalizedPayload: {
                 message: "done",
@@ -280,6 +297,7 @@ test("TuiRunController clears submitted wait state while blocked resume is in fl
     commandId: "command-wait-clear",
     payload: {
       result: {
+        assistantText: null,
         output: makeCompletedOutput("session-1", "run-wait-clear"),
         finalizedPayload: {
           message: "done",
@@ -407,6 +425,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
           type: "run.failed",
           commandId: "command-checkpoint",
           payload: {
+            result: makeFailedResult("command-checkpoint"),
             error: {
               code: "CONTEXT_CHECKPOINT_PENDING",
               message: "Thread has a pending context checkpoint.",
@@ -424,6 +443,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
         commandId: "command-retry",
         payload: {
           result: {
+            assistantText: null,
             output: makeCompletedOutput("session-1", "run-retry"),
             finalizedPayload: {
               message: "done after recovery",
@@ -462,6 +482,7 @@ test("TuiRunController does not auto-recover shape-changing context checkpoints"
       type: "run.failed",
       commandId: "command-checkpoint",
       payload: {
+        result: makeFailedResult("command-checkpoint"),
         error: {
           code: "CONTEXT_CHECKPOINT_PENDING",
           message: "Thread has a pending context checkpoint.",
@@ -500,6 +521,7 @@ test("TuiRunController attempts context checkpoint recovery only once", async ()
         type: "run.failed",
         commandId: "command-checkpoint",
         payload: {
+          result: makeFailedResult("command-checkpoint"),
           error: {
             code: "CONTEXT_CHECKPOINT_PENDING",
             message: "Thread has a pending context checkpoint.",
