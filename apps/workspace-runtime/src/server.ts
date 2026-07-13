@@ -20,6 +20,7 @@ import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
+import { workspaceListenHost } from "./network.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
@@ -340,7 +341,7 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(config.port, "0.0.0.0");
+server.listen(config.port, config.listenHost);
 const idleTimer = setInterval(() => {
   if (
     activeRequests === 0 &&
@@ -787,6 +788,10 @@ function readConfig() {
   };
   return {
     port: Number.parseInt(process.env.KESTREL_WORKSPACE_PORT ?? "43104", 10),
+    listenHost: workspaceListenHost({
+      flyPrivateIp: process.env.FLY_PRIVATE_IP,
+      configuredHost: process.env.KESTREL_WORKSPACE_HOST,
+    }),
     workspaceRoot: path.resolve(process.env.KESTREL_WORKSPACE_ROOT ?? "/workspace"),
     workspaceId: required("KESTREL_WORKSPACE_ID"),
     organizationId: required("KESTREL_ORGANIZATION_ID"),

@@ -110,6 +110,12 @@ export interface EnvironmentInfrastructureProvider {
     state: "started" | "stopped" | "destroyed";
     timeoutSeconds?: number;
   }): Promise<void>;
+  waitForMachineHealth(input: {
+    appName: string;
+    machineId: string;
+    checkName: string;
+    timeoutSeconds?: number;
+  }): Promise<void>;
   createVolumeSnapshot(input: {
     appName: string;
     volumeId: string;
@@ -127,7 +133,8 @@ export class EnvironmentProviderError extends Error {
     | "FLY_PROVIDER_UNAVAILABLE"
     | "FLY_PROVIDER_REJECTED"
     | "FLY_RESOURCE_CONFLICT"
-    | "FLY_RESPONSE_INVALID";
+    | "FLY_RESPONSE_INVALID"
+    | "FLY_MACHINE_UNHEALTHY";
   readonly status?: number | undefined;
 
   constructor(

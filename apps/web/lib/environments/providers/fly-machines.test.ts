@@ -66,6 +66,66 @@ test("Fly stopped waits bind the current Machine instance", async () => {
   assert.match(requests[1] ?? "", /[?&]instance_id=instance-1(?:&|$)/u);
 });
 
+test("Fly readiness waits for the exact named Machine check to pass", async () => {
+  const responses = [
+    {
+      id: "machine-1",
+      state: "started",
+      region: "iad",
+      checks: [{ name: "workspace", status: "warning" }],
+    },
+    {
+      id: "machine-1",
+      state: "started",
+      region: "iad",
+      checks: [
+        { name: "another-check", status: "passing" },
+        { name: "workspace", status: "passing" },
+      ],
+    },
+  ];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    fetchImpl: (async () =>
+      Response.json(responses.shift())) as unknown as typeof fetch,
+  });
+
+  await client.waitForMachineHealth({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    checkName: "workspace",
+    timeoutSeconds: 1,
+  });
+  assert.equal(responses.length, 0);
+});
+
+test("Fly readiness fails closed when the named Machine check never passes", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    fetchImpl: (async () =>
+      Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        checks: [{ name: "workspace", status: "critical" }],
+      })) as unknown as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.waitForMachineHealth({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+      checkName: "workspace",
+      timeoutSeconds: 0,
+    }),
+    /workspace did not pass/u
+  );
+});
+
 test("Environment App creation always supplies the custom network", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
@@ -89,6 +149,33 @@ test("Environment App creation always supplies the custom network", async () => 
     org_slug: "kestrel-test",
     network: "kestrel-abc-network",
   });
+});
+
+test("Environment App ownership resolves configured organization aliases", async () => {
+  const requests: string[] = [];
+  const app = {
+    id: "fly-app-id",
+    name: "kestrel-env-abc",
+    network: "kestrel-abc-network",
+    organization: { slug: "canonical-organization" },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "personal",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return requests.length === 1
+        ? Response.json(app)
+        : Response.json({ total_apps: 1, apps: [app] });
+    }) as typeof fetch,
+  });
+  const resolved = await client.ensureEnvironmentApp({
+    appName: app.name,
+    networkName: app.network,
+  });
+  assert.equal(resolved.id, app.id);
+  assert.equal(resolved.organizationSlug, "canonical-organization");
+  assert.match(requests[1] ?? "", /[?&]org_slug=personal(?:&|$)/u);
 });
 
 test("Workspace provisioning requests encrypted storage and a private runtime Machine", async () => {

@@ -24,6 +24,8 @@ const appDetailsSchema = z.object({
 
 const appCreateSchema = z.object({ id: z.string().min(1) });
 
+const appListSchema = z.object({ apps: z.array(appDetailsSchema) });
+
 const ipAssignmentSchema = z.object({
   ip: z.string().min(1),
   shared: z.boolean().optional(),
@@ -47,6 +49,16 @@ const machineSchema = z.object({
   state: z.string().min(1),
   region: z.string().min(1),
   instance_id: z.string().min(1).optional(),
+  checks: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        status: z.string().min(1),
+        output: z.string().optional(),
+        updated_at: z.string().optional(),
+      })
+    )
+    .optional(),
   config: z
     .object({
       image: z.string().min(1).optional(),
@@ -73,12 +85,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   private readonly organizationSlug: string;
   private readonly apiBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly healthPollIntervalMs: number;
 
   constructor(input: {
     token: string;
     organizationSlug: string;
     apiBaseUrl?: string | undefined;
     fetchImpl?: typeof fetch | undefined;
+    healthPollIntervalMs?: number | undefined;
   }) {
     this.token = requireConfigured(input.token, "Fly API token");
     this.organizationSlug = requireConfigured(
@@ -90,6 +104,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       ""
     );
     this.fetchImpl = input.fetchImpl ?? fetch;
+    this.healthPollIntervalMs = input.healthPollIntervalMs ?? 1000;
   }
 
   async ensureEnvironmentApp(input: {
@@ -103,8 +118,19 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     if (existing !== null) {
       const parsed = parseResponse(appDetailsSchema, existing);
+      const organizationApps = parseResponse(
+        appListSchema,
+        await this.request(
+          `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
+          { method: "GET" }
+        )
+      );
+      const belongsToConfiguredOrganization = organizationApps.apps.some(
+        (app) => app.id === parsed.id && app.name === parsed.name
+      );
       if (
-        parsed.organization.slug !== this.organizationSlug ||
+        !belongsToConfiguredOrganization ||
+        parsed.name !== input.appName ||
         (parsed.network !== undefined && parsed.network !== input.networkName)
       ) {
         throw new EnvironmentProviderError(
@@ -489,11 +515,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             )
           ).instance_id
         : undefined;
-    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1_000;
+    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
     while (true) {
       const remainingSeconds = Math.max(
         1,
-        Math.ceil((deadline - Date.now()) / 1_000)
+        Math.ceil((deadline - Date.now()) / 1000)
       );
       const query = new URLSearchParams({
         state: input.state,
@@ -515,6 +541,41 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           throw error;
         }
       }
+    }
+  }
+
+  async waitForMachineHealth(input: {
+    appName: string;
+    machineId: string;
+    checkName: string;
+    timeoutSeconds?: number;
+  }) {
+    const checkName = requireConfigured(
+      input.checkName,
+      "Fly health check name"
+    );
+    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
+    while (true) {
+      const machine = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          { method: "GET" }
+        )
+      );
+      const check = machine.checks?.find(
+        (candidate) => candidate.name === checkName
+      );
+      if (check?.status === "passing") return;
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_MACHINE_UNHEALTHY",
+          `Fly Machine health check ${checkName} did not pass before the readiness deadline.`
+        );
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.healthPollIntervalMs)
+      );
     }
   }
 

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import {
   createAdminEnvironment,
+  getAdminEnvironmentRollout,
   listAdminEnvironments,
+  setAdminEnvironmentRollout,
 } from "@/lib/admin/environments";
 import { createEnvironmentInputSchema } from "@/lib/environments/contracts";
 import { requireAdminOrganization } from "@/lib/knowledge/auth";
@@ -12,9 +14,32 @@ export async function GET() {
     const { organizationId } = await requireAdminOrganization();
     return NextResponse.json({
       environments: await listAdminEnvironments(organizationId),
+      rollout: await getAdminEnvironmentRollout(organizationId),
     });
   } catch (error) {
     return errorResponse(error);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const { organizationId, session } = await requireAdminOrganization();
+    const payload = (await request.json()) as { enabled?: unknown };
+    if (typeof payload.enabled !== "boolean") {
+      return NextResponse.json(
+        { error: "Environment rollout enabled must be a boolean." },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json({
+      rollout: await setAdminEnvironmentRollout({
+        organizationId,
+        actorUserId: session.user.id,
+        enabled: payload.enabled,
+      }),
+    });
+  } catch (error) {
+    return errorResponse(error, 400);
   }
 }
 

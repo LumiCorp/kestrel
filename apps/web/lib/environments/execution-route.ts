@@ -52,7 +52,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
   };
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
-  requireHostedEnvironmentsEnabled();
+  await requireHostedEnvironmentsEnabled({
+    organizationId: input.organizationId,
+  });
   input.onProgress?.({
     stage: "environment.activation.requested",
     detail: "Preparing the Environment…",

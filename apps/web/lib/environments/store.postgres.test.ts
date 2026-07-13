@@ -80,6 +80,11 @@ test(
         ) VALUES (${memberA}, ${organizationA}, ${userA}, 'owner', ${now})
       `;
       await transaction`
+        INSERT INTO "organization_feature_flags" (
+          "organization_id", "key", "enabled", "updated_by_user_id"
+        ) VALUES (${organizationA}, 'hosted_environments', false, ${userA})
+      `;
+      await transaction`
         INSERT INTO "projects" (
           "id", "organization_id", "created_by_user_id", "name"
         ) VALUES (${projectId}, ${organizationA}, ${userA}, 'Environment Project')
@@ -178,6 +183,23 @@ test(
         "fly_volume_id" = ${`volume-${suffix}`},
         "runtime_image" = 'registry.example/kestrel-workspace@sha256:test'
       WHERE "id" = ${projectBinding.workspace.id}
+    `;
+
+    await assert.rejects(
+      executionRoute.resolveEnvironmentExecutionRoute({
+        organizationId: organizationA,
+        threadId: projectThreadId,
+        actorUserId: userA,
+        agentId: "kestrel-one",
+        recordExecution: { projectContextRevisionId: revisionId },
+      }),
+      /not enabled for this organization/u
+    );
+    await sql`
+      UPDATE "organization_feature_flags"
+      SET "enabled" = true, "updated_at" = now()
+      WHERE "organization_id" = ${organizationA}
+        AND "key" = 'hosted_environments'
     `;
 
     const route = await executionRoute.resolveEnvironmentExecutionRoute({

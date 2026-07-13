@@ -17,6 +17,7 @@ import type {
   EnvironmentWorkspace,
   WorkspaceBackup,
 } from "@/drizzle/schema";
+import type { HostedEnvironmentsRollout } from "@/lib/environments/config";
 
 type CreateEnvironmentResponse = {
   environment?: Environment;
@@ -25,13 +26,17 @@ type CreateEnvironmentResponse = {
 
 export function EnvironmentsAdminClient({
   initialEnvironments,
+  initialRollout,
 }: {
   initialEnvironments: Environment[];
+  initialRollout: HostedEnvironmentsRollout;
 }) {
   const [environments, setEnvironments] = useState(initialEnvironments);
   const [name, setName] = useState("");
   const [region, setRegion] = useState("");
   const [busy, setBusy] = useState(false);
+  const [rollout, setRollout] = useState(initialRollout);
+  const [rolloutBusy, setRolloutBusy] = useState(false);
   const [grants, setGrants] = useState<EnvironmentCapabilityGrant[]>([]);
   const [workspaces, setWorkspaces] = useState<EnvironmentWorkspace[]>([]);
   const [backups, setBackups] = useState<WorkspaceBackup[]>([]);
@@ -114,6 +119,38 @@ export function EnvironmentsAdminClient({
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function updateRollout(enabled: boolean) {
+    setRolloutBusy(true);
+    try {
+      const response = await fetch("/api/admin/environments", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const payload = (await response.json()) as {
+        rollout?: HostedEnvironmentsRollout;
+        error?: string;
+      };
+      if (!(response.ok && payload.rollout)) {
+        throw new Error(payload.error ?? "Environment rollout update failed.");
+      }
+      setRollout(payload.rollout);
+      toast.success(
+        enabled
+          ? "Environment execution enabled for this organization."
+          : "Environment execution disabled for this organization."
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Environment rollout update failed."
+      );
+    } finally {
+      setRolloutBusy(false);
     }
   }
 
@@ -274,6 +311,41 @@ export function EnvironmentsAdminClient({
         description="Creating an Environment records a durable provisioning operation. Fly resources are created asynchronously and never in the browser."
         title="Kestrel-managed infrastructure"
       />
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Organization rollout</CardTitle>
+            <p className="mt-1 text-muted-foreground text-sm">
+              Agent runs resolve through Environments only when both the
+              deployment ceiling and this organization flag are enabled.
+            </p>
+          </div>
+          <Badge variant={rollout.effectiveEnabled ? "default" : "outline"}>
+            {rollout.effectiveEnabled ? "Active" : "Inactive"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between gap-4 border-t pt-4">
+          <div className="text-muted-foreground text-sm">
+            Deployment ceiling:{" "}
+            {rollout.deploymentEnabled ? "enabled" : "disabled"}
+            {rollout.organizationEnabled
+              ? " · Organization enabled"
+              : " · Organization disabled"}
+          </div>
+          <Button
+            disabled={rolloutBusy}
+            onClick={() => void updateRollout(!rollout.organizationEnabled)}
+            variant={rollout.organizationEnabled ? "outline" : "default"}
+          >
+            {rolloutBusy
+              ? "Updating…"
+              : rollout.organizationEnabled
+                ? "Disable for organization"
+                : "Enable for organization"}
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">

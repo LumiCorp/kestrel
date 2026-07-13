@@ -349,6 +349,12 @@ export async function restoreWorkspaceBackup(input: {
         timeoutSeconds: 90,
       });
     }
+    await provider.waitForMachineHealth({
+      appName: flyAppName,
+      machineId: replacementMachine.id,
+      checkName: "workspace",
+      timeoutSeconds: 90,
+    });
     const replacementRoute = () =>
       createEnvironmentMachineRoute({
         organizationId: input.organizationId,
@@ -384,6 +390,12 @@ export async function restoreWorkspaceBackup(input: {
       appName: flyAppName,
       machineId: replacementMachine.id,
       state: "started",
+      timeoutSeconds: 90,
+    });
+    await provider.waitForMachineHealth({
+      appName: flyAppName,
+      machineId: replacementMachine.id,
+      checkName: "workspace",
       timeoutSeconds: 90,
     });
     await waitForWorkspaceService(replacementRoute);

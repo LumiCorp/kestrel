@@ -1,15 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
-  requireHostedEnvironmentsEnabled,
 } from "./config";
 
-test("Environment rollout flag fails closed without legacy runner fallback", () => {
-  assert.equal(hostedEnvironmentsEnabled({}), false);
+test("Environment rollout requires both deployment and organization flags", () => {
+  assert.equal(hostedEnvironmentsDeploymentEnabled({}), false);
   assert.equal(
-    hostedEnvironmentsEnabled({ KESTREL_ENVIRONMENTS_ENABLED: "true" }),
+    hostedEnvironmentsDeploymentEnabled({
+      KESTREL_ENVIRONMENTS_ENABLED: "true",
+    }),
     true
   );
-  assert.throws(() => requireHostedEnvironmentsEnabled({}));
+  assert.equal(
+    hostedEnvironmentsEnabled({
+      organizationEnabled: false,
+      env: { KESTREL_ENVIRONMENTS_ENABLED: "true" },
+    }),
+    false
+  );
+  assert.equal(
+    hostedEnvironmentsEnabled({
+      organizationEnabled: true,
+      env: { KESTREL_ENVIRONMENTS_ENABLED: "true" },
+    }),
+    true
+  );
+  assert.equal(
+    hostedEnvironmentsEnabled({ organizationEnabled: true, env: {} }),
+    false
+  );
 });

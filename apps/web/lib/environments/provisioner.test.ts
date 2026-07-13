@@ -168,6 +168,9 @@ function fixture(type: string, workspaceId: string | null = null) {
     async waitForMachine() {
       calls.push("provider:wait");
     },
+    async waitForMachineHealth() {
+      calls.push("provider:health");
+    },
     async createVolumeSnapshot() {
       return { id: "snapshot-id", state: "prepare" };
     },
@@ -203,6 +206,7 @@ test("Environment provisioning durably follows requested through ready", async (
     "provider:app",
     "provider:gateway",
     "provider:wait",
+    "provider:health",
     "environment:ready",
     "operation:completed",
   ]);
@@ -221,6 +225,7 @@ test("Workspace provisioning persists provider resources only after readiness", 
     "provider:volume",
     "provider:machine",
     "provider:wait",
+    "provider:health",
     "workspace:ready",
     "operation:completed",
   ]);
@@ -305,6 +310,7 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
     "workspace:starting",
     "provider:start",
     "provider:wait",
+    "provider:health",
     "workspace:ready",
     "operation:completed",
   ]);

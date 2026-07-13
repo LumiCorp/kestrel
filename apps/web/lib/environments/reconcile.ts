@@ -123,6 +123,12 @@ async function reconcileEnvironmentGateways(
           timeoutSeconds: 60,
         });
       }
+      await provider.waitForMachineHealth({
+        appName: environment.flyAppName,
+        machineId: gateway.machineId,
+        checkName: "gateway",
+        timeoutSeconds: 60,
+      });
       await knowledgeDb
         .update(schema.environments)
         .set({

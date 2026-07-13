@@ -187,6 +187,39 @@ export const members = pgTable("member", {
 });
 
 /** =========================
+ *  organization feature flags
+ *  ========================= */
+export const organizationFeatureFlags = pgTable(
+  "organization_feature_flags",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    updatedByUserId: text("updated_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: "organization_feature_flags_pk",
+      columns: [table.organizationId, table.key],
+    }),
+    index("organization_feature_flags_enabled_idx").on(
+      table.key,
+      table.enabled
+    ),
+  ]
+);
+
+/** =========================
  *  Hosted Projects
  *  ========================= */
 
@@ -2166,6 +2199,9 @@ export const adminApiKeys = pgTable(
 export type User = InferSelectModel<typeof users>;
 export type Session = InferSelectModel<typeof sessions>;
 export type Organization = InferSelectModel<typeof organizations>;
+export type OrganizationFeatureFlag = InferSelectModel<
+  typeof organizationFeatureFlags
+>;
 export type Member = InferSelectModel<typeof members>;
 export type Invitation = InferSelectModel<typeof invitations>;
 export type Subscription = InferSelectModel<typeof subscriptions>;

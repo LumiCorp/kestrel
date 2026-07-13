@@ -257,6 +257,12 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 60,
       });
     }
+    await this.provider.waitForMachineHealth({
+      appName,
+      machineId: gateway.machineId,
+      checkName: "gateway",
+      timeoutSeconds: 60,
+    });
     await this.repository.completeEnvironment({
       environmentId: environment.id,
       appName,
@@ -350,6 +356,12 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 60,
       });
     }
+    await this.provider.waitForMachineHealth({
+      appName: environment.flyAppName,
+      machineId: machine.id,
+      checkName: "workspace",
+      timeoutSeconds: 60,
+    });
     await this.repository.completeWorkspace({
       workspaceId: workspace.id,
       volumeId: volume.id,
@@ -399,6 +411,12 @@ export class EnvironmentProvisioner {
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       state: "started",
+      timeoutSeconds: 60,
+    });
+    await this.provider.waitForMachineHealth({
+      appName: environment.flyAppName,
+      machineId: workspace.flyMachineId,
+      checkName: "workspace",
       timeoutSeconds: 60,
     });
     await this.repository.completeWorkspaceStart(workspace.id);
@@ -578,6 +596,12 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 90,
       });
     }
+    await this.provider.waitForMachineHealth({
+      appName: environment.flyAppName,
+      machineId: workspace.flyMachineId,
+      checkName: "workspace",
+      timeoutSeconds: 90,
+    });
     await this.repository.completeWorkspaceRebuild({
       workspaceId: workspace.id,
       runtimeImage: environment.runtimeImage,
