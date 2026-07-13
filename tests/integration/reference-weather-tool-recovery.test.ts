@@ -6,6 +6,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
+import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -339,6 +340,47 @@ test("reference harness routes default plan-mode weather asks into tooling route
 });
 
 test("reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
+  const forecastHandler = weatherForecastTool.createHandler({
+    fetchImpl: async (url) => {
+      const target = typeof url === "string" ? url : String(url);
+      if (target.includes("geocoding-api.open-meteo.com")) {
+        return new Response(
+          JSON.stringify({
+            results: [{ latitude: 39.1031, longitude: -84.512 }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const hourlyTimes = Array.from(
+        { length: 24 },
+        (_, hour) => `2026-07-12T${String(hour).padStart(2, "0")}:00`,
+      );
+      return new Response(
+        JSON.stringify({
+          timezone: "America/New_York",
+          current: { time: "2026-07-12T15:45", temperature_2m: 27 },
+          hourly: {
+            time: hourlyTimes,
+            temperature_2m: hourlyTimes.map((_, hour) => 20 + hour / 2),
+            apparent_temperature: hourlyTimes.map((_, hour) => 21 + hour / 2),
+            precipitation_probability: hourlyTimes.map((_, hour) => hour),
+            precipitation: hourlyTimes.map(() => 0),
+            wind_speed_10m: hourlyTimes.map(() => 9),
+          },
+          daily: {
+            time: ["2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15"],
+            temperature_2m_max: [30, 32, 33, 31],
+            temperature_2m_min: [21, 22, 23, 21],
+            precipitation_probability_max: [20, 30, 50, 40],
+            precipitation_sum: [0, 0.5, 2.4, 1.2],
+            wind_speed_10m_max: [9, 10, 14, 12],
+            weather_code: [1, 2, 61, 80],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-weather-range-1",
     message: "whats the weather in cincinnati oh between now and wednesday",
@@ -354,36 +396,16 @@ test("reference harness answers Cincinnati through Wednesday from one model-visi
       additionalProperties: false,
     },
     capabilityClasses: ["weather.forecast"],
-    toolResult: {
-      source: "open-meteo",
-      latitude: 39.1031,
-      longitude: -84.512,
-      timezone: "America/New_York",
-      requestedDays: 4,
-      granularity: "mixed",
-      target: {
-        time: "2026-07-12T15:00",
-        temperatureC: 27,
-        apparentTemperatureC: 29,
-        precipitationProbabilityPct: 20,
-        precipitationMm: 0,
-        windSpeedKph: 9,
-      },
-      daily: [
-        { date: "2026-07-12", minTemperatureC: 21, maxTemperatureC: 30, precipitationProbabilityPct: 20, precipitationMm: 0, windSpeedKph: 9, weatherCode: 1 },
-        { date: "2026-07-13", minTemperatureC: 22, maxTemperatureC: 32, precipitationProbabilityPct: 30, precipitationMm: 0.5, windSpeedKph: 10, weatherCode: 2 },
-        { date: "2026-07-14", minTemperatureC: 23, maxTemperatureC: 33, precipitationProbabilityPct: 50, precipitationMm: 2.4, windSpeedKph: 14, weatherCode: 61 },
-        { date: "2026-07-15", minTemperatureC: 21, maxTemperatureC: 31, precipitationProbabilityPct: 40, precipitationMm: 1.2, windSpeedKph: 12, weatherCode: 80 },
-      ],
-      nextHours: [
-        { time: "2026-07-12T16:00", temperatureC: 28, apparentTemperatureC: 30, precipitationProbabilityPct: 25, precipitationMm: 0, windSpeedKph: 10 },
-      ],
-    },
+    toolResult: async (toolInput) =>
+      await forecastHandler(toolInput) as Record<string, unknown>,
     expectedToolInput: {
       city: "Cincinnati, OH",
       days: 4,
     },
-    expectedLoopEvidence: "maxTemperatureC=31",
+    expectedLoopEvidence: [
+      "time=2026-07-12T15:00",
+      "maxTemperatureC=31",
+    ],
     finalMessage: "Cincinnati stays warm through Wednesday, with highs near 30-33C and the best rain chances Tuesday and Wednesday.",
   });
 
@@ -485,9 +507,11 @@ async function runReferenceRecoveryScenario(input: {
   toolName: string;
   toolInputSchema: Record<string, unknown>;
   capabilityClasses: string[];
-  toolResult: Record<string, unknown>;
+  toolResult:
+    | Record<string, unknown>
+    | ((toolInput: unknown) => Promise<Record<string, unknown>>);
   expectedToolInput: Record<string, unknown>;
-  expectedLoopEvidence: string;
+  expectedLoopEvidence: string | string[];
   finalMessage: string;
   interactionMode?: "plan" | "build";
   expectedExecutionLane?: "chat" | "tooling";
@@ -505,7 +529,10 @@ async function runReferenceRecoveryScenario(input: {
     async call<T>(name: string, payload: unknown): Promise<T> {
       toolCalls.push({ name, input: payload });
       if (name === input.toolName) {
-        return input.toolResult as T;
+        const toolResult = typeof input.toolResult === "function"
+          ? await input.toolResult(payload)
+          : input.toolResult;
+        return toolResult as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(payload as Record<string, unknown>);
@@ -530,11 +557,16 @@ async function runReferenceRecoveryScenario(input: {
           input: request.input,
           messages: request.messages,
         });
-        observedLoopEvidence = modelVisibleRequest.includes(input.expectedLoopEvidence);
+        const expectedLoopEvidence = Array.isArray(input.expectedLoopEvidence)
+          ? input.expectedLoopEvidence
+          : [input.expectedLoopEvidence];
+        observedLoopEvidence = expectedLoopEvidence.every((evidence) =>
+          modelVisibleRequest.includes(evidence)
+        );
         assert.equal(
           observedLoopEvidence,
           true,
-          `Expected next model request to include tool evidence '${input.expectedLoopEvidence}'.`,
+          `Expected next model request to include tool evidence '${expectedLoopEvidence.join("', '")}'.`,
         );
         return modelResponse({
           nextAction: {

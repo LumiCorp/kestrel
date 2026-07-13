@@ -1,5 +1,6 @@
 import type { SharedToolModule } from "../contracts.js";
 import {
+  asRecord,
   createToolInputError,
   ensureFetchOk,
   fetchImplOrDefault,
@@ -111,6 +112,7 @@ export const weatherForecastTool: SharedToolModule = {
       const granularity = readGranularity(body);
       const forecastUrl =
         `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+        "&current=temperature_2m" +
         "&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m" +
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max" +
         `&forecast_days=${requestedDays}&timezone=${encodeURIComponent(requestedTimezone)}`;
@@ -144,7 +146,12 @@ export const weatherForecastTool: SharedToolModule = {
         );
       }
 
-      const selectedIndex = selectForecastIndex(times, selector);
+      const current = asRecord(payload.current);
+      const selectedIndex = selectForecastIndex(
+        times,
+        selector,
+        readString(current, "time"),
+      );
       if (selector !== undefined && selectedIndex === undefined) {
         throw createToolInputError(
           "free.weather.forecast",
@@ -168,10 +175,15 @@ export const weatherForecastTool: SharedToolModule = {
         timezone: resolvedTimezone,
         requestedDays,
         granularity,
-        ...(times.length > 0
+        ...(selectedIndex !== undefined
           ? {
-              target: mapHourAtIndex(hourly, times, selectedIndex ?? 0),
-              nextHours: buildHourSlice(hourly, times, Math.min(12, times.length)),
+              target: mapHourAtIndex(hourly, times, selectedIndex),
+              nextHours: buildHourSlice(
+                hourly,
+                times,
+                selectedIndex,
+                Math.min(12, times.length - selectedIndex),
+              ),
             }
           : {}),
         ...(dailyTimes.length > 0
@@ -279,12 +291,18 @@ function parseTargetSelector(
 function selectForecastIndex(
   times: string[],
   options: ForecastTargetSelector | undefined,
+  currentLocalTime: string | undefined,
 ): number | undefined {
   if (times.length === 0) {
     return undefined;
   }
   if (options === undefined) {
-    return 0;
+    if (currentLocalTime === undefined) {
+      return undefined;
+    }
+    const currentHour = `${currentLocalTime.slice(0, 13)}:00`;
+    const currentIndex = times.findIndex((time) => time === currentHour);
+    return currentIndex >= 0 ? currentIndex : undefined;
   }
   if (options.localDate !== undefined) {
     const targetPrefix = `${options.localDate}T${padHour(options.localHour)}:`;
@@ -323,10 +341,11 @@ function mapHourAtIndex(
 function buildHourSlice(
   hourly: Record<string, unknown>,
   times: string[],
+  startIndex: number,
   count: number,
 ): Array<Record<string, unknown>> {
   const items: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < count; index += 1) {
+  for (let index = startIndex; index < startIndex + count; index += 1) {
     items.push(mapHourAtIndex(hourly, times, index));
   }
   return items;
