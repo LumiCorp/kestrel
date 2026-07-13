@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { restoreWorkspaceBackup } from "@/lib/environments/backups";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
 export async function POST(
@@ -10,7 +10,7 @@ export async function POST(
   }
 ) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const { id, workspaceId, backupId } = await context.params;
     return NextResponse.json(
       await restoreWorkspaceBackup({

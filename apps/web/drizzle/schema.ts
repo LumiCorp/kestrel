@@ -199,6 +199,9 @@ export const projects = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "restrict" }),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
@@ -217,6 +220,12 @@ export const projects = pgTable(
   },
   (table) => [
     index("projects_org_id_idx").on(table.organizationId),
+    index("projects_environment_id_idx").on(table.environmentId),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "projects_organization_environment_fk",
+    }).onDelete("restrict"),
     index("projects_created_by_user_id_idx").on(table.createdByUserId),
     index("projects_updated_at_idx").on(table.updatedAt),
     index("projects_archived_at_idx").on(table.archivedAt),
@@ -763,9 +772,9 @@ export const environments = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    createdByUserId: text("created_by_user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "restrict" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     region: text("region").notNull(),
@@ -809,6 +818,7 @@ export const environments = pgTable(
       table.organizationId,
       table.slug
     ),
+    uniqueIndex("environments_org_id_idx").on(table.organizationId, table.id),
     uniqueIndex("environments_org_default_idx")
       .on(table.organizationId)
       .where(sql`${table.isDefault} = true and ${table.archivedAt} is null`),
@@ -1461,6 +1471,652 @@ export const projectCapabilityRestrictions = pgTable(
       name: "project_capability_restrictions_capability_fk",
     }).onDelete("cascade"),
     index("project_capability_restrictions_project_idx").on(table.projectId),
+  ]
+);
+
+/** =========================
+ *  Hosted MCP control plane
+ *  ========================= */
+
+export const mcpCredentials = pgTable(
+  "mcp_credentials",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["oauth", "secret_headers"] }).notNull(),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    status: text("status", {
+      enum: ["active", "refresh_required", "revoked"],
+    })
+      .notNull()
+      .default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_credentials_organization_environment_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("mcp_credentials_environment_id_idx").on(
+      table.environmentId,
+      table.id
+    ),
+    uniqueIndex("mcp_credentials_environment_name_idx").on(
+      table.environmentId,
+      table.name
+    ),
+    index("mcp_credentials_environment_status_idx").on(
+      table.environmentId,
+      table.status
+    ),
+    check(
+      "mcp_credentials_encrypted_payload_check",
+      sql`${table.encryptedPayload} like 'kmcp:v1:%'`
+    ),
+  ]
+);
+
+export const mcpOauthAuthorizations = pgTable(
+  "mcp_oauth_authorizations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialId: text("credential_id").notNull(),
+    credentialName: text("credential_name").notNull(),
+    stateDigest: text("state_digest").notNull(),
+    encryptedSession: text("encrypted_session").notNull(),
+    authorizationEndpoint: text("authorization_endpoint").notNull(),
+    tokenEndpoint: text("token_endpoint").notNull(),
+    clientId: text("client_id").notNull(),
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method", {
+      enum: ["none", "client_secret_basic", "client_secret_post"],
+    })
+      .notNull()
+      .default("none"),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+    resource: text("resource"),
+    redirectUri: text("redirect_uri").notNull(),
+    status: text("status", {
+      enum: ["pending", "completed", "failed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_oauth_authorizations_organization_environment_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("mcp_oauth_authorizations_state_digest_idx").on(
+      table.stateDigest
+    ),
+    uniqueIndex("mcp_oauth_authorizations_credential_id_idx").on(
+      table.credentialId
+    ),
+    index("mcp_oauth_authorizations_expiry_status_idx").on(
+      table.expiresAt,
+      table.status
+    ),
+    check(
+      "mcp_oauth_authorizations_encrypted_session_check",
+      sql`${table.encryptedSession} like 'kmcp:v1:%'`
+    ),
+  ]
+);
+
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key")
+      .notNull()
+      .references(() => toolProviders.key, { onDelete: "restrict" }),
+    credentialId: text("credential_id"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    sourceType: text("source_type", { enum: ["remote", "oci"] }).notNull(),
+    transport: text("transport", {
+      enum: ["streamable_http", "stdio"],
+    }).notNull(),
+    remoteUrl: text("remote_url"),
+    ociImageReference: text("oci_image_reference"),
+    ociDigest: text("oci_digest"),
+    authMode: text("auth_mode", {
+      enum: ["none", "oauth", "secret_headers"],
+    })
+      .notNull()
+      .default("none"),
+    launchArguments: jsonb("launch_arguments")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    egressAllowlist: jsonb("egress_allowlist")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    cpuMillicores: integer("cpu_millicores").notNull().default(500),
+    memoryMib: integer("memory_mib").notNull().default(512),
+    pidsLimit: integer("pids_limit").notNull().default(128),
+    status: text("status", {
+      enum: ["draft", "discovering", "ready", "degraded", "disabled"],
+    })
+      .notNull()
+      .default("draft"),
+    lastHealthAt: timestamp("last_health_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_servers_organization_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.environmentId, table.credentialId],
+      foreignColumns: [mcpCredentials.environmentId, mcpCredentials.id],
+      name: "mcp_servers_environment_credential_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("mcp_servers_environment_slug_idx").on(
+      table.environmentId,
+      table.slug
+    ),
+    uniqueIndex("mcp_servers_provider_key_idx").on(table.providerKey),
+    index("mcp_servers_environment_status_idx").on(
+      table.environmentId,
+      table.status
+    ),
+    check(
+      "mcp_servers_source_check",
+      sql`(
+        (${table.sourceType} = 'remote' and ${table.transport} = 'streamable_http' and ${table.remoteUrl} is not null and ${table.ociImageReference} is null and ${table.ociDigest} is null)
+        or
+        (${table.sourceType} = 'oci' and ${table.remoteUrl} is null and ${table.ociImageReference} is not null and ${table.ociDigest} ~ '^sha256:[0-9a-f]{64}$' and ${table.ociImageReference} like '%@sha256:%')
+      )`
+    ),
+    check(
+      "mcp_servers_auth_check",
+      sql`(
+        (${table.authMode} = 'none' and ${table.credentialId} is null)
+        or
+        (${table.authMode} <> 'none' and ${table.credentialId} is not null)
+      )`
+    ),
+    check(
+      "mcp_servers_resource_limits_check",
+      sql`${table.cpuMillicores} > 0 and ${table.memoryMib} > 0 and ${table.pidsLimit} > 0`
+    ),
+  ]
+);
+
+export const mcpCapabilitySnapshots = pgTable(
+  "mcp_capability_snapshots",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    protocolVersion: text("protocol_version").notNull(),
+    capabilityDigest: text("capability_digest").notNull(),
+    serverInfo: jsonb("server_info").$type<Record<string, unknown>>(),
+    status: text("status", {
+      enum: ["pending_review", "approved", "rejected", "superseded"],
+    })
+      .notNull()
+      .default("pending_review"),
+    reviewedByUserId: text("reviewed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_capability_snapshots_server_digest_idx").on(
+      table.serverId,
+      table.capabilityDigest
+    ),
+    index("mcp_capability_snapshots_server_status_idx").on(
+      table.serverId,
+      table.status
+    ),
+    uniqueIndex("mcp_capability_snapshots_approved_server_idx")
+      .on(table.serverId)
+      .where(sql`${table.status} = 'approved'`),
+  ]
+);
+
+export const mcpDiscoveryJobs = pgTable(
+  "mcp_discovery_jobs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["queued", "running", "completed", "failed"],
+    })
+      .notNull()
+      .default("queued"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_discovery_jobs_organization_environment_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("mcp_discovery_jobs_active_server_idx")
+      .on(table.serverId)
+      .where(sql`${table.status} in ('queued', 'running')`),
+    index("mcp_discovery_jobs_status_created_idx").on(
+      table.status,
+      table.createdAt
+    ),
+  ]
+);
+
+export const mcpCapabilities = pgTable(
+  "mcp_capabilities",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => mcpCapabilitySnapshots.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key")
+      .notNull()
+      .references(() => toolProviders.key, { onDelete: "cascade" }),
+    toolCapabilityKey: text("tool_capability_key"),
+    kind: text("kind", {
+      enum: [
+        "tool",
+        "resource",
+        "resource_template",
+        "prompt",
+        "root",
+        "sampling",
+        "elicitation",
+        "completion",
+        "logging",
+        "task",
+      ],
+    }).notNull(),
+    capabilityKey: text("capability_key").notNull(),
+    displayName: text("display_name"),
+    description: text("description"),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    environmentEnabled: boolean("environment_enabled").notNull().default(false),
+    approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
+      .notNull()
+      .default("deny"),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_capabilities_snapshot_kind_key_idx").on(
+      table.snapshotId,
+      table.kind,
+      table.capabilityKey
+    ),
+    foreignKey({
+      columns: [table.providerKey, table.toolCapabilityKey],
+      foreignColumns: [toolCapabilities.providerKey, toolCapabilities.key],
+      name: "mcp_capabilities_tool_capability_fk",
+    }).onDelete("cascade"),
+    index("mcp_capabilities_provider_enabled_idx").on(
+      table.providerKey,
+      table.environmentEnabled
+    ),
+    check(
+      "mcp_capabilities_tool_projection_check",
+      sql`(
+        (${table.kind} = 'tool' and ${table.toolCapabilityKey} is not null)
+        or
+        (${table.kind} <> 'tool' and ${table.toolCapabilityKey} is null)
+      )`
+    ),
+  ]
+);
+
+export const mcpProjectCapabilityRestrictions = pgTable(
+  "mcp_project_capability_restrictions",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    capabilityId: text("capability_id")
+      .notNull()
+      .references(() => mcpCapabilities.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
+      .notNull()
+      .default("deny"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.capabilityId] }),
+    index("mcp_project_capability_restrictions_capability_idx").on(
+      table.capabilityId
+    ),
+  ]
+);
+
+export const mcpProjectResourceReferences = pgTable(
+  "mcp_project_resource_references",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    resourceUri: text("resource_uri").notNull(),
+    label: text("label").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_project_resource_references_uri_idx").on(
+      table.projectId,
+      table.serverId,
+      table.resourceUri
+    ),
+    index("mcp_project_resource_references_server_idx").on(table.serverId),
+  ]
+);
+
+export const mcpRunGrants = pgTable(
+  "mcp_run_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runExecutionId: text("run_execution_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    policyDigest: text("policy_digest").notNull(),
+    effectiveCapabilities: jsonb("effective_capabilities")
+      .$type<string[]>()
+      .notNull(),
+    effectivePolicy: jsonb("effective_policy")
+      .$type<
+        Array<{
+          capabilityId: string;
+          approvalMode: "auto" | "ask";
+        }>
+      >()
+      .notNull(),
+    status: text("status", {
+      enum: ["issued", "active", "revoked", "expired"],
+    })
+      .notNull()
+      .default("issued"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_run_grants_run_execution_idx").on(table.runExecutionId),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_run_grants_organization_environment_fk",
+    }).onDelete("cascade"),
+    index("mcp_run_grants_expiry_status_idx").on(table.expiresAt, table.status),
+    check(
+      "mcp_run_grants_expiry_check",
+      sql`${table.expiresAt} > ${table.createdAt}`
+    ),
+  ]
+);
+
+export const mcpInvocations = pgTable(
+  "mcp_invocations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    grantId: text("grant_id")
+      .notNull()
+      .references(() => mcpRunGrants.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "restrict" }),
+    capabilityId: text("capability_id").references(() => mcpCapabilities.id, {
+      onDelete: "restrict",
+    }),
+    requestId: text("request_id").notNull(),
+    method: text("method").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    responseDigest: text("response_digest"),
+    status: text("status", {
+      enum: [
+        "requested",
+        "waiting_approval",
+        "waiting_sampling",
+        "waiting_elicitation",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("requested"),
+    replayEvidence: jsonb("replay_evidence").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_invocations_grant_request_idx").on(
+      table.grantId,
+      table.requestId
+    ),
+    index("mcp_invocations_server_created_idx").on(
+      table.serverId,
+      table.createdAt
+    ),
+    index("mcp_invocations_status_created_idx").on(
+      table.status,
+      table.createdAt
+    ),
+  ]
+);
+
+export const mcpInteractionCheckpoints = pgTable(
+  "mcp_interaction_checkpoints",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    invocationId: text("invocation_id")
+      .notNull()
+      .references(() => mcpInvocations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["sampling", "elicitation"] }).notNull(),
+    status: text("status", {
+      enum: [
+        "requested",
+        "approved",
+        "processing",
+        "denied",
+        "completed",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("requested"),
+    requestEnvelope: jsonb("request_envelope")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    responseEnvelope:
+      jsonb("response_envelope").$type<Record<string, unknown>>(),
+    replayCursor: jsonb("replay_cursor")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    processingStartedAt: timestamp("processing_started_at", {
+      withTimezone: true,
+    }),
+    processingExpiresAt: timestamp("processing_expires_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_interaction_checkpoints_invocation_idx").on(
+      table.invocationId
+    ),
+    index("mcp_interaction_checkpoints_thread_status_idx").on(
+      table.threadId,
+      table.status
+    ),
+    index("mcp_interaction_checkpoints_processing_expiry_idx")
+      .on(table.processingExpiresAt)
+      .where(sql`${table.status} = 'processing'`),
   ]
 );
 
@@ -2217,6 +2873,26 @@ export type EnvironmentCapabilityGrant = InferSelectModel<
 >;
 export type ProjectCapabilityRestriction = InferSelectModel<
   typeof projectCapabilityRestrictions
+>;
+export type McpCredential = InferSelectModel<typeof mcpCredentials>;
+export type McpOauthAuthorization = InferSelectModel<
+  typeof mcpOauthAuthorizations
+>;
+export type McpServer = InferSelectModel<typeof mcpServers>;
+export type McpCapabilitySnapshot = InferSelectModel<
+  typeof mcpCapabilitySnapshots
+>;
+export type McpCapability = InferSelectModel<typeof mcpCapabilities>;
+export type McpProjectCapabilityRestriction = InferSelectModel<
+  typeof mcpProjectCapabilityRestrictions
+>;
+export type McpProjectResourceReference = InferSelectModel<
+  typeof mcpProjectResourceReferences
+>;
+export type McpRunGrant = InferSelectModel<typeof mcpRunGrants>;
+export type McpInvocation = InferSelectModel<typeof mcpInvocations>;
+export type McpInteractionCheckpoint = InferSelectModel<
+  typeof mcpInteractionCheckpoints
 >;
 export type AgentConfig = InferSelectModel<typeof agentConfig>;
 export type ApiUsage = InferSelectModel<typeof apiUsage>;

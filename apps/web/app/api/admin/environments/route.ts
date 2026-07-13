@@ -4,12 +4,12 @@ import {
   listAdminEnvironments,
 } from "@/lib/admin/environments";
 import { createEnvironmentInputSchema } from "@/lib/environments/contracts";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
 export async function GET() {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     return NextResponse.json({
       environments: await listAdminEnvironments(organizationId),
     });
@@ -20,7 +20,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const environment = createEnvironmentInputSchema.parse(
       await request.json()
     );

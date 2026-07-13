@@ -127,6 +127,9 @@ interface RuntimeBootstrap {
   close: () => Promise<void>;
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
+  prepareHostedMcpRuntime?:
+    | ((input: Pick<RunTurnInput, "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
+    | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -196,6 +199,7 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<unknown | undefined>)
     | undefined;
   private readonly turnCoordinator: RuntimeTurnCoordinatorService;
+  private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
 
   private finalizedPayload: unknown;
 
@@ -242,6 +246,7 @@ export class KestrelChatRuntime {
     this.entryStepAgent = bootstrap.entryStepAgent;
     this.closePool = bootstrap.close;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
+    this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
     this.forceModeSystemV2 = profile.agent === "reference-react";
     this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
     this.defaultExecutionPolicy = buildExecutionPolicyFromPack(profile.approvalPolicyPackId);
@@ -308,7 +313,20 @@ export class KestrelChatRuntime {
           }
         : {}),
     };
-    const result = await this.turnCoordinator.runTurn(authorizedInput, options);
+    const { mcpAuthorization, ...persistableInput } = authorizedInput;
+    if (mcpAuthorization !== undefined) {
+      if (persistableInput.mcpContext === undefined) {
+        throw new Error("mcpAuthorization requires mcpContext");
+      }
+      if (this.prepareHostedMcpRuntime === undefined) {
+        throw new Error("Hosted MCP runtime preparation is unavailable");
+      }
+      await this.prepareHostedMcpRuntime({
+        mcpContext: persistableInput.mcpContext,
+        mcpAuthorization,
+      });
+    }
+    const result = await this.turnCoordinator.runTurn(persistableInput, options);
     if (result.finalizedPayload !== undefined) {
       this.finalizedPayload = result.finalizedPayload;
     }
@@ -1031,8 +1049,21 @@ function createDefaultRuntime(
     },
     getSession: (sessionId) => kestrel.getSession(sessionId),
     runKernel: (event, runOptions) => kestrel.run(event, runOptions),
-    refreshToolRuntime: () => toolRegistry.refreshRuntime(),
-    resolveAvailableToolAllowlist: (allowlist) => toolRegistry.resolveAvailableAllowlist(allowlist),
+    refreshToolRuntime: (input) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.refreshForRuntimeTurn(input)
+        : toolRegistry.refreshRuntime(),
+    resolveAvailableToolAllowlist: (allowlist, input, options) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.resolveAvailableAllowlistForRuntimeTurn(
+            allowlist,
+            input,
+            {
+              includeGrantedMcpTools:
+                options?.includeGrantedMcpTools === true,
+            }
+          )
+        : toolRegistry.resolveAvailableAllowlist(allowlist),
     resolveSkillPackById: (skillPackId) => getSkillPackById(skillPackId),
     handleCapabilityLoss: (input) => {
       if (threadRuntime === undefined) {
@@ -1072,6 +1103,8 @@ function createDefaultRuntime(
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;
     },
+    prepareHostedMcpRuntime: (input) =>
+      toolRegistry.refreshForRuntimeTurn(input),
     close: async () =>
       closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),

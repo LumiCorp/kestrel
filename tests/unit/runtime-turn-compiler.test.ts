@@ -3,8 +3,8 @@ import test from "node:test";
 
 import {
   compileRuntimeTurn,
-  resolveRuntimeRecoveryContinuation,
   type RuntimeTurnInput,
+  resolveRuntimeRecoveryContinuation,
 } from "../../src/runtime/RuntimeTurn.js";
 
 test("compileRuntimeTurn builds canonical v2 payload and metadata for external turns", () => {
@@ -110,8 +110,14 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
     },
   });
   assert.equal(compiled.executionPolicy?.toolClassPolicy?.read_only, true);
-  assert.equal(compiled.executionPolicy?.toolClassPolicy?.external_side_effect, true);
-  assert.equal(compiled.executionPolicy?.capabilityPolicy?.["workspace.write"], true);
+  assert.equal(
+    compiled.executionPolicy?.toolClassPolicy?.external_side_effect,
+    true
+  );
+  assert.equal(
+    compiled.executionPolicy?.capabilityPolicy?.["workspace.write"],
+    true
+  );
 });
 
 test("compileRuntimeTurn preserves resume and attachment payload fields", () => {
@@ -141,7 +147,7 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
       defaultActSubmode: "safe",
       modeSystemV2Enabled: true,
       toolBatchCheckpointSize: 5,
-    },
+    }
   );
 
   assert.equal(compiled.payload.resumeBlockedRun, true);
@@ -150,6 +156,32 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
   assert.equal(compiled.resolvedMode.interactionMode, "build");
   assert.equal(compiled.resolvedMode.actSubmode, "safe");
   assert.equal(compiled.metadata.actSubmode, "safe");
+});
+
+test("compileRuntimeTurn carries hosted MCP grant context into the kernel payload", () => {
+  const mcpContext = {
+    gatewayUrl: "https://mcp.kestrel.example/mcp",
+    grantId: "018f1f73-4ce2-7b0f-8e14-3b977e1577a5",
+    protocolVersion: "2025-11-25" as const,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+  };
+  const compiled = compileRuntimeTurn(
+    {
+      sessionId: "session-1",
+      message: "use the environment tools",
+      eventType: "user.message",
+      mcpContext,
+      mcpAuthorization: { executionTicket: "signed-run-ticket" },
+    },
+    { toolBatchCheckpointSize: 5 }
+  );
+
+  assert.deepEqual(compiled.payload.mcpContext, mcpContext);
+  assert.equal("mcpAuthorization" in compiled.payload, false);
+  assert.equal("mcpAuthorization" in compiled.metadata, false);
 });
 
 test("compileRuntimeTurn emits legacy migration metadata when mode system v2 is forced", () => {
@@ -166,7 +198,7 @@ test("compileRuntimeTurn emits legacy migration metadata when mode system v2 is 
       modeSystemV2Enabled: false,
       forceModeSystemV2: true,
       toolBatchCheckpointSize: 5,
-    },
+    }
   );
 
   assert.equal(compiled.metadata.modeSystemV2Enabled, true);
@@ -195,7 +227,7 @@ test("compileRuntimeTurn applies armed auto compaction while preserving compacti
       defaultActSubmode: "safe",
       modeSystemV2Enabled: true,
       toolBatchCheckpointSize: 5,
-    },
+    }
   );
 
   assert.equal(compiled.compaction.apply, true);

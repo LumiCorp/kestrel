@@ -31,6 +31,21 @@ test("Environment migration establishes the hosted ownership graph", () => {
   }
 });
 
+test("Environment ownership is canonical on Projects after the follow-up migration", () => {
+  const ownershipMigration = fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "migrations/0016_environment_project_ownership.sql"
+    ),
+    "utf8"
+  );
+  assert.match(ownershipMigration, /projects_organization_environment_fk/u);
+  assert.match(
+    ownershipMigration,
+    /ALTER COLUMN "environment_id" SET NOT NULL/u
+  );
+});
+
 test("Environment migration pins isolation and lazy Workspace invariants", () => {
   assert.match(migration, /environments_org_default_idx/u);
   assert.match(migration, /fly_gateway_machine_id/u);
@@ -46,6 +61,26 @@ test("Environment migration pins isolation and lazy Workspace invariants", () =>
     migration,
     /environment_run_executions[\s\S]*effective_capabilities/u
   );
+});
+
+test("Environment router fields converge for databases that applied the original migration", () => {
+  const upgradeMigration = fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "migrations/0018_environment_router_upgrade.sql"
+    ),
+    "utf8"
+  );
+  for (const field of [
+    "fly_gateway_machine_id",
+    "router_url",
+    "router_image",
+  ]) {
+    assert.match(
+      upgradeMigration,
+      new RegExp(`ADD COLUMN IF NOT EXISTS "${field}"`, "u")
+    );
+  }
 });
 
 test("Environment migration makes provider operations and grants auditable", () => {

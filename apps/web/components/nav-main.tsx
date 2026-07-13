@@ -70,6 +70,14 @@ const accountItems = [
   },
 ];
 
+const organizationItems = [
+  {
+    title: "Environments",
+    url: "/settings/environments",
+    icon: HardDrive,
+  },
+];
+
 const adminItems = [
   {
     title: "Agent",
@@ -80,11 +88,6 @@ const adminItems = [
     title: "Gateways",
     url: "/admin/gateways",
     icon: Cpu,
-  },
-  {
-    title: "Environments",
-    url: "/admin/environments",
-    icon: HardDrive,
   },
   {
     title: "Tools",
@@ -176,7 +179,13 @@ function NavSection({
   );
 }
 
-export function NavMain({ isAdmin }: { isAdmin: boolean }) {
+export function NavMain({
+  isAdmin,
+  canManageOrganization,
+}: {
+  isAdmin: boolean;
+  canManageOrganization: boolean;
+}) {
   const pathname = usePathname();
 
   return (
@@ -187,6 +196,13 @@ export function NavMain({ isAdmin }: { isAdmin: boolean }) {
         pathname={pathname}
       />
       <NavSection items={accountItems} label="Account" pathname={pathname} />
+      {canManageOrganization ? (
+        <NavSection
+          items={organizationItems}
+          label="Organization"
+          pathname={pathname}
+        />
+      ) : null}
       {isAdmin ? (
         <>
           <NavSection items={adminItems} label="Admin" pathname={pathname} />

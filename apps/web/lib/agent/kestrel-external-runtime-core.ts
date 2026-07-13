@@ -53,6 +53,8 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
   prompt: string;
   context: KestrelRequestContext;
   clientCapabilities: KestrelAgentTurnInput["clientCapabilities"];
+  mcpContext?: RunnerTurnInput["mcpContext"] | undefined;
+  mcpAuthorization?: RunnerTurnInput["mcpAuthorization"] | undefined;
 }): Promise<KestrelOneExternalReply> {
   const userMessage: UIMessage = {
     id: crypto.randomUUID(),
@@ -65,6 +67,10 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
       sessionId: input.sessionId,
       message: input.prompt,
       clientCapabilities: input.clientCapabilities,
+      ...(input.mcpContext ? { mcpContext: input.mcpContext } : {}),
+      ...(input.mcpAuthorization
+        ? { mcpAuthorization: input.mcpAuthorization }
+        : {}),
     },
     input.context
   );

@@ -17,6 +17,7 @@ import type {
   EnvironmentWorkspace,
   WorkspaceBackup,
 } from "@/drizzle/schema";
+import { McpEnvironmentPanel } from "./mcp-environment-panel";
 
 type CreateEnvironmentResponse = {
   environment?: Environment;
@@ -512,6 +513,7 @@ export function EnvironmentsAdminClient({
                       ))}
                   </div>
                 ) : null}
+                <McpEnvironmentPanel environmentId={environment.id} />
               </CardContent>
             </Card>
           ))}

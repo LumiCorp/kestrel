@@ -86,7 +86,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
     if (entry.access === "admin") {
       assert.match(
         source,
-        /\brequireAdmin(?:Organization)?\b/,
+        /\brequire(?:Admin(?:Organization)?|OrganizationAdmin)\b/,
         `${entry.file} must reject non-admin users`
       );
       continue;

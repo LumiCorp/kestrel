@@ -386,3 +386,17 @@ test("Environment deletion removes the owning Fly App idempotently", async () =>
     "operation:completed",
   ]);
 });
+
+for (const code of ["ENVIRONMENT_IS_DEFAULT", "ENVIRONMENT_HAS_PROJECTS"]) {
+  test(`Environment deletion stops before provider teardown for ${code}`, async () => {
+    const { repository, provider, calls } = fixture("environment.delete");
+    repository.setEnvironmentDeleting = async () => {
+      throw Object.assign(new Error("Deletion blocked."), { code });
+    };
+    provider.deleteEnvironmentApp = async () => {
+      calls.push("provider:delete-app");
+    };
+    await createProvisioner(repository, provider).process("operation-id");
+    assert.deepEqual(calls, [`operation:failed:${code}`]);
+  });
+}

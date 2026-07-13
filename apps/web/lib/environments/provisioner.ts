@@ -7,6 +7,7 @@ import {
   environmentStatusSchema,
   workspaceStatusSchema,
 } from "./contracts";
+import { environmentLifecycleLockKey } from "./lifecycle-lock";
 import {
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
@@ -199,6 +200,17 @@ export class EnvironmentProvisioner {
           message: failure.message,
         });
         return "deferred";
+      }
+      if (
+        failure.code === "ENVIRONMENT_IS_DEFAULT" ||
+        failure.code === "ENVIRONMENT_HAS_PROJECTS"
+      ) {
+        await this.repository.failOperation({
+          operationId: operation.id,
+          stage: "environment.deletion.blocked",
+          ...failure,
+        });
+        return "processed";
       }
       if (operation.workspaceId) {
         await this.repository.failWorkspace({
@@ -670,10 +682,41 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(eq(schema.environments.id, environmentId));
     },
     async setEnvironmentDeleting(environmentId) {
-      await knowledgeDb
-        .update(schema.environments)
-        .set({ status: "deleting", updatedAt: new Date() })
-        .where(eq(schema.environments.id, environmentId));
+      await knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`
+        );
+        const [environment] = await transaction
+          .update(schema.environments)
+          .set({ status: "deleting", updatedAt: new Date() })
+          .where(eq(schema.environments.id, environmentId))
+          .returning({
+            id: schema.environments.id,
+            isDefault: schema.environments.isDefault,
+          });
+        if (!environment) {
+          throw operationError(
+            "ENVIRONMENT_NOT_FOUND",
+            "Environment deletion target is unavailable."
+          );
+        }
+        if (environment.isDefault) {
+          throw operationError(
+            "ENVIRONMENT_IS_DEFAULT",
+            "Select another default Environment before deleting this Environment."
+          );
+        }
+        const project = await transaction.query.projects.findFirst({
+          where: (table, { eq }) => eq(table.environmentId, environmentId),
+          columns: { id: true },
+        });
+        if (project) {
+          throw operationError(
+            "ENVIRONMENT_HAS_PROJECTS",
+            "Move every Project to another Environment before deleting this Environment."
+          );
+        }
+      });
     },
     async completeEnvironment(input) {
       await knowledgeDb

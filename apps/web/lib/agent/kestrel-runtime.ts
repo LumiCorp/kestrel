@@ -152,15 +152,8 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType: turn.eventType || "user.message",
-            clientCapabilities: {
-              ...(turn.clientCapabilities ?? {}),
-              kestrelOne: {
-                ...((turn.clientCapabilities?.kestrelOne as
-                  | Record<string, unknown>
-                  | undefined) ?? {}),
-                executionTicket: route.authToken,
-              },
-            },
+            ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
+            mcpAuthorization: { executionTicket: route.authToken },
           };
           const downstream = runtimeModel
             ? client.streamRunWithProfile(
@@ -343,12 +336,13 @@ export async function generateKestrelOneExternalReply(input: {
       clientCapabilities: {
         kestrelOne: {
           tenantId: input.organizationId,
-          executionTicket: route.authToken,
           capabilities: buildKestrelOneCapabilityDescriptors({
             request: new Request(new URL("/", input.apiUrl)),
           }),
         },
       },
+      mcpAuthorization: { executionTicket: route.authToken },
+      mcpContext: route.mcpContext,
     });
     await updateEnvironmentExecutionStatus({
       organizationId: input.organizationId,

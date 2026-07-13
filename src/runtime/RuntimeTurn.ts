@@ -1,15 +1,19 @@
 import type { ClientCapabilities } from "../clientCapabilities.js";
+import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
+import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import type {
+  HostedMcpAuthorization,
+  HostedMcpContext,
+} from "../mcp/hosted-contracts.js";
+import type {
+  ActSubmode,
   ExecutionPolicyOverride,
   InteractionMode,
-  ActSubmode,
 } from "../mode/contracts.js";
 import {
   alignExecutionPolicyWithMode,
   normalizeInteractionMode,
 } from "../mode/contracts.js";
-import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
-import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 
 export type RuntimeTurnActorType = "end_user" | "operator" | "service";
 
@@ -38,6 +42,9 @@ export interface RuntimeTurnInput {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
   actSubmode?: ActSubmode | undefined;
+  mcpContext?: HostedMcpContext | undefined;
+  /** Ephemeral authorization consumed before the turn is compiled or persisted. */
+  mcpAuthorization?: HostedMcpAuthorization | undefined;
   metadata?: Record<string, unknown> | undefined;
   actor?: RuntimeTurnActor | undefined;
   clientCapabilities?: ClientCapabilities | undefined;
@@ -69,7 +76,10 @@ export interface RuntimeTurnResult {
 }
 
 export interface RuntimeTurnCoordinator {
-  runTurn(input: RuntimeTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RuntimeTurnResult>;
+  runTurn(
+    input: RuntimeTurnInput,
+    options?: { signal?: AbortSignal | undefined }
+  ): Promise<RuntimeTurnResult>;
 }
 
 export interface CompileRuntimeTurnDefaults {
@@ -119,28 +129,34 @@ export interface RuntimeRecoveryContinuation {
 
 export function compileRuntimeTurn(
   input: RuntimeTurnInput,
-  defaults: CompileRuntimeTurnDefaults,
+  defaults: CompileRuntimeTurnDefaults
 ): CompiledRuntimeTurn {
   return materializeCompiledRuntimeTurn(prepareRuntimeTurn(input, defaults));
 }
 
 export function prepareRuntimeTurn(
   input: RuntimeTurnInput,
-  defaults: CompileRuntimeTurnDefaults,
+  defaults: CompileRuntimeTurnDefaults
 ): PreparedRuntimeTurn {
-  const requestedModeSystemV2Enabled = input.modeSystemV2Enabled ?? defaults.modeSystemV2Enabled === true;
-  const modeSystemV2Enabled = defaults.forceModeSystemV2 === true
-    ? true
-    : requestedModeSystemV2Enabled;
+  const requestedModeSystemV2Enabled =
+    input.modeSystemV2Enabled ?? defaults.modeSystemV2Enabled === true;
+  const modeSystemV2Enabled =
+    defaults.forceModeSystemV2 === true ? true : requestedModeSystemV2Enabled;
   const resolvedMode = normalizeInteractionMode({
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     defaultInteractionMode: defaults.defaultInteractionMode,
     defaultActSubmode: defaults.defaultActSubmode,
   });
-  const payloadMode = buildRuntimeModePayload(modeSystemV2Enabled, resolvedMode);
+  const payloadMode = buildRuntimeModePayload(
+    modeSystemV2Enabled,
+    resolvedMode
+  );
   const executionPolicy = alignExecutionPolicyWithMode({
-    executionPolicy: mergeExecutionPolicies(defaults.defaultExecutionPolicy, input.executionPolicy),
+    executionPolicy: mergeExecutionPolicies(
+      defaults.defaultExecutionPolicy,
+      input.executionPolicy
+    ),
     interactionMode: resolvedMode.interactionMode,
     actSubmode: resolvedMode.actSubmode,
   });
@@ -174,36 +190,55 @@ export function prepareRuntimeTurn(
 }
 
 export function materializeCompiledRuntimeTurn(
-  prepared: PreparedRuntimeTurn,
+  prepared: PreparedRuntimeTurn
 ): CompiledRuntimeTurn {
   const externalDeadlineMs = readExternalDeadlineMs(prepared.metadata);
   const payload: Record<string, unknown> = {
     message: prepared.input.message,
-    ...(prepared.input.attachments !== undefined ? { attachments: prepared.input.attachments } : {}),
+    ...(prepared.input.attachments !== undefined
+      ? { attachments: prepared.input.attachments }
+      : {}),
     enableRouteClassifier: true,
     modeSystemV2Enabled: prepared.modeSystemV2Enabled,
     interactionMode: prepared.payloadMode.interactionMode,
-    ...(prepared.payloadMode.actSubmode !== undefined ? { actSubmode: prepared.payloadMode.actSubmode } : {}),
-    ...(prepared.input.clientCapabilities !== undefined ? { clientCapabilities: prepared.input.clientCapabilities } : {}),
+    ...(prepared.payloadMode.actSubmode !== undefined
+      ? { actSubmode: prepared.payloadMode.actSubmode }
+      : {}),
+    ...(prepared.input.clientCapabilities !== undefined
+      ? { clientCapabilities: prepared.input.clientCapabilities }
+      : {}),
+    ...(prepared.input.mcpContext !== undefined
+      ? { mcpContext: prepared.input.mcpContext }
+      : {}),
     ...(prepared.metadata.legacyModeMigration !== undefined
       ? { legacyModeMigration: prepared.metadata.legacyModeMigration }
       : {}),
-    ...(prepared.executionPolicy !== undefined ? { executionPolicy: prepared.executionPolicy } : {}),
-    ...(prepared.input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
+    ...(prepared.executionPolicy !== undefined
+      ? { executionPolicy: prepared.executionPolicy }
+      : {}),
+    ...(prepared.input.resumeBlockedRun === true
+      ? { resumeBlockedRun: true }
+      : {}),
     metadata: prepared.metadata,
     orchestration: {
       ...prepared.metadata,
       ...(externalDeadlineMs !== undefined ? { externalDeadlineMs } : {}),
     },
     toolBatchCheckpointSize: prepared.toolBatchCheckpointSize,
-    ...(prepared.input.history !== undefined ? { history: prepared.input.history } : {}),
+    ...(prepared.input.history !== undefined
+      ? { history: prepared.input.history }
+      : {}),
     ...(prepared.compaction.apply ? { manualCompaction: true } : {}),
     ...(prepared.input.autoCompaction !== undefined
       ? {
           autoCompaction: {
             enabled: prepared.input.autoCompaction.enabled === true,
-            ...(prepared.input.autoCompaction.state !== undefined ? { state: prepared.input.autoCompaction.state } : {}),
-            ...(prepared.input.autoCompaction.suppressOnce === true ? { suppressOnce: true } : {}),
+            ...(prepared.input.autoCompaction.state !== undefined
+              ? { state: prepared.input.autoCompaction.state }
+              : {}),
+            ...(prepared.input.autoCompaction.suppressOnce === true
+              ? { suppressOnce: true }
+              : {}),
             ...(prepared.compaction.apply &&
             prepared.input.manualCompaction !== true &&
             prepared.input.autoCompaction.enabled === true
@@ -212,7 +247,9 @@ export function materializeCompiledRuntimeTurn(
           },
         }
       : {}),
-    ...(prepared.input.workspace !== undefined ? { workspace: prepared.input.workspace } : {}),
+    ...(prepared.input.workspace !== undefined
+      ? { workspace: prepared.input.workspace }
+      : {}),
     ...(prepared.input.skillPack !== undefined
       ? {
           skillPack: {
@@ -233,21 +270,29 @@ export function materializeCompiledRuntimeTurn(
 
 export async function resolveRuntimeRecoveryContinuation(input: {
   output: NormalizedOutput;
-  readPersistedResumeStepAgent?: (() => Promise<string | undefined>) | undefined;
+  readPersistedResumeStepAgent?:
+    | (() => Promise<string | undefined>)
+    | undefined;
   defaultStepAgent?: string | undefined;
 }): Promise<RuntimeRecoveryContinuation | undefined> {
-  if (input.output.status !== "WAITING" || input.output.waitFor?.eventType !== "system.meta_reasoning") {
-    return undefined;
+  if (
+    input.output.status !== "WAITING" ||
+    input.output.waitFor?.eventType !== "system.meta_reasoning"
+  ) {
+    return;
   }
   const metadata = asRecord(input.output.waitFor.metadata);
   const reason = asString(metadata?.reason);
-  if (reason !== "agent_timeout_resume" && reason !== "observer_timeout_resume") {
-    return undefined;
+  if (
+    reason !== "agent_timeout_resume" &&
+    reason !== "observer_timeout_resume"
+  ) {
+    return;
   }
   const fromMetadata = asString(metadata?.resumeStepAgent);
   const stepAgent =
     fromMetadata ??
-    await input.readPersistedResumeStepAgent?.() ??
+    (await input.readPersistedResumeStepAgent?.()) ??
     input.defaultStepAgent ??
     "agent.loop";
   return {
@@ -261,10 +306,11 @@ export async function resolveRuntimeRecoveryContinuation(input: {
 
 function buildRuntimeModePayload(
   modeSystemV2Enabled: boolean,
-  resolvedMode: ReturnType<typeof normalizeInteractionMode>,
+  resolvedMode: ReturnType<typeof normalizeInteractionMode>
 ): CompiledRuntimeTurn["payloadMode"] {
   const actSubmode =
-    resolvedMode.interactionMode === "build" && resolvedMode.actSubmode !== undefined
+    resolvedMode.interactionMode === "build" &&
+    resolvedMode.actSubmode !== undefined
       ? { actSubmode: resolvedMode.actSubmode }
       : {};
 
@@ -293,7 +339,8 @@ function buildRuntimeTurnMetadata(input: {
 }): Record<string, unknown> {
   return {
     ...(input.input.metadata ?? {}),
-    ...(input.input.metadata?.activeTaskId === undefined && input.activeTaskId !== undefined
+    ...(input.input.metadata?.activeTaskId === undefined &&
+    input.activeTaskId !== undefined
       ? { activeTaskId: input.activeTaskId }
       : {}),
     ...(input.input.runId !== undefined ? { runId: input.input.runId } : {}),
@@ -303,7 +350,9 @@ function buildRuntimeTurnMetadata(input: {
     ...(input.resolvedMode.actSubmode !== undefined
       ? { actSubmode: input.resolvedMode.actSubmode }
       : {}),
-    ...(input.input.clientCapabilities !== undefined ? { clientCapabilities: input.input.clientCapabilities } : {}),
+    ...(input.input.clientCapabilities !== undefined
+      ? { clientCapabilities: input.input.clientCapabilities }
+      : {}),
     ...(input.modeSystemV2Enabled && input.requestedModeSystemV2Enabled !== true
       ? {
           legacyModeMigration: {
@@ -313,18 +362,26 @@ function buildRuntimeTurnMetadata(input: {
           },
         }
       : {}),
-    ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
+    ...(input.executionPolicy !== undefined
+      ? { executionPolicy: input.executionPolicy }
+      : {}),
     toolBatchCheckpointSize: input.toolBatchCheckpointSize,
-    ...(input.input.history !== undefined ? { history: input.input.history } : {}),
-    ...(input.input.workspace !== undefined ? { workspace: input.input.workspace } : {}),
-    ...(input.input.skillPack !== undefined ? { skillPackId: input.input.skillPack.id } : {}),
+    ...(input.input.history !== undefined
+      ? { history: input.input.history }
+      : {}),
+    ...(input.input.workspace !== undefined
+      ? { workspace: input.input.workspace }
+      : {}),
+    ...(input.input.skillPack !== undefined
+      ? { skillPackId: input.input.skillPack.id }
+      : {}),
     ...(input.input.actor !== undefined ? { actor: input.input.actor } : {}),
   };
 }
 
 function mergeExecutionPolicies(
   base: ExecutionPolicyOverride | undefined,
-  override: ExecutionPolicyOverride | undefined,
+  override: ExecutionPolicyOverride | undefined
 ): ExecutionPolicyOverride | undefined {
   if (base === undefined) {
     return override;
@@ -375,7 +432,9 @@ function resolveCompactionRequest(input: RuntimeTurnInput): { apply: boolean } {
   return { apply: false };
 }
 
-function readExternalDeadlineMs(metadata: Record<string, unknown>): number | undefined {
+function readExternalDeadlineMs(
+  metadata: Record<string, unknown>
+): number | undefined {
   const value = metadata.externalDeadlineMs;
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.trunc(value)
@@ -384,7 +443,7 @@ function readExternalDeadlineMs(metadata: Record<string, unknown>): number | und
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return;
   }
   return value as Record<string, unknown>;
 }

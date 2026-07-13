@@ -2,7 +2,9 @@ import { headers } from "next/headers";
 import { forbidden, redirect, unauthorized } from "next/navigation";
 import { auth as betterAuth } from "@/lib/auth";
 import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
+import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import { knowledgeDb } from "@/lib/knowledge/db";
+import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { ensurePersonalOrganizationByUserId } from "@/lib/personal-workspace";
 
 type SessionLike = Session | null;
@@ -90,6 +92,14 @@ export async function requireActiveOrganization() {
     throw new Error("Active organization required");
   }
 
+  const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+    organizationId,
+    userId: session.user.id,
+  });
+  if (ensuredEnvironment.operation) {
+    await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+  }
+
   return {
     session,
     organizationId,
@@ -110,6 +120,14 @@ export async function getActiveOrganizationSnapshot(
 
   if (!organizationId) {
     return null;
+  }
+
+  const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+    organizationId,
+    userId: session.user.id,
+  });
+  if (ensuredEnvironment.operation) {
+    await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
   }
 
   const organization = await knowledgeDb.query.organizations.findFirst({
@@ -145,10 +163,46 @@ export async function requireAdminOrganization() {
     throw new Error("Active organization required");
   }
 
+  const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+    organizationId,
+    userId: session.user.id,
+  });
+  if (ensuredEnvironment.operation) {
+    await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+  }
+
   return {
     session,
     organizationId,
   };
+}
+
+export async function canManageOrganization(input: {
+  organizationId: string;
+  userId: string;
+}): Promise<boolean> {
+  const membership = await knowledgeDb.query.members.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.organizationId, input.organizationId),
+        eq(table.userId, input.userId)
+      ),
+    columns: { role: true },
+  });
+  return membership?.role === "owner" || membership?.role === "admin";
+}
+
+export async function requireOrganizationAdmin() {
+  const { organizationId, session } = await requireActiveOrganization();
+  if (
+    !(await canManageOrganization({
+      organizationId,
+      userId: session.user.id,
+    }))
+  ) {
+    throw new Error("Forbidden");
+  }
+  return { organizationId, session };
 }
 
 export async function requireAuthenticatedShell(input?: {

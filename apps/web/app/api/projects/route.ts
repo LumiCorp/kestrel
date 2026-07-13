@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/knowledge/http";
 import { createProject, listProjectsForUser } from "@/lib/projects/store";
 
 const createProjectSchema = z.object({
+  environmentId: z.string().uuid().optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(1000).nullable().optional(),
   instructions: z.string().trim().max(20_000).optional(),
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
     const project = await createProject({
       organizationId,
       userId: session.user.id,
+      environmentId: body.environmentId,
       name: body.name,
       description: body.description,
       instructions: body.instructions,

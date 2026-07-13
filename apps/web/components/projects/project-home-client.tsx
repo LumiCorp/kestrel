@@ -72,6 +72,14 @@ export type ProjectHomeData = {
     name: string;
     email: string;
   }>;
+  auditEvents: Array<{
+    id: string;
+    actorUserId: string | null;
+    action: string;
+    targetType: string | null;
+    targetId: string | null;
+    createdAt: string;
+  }>;
   threads: Array<{
     id: string;
     title: string;
@@ -297,6 +305,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
           <div className="flex gap-2">
             {!initial.project.archivedAt && (
@@ -560,6 +569,37 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                     <Plus className="size-4" /> Add
                   </Button>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="activity">
+          <Card>
+            <CardHeader>
+              <CardTitle>Project audit activity</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {initial.auditEvents.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  No Project activity has been recorded.
+                </p>
+              ) : (
+                initial.auditEvents.map((event) => (
+                  <div
+                    className="grid gap-1 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                    key={event.id}
+                  >
+                    <span>{event.action}</span>
+                    <time className="text-muted-foreground sm:text-right">
+                      {new Date(event.createdAt).toLocaleString()}
+                    </time>
+                    <span className="truncate font-mono text-muted-foreground text-xs sm:col-span-2">
+                      {event.targetType ?? "project"}
+                      {event.targetId ? ` · ${event.targetId}` : ""}
+                    </span>
+                  </div>
+                ))
               )}
             </CardContent>
           </Card>

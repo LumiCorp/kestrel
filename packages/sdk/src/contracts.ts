@@ -41,7 +41,13 @@ export interface RunnerProfile {
   label: string;
   agent: string;
   sessionPrefix: string;
-  modelProvider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  modelProvider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   defaultInteractionMode?: "chat" | "plan" | "build" | undefined;
@@ -74,6 +80,20 @@ export interface RunnerTurnAttachment {
   text?: string | undefined;
 }
 
+export interface RunnerMcpContext {
+  gatewayUrl: string;
+  grantId: string;
+  protocolVersion: "2025-11-25";
+  organizationId: string;
+  environmentId: string;
+  projectId?: string | undefined;
+  threadId: string;
+}
+
+export interface RunnerMcpAuthorization {
+  executionTicket: string;
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -85,15 +105,19 @@ export interface RunnerTurnInput {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  mcpContext?: RunnerMcpContext | undefined;
+  mcpAuthorization?: RunnerMcpAuthorization | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
   history?: RunnerHistoryEntry[] | undefined;
   manualCompaction?: boolean | undefined;
-  autoCompaction?: {
-    enabled?: boolean | undefined;
-    state?: string | undefined;
-    suppressOnce?: boolean | undefined;
-  } | undefined;
+  autoCompaction?:
+    | {
+        enabled?: boolean | undefined;
+        state?: string | undefined;
+        suppressOnce?: boolean | undefined;
+      }
+    | undefined;
   workspace?: Record<string, unknown> | undefined;
   skillPack?: Record<string, unknown> | undefined;
 }
@@ -197,7 +221,7 @@ export interface RunnerPingCommandPayload {
   nonce?: string | undefined;
 }
 
-export interface ProfileListCommandPayload {}
+export type ProfileListCommandPayload = {};
 
 export interface ProfileGetCommandPayload {
   profileId: string;
@@ -266,7 +290,13 @@ export interface OperatorControlCommandPayload {
   rolePrompt?: string | undefined;
   goal?: string | undefined;
   profileId?: string | undefined;
-  provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  provider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   skillPackId?: string | undefined;
   maxTurns?: number | undefined;
@@ -451,7 +481,9 @@ export interface RunnerCommandPayloadByType {
   "mcp.refresh": McpRefreshCommandPayload;
 }
 
-export interface RunnerCommandEnvelope<TType extends RunnerCommandType = RunnerCommandType> {
+export interface RunnerCommandEnvelope<
+  TType extends RunnerCommandType = RunnerCommandType,
+> {
   id: string;
   type: TType;
   payload: RunnerCommandPayloadByType[TType];
@@ -484,7 +516,9 @@ export type RunnerEventType =
   | "mcp.status"
   | "mcp.refreshed";
 
-export interface RunnerEventEnvelope<TType extends RunnerEventType = RunnerEventType> {
+export interface RunnerEventEnvelope<
+  TType extends RunnerEventType = RunnerEventType,
+> {
   id: string;
   type: TType;
   ts: string;
@@ -510,6 +544,7 @@ export interface RunStartedEventPayload {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerTurnInput["interactionMode"];
   actSubmode?: RunnerTurnInput["actSubmode"];
+  mcpContext?: RunnerMcpContext | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
 }
@@ -615,12 +650,14 @@ export interface TaskGraphEventPayload {
   graph: RunnerTaskGraph;
 }
 
-export interface RunnerWorkspaceCheckpointRecord extends Record<string, unknown> {
+export interface RunnerWorkspaceCheckpointRecord
+  extends Record<string, unknown> {
   checkpointId: string;
   sessionId: string;
 }
 
-export interface RunnerWorkspaceCheckpointDetail extends Record<string, unknown> {
+export interface RunnerWorkspaceCheckpointDetail
+  extends Record<string, unknown> {
   checkpoint: RunnerWorkspaceCheckpointRecord;
   files: Array<Record<string, unknown>>;
 }

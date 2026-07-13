@@ -1,8 +1,15 @@
+import {
+  buildPersistedRuntimeEventFromProgressUpdate,
+  buildPersistedRuntimeEventFromReasoningUpdate,
+  readProgressUpdateFromPersistedRuntimeEvent,
+  readReasoningUpdateFromPersistedRuntimeEvent,
+  readToolUpdateFromPersistedRuntimeEvent,
+} from "../../src/events/RuntimeEventProjections.js";
 import type {
-  ProductTaskGraph,
-  ProductProjectAction,
+  McpStatusSnapshot,
   ProductProjectSnapshot,
   ProductReviewDetail,
+  ProductTaskGraph,
   ProgressUpdateV1,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
@@ -17,65 +24,58 @@ import type {
   WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/index.js";
-import {
-  KestrelChatRuntime,
-  type DelegationTaskUpdate,
-  type RunTurnInput,
-  type RunTurnResult,
-} from "../runtime/KestrelChatRuntime.js";
-import { ProfileStore } from "../config/ProfileStore.js";
-import { resolveKestrelHome } from "../config/kestrelHome.js";
-import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
+import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import {
-  buildPersistedRuntimeEventFromProgressUpdate,
-  buildPersistedRuntimeEventFromReasoningUpdate,
-  readProgressUpdateFromPersistedRuntimeEvent,
-  readReasoningUpdateFromPersistedRuntimeEvent,
-  readToolUpdateFromPersistedRuntimeEvent,
-} from "../../src/events/RuntimeEventProjections.js";
-import {
-  maybeBuildDatabaseConnectionFailure,
-} from "../../src/runtime/databasePreflight.js";
-import { readDatabaseUrlSource } from "../localCoreEnv.js";
+import { resolveKestrelHome } from "../config/kestrelHome.js";
+import { ProfileStore } from "../config/ProfileStore.js";
 import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
+import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
+import {
+  buildJobReplayPointer,
+  type JobRunResultV1,
+} from "../job/contracts.js";
+import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
   JobRunCommandPayload,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
-  ProfileGetCommandPayload,
-  ProfileListCommandPayload,
   OperatorControlCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  ProfileGetCommandPayload,
+  ProfileListCommandPayload,
   ProjectActionCommandPayload,
   ProjectReviewActionCommandPayload,
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
   ProjectSnapshotUpdateCommandPayload,
-  TaskGraphGetCommandPayload,
-  TaskGraphUpdateCommandPayload,
   RunCancelCommandPayload,
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
   SessionDescribeCommandPayload,
   SessionStateCommandPayload,
+  TaskGraphGetCommandPayload,
+  TaskGraphUpdateCommandPayload,
   WorkspaceCheckpointCaptureCommandPayload,
   WorkspaceCheckpointCleanupCommandPayload,
   WorkspaceCheckpointDiffCommandPayload,
   WorkspaceCheckpointInspectCommandPayload,
   WorkspaceCheckpointListCommandPayload,
+  WorkspaceCheckpointRestoreCommandPayload,
   WorkspacePromotionApplyCommandPayload,
   WorkspacePromotionListCommandPayload,
   WorkspacePromotionPreviewCommandPayload,
   WorkspacePromotionUndoLatestCommandPayload,
-  WorkspaceCheckpointRestoreCommandPayload,
 } from "../protocol/contracts.js";
-import { buildJobReplayPointer, type JobRunResultV1 } from "../job/contracts.js";
+import {
+  type DelegationTaskUpdate,
+  KestrelChatRuntime,
+  type RunTurnInput,
+  type RunTurnResult,
+} from "../runtime/KestrelChatRuntime.js";
 import type { RunnerEventSink } from "./EventWriter.js";
-import type { McpStatusSnapshot } from "../../src/index.js";
 
 const EMPTY_TOOL_RUNTIME_STATUS: ToolRuntimeStatus = {
   healthy: true,
@@ -102,73 +102,216 @@ export interface RunnerProfileProvider {
 }
 
 export interface RunnerRuntime {
-  runTurn(input: RunTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RunTurnResult>;
-  cancelActiveRun?: ((sessionId: string) => Promise<{ runId?: string | undefined }>) | undefined;
-  describeSession?: ((sessionId: string) => Promise<{
-    sessionId: string;
-    version: number;
-    threadId?: string | undefined;
-    currentStepAgent?: string | undefined;
-    updatedAt?: string | undefined;
-    waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
-    activeAssembly?: OperatorAssemblySummary | undefined;
-    operatorInbox?: import("../contracts.js").OperatorInboxSummary | undefined;
-    childBlocker?: import("../contracts.js").OperatorChildBlockerSummary | undefined;
-    latestCheckpoint?: import("../contracts.js").OperatorCheckpointSummary | undefined;
-    latestSteering?: import("../contracts.js").OperatorSteeringSummary | undefined;
-    focusedThreadId?: string | undefined;
-  } | undefined>) | undefined;
-  listOperatorInbox?: ((input: OperatorInboxCommandPayload) => Promise<import("../../src/orchestration/contracts.js").OperatorInboxSnapshot>) | undefined;
-  listOperatorRuns?: ((input: OperatorRunsCommandPayload) => Promise<import("../../src/orchestration/contracts.js").OperatorRunIndexView>) | undefined;
-  getOperatorThreadView?: ((threadId: string) => Promise<import("../../src/orchestration/contracts.js").OperatorThreadView | null>) | undefined;
-  getOperatorRunView?: ((runId: string) => Promise<import("../../src/orchestration/contracts.js").OperatorRunView | null>) | undefined;
-  performOperatorAction?: ((input: OperatorControlCommandPayload & { issuedBy?: string | undefined }) => Promise<{
-    sessionId?: string | undefined;
-    threadId: string;
-    inbox?: import("../../src/orchestration/contracts.js").OperatorInboxSnapshot | undefined;
-    view?: import("../../src/orchestration/contracts.js").OperatorThreadView | undefined;
-    result?: RunTurnResult | undefined;
-  }>) | undefined;
-  getTaskGraph?: ((input: TaskGraphGetCommandPayload) => Promise<{ sessionId: string; version: number; graph: ProductTaskGraph }>) | undefined;
-  updateTaskGraph?: ((input: TaskGraphUpdateCommandPayload) => Promise<{ sessionId: string; version: number; graph: ProductTaskGraph }>) | undefined;
-  captureWorkspaceCheckpoint?: ((input: WorkspaceCheckpointCaptureCommandPayload) => Promise<{ sessionId: string; checkpoint: WorkspaceCheckpointDetail }>) | undefined;
-  listWorkspaceCheckpoints?: ((input: WorkspaceCheckpointListCommandPayload) => Promise<{ sessionId: string; checkpoints: WorkspaceCheckpointRecord[] }>) | undefined;
-  inspectWorkspaceCheckpoint?: ((input: WorkspaceCheckpointInspectCommandPayload) => Promise<{ sessionId: string; checkpoint: WorkspaceCheckpointDetail }>) | undefined;
-  diffWorkspaceCheckpoints?: ((input: WorkspaceCheckpointDiffCommandPayload) => Promise<{ sessionId: string; diff: WorkspaceDiffRecord }>) | undefined;
-  restoreWorkspaceCheckpoint?: ((input: WorkspaceCheckpointRestoreCommandPayload) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>) | undefined;
-  cleanupWorkspaceCheckpoints?: ((input: import("../protocol/contracts.js").WorkspaceCheckpointCleanupCommandPayload) => Promise<{
-    sessionId: string;
-  } & import("../../src/workspaceCheckpoints/contracts.js").WorkspaceCheckpointCleanupResult>) | undefined;
-  restoreLatestWorkspacePromotion?: ((input: WorkspacePromotionUndoLatestCommandPayload) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>) | undefined;
-  listWorkspacePromotions?: ((input: WorkspacePromotionListCommandPayload) => Promise<{ sessionId: string; promotions: WorkspacePromotionRecord[] }>) | undefined;
-  previewWorkspacePromotion?: ((input: WorkspacePromotionPreviewCommandPayload) => Promise<{ sessionId: string; preview: WorkspacePromotionPreview }>) | undefined;
-  applyWorkspacePromotion?: ((input: WorkspacePromotionApplyCommandPayload & { appliedBy?: string | undefined }) => Promise<{
-    sessionId: string;
-    promotion: WorkspacePromotionRecord;
-  }>) | undefined;
-  getSessionState?: ((sessionId: string) => Promise<{
-    session: {
-      sessionId: string;
-      version: number;
-      threadId?: string | undefined;
-      currentStepAgent?: string | undefined;
-      updatedAt?: string | undefined;
-      waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
-      activeAssembly?: OperatorAssemblySummary | undefined;
-      operatorInbox?: import("../contracts.js").OperatorInboxSummary | undefined;
-      childBlocker?: import("../contracts.js").OperatorChildBlockerSummary | undefined;
-      latestCheckpoint?: import("../contracts.js").OperatorCheckpointSummary | undefined;
-      latestSteering?: import("../contracts.js").OperatorSteeringSummary | undefined;
-      focusedThreadId?: string | undefined;
-    };
-    version: number;
-    graph: ProductTaskGraph;
-  } | undefined>) | undefined;
-  getProjectSnapshot?: ((input: ProjectSnapshotGetCommandPayload) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>) | undefined;
-  updateProjectSnapshot?: ((input: ProjectSnapshotUpdateCommandPayload) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>) | undefined;
-  performProjectAction?: ((input: ProjectActionCommandPayload) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>) | undefined;
-  getProjectReviewDetail?: ((input: ProjectReviewGetCommandPayload) => Promise<{ sessionId: string; detail: ProductReviewDetail }>) | undefined;
-  performProjectReviewAction?: ((input: ProjectReviewActionCommandPayload) => Promise<{ sessionId: string; detail: ProductReviewDetail }>) | undefined;
+  runTurn(
+    input: RunTurnInput,
+    options?: { signal?: AbortSignal | undefined }
+  ): Promise<RunTurnResult>;
+  cancelActiveRun?:
+    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
+    | undefined;
+  describeSession?:
+    | ((sessionId: string) => Promise<
+        | {
+            sessionId: string;
+            version: number;
+            threadId?: string | undefined;
+            currentStepAgent?: string | undefined;
+            updatedAt?: string | undefined;
+            waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
+            activeAssembly?: OperatorAssemblySummary | undefined;
+            operatorInbox?:
+              | import("../contracts.js").OperatorInboxSummary
+              | undefined;
+            childBlocker?:
+              | import("../contracts.js").OperatorChildBlockerSummary
+              | undefined;
+            latestCheckpoint?:
+              | import("../contracts.js").OperatorCheckpointSummary
+              | undefined;
+            latestSteering?:
+              | import("../contracts.js").OperatorSteeringSummary
+              | undefined;
+            focusedThreadId?: string | undefined;
+          }
+        | undefined
+      >)
+    | undefined;
+  listOperatorInbox?:
+    | ((
+        input: OperatorInboxCommandPayload
+      ) => Promise<
+        import("../../src/orchestration/contracts.js").OperatorInboxSnapshot
+      >)
+    | undefined;
+  listOperatorRuns?:
+    | ((
+        input: OperatorRunsCommandPayload
+      ) => Promise<
+        import("../../src/orchestration/contracts.js").OperatorRunIndexView
+      >)
+    | undefined;
+  getOperatorThreadView?:
+    | ((
+        threadId: string
+      ) => Promise<
+        import("../../src/orchestration/contracts.js").OperatorThreadView | null
+      >)
+    | undefined;
+  getOperatorRunView?:
+    | ((
+        runId: string
+      ) => Promise<
+        import("../../src/orchestration/contracts.js").OperatorRunView | null
+      >)
+    | undefined;
+  performOperatorAction?:
+    | ((
+        input: OperatorControlCommandPayload & { issuedBy?: string | undefined }
+      ) => Promise<{
+        sessionId?: string | undefined;
+        threadId: string;
+        inbox?:
+          | import("../../src/orchestration/contracts.js").OperatorInboxSnapshot
+          | undefined;
+        view?:
+          | import("../../src/orchestration/contracts.js").OperatorThreadView
+          | undefined;
+        result?: RunTurnResult | undefined;
+      }>)
+    | undefined;
+  getTaskGraph?:
+    | ((input: TaskGraphGetCommandPayload) => Promise<{
+        sessionId: string;
+        version: number;
+        graph: ProductTaskGraph;
+      }>)
+    | undefined;
+  updateTaskGraph?:
+    | ((input: TaskGraphUpdateCommandPayload) => Promise<{
+        sessionId: string;
+        version: number;
+        graph: ProductTaskGraph;
+      }>)
+    | undefined;
+  captureWorkspaceCheckpoint?:
+    | ((input: WorkspaceCheckpointCaptureCommandPayload) => Promise<{
+        sessionId: string;
+        checkpoint: WorkspaceCheckpointDetail;
+      }>)
+    | undefined;
+  listWorkspaceCheckpoints?:
+    | ((input: WorkspaceCheckpointListCommandPayload) => Promise<{
+        sessionId: string;
+        checkpoints: WorkspaceCheckpointRecord[];
+      }>)
+    | undefined;
+  inspectWorkspaceCheckpoint?:
+    | ((input: WorkspaceCheckpointInspectCommandPayload) => Promise<{
+        sessionId: string;
+        checkpoint: WorkspaceCheckpointDetail;
+      }>)
+    | undefined;
+  diffWorkspaceCheckpoints?:
+    | ((
+        input: WorkspaceCheckpointDiffCommandPayload
+      ) => Promise<{ sessionId: string; diff: WorkspaceDiffRecord }>)
+    | undefined;
+  restoreWorkspaceCheckpoint?:
+    | ((
+        input: WorkspaceCheckpointRestoreCommandPayload
+      ) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
+    | undefined;
+  cleanupWorkspaceCheckpoints?:
+    | ((
+        input: import("../protocol/contracts.js").WorkspaceCheckpointCleanupCommandPayload
+      ) => Promise<
+        {
+          sessionId: string;
+        } & import("../../src/workspaceCheckpoints/contracts.js").WorkspaceCheckpointCleanupResult
+      >)
+    | undefined;
+  restoreLatestWorkspacePromotion?:
+    | ((
+        input: WorkspacePromotionUndoLatestCommandPayload
+      ) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
+    | undefined;
+  listWorkspacePromotions?:
+    | ((input: WorkspacePromotionListCommandPayload) => Promise<{
+        sessionId: string;
+        promotions: WorkspacePromotionRecord[];
+      }>)
+    | undefined;
+  previewWorkspacePromotion?:
+    | ((
+        input: WorkspacePromotionPreviewCommandPayload
+      ) => Promise<{ sessionId: string; preview: WorkspacePromotionPreview }>)
+    | undefined;
+  applyWorkspacePromotion?:
+    | ((
+        input: WorkspacePromotionApplyCommandPayload & {
+          appliedBy?: string | undefined;
+        }
+      ) => Promise<{
+        sessionId: string;
+        promotion: WorkspacePromotionRecord;
+      }>)
+    | undefined;
+  getSessionState?:
+    | ((sessionId: string) => Promise<
+        | {
+            session: {
+              sessionId: string;
+              version: number;
+              threadId?: string | undefined;
+              currentStepAgent?: string | undefined;
+              updatedAt?: string | undefined;
+              waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
+              activeAssembly?: OperatorAssemblySummary | undefined;
+              operatorInbox?:
+                | import("../contracts.js").OperatorInboxSummary
+                | undefined;
+              childBlocker?:
+                | import("../contracts.js").OperatorChildBlockerSummary
+                | undefined;
+              latestCheckpoint?:
+                | import("../contracts.js").OperatorCheckpointSummary
+                | undefined;
+              latestSteering?:
+                | import("../contracts.js").OperatorSteeringSummary
+                | undefined;
+              focusedThreadId?: string | undefined;
+            };
+            version: number;
+            graph: ProductTaskGraph;
+          }
+        | undefined
+      >)
+    | undefined;
+  getProjectSnapshot?:
+    | ((
+        input: ProjectSnapshotGetCommandPayload
+      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+    | undefined;
+  updateProjectSnapshot?:
+    | ((
+        input: ProjectSnapshotUpdateCommandPayload
+      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+    | undefined;
+  performProjectAction?:
+    | ((
+        input: ProjectActionCommandPayload
+      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+    | undefined;
+  getProjectReviewDetail?:
+    | ((
+        input: ProjectReviewGetCommandPayload
+      ) => Promise<{ sessionId: string; detail: ProductReviewDetail }>)
+    | undefined;
+  performProjectReviewAction?:
+    | ((
+        input: ProjectReviewActionCommandPayload
+      ) => Promise<{ sessionId: string; detail: ProductReviewDetail }>)
+    | undefined;
   getToolRuntimeStatus?: (() => Promise<ToolRuntimeStatus>) | undefined;
   refreshToolRuntime?: (() => Promise<ToolRuntimeStatus>) | undefined;
   close(): Promise<void>;
@@ -181,12 +324,12 @@ type RunnerRuntimeFactory = (
   onConsole: (update: RunConsoleUpdateV1) => void,
   onReasoning: (update: ReasoningUpdateV1) => void,
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
-  onRunEvent: (event: RunEvent) => void,
+  onRunEvent: (event: RunEvent) => void
 ) => RunnerRuntime;
 
 function normalizeFinalizedResultRunId(
   result: RunTurnResult,
-  acceptedRunId: string | undefined,
+  acceptedRunId: string | undefined
 ): RunTurnResult {
   if (
     acceptedRunId === undefined ||
@@ -212,36 +355,62 @@ export class RunnerHost {
   private readonly diagnosticsStore = new DiagnosticLogStore();
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
-  private readonly commandTypeBySession = new Map<string, "run.start" | "job.run">();
+  private readonly commandTypeBySession = new Map<
+    string,
+    "run.start" | "job.run"
+  >();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
 
   constructor(
     writer: RunnerEventSink,
-    runtimeFactory: RunnerRuntimeFactory = (profile, onRunLog, _onProgress, onConsole, _onReasoning, onTaskUpdate, onRunEvent) =>
-      new KestrelChatRuntime(profile, undefined, { onRunLog, onConsole, onTaskUpdate, onRunEvent }),
-    profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
+    runtimeFactory: RunnerRuntimeFactory = (
+      profile,
+      onRunLog,
+      _onProgress,
+      onConsole,
+      _onReasoning,
+      onTaskUpdate,
+      onRunEvent
+    ) =>
+      new KestrelChatRuntime(profile, undefined, {
+        onRunLog,
+        onConsole,
+        onTaskUpdate,
+        onRunEvent,
+      }),
+    profileProvider: RunnerProfileProvider = createDefaultProfileProvider()
   ) {
     this.writer = writer;
     this.runtimeFactory = runtimeFactory;
     this.profileProvider = profileProvider;
   }
 
-  async profileList(commandId: string, _payload: ProfileListCommandPayload): Promise<void> {
+  async profileList(
+    commandId: string,
+    _payload: ProfileListCommandPayload
+  ): Promise<void> {
     const profiles = await this.profileProvider.listProfiles();
     this.writer.emit("profile.listed", { profiles }, { commandId });
   }
 
-  async profileGet(commandId: string, payload: ProfileGetCommandPayload): Promise<void> {
+  async profileGet(
+    commandId: string,
+    payload: ProfileGetCommandPayload
+  ): Promise<void> {
     const profile = await this.profileProvider.getProfile(payload.profileId);
     if (profile === undefined) {
-      this.writer.emit("runner.error", {
-        code: "PROFILE_NOT_FOUND",
-        message: `Profile '${payload.profileId}' was not found.`,
-        details: {
-          profileId: payload.profileId,
+      this.writer.emit(
+        "runner.error",
+        {
+          code: "PROFILE_NOT_FOUND",
+          message: `Profile '${payload.profileId}' was not found.`,
+          details: {
+            profileId: payload.profileId,
+          },
         },
-      }, { commandId });
+        { commandId }
+      );
       return;
     }
     this.writer.emit("profile.loaded", { profile }, { commandId });
@@ -249,8 +418,12 @@ export class RunnerHost {
 
   async runStart(
     commandId: string,
-    payload: { profile?: TuiProfile | undefined; profileId?: string | undefined; turn: RunTurnInput },
-    metadata?: RunnerCommandMetadata | undefined,
+    payload: {
+      profile?: TuiProfile | undefined;
+      profileId?: string | undefined;
+      turn: RunTurnInput;
+    },
+    metadata?: RunnerCommandMetadata | undefined
   ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "run.start");
     const turn: RunTurnInput = {
@@ -259,16 +432,18 @@ export class RunnerHost {
         ? {
             actor: {
               ...metadata.actor,
-              ...(metadata.actor.tenantId === undefined && metadata.tenantId !== undefined
+              ...(metadata.actor.tenantId === undefined &&
+              metadata.tenantId !== undefined
                 ? { tenantId: metadata.tenantId }
                 : {}),
             },
           }
         : {}),
     };
-    const requestedRunId = typeof turn.runId === "string" && turn.runId.trim().length > 0
-      ? turn.runId.trim()
-      : undefined;
+    const requestedRunId =
+      typeof turn.runId === "string" && turn.runId.trim().length > 0
+        ? turn.runId.trim()
+        : undefined;
     const existing = this.activeRuns.get(turn.sessionId);
     if (existing !== undefined) {
       this.writer.emit(
@@ -282,7 +457,7 @@ export class RunnerHost {
           commandId,
           sessionId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
-        },
+        }
       );
       return;
     }
@@ -307,32 +482,50 @@ export class RunnerHost {
         ...(turn.modeSystemV2Enabled !== undefined
           ? { modeSystemV2Enabled: turn.modeSystemV2Enabled }
           : {}),
-        ...(turn.interactionMode !== undefined ? { interactionMode: turn.interactionMode } : {}),
-        ...(turn.actSubmode !== undefined ? { actSubmode: turn.actSubmode } : {}),
-        ...(turn.clientCapabilities !== undefined ? { clientCapabilities: turn.clientCapabilities } : {}),
-        ...(turn.executionPolicy !== undefined ? { executionPolicy: turn.executionPolicy } : {}),
+        ...(turn.interactionMode !== undefined
+          ? { interactionMode: turn.interactionMode }
+          : {}),
+        ...(turn.actSubmode !== undefined
+          ? { actSubmode: turn.actSubmode }
+          : {}),
+        ...(turn.mcpContext !== undefined
+          ? { mcpContext: turn.mcpContext }
+          : {}),
+        ...(turn.clientCapabilities !== undefined
+          ? { clientCapabilities: turn.clientCapabilities }
+          : {}),
+        ...(turn.executionPolicy !== undefined
+          ? { executionPolicy: turn.executionPolicy }
+          : {}),
       },
       {
         commandId,
         sessionId: turn.sessionId,
         ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
-      },
+      }
     );
 
     try {
       const result = await runtime.runTurn(turn, {
         signal: abortController.signal,
       });
-      const terminalResult = normalizeFinalizedResultRunId(result, requestedRunId);
+      const terminalResult = normalizeFinalizedResultRunId(
+        result,
+        requestedRunId
+      );
       const active = this.activeRuns.get(turn.sessionId);
       if (active !== undefined && active.commandId === commandId) {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
-      if (requestedRunId !== undefined && terminalResult.output.runId !== requestedRunId) {
+      if (
+        requestedRunId !== undefined &&
+        terminalResult.output.runId !== requestedRunId
+      ) {
         const error = {
           code: "RUN_ID_MISMATCH",
-          message: "Runtime returned a different run ID than the accepted runner run ID.",
+          message:
+            "Runtime returned a different run ID than the accepted runner run ID.",
           details: {
             requestedRunId,
             outputRunId: terminalResult.output.runId,
@@ -348,7 +541,7 @@ export class RunnerHost {
             commandId,
             runId: emittedRunId,
             sessionId: turn.sessionId,
-          },
+          }
         );
         return;
       }
@@ -362,7 +555,8 @@ export class RunnerHost {
             commandId,
             runId: emittedRunId,
             outputStatus: terminalResult.output.status,
-            finalizedPayloadPresent: terminalResult.finalizedPayload !== undefined,
+            finalizedPayloadPresent:
+              terminalResult.finalizedPayload !== undefined,
             errorCode: terminalResult.output.errors[0]?.code,
             errorMessage: terminalResult.output.errors[0]?.message,
           },
@@ -380,7 +574,7 @@ export class RunnerHost {
             commandId,
             runId: emittedRunId,
             sessionId: turn.sessionId,
-          },
+          }
         );
         return;
       }
@@ -394,7 +588,8 @@ export class RunnerHost {
           commandId,
           runId: emittedRunId,
           outputStatus: terminalResult.output.status,
-          finalizedPayloadPresent: terminalResult.finalizedPayload !== undefined,
+          finalizedPayloadPresent:
+            terminalResult.finalizedPayload !== undefined,
         },
       });
       this.writer.emit(
@@ -404,11 +599,15 @@ export class RunnerHost {
           commandId,
           runId: emittedRunId,
           sessionId: turn.sessionId,
-        },
+        }
       );
     } catch (error) {
       const active = this.activeRuns.get(turn.sessionId);
-      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true) {
+      if (
+        abortController.signal.aborted &&
+        active?.commandId === commandId &&
+        active.cancelRequested === true
+      ) {
         this.writer.emit(
           "run.cancelled",
           {
@@ -419,7 +618,7 @@ export class RunnerHost {
             commandId,
             ...(active.runId !== undefined ? { runId: active.runId } : {}),
             sessionId: turn.sessionId,
-          },
+          }
         );
         return;
       }
@@ -430,14 +629,16 @@ export class RunnerHost {
           error: {
             code: failure.code,
             message: failure.message,
-            ...(failure.details !== undefined ? { details: failure.details } : {}),
+            ...(failure.details !== undefined
+              ? { details: failure.details }
+              : {}),
           },
         },
         {
           commandId,
           ...(active?.runId !== undefined ? { runId: active.runId } : {}),
           sessionId: turn.sessionId,
-        },
+        }
       );
       await this.appendTerminalHandoffDiagnostic({
         scope: "terminal_handoff.runner_exception",
@@ -448,7 +649,9 @@ export class RunnerHost {
           commandId,
           code: failure.code,
           message: failure.message,
-          ...(failure.details !== undefined ? { details: failure.details } : {}),
+          ...(failure.details !== undefined
+            ? { details: failure.details }
+            : {}),
         },
       });
     } finally {
@@ -458,7 +661,10 @@ export class RunnerHost {
     }
   }
 
-  async jobRun(commandId: string, payload: JobRunCommandPayload): Promise<void> {
+  async jobRun(
+    commandId: string,
+    payload: JobRunCommandPayload
+  ): Promise<void> {
     const profileInput = payload.profile ?? payload.input.profile;
     const profileIdInput = payload.profileId ?? payload.input.profileId;
     const resolvedProfile = await this.resolveProfileOrThrow(
@@ -466,11 +672,13 @@ export class RunnerHost {
         ...(profileInput !== undefined ? { profile: profileInput } : {}),
         ...(profileIdInput !== undefined ? { profileId: profileIdInput } : {}),
       },
-      "job.run",
+      "job.run"
     );
     const profile: TuiProfile = {
       ...resolvedProfile,
-      ...(payload.input.storeDriver !== undefined ? { storeDriver: payload.input.storeDriver } : {}),
+      ...(payload.input.storeDriver !== undefined
+        ? { storeDriver: payload.input.storeDriver }
+        : {}),
       ...(payload.input.approvalPolicyPackId !== undefined
         ? { approvalPolicyPackId: payload.input.approvalPolicyPackId }
         : {}),
@@ -490,7 +698,11 @@ export class RunnerHost {
     });
 
     const defaultThreadId = turn.sessionId;
-    const initialThreadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
+    const initialThreadId = await this.resolveThreadIdForSession(
+      runtime,
+      turn.sessionId,
+      defaultThreadId
+    );
     this.threadIdBySession.set(turn.sessionId, initialThreadId);
     this.writer.emit(
       "job.started",
@@ -503,7 +715,7 @@ export class RunnerHost {
         commandId,
         sessionId: turn.sessionId,
         threadId: initialThreadId,
-      },
+      }
     );
     this.writer.emit(
       "job.progress",
@@ -517,7 +729,7 @@ export class RunnerHost {
         commandId,
         sessionId: turn.sessionId,
         threadId: initialThreadId,
-      },
+      }
     );
 
     try {
@@ -528,7 +740,11 @@ export class RunnerHost {
       if (active !== undefined && active.commandId === commandId) {
         active.runId = result.output.runId;
       }
-      const threadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
+      const threadId = await this.resolveThreadIdForSession(
+        runtime,
+        turn.sessionId,
+        defaultThreadId
+      );
       this.threadIdBySession.set(turn.sessionId, threadId);
       const replay = buildJobReplayPointer({
         sessionId: turn.sessionId,
@@ -541,7 +757,9 @@ export class RunnerHost {
         threadId,
         runId: result.output.runId,
         status: result.output.status,
-        ...(result.output.waitFor !== undefined ? { waitFor: result.output.waitFor } : {}),
+        ...(result.output.waitFor !== undefined
+          ? { waitFor: result.output.waitFor }
+          : {}),
         replay,
       };
 
@@ -559,7 +777,7 @@ export class RunnerHost {
           sessionId: turn.sessionId,
           threadId,
           runId: result.output.runId,
-        },
+        }
       );
 
       if (result.output.status === "FAILED") {
@@ -585,7 +803,7 @@ export class RunnerHost {
             sessionId: turn.sessionId,
             threadId,
             runId: result.output.runId,
-          },
+          }
         );
         return;
       }
@@ -601,12 +819,16 @@ export class RunnerHost {
           sessionId: turn.sessionId,
           threadId,
           runId: result.output.runId,
-        },
+        }
       );
     } catch (error) {
       const active = this.activeRuns.get(turn.sessionId);
       const runId = active?.runId ?? `job-failed-${commandId}`;
-      const threadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
+      const threadId = await this.resolveThreadIdForSession(
+        runtime,
+        turn.sessionId,
+        defaultThreadId
+      );
       this.threadIdBySession.set(turn.sessionId, threadId);
       const replay = buildJobReplayPointer({
         sessionId: turn.sessionId,
@@ -634,7 +856,7 @@ export class RunnerHost {
           sessionId: turn.sessionId,
           threadId,
           runId,
-        },
+        }
       );
     } finally {
       this.commandBySession.delete(turn.sessionId);
@@ -663,7 +885,9 @@ export class RunnerHost {
         return {
           code: databaseFailure.code,
           message: databaseFailure.message,
-          ...(databaseFailure.details !== undefined ? { details: databaseFailure.details } : {}),
+          ...(databaseFailure.details !== undefined
+            ? { details: databaseFailure.details }
+            : {}),
         };
       }
     }
@@ -688,7 +912,7 @@ export class RunnerHost {
   async runCancel(
     commandId: string,
     payload: RunCancelCommandPayload,
-    metadata?: RunnerCommandMetadata | undefined,
+    metadata?: RunnerCommandMetadata | undefined
   ): Promise<void> {
     const active = this.activeRuns.get(payload.sessionId);
     let cancelledRunId: string | undefined;
@@ -698,7 +922,9 @@ export class RunnerHost {
         payload.runId === undefined ||
         active.runId === undefined ||
         payload.runId === active.runId;
-      const matchesCommandId = payload.commandId === undefined || payload.commandId === active.commandId;
+      const matchesCommandId =
+        payload.commandId === undefined ||
+        payload.commandId === active.commandId;
       if (matchesRunId && matchesCommandId) {
         if (active.runId === undefined && payload.runId !== undefined) {
           active.runId = payload.runId;
@@ -709,26 +935,39 @@ export class RunnerHost {
         cancelled = true;
       }
     } else {
-      cancelledRunId = await this.cancelPersistedActiveRun(payload.sessionId, metadata);
+      cancelledRunId = await this.cancelPersistedActiveRun(
+        payload.sessionId,
+        metadata
+      );
       cancelled = cancelledRunId !== undefined;
     }
 
     if (cancelled === false) {
-      this.writer.emit("runner.error", {
-        code: "RUN_CANCEL_NOT_FOUND",
-        message: "No matching cancellable run was found.",
-        details: {
+      this.writer.emit(
+        "runner.error",
+        {
+          code: "RUN_CANCEL_NOT_FOUND",
+          message: "No matching cancellable run was found.",
+          details: {
+            sessionId: payload.sessionId,
+            ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+            ...(payload.commandId !== undefined
+              ? { commandId: payload.commandId }
+              : {}),
+            ...(active?.runId !== undefined
+              ? { activeRunId: active.runId }
+              : {}),
+            ...(active?.commandId !== undefined
+              ? { activeCommandId: active.commandId }
+              : {}),
+          },
+        },
+        {
+          commandId,
           sessionId: payload.sessionId,
           ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-          ...(payload.commandId !== undefined ? { commandId: payload.commandId } : {}),
-          ...(active?.runId !== undefined ? { activeRunId: active.runId } : {}),
-          ...(active?.commandId !== undefined ? { activeCommandId: active.commandId } : {}),
-        },
-      }, {
-        commandId,
-        sessionId: payload.sessionId,
-        ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-      });
+        }
+      );
       return;
     }
 
@@ -742,28 +981,26 @@ export class RunnerHost {
         commandId,
         sessionId: payload.sessionId,
         ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {}),
-      },
+      }
     );
   }
 
   async describeSession(
     commandId: string,
     payload: SessionDescribeCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.describeSession === "function") {
         const described = await runtime.describeSession(payload.sessionId);
         if (described !== undefined) {
-          this.writer.emit(
-            "session.described",
-            described,
-            {
-              commandId,
-              sessionId: described.sessionId,
-              ...(described.threadId !== undefined ? { threadId: described.threadId } : {}),
-            },
-          );
+          this.writer.emit("session.described", described, {
+            commandId,
+            sessionId: described.sessionId,
+            ...(described.threadId !== undefined
+              ? { threadId: described.threadId }
+              : {}),
+          });
           return;
         }
       }
@@ -777,28 +1014,26 @@ export class RunnerHost {
       {
         commandId,
         sessionId: payload.sessionId,
-      },
+      }
     );
   }
 
   async sessionState(
     commandId: string,
     payload: SessionStateCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getSessionState === "function") {
         const state = await runtime.getSessionState(payload.sessionId);
         if (state !== undefined) {
-          this.writer.emit(
-            "session.state",
-            state,
-            {
-              commandId,
-              sessionId: state.session.sessionId,
-              ...(state.session.threadId !== undefined ? { threadId: state.session.threadId } : {}),
-            },
-          );
+          this.writer.emit("session.state", state, {
+            commandId,
+            sessionId: state.session.sessionId,
+            ...(state.session.threadId !== undefined
+              ? { threadId: state.session.threadId }
+              : {}),
+          });
           return;
         }
       }
@@ -817,105 +1052,145 @@ export class RunnerHost {
       {
         commandId,
         sessionId: payload.sessionId,
-      },
+      }
     );
   }
 
   async operatorInbox(
     commandId: string,
     payload: OperatorInboxCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listOperatorInbox === "function") {
         const inbox = await runtime.listOperatorInbox(payload);
-        this.writer.emit("operator.inbox", { inbox }, {
-          commandId,
-          ...(payload.sessionId !== undefined ? { sessionId: payload.sessionId } : {}),
-          ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
-        });
+        this.writer.emit(
+          "operator.inbox",
+          { inbox },
+          {
+            commandId,
+            ...(payload.sessionId !== undefined
+              ? { sessionId: payload.sessionId }
+              : {}),
+            ...(payload.threadId !== undefined
+              ? { threadId: payload.threadId }
+              : {}),
+          }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Operator inbox is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Operator inbox is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async operatorThread(
     commandId: string,
     payload: OperatorThreadCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getOperatorThreadView === "function") {
         const view = await runtime.getOperatorThreadView(payload.threadId);
         if (view !== null) {
-          this.writer.emit("operator.thread", { view }, {
-            commandId,
-            threadId: payload.threadId,
-          });
+          this.writer.emit(
+            "operator.thread",
+            { view },
+            {
+              commandId,
+              threadId: payload.threadId,
+            }
+          );
           return;
         }
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: `Thread '${payload.threadId}' was not found.`,
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Thread '${payload.threadId}' was not found.`,
+      },
+      { commandId }
+    );
   }
 
   async operatorRuns(
     commandId: string,
     payload: OperatorRunsCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listOperatorRuns === "function") {
         const view = await runtime.listOperatorRuns(payload);
-        this.writer.emit("operator.runs", { view }, {
-          commandId,
-          ...(payload.sessionId !== undefined ? { sessionId: payload.sessionId } : {}),
-        });
+        this.writer.emit(
+          "operator.runs",
+          { view },
+          {
+            commandId,
+            ...(payload.sessionId !== undefined
+              ? { sessionId: payload.sessionId }
+              : {}),
+          }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Operator run index is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Operator run index is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async operatorRun(
     commandId: string,
     payload: OperatorRunCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getOperatorRunView === "function") {
         const view = await runtime.getOperatorRunView(payload.runId);
         if (view !== null) {
-          this.writer.emit("operator.run", { view }, {
-            commandId,
-            runId: payload.runId,
-            sessionId: view.run.sessionId,
-            ...(view.threadId !== undefined ? { threadId: view.threadId } : {}),
-          });
+          this.writer.emit(
+            "operator.run",
+            { view },
+            {
+              commandId,
+              runId: payload.runId,
+              sessionId: view.run.sessionId,
+              ...(view.threadId !== undefined
+                ? { threadId: view.threadId }
+                : {}),
+            }
+          );
           return;
         }
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: `Run '${payload.runId}' was not found.`,
-    }, { commandId, runId: payload.runId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Run '${payload.runId}' was not found.`,
+      },
+      { commandId, runId: payload.runId }
+    );
   }
 
   async operatorControl(
     commandId: string,
     payload: OperatorControlCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performOperatorAction === "function") {
@@ -926,22 +1201,28 @@ export class RunnerHost {
         });
         this.writer.emit("operator.controlled", result, {
           commandId,
-          ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+          ...(result.sessionId !== undefined
+            ? { sessionId: result.sessionId }
+            : {}),
           threadId: result.threadId,
         });
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Operator control is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Operator control is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async taskGraphGet(
     commandId: string,
     payload: TaskGraphGetCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getTaskGraph === "function") {
@@ -949,21 +1230,27 @@ export class RunnerHost {
         this.writer.emit("task.graph", snapshot, {
           commandId,
           sessionId: snapshot.sessionId,
-          ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
+          ...(payload.threadId !== undefined
+            ? { threadId: payload.threadId }
+            : {}),
         });
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Task graph is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Task graph is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async taskGraphUpdate(
     commandId: string,
     payload: TaskGraphUpdateCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.updateTaskGraph === "function") {
@@ -972,39 +1259,53 @@ export class RunnerHost {
           this.writer.emit("task.graph", snapshot, {
             commandId,
             sessionId: snapshot.sessionId,
-            ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
+            ...(payload.threadId !== undefined
+              ? { threadId: payload.threadId }
+              : {}),
           });
           return;
         } catch (error) {
           if (isSessionVersionConflictError(error)) {
-            this.writer.emit("runner.error", {
-              code: "SESSION_VERSION_CONFLICT",
-              message: error.message,
-              details: {
-                sessionId: payload.sessionId,
-                ...(payload.expectedVersion !== undefined ? { expectedVersion: payload.expectedVersion } : {}),
+            this.writer.emit(
+              "runner.error",
+              {
+                code: "SESSION_VERSION_CONFLICT",
+                message: error.message,
+                details: {
+                  sessionId: payload.sessionId,
+                  ...(payload.expectedVersion !== undefined
+                    ? { expectedVersion: payload.expectedVersion }
+                    : {}),
+                },
               },
-            }, {
-              commandId,
-              sessionId: payload.sessionId,
-              ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
-            });
+              {
+                commandId,
+                sessionId: payload.sessionId,
+                ...(payload.threadId !== undefined
+                  ? { threadId: payload.threadId }
+                  : {}),
+              }
+            );
             return;
           }
           throw error;
         }
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Task graph is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Task graph is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async projectSnapshotGet(
     commandId: string,
     payload: ProjectSnapshotGetCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getProjectSnapshot === "function") {
@@ -1016,167 +1317,227 @@ export class RunnerHost {
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Project snapshot is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Project snapshot is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointCapture(
     commandId: string,
     payload: WorkspaceCheckpointCaptureCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.captureWorkspaceCheckpoint === "function") {
         const response = await runtime.captureWorkspaceCheckpoint(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "capture",
-          checkpoint: response.checkpoint,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "capture",
+            checkpoint: response.checkpoint,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointList(
     commandId: string,
     payload: WorkspaceCheckpointListCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listWorkspaceCheckpoints === "function") {
         const response = await runtime.listWorkspaceCheckpoints(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "list",
-          checkpoints: response.checkpoints,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "list",
+            checkpoints: response.checkpoints,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointInspect(
     commandId: string,
     payload: WorkspaceCheckpointInspectCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.inspectWorkspaceCheckpoint === "function") {
         const response = await runtime.inspectWorkspaceCheckpoint(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "inspect",
-          checkpoint: response.checkpoint,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "inspect",
+            checkpoint: response.checkpoint,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointDiff(
     commandId: string,
     payload: WorkspaceCheckpointDiffCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.diffWorkspaceCheckpoints === "function") {
         const response = await runtime.diffWorkspaceCheckpoints(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "diff",
-          diff: response.diff,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "diff",
+            diff: response.diff,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointRestore(
     commandId: string,
     payload: WorkspaceCheckpointRestoreCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.restoreWorkspaceCheckpoint === "function") {
         const response = await runtime.restoreWorkspaceCheckpoint(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "restore",
-          restore: response.restore,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "restore",
+            restore: response.restore,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspaceCheckpointCleanup(
     commandId: string,
     payload: WorkspaceCheckpointCleanupCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.cleanupWorkspaceCheckpoints === "function") {
         const response = await runtime.cleanupWorkspaceCheckpoints(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "cleanup",
-          cleanup: response.cleanup,
-          deletedCheckpoints: response.deletedCheckpoints,
-          remainingCheckpointCount: response.remainingCheckpointCount,
-          remainingBytes: response.remainingBytes,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "cleanup",
+            cleanup: response.cleanup,
+            deletedCheckpoints: response.deletedCheckpoints,
+            remainingCheckpointCount: response.remainingCheckpointCount,
+            remainingBytes: response.remainingBytes,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace checkpoints are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace checkpoints are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspacePromotionUndoLatest(
     commandId: string,
     payload: WorkspacePromotionUndoLatestCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.restoreLatestWorkspacePromotion === "function") {
         const response = await runtime.restoreLatestWorkspacePromotion(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "promotion.undo_latest",
-          restore: response.restore,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "promotion.undo_latest",
+            restore: response.restore,
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Workspace promotion undo is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace promotion undo is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async workspacePromotionList(
@@ -1277,7 +1638,7 @@ export class RunnerHost {
   async projectSnapshotUpdate(
     commandId: string,
     payload: ProjectSnapshotUpdateCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.updateProjectSnapshot === "function") {
@@ -1289,16 +1650,20 @@ export class RunnerHost {
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Project snapshot is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Project snapshot is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async projectAction(
     commandId: string,
     payload: ProjectActionCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectAction === "function") {
@@ -1310,19 +1675,29 @@ export class RunnerHost {
           });
         } catch (error) {
           if (isProjectBoardConflictError(error)) {
-            this.writer.emit("runner.error", {
-              code: (error as Error & { code?: string }).code ?? "PROJECT_BOARD_CONFLICT",
-              message: error instanceof Error ? error.message : "Project board conflict.",
-              details: {
-                sessionId: payload.sessionId,
-                ...("expectedBoardVersion" in payload && typeof payload.expectedBoardVersion === "number"
-                  ? { expectedBoardVersion: payload.expectedBoardVersion }
-                  : {}),
+            this.writer.emit(
+              "runner.error",
+              {
+                code:
+                  (error as Error & { code?: string }).code ??
+                  "PROJECT_BOARD_CONFLICT",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Project board conflict.",
+                details: {
+                  sessionId: payload.sessionId,
+                  ...("expectedBoardVersion" in payload &&
+                  typeof payload.expectedBoardVersion === "number"
+                    ? { expectedBoardVersion: payload.expectedBoardVersion }
+                    : {}),
+                },
               },
-            }, {
-              commandId,
-              sessionId: payload.sessionId,
-            });
+              {
+                commandId,
+                sessionId: payload.sessionId,
+              }
+            );
             return;
           }
           throw error;
@@ -1330,16 +1705,20 @@ export class RunnerHost {
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Project actions are unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Project actions are unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async projectReviewGet(
     commandId: string,
     payload: ProjectReviewGetCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getProjectReviewDetail === "function") {
@@ -1351,16 +1730,20 @@ export class RunnerHost {
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Project review is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Project review is unavailable.",
+      },
+      { commandId }
+    );
   }
 
   async projectReviewAction(
     commandId: string,
     payload: ProjectReviewActionCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectReviewAction === "function") {
@@ -1372,23 +1755,33 @@ export class RunnerHost {
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Project review is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Project review is unavailable.",
+      },
+      { commandId }
+    );
   }
 
-  async ping(commandId: string, payload: RunnerPingCommandPayload): Promise<void> {
+  async ping(
+    commandId: string,
+    payload: RunnerPingCommandPayload
+  ): Promise<void> {
     this.writer.emit(
       "runner.pong",
       {
         ...(payload.nonce !== undefined ? { nonce: payload.nonce } : {}),
       },
-      { commandId },
+      { commandId }
     );
   }
 
-  async mcpStatus(commandId: string, payload: McpStatusCommandPayload): Promise<void> {
+  async mcpStatus(
+    commandId: string,
+    payload: McpStatusCommandPayload
+  ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "mcp.status");
     const runtime = this.getRuntime(profile);
     const status =
@@ -1401,11 +1794,14 @@ export class RunnerHost {
       {
         status: getMcpStatusSnapshot(status),
       },
-      { commandId },
+      { commandId }
     );
   }
 
-  async mcpRefresh(commandId: string, payload: McpRefreshCommandPayload): Promise<void> {
+  async mcpRefresh(
+    commandId: string,
+    payload: McpRefreshCommandPayload
+  ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "mcp.refresh");
     const runtime = this.getRuntime(profile);
     const status =
@@ -1420,18 +1816,22 @@ export class RunnerHost {
       {
         status: getMcpStatusSnapshot(status),
       },
-      { commandId },
+      { commandId }
     );
   }
 
-  async close(options: { abortActiveRuns?: boolean | undefined } = {}): Promise<void> {
+  async close(
+    options: { abortActiveRuns?: boolean | undefined } = {}
+  ): Promise<void> {
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
         active.cancelRequested = true;
         active.abortController.abort();
       }
     }
-    const closeAll = [...this.runtimes.values()].map((entry) => entry.runtime.close());
+    const closeAll = [...this.runtimes.values()].map((entry) =>
+      entry.runtime.close()
+    );
     await Promise.all(closeAll);
     this.runtimes.clear();
     this.commandBySession.clear();
@@ -1454,19 +1854,27 @@ export class RunnerHost {
       void existing.runtime.close();
     }
 
-    const runtime = this.runtimeFactory(profile, (entry) => {
-      this.onRunLog(entry);
-    }, (update) => {
-      this.onProgress(update);
-    }, (update) => {
-      this.onConsole(update);
-    }, (update) => {
-      this.onReasoning(update);
-    }, (update) => {
-      this.onTaskUpdate(update);
-    }, (event) => {
-      this.onRunEvent(event);
-    });
+    const runtime = this.runtimeFactory(
+      profile,
+      (entry) => {
+        this.onRunLog(entry);
+      },
+      (update) => {
+        this.onProgress(update);
+      },
+      (update) => {
+        this.onConsole(update);
+      },
+      (update) => {
+        this.onReasoning(update);
+      },
+      (update) => {
+        this.onTaskUpdate(update);
+      },
+      (event) => {
+        this.onRunEvent(event);
+      }
+    );
 
     this.runtimes.set(profile.id, { key, runtime });
     return runtime;
@@ -1483,7 +1891,7 @@ export class RunnerHost {
 
   private async cancelPersistedActiveRun(
     sessionId: string,
-    metadata?: RunnerCommandMetadata | undefined,
+    metadata?: RunnerCommandMetadata | undefined
   ): Promise<string | undefined> {
     for (const runtime of this.selectRuntimes(metadata)) {
       const result = await runtime.cancelActiveRun?.(sessionId);
@@ -1491,7 +1899,7 @@ export class RunnerHost {
         return result.runId;
       }
     }
-    return undefined;
+    return;
   }
 
   private selectRuntimes(metadata?: RunnerCommandMetadata): RunnerRuntime[] {
@@ -1507,7 +1915,7 @@ export class RunnerHost {
       profile?: TuiProfile | undefined;
       profileId?: string | undefined;
     },
-    commandType: string,
+    commandType: string
   ): Promise<TuiProfile> {
     if (input.profile !== undefined) {
       return input.profile;
@@ -1517,7 +1925,9 @@ export class RunnerHost {
       if (profile !== undefined) {
         return profile;
       }
-      throw new Error(`${commandType} profileId '${input.profileId}' was not found`);
+      throw new Error(
+        `${commandType} profileId '${input.profileId}' was not found`
+      );
     }
     throw new Error(`${commandType} requires profile or profileId`);
   }
@@ -1532,7 +1942,7 @@ export class RunnerHost {
         runId: normalizedEntry.runId,
         sessionId: normalizedEntry.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
-      },
+      }
     );
   }
 
@@ -1558,8 +1968,12 @@ export class RunnerHost {
   private emitProgressUpdate(update: ProgressUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const commandType = this.commandTypeBySession.get(normalizedUpdate.sessionId);
-    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
+    const commandType = this.commandTypeBySession.get(
+      normalizedUpdate.sessionId
+    );
+    const threadId =
+      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
+      normalizedUpdate.sessionId;
     this.writer.emit(
       "run.progress",
       { update: normalizedUpdate },
@@ -1567,7 +1981,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
-      },
+      }
     );
     if (commandType === "job.run") {
       this.writer.emit(
@@ -1585,7 +1999,7 @@ export class RunnerHost {
           sessionId: normalizedUpdate.sessionId,
           threadId,
           ...(commandId !== undefined ? { commandId } : {}),
-        },
+        }
       );
     }
   }
@@ -1593,7 +2007,9 @@ export class RunnerHost {
   private onConsole(update: RunConsoleUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
+    const threadId =
+      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
+      normalizedUpdate.sessionId;
     this.writer.emit(
       "run.console",
       { update: normalizedUpdate },
@@ -1602,19 +2018,22 @@ export class RunnerHost {
         sessionId: normalizedUpdate.sessionId,
         threadId,
         ...(commandId !== undefined ? { commandId } : {}),
-      },
+      }
     );
   }
 
   private emitToolUpdate(update: RunToolUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
-    const type = normalizedUpdate.phase === "started"
-      ? "run.tool.started"
-      : normalizedUpdate.phase === "completed"
-        ? "run.tool.completed"
-        : "run.tool.failed";
+    const threadId =
+      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
+      normalizedUpdate.sessionId;
+    const type =
+      normalizedUpdate.phase === "started"
+        ? "run.tool.started"
+        : normalizedUpdate.phase === "completed"
+          ? "run.tool.completed"
+          : "run.tool.failed";
     this.writer.emit(
       type,
       { update: normalizedUpdate },
@@ -1623,11 +2042,13 @@ export class RunnerHost {
         sessionId: normalizedUpdate.sessionId,
         threadId,
         ...(commandId !== undefined ? { commandId } : {}),
-      },
+      }
     );
   }
 
-  private normalizeActiveRunIdentity<T extends { sessionId: string; runId: string }>(value: T): T {
+  private normalizeActiveRunIdentity<
+    T extends { sessionId: string; runId: string },
+  >(value: T): T {
     const acceptedRunId = this.activeRuns.get(value.sessionId)?.runId;
     if (acceptedRunId === undefined || acceptedRunId === value.runId) {
       return value;
@@ -1641,13 +2062,16 @@ export class RunnerHost {
   private async resolveThreadIdForSession(
     runtime: RunnerRuntime,
     sessionId: string,
-    fallbackThreadId: string,
+    fallbackThreadId: string
   ): Promise<string> {
     const described = await runtime.describeSession?.(sessionId);
     if (described === undefined) {
       return fallbackThreadId;
     }
-    if (typeof described.threadId === "string" && described.threadId.length > 0) {
+    if (
+      typeof described.threadId === "string" &&
+      described.threadId.length > 0
+    ) {
       return described.threadId;
     }
     throw createRuntimeFailure(
@@ -1655,7 +2079,7 @@ export class RunnerHost {
       `Session '${sessionId}' did not resolve a canonical thread ID.`,
       {
         sessionId,
-      },
+      }
     );
   }
 
@@ -1673,7 +2097,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
-      },
+      }
     );
   }
 
@@ -1683,11 +2107,13 @@ export class RunnerHost {
       {
         task: update.task,
         kind: update.kind,
-        ...(update.finalizedPayload !== undefined ? { finalizedPayload: update.finalizedPayload } : {}),
+        ...(update.finalizedPayload !== undefined
+          ? { finalizedPayload: update.finalizedPayload }
+          : {}),
       },
       {
         sessionId: update.task.parentSessionId,
-      },
+      }
     );
   }
 
@@ -1722,11 +2148,17 @@ function isSessionVersionConflictError(error: unknown): error is Error {
 }
 
 function isProjectBoardConflictError(error: unknown): error is Error {
-  if (!(error instanceof Error) || typeof (error as Error & { code?: unknown }).code !== "string") {
+  if (
+    !(error instanceof Error) ||
+    typeof (error as Error & { code?: unknown }).code !== "string"
+  ) {
     return false;
   }
   const code = (error as Error & { code: string }).code;
-  return code === "SESSION_VERSION_CONFLICT" || code === "PROJECT_BOARD_VERSION_CONFLICT";
+  return (
+    code === "SESSION_VERSION_CONFLICT" ||
+    code === "PROJECT_BOARD_VERSION_CONFLICT"
+  );
 }
 
 export type { RunTurnResult };
@@ -1759,10 +2191,12 @@ function isMcpStatusSnapshot(value: unknown): value is McpStatusSnapshot {
   );
 }
 
-function resolveIssuedBy(metadata: RunnerCommandMetadata | undefined): string | undefined {
+function resolveIssuedBy(
+  metadata: RunnerCommandMetadata | undefined
+): string | undefined {
   const actor = metadata?.actor;
   if (actor === undefined) {
-    return undefined;
+    return;
   }
   const displayName = actor.displayName?.trim();
   if (displayName !== undefined && displayName.length > 0) {

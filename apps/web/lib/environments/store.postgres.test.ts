@@ -29,12 +29,14 @@ test(
       executionRoute,
       auth,
       githubPolicy,
+      { databaseEnvironmentProvisioningRepository },
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("./store"),
       import("./execution-route"),
       import("@lumi/kestrel-environment-auth"),
       import("@/lib/integrations/github-policy"),
+      import("./provisioner"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
@@ -79,10 +81,27 @@ test(
           "id", "organizationId", "userId", "role", "createdAt"
         ) VALUES (${memberA}, ${organizationA}, ${userA}, 'owner', ${now})
       `;
+    });
+
+    const createdEnvironment =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: organizationA,
+        userId: userA,
+        environment: {
+          name: "Primary Environment",
+          region: "iad",
+          isDefault: true,
+        },
+      });
+
+    await sql.begin(async (transaction) => {
       await transaction`
         INSERT INTO "projects" (
-          "id", "organization_id", "created_by_user_id", "name"
-        ) VALUES (${projectId}, ${organizationA}, ${userA}, 'Environment Project')
+          "id", "organization_id", "environment_id", "created_by_user_id", "name"
+        ) VALUES (
+          ${projectId}, ${organizationA}, ${createdEnvironment.environment.id},
+          ${userA}, 'Environment Project'
+        )
       `;
       await transaction`
         INSERT INTO "project_members" (
@@ -113,17 +132,6 @@ test(
       `;
     });
 
-    const createdEnvironment =
-      await environmentStore.createOrganizationEnvironment({
-        organizationId: organizationA,
-        userId: userA,
-        environment: {
-          name: "Primary Environment",
-          region: "iad",
-          isDefault: true,
-        },
-      });
-
     const projectBinding =
       await environmentStore.resolveOrCreateThreadExecutionBinding({
         organizationId: organizationA,
@@ -144,7 +152,7 @@ test(
     assert.equal(repeatedProjectBinding.created, false);
     assert.equal(
       repeatedProjectBinding.workspace.id,
-      projectBinding.workspace.id
+      projectBinding.workspace.id,
     );
 
     const scratchBinding =
@@ -356,7 +364,8 @@ test(
       await assert.rejects(
         githubPolicy.authorizeGitHubCapability(authorizationInput),
         (error: unknown) =>
-          error instanceof githubPolicy.GitHubPolicyError && error.code === code
+          error instanceof githubPolicy.GitHubPolicyError &&
+          error.code === code,
       );
     };
     await sql`
@@ -418,7 +427,146 @@ test(
       (error: unknown) =>
         error instanceof Error &&
         "code" in error &&
-        error.code === "ENVIRONMENT_BINDING_NOT_FOUND"
+        error.code === "ENVIRONMENT_BINDING_NOT_FOUND",
     );
-  }
+
+    const secondary = await environmentStore.createOrganizationEnvironment({
+      organizationId: organizationA,
+      userId: userA,
+      environment: {
+        name: "Secondary Environment",
+        region: "iad",
+        isDefault: false,
+      },
+    });
+    await sql`
+      UPDATE "environments"
+      SET "status" = 'ready'
+      WHERE "id" = ${secondary.environment.id}
+    `;
+    await assert.rejects(
+      databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
+        createdEnvironment.environment.id,
+      ),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_IS_DEFAULT",
+    );
+    const projectOwned = await environmentStore.createOrganizationEnvironment({
+      organizationId: organizationA,
+      userId: userA,
+      environment: {
+        name: "Project-owned Environment",
+        region: "iad",
+        isDefault: false,
+      },
+    });
+    const ownedProjectId = `owned-project-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environments"
+        SET "status" = 'ready'
+        WHERE "id" = ${projectOwned.environment.id}
+      `;
+      await transaction`
+        INSERT INTO "projects" (
+          "id", "organization_id", "environment_id", "created_by_user_id", "name"
+        ) VALUES (
+          ${ownedProjectId}, ${organizationA}, ${projectOwned.environment.id},
+          ${userA}, 'Owned Project'
+        )
+      `;
+    });
+    await assert.rejects(
+      databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
+        projectOwned.environment.id,
+      ),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_HAS_PROJECTS",
+    );
+    const [projectOwnedAfterConflict] = await sql<Array<{ status: string }>>`
+      SELECT "status"
+      FROM "environments"
+      WHERE "id" = ${projectOwned.environment.id}
+    `;
+    assert.equal(projectOwnedAfterConflict?.status, "ready");
+    const lifecycleRace = await Promise.allSettled([
+      environmentStore.setDefaultOrganizationEnvironment({
+        organizationId: organizationA,
+        environmentId: secondary.environment.id,
+      }),
+      databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
+        secondary.environment.id,
+      ),
+    ]);
+    assert.equal(
+      lifecycleRace.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    const [racedEnvironment] = await sql<
+      Array<{ status: string; isDefault: boolean }>
+    >`
+      SELECT "status", "is_default" AS "isDefault"
+      FROM "environments"
+      WHERE "id" = ${secondary.environment.id}
+    `;
+    assert.ok(racedEnvironment);
+    assert.equal(
+      racedEnvironment.status === "deleting" && racedEnvironment.isDefault,
+      false,
+      "a deleting Environment must never become the organization default",
+    );
+
+    const automaticTarget =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: organizationB,
+        userId: userB,
+        environment: {
+          name: "Automatic default candidate",
+          region: "iad",
+          isDefault: false,
+        },
+      });
+    await sql`
+      UPDATE "environments"
+      SET "status" = 'ready'
+      WHERE "id" = ${automaticTarget.environment.id}
+    `;
+    const automaticDefaultRace = await Promise.allSettled([
+      environmentStore.ensureOrganizationDefaultEnvironment({
+        organizationId: organizationB,
+        userId: userB,
+      }),
+      databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
+        automaticTarget.environment.id,
+      ),
+    ]);
+    const ensuredDefault = automaticDefaultRace[0];
+    assert.equal(ensuredDefault.status, "fulfilled");
+    const [automaticTargetAfterRace] = await sql<
+      Array<{ status: string; isDefault: boolean }>
+    >`
+      SELECT "status", "is_default" AS "isDefault"
+      FROM "environments"
+      WHERE "id" = ${automaticTarget.environment.id}
+    `;
+    assert.ok(automaticTargetAfterRace);
+    assert.equal(
+      automaticTargetAfterRace.status === "deleting" &&
+        automaticTargetAfterRace.isDefault,
+      false,
+      "automatic default selection must not claim a deleting Environment",
+    );
+    if (automaticDefaultRace[1]?.status === "fulfilled") {
+      assert.notEqual(
+        ensuredDefault.status === "fulfilled"
+          ? ensuredDefault.value.environment.id
+          : undefined,
+        automaticTarget.environment.id,
+      );
+    }
+  },
 );

@@ -5,6 +5,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
+import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
 import { requireHostedEnvironmentsEnabled } from "./config";
 import {
   requestWorkspaceStart,
@@ -96,8 +97,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
     actorId: input.actorUserId,
     agentId: input.agentId ?? "kestrel-one-ui",
   });
+  let mcpContext;
   if (input.recordExecution) {
-    await recordEnvironmentExecution({
+    const projectId = await recordEnvironmentExecution({
       id: runId,
       organizationId: input.organizationId,
       environmentId: environment.id,
@@ -108,6 +110,13 @@ export async function resolveEnvironmentExecutionRoute(input: {
       routeCapabilities: [...ROUTE_CAPABILITIES],
       effectiveCapabilities,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+    });
+    mcpContext = await issueHostedMcpRunContext({
+      runExecutionId: runId,
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      projectId,
+      threadId: input.threadId,
     });
   }
   const privateKey = process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "";
@@ -142,6 +151,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     runId,
     environmentId: environment.id,
     workspaceId: workspace.id,
+    ...(mcpContext ? { mcpContext } : {}),
   };
 }
 
@@ -330,6 +340,7 @@ async function recordEnvironmentExecution(input: {
       ...input.effectiveCapabilities,
     ].sort(),
   });
+  return thread.projectId;
 }
 
 async function snapshotEffectiveCapabilities(input: {
