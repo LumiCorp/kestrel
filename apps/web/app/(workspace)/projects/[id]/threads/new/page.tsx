@@ -27,7 +27,9 @@ export default async function NewProjectThreadPage({
   const threadId = generateUUID();
   const modelIdFromCookie = cookieStore.get("chat-model");
   const initialChatModel = await resolvePreferredLanguageModelId(
-    modelIdFromCookie?.value
+    modelIdFromCookie?.value,
+    null,
+    organizationId
   );
   return (
     <>

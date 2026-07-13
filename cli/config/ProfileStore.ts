@@ -533,6 +533,8 @@ function parseModelCredential(
     candidate.source !== "kestrel-one" ||
     typeof candidate.gatewayId !== "string" ||
     candidate.gatewayId.trim().length === 0 ||
+    typeof candidate.organizationId !== "string" ||
+    candidate.organizationId.trim().length === 0 ||
     typeof candidate.rawModelId !== "string" ||
     candidate.rawModelId.trim().length === 0
   ) {
@@ -541,6 +543,7 @@ function parseModelCredential(
   return {
     source: "kestrel-one",
     gatewayId: candidate.gatewayId.trim(),
+    organizationId: candidate.organizationId.trim(),
     rawModelId: candidate.rawModelId.trim(),
   };
 }

@@ -3,15 +3,18 @@ import {
   type GatewayLanguageProtocol,
   type GatewayProtocolProvider,
   getGatewayLanguageProtocol,
+  isRunPodServerlessBaseUrl,
 } from "./gateway-utils";
+import { getMatchingRunPodValidationEvidence } from "./runpod-connection-test";
 
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
-  "gateway-credential-lease-v1" as const;
+  "gateway-credential-lease-v2" as const;
 export const GATEWAY_CREDENTIAL_LEASE_TTL_MS = 5 * 60 * 1000;
 
 export type GatewayCredentialLeaseRequest = {
   version: typeof GATEWAY_CREDENTIAL_LEASE_VERSION;
   gatewayId: string;
+  organizationId: string;
   rawModelId: string;
 };
 
@@ -19,6 +22,7 @@ export type GatewayCredentialLease = {
   version: typeof GATEWAY_CREDENTIAL_LEASE_VERSION;
   leaseId: string;
   gatewayId: string;
+  organizationId: string;
   rawModelId: string;
   provider: Exclude<GatewayProtocolProvider, "replicate">;
   protocol: GatewayLanguageProtocol;
@@ -40,8 +44,17 @@ export class GatewayCredentialLeaseError extends Error {
 }
 
 export function assertGatewayCredentialLeaseEligible(input: {
-  gateway: { enabled: boolean; provider: GatewayProtocolProvider };
-  model: { approved: boolean; modality: string };
+  gateway: {
+    enabled: boolean;
+    provider: GatewayProtocolProvider;
+    baseUrl?: string | null;
+  };
+  model: {
+    approved: boolean;
+    modality: string;
+    rawModelId?: string;
+    metadata?: unknown;
+  };
 }) {
   if (
     !input.gateway.enabled ||
@@ -53,6 +66,21 @@ export function assertGatewayCredentialLeaseEligible(input: {
       "GATEWAY_MODEL_NOT_APPROVED",
       "The requested gateway model is unavailable or not approved.",
       404
+    );
+  }
+  const runPodValidationEvidence =
+    input.model.rawModelId && input.gateway.baseUrl
+      ? getMatchingRunPodValidationEvidence({
+          metadata: input.model.metadata,
+          rawModelId: input.model.rawModelId,
+          baseUrl: input.gateway.baseUrl,
+        })
+      : null;
+  if (input.gateway.provider === "runpod" && !runPodValidationEvidence) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_MODEL_NOT_VALIDATED",
+      "The requested RunPod model has not passed Kestrel validation.",
+      409
     );
   }
 }
@@ -95,6 +123,7 @@ export function authorizeGatewayCredentialBroker(input: {
 }
 
 export function buildGatewayCredentialLease(input: {
+  organizationId: string;
   gateway: {
     id: string;
     provider: Exclude<GatewayProtocolProvider, "replicate">;
@@ -122,10 +151,18 @@ export function buildGatewayCredentialLease(input: {
         });
   const configuredBaseUrl =
     input.gateway.baseUrl?.trim() || getDefaultGatewayBaseUrl(provider);
+  if (provider === "runpod" && !isRunPodServerlessBaseUrl(configuredBaseUrl)) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_ENDPOINT_INVALID",
+      "The RunPod gateway endpoint is invalid.",
+      409
+    );
+  }
   return {
     version: GATEWAY_CREDENTIAL_LEASE_VERSION,
     leaseId: randomUUID(),
     gatewayId: input.gateway.id,
+    organizationId: input.organizationId,
     rawModelId: input.model.rawModelId,
     provider,
     protocol,
@@ -174,6 +211,8 @@ function getDefaultGatewayBaseUrl(
       return "https://api.kestrelagents.dev";
     case "openai":
       return "https://api.openai.com/v1";
+    case "runpod":
+      return null;
     case "openrouter":
       return "https://openrouter.ai/api/v1";
     case "ollama":

@@ -111,6 +111,7 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
           model: "openai/gpt-5.4",
           modelCredential: {
             source: "kestrel-one",
+            organizationId: "org-acme",
             gatewayId: "gateway-openrouter",
             rawModelId: "z-ai/glm-5.2",
           },
@@ -171,6 +172,7 @@ test("run.start rejects a stale gateway-managed agent loop model", async () => {
           },
           modelCredential: {
             source: "kestrel-one",
+            organizationId: "org-acme",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
           },
@@ -195,6 +197,58 @@ test("run.start rejects a stale gateway-managed agent loop model", async () => {
   await host.close();
 });
 
+test("run.start binds a gateway-managed credential to command tenant context", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("cross-tenant profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-cross-tenant-managed-profile",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.4",
+          agentStageConfig: {
+            modelByStage: { "agent.loop": "openai/gpt-5.4" },
+          },
+          modelCredential: {
+            source: "kestrel-one",
+            organizationId: "org-acme",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "openai/gpt-5.4",
+          },
+        },
+        turn: {
+          sessionId: "session-cross-tenant",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+      metadata: { tenantId: "org-other" },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.match(
+    String(events[0]?.payload.message),
+    /does not belong to the authenticated tenant/u,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("run.start emits started/log/completed protocol events", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -207,6 +261,7 @@ test("run.start emits started/log/completed protocol events", async () => {
     },
     modelCredential: {
       source: "kestrel-one",
+      organizationId: "org-acme",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
     },
@@ -325,6 +380,7 @@ test("run.start emits started/log/completed protocol events", async () => {
           },
         },
       },
+      metadata: { tenantId: "org-acme" },
     }),
   );
 

@@ -4,6 +4,7 @@ export type GatewayProtocolProvider =
   | "openai"
   | "openrouter"
   | "ollama"
+  | "runpod"
   | "replicate";
 
 export type GatewayProtocolModality =
@@ -21,6 +22,7 @@ export const GATEWAY_PROVIDERS = [
   "openai",
   "openrouter",
   "ollama",
+  "runpod",
   "replicate",
 ] as const;
 
@@ -38,6 +40,7 @@ const KESTREL_RUNTIME_LANGUAGE_PROVIDERS = new Set<GatewayProtocolProvider>([
   "ollama",
   "openai",
   "openrouter",
+  "runpod",
 ]);
 
 const GATEWAY_SELECTION_PRIORITY: Record<GatewayProtocolProvider, number> = {
@@ -46,7 +49,8 @@ const GATEWAY_SELECTION_PRIORITY: Record<GatewayProtocolProvider, number> = {
   anthropic: 2,
   ollama: 3,
   openrouter: 4,
-  replicate: 5,
+  runpod: 5,
+  replicate: 6,
 };
 
 const PROVIDER_SUPPORTED_MODALITIES: Record<
@@ -58,8 +62,45 @@ const PROVIDER_SUPPORTED_MODALITIES: Record<
   openai: ["language", "image", "speech", "embedding"],
   openrouter: ["language", "image", "speech", "embedding"],
   ollama: ["language", "embedding"],
+  runpod: ["language"],
   replicate: ["image", "video"],
 };
+
+const RUNPOD_ENDPOINT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+
+export function normalizeRunPodEndpointId(value: unknown): string {
+  const endpointId = typeof value === "string" ? value.trim() : "";
+  if (!RUNPOD_ENDPOINT_ID_PATTERN.test(endpointId)) {
+    throw new Error("RunPod endpoint ID is invalid.");
+  }
+  return endpointId;
+}
+
+export function buildRunPodServerlessBaseUrl(endpointId: unknown): string {
+  return `https://api.runpod.ai/v2/${normalizeRunPodEndpointId(endpointId)}/openai/v1`;
+}
+
+export function isRunPodServerlessBaseUrl(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    const match = /^\/v2\/([^/]+)\/openai\/v1\/?$/u.exec(url.pathname);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "api.runpod.ai" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      match !== null &&
+      normalizeRunPodEndpointId(match[1]) === match[1]
+    );
+  } catch {
+    return false;
+  }
+}
 
 function toRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -88,7 +129,13 @@ export function getProviderSupportedModalities(
 
 export function isKestrelRuntimeLanguageProvider(
   provider: GatewayProtocolProvider
-): provider is "anthropic" | "lumi" | "ollama" | "openai" | "openrouter" {
+): provider is
+  | "anthropic"
+  | "lumi"
+  | "ollama"
+  | "openai"
+  | "openrouter"
+  | "runpod" {
   return KESTREL_RUNTIME_LANGUAGE_PROVIDERS.has(provider);
 }
 

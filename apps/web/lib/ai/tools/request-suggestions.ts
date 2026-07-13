@@ -71,6 +71,7 @@ export const requestSuggestions = ({
       const resolvedSuggestionModel = await resolveRequiredLanguageModel({
         modelId,
         surface: "suggestions",
+        organizationId,
       });
 
       const { partialOutputStream } = streamText({

@@ -17,9 +17,11 @@ export async function generateTitleFromUserMessage({
   message: UIMessage;
   modelId?: string | null;
 }) {
+  const { organizationId } = await requireActiveOrganization();
   const resolvedTitleModel = await resolveRequiredLanguageModel({
     modelId,
     surface: "title",
+    organizationId,
   });
   const { text } = await generateText({
     model: resolvedTitleModel.model,

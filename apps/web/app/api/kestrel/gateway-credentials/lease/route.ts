@@ -10,6 +10,7 @@ import {
 const requestSchema = z.object({
   version: z.literal(GATEWAY_CREDENTIAL_LEASE_VERSION),
   gatewayId: z.string().trim().min(1),
+  organizationId: z.string().trim().min(1),
   rawModelId: z.string().trim().min(1),
 });
 
