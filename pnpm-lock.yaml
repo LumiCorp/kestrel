@@ -761,9 +761,6 @@ importers:
 
   apps/workspace-runtime:
     dependencies:
-      '@kestrel-agents/kestrel':
-        specifier: 0.5.1
-        version: link:../..
       '@kestrel-agents/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
