@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
@@ -14,15 +14,23 @@ import { Label } from "@/components/ui/label";
 import type {
   Environment,
   EnvironmentCapabilityGrant,
+  EnvironmentOperation,
   EnvironmentWorkspace,
   WorkspaceBackup,
 } from "@/drizzle/schema";
 import type { HostedEnvironmentsRollout } from "@/lib/environments/config";
+import { describeEnvironmentOperation } from "@/lib/environments/operation-presentation";
 
 type CreateEnvironmentResponse = {
   environment?: Environment;
   error?: string;
 };
+
+const LIVE_STATE_REFRESH_MS = 2000;
+
+function preserveEqualRows<T>(current: T[], next: T[]) {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
 
 export function EnvironmentsAdminClient({
   initialEnvironments,
@@ -39,6 +47,7 @@ export function EnvironmentsAdminClient({
   const [rolloutBusy, setRolloutBusy] = useState(false);
   const [grants, setGrants] = useState<EnvironmentCapabilityGrant[]>([]);
   const [workspaces, setWorkspaces] = useState<EnvironmentWorkspace[]>([]);
+  const [operations, setOperations] = useState<EnvironmentOperation[]>([]);
   const [backups, setBackups] = useState<WorkspaceBackup[]>([]);
   const [runtimeImages, setRuntimeImages] = useState<Record<string, string>>(
     Object.fromEntries(
@@ -54,7 +63,7 @@ export function EnvironmentsAdminClient({
 
   useEffect(() => {
     void Promise.all(
-      initialEnvironments.map(async (environment) => {
+      environments.map(async (environment) => {
         const response = await fetch(
           `/api/admin/environments/${environment.id}/capabilities`
         );
@@ -65,7 +74,7 @@ export function EnvironmentsAdminClient({
         return payload.grants ?? [];
       })
     ).then((rows) => setGrants(rows.flat()));
-  }, [initialEnvironments]);
+  }, [environments]);
 
   useEffect(() => {
     void Promise.all(
@@ -82,20 +91,81 @@ export function EnvironmentsAdminClient({
     ).then((rows) => setBackups(rows.flat()));
   }, [workspaces]);
 
+  const refreshLiveState = useCallback(async (signal: AbortSignal) => {
+    const response = await fetch("/api/admin/environments", {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error("Environment live state is unavailable.");
+    }
+    const payload = (await response.json()) as {
+      environments?: Environment[];
+      rollout?: HostedEnvironmentsRollout;
+    };
+    const liveEnvironments = payload.environments ?? [];
+    const [workspaceRows, operationRows] = await Promise.all([
+      Promise.all(
+        liveEnvironments.map(async (environment) => {
+          const workspaceResponse = await fetch(
+            `/api/admin/environments/${environment.id}/workspaces`,
+            { cache: "no-store", signal }
+          );
+          if (!workspaceResponse.ok) {
+            throw new Error("Workspace live state is unavailable.");
+          }
+          const workspacePayload = (await workspaceResponse.json()) as {
+            workspaces?: EnvironmentWorkspace[];
+          };
+          return workspacePayload.workspaces ?? [];
+        })
+      ),
+      Promise.all(
+        liveEnvironments.map(async (environment) => {
+          const operationResponse = await fetch(
+            `/api/admin/environments/${environment.id}/operations`,
+            { cache: "no-store", signal }
+          );
+          if (!operationResponse.ok) {
+            throw new Error("Environment operation state is unavailable.");
+          }
+          const operationPayload = (await operationResponse.json()) as {
+            operations?: EnvironmentOperation[];
+          };
+          return operationPayload.operations ?? [];
+        })
+      ),
+    ]);
+    if (signal.aborted) return;
+    setEnvironments((current) => preserveEqualRows(current, liveEnvironments));
+    setWorkspaces((current) =>
+      preserveEqualRows(current, workspaceRows.flat())
+    );
+    setOperations((current) =>
+      preserveEqualRows(current, operationRows.flat())
+    );
+    if (payload.rollout) setRollout(payload.rollout);
+  }, []);
+
   useEffect(() => {
-    void Promise.all(
-      initialEnvironments.map(async (environment) => {
-        const response = await fetch(
-          `/api/admin/environments/${environment.id}/workspaces`
-        );
-        if (!response.ok) return [];
-        const payload = (await response.json()) as {
-          workspaces?: EnvironmentWorkspace[];
-        };
-        return payload.workspaces ?? [];
-      })
-    ).then((rows) => setWorkspaces(rows.flat()));
-  }, [initialEnvironments]);
+    const controller = new AbortController();
+    let timeout: number | undefined;
+    const refresh = async () => {
+      try {
+        await refreshLiveState(controller.signal);
+      } catch {
+      } finally {
+        if (!controller.signal.aborted) {
+          timeout = window.setTimeout(refresh, LIVE_STATE_REFRESH_MS);
+        }
+      }
+    };
+    void refresh();
+    return () => {
+      controller.abort();
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, [refreshLiveState]);
 
   async function createEnvironment() {
     setBusy(true);
@@ -403,190 +473,250 @@ export function EnvironmentsAdminClient({
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          {environments.map((environment) => (
-            <Card key={environment.id}>
-              <CardHeader className="flex-row items-start justify-between space-y-0">
-                <div className="space-y-1">
-                  <CardTitle>{environment.name}</CardTitle>
-                  <p className="text-muted-foreground text-sm">
-                    {environment.region} · {environment.runtimeTemplate}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  {environment.isDefault ? <Badge>Default</Badge> : null}
-                  <Badge variant="outline">{environment.status}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="text-muted-foreground text-sm">
-                    Idle compute stops after {environment.idleTimeoutMinutes}{" "}
-                    minutes.
+          {environments.map((environment) => {
+            const latestOperation = operations.find(
+              (operation) => operation.environmentId === environment.id
+            );
+            const operationPresentation = latestOperation
+              ? describeEnvironmentOperation(latestOperation)
+              : null;
+            return (
+              <Card key={environment.id}>
+                <CardHeader className="flex-row items-start justify-between space-y-0">
+                  <div className="space-y-1">
+                    <CardTitle>{environment.name}</CardTitle>
+                    <p className="text-muted-foreground text-sm">
+                      {environment.region} · {environment.runtimeTemplate}
+                    </p>
                   </div>
-                  {environment.isDefault ? null : (
+                  <div className="flex gap-2">
+                    {environment.isDefault ? <Badge>Default</Badge> : null}
+                    <Badge variant="outline">{environment.status}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {latestOperation && operationPresentation ? (
+                    <div
+                      aria-live="polite"
+                      className="space-y-1 rounded-md border bg-muted/30 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-medium text-sm">
+                          {operationPresentation.label}
+                        </div>
+                        <Badge
+                          variant={
+                            operationPresentation.tone === "error"
+                              ? "destructive"
+                              : latestOperation.status === "completed"
+                                ? "default"
+                                : "outline"
+                          }
+                        >
+                          {latestOperation.status}
+                        </Badge>
+                      </div>
+                      <div
+                        className={
+                          operationPresentation.tone === "error"
+                            ? "text-destructive text-sm"
+                            : "text-muted-foreground text-sm"
+                        }
+                      >
+                        {operationPresentation.detail}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="text-muted-foreground text-sm">
+                      Idle compute stops after {environment.idleTimeoutMinutes}{" "}
+                      minutes.
+                    </div>
+                    {environment.isDefault ? null : (
+                      <Button
+                        onClick={() => void makeDefault(environment.id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Make default
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex gap-2 border-t pt-4">
+                    <Input
+                      aria-label={`${environment.name} runtime image`}
+                      onChange={(event) =>
+                        setRuntimeImages((current) => ({
+                          ...current,
+                          [environment.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="registry.fly.io/kestrel-workspace@sha256:…"
+                      value={runtimeImages[environment.id] ?? ""}
+                    />
                     <Button
-                      onClick={() => void makeDefault(environment.id)}
-                      size="sm"
+                      disabled={
+                        !runtimeImages[environment.id]?.trim() ||
+                        runtimeImages[environment.id] ===
+                          environment.runtimeImage
+                      }
+                      onClick={() => void updateRuntimeImage(environment.id)}
                       variant="outline"
                     >
-                      Make default
+                      Update runtime
                     </Button>
-                  )}
-                </div>
-                <div className="flex gap-2 border-t pt-4">
-                  <Input
-                    aria-label={`${environment.name} runtime image`}
-                    onChange={(event) =>
-                      setRuntimeImages((current) => ({
-                        ...current,
-                        [environment.id]: event.target.value,
-                      }))
-                    }
-                    placeholder="registry.fly.io/kestrel-workspace@sha256:…"
-                    value={runtimeImages[environment.id] ?? ""}
-                  />
-                  <Button
-                    disabled={
-                      !runtimeImages[environment.id]?.trim() ||
-                      runtimeImages[environment.id] === environment.runtimeImage
-                    }
-                    onClick={() => void updateRuntimeImage(environment.id)}
-                    variant="outline"
-                  >
-                    Update runtime
-                  </Button>
-                </div>
-                <div className="space-y-2 border-t pt-4">
-                  <div className="font-medium text-sm">
-                    GitHub capability ceiling
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 rounded-md border p-2">
-                    {(
-                      [
-                        ["repository.read", "Read", "auto"],
-                        [
-                          "repository.push_agent_branch",
-                          "Push agent branches",
-                          "auto",
-                        ],
-                        ["issue.write", "Issues", "ask"],
-                        ["pull_request.write", "Pull requests", "ask"],
-                        ["merge.write", "Merges", "ask"],
-                        ["release.write", "Releases", "ask"],
-                        ["workflow.dispatch", "Workflows", "ask"],
-                      ] as const
-                    ).map(([capabilityKey, label, enabledMode]) => {
-                      const grant = grants.find(
-                        (candidate) =>
-                          candidate.environmentId === environment.id &&
-                          candidate.resourceId === null &&
-                          candidate.capabilityKey === capabilityKey
-                      );
-                      const enabled = grant?.approvalMode === enabledMode;
-                      return (
-                        <Button
-                          key={capabilityKey}
-                          onClick={() =>
-                            void setGitHubGrant({
-                              environmentId: environment.id,
-                              resourceId: null,
-                              capabilityKey,
-                              approvalMode: enabled ? "deny" : enabledMode,
-                            })
-                          }
-                          size="sm"
-                          variant={enabled ? "default" : "outline"}
-                        >
-                          {label}
-                          {enabledMode === "ask" ? " · approval" : ""}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {workspaces.some(
-                  (workspace) => workspace.environmentId === environment.id
-                ) ? (
                   <div className="space-y-2 border-t pt-4">
                     <div className="font-medium text-sm">
-                      Persistent Workspaces
+                      GitHub capability ceiling
                     </div>
-                    {workspaces
-                      .filter(
-                        (workspace) =>
-                          workspace.environmentId === environment.id
-                      )
-                      .map((workspace) => (
-                        <div
-                          className="flex items-center gap-2 rounded-md border p-2"
-                          key={workspace.id}
-                        >
-                          <div className="mr-auto min-w-0">
-                            <div className="truncate text-sm">
-                              {workspace.name}
-                            </div>
-                            <div className="text-muted-foreground text-xs">
-                              {workspace.status} ·{" "}
-                              {
-                                backups.filter(
-                                  (backup) =>
-                                    backup.workspaceId === workspace.id &&
-                                    backup.status === "available"
-                                ).length
-                              }{" "}
-                              backups
-                            </div>
-                          </div>
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+                      {(
+                        [
+                          ["repository.read", "Read", "auto"],
+                          [
+                            "repository.push_agent_branch",
+                            "Push agent branches",
+                            "auto",
+                          ],
+                          ["issue.write", "Issues", "ask"],
+                          ["pull_request.write", "Pull requests", "ask"],
+                          ["merge.write", "Merges", "ask"],
+                          ["release.write", "Releases", "ask"],
+                          ["workflow.dispatch", "Workflows", "ask"],
+                        ] as const
+                      ).map(([capabilityKey, label, enabledMode]) => {
+                        const grant = grants.find(
+                          (candidate) =>
+                            candidate.environmentId === environment.id &&
+                            candidate.resourceId === null &&
+                            candidate.capabilityKey === capabilityKey
+                        );
+                        const enabled = grant?.approvalMode === enabledMode;
+                        return (
                           <Button
-                            disabled={workspace.status !== "ready"}
+                            key={capabilityKey}
                             onClick={() =>
-                              void createBackup(environment.id, workspace.id)
+                              void setGitHubGrant({
+                                environmentId: environment.id,
+                                resourceId: null,
+                                capabilityKey,
+                                approvalMode: enabled ? "deny" : enabledMode,
+                              })
                             }
                             size="sm"
-                            variant="outline"
+                            variant={enabled ? "default" : "outline"}
                           >
-                            Back up
+                            {label}
+                            {enabledMode === "ask" ? " · approval" : ""}
                           </Button>
-                          {backups.find(
-                            (backup) =>
-                              backup.workspaceId === workspace.id &&
-                              backup.status === "available"
-                          ) ? (
-                            <Button
-                              onClick={() => {
-                                const backup = backups.find(
-                                  (candidate) =>
-                                    candidate.workspaceId === workspace.id &&
-                                    candidate.status === "available"
-                                );
-                                if (backup) {
-                                  void restoreBackup({
-                                    environmentId: environment.id,
-                                    workspaceId: workspace.id,
-                                    backupId: backup.id,
-                                  });
-                                }
-                              }}
-                              size="sm"
-                              variant="outline"
-                            >
-                              {restoreConfirmation ===
-                              backups.find(
-                                (candidate) =>
-                                  candidate.workspaceId === workspace.id &&
-                                  candidate.status === "available"
-                              )?.id
-                                ? "Confirm restore"
-                                : "Restore latest"}
-                            </Button>
-                          ) : null}
-                        </div>
-                      ))}
+                        );
+                      })}
+                    </div>
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          ))}
+                  {workspaces.some(
+                    (workspace) => workspace.environmentId === environment.id
+                  ) ? (
+                    <div className="space-y-2 border-t pt-4">
+                      <div className="font-medium text-sm">
+                        Persistent Workspaces
+                      </div>
+                      {workspaces
+                        .filter(
+                          (workspace) =>
+                            workspace.environmentId === environment.id
+                        )
+                        .map((workspace) => {
+                          const workspaceOperation = operations.find(
+                            (operation) =>
+                              operation.workspaceId === workspace.id
+                          );
+                          const workspaceOperationPresentation =
+                            workspaceOperation
+                              ? describeEnvironmentOperation(workspaceOperation)
+                              : null;
+                          return (
+                            <div
+                              className="flex items-center gap-2 rounded-md border p-2"
+                              key={workspace.id}
+                            >
+                              <div className="mr-auto min-w-0">
+                                <div className="truncate text-sm">
+                                  {workspace.name}
+                                </div>
+                                <div className="text-muted-foreground text-xs">
+                                  {workspace.status} ·{" "}
+                                  {
+                                    backups.filter(
+                                      (backup) =>
+                                        backup.workspaceId === workspace.id &&
+                                        backup.status === "available"
+                                    ).length
+                                  }{" "}
+                                  backups
+                                </div>
+                                {workspaceOperationPresentation ? (
+                                  <div className="mt-1 text-muted-foreground text-xs">
+                                    {workspaceOperationPresentation.detail}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <Button
+                                disabled={workspace.status !== "ready"}
+                                onClick={() =>
+                                  void createBackup(
+                                    environment.id,
+                                    workspace.id
+                                  )
+                                }
+                                size="sm"
+                                variant="outline"
+                              >
+                                Back up
+                              </Button>
+                              {backups.find(
+                                (backup) =>
+                                  backup.workspaceId === workspace.id &&
+                                  backup.status === "available"
+                              ) ? (
+                                <Button
+                                  onClick={() => {
+                                    const backup = backups.find(
+                                      (candidate) =>
+                                        candidate.workspaceId ===
+                                          workspace.id &&
+                                        candidate.status === "available"
+                                    );
+                                    if (backup) {
+                                      void restoreBackup({
+                                        environmentId: environment.id,
+                                        workspaceId: workspace.id,
+                                        backupId: backup.id,
+                                      });
+                                    }
+                                  }}
+                                  size="sm"
+                                  variant="outline"
+                                >
+                                  {restoreConfirmation ===
+                                  backups.find(
+                                    (candidate) =>
+                                      candidate.workspaceId === workspace.id &&
+                                      candidate.status === "available"
+                                  )?.id
+                                    ? "Confirm restore"
+                                    : "Restore latest"}
+                                </Button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </AppPage>
