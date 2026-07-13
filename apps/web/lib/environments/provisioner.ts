@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   assertEnvironmentTransition,
@@ -635,7 +635,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(
           and(
             eq(schema.environmentOperations.id, operationId),
-            eq(schema.environmentOperations.status, "queued")
+            inArray(schema.environmentOperations.status, ["queued", "running"])
           )
         )
         .returning({

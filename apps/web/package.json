@@ -39,7 +39,7 @@
     "test:knowledge-rag:unit": "pnpm exec tsx --test tests/fixtures/knowledge-rag/fixture-corpus.test.ts lib/knowledge/documents/shared.test.ts lib/knowledge/documents/retrieval.test.ts",
     "test:knowledge-page:unit": "pnpm exec tsx --test app/knowledge/knowledge-explorer.test.ts",
     "test:knowledge-rag:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test tests/e2e/knowledge-rag.test.ts",
-    "test:environment:postgres": "node -e \"if (!process.env.KESTREL_ENVIRONMENT_DB_TEST_URL) throw new Error('KESTREL_ENVIRONMENT_DB_TEST_URL is required')\" && node --conditions=react-server --import tsx --test lib/environments/store.postgres.test.ts",
+    "test:environment:postgres": "node -e \"if (!process.env.KESTREL_ENVIRONMENT_DB_TEST_URL) throw new Error('KESTREL_ENVIRONMENT_DB_TEST_URL is required')\" && node --conditions=react-server --import tsx --test lib/environments/*.postgres.test.ts",
     "canary:environment:fly": "tsx scripts/environment-fly-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",
     "preflight:environment:hosted": "tsx scripts/hosted-environment-preflight.ts",

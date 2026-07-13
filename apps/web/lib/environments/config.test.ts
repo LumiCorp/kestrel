@@ -10,6 +10,7 @@ import {
 function validEnvironment() {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   return {
+    CRON_SECRET: "cron-secret",
     FLY_API_TOKEN: "FlyV1 example",
     KESTREL_FLY_ORGANIZATION_SLUG: "personal",
     KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: privateKey.export({

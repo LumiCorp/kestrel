@@ -13,13 +13,14 @@ export async function reconcileHostedEnvironments() {
     token: process.env.FLY_API_TOKEN ?? "",
     organizationSlug: process.env.KESTREL_FLY_ORGANIZATION_SLUG ?? "",
   });
-  const queuedOperations =
+  const recoverableOperations =
     await knowledgeDb.query.environmentOperations.findMany({
-      where: (table, { eq }) => eq(table.status, "queued"),
+      where: (table, { inArray }) =>
+        inArray(table.status, ["queued", "running"]),
       columns: { id: true },
       limit: 100,
     });
-  for (const operation of queuedOperations) {
+  for (const operation of recoverableOperations) {
     try {
       await processEnvironmentOperation(operation.id);
     } catch {}
@@ -80,7 +81,7 @@ export async function reconcileHostedEnvironments() {
   await expireWorkspaceBackups(now);
   await createDueDailyBackup(now);
   return {
-    queuedOperationCount: queuedOperations.length,
+    operationCount: recoverableOperations.length,
     environmentGatewayCount,
     workspaceCount: workspaces.length,
   };

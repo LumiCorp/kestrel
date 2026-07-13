@@ -17,6 +17,7 @@ test(
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
     process.env.KESTREL_ENVIRONMENTS_ENABLED = "true";
+    process.env.CRON_SECRET = "cron-secret";
 
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
@@ -48,12 +49,14 @@ test(
       executionRoute,
       auth,
       githubPolicy,
+      provisioning,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("./store"),
       import("./execution-route"),
       import("@lumi/kestrel-environment-auth"),
       import("@/lib/integrations/github-policy"),
+      import("./provisioner"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
@@ -306,6 +309,22 @@ test(
     assert.equal(
       idleWorkspace?.lastActivityAt.toISOString(),
       idleAt.toISOString()
+    );
+    assert.equal(
+      (
+        await provisioning.databaseEnvironmentProvisioningRepository.claimOperation(
+          idleOperation?.id ?? ""
+        )
+      )?.id,
+      idleOperation?.id
+    );
+    assert.equal(
+      (
+        await provisioning.databaseEnvironmentProvisioningRepository.claimOperation(
+          idleOperation?.id ?? ""
+        )
+      )?.id,
+      idleOperation?.id
     );
     await assert.rejects(
       environmentStore.requestWorkspaceIdleStop({
