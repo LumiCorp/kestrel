@@ -15,7 +15,9 @@ import {
   runSplashDatabasePreflight,
 } from "../../cli/app/TuiBootstrap.js";
 import { applyLocalCoreShellEnvironment, formatCliLocalCoreStatus } from "../../cli/localCoreShell.js";
+import { createConfiguredCliProtocolClient } from "../../cli/client/configuredClient.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import { writeRuntimeSettings } from "../../cli/config/RuntimeSettings.js";
 import { DiagnosticLogStore } from "../../cli/diagnostics/DiagnosticLogStore.js";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
@@ -33,6 +35,7 @@ import type { InkAppController } from "../../cli/ink/AppRoot.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
+import { startLocalCoreApiServer } from "../../src/localCore/api.js";
 
 async function createAppHarness(input: {
   activeProfileId?: string;
@@ -316,6 +319,82 @@ test("bootstrapTuiApp defaults to shared Local Core home", async () => {
     } else {
       process.env.KESTREL_DATABASE_URL_SOURCE = previousDatabaseUrlSource;
     }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bootstrapTuiApp ignores legacy client persistence defaults", async () => {
+  const root = await mkdtemp(path.join("/tmp", "kestrel-legacy-store-"));
+  const cwd = path.join(root, "cwd");
+  const home = path.join(root, "home");
+  await mkdir(cwd, { recursive: true });
+  await writeRuntimeSettings(home, {
+    version: 1,
+    defaults: {
+      profileId: "reference",
+      storeDriver: "postgres",
+      sqlitePath: "legacy-runtime.db",
+    },
+  });
+
+  try {
+    const bootstrap = await bootstrapTuiApp({ cwd, kestrelHome: home, scripted: true });
+    assert.notEqual(bootstrap.activeProfile.storeDriver, "postgres");
+    assert.match(
+      bootstrap.startupNotices.join("\n"),
+      /Legacy client database settings are ignored/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bootstrapTuiApp carries a custom home's resolved Core transport into the App client", async () => {
+  const root = await mkdtemp(path.join("/tmp", "kestrel-custom-home-core-"));
+  const cwd = path.join(root, "cwd");
+  const home = path.join(root, "home");
+  await mkdir(cwd, { recursive: true });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.5.1",
+    idleTimeoutMs: 0,
+  });
+  const previousDirect = process.env.KESTREL_LOCAL_CORE_DIRECT;
+  const previousSocket = process.env.KESTREL_LOCAL_CORE_API_SOCKET;
+  const previousToken = process.env.KESTREL_LOCAL_CORE_API_TOKEN;
+  process.env.KESTREL_LOCAL_CORE_DIRECT = "0";
+  delete process.env.KESTREL_LOCAL_CORE_API_SOCKET;
+  delete process.env.KESTREL_LOCAL_CORE_API_TOKEN;
+
+  try {
+    const bootstrap = await bootstrapTuiApp({ cwd, kestrelHome: home, scripted: true });
+    assert.equal(bootstrap.runnerTransportEnv.KESTREL_LOCAL_CORE_API_SOCKET, server.socketPath);
+    assert.equal(bootstrap.runnerTransportEnv.KESTREL_LOCAL_CORE_API_TOKEN, server.token);
+    const client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv);
+    try {
+      const pong = await client.sendCommand("runner.ping", { nonce: "custom-home" });
+      assert.equal(pong.type, "runner.pong");
+    } finally {
+      await client.close();
+    }
+  } finally {
+    if (previousDirect === undefined) {
+      delete process.env.KESTREL_LOCAL_CORE_DIRECT;
+    } else {
+      process.env.KESTREL_LOCAL_CORE_DIRECT = previousDirect;
+    }
+    if (previousSocket === undefined) {
+      delete process.env.KESTREL_LOCAL_CORE_API_SOCKET;
+    } else {
+      process.env.KESTREL_LOCAL_CORE_API_SOCKET = previousSocket;
+    }
+    if (previousToken === undefined) {
+      delete process.env.KESTREL_LOCAL_CORE_API_TOKEN;
+    } else {
+      process.env.KESTREL_LOCAL_CORE_API_TOKEN = previousToken;
+    }
+    await server.close();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -9,6 +9,12 @@ import {
   type DesktopProjectLauncherDescriptor,
 } from "../desktopShell/contracts.js";
 import type { ResolvedModelPolicy } from "../profile/modelPolicy.js";
+import type {
+  ReplayDoctorReport,
+  ReplayQuery,
+  ReplayResult,
+} from "../replay/RunReplayService.js";
+import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import type { LocalCoreStatus } from "./contracts.js";
 
 export interface LocalCoreClientOptions {
@@ -231,6 +237,21 @@ export class LocalCoreClient {
 
   async runs(): Promise<unknown> {
     return await this.get("/v1/runs");
+  }
+
+  async runtimeReplay(query: ReplayQuery): Promise<ReplayResult> {
+    const response = await this.post("/v1/runtime/replay", { query });
+    return readObjectField<ReplayResult>(response, "replay", "runtime replay");
+  }
+
+  async runtimeDoctor(query: ReplayQuery): Promise<ReplayDoctorReport> {
+    const response = await this.post("/v1/runtime/doctor", { query });
+    return readObjectField<ReplayDoctorReport>(response, "doctor", "runtime doctor");
+  }
+
+  async runtimeBundle(query: ReplayQuery): Promise<RuntimeReplayBundleV1> {
+    const response = await this.post("/v1/runtime/bundle", { query });
+    return readObjectField<RuntimeReplayBundleV1>(response, "bundle", "runtime bundle");
   }
 
   async diagnostics(): Promise<unknown> {

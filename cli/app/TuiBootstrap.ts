@@ -88,6 +88,7 @@ export interface TuiBootstrapResult {
   uiStore: UiStore;
   startupNotices: string[];
   localCoreStatus: CliLocalCoreStatus;
+  runnerTransportEnv: NodeJS.ProcessEnv;
 }
 
 export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootstrapResult> {
@@ -95,15 +96,14 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
     preferDotEnvKeys: [...PREFERRED_DOT_ENV_KEYS],
   });
 
-  const localCoreStatus = options.kestrelHome !== undefined
-    ? await ensureCliLocalCoreReady({
-        env: {
-          ...process.env,
-          KESTREL_HOME: options.kestrelHome,
-          KESTREL_CORE_HOME: undefined,
-        },
-      })
-    : await ensureCliLocalCoreReady();
+  const localCoreEnv = options.kestrelHome !== undefined
+    ? {
+        ...process.env,
+        KESTREL_HOME: options.kestrelHome,
+        KESTREL_CORE_HOME: undefined,
+      }
+    : process.env;
+  const localCoreStatus = await ensureCliLocalCoreReady({ env: localCoreEnv });
   const home = options.kestrelHome ?? localCoreStatus.home.homePath ?? resolveKestrelHomePath();
   const profileStore = new ProfileStore(home);
   const sessionStore = new SessionStore(home);
@@ -116,6 +116,14 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
     `Kestrel Local Core ${localCoreStatus.state}: ${localCoreStatus.home.homePath} (${localCoreStatus.home.source}${localCoreStatus.home.isolated ? ", isolated/dev" : ""}).`,
   );
   const runtimeSettings = await readRuntimeSettings(home);
+  if (
+    runtimeSettings.defaults.storeDriver !== undefined
+    || runtimeSettings.defaults.sqlitePath !== undefined
+  ) {
+    startupNotices.push(
+      "Legacy client database settings are ignored; Local Core owns persistence selection.",
+    );
+  }
   if (runtimeSettings.defaults.minimalMode === true) {
     startupNotices.push("Setup minimal mode is enabled (plan+safe defaults).");
   }
@@ -183,7 +191,25 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
     uiStore,
     startupNotices,
     localCoreStatus,
+    runnerTransportEnv: pickRunnerTransportEnvironment(localCoreEnv),
   };
+}
+
+function pickRunnerTransportEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const keys = [
+    "KESTREL_RUNNER_SERVICE_URL",
+    "KESTREL_RUNNER_SERVICE_TOKEN",
+    "KESTREL_LOCAL_CORE_API_SOCKET",
+    "KESTREL_LOCAL_CORE_API_TOKEN",
+  ] as const;
+  const selected: NodeJS.ProcessEnv = {};
+  for (const key of keys) {
+    const value = env[key];
+    if (value !== undefined) {
+      selected[key] = value;
+    }
+  }
+  return selected;
 }
 
 export function deriveStartupPersistedUiState(
@@ -641,7 +667,6 @@ function applyRuntimeSettingsProfileDefaults(
   const defaults = runtimeSettings.defaults;
   return {
     ...profile,
-    ...(defaults.storeDriver !== undefined ? { storeDriver: defaults.storeDriver } : {}),
     ...(defaults.approvalPolicyPackId !== undefined
       ? { approvalPolicyPackId: defaults.approvalPolicyPackId }
       : {}),

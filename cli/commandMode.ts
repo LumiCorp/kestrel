@@ -10,12 +10,11 @@ import {
   searchProviderModelCatalog,
   type ToolExecutionClass,
 } from "../src/index.js";
-import { createSessionStoreFromEnv } from "../src/store/createSessionStore.js";
+import type { ReplayQuery } from "../src/replay/RunReplayService.js";
+import type { LocalCoreClient } from "../src/localCore/client.js";
 import type { TuiProfile } from "./contracts.js";
-import { InProcessRunnerTransport } from "./client/InProcessRunnerTransport.js";
-import { ProtocolClient } from "./client/ProtocolClient.js";
-import type { ProtocolTransport } from "./client/ProtocolClient.js";
-import { RunnerProcess } from "./client/RunnerProcess.js";
+import { createConfiguredCliProtocolClient } from "./client/configuredClient.js";
+import { toCoreExecutionProfile } from "./client/coreExecutionProfile.js";
 import { COMMAND_MODE_COMMANDS } from "./contractMatrix.js";
 import { ProfileStore } from "./config/ProfileStore.js";
 import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "./config/RuntimeSettings.js";
@@ -28,7 +27,7 @@ import type {
   OperatorControlCommandPayload,
   RunnerEvent,
 } from "./protocol/contracts.js";
-import { writeDoctorReport, writeRuntimeReplayBundle } from "./runtime/replayBundle.js";
+import { formatDoctorInspection, formatReplayInspection } from "./runtime/inspectionFormatting.js";
 import { runWebCommand } from "./webCommand.js";
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
 import { resolveWorkspaceFromCwd } from "./workspace/WorkspaceResolver.js";
@@ -60,7 +59,6 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
     return;
   }
   if (command === "web") {
-    await ensureCliLocalCoreReady();
     await runWebCommand(rest, cwd);
     return;
   }
@@ -70,8 +68,8 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
     return;
   }
   if (command === "operator") {
-    await ensureCliLocalCoreReady();
-    await runOperatorCommand(rest, cwd);
+    const core = await ensureCliLocalCoreReady();
+    await runOperatorCommand(rest, cwd, core.client);
     return;
   }
   if (command === "setup") {
@@ -80,8 +78,8 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
     return;
   }
   if (command === "runtime") {
-    await ensureCliLocalCoreReady();
-    await runRuntimeCommand(rest, cwd);
+    const core = await ensureCliLocalCoreReady();
+    await runRuntimeCommand(rest, cwd, core.client);
     return;
   }
 
@@ -333,16 +331,21 @@ async function writeCommandModeModelPolicy(
 async function runJobCommand(args: string[], cwd: string): Promise<void> {
   const [subcommand, ...rest] = args;
   if (subcommand !== "run") {
-    throw new Error("Usage: kestrel job run --json-in <file> --json-out <file> [--profile <id>] [--store auto|postgres|sqlite]");
+    throw new Error("Usage: kestrel job run --json-in <file> --json-out <file> [--profile <id>]");
   }
+  rejectClientOwnedStoreSelection(rest, "kestrel job run");
   const jsonIn = readRequiredFlag(rest, "--json-in");
   const jsonOut = readRequiredFlag(rest, "--json-out");
   const profileIdFlag = readFlag(rest, "--profile");
-  const storeDriver = readOptionalStoreDriver(readFlag(rest, "--store"));
 
   const settings = await readRuntimeSettings(resolveKestrelHome(cwd));
   const rawInput = await readFile(resolveFromCwd(cwd, jsonIn), "utf8");
   const input = parseJobInputV1(JSON.parse(rawInput));
+  if (input.storeDriver !== undefined) {
+    throw new Error(
+      "job input storeDriver is no longer supported; Local Core owns persistence for every local run.",
+    );
+  }
   const home = resolveKestrelHome(cwd);
   const profileStore = new ProfileStore(home);
   const profiles = await profileStore.load();
@@ -355,10 +358,7 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
     inputProfile: input.profile,
   });
   const effectiveProfile: TuiProfile = {
-    ...profile,
-    ...(settings.defaults.storeDriver !== undefined ? { storeDriver: settings.defaults.storeDriver } : {}),
-    ...(storeDriver !== undefined ? { storeDriver } : {}),
-    ...(input.storeDriver !== undefined ? { storeDriver: input.storeDriver } : {}),
+    ...toCoreExecutionProfile(profile),
     ...(settings.defaults.approvalPolicyPackId !== undefined
       ? { approvalPolicyPackId: settings.defaults.approvalPolicyPackId }
       : {}),
@@ -367,7 +367,7 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       : {}),
   };
 
-  const client = new ProtocolClient(createCommandModeTransport(cwd));
+  const client = createConfiguredCliProtocolClient();
   const eventLogPath = process.env.KESTREL_JOB_EVENT_LOG_PATH?.trim();
   const unsubscribe =
     eventLogPath !== undefined && eventLogPath.length > 0
@@ -411,15 +411,19 @@ export function buildResolvedJobRunCommandPayload(
   input: JobInputV1,
   effectiveProfile: TuiProfile,
 ): JobRunCommandPayload {
+  if (input.storeDriver !== undefined) {
+    throw new Error(
+      "job input storeDriver is no longer supported; Local Core owns persistence for every local run.",
+    );
+  }
   return {
-    profile: effectiveProfile,
+    profile: toCoreExecutionProfile(effectiveProfile),
     input: {
       version: input.version,
       turn: {
         ...input.turn,
         eventType: input.turn.eventType ?? "job.run",
       },
-      ...(input.storeDriver !== undefined ? { storeDriver: input.storeDriver } : {}),
       ...(input.approvalPolicyPackId !== undefined
         ? { approvalPolicyPackId: input.approvalPolicyPackId }
         : {}),
@@ -427,12 +431,16 @@ export function buildResolvedJobRunCommandPayload(
   };
 }
 
-async function runOperatorCommand(args: string[], cwd: string): Promise<void> {
+async function runOperatorCommand(
+  args: string[],
+  cwd: string,
+  localCoreClient?: LocalCoreClient | undefined,
+): Promise<void> {
   const [subcommand, ...rest] = args;
   if (subcommand === "resume-wait") {
     const threadId = readRequiredFlag(rest, "--thread-id");
     const reason = readFlag(rest, "--reason");
-    await sendOperatorControl(cwd, {
+    await sendOperatorControl({
       action: "retry",
       threadId,
       ...(reason !== undefined ? { message: reason } : {}),
@@ -445,7 +453,7 @@ async function runOperatorCommand(args: string[], cwd: string): Promise<void> {
     const requestId = readRequiredFlag(rest, "--request-id");
     const allowToolClasses = parseToolClasses(readMultiFlag(rest, "--allow-tool-class"));
     const allowCapabilities = readMultiFlag(rest, "--allow-capability");
-    await sendOperatorControl(cwd, {
+    await sendOperatorControl({
       action: "approve",
       threadId,
       requestId,
@@ -460,7 +468,7 @@ async function runOperatorCommand(args: string[], cwd: string): Promise<void> {
   if (subcommand === "retry-delegation") {
     const threadId = readRequiredFlag(rest, "--thread-id");
     const delegationId = readRequiredFlag(rest, "--delegation-id");
-    await sendOperatorControl(cwd, {
+    await sendOperatorControl({
       action: "supersede_child_thread",
       threadId,
       delegationId,
@@ -472,16 +480,10 @@ async function runOperatorCommand(args: string[], cwd: string): Promise<void> {
   if (subcommand === "doctor-export") {
     const runId = readRequiredFlag(rest, "--run-id");
     const outPath = readRequiredFlag(rest, "--out");
-    const storeDriver = readOptionalStoreDriver(readFlag(rest, "--store"));
-    const handle = createSessionStoreFromEnv({
-      ...(storeDriver !== undefined ? { driver: storeDriver } : {}),
-    });
-    try {
-      const report = await writeDoctorReport(handle.store, { runId }, resolveFromCwd(cwd, outPath));
-      process.stdout.write(`doctor report exported: ${outPath} status=${report.status}\n`);
-    } finally {
-      await handle.close();
-    }
+    rejectClientOwnedStoreSelection(rest, "kestrel operator doctor-export");
+    const report = await requireLocalCoreClient(cwd, localCoreClient).runtimeDoctor({ runId });
+    await writeJson(resolveFromCwd(cwd, outPath), report);
+    process.stdout.write(`doctor report exported: ${outPath} status=${report.status}\n`);
     return;
   }
   throw new Error(
@@ -490,6 +492,11 @@ async function runOperatorCommand(args: string[], cwd: string): Promise<void> {
 }
 
 async function runSetupCommand(args: string[], cwd: string): Promise<void> {
+  if (hasFlagOrAssignment(args, "--store") || hasFlagOrAssignment(args, "--sqlite-path")) {
+    throw new Error(
+      "kestrel setup no longer accepts --store or --sqlite-path; Local Core owns database configuration.",
+    );
+  }
   const home = resolveKestrelHome(cwd);
   const profileStore = new ProfileStore(home);
   const profiles = await profileStore.load();
@@ -502,16 +509,12 @@ async function runSetupCommand(args: string[], cwd: string): Promise<void> {
   if (selectedProfile === undefined) {
     throw new Error(`Profile '${explicitProfileId}' not found.`);
   }
-  const storeDriver = readOptionalStoreDriver(readFlag(args, "--store")) ?? "auto";
-  const sqlitePath = readFlag(args, "--sqlite-path");
   const approvalPolicyPackId = readOptionalApprovalPack(readFlag(args, "--approval-pack")) ?? "dev";
   const minimalMode = args.includes("--full") ? false : true;
   const nextSettings: RuntimeSettingsFile = {
     version: 1,
     defaults: {
       profileId: selectedProfile.id,
-      storeDriver,
-      ...(sqlitePath !== undefined ? { sqlitePath } : {}),
       approvalPolicyPackId,
       minimalMode,
     },
@@ -522,7 +525,7 @@ async function runSetupCommand(args: string[], cwd: string): Promise<void> {
       "kestrel setup complete",
       `home: ${home}`,
       `profile: ${selectedProfile.id}`,
-      `store: ${storeDriver}`,
+      "database: Local Core (PGlite by default)",
       `approval-pack: ${approvalPolicyPackId}`,
       `minimal-mode: ${minimalMode ? "on" : "off"}`,
       "next: run `kestrel job run --json-in <file> --json-out <file>` or `kestrel`",
@@ -530,32 +533,55 @@ async function runSetupCommand(args: string[], cwd: string): Promise<void> {
   );
 }
 
-async function runRuntimeCommand(args: string[], cwd: string): Promise<void> {
+async function runRuntimeCommand(
+  args: string[],
+  cwd: string,
+  localCoreClient?: LocalCoreClient | undefined,
+): Promise<void> {
   const [subcommand, ...rest] = args;
-  if (subcommand !== "bundle") {
-    throw new Error("Usage: kestrel runtime bundle --run-id|--thread-id <id> --out <file> [--store auto|postgres|sqlite]");
-  }
-  const outPath = readRequiredFlag(rest, "--out");
-  const storeDriver = readOptionalStoreDriver(readFlag(rest, "--store"));
-  const query = readReplayQueryFlags(rest);
-  const handle = createSessionStoreFromEnv({
-    ...(storeDriver !== undefined ? { driver: storeDriver } : {}),
-  });
-  try {
-    const bundle = await writeRuntimeReplayBundle(handle.store, query, resolveFromCwd(cwd, outPath));
-    process.stdout.write(
-      `runtime bundle exported: ${outPath} run=${bundle.focus.runId ?? "n/a"} thread=${bundle.focus.threadId ?? "n/a"}\n`,
+  if (subcommand !== "replay" && subcommand !== "doctor" && subcommand !== "bundle") {
+    throw new Error(
+      "Usage: kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>",
     );
-  } finally {
-    await handle.close();
   }
+  rejectClientOwnedStoreSelection(rest, `kestrel runtime ${subcommand}`);
+  const query = readReplayQueryFlags(rest);
+  const client = requireLocalCoreClient(cwd, localCoreClient);
+  if (subcommand === "replay") {
+    const replay = await client.runtimeReplay(query);
+    if (rest.includes("--json")) {
+      process.stdout.write(`${JSON.stringify(replay, null, 2)}\n`);
+    } else {
+      for (const line of formatReplayInspection(replay)) {
+        process.stdout.write(`${line}\n`);
+      }
+    }
+    return;
+  }
+  if (subcommand === "doctor") {
+    const report = await client.runtimeDoctor(query);
+    if (rest.includes("--json")) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    } else {
+      for (const line of formatDoctorInspection(report)) {
+        process.stdout.write(`${line}\n`);
+      }
+    }
+    return;
+  }
+
+  const outPath = readRequiredFlag(rest, "--out");
+  const bundle = await client.runtimeBundle(query);
+  await writeJson(resolveFromCwd(cwd, outPath), bundle);
+  process.stdout.write(
+    `runtime bundle exported: ${outPath} run=${bundle.focus.runId ?? "n/a"} thread=${bundle.focus.threadId ?? "n/a"}\n`,
+  );
 }
 
 async function sendOperatorControl(
-  cwd: string,
   payload: OperatorControlCommandPayload,
 ): Promise<void> {
-  const client = new ProtocolClient(createCommandModeTransport(cwd));
+  const client = createConfiguredCliProtocolClient();
   try {
     const response = await client.sendCommand("operator.control", payload);
     if (response.type !== "operator.controlled") {
@@ -588,29 +614,7 @@ function resolveJobProfile(input: {
   return input.profileStore.getDefault(input.profiles);
 }
 
-function createCommandModeTransport(cwd: string): ProtocolTransport {
-  return resolveCommandModeRunnerMode(process.env) === "inprocess"
-    ? new InProcessRunnerTransport()
-    : new RunnerProcess({ cwd });
-}
-
-export function resolveCommandModeRunnerModeForTests(env: NodeJS.ProcessEnv): "child" | "inprocess" {
-  return resolveCommandModeRunnerMode(env);
-}
-
-function resolveCommandModeRunnerMode(env: NodeJS.ProcessEnv): "child" | "inprocess" {
-  const raw = env.KESTREL_RUNNER_PROCESS_MODE ?? env.KCHAT_RUNNER_MODE;
-  const normalized = raw?.trim().toLowerCase();
-  return normalized === "inprocess" || normalized === "in_process" ? "inprocess" : "child";
-}
-
-function readReplayQueryFlags(args: string[]): {
-  runId?: string | undefined;
-  sessionId?: string | undefined;
-  threadId?: string | undefined;
-  delegationId?: string | undefined;
-  limit?: number | undefined;
-} {
+function readReplayQueryFlags(args: string[]): ReplayQuery {
   const runId = readFlag(args, "--run-id");
   const sessionId = readFlag(args, "--session-id");
   const threadId = readFlag(args, "--thread-id");
@@ -626,6 +630,32 @@ function readReplayQueryFlags(args: string[]): {
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
+}
+
+function requireLocalCoreClient(
+  cwd: string,
+  localCoreClient?: LocalCoreClient | undefined,
+): LocalCoreClient {
+  if (localCoreClient !== undefined) {
+    return localCoreClient;
+  }
+  const resolved = resolveLocalCoreStoreClient(resolveKestrelHome(cwd));
+  if (resolved === undefined) {
+    throw new Error("This command requires the authenticated Local Core API.");
+  }
+  return resolved.client;
+}
+
+function rejectClientOwnedStoreSelection(args: string[], command: string): void {
+  if (hasFlagOrAssignment(args, "--store")) {
+    throw new Error(
+      `${command} no longer accepts --store; Local Core owns persistence selection.`,
+    );
+  }
+}
+
+function hasFlagOrAssignment(args: string[], flag: string): boolean {
+  return args.some((value) => value === flag || value.startsWith(`${flag}=`));
 }
 
 function readFlag(args: string[], name: string): string | undefined {
@@ -691,16 +721,6 @@ function readOptionalInteger(value: string | undefined): number | undefined {
     throw new Error("Expected a positive integer.");
   }
   return parsed;
-}
-
-function readOptionalStoreDriver(value: string | undefined): "auto" | "postgres" | "sqlite" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "auto" || value === "postgres" || value === "sqlite") {
-    return value;
-  }
-  throw new Error(`Unsupported store driver '${value}'. Expected auto|postgres|sqlite.`);
 }
 
 function readOptionalApprovalPack(value: string | undefined): "dev" | "ci_bot" | "production" | undefined {

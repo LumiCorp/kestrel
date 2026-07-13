@@ -172,8 +172,8 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "job",
-        usage: "kestrel job run --json-in <file> --json-out <file> [--profile <id>] [--store auto|postgres|sqlite]",
-        flags: ["--json-in", "--json-out", "--profile", "--store"],
+        usage: "kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+        flags: ["--json-in", "--json-out", "--profile"],
       },
       {
         command: "operator",
@@ -191,13 +191,14 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "runtime",
-        usage: "kestrel runtime bundle --run-id|--thread-id <id> --out <file> [--store auto|postgres|sqlite]",
-        flags: ["--run-id", "--session-id", "--thread-id", "--delegation-id", "--out", "--store", "--limit"],
+        usage:
+          "kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>",
+        flags: ["--run-id", "--session-id", "--thread-id", "--delegation-id", "--out", "--limit", "--json"],
       },
       {
         command: "setup",
-        usage: "kestrel setup [--profile <id>] [--store auto|postgres|sqlite] [--sqlite-path <path>] [--approval-pack dev|ci_bot|production] [--full]",
-        flags: ["--profile", "--store", "--sqlite-path", "--approval-pack", "--full"],
+        usage: "kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
+        flags: ["--profile", "--approval-pack", "--full"],
       },
     ],
     slashCommands: [...SLASH_COMMANDS],
@@ -210,7 +211,7 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       "Legacy ambiguous command/flag aliases are intentionally excluded from the frozen matrix.",
       "Streaming protocol commands must use /commands/stream on runner-service.",
       "job.run is the protocol-native non-interactive surface for strict JSON IO.",
-      "store driver sqlite is local durable mode backed by PGlite with runtime.db defaults.",
+      "Local Core owns persistence selection for every local command and run.",
     ],
   };
 }

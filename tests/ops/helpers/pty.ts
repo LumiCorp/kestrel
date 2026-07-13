@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import type { TuiSessionMeta } from "../../../cli/contracts.js";
 import { SessionStore } from "../../../cli/session/SessionStore.js";
+import { resolveLocalCorePaths } from "../../../src/localCore/home.js";
 import { seedTuiHome } from "./tuiHome.js";
 
 const ANSI_PATTERN =
@@ -75,8 +76,10 @@ export async function runTuiScenarioWithSession(input: {
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
   const tempDir = path.join(os.tmpdir(), `kestrel-pty-${randomUUID()}`);
   const homeDir = path.join(tempDir, "home");
+  const coreProductRoot = path.join(tempDir, "core-home");
+  const corePaths = resolveLocalCorePaths(coreProductRoot);
   await mkdir(tempDir, { recursive: true });
-  await seedTuiHome(homeDir);
+  await seedTuiHome(corePaths.stateRootPath);
 
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = JSON.stringify({
@@ -85,7 +88,6 @@ export async function runTuiScenarioWithSession(input: {
       "--import",
       "tsx",
       path.resolve(process.cwd(), "cli/tui.ts"),
-      "--inprocess-runner",
       "--scripted",
       ...(input.freshSessionName !== undefined
         ? ["--new-session", input.freshSessionName]
@@ -98,6 +100,10 @@ export async function runTuiScenarioWithSession(input: {
       ...(input.env ?? {}),
       HOME: homeDir,
       DATABASE_URL: input.databaseUrl,
+      KESTREL_CORE_HOME: coreProductRoot,
+      KESTREL_CORE_DATABASE_MODE: "external",
+      KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
+      KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
       KESTREL_DISABLE_DOTENV: "1",
       OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
       TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
@@ -121,7 +127,7 @@ export async function runTuiScenarioWithSession(input: {
     if (result.exitCode !== 0) {
       throw new Error(normalizeTerminalOutput(result.stderr || result.stdout));
     }
-    const sessionStore = new SessionStore(path.join(homeDir, ".kestrel"));
+    const sessionStore = new SessionStore(corePaths.stateRootPath);
     const sessionsFile = await sessionStore.load();
     const session =
       input.freshSessionName !== undefined
@@ -135,8 +141,37 @@ export async function runTuiScenarioWithSession(input: {
       session,
     };
   } finally {
+    await stopTestOwnedLocalCore(corePaths.lockPath);
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
+  let ownerPid: number | undefined;
+  try {
+    const lock = JSON.parse(await readFile(lockPath, "utf8")) as { ownerPid?: unknown };
+    ownerPid = typeof lock.ownerPid === "number" ? lock.ownerPid : undefined;
+  } catch {
+    return;
+  }
+  if (ownerPid === undefined || ownerPid === process.pid) {
+    return;
+  }
+  try {
+    process.kill(ownerPid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    try {
+      process.kill(ownerPid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Test-owned Local Core pid ${ownerPid} did not stop.`);
 }
 
 async function runPythonDriver(scriptPath: string, payload: string): Promise<{

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   createServer as createHttpServer,
   request as httpRequest,
@@ -9,6 +9,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { createRequire } from "node:module";
 import { createServer, type Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +22,8 @@ import {
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_EVENT_CONTRACT_VERSION,
 } from "../../packages/protocol/src/index.js";
+import { LocalCoreClient } from "../../src/localCore/client.js";
+import { resolveLocalCorePaths } from "../../src/localCore/home.js";
 
 const execFileAsync = promisify(execFile);
 const CURL_REQUEST_TIMEOUT_SECONDS = "5";
@@ -130,6 +133,64 @@ test("kestrel web answers authenticated curl runner.ping requests", async (t) =>
   assert.match(String(pingBody.id ?? ""), /./u);
   assert.match(String(pingBody.ts ?? ""), /\d{4}-\d{2}-\d{2}T/u);
   assert.equal(pingBody.payload?.nonce, "ok");
+});
+
+test("kestrel web loads project provider credentials before starting Local Core", async () => {
+  const root = await mkdtemp(path.join("/tmp", "kestrel-web-dotenv-"));
+  const cwd = path.join(root, "project");
+  const coreHome = path.join(root, "core-home");
+  const corePaths = resolveLocalCorePaths(coreHome);
+  await mkdir(cwd, { recursive: true });
+  await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=dotenv-openrouter-key\n", "utf8");
+  const port = await reservePort();
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    KESTREL_CORE_HOME: coreHome,
+    KESTREL_HOME: coreHome,
+    KESTREL_LOCAL_CORE_DIRECT: "0",
+    KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
+    FORCE_COLOR: "0",
+  };
+  delete childEnv.OPENROUTER_API_KEY;
+  delete childEnv.KESTREL_DISABLE_DOTENV;
+  delete childEnv.KESTREL_LOCAL_CORE_API_SOCKET;
+  delete childEnv.KESTREL_LOCAL_CORE_API_TOKEN;
+
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      createRequire(import.meta.url).resolve("tsx"),
+      path.resolve(process.cwd(), "cli/tui.ts"),
+      "web",
+      "--port",
+      String(port),
+    ],
+    { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+  child.stdout.on("data", (chunk) => stdoutChunks.push(chunk.toString("utf8")));
+  child.stderr.on("data", (chunk) => stderrChunks.push(chunk.toString("utf8")));
+  const exitPromise = waitForClose(child);
+
+  try {
+    await waitForOutput(stdoutChunks, /export KESTREL_RUNNER_SERVICE_TOKEN=/u, 30_000);
+    const coreToken = (await readFile(corePaths.apiTokenPath, "utf8")).trim();
+    const client = new LocalCoreClient({ socketPath: corePaths.apiSocketPath, token: coreToken });
+    const readiness = await client.providerReadiness() as {
+      providerReadiness?: { openrouter?: { ready?: boolean | undefined } | undefined } | undefined;
+    };
+    assert.equal(readiness.providerReadiness?.openrouter?.ready, true);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGINT");
+    }
+    const exit = await exitPromise;
+    await stopLocalCoreFromLock(corePaths.lockPath);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(exit.code, 0, stderrChunks.join(""));
+  }
 });
 
 test("kestrel web runs quick chat-lane agent interactions against a fake model backend", async (t) => {
@@ -397,7 +458,55 @@ async function startWebRunner(
 }> {
   const repoRoot = process.cwd();
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-web-command-"));
+  const corePaths = resolveLocalCorePaths(kestrelHome);
   const port = await reservePort();
+  const coreStderrChunks: string[] = [];
+  const core = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      path.resolve(repoRoot, "src/localCore/daemonMain.ts"),
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        ...envOverrides,
+        KESTREL_HOME: kestrelHome,
+        KESTREL_DISABLE_DOTENV: "1",
+        KESTREL_LOCAL_CORE_DIRECT: "0",
+        KESTREL_LOCAL_CORE_DAEMON: "1",
+        KESTREL_CORE_VERSION: "0.5.1",
+        KESTREL_CORE_OWNER_EXECUTABLE: path.resolve(repoRoot, "src/localCore/daemonMain.ts"),
+        KESTREL_CORE_REPO_ROOT: repoRoot,
+        KESTREL_CORE_RUN_MIGRATIONS: "1",
+        KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
+        FORCE_COLOR: "0",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  const coreExitPromise = waitForClose(core);
+  core.stderr.on("data", (chunk) => {
+    coreStderrChunks.push(chunk.toString("utf8"));
+  });
+  let coreToken: string;
+  try {
+    coreToken = await waitForLocalCoreReady({
+      socketPath: corePaths.apiSocketPath,
+      tokenPath: corePaths.apiTokenPath,
+      exitPromise: coreExitPromise,
+      stderrChunks: coreStderrChunks,
+    });
+  } catch (error) {
+    if (core.exitCode === null && core.signalCode === null) {
+      core.kill("SIGTERM");
+    }
+    await coreExitPromise;
+    await rm(kestrelHome, { recursive: true, force: true });
+    throw error;
+  }
   const child = spawn(
     process.execPath,
     [
@@ -415,7 +524,9 @@ async function startWebRunner(
         ...envOverrides,
         KESTREL_HOME: kestrelHome,
         KESTREL_DISABLE_DOTENV: "1",
-        KESTREL_LOCAL_CORE_DIRECT: "1",
+        KESTREL_LOCAL_CORE_DIRECT: "0",
+        KESTREL_LOCAL_CORE_API_SOCKET: corePaths.apiSocketPath,
+        KESTREL_LOCAL_CORE_API_TOKEN: coreToken,
         FORCE_COLOR: "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -444,6 +555,10 @@ async function startWebRunner(
       assert.equal(exit.code, 0);
       assert.match(stderrChunks.join(""), /runner service stopped/u);
     }
+    if (core.exitCode === null && core.signalCode === null) {
+      core.kill("SIGTERM");
+    }
+    await coreExitPromise;
     await rm(kestrelHome, { recursive: true, force: true });
   });
 
@@ -479,6 +594,73 @@ async function startWebRunner(
   };
 }
 
+async function waitForLocalCoreReady(input: {
+  socketPath: string;
+  tokenPath: string;
+  exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  stderrChunks: string[];
+}): Promise<string> {
+  const startedAt = Date.now();
+  let lastError: unknown;
+  while (Date.now() - startedAt < 30_000) {
+    const exited = await Promise.race([
+      input.exitPromise.then((result) => ({ result })),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 25)),
+    ]);
+    if (exited !== undefined) {
+      throw new Error(
+        `Local Core exited before becoming ready: ${JSON.stringify(exited.result)} ${input.stderrChunks.join("")}`,
+      );
+    }
+    try {
+      const normalizedToken = (await readFile(input.tokenPath, "utf8")).trim();
+      if (normalizedToken.length === 0) {
+        throw new Error("Local Core token was empty.");
+      }
+      const client = new LocalCoreClient({
+        socketPath: input.socketPath,
+        token: normalizedToken,
+        timeoutMs: 2_000,
+      });
+      await client.status();
+      return normalizedToken;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(
+    `Timed out waiting for Local Core: ${lastError instanceof Error ? lastError.message : String(lastError)} ${input.stderrChunks.join("")}`,
+  );
+}
+
+async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
+  let ownerPid: number | undefined;
+  try {
+    const lock = JSON.parse(await readFile(lockPath, "utf8")) as { ownerPid?: unknown };
+    ownerPid = typeof lock.ownerPid === "number" ? lock.ownerPid : undefined;
+  } catch {
+    return;
+  }
+  if (ownerPid === undefined) {
+    return;
+  }
+  try {
+    process.kill(ownerPid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    try {
+      process.kill(ownerPid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Local Core pid ${ownerPid} did not stop.`);
+}
+
 async function openEventSubscription(
   runnerUrl: string,
   runnerToken: string,
@@ -512,6 +694,7 @@ async function openEventSubscription(
         },
       },
       (response) => {
+        req.setTimeout(0);
         response.on("data", () => {
           // Keep the stream flowing until the server closes it.
         });
@@ -519,6 +702,9 @@ async function openEventSubscription(
       },
     );
     req.once("error", reject);
+    req.setTimeout(5_000, () => {
+      req.destroy(new Error("Timed out waiting for the web runner event subscription."));
+    });
     req.end(body);
   });
 

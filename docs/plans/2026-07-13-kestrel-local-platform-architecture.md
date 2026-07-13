@@ -19,6 +19,8 @@ The transition is intentionally split into ordered milestones. The execution-con
 
 The first implementation PR for execution authority is deliberately a substrate, not the completed client cutover. It adds the shared runner host, Core-owned runtime/store binding, durable protocol journal, local SDK transport, authority and shutdown invariants, and 0.6 state isolation. Follow-up PRs must migrate CLI and Desktop execution onto that boundary before the execution-authority milestone can be called complete. Packaging, updater, launchd, client credentials, scheduling replacement, and removal of legacy bundled services remain in the platform-lifecycle milestone.
 
+The CLI cutover is the next bounded authority slice. Interactive, job, and operator commands use the authenticated Core transport with explicit actor metadata; execution commands continue after client disconnection. `kestrel web` is an auth-translating TCP proxy to Core rather than another runner host, and replay, doctor, and bundle commands query Core-owned evidence instead of opening a client-selected store. Desktop remains a separate follow-up because its provider credentials and runtime settings must become Core-owned before its child runner can be removed safely.
+
 ## Target Topology
 
 ```text

@@ -172,9 +172,16 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   assert.match(packageScript, /prepareDesktopPostgresBundle\(\{/u);
   assert.match(packageScript, /strict: true/u);
   assert.match(packageScript, /verifyPreparedDesktopPostgresBundle\(\{/u);
+  assert.match(packageScript, /CLI_EXCLUDED_RUNTIME_PATHS/u);
+  assert.match(packageScript, /cli\/client\/InProcessRunnerTransport\.ts/u);
+  assert.match(packageScript, /cli\/client\/RunnerProcess\.ts/u);
+  assert.match(packageScript, /cli\/runner\/main\.ts/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /parseRunnerHealthV1\(health\.body\)/u);
+  assert.match(releaseScript, /FORBIDDEN_LIBEXEC_PATHS/u);
+  assert.match(releaseScript, /smokePackagedProtocolClient/u);
+  assert.match(releaseScript, /scripts\/kchat-smoke\.ts/u);
 });
 
 test("public CI packages and verifies macOS release artifacts from a clean checkout", async () => {

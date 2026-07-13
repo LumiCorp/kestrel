@@ -1,13 +1,12 @@
 import { mkdir } from "node:fs/promises";
-import path from "node:path";
 
 import { HistoryStore } from "../../../cli/history/HistoryStore.js";
 import { SessionStore } from "../../../cli/session/SessionStore.js";
 import type { SessionsFile, TuiHistoryRecord, TuiSessionMeta } from "../../../cli/contracts.js";
 import { OPS_FIXTURE_IDS } from "./fixtures.js";
 
-export async function seedTuiHome(baseDir: string): Promise<void> {
-  await mkdir(baseDir, { recursive: true });
+export async function seedTuiHome(home: string): Promise<void> {
+  await mkdir(home, { recursive: true });
 
   const now = "2026-03-16T12:40:00.000Z";
   const sessions: SessionsFile = {
@@ -86,7 +85,6 @@ export async function seedTuiHome(baseDir: string): Promise<void> {
     ],
   };
 
-  const home = path.join(baseDir, ".kestrel");
   const sessionStore = new SessionStore(home);
   await sessionStore.save(sessions);
 

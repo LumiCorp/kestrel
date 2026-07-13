@@ -3,7 +3,7 @@ id: cli-contract-matrix
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-07-11
+last_verified_at: 2026-07-13
 depends_on:
   - ./kchat.md
   - ./kchat-protocol.md
@@ -29,10 +29,10 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 | `status` | `kestrel status` | - |
 | `workspace` | `kestrel workspace <status|list>` | - |
 | `web` | `kestrel web ...` | - |
-| `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>] [--store auto|postgres|sqlite]` | `--json-in`, `--json-out`, `--profile`, `--store` |
+| `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | `--json-in`, `--json-out`, `--profile` |
 | `operator` | `kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...` | `--thread-id`, `--request-id`, `--allow-tool-class`, `--allow-capability`, `--delegation-id`, `--run-id`, `--out`, `--reason` |
-| `runtime` | `kestrel runtime bundle --run-id|--thread-id <id> --out <file> [--store auto|postgres|sqlite]` | `--run-id`, `--session-id`, `--thread-id`, `--delegation-id`, `--out`, `--store`, `--limit` |
-| `setup` | `kestrel setup [--profile <id>] [--store auto|postgres|sqlite] [--sqlite-path <path>] [--approval-pack dev|ci_bot|production] [--full]` | `--profile`, `--store`, `--sqlite-path`, `--approval-pack`, `--full` |
+| `runtime` | `kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>` | `--run-id`, `--session-id`, `--thread-id`, `--delegation-id`, `--out`, `--limit`, `--json` |
+| `setup` | `kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]` | `--profile`, `--approval-pack`, `--full` |
 
 ## Slash Commands
 
@@ -146,7 +146,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - Legacy ambiguous command/flag aliases are intentionally excluded from the frozen matrix.
 - Streaming protocol commands must use /commands/stream on runner-service.
 - job.run is the protocol-native non-interactive surface for strict JSON IO.
-- store driver sqlite is local durable mode backed by PGlite with runtime.db defaults.
+- Local Core owns persistence selection for every local command and run.
 
 ## Source Of Truth
 
