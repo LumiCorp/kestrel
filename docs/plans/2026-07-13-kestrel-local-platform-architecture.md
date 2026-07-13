@@ -21,6 +21,10 @@ The first implementation PR for execution authority is deliberately a substrate,
 
 The CLI cutover is the next bounded authority slice. Interactive, job, and operator commands use the authenticated Core transport with explicit actor metadata; execution commands continue after client disconnection. `kestrel web` is an auth-translating TCP proxy to Core rather than another runner host, and replay, doctor, and bundle commands query Core-owned evidence instead of opening a client-selected store. Desktop remains a separate follow-up because its provider credentials and runtime settings must become Core-owned before its child runner can be removed safely.
 
+The SDK now requires every client to select an explicit local or remote target; environment discovery and legacy top-level connection options are no longer part of the public contract. Desktop migration proceeds through two reviewable prerequisites before its behavior changes. First, shared client plumbing gives Desktop a reusable Unix-socket transport and a Core-owned registered profile reference, so the UI can shape requests without sending an inline runtime profile. Second, Core-owned configuration and credential resolution supplies an immutable runtime environment without exposing secrets back to Desktop. Only after both prerequisites land does Desktop replace its managed child runner with the Local Core transport, preserve runs across client disconnects, and stop mutating Core-owned storage directly.
+
+Credential storage and Desktop cutover form one activation boundary even when their substrate is reviewed separately. Local Core may gain typed credential-store and explicit-environment abstractions ahead of the cutover, but plaintext migration, rejection of legacy secret fields, and secure credential activation must not strand the existing Desktop child runner. No control API will lease raw credentials back to a client merely to preserve that temporary execution path.
+
 ## Target Topology
 
 ```text

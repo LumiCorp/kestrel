@@ -1,4 +1,6 @@
 export * from "./contracts.js";
+export * from "./connection.js";
+export * from "./LocalCoreRunnerTransport.js";
 export * from "./home.js";
 export * from "./manifest.js";
 export * from "./lock.js";
@@ -8,5 +10,6 @@ export * from "./migrations.js";
 export * from "./legacyState.js";
 export * from "./api.js";
 export * from "./client.js";
+export * from "./profileProvider.js";
 export * from "./daemon.js";
 export * from "./desktopUiState.js";

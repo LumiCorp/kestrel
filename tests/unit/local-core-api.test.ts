@@ -7,9 +7,11 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  LOCAL_CORE_DESKTOP_PROFILE_ID,
   LocalCoreApiError,
   LocalCoreClient,
   acquireCoreLock,
+  parseLocalCoreDesktopExecutionConfig,
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
@@ -43,6 +45,11 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     const paths = resolveLocalCorePaths(home);
     assert.equal(server.socketPath, paths.apiSocketPath);
     assert.equal((await readFile(paths.apiTokenPath, "utf8")).trim(), server.token);
+    assert.equal(server.connection.socketPath, server.socketPath);
+    assert.equal(server.connection.authToken, server.token);
+    assert.deepEqual(JSON.parse(JSON.stringify(server.connection)), {
+      socketPath: server.socketPath,
+    });
 
     const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
     assert.deepEqual(await client.health(), { ok: true });
@@ -858,6 +865,175 @@ test("Local Core API owns Desktop settings and model policy", async () => {
     assert.equal(restored.settings.selectedProvider, "ollama");
     assert.equal(restored.modelPolicy.provider, "ollama");
   } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core registers a Core-owned Desktop execution profile resolved from model policy", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcdp-"));
+  const runtimeProfiles: Array<{
+    id: string;
+    modelProvider: string | undefined;
+    model: string | undefined;
+  }> = [];
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: (profile) => {
+      runtimeProfiles.push({
+        id: profile.id,
+        modelProvider: profile.modelProvider,
+        model: profile.model,
+      });
+      return {
+        async runTurn(turn) {
+          return {
+            assistantText: "Local Core accepted the registered Desktop profile.",
+            finalizedPayload: null,
+            output: {
+              status: "COMPLETED" as const,
+              sessionId: turn.sessionId,
+              runId: turn.runId ?? "run-local-core-desktop-profile",
+              errors: [],
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
+            },
+          };
+        },
+        async close() {},
+      };
+    },
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  const sdk = new KestrelSdkClient({
+    target: {
+      kind: "local",
+      socketPath: server.socketPath,
+      authToken: server.token,
+    },
+  });
+  const context = {
+    actor: {
+      actorId: "local-core-desktop-profile-test",
+      actorType: "end_user" as const,
+    },
+  };
+
+  try {
+    const initial = await client.desktopExecutionConfig();
+    assert.equal(initial.version, 1);
+    assert.equal(initial.profileId, LOCAL_CORE_DESKTOP_PROFILE_ID);
+    assert.equal(initial.resolvedProfile.id, initial.profileId);
+    assert.equal(initial.resolvedProfile.shellKind, "desktop");
+    assert.equal(initial.resolvedProfile.presetId, "desktop_dev_local");
+    assert.equal(initial.resolvedProfile.modelProvider, "openrouter");
+
+    assert.throws(
+      () => parseLocalCoreDesktopExecutionConfig({
+        ...initial,
+        resolvedProfile: {
+          ...initial.resolvedProfile,
+          id: "desktop-inline-override",
+        },
+      }),
+      /profile id does not match profileId/u,
+    );
+    assert.throws(
+      () => parseLocalCoreDesktopExecutionConfig({
+        ...initial,
+        resolvedProfile: {
+          ...initial.resolvedProfile,
+          model: " ",
+        },
+      }),
+      /resolvedProfile\.model must be a non-empty string/u,
+    );
+    assert.throws(
+      () => parseLocalCoreDesktopExecutionConfig({
+        ...initial,
+        resolvedProfile: {
+          ...initial.resolvedProfile,
+          toolQueue: { perRunConcurrency: "many" },
+        },
+      }),
+      /unsupported field 'toolQueue'/u,
+    );
+
+    const storedProfiles = await client.getJson("/v1/profiles") as {
+      profiles: Array<Record<string, unknown>>;
+    };
+    await assert.rejects(
+      () => client.putJson("/v1/profiles", {
+        profiles: storedProfiles.profiles.map((profile, index) => index === 0
+          ? { ...profile, id: LOCAL_CORE_DESKTOP_PROFILE_ID }
+          : profile),
+      }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 409
+        && (error.body as { error?: { code?: string } }).error?.code === "LOCAL_CORE_PROFILE_ID_RESERVED",
+    );
+
+    await client.patchSettings({
+      modelPolicy: {
+        version: 1,
+        provider: "ollama",
+        model: "llama3.2:latest",
+        modelByStage: {
+          "agent.loop": "llama3.2:latest",
+        },
+        modelCapabilities: {
+          visionInputEnabled: true,
+        },
+      },
+    });
+
+    const resolved = await client.desktopExecutionConfig();
+    assert.equal(resolved.profileId, initial.profileId);
+    assert.equal(resolved.resolvedProfile.modelProvider, "ollama");
+    assert.equal(resolved.resolvedProfile.model, "llama3.2:latest");
+
+    const listed = await sdk.listProfiles(context);
+    const listedDesktop = listed.find((profile) => profile.id === resolved.profileId);
+    assert.equal(listedDesktop?.modelProvider, "ollama");
+    assert.equal(listedDesktop?.model, "llama3.2:latest");
+    assert.equal(listed.filter((profile) => profile.id === resolved.profileId).length, 1);
+
+    const loaded = await sdk.getProfile(resolved.profileId, context);
+    assert.equal(loaded.id, resolved.profileId);
+    assert.equal(loaded.modelProvider, "ollama");
+    assert.equal(loaded.model, "llama3.2:latest");
+
+    const terminal = await sdk.run({
+      profileId: resolved.profileId,
+      turn: {
+        sessionId: "session-local-core-desktop-profile",
+        runId: "run-local-core-desktop-profile",
+        message: "use the Core-owned Desktop profile",
+        eventType: "user.message",
+      },
+    }, context);
+    assert.equal(terminal.type, "run.completed");
+    assert.equal(terminal.payload.result.assistantText, "Local Core accepted the registered Desktop profile.");
+    assert.deepEqual(runtimeProfiles, [{
+      id: resolved.profileId,
+      modelProvider: "ollama",
+      model: "llama3.2:latest",
+    }]);
+  } finally {
+    await sdk.close();
     await server.close();
     await rm(home, { recursive: true, force: true });
   }

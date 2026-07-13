@@ -1,14 +1,12 @@
 import { request } from "node:http";
 import { Readable } from "node:stream";
 
-import { RemoteRunnerTransport } from "./RemoteRunnerTransport.js";
+import { RemoteRunnerTransport } from "../../cli/client/RemoteRunnerTransport.js";
+import type { LocalCoreConnectionDescriptor } from "./connection.js";
 
 const LOCAL_CORE_RUNTIME_BASE_URL = "http://kestrel.local/runtime/v2";
 
-export interface LocalCoreRunnerTransportOptions {
-  socketPath: string;
-  authToken: string;
-}
+export type LocalCoreRunnerTransportOptions = LocalCoreConnectionDescriptor;
 
 /**
  * Execution Protocol v2 transport over Local Core's user-only Unix socket.

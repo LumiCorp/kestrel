@@ -2,6 +2,162 @@ export const LOCAL_CORE_MANIFEST_VERSION = 2;
 export const LOCAL_CORE_LOCK_VERSION = 1;
 export const LOCAL_CORE_SCHEMA_VERSION = 1;
 export const LOCAL_CORE_STATE_EPOCH = "0.6";
+export const LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION = 1;
+export const LOCAL_CORE_DESKTOP_PROFILE_ID = "local-core-desktop";
+
+export interface LocalCoreDesktopProfileSnapshot {
+  id: typeof LOCAL_CORE_DESKTOP_PROFILE_ID;
+  label: string;
+  agent: "reference-react";
+  shellKind: "desktop";
+  presetId: "desktop_dev_local";
+  modelProvider: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
+  model: string;
+  modeSystemV2Enabled: true;
+  defaultInteractionMode: "chat" | "plan" | "build";
+  defaultActSubmode: "strict" | "safe" | "full_auto";
+}
+
+export interface LocalCoreDesktopExecutionConfig {
+  version: typeof LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION;
+  profileId: typeof LOCAL_CORE_DESKTOP_PROFILE_ID;
+  resolvedProfile: LocalCoreDesktopProfileSnapshot;
+}
+
+/**
+ * Parse the Core-owned Desktop execution snapshot at the client boundary.
+ * Desktop uses `profileId` for execution and treats `resolvedProfile` as
+ * display/request-shaping data, never as inline execution authority.
+ */
+export function parseLocalCoreDesktopExecutionConfig(
+  value: unknown,
+): LocalCoreDesktopExecutionConfig {
+  const record = requireLocalCoreRecord(value, "Desktop execution config");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["version", "profileId", "resolvedProfile"]),
+    "Desktop execution config",
+  );
+  if (record.version !== LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION) {
+    throw new Error(
+      `Local Core Desktop execution config.version must be ${LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION}.`,
+    );
+  }
+  if (record.profileId !== LOCAL_CORE_DESKTOP_PROFILE_ID) {
+    throw new Error(
+      `Local Core Desktop execution config.profileId must be '${LOCAL_CORE_DESKTOP_PROFILE_ID}'.`,
+    );
+  }
+
+  const profile = requireLocalCoreRecord(
+    record.resolvedProfile,
+    "Desktop execution config.resolvedProfile",
+  );
+  rejectUnknownLocalCoreFields(
+    profile,
+    new Set([
+      "id",
+      "label",
+      "agent",
+      "shellKind",
+      "presetId",
+      "modelProvider",
+      "model",
+      "modeSystemV2Enabled",
+      "defaultInteractionMode",
+      "defaultActSubmode",
+    ]),
+    "Desktop execution config.resolvedProfile",
+  );
+  if (profile.id !== record.profileId) {
+    throw new Error("Local Core Desktop execution config profile id does not match profileId.");
+  }
+  const label = requireLocalCoreString(
+    profile.label,
+    "Desktop execution config.resolvedProfile.label",
+  );
+  if (profile.agent !== "reference-react") {
+    throw new Error("Local Core Desktop execution config resolvedProfile.agent must be 'reference-react'.");
+  }
+  if (profile.shellKind !== "desktop") {
+    throw new Error("Local Core Desktop execution config resolvedProfile must target the Desktop shell.");
+  }
+  if (profile.presetId !== "desktop_dev_local") {
+    throw new Error("Local Core Desktop execution config resolvedProfile must use the Desktop preset.");
+  }
+  if (
+    profile.modelProvider !== "openrouter"
+    && profile.modelProvider !== "openai"
+    && profile.modelProvider !== "anthropic"
+    && profile.modelProvider !== "ollama"
+    && profile.modelProvider !== "lmstudio"
+  ) {
+    throw new Error("Local Core Desktop execution config resolvedProfile.modelProvider is invalid.");
+  }
+  const model = requireLocalCoreString(
+    profile.model,
+    "Desktop execution config.resolvedProfile.model",
+  );
+  if (profile.modeSystemV2Enabled !== true) {
+    throw new Error("Local Core Desktop execution config resolvedProfile must enable mode-system v2.");
+  }
+  if (
+    profile.defaultInteractionMode !== "chat"
+    && profile.defaultInteractionMode !== "plan"
+    && profile.defaultInteractionMode !== "build"
+  ) {
+    throw new Error("Local Core Desktop execution config resolvedProfile.defaultInteractionMode is invalid.");
+  }
+  if (
+    profile.defaultActSubmode !== "strict"
+    && profile.defaultActSubmode !== "safe"
+    && profile.defaultActSubmode !== "full_auto"
+  ) {
+    throw new Error("Local Core Desktop execution config resolvedProfile.defaultActSubmode is invalid.");
+  }
+
+  return {
+    version: LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
+    profileId: LOCAL_CORE_DESKTOP_PROFILE_ID,
+    resolvedProfile: {
+      id: LOCAL_CORE_DESKTOP_PROFILE_ID,
+      label,
+      agent: "reference-react",
+      shellKind: "desktop",
+      presetId: "desktop_dev_local",
+      modelProvider: profile.modelProvider,
+      model,
+      modeSystemV2Enabled: true,
+      defaultInteractionMode: profile.defaultInteractionMode,
+      defaultActSubmode: profile.defaultActSubmode,
+    },
+  };
+}
+
+function requireLocalCoreRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Local Core ${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireLocalCoreString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Local Core ${label} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function rejectUnknownLocalCoreFields(
+  value: Record<string, unknown>,
+  supported: ReadonlySet<string>,
+  label: string,
+): void {
+  const unknown = Object.keys(value).find((key) => supported.has(key) === false);
+  if (unknown !== undefined) {
+    throw new Error(`Local Core ${label} includes unsupported field '${unknown}'.`);
+  }
+}
 
 export type KestrelCoreHomeSource =
   | "default"

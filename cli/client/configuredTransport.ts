@@ -1,5 +1,5 @@
 import type { ProtocolTransport } from "./ProtocolClient.js";
-import { LocalCoreRunnerTransport } from "./LocalCoreRunnerTransport.js";
+import { LocalCoreRunnerTransport } from "../../src/localCore/LocalCoreRunnerTransport.js";
 import { RemoteRunnerTransport } from "./RemoteRunnerTransport.js";
 
 export function createConfiguredRunnerTransport(

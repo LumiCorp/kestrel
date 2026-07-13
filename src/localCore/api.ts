@@ -7,7 +7,7 @@ import path from "node:path";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
-import type { RunnerHost, RunnerProfileProvider } from "../../cli/runner/RunnerHost.js";
+import type { RunnerHost } from "../../cli/runner/RunnerHost.js";
 import {
   createRunnerServiceHttpHandler,
   type RunnerServiceHttpHandler,
@@ -36,6 +36,10 @@ import type {
   LocalCoreStatus,
 } from "./contracts.js";
 import {
+  createLocalCoreConnectionDescriptor,
+  type LocalCoreConnectionDescriptor,
+} from "./connection.js";
+import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
 } from "./desktopProjectRuns.js";
@@ -45,6 +49,12 @@ import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
+import {
+  assertNoLocalCoreReservedProfileCollision,
+  createLocalCoreProfileProvider,
+  LocalCoreReservedProfileIdError,
+  resolveLocalCoreDesktopExecutionConfig,
+} from "./profileProvider.js";
 import { ensureLocalCoreReady } from "./ready.js";
 import { closeLocalCoreStore, ensureLocalCoreStore } from "./store.js";
 
@@ -53,6 +63,7 @@ const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024
 
 export interface LocalCoreApiServer {
   status: LocalCoreStatus;
+  connection: LocalCoreConnectionDescriptor;
   socketPath: string;
   tokenPath: string;
   token: string;
@@ -275,10 +286,15 @@ export async function startLocalCoreApiServer(
     };
     scheduleIdleTimeout();
 
+    const connection = createLocalCoreConnectionDescriptor({
+      socketPath: paths.apiSocketPath,
+      authToken: token,
+    });
     return {
       get status() {
         return status;
       },
+      connection,
       socketPath: paths.apiSocketPath,
       tokenPath: paths.apiTokenPath,
       token,
@@ -511,6 +527,13 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, settings: await patchSettings(input.status.home.homePath, patch) });
       return;
     }
+    if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
+      writeJson(input.response, 200, {
+        ok: true,
+        executionConfig: await resolveLocalCoreDesktopExecutionConfig(input.status.home.homePath),
+      });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/desktop/ui-state") {
       writeJson(input.response, 200, {
         ok: true,
@@ -703,13 +726,16 @@ async function handleRequest(input: {
     if (method === "GET" && url.pathname === "/v1/profiles") {
       const store = new ProfileStore(input.status.home.homePath);
       const profiles = await store.load();
+      assertNoLocalCoreReservedProfileCollision(profiles);
       writeJson(input.response, 200, { ok: true, profiles, notices: store.consumeLoadNotices() });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/profiles") {
       const body = await readJsonBody(input.request);
       const store = new ProfileStore(input.status.home.homePath);
-      await store.save(normalizeArrayField<TuiProfile>(body, "profiles"));
+      const profiles = normalizeArrayField<TuiProfile>(body, "profiles");
+      assertNoLocalCoreReservedProfileCollision(profiles);
+      await store.save(profiles);
       writeJson(input.response, 200, { ok: true, profiles: await store.load(), notices: store.consumeLoadNotices() });
       return;
     }
@@ -828,8 +854,9 @@ async function handleRequest(input: {
     writeJson(input.response, 404, errorBody("LOCAL_CORE_API_NOT_FOUND", `Unknown Local Core API endpoint: ${method} ${url.pathname}`));
   } catch (error) {
     const requestError = error instanceof LocalCoreApiRequestError ? error : undefined;
-    writeJson(input.response, requestError?.statusCode ?? 500, errorBody(
-      requestError?.code ?? "LOCAL_CORE_API_ERROR",
+    const profileIdError = error instanceof LocalCoreReservedProfileIdError ? error : undefined;
+    writeJson(input.response, requestError?.statusCode ?? (profileIdError === undefined ? 500 : 409), errorBody(
+      requestError?.code ?? (profileIdError === undefined ? "LOCAL_CORE_API_ERROR" : "LOCAL_CORE_PROFILE_ID_RESERVED"),
       error instanceof Error ? error.message : String(error),
     ));
   }
@@ -1401,18 +1428,6 @@ async function closeServer(input: {
   if (errors.length > 1) {
     throw new AggregateError(errors, "Kestrel Local Core shutdown failed.");
   }
-}
-
-function createLocalCoreProfileProvider(homePath: string): RunnerProfileProvider {
-  const store = new ProfileStore(homePath);
-  return {
-    async listProfiles() {
-      return await store.load();
-    },
-    async getProfile(profileId) {
-      return store.findById(await store.load(), profileId);
-    },
-  };
 }
 
 function isRuntimeV2Request(url: string | undefined): boolean {

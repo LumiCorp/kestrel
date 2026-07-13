@@ -14,7 +14,11 @@ import {
   type RunnerCommandPayloadByType,
   type RunnerEvent,
 } from "../../cli/protocol/contracts.js";
-import { ProtocolClient, type ProtocolTransport } from "../../cli/client/ProtocolClient.js";
+import {
+  ProtocolClient,
+  type ProtocolClientOptions,
+  type ProtocolTransport,
+} from "../../cli/client/ProtocolClient.js";
 import { createConfiguredRunnerTransport } from "../../cli/client/configuredTransport.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
@@ -96,13 +100,58 @@ export interface WebRunnerAdapter {
   close(): Promise<void>;
 }
 
-export interface CreateWebRunnerAdapterOptions {
-  profile?: TuiProfile | undefined;
+interface WebRunnerAdapterBaseOptions {
   transportFactory?: (() => ProtocolTransport) | undefined;
 }
 
+interface WebRunnerInlineProfileOptions {
+  profile?: TuiProfile | undefined;
+  profileId?: never;
+  protocolClientOptions?: ProtocolClientOptions | undefined;
+  resolvedProfile?: never;
+}
+
+export type WebRunnerRegisteredProfileSnapshot = Pick<
+  TuiProfile,
+  | "id"
+  | "agent"
+  | "modeSystemV2Enabled"
+  | "defaultInteractionMode"
+  | "defaultActSubmode"
+>;
+
+interface WebRunnerRegisteredProfileOptions {
+  profile?: never;
+  profileId: string;
+  protocolClientOptions?: RegisteredProfileProtocolClientOptions | undefined;
+  resolvedProfile: WebRunnerRegisteredProfileSnapshot;
+}
+
+type RegisteredProfileProtocolClientOptions = Omit<ProtocolClientOptions, "defaultMetadata"> & {
+  defaultMetadata?: Omit<RunnerCommandMetadata, "profile"> & { profile?: never } | undefined;
+};
+
+export type CreateWebRunnerAdapterOptions = WebRunnerAdapterBaseOptions &
+  (WebRunnerInlineProfileOptions | WebRunnerRegisteredProfileOptions);
+
+type WebRunnerProfileSelection =
+  | {
+      kind: "inline";
+      resolvedProfile: TuiProfile;
+    }
+  | {
+      kind: "registered";
+      profileId: string;
+      resolvedProfile: WebRunnerRegisteredProfileSnapshot;
+    };
+
 export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = {}): WebRunnerAdapter {
-  const profile = options.profile ?? createWebDemoProfile();
+  const profileSelection = resolveWebRunnerProfileSelection(options);
+  const protocolClientOptions = validateProtocolClientOptions(
+    profileSelection,
+    options.protocolClientOptions,
+  );
+  const profile = profileSelection.resolvedProfile;
   const transportFactory = options.transportFactory ?? createConfiguredRunnerTransport;
 
   let client: ProtocolClient | undefined;
@@ -110,7 +159,10 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
 
   function ensureClient(): ProtocolClient {
     if (client === undefined) {
-      client = new ProtocolClient(transportFactory());
+      client = new ProtocolClient(
+        transportFactory(),
+        protocolClientOptions,
+      );
     }
     return client;
   }
@@ -154,11 +206,15 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           defaultInteractionMode: profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
           defaultActSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
         });
-        const commandMetadata = toRunnerCommandMetadata(profile, context);
+        const commandMetadata = toRunnerCommandMetadata(
+          profileSelection,
+          context,
+          protocolClientOptions?.defaultMetadata,
+        );
         const response = await activeClient.sendCommandWithId(
           commandId,
           "run.start",
-          buildRunStartPayload(profile, request, resolvedMode, commandMetadata),
+          buildRunStartPayload(profileSelection, request, resolvedMode, commandMetadata),
           commandMetadata,
         );
 
@@ -257,11 +313,15 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         defaultInteractionMode: profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
         defaultActSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
       });
-      const commandMetadata = toRunnerCommandMetadata(profile, context);
+      const commandMetadata = toRunnerCommandMetadata(
+        profileSelection,
+        context,
+        protocolClientOptions?.defaultMetadata,
+      );
       void activeClient.sendCommandWithId(
         commandId,
         "run.start",
-        buildRunStartPayload(profile, { ...request, runId }, resolvedMode, commandMetadata),
+        buildRunStartPayload(profileSelection, { ...request, runId }, resolvedMode, commandMetadata),
         {
           ...commandMetadata,
           durability: "continue_on_disconnect",
@@ -358,7 +418,11 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
 
     async sendControl(command, context) {
       const activeClient = ensureClient();
-      const metadata = toRunnerCommandMetadata(profile, context);
+      const metadata = toRunnerCommandMetadata(
+        profileSelection,
+        context,
+        protocolClientOptions?.defaultMetadata,
+      );
 
       if (command.type === "ping") {
         const response = await sendCommand(activeClient, "runner.ping", {
@@ -403,7 +467,12 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
       }
 
       if (command.type === "mcp.status") {
-        const response = await sendCommand(activeClient, "mcp.status", { profile }, metadata);
+        const response = await sendCommand(
+          activeClient,
+          "mcp.status",
+          toRunnerProfileReference(profileSelection),
+          metadata,
+        );
         if (response.type !== "mcp.status") {
           throw createRuntimeFailure(
             "WEB_ADAPTER_UNEXPECTED_MCP_STATUS_RESPONSE",
@@ -731,7 +800,12 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         return response;
       }
 
-      const response = await sendCommand(activeClient, "mcp.refresh", { profile }, metadata);
+      const response = await sendCommand(
+        activeClient,
+        "mcp.refresh",
+        toRunnerProfileReference(profileSelection),
+        metadata,
+      );
       if (response.type !== "mcp.refreshed") {
         throw createRuntimeFailure(
           "WEB_ADAPTER_UNEXPECTED_MCP_REFRESH_RESPONSE",
@@ -760,11 +834,12 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
 }
 
 function buildRunStartPayload(
-  profile: TuiProfile,
+  profileSelection: WebRunnerProfileSelection,
   request: WebRunTurnRequest,
   resolvedMode: ReturnType<typeof normalizeInteractionMode>,
   metadata?: RunnerCommandMetadata | undefined,
 ): RunnerCommandPayloadByType["run.start"] {
+  const profile = profileSelection.resolvedProfile;
   const actor = metadata?.actor === undefined
     ? undefined
     : {
@@ -774,7 +849,7 @@ function buildRunStartPayload(
           : {}),
       };
   return {
-    profile,
+    ...toRunnerProfileReference(profileSelection),
     turn: {
       sessionId: request.sessionId,
       ...(request.runId !== undefined ? { runId: request.runId } : {}),
@@ -889,7 +964,7 @@ export function clampHistoryWindow(history: WebHistoryLine[] | undefined): WebHi
   return normalizeSubmittedHistory(history);
 }
 
-function getEntryStepAgent(profile: TuiProfile): string {
+function getEntryStepAgent(profile: Pick<TuiProfile, "id" | "agent">): string {
   if (profile.agent === "reference-react") {
     return AGENT_STEP_IDS.loop;
   }
@@ -910,15 +985,120 @@ function sendCommand<TType extends RunnerCommandType>(
 }
 
 function toRunnerCommandMetadata(
-  profile: TuiProfile,
+  profileSelection: WebRunnerProfileSelection,
   context: WebRunnerRequestContext | undefined,
+  defaults: RunnerCommandMetadata | undefined,
 ): RunnerCommandMetadata | undefined {
-  if (context?.actor === undefined && context?.tenantId === undefined) {
-    return { profile };
+  const actor = context?.actor ?? defaults?.actor;
+  const tenantId = context?.tenantId ?? defaults?.tenantId;
+  if (actor === undefined && tenantId === undefined) {
+    return profileSelection.kind === "inline"
+      ? { profile: profileSelection.resolvedProfile }
+      : undefined;
   }
   return {
-    profile,
-    ...(context.actor !== undefined ? { actor: context.actor } : {}),
-    ...(context.tenantId !== undefined ? { tenantId: context.tenantId } : {}),
+    ...(profileSelection.kind === "inline"
+      ? { profile: profileSelection.resolvedProfile }
+      : {}),
+    ...(actor !== undefined ? { actor } : {}),
+    ...(tenantId !== undefined ? { tenantId } : {}),
+  };
+}
+
+function resolveWebRunnerProfileSelection(
+  options: CreateWebRunnerAdapterOptions,
+): WebRunnerProfileSelection {
+  const inlineProfile = options.profile;
+  const profileId = options.profileId;
+  const resolvedProfile = options.resolvedProfile;
+  if (inlineProfile !== undefined && (profileId !== undefined || resolvedProfile !== undefined)) {
+    throw createRuntimeFailure(
+      "WEB_ADAPTER_PROFILE_REFERENCE_CONFLICT",
+      "Web runner adapter options must select either an inline profile or a registered profile, not both.",
+    );
+  }
+  if (profileId !== undefined) {
+    const normalizedProfileId = profileId.trim();
+    if (normalizedProfileId.length === 0) {
+      throw createRuntimeFailure(
+        "WEB_ADAPTER_REGISTERED_PROFILE_ID_INVALID",
+        "Web runner adapter registered profileId must be a non-empty string.",
+      );
+    }
+    if (resolvedProfile === undefined) {
+      throw createRuntimeFailure(
+        "WEB_ADAPTER_REGISTERED_PROFILE_REQUIRED",
+        "Web runner adapter registered profileId requires a resolvedProfile for client-side shaping.",
+        { profileId: normalizedProfileId },
+      );
+    }
+    if (resolvedProfile.id !== normalizedProfileId) {
+      throw createRuntimeFailure(
+        "WEB_ADAPTER_REGISTERED_PROFILE_MISMATCH",
+        `Web runner adapter resolvedProfile.id '${resolvedProfile.id}' must match profileId '${normalizedProfileId}'.`,
+        {
+          profileId: normalizedProfileId,
+          resolvedProfileId: resolvedProfile.id,
+        },
+      );
+    }
+    return {
+      kind: "registered",
+      profileId: normalizedProfileId,
+      resolvedProfile,
+    };
+  }
+  if (resolvedProfile !== undefined) {
+    throw createRuntimeFailure(
+      "WEB_ADAPTER_REGISTERED_PROFILE_ID_REQUIRED",
+      "Web runner adapter resolvedProfile requires a registered profileId.",
+      { resolvedProfileId: resolvedProfile.id },
+    );
+  }
+  return {
+    kind: "inline",
+    resolvedProfile: inlineProfile ?? createWebDemoProfile(),
+  };
+}
+
+function toRunnerProfileReference(
+  profileSelection: WebRunnerProfileSelection,
+): RunnerCommandPayloadByType["mcp.status"] {
+  return profileSelection.kind === "registered"
+    ? { profileId: profileSelection.profileId }
+    : { profile: profileSelection.resolvedProfile };
+}
+
+function validateProtocolClientOptions(
+  profileSelection: WebRunnerProfileSelection,
+  options: ProtocolClientOptions | undefined,
+): ProtocolClientOptions | undefined {
+  if (profileSelection.kind === "registered" && options?.defaultMetadata?.profile !== undefined) {
+    throw createRuntimeFailure(
+      "WEB_ADAPTER_REGISTERED_METADATA_PROFILE_FORBIDDEN",
+      "Web runner adapter registered profile mode cannot include an inline profile in protocol client metadata.",
+      { profileId: profileSelection.profileId },
+    );
+  }
+  if (options === undefined) {
+    return undefined;
+  }
+  const metadata = options.defaultMetadata;
+  return {
+    ...(options.defaultExecutionDurability !== undefined
+      ? { defaultExecutionDurability: options.defaultExecutionDurability }
+      : {}),
+    ...(metadata !== undefined
+      ? {
+          defaultMetadata: {
+            ...(metadata.actor !== undefined ? { actor: { ...metadata.actor } } : {}),
+            ...(metadata.tenantId !== undefined ? { tenantId: metadata.tenantId } : {}),
+            ...(profileSelection.kind === "inline" && metadata.profile !== undefined
+              ? { profile: metadata.profile }
+              : {}),
+            ...(metadata.durability !== undefined ? { durability: metadata.durability } : {}),
+          },
+        }
+      : {}),
   };
 }
