@@ -878,6 +878,9 @@ test("ModelReasoningSidecar forwards explicit model and budget overrides", async
   assert.equal(systemPrompt.includes("Continue the recent narrative"), true);
   assert.equal(systemPrompt.includes("engaged assistant narrating concrete work"), true);
   assert.equal(systemPrompt.includes("Treat beat as the only source"), true);
+  assert.equal(systemPrompt.includes("do not call an attempt last or final"), true);
+  assert.equal(systemPrompt.includes("promise imminent completion"), true);
+  assert.equal(userPrompt.includes("do not claim an attempt is last or final"), true);
   assert.equal(systemPrompt.includes("beat.reason"), true);
   assert.equal(systemPrompt.includes("one more substantive task-level update"), true);
   assert.equal(systemPrompt.includes("runtimeBeat is present"), false);
