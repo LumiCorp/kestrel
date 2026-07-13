@@ -36,3 +36,4 @@ tmp/
 .superpowers/
 .external/
 *.tsbuildinfo
+.vercel

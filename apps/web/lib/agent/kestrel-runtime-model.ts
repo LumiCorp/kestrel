@@ -52,12 +52,22 @@ export function applyKestrelOneModelToProfile(
   profile: RunnerProfile,
   selection: KestrelOneRuntimeModelSelection
 ): RunnerProfile {
+  const agentStageConfig = asRecord(profile.agentStageConfig);
+  const modelByStage = asRecord(agentStageConfig.modelByStage);
+
   return {
     ...profile,
     id: `${profile.id}:model:${encodeURIComponent(selection.id)}`,
     label: `${profile.label} · ${selection.id}`,
     modelProvider: selection.provider,
     model: selection.model,
+    agentStageConfig: {
+      ...agentStageConfig,
+      modelByStage: {
+        ...modelByStage,
+        "agent.loop": selection.model,
+      },
+    },
     modelCredential: {
       source: "kestrel-one",
       gatewayId: selection.gatewayId,
@@ -65,4 +75,10 @@ export function applyKestrelOneModelToProfile(
     },
     default: false,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

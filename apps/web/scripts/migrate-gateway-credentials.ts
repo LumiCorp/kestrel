@@ -136,9 +136,7 @@ async function runGatewayCredentialMigration() {
   );
 }
 
-try {
-  await runGatewayCredentialMigration();
-} catch {
+runGatewayCredentialMigration().catch(() => {
   process.stderr.write("Gateway credential migration failed.\n");
   process.exitCode = 1;
-}
+});

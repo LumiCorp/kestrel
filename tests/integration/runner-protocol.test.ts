@@ -135,6 +135,66 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
   await host.close();
 });
 
+test("run.start rejects a stale gateway-managed agent loop model", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("invalid profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{
+    type: string;
+    commandId?: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        type: string;
+        commandId?: string;
+        payload: Record<string, unknown>;
+      },
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-managed-stage-invalid",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          model: "openai/gpt-5.4",
+          agentStageConfig: {
+            modelByStage: { "agent.loop": "z-ai/glm-5.2" },
+          },
+          modelCredential: {
+            source: "kestrel-one",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "openai/gpt-5.4",
+          },
+        },
+        turn: {
+          sessionId: "session-invalid-managed-stage",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.commandId, "cmd-managed-stage-invalid");
+  assert.match(
+    String(events[0]?.payload.message),
+    /agentStageConfig\.modelByStage\.agent\.loop must match .*modelCredential\.rawModelId/,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("run.start emits started/log/completed protocol events", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -142,6 +202,9 @@ test("run.start emits started/log/completed protocol events", async () => {
     ...profile,
     modelProvider: "openrouter",
     model: "openai/gpt-5.4",
+    agentStageConfig: {
+      modelByStage: { "agent.loop": "openai/gpt-5.4" },
+    },
     modelCredential: {
       source: "kestrel-one",
       gatewayId: "gateway-openrouter",

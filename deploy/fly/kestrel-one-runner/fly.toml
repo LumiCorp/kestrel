@@ -1,0 +1,43 @@
+app = "kestrel-one-runner"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  KESTREL_RUNNER_SERVICE_HOST = "0.0.0.0"
+  KESTREL_RUNNER_SERVICE_PORT = "8080"
+  KESTREL_ONE_APP_URL = "https://kestrel-one-green.vercel.app"
+  KESTREL_HOME = "/data/.kestrel"
+  KESTREL_STORE_DRIVER = "sqlite"
+  KESTREL_SQLITE_PATH = "/data/runtime.db"
+
+[mounts]
+  source = "kestrel_runner_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 25
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 4
+  memory = "4gb"
