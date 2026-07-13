@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   type EnvironmentReconcileLock,
   withEnvironmentOperationLock,
   withEnvironmentReconcileLock,
 } from "./reconcile-lock";
+
+test("production Environment locks are transaction scoped for pooled Postgres", () => {
+  const source = readFileSync(
+    new URL("./reconcile-lock.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /pg_try_advisory_xact_lock/u);
+  assert.doesNotMatch(source, /pg_advisory_unlock/u);
+});
 
 test("Environment reconciliation closes an unacquired lock without running", async () => {
   const calls: string[] = [];

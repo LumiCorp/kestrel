@@ -39,8 +39,10 @@ async function withEnvironmentAdvisoryLock<T>(input: {
   run: () => Promise<T>;
   createLock?: (lockKey: string) => Promise<EnvironmentReconcileLock>;
 }) {
-  const createLock = input.createLock ?? createPostgresEnvironmentAdvisoryLock;
-  const lock = await createLock(input.lockKey);
+  if (!input.createLock) {
+    return withPostgresEnvironmentAdvisoryLock(input);
+  }
+  const lock = await input.createLock(input.lockKey);
   let acquired = false;
   try {
     acquired = await lock.tryAcquire();
@@ -57,9 +59,10 @@ async function withEnvironmentAdvisoryLock<T>(input: {
   }
 }
 
-export async function createPostgresEnvironmentAdvisoryLock(
-  lockKey: string
-): Promise<EnvironmentReconcileLock> {
+async function withPostgresEnvironmentAdvisoryLock<T>(input: {
+  lockKey: string;
+  run: () => Promise<T>;
+}) {
   const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error("DATABASE_URL or POSTGRES_URL is required");
@@ -70,26 +73,19 @@ export async function createPostgresEnvironmentAdvisoryLock(
     max: 1,
     prepare: false,
   });
-  const reserved = await sql.reserve();
-  return {
-    async tryAcquire() {
-      const [row] = await reserved<Array<{ acquired: boolean }>>`
-        SELECT pg_try_advisory_lock(
-          hashtextextended(${lockKey}, 0)
+  try {
+    return await sql.begin(async (transaction) => {
+      const [row] = await transaction<Array<{ acquired: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(
+          hashtextextended(${input.lockKey}, 0)
         ) AS "acquired"
       `;
-      return row?.acquired === true;
-    },
-    async release() {
-      await reserved`
-        SELECT pg_advisory_unlock(
-          hashtextextended(${lockKey}, 0)
-        )
-      `;
-    },
-    async close() {
-      reserved.release();
-      await sql.end({ timeout: 1 });
-    },
-  };
+      if (row?.acquired !== true) {
+        return { acquired: false as const, result: null };
+      }
+      return { acquired: true as const, result: await input.run() };
+    });
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
 }
