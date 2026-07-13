@@ -645,6 +645,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied"
   ),
   api(
+    "app/api/integrations/github/route.ts",
+    "/api/integrations/github",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/connect/route.ts",
+    "/api/integrations/github/connect",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/repositories/route.ts",
+    "/api/integrations/github/repositories",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/integrations/github/sync/route.ts",
+    "/api/integrations/github/sync",
+    "integrations",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/sandbox/shell/route.ts",
     "/api/sandbox/shell",
     "sandbox",

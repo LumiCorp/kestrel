@@ -55,16 +55,14 @@ test("workspace sources distinguish blank state from a selected GitHub repo", ()
   assert.equal(
     workspaceSourceSchema.safeParse({
       type: "github",
-      connectionId: "github-installation-1",
-      repository: "owner/repo",
+      resourceId: "11111111-1111-4111-8111-111111111111",
     }).success,
     true
   );
   assert.equal(
     workspaceSourceSchema.safeParse({
       type: "github",
-      connectionId: "github-installation-1",
-      repository: "unscoped",
+      resourceId: "github-installation-1",
     }).success,
     false
   );
