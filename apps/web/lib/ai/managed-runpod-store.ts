@@ -8,6 +8,9 @@ import {
   type ManagedRunPodSpecSnapshot,
   managedRunPodProfileInputSchema,
   parseManagedRunPodSpecSnapshot,
+  sanitizeManagedRunPodEndpointSpec,
+  sanitizeManagedRunPodSpecSnapshot,
+  sanitizeManagedRunPodTemplateSpec,
 } from "./managed-runpod-contracts";
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
@@ -39,7 +42,6 @@ export async function listManagedRunPodProfiles(input?: {
 export function sanitizeManagedRunPodProfile(
   profile: typeof schema.aiDeploymentProfiles.$inferSelect
 ) {
-  const templateSpec = profile.templateSpec as Record<string, unknown>;
   return {
     id: profile.id,
     profileKey: profile.profileKey,
@@ -49,24 +51,21 @@ export function sanitizeManagedRunPodProfile(
     status: profile.status,
     imageRef: profile.imageRef,
     expectedModelId: profile.expectedModelId,
-    endpointSpec: profile.endpointSpec,
-    templateSpec: {
-      ...templateSpec,
-      env: Object.fromEntries(
-        Object.keys((templateSpec.env as Record<string, unknown>) ?? {}).map(
-          (key) => [key, "configured"]
-        )
-      ),
-      secretEnv: Object.fromEntries(
-        Object.keys(
-          (templateSpec.secretEnv as Record<string, unknown>) ?? {}
-        ).map((key) => [key, "configured"])
-      ),
-    },
+    endpointSpec: sanitizeManagedRunPodEndpointSpec(profile.endpointSpec),
+    templateSpec: sanitizeManagedRunPodTemplateSpec(profile.templateSpec),
     costLimitUsdPerHour: profile.costLimitUsdPerHour,
     qualifiedAt: profile.qualifiedAt,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
+  };
+}
+
+export function sanitizeManagedRunPodDeployment(
+  deployment: typeof schema.aiDeployments.$inferSelect
+) {
+  return {
+    ...deployment,
+    specSnapshot: sanitizeManagedRunPodSpecSnapshot(deployment.specSnapshot),
   };
 }
 
@@ -410,7 +409,7 @@ export async function createManagedRunPodDeployment(input: {
 }
 
 export async function listManagedRunPodDeployments(organizationId: string) {
-  return knowledgeDb
+  const rows = await knowledgeDb
     .select({
       deployment: schema.aiDeployments,
       profile: schema.aiDeploymentProfiles,
@@ -427,6 +426,10 @@ export async function listManagedRunPodDeployments(organizationId: string) {
       )
     )
     .orderBy(desc(schema.aiDeployments.createdAt));
+  return rows.map(({ deployment, profile }) => ({
+    deployment: sanitizeManagedRunPodDeployment(deployment),
+    profile: sanitizeManagedRunPodProfile(profile),
+  }));
 }
 
 export async function listManagedRunPodFleet() {
@@ -498,7 +501,12 @@ export async function getManagedRunPodDeployment(input: {
       orderBy: [desc(schema.aiDeploymentUsage.bucketStartedAt)],
     }),
   ]);
-  return { ...row, runs, usage };
+  return {
+    deployment: sanitizeManagedRunPodDeployment(row.deployment),
+    profile: sanitizeManagedRunPodProfile(row.profile),
+    runs,
+    usage,
+  };
 }
 
 export async function queueManagedRunPodDeletion(input: {
@@ -569,6 +577,24 @@ export async function queueManagedRunPodRetry(input: {
       );
     }
     const kind = deployment.status === "delete_failed" ? "delete" : "provision";
+    if (kind === "provision") {
+      const [policy] = await tx
+        .select()
+        .from(schema.organizationAiDeploymentPolicies)
+        .where(
+          eq(
+            schema.organizationAiDeploymentPolicies.organizationId,
+            input.organizationId
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!(policy?.enabled && policy.maxActiveDeployments > 0)) {
+        throw new Error(
+          "Managed RunPod deployments are not enabled for this organization."
+        );
+      }
+    }
     const [run] = await tx
       .insert(schema.aiDeploymentRuns)
       .values({

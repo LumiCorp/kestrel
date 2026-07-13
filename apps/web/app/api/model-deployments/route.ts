@@ -10,6 +10,7 @@ import {
   createManagedRunPodDeployment,
   listManagedRunPodDeployments,
   listManagedRunPodProfiles,
+  sanitizeManagedRunPodDeployment,
   sanitizeManagedRunPodProfile,
 } from "@/lib/ai/managed-runpod-store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     });
     await enqueueManagedRunPodRun(result.run!.id);
     return NextResponse.json(
-      { deployment: result.deployment },
+      { deployment: sanitizeManagedRunPodDeployment(result.deployment!) },
       { status: 202 }
     );
   } catch (error) {

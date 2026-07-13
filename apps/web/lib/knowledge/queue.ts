@@ -1,4 +1,6 @@
+import { eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
@@ -6,6 +8,29 @@ const KNOWLEDGE_SYNC_QUEUE = "knowledge.sync";
 const MANAGED_RUNPOD_RUN_QUEUE = "ai.runpod.run";
 const MANAGED_RUNPOD_RECONCILE_QUEUE = "ai.runpod.reconcile";
 const MANAGED_RUNPOD_USAGE_QUEUE = "ai.runpod.usage";
+const MANAGED_RUNPOD_RUN_OPTIONS = {
+  retryLimit: 20,
+  retryDelay: 15,
+  retryBackoff: true,
+} as const;
+
+async function sendManagedRunPodRun(boss: PgBoss, runId: string) {
+  await boss.send(
+    MANAGED_RUNPOD_RUN_QUEUE,
+    { runId },
+    { ...MANAGED_RUNPOD_RUN_OPTIONS, singletonKey: runId }
+  );
+}
+
+async function recoverQueuedManagedRunPodRuns(boss: PgBoss) {
+  const queuedRuns = await knowledgeDb.query.aiDeploymentRuns.findMany({
+    where: eq(schema.aiDeploymentRuns.status, "queued"),
+    columns: { id: true },
+  });
+  for (const run of queuedRuns) {
+    await sendManagedRunPodRun(boss, run.id);
+  }
+}
 
 async function createBoss() {
   if (!knowledgeQueueState.databaseUrl) {
@@ -63,6 +88,7 @@ export async function getKnowledgeBoss() {
       }
     );
     await boss.work(MANAGED_RUNPOD_RECONCILE_QUEUE, async () => {
+      await recoverQueuedManagedRunPodRuns(boss);
       const { reconcileManagedRunPodFleet } = await import(
         "@/lib/ai/managed-runpod-runtime"
       );
@@ -112,16 +138,7 @@ export async function enqueueKnowledgeDocumentRun(runId: string) {
 
 export async function enqueueManagedRunPodRun(runId: string) {
   const boss = await getKnowledgeBoss();
-  await boss.send(
-    MANAGED_RUNPOD_RUN_QUEUE,
-    { runId },
-    {
-      retryLimit: 20,
-      retryDelay: 15,
-      retryBackoff: true,
-      singletonKey: runId,
-    }
-  );
+  await sendManagedRunPodRun(boss, runId);
 }
 
 export async function enqueueManagedRunPodReconciliation() {

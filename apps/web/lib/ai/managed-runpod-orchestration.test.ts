@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   deleteManagedRunPodResources,
   ensureManagedRunPodResource,
+  isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
 
 test("resource creation recovers after a crash before provider ID persistence", async () => {
@@ -72,4 +73,12 @@ test("resource cleanup is ordered and safe to retry after a partial failure", as
     "endpoint:endpoint-1",
     "template:template-1",
   ]);
+});
+
+test("missing endpoints do not turn deletion retries back into provisioning failures", () => {
+  assert.equal(isManagedRunPodDeletionStatus("deleting"), true);
+  assert.equal(isManagedRunPodDeletionStatus("delete_failed"), true);
+  assert.equal(isManagedRunPodDeletionStatus("deleted"), true);
+  assert.equal(isManagedRunPodDeletionStatus("ready"), false);
+  assert.equal(isManagedRunPodDeletionStatus("failed"), false);
 });

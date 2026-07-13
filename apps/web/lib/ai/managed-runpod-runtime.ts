@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, notInArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { buildRunPodServerlessBaseUrl } from "./gateway-utils";
 import {
@@ -23,6 +23,7 @@ import {
 import {
   deleteManagedRunPodResources,
   ensureManagedRunPodResource,
+  isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
 import { validateRunPodToolRoundTrip } from "./runpod-connection-test";
 import { RunPodControlPlaneError } from "./runpod-control-plane";
@@ -37,6 +38,20 @@ class ManagedRunPodRuntimeError extends Error {
     this.code = input.code;
     this.retryable = input.retryable ?? false;
   }
+}
+
+const PROVISION_CANCELLED_CODE = "MANAGED_RUNPOD_PROVISION_CANCELLED";
+const DELETE_LIFECYCLE_STATUSES = [
+  "deleting",
+  "delete_failed",
+  "deleted",
+] as const;
+
+function provisionCancelledError() {
+  return new ManagedRunPodRuntimeError({
+    code: PROVISION_CANCELLED_CODE,
+    message: "Managed RunPod provisioning was cancelled by deletion.",
+  });
 }
 
 function safeFailure(error: unknown) {
@@ -69,6 +84,25 @@ async function updateRun(
     .update(schema.aiDeploymentRuns)
     .set({ ...values, updatedAt: new Date() })
     .where(eq(schema.aiDeploymentRuns.id, runId));
+}
+
+async function updateProvisioningDeployment(
+  deploymentId: string,
+  values: Partial<typeof schema.aiDeployments.$inferInsert>
+) {
+  const [updated] = await knowledgeDb
+    .update(schema.aiDeployments)
+    .set({ ...values, updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.aiDeployments.id, deploymentId),
+        notInArray(schema.aiDeployments.status, [...DELETE_LIFECYCLE_STATUSES])
+      )
+    )
+    .returning({ id: schema.aiDeployments.id });
+  if (!updated) {
+    throw provisionCancelledError();
+  }
 }
 
 async function ensureTemplate(input: {
@@ -256,6 +290,9 @@ async function ensureManagedGateway(input: {
   apiKey: string;
 }) {
   if (input.deployment.gatewayId) {
+    await updateProvisioningDeployment(input.deployment.id, {
+      gatewayId: input.deployment.gatewayId,
+    });
     return input.deployment.gatewayId;
   }
   const existing = await knowledgeDb.query.aiGateways.findFirst({
@@ -263,10 +300,9 @@ async function ensureManagedGateway(input: {
     columns: { id: true },
   });
   if (existing) {
-    await knowledgeDb
-      .update(schema.aiDeployments)
-      .set({ gatewayId: existing.id, updatedAt: new Date() })
-      .where(eq(schema.aiDeployments.id, input.deployment.id));
+    await updateProvisioningDeployment(input.deployment.id, {
+      gatewayId: existing.id,
+    });
     return existing.id;
   }
   const gateway = await createGateway({
@@ -280,11 +316,74 @@ async function ensureManagedGateway(input: {
     providerConnectionId: input.connectionId,
     metadata: { managedBy: "kestrel", deploymentId: input.deployment.id },
   });
-  await knowledgeDb
-    .update(schema.aiDeployments)
-    .set({ gatewayId: gateway.id, updatedAt: new Date() })
-    .where(eq(schema.aiDeployments.id, input.deployment.id));
+  await updateProvisioningDeployment(input.deployment.id, {
+    gatewayId: gateway.id,
+  });
   return gateway.id;
+}
+
+async function settleCancelledProvision(input: {
+  runId: string;
+  deploymentId: string;
+}) {
+  const [latestRun, latestDeployment] = await Promise.all([
+    knowledgeDb.query.aiDeploymentRuns.findFirst({
+      where: eq(schema.aiDeploymentRuns.id, input.runId),
+    }),
+    knowledgeDb.query.aiDeployments.findFirst({
+      where: eq(schema.aiDeployments.id, input.deploymentId),
+    }),
+  ]);
+  let cleanupFailure: ReturnType<typeof safeFailure> | null = null;
+  const endpointId =
+    latestDeployment?.providerEndpointId ?? latestRun?.providerEndpointId;
+  const templateId =
+    latestDeployment?.providerTemplateId ?? latestRun?.providerTemplateId;
+  if (endpointId || templateId) {
+    try {
+      await cleanupProviderResources({ endpointId, templateId });
+    } catch (error) {
+      cleanupFailure = safeFailure(error);
+    }
+  }
+  await knowledgeDb.transaction(async (tx) => {
+    const [currentDeployment] = await tx
+      .select({ status: schema.aiDeployments.status })
+      .from(schema.aiDeployments)
+      .where(eq(schema.aiDeployments.id, input.deploymentId))
+      .limit(1)
+      .for("update");
+    await tx
+      .delete(schema.aiGateways)
+      .where(eq(schema.aiGateways.deploymentId, input.deploymentId));
+    await tx
+      .update(schema.aiDeployments)
+      .set({
+        gatewayId: null,
+        ...(cleanupFailure &&
+        currentDeployment &&
+        isManagedRunPodDeletionStatus(currentDeployment.status)
+          ? {
+              status: "delete_failed" as const,
+              deletedAt: null,
+              failureCode: cleanupFailure.code,
+              failureMessage: cleanupFailure.message,
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.aiDeployments.id, input.deploymentId));
+    await tx
+      .update(schema.aiDeploymentRuns)
+      .set({
+        status: "failed",
+        errorCode: PROVISION_CANCELLED_CODE,
+        errorMessage: "Managed RunPod provisioning was cancelled by deletion.",
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.aiDeploymentRuns.id, input.runId));
+  });
 }
 
 async function processProvision(
@@ -296,10 +395,9 @@ async function processProvision(
     kind: "deployment",
     id: deployment.id,
   });
-  await knowledgeDb
-    .update(schema.aiDeployments)
-    .set({ status: "provisioning_template", updatedAt: new Date() })
-    .where(eq(schema.aiDeployments.id, deployment.id));
+  await updateProvisioningDeployment(deployment.id, {
+    status: "provisioning_template",
+  });
   const template = await ensureTemplate({
     runId: run.id,
     name,
@@ -307,14 +405,10 @@ async function processProvision(
     templateSpec: snapshot.templateSpec,
     providerTemplateId: deployment.providerTemplateId ?? run.providerTemplateId,
   });
-  await knowledgeDb
-    .update(schema.aiDeployments)
-    .set({
-      status: "provisioning_endpoint",
-      providerTemplateId: template.templateId,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.aiDeployments.id, deployment.id));
+  await updateProvisioningDeployment(deployment.id, {
+    status: "provisioning_endpoint",
+    providerTemplateId: template.templateId,
+  });
   const endpoint = await ensureEndpoint({
     runId: run.id,
     name,
@@ -325,14 +419,10 @@ async function processProvision(
   const { connection, client } = await createRunPodControlPlaneClient();
   await client.getEndpoint(endpoint.endpointId);
   const apiKey = resolveRunPodProviderApiKey(connection);
-  await knowledgeDb
-    .update(schema.aiDeployments)
-    .set({
-      status: "waiting_for_capacity",
-      providerEndpointId: endpoint.endpointId,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.aiDeployments.id, deployment.id));
+  await updateProvisioningDeployment(deployment.id, {
+    status: "waiting_for_capacity",
+    providerEndpointId: endpoint.endpointId,
+  });
   const gatewayId = await ensureManagedGateway({
     deployment,
     connectionId: connection.id,
@@ -358,10 +448,10 @@ async function processProvision(
       message: "RunPod endpoint did not expose the deployment profile model.",
     });
   }
-  await knowledgeDb
-    .update(schema.aiDeployments)
-    .set({ status: "validating", gatewayId, updatedAt: new Date() })
-    .where(eq(schema.aiDeployments.id, deployment.id));
+  await updateProvisioningDeployment(deployment.id, {
+    status: "validating",
+    gatewayId,
+  });
   await validateRunPodGatewayModel({ gatewayId, modelId: expected.id });
   await saveGatewayModel({
     id: expected.id,
@@ -377,11 +467,7 @@ async function processProvision(
     metadata: expected.metadata as Record<string, unknown> | null,
   });
   await knowledgeDb.transaction(async (tx) => {
-    await tx
-      .update(schema.aiGateways)
-      .set({ enabled: true, updatedAt: new Date() })
-      .where(eq(schema.aiGateways.id, gatewayId));
-    await tx
+    const [updatedDeployment] = await tx
       .update(schema.aiDeployments)
       .set({
         status: "ready",
@@ -393,7 +479,22 @@ async function processProvision(
         lastReconciledAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(schema.aiDeployments.id, deployment.id));
+      .where(
+        and(
+          eq(schema.aiDeployments.id, deployment.id),
+          notInArray(schema.aiDeployments.status, [
+            ...DELETE_LIFECYCLE_STATUSES,
+          ])
+        )
+      )
+      .returning({ id: schema.aiDeployments.id });
+    if (!updatedDeployment) {
+      throw provisionCancelledError();
+    }
+    await tx
+      .update(schema.aiGateways)
+      .set({ enabled: true, updatedAt: new Date() })
+      .where(eq(schema.aiGateways.id, gatewayId));
     await tx
       .update(schema.aiDeploymentRuns)
       .set({
@@ -484,6 +585,23 @@ export async function processManagedRunPodRun(runId: string) {
     await processProvision(row.run, row.deployment);
   } catch (error) {
     const failure = safeFailure(error);
+    if (row.run.kind === "provision" && row.deployment) {
+      const latestDeployment = await knowledgeDb.query.aiDeployments.findFirst({
+        where: eq(schema.aiDeployments.id, row.deployment.id),
+        columns: { status: true },
+      });
+      if (
+        failure.code === PROVISION_CANCELLED_CODE ||
+        (latestDeployment &&
+          isManagedRunPodDeletionStatus(latestDeployment.status))
+      ) {
+        await settleCancelledProvision({
+          runId,
+          deploymentId: row.deployment.id,
+        });
+        return;
+      }
+    }
     const deadlineExpired = Boolean(
       row.deployment?.reconciliationDeadline &&
         row.deployment.reconciliationDeadline.getTime() <= Date.now()
@@ -550,16 +668,18 @@ export async function reconcileManagedRunPodFleet() {
         }
         await tx
           .update(schema.aiDeployments)
-          .set({
-            status: deployment.status === "deleting" ? "deleted" : "failed",
-            failureCode: "RUNPOD_ENDPOINT_DRIFT",
-            failureMessage: "The managed RunPod endpoint no longer exists.",
-            lastReconciledAt: new Date(),
-            ...(deployment.status === "deleting"
-              ? { deletedAt: new Date() }
-              : {}),
-            updatedAt: new Date(),
-          })
+          .set(
+            isManagedRunPodDeletionStatus(deployment.status)
+              ? { lastReconciledAt: new Date(), updatedAt: new Date() }
+              : {
+                  status: "failed",
+                  failureCode: "RUNPOD_ENDPOINT_DRIFT",
+                  failureMessage:
+                    "The managed RunPod endpoint no longer exists.",
+                  lastReconciledAt: new Date(),
+                  updatedAt: new Date(),
+                }
+          )
           .where(eq(schema.aiDeployments.id, deployment.id));
       });
     } else {

@@ -27,3 +27,9 @@ export async function deleteManagedRunPodResources(input: {
     await input.deleteTemplate(input.templateId);
   }
 }
+
+export function isManagedRunPodDeletionStatus(status: string) {
+  return (
+    status === "deleting" || status === "delete_failed" || status === "deleted"
+  );
+}

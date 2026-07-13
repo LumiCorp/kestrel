@@ -5,6 +5,7 @@ import {
   hashManagedRunPodProfile,
   managedRunPodProfileInputSchema,
   parseManagedRunPodSpecSnapshot,
+  sanitizeManagedRunPodSpecSnapshot,
 } from "./managed-runpod-contracts";
 
 const digest = `registry.example/kestrel/model@sha256:${"a".repeat(64)}`;
@@ -106,6 +107,37 @@ test("profile hashing is canonical and deployment snapshots are immutable copies
   assert.equal(snapshot.profileVersion, 3);
   assert.equal(snapshot.specHash, specHash);
   assert.equal(snapshot.endpointSpec.gpuTypeIds[0], "NVIDIA L40S");
+});
+
+test("tenant deployment snapshots redact configuration and provider references", () => {
+  const parsed = managedRunPodProfileInputSchema.parse({
+    ...profileInput(),
+    templateSpec: {
+      ...profileInput().templateSpec,
+      containerRegistryAuthId: "registry-auth-123",
+    },
+    endpointSpec: {
+      ...profileInput().endpointSpec,
+      networkVolumeIds: ["volume-123"],
+    },
+  });
+  const sanitized = sanitizeManagedRunPodSpecSnapshot({
+    ...parsed,
+    profileId: "profile-1",
+    profileVersion: 1,
+    specHash: hashManagedRunPodProfile(parsed),
+  });
+
+  assert.deepEqual(sanitized.templateSpec.env, { MODEL_NAME: "configured" });
+  assert.deepEqual(sanitized.templateSpec.secretEnv, {
+    HF_TOKEN: "configured",
+  });
+  assert.equal(sanitized.templateSpec.containerRegistryAuthId, "configured");
+  assert.deepEqual(sanitized.endpointSpec.networkVolumeIds, ["configured"]);
+  assert.doesNotMatch(
+    JSON.stringify(sanitized),
+    /huggingface_token|volume-123/u
+  );
 });
 
 test("provider resource names are deterministic and bounded", () => {

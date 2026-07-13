@@ -147,6 +147,37 @@ export function parseManagedRunPodSpecSnapshot(
   };
 }
 
+export function sanitizeManagedRunPodTemplateSpec(value: unknown) {
+  const spec = runPodTemplateSpecSchema.parse(value);
+  return {
+    ...spec,
+    containerRegistryAuthId: spec.containerRegistryAuthId ? "configured" : null,
+    env: Object.fromEntries(
+      Object.keys(spec.env).map((key) => [key, "configured"])
+    ),
+    secretEnv: Object.fromEntries(
+      Object.keys(spec.secretEnv).map((key) => [key, "configured"])
+    ),
+  };
+}
+
+export function sanitizeManagedRunPodEndpointSpec(value: unknown) {
+  const spec = runPodEndpointSpecSchema.parse(value);
+  return {
+    ...spec,
+    networkVolumeIds: spec.networkVolumeIds.map(() => "configured"),
+  };
+}
+
+export function sanitizeManagedRunPodSpecSnapshot(value: unknown) {
+  const snapshot = parseManagedRunPodSpecSnapshot(value);
+  return {
+    ...snapshot,
+    templateSpec: sanitizeManagedRunPodTemplateSpec(snapshot.templateSpec),
+    endpointSpec: sanitizeManagedRunPodEndpointSpec(snapshot.endpointSpec),
+  };
+}
+
 export function getManagedRunPodResourceName(input: {
   kind: "deployment" | "qualification";
   id: string;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   assertManagedRunPodDeleteAccess,
+  assertManagedRunPodLaunchAccess,
   getManagedRunPodActor,
 } from "@/lib/ai/managed-runpod-access";
 import { assertManagedRunPodEnabled } from "@/lib/ai/managed-runpod-config";
@@ -10,6 +11,7 @@ import {
   getManagedRunPodDeployment,
   queueManagedRunPodDeletion,
   queueManagedRunPodRetry,
+  sanitizeManagedRunPodDeployment,
 } from "@/lib/ai/managed-runpod-store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { enqueueManagedRunPodRun } from "@/lib/knowledge/queue";
@@ -69,13 +71,16 @@ export async function POST(
       isOrganizationAdmin: actor.isOrganizationAdmin,
       isPlatformAdmin: actor.isPlatformAdmin,
     });
+    if (deployment.status === "failed") {
+      await assertManagedRunPodLaunchAccess(actor);
+    }
     const result = await queueManagedRunPodRetry({
       deploymentId: deployment.id,
       organizationId: actor.organizationId,
     });
     await enqueueManagedRunPodRun(result.run!.id);
     return NextResponse.json(
-      { deployment: result.deployment },
+      { deployment: sanitizeManagedRunPodDeployment(result.deployment!) },
       { status: 202 }
     );
   } catch (error) {
@@ -110,7 +115,11 @@ export async function DELETE(
       await enqueueManagedRunPodRun(result.run.id);
     }
     return NextResponse.json(
-      { deployment: result?.deployment ?? deployment },
+      {
+        deployment: result?.deployment
+          ? sanitizeManagedRunPodDeployment(result.deployment)
+          : deployment,
+      },
       { status: 202 }
     );
   } catch (error) {
