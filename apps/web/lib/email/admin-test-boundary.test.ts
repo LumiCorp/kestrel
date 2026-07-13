@@ -28,3 +28,22 @@ test("email test failures require authenticated delivery authority before mutati
     /actorUserId\s*&&\s*deliveryAttempted\s*&&\s*testedConfigFingerprint\s*&&\s*testedConfigRevision/
   );
 });
+
+test("email test audit failure cannot turn committed readiness into failure", () => {
+  const resultWrite = routeSource.indexOf("await recordEmailTestResult");
+  const audit = routeSource.indexOf("await logAdminEvent", resultWrite);
+  const isolatedAuditFailure = routeSource.indexOf(".catch(() =>", audit);
+  const successResponse = routeSource.indexOf(
+    "return NextResponse.json",
+    audit
+  );
+
+  assert.notEqual(resultWrite, -1);
+  assert.ok(resultWrite < audit);
+  assert.ok(audit < isolatedAuditFailure);
+  assert.ok(isolatedAuditFailure < successResponse);
+  assert.doesNotMatch(
+    routeSource.slice(isolatedAuditFailure, successResponse),
+    /throw|return responseFor/
+  );
+});

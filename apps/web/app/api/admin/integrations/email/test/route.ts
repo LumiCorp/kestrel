@@ -42,6 +42,10 @@ export async function POST() {
         targetId: "default",
         message: "Resend accepted the platform email test message.",
         metadata: { provider: "resend", messageId: result.id },
+      }).catch(() => {
+        console.error(
+          "[admin:email] Test result committed, but its audit event could not be recorded."
+        );
       });
     }
     return NextResponse.json({
