@@ -35,6 +35,13 @@ export interface ActiveSkillPackContext {
   allowedTools: string[];
 }
 
+export interface ActiveProjectContext {
+  projectId: string;
+  contextRevisionId: string;
+  contextRevision: number;
+  content: string;
+}
+
 export function buildRuntimeContextFragment(input: {
   taskInstruction?: string | undefined;
   eventType: string;
@@ -42,6 +49,7 @@ export function buildRuntimeContextFragment(input: {
   actSubmode?: string | undefined;
   promptVariant?: string | undefined;
   workspaceContext?: unknown;
+  projectContext?: unknown;
   skillPackContext?: unknown;
   activeProcessEvidence?: string[] | undefined;
   recentFilesystemEvidence?: string[] | undefined;
@@ -73,6 +81,10 @@ export function buildRuntimeContextFragment(input: {
   const workspace = renderWorkspaceContext(input.workspaceContext);
   if (workspace !== undefined) {
     lines.push("", workspace);
+  }
+  const projectContext = renderProjectContext(input.projectContext);
+  if (projectContext !== undefined) {
+    lines.push("", projectContext);
   }
   const skillPack = renderSkillPackContext(input.skillPackContext);
   if (skillPack !== undefined) {
@@ -147,6 +159,30 @@ export function buildWorkspaceModelContext(
 export function buildWorkspaceSystemMessages(value: unknown): string[] {
   const rendered = renderWorkspaceContext(value);
   return rendered !== undefined ? [rendered] : [];
+}
+
+export function readActiveProjectContext(value: unknown): ActiveProjectContext | undefined {
+  const record = asRecord(value);
+  const projectId = asString(record?.projectId);
+  const contextRevisionId = asString(record?.contextRevisionId);
+  const contextRevision = record?.contextRevision;
+  const content = asString(record?.content);
+  if (
+    projectId === undefined ||
+    contextRevisionId === undefined ||
+    typeof contextRevision !== "number" ||
+    Number.isSafeInteger(contextRevision) === false ||
+    contextRevision < 1 ||
+    content === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    projectId,
+    contextRevisionId,
+    contextRevision,
+    content,
+  };
 }
 
 export function readActiveSkillPackContext(value: unknown): ActiveSkillPackContext | undefined {
@@ -228,6 +264,20 @@ function renderWorkspaceContext(value: unknown): string | undefined {
     `- appRoot: ${workspace.appRoot}`,
     ...(workspace.packageManager !== undefined ? [`- packageManager: ${workspace.packageManager}`] : []),
     ...formatWorkspaceCommands(workspace.commands),
+  ].join("\n");
+}
+
+function renderProjectContext(value: unknown): string | undefined {
+  const projectContext = readActiveProjectContext(value);
+  if (projectContext === undefined) {
+    return undefined;
+  }
+  return [
+    "Project context:",
+    `- projectId: ${projectContext.projectId}`,
+    `- contextRevisionId: ${projectContext.contextRevisionId}`,
+    `- contextRevision: ${projectContext.contextRevision}`,
+    projectContext.content,
   ].join("\n");
 }
 

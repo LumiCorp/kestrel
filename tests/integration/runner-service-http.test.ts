@@ -167,6 +167,7 @@ test("runner service http serves unary commands over /commands", async (t) => {
 test("runner service http streams run.start over /commands/stream", async (t) => {
   const runtimeFactory = (): RunnerRuntime => ({
     runTurn: async () => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: "session-http",
@@ -263,6 +264,7 @@ test("runner service http exposes OpenAI-compatible models and chat streaming", 
             },
           } as import("../../src/index.js").ProgressUpdateV1 & { toolInput: Record<string, unknown> });
           return {
+            assistantText: "Compatibility HTTP hello",
             output: {
               status: "COMPLETED",
               sessionId: input.sessionId,

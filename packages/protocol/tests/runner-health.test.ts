@@ -6,7 +6,10 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
   RUNNER_RUN_STREAM_EVENT_TYPES,
+  RUNNER_WAITING_PROMPT_HISTORY_KIND,
   createRunnerHealthV1,
+  parseRunnerResultV2,
+  parseRunnerTerminalPayloadV2,
   parseRunnerHealthV1,
 } from "../src/index.js";
 
@@ -27,7 +30,66 @@ test("runner health contract rejects legacy unversioned payloads", () => {
   );
 });
 
+test("runner health rejects the v1 event contract", () => {
+  const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
+  assert.throws(
+    () => parseRunnerHealthV1({
+      ...health,
+      contracts: { ...health.contracts, events: "dotted-runtime-events-v1" },
+    }),
+    /dotted-runtime-events-v2/u,
+  );
+});
+
+test("v2 runner results require explicit assistant text without interpreting structured output", () => {
+  const finalizedPayload = {
+    message: "must not become assistant text",
+    content: "also structured",
+    text: "still structured",
+  };
+  const parsed = parseRunnerResultV2({
+    output: { status: "COMPLETED" },
+    assistantText: null,
+    finalizedPayload,
+  });
+  assert.equal(parsed.assistantText, null);
+  assert.equal(parsed.finalizedPayload, finalizedPayload);
+  assert.throws(
+    () => parseRunnerResultV2({ output: {}, finalizedPayload }),
+    /assistantText is required/u,
+  );
+  assert.throws(
+    () => parseRunnerResultV2({ output: {}, assistantText: "   " }),
+    /null or a non-empty string/u,
+  );
+  assert.equal(
+    parseRunnerResultV2({ output: {}, assistantText: "  committed response  " }).assistantText,
+    "committed response",
+  );
+});
+
+test("every v2 terminal payload requires a result while operator results are validated when present", () => {
+  for (const type of ["run.completed", "run.failed", "run.cancelled"]) {
+    assert.throws(
+      () => parseRunnerTerminalPayloadV2(type, {}),
+      /runner result must be an object/u,
+    );
+  }
+  assert.deepEqual(
+    parseRunnerTerminalPayloadV2("operator.controlled", { threadId: "thread-1" }),
+    { threadId: "thread-1" },
+  );
+  assert.throws(
+    () => parseRunnerTerminalPayloadV2("operator.controlled", {
+      threadId: "thread-1",
+      result: { output: {}, assistantText: "" },
+    }),
+    /non-empty string/u,
+  );
+});
+
 test("public run stream event names include tool and console activity", () => {
+  assert.equal(RUNNER_WAITING_PROMPT_HISTORY_KIND, "runtime.waiting_prompt");
   assert.deepEqual(RUNNER_RUN_STREAM_EVENT_TYPES, [
     "run.started",
     "run.cancelled",

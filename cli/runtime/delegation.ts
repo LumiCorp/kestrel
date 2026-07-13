@@ -13,11 +13,11 @@ import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { normalizeSubAgentResultEnvelope } from "../../src/orchestration/subAgentResult.js";
 import { getSkillPackById } from "./skillPacks.js";
-import { parseFinalizePayload } from "../output/FinalizePayload.js";
 
 export interface DelegationTaskUpdate {
   task: DelegationTaskSnapshot;
   kind: "spawned" | "waiting" | "completed" | "failed";
+  assistantText: string | null;
   finalizedPayload?: unknown | undefined;
 }
 
@@ -107,6 +107,7 @@ export class RuntimeDelegationService implements DelegationServicePort {
         updatedAt: new Date().toISOString(),
       },
       kind: "spawned",
+      assistantText: null,
     });
 
     void this.executeTask({
@@ -179,18 +180,18 @@ export class RuntimeDelegationService implements DelegationServicePort {
         this.emitUpdate({
           task: waitingTask,
           kind: "waiting",
+          assistantText: null,
         });
         return;
       }
 
-      const parsed = parseFinalizePayload(finalOutput);
+      const assistantText = readAssistantText(react?.assistantText);
       const result = normalizeSubAgentResultEnvelope(finalOutput, "completed");
       const completedTask = this.patchTask(taskId, {
         status: "COMPLETED",
         waitEventType: undefined,
         result,
-        resultSummary:
-          parsed.ok === true ? parsed.payload?.message : summarizeResult(result.result),
+        resultSummary: assistantText ?? summarizeResult(result.result),
         ...(result.error?.code !== undefined ? { errorCode: result.error.code } : {}),
         ...(result.error?.message !== undefined ? { errorMessage: result.error.message } : {}),
         ...(result.references !== undefined ? { references: result.references } : {}),
@@ -207,6 +208,7 @@ export class RuntimeDelegationService implements DelegationServicePort {
       this.emitUpdate({
         task: completedTask,
         kind: "completed",
+        assistantText,
         finalizedPayload: finalOutput,
       });
     } catch (error) {
@@ -234,6 +236,7 @@ export class RuntimeDelegationService implements DelegationServicePort {
       this.emitUpdate({
         task: failedTask,
         kind: "failed",
+        assistantText: null,
       });
     }
   }
@@ -362,6 +365,14 @@ export class RuntimeDelegationService implements DelegationServicePort {
       throw new Error(`Delegation limit reached (${maxConcurrent} active child sessions).`);
     }
   }
+}
+
+function readAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function summarizeResult(value: unknown): string {

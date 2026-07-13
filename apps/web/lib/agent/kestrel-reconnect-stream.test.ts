@@ -18,7 +18,7 @@ test("writeKestrelReconnectStreamToUi keeps runner error as fallback until termi
       },
       {
         type: "run.completed",
-        payload: { result: { finalizedPayload: { message: "Final answer" } } },
+        payload: { result: { assistantText: "Final answer", finalizedPayload: { message: "ignored" } } },
       },
     ]),
   });
@@ -54,12 +54,7 @@ test("writeKestrelReconnectStreamToUi emits runner error fallback when no termin
 
   const output = JSON.stringify(writer.chunks);
 
-  assert.equal(countOccurrences(output, "Runner boundary failed."), 2);
-  assert.ok(
-    output.indexOf("reasoning-end") <
-      output.lastIndexOf("Runner boundary failed."),
-    "reasoning should close before the fallback assistant text"
-  );
+  assert.equal(countOccurrences(output, "Runner boundary failed."), 1);
 });
 
 function createChunkWriter() {

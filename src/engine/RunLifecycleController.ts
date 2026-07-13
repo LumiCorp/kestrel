@@ -101,10 +101,10 @@ export class RunLifecycleController {
     runId: string;
     event: RuntimeEvent;
   }): Promise<{ session: SessionRecord; progressSeq: number; lastStepAgent: string | undefined }> {
-    const session = this.options.normalizeLegacyExecutionSession(
+    const loadedSession = this.options.normalizeLegacyExecutionSession(
       await this.options.deps.store.ensureSession(input.event.sessionId, input.event.stepAgent),
     );
-    if (session === undefined) {
+    if (loadedSession === undefined) {
       throw createRuntimeFailure(
         "RUN_SESSION_LOAD_FAILED",
         "Session could not be initialized.",
@@ -115,6 +115,8 @@ export class RunLifecycleController {
         },
       );
     }
+
+    const session = loadedSession;
 
     await this.options.deps.store.startRun(input.runId, input.event);
     await this.options.appendRunEvent(input.runId, input.event.sessionId, "run.started", "INFO", {
@@ -156,6 +158,23 @@ export class RunLifecycleController {
       progressSeq,
       lastStepAgent: session.currentStepAgent ?? input.event.stepAgent,
     };
+  }
+
+  async resetFinalizationArtifacts(session: SessionRecord): Promise<SessionRecord> {
+    const agentState = asRecord(session.state.agent) ?? {};
+    return this.options.deps.store.patchSessionState({
+      sessionId: session.sessionId,
+      expectedVersion: session.version,
+      statePatch: {
+        agent: {
+          ...agentState,
+          assistantText: null,
+          finalOutput: undefined,
+        },
+      },
+      ...(session.currentStepAgent !== undefined ? { nextStepAgent: session.currentStepAgent } : {}),
+      reason: "run_finalization_reset",
+    });
   }
 
   async returnTerminal(input: {

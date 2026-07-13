@@ -41,6 +41,7 @@ import {
   appendRendererTranscript,
   getRendererTurnContinuation,
   getTerminalWaitEventType,
+  getTerminalWaitingPrompt,
   readDesktopRendererState,
   selectRendererThread,
   serializeDesktopRendererState,
@@ -204,16 +205,30 @@ export function DesktopApp() {
       });
       const assistantText = extractTerminalMessage(terminal);
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
-      if (assistantText !== undefined) {
+      const waitingPrompt = getTerminalWaitingPrompt(terminal);
+      const terminalLine = assistantText !== undefined
+        ? {
+            role: "assistant" as const,
+            text: assistantText,
+            timestamp: new Date().toISOString(),
+          }
+        : waitingPrompt !== undefined
+          ? {
+              role: "system" as const,
+              text: waitingPrompt.text,
+              timestamp: new Date().toISOString(),
+              data: {
+                kind: "runtime.waiting_prompt" as const,
+                runId: waitingPrompt.runId,
+              },
+            }
+          : undefined;
+      if (terminalLine !== undefined) {
         setState((current) => {
           if (current === undefined) {
             return current;
           }
-          const appended = appendRendererTranscript(current, threadId, {
-            role: "assistant",
-            text: assistantText,
-            timestamp: new Date().toISOString(),
-          });
+          const appended = appendRendererTranscript(current, threadId, terminalLine);
           return updateRendererThread(appended, threadId, (thread) => ({
             ...thread,
             pendingWaitEventType,
@@ -707,38 +722,11 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
 }
 
 function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
-  if (event.type === "run.cancelled") {
-    return "Run cancelled.";
-  }
-  if (event.type === "run.failed") {
-    const payload = asRecord(event.payload);
-    const error = asRecord(payload?.error);
-    return readString(error?.message) ?? readString(payload?.message) ?? "The run failed.";
-  }
   if (event.type !== "run.completed") {
     return undefined;
   }
   const result = asRecord(event.payload.result);
-  const output = asRecord(result?.output);
-  if (output?.status === "WAITING") {
-    const waitFor = asRecord(output.waitFor);
-    const eventType = readString(waitFor?.eventType);
-    return eventType === undefined ? "Waiting for input." : `Waiting for ${eventType}.`;
-  }
-  return extractMessage(result?.finalizedPayload)
-    ?? readString(output?.message)
-    ?? (typeof output?.status === "string" ? output.status : undefined);
-}
-
-function extractMessage(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value.trim().length > 0 ? value.trim() : undefined;
-  }
-  const record = asRecord(value);
-  return readString(record?.message)
-    ?? readString(record?.text)
-    ?? readString(record?.content)
-    ?? readString(asRecord(record?.data)?.plainText);
+  return readString(result?.assistantText);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

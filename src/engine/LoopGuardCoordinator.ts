@@ -611,6 +611,7 @@ export class LoopGuardCoordinator {
         agent: clearRuntimeWaitState({
           ...reactState,
           nextAction,
+          assistantText: summary.partialAnswer.trim(),
           finalOutput,
           terminal: {
             status: "COMPLETED",
@@ -658,6 +659,7 @@ export class LoopGuardCoordinator {
         statePatch: {
           agent: {
             nextAction,
+            assistantText: summary.partialAnswer.trim(),
             finalOutput,
           },
         },
@@ -771,6 +773,7 @@ export class LoopGuardCoordinator {
           ...reactState,
           ...(completedVisibleTodos !== undefined ? { visibleTodos: completedVisibleTodos } : {}),
           nextAction,
+          assistantText: message,
           finalOutput,
           terminal: {
             status: "COMPLETED",
@@ -796,6 +799,7 @@ export class LoopGuardCoordinator {
           agent: {
             ...(completedVisibleTodos !== undefined ? { visibleTodos: completedVisibleTodos } : {}),
             nextAction,
+            assistantText: message,
             finalOutput,
           },
         },
@@ -1056,6 +1060,7 @@ export class LoopGuardCoordinator {
         agent: clearRuntimeWaitState({
           ...reactState,
           nextAction,
+          assistantText: synthesisResult.message.trim(),
           finalOutput,
           terminal: {
             status: "COMPLETED",
@@ -1080,6 +1085,7 @@ export class LoopGuardCoordinator {
         statePatch: {
           agent: {
             nextAction,
+            assistantText: synthesisResult.message.trim(),
             finalOutput,
           },
         },

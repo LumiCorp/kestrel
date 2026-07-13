@@ -6,6 +6,7 @@ import {
   extractWaitPrompt,
   resolveBlockedWaitModeReply,
 } from "../../cli/app/waitForPrompt.js";
+import { extractWaitPrompt as extractSharedWaitPrompt } from "../../src/runtime/waitForPrompt.js";
 
 test("extractWaitPrompt returns prompt from wait metadata", () => {
   const waitFor = {
@@ -17,6 +18,16 @@ test("extractWaitPrompt returns prompt from wait metadata", () => {
   };
 
   assert.equal(extractWaitPrompt(waitFor), "Should I proceed?");
+});
+
+test("shared wait prompt extraction retains the legacy direct prompt shape", () => {
+  assert.equal(
+    extractSharedWaitPrompt({
+      eventType: "user.reply",
+      prompt: "  Which workspace should I inspect?  ",
+    }),
+    "Which workspace should I inspect?",
+  );
 });
 
 test("buildWaitingSystemText includes prompt when present", () => {

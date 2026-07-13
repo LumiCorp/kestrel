@@ -3653,6 +3653,7 @@ test("run completion appends finalize provenance notice when reporting grounding
       type: "run.completed",
       payload: {
         result: {
+          assistantText: "Implemented requested repository update.",
           output: {
             status: "COMPLETED",
             sessionId: "session-1",

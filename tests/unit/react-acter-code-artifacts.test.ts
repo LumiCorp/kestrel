@@ -1118,6 +1118,10 @@ test("exec.finalize persists resumable follow-up contract for non-success finali
   const commandProcessor = react.commandProcessor as Record<string, unknown>;
   const lastCheckpoint = commandProcessor.lastCheckpoint as Record<string, unknown>;
   const workingPlan = react.workingPlan as Record<string, unknown>;
+  assert.equal(
+    react.assistantText,
+    "I cannot summarize yet. If you want, I can continue by gathering fresh US headlines and then summarize them cautiously.",
+  );
   assert.equal(react.resumableFollowUp, undefined);
   assert.equal(exec.pendingBatch, undefined);
   assert.equal(lastCheckpoint.substate, "finalize");
@@ -1195,6 +1199,10 @@ test("exec.cannot_satisfy persists resumable follow-up contract", async () => {
   const commandProcessor = react.commandProcessor as Record<string, unknown>;
   const lastCheckpoint = commandProcessor.lastCheckpoint as Record<string, unknown>;
   const workingPlan = react.workingPlan as Record<string, unknown>;
+  assert.equal(
+    react.assistantText,
+    "I can't give you current US morning news without a fresh follow-up run.",
+  );
   assert.equal(react.resumableFollowUp, undefined);
   assert.equal(lastCheckpoint.substate, "finalize");
   assert.equal(workingPlan.status, "finalizing");
@@ -1639,6 +1647,10 @@ test("exec.finalize dispatches implemented_and_verified without runtime proof-to
 
   assert.equal(transition.status, "COMPLETED");
   assert.equal(finalizedPayload?.message, "Verified newsletter work is complete.");
+  assert.equal(
+    (transition.statePatch?.agent as Record<string, unknown>).assistantText,
+    "Verified newsletter work is complete.",
+  );
   const data = (finalizedPayload?.data ?? {}) as Record<string, unknown>;
   assert.equal(data.completionState, "implemented_and_verified");
 });

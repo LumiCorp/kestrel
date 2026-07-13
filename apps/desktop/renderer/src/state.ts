@@ -4,6 +4,7 @@ import type {
   DesktopRunnerEvent,
   DesktopUiStateV1,
 } from "../../src/contracts";
+import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
 
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
@@ -15,7 +16,10 @@ const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
 export type RendererTheme = "light" | "dark";
 export type RendererMode = "chat" | "plan" | "build";
 
-export interface RendererTranscriptLine extends DesktopRunHistoryLine {
+export interface RendererTranscriptLine {
+  role: "user" | "assistant" | "system";
+  text: string;
+  timestamp: string;
   data?: unknown;
 }
 
@@ -166,9 +170,26 @@ export function serializeDesktopRendererState(
 }
 
 export function toDesktopRunHistory(thread: RendererThread): DesktopRunHistoryLine[] {
-  return thread.transcript
-    .filter((line) => line.role === "user" || line.role === "assistant" || line.role === "system")
-    .map(({ role, text, timestamp }) => ({ role, text, timestamp }));
+  return thread.transcript.flatMap<DesktopRunHistoryLine>((line) => {
+    if (line.role === "user" || line.role === "assistant") {
+      return [{ role: line.role, text: line.text, timestamp: line.timestamp }];
+    }
+    const data = asRecord(line.data);
+    const runId = typeof data?.runId === "string" && data.runId.trim().length > 0
+      ? data.runId.trim()
+      : undefined;
+    return data?.kind === "runtime.waiting_prompt"
+      ? [{
+          role: "system" as const,
+          text: line.text,
+          timestamp: line.timestamp,
+          data: {
+            kind: "runtime.waiting_prompt" as const,
+            ...(runId !== undefined ? { runId } : {}),
+          },
+        }]
+      : [];
+  });
 }
 
 export function getRendererTurnContinuation(
@@ -199,6 +220,18 @@ export function getTerminalWaitEventType(
   const eventType = event.payload.result.output.waitFor?.eventType;
   return typeof eventType === "string" && eventType.trim().length > 0
     ? eventType.trim()
+    : undefined;
+}
+
+export function getTerminalWaitingPrompt(
+  event: DesktopRunnerEvent,
+): { text: string; runId: string } | undefined {
+  if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
+    return undefined;
+  }
+  const prompt = extractWaitPrompt(event.payload.result.output.waitFor);
+  return prompt !== undefined
+    ? { text: prompt, runId: event.payload.result.output.runId }
     : undefined;
 }
 

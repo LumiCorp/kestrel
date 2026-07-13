@@ -35,6 +35,7 @@ test("external replies use the hosted chat id and canonical SDK context", async 
         runId: "run_123",
         payload: {
           result: {
+            assistantText: "Canonical bot reply",
             output: {
               status: "COMPLETED",
               sessionId: turn.sessionId,
@@ -99,6 +100,18 @@ test("external replies surface canonical runner failures", async () => {
         sessionId: turn.sessionId,
         runId: "run_failed",
         payload: {
+          result: {
+            assistantText: null,
+            output: {
+              status: "FAILED",
+              sessionId: turn.sessionId,
+              runId: "run_failed",
+              errors: [{
+                code: "MODEL_UNAVAILABLE",
+                message: "The configured model is unavailable.",
+              }],
+            },
+          },
           error: {
             code: "MODEL_UNAVAILABLE",
             message: "The configured model is unavailable.",
@@ -154,6 +167,7 @@ test("external bot replies submit the gateway-managed inline profile", async () 
         runId: "run_123",
         payload: {
           result: {
+            assistantText: "done",
             output: {
               status: "COMPLETED",
               sessionId: request.turn.sessionId,

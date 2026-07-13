@@ -18,7 +18,7 @@ test("writeKestrelRunnerEventsToUi keeps runner error in reasoning but completed
       },
       {
         type: "run.completed",
-        payload: { result: { finalizedPayload: { message: "Final answer" } } },
+        payload: { result: { assistantText: "Final answer", finalizedPayload: { message: "ignored" } } },
       },
     ]),
   });
@@ -32,7 +32,7 @@ test("writeKestrelRunnerEventsToUi keeps runner error in reasoning but completed
   assert.equal(countOccurrences(output, "Final answer"), 1);
 });
 
-test("writeKestrelRunnerEventsToUi translates thrown runner errors into reasoning fallback", async () => {
+test("writeKestrelRunnerEventsToUi keeps thrown runner errors out of assistant text", async () => {
   const writer = createChunkWriter();
 
   const result = await writeKestrelRunnerEventsToUi({
@@ -46,13 +46,9 @@ test("writeKestrelRunnerEventsToUi translates thrown runner errors into reasonin
   const output = JSON.stringify(writer.chunks);
 
   assert.equal(result.terminalStatus, "runner_error");
-  assert.equal(result.finalText, "Subscription denied.");
+  assert.equal(result.finalText, "");
   assert.equal(result.errorMessage, "Subscription denied.");
-  assert.equal(countOccurrences(output, "Subscription denied."), 2);
-  assert.ok(
-    output.indexOf("reasoning-end") < output.lastIndexOf("Subscription denied."),
-    "reasoning should close before the fallback assistant text"
-  );
+  assert.equal(countOccurrences(output, "Subscription denied."), 1);
 });
 
 test("writeKestrelRunnerEventsToUi maps failed and cancelled terminal statuses", async () => {
@@ -83,7 +79,7 @@ test("writeKestrelRunnerEventsToUi maps failed and cancelled terminal statuses",
       errorMessage: failed.errorMessage,
     },
     {
-      finalText: "Runner failed.",
+      finalText: "",
       terminalStatus: "failed",
       errorMessage: "Runner failed.",
     }
@@ -95,7 +91,7 @@ test("writeKestrelRunnerEventsToUi maps failed and cancelled terminal statuses",
       errorMessage: cancelled.errorMessage,
     },
     {
-      finalText: "The run was cancelled before it finished.",
+      finalText: "",
       terminalStatus: "cancelled",
       errorMessage: "The run was cancelled before it finished.",
     }
@@ -116,7 +112,7 @@ test("writeKestrelRunnerEventsToUi suppresses duplicate and blank progress but p
       { type: "run.progress", payload: { update: { message: "   " } } },
       {
         type: "run.completed",
-        payload: { result: { finalizedPayload: { message: "Working." } } },
+        payload: { result: { assistantText: "Working.", finalizedPayload: { message: "ignored" } } },
       },
     ]),
   });

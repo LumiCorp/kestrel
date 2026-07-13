@@ -134,7 +134,7 @@ export function buildManagedScratchpadFromRuntime(input: {
     goal:
       transcriptGoal ??
       asString(plan?.intent) ??
-      asString(asRecord(reactState.finalOutput)?.message) ??
+      asString(reactState.assistantText) ??
       undefined,
     currentPlan: [
       ...successCriteria,

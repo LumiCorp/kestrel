@@ -55,6 +55,7 @@ import {
   resolveDeliberatorPromptVariant,
 } from "../prompt/deliberatorPrompt.js";
 import { readActiveSkillPackContext } from "../prompt/skillPack.js";
+import { readActiveProjectContext } from "../prompt/projectContext.js";
 import {
   buildWorkspaceModelContext,
   readActiveWorkspaceContext,
@@ -350,6 +351,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const projectSnapshot = readProjectSnapshotContext(ctx.session.state);
 
     const activeWorkspaceModelContext = buildWorkspaceModelContext(activeWorkspace);
+    const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
     const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
     const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
       tools: deliberatorTools,
@@ -393,6 +395,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       },
       retryContext: asRecord(reactState.retryContext),
       activeWorkspace: activeWorkspaceModelContext,
+      activeProjectContext,
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
@@ -410,6 +413,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       projectSnapshot,
       promptVariant: resolvedPromptVariant,
       activeWorkspace: activeWorkspaceModelContext,
+      activeProjectContext,
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
@@ -533,6 +537,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         },
         retryContext,
         activeWorkspace: activeWorkspaceModelContext,
+        activeProjectContext,
         activeSkillPack: activeSkillPackContext,
         stepIndex: ctx.stepIndex,
       });
@@ -678,6 +683,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     decisionTrace: undefined,
     loopGuard: undefined,
     terminal: undefined,
+    assistantText: null,
     finalOutput: undefined,
     activeTurnIntent: undefined,
     phase: undefined,
@@ -977,6 +983,7 @@ async function compactContextRequestIfNeeded(input: {
   projectSnapshot?: unknown;
   promptVariant?: string | undefined;
   activeWorkspace?: unknown;
+  activeProjectContext?: unknown;
   activeSkillPack?: unknown;
   stepIndex: number;
 }): Promise<ReturnType<typeof buildContextRequest>> {
@@ -1031,6 +1038,7 @@ async function compactContextRequestIfNeeded(input: {
       promptVariant: input.promptVariant,
     },
     activeWorkspace: input.activeWorkspace,
+    activeProjectContext: input.activeProjectContext,
     activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
   });

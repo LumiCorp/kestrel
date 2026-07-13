@@ -12,7 +12,7 @@ importers:
         specifier: ^0.4.6
         version: 0.4.6
       '@kestrel-agents/protocol':
-        specifier: 0.5.1
+        specifier: workspace:*
         version: link:packages/protocol
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1

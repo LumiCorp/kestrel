@@ -20,7 +20,7 @@ import {
   type RuntimePlanState,
 } from "./planDocument.js";
 
-export const CURRENT_RUNTIME_STATE_SCHEMA_VERSION = 1;
+export const CURRENT_RUNTIME_STATE_SCHEMA_VERSION = 2;
 
 export interface RuntimeMetadataState {
   schemaVersion: number;
@@ -67,6 +67,7 @@ export interface RuntimeTerminalState {
 export interface RuntimeAgentState extends Record<string, unknown> {
   observations: unknown[];
   exec: RuntimeExecState;
+  assistantText: string | null;
   waitingFor?: RuntimeCanonicalWaitingForState | undefined;
   terminal?: RuntimeTerminalState | undefined;
   lastAction?: Record<string, unknown> | undefined;
@@ -149,6 +150,7 @@ export function migrateLegacyRuntimeState(
     },
     agent: {
       ...agent,
+      assistantText: null,
       exec,
       pendingEffectKey: undefined,
       pendingEffectType: undefined,
@@ -220,6 +222,18 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
       message: "state.agent.exec must be an object",
       details: {
         path: "state.agent.exec",
+      },
+    };
+  }
+  if (
+    agent.assistantText !== null &&
+    (typeof agent.assistantText !== "string" || agent.assistantText.trim().length === 0)
+  ) {
+    return {
+      code: "RUNTIME_STATE_INVALID",
+      message: "state.agent.assistantText must be null or a non-empty string",
+      details: {
+        path: "state.agent.assistantText",
       },
     };
   }
@@ -514,6 +528,7 @@ function decodeAgentState(value: Record<string, unknown> | undefined): RuntimeAg
     ...stateWithoutLegacyAuthority,
     observations: Array.isArray(state.observations) ? state.observations : [],
     exec: asRecord(state.exec) ?? {},
+    assistantText: normalizeAssistantText(state.assistantText),
     ...(asRecord(state.waitingFor) !== undefined ? { waitingFor: asRecord(state.waitingFor) } : {}),
     ...(asRecord(state.terminal) !== undefined ? { terminal: asRecord(state.terminal) } : {}),
     ...(asRecord(state.lastAction) !== undefined ? { lastAction: asRecord(state.lastAction) } : {}),
@@ -561,8 +576,17 @@ function hasLegacyRuntimeState(state: DecodedRuntimeSessionState): boolean {
     typeof agent.pendingEffectType === "string" ||
     asRecord(agent.pendingApproval) !== undefined ||
     asRecord(agent.pendingToolBatch) !== undefined ||
-    asRecord(agent.pendingToolCall) !== undefined
+    asRecord(agent.pendingToolCall) !== undefined ||
+    agent.assistantText === undefined
   );
+}
+
+function normalizeAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function looksLikeLegacyPlanState(value: unknown): boolean {

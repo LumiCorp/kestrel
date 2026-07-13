@@ -102,11 +102,17 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
           options,
         );
 
-    const finalizedPayload = result.finalizedPayload ??
-      (result.output.status === "COMPLETED"
+    const finalizedPayload = result.finalizedPayload !== undefined
+      ? result.finalizedPayload
+      : result.output.status === "COMPLETED"
         ? await this.readFinalizedPayload?.(input.sessionId)
-        : undefined);
+        : undefined;
     const session = result.session ?? await this.getSession?.(input.sessionId);
+    const assistantText = result.output.status === "COMPLETED"
+      ? result.assistantText !== undefined
+        ? result.assistantText
+        : readAssistantText(asRecord(session?.state.agent)?.assistantText)
+      : null;
     const affordanceInput = {
       session,
       turn: {
@@ -135,6 +141,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
 
     return {
       output: result.output,
+      assistantText,
       ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
       ...(operatorAffordance !== undefined ? { operatorAffordance } : {}),
     };
@@ -177,6 +184,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     return {
       prepared,
       output: result.output,
+      assistantText: result.assistantText,
       session: result.session,
       finalizedPayload: result.finalizedPayload,
       threadStatus,
@@ -233,6 +241,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
 interface RuntimeTurnExecutionResult {
   prepared: PreparedRuntimeTurn;
   output: NormalizedOutput;
+  assistantText?: string | null | undefined;
   session?: SessionRecord | undefined;
   finalizedPayload?: unknown | undefined;
   threadStatus?: ThreadStatusSnapshot | null | undefined;
@@ -259,4 +268,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
+}
+
+function readAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

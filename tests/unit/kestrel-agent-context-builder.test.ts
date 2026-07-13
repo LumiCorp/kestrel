@@ -70,6 +70,12 @@ test("Kestrel agent context builder records deterministic section order", () => 
     eventType: "job.run",
     goal: "Build a planner.",
     interactionMode: "build",
+    activeProjectContext: {
+      projectId: "project-atlas",
+      contextRevisionId: "revision-7",
+      contextRevision: 7,
+      content: "Project: Atlas",
+    },
   });
 
   assert.deepEqual(
@@ -80,6 +86,7 @@ test("Kestrel agent context builder records deterministic section order", () => 
       "benchmarkContext",
       "mode",
       "workspace",
+      "projectContext",
       "skillPack",
       "activeProcessEvidence",
       "recentFilesystemEvidence",
@@ -91,6 +98,10 @@ test("Kestrel agent context builder records deterministic section order", () => 
       "activeWait",
       "transcript",
     ],
+  );
+  assert.deepEqual(
+    context.metadata.sections.find((section) => section.id === "projectContext"),
+    { id: "projectContext", origin: "project", rendered: true },
   );
 });
 

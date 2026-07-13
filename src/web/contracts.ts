@@ -1,4 +1,5 @@
 import type { RunnerActorMetadata, RunnerEvent } from "../../cli/protocol/contracts.js";
+import type { RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 
 import type {
@@ -18,12 +19,22 @@ import type {
 } from "../mode/contracts.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
 
-export interface WebHistoryLine {
-  role: "user" | "assistant" | "system";
+interface WebHistoryLineBase {
   text: string;
   timestamp: string;
   attachments?: RunTurnAttachment[] | undefined;
 }
+
+export type WebHistoryLine = WebHistoryLineBase & (
+  | {
+      role: "user" | "assistant";
+      data?: undefined;
+    }
+  | {
+      role: "system";
+      data: RunnerWaitingPromptHistoryDataV2;
+    }
+);
 
 export interface WebRunTurnRequest {
   sessionId: string;

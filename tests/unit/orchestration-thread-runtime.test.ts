@@ -693,6 +693,7 @@ test("ThreadRuntime appends completed assistant output to durable thread history
       finalizedPayload: {
         message: "Final answer from the runtime.",
       },
+      assistantText: "Final answer from the runtime.",
     },
   ]);
 
@@ -766,7 +767,7 @@ test("ThreadRuntime preserves submitted history and appends the waiting assistan
           kind: "user",
           eventType: "user.reply",
           metadata: {
-            prompt: "Need user input",
+            question: "Need user input",
           },
         },
       }),
@@ -834,6 +835,76 @@ test("ThreadRuntime preserves submitted history and appends the waiting assistan
     "fix the landing page mounting issue",
     "try again",
     "Need user input",
+  ]);
+  assert.deepEqual(persistedHistory.map((line) => (line as { role?: string }).role), [
+    "user",
+    "user",
+    "system",
+  ]);
+});
+
+test("ThreadRuntime preserves identical waiting prompts from separate runs", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const waitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+    metadata: {
+      question: "Which workspace should I inspect?",
+    },
+  };
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "run-repeated-wait-1",
+        status: "WAITING",
+        waitFor,
+      }),
+    },
+    {
+      output: buildOutput({
+        runId: "run-repeated-wait-2",
+        status: "WAITING",
+        waitFor,
+      }),
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+
+  await runtime.startThread({
+    threadId: "thread-repeated-wait",
+    title: "Repeated wait thread",
+  });
+  await runtime.submitTurn({
+    threadId: "thread-repeated-wait",
+    message: "Inspect the first workspace",
+    eventType: "user.message",
+  });
+  await runtime.submitTurn({
+    threadId: "thread-repeated-wait",
+    message: "Inspect another workspace",
+    eventType: "user.message",
+  });
+
+  const persisted = await sessionStore.getThread("thread-repeated-wait");
+  const history = persisted?.metadata?.history;
+  assert.ok(Array.isArray(history));
+  assert.deepEqual(history, [
+    {
+      role: "system",
+      text: "Which workspace should I inspect?",
+      timestamp: history[0]?.timestamp,
+      data: { kind: "runtime.waiting_prompt", runId: "run-repeated-wait-1" },
+    },
+    {
+      role: "system",
+      text: "Which workspace should I inspect?",
+      timestamp: history[1]?.timestamp,
+      data: { kind: "runtime.waiting_prompt", runId: "run-repeated-wait-2" },
+    },
   ]);
 });
 

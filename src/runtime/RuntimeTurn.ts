@@ -1,5 +1,9 @@
 import type { ClientCapabilities } from "../clientCapabilities.js";
 import type {
+  RunnerResultV2,
+  RunnerWaitingPromptHistoryDataV2,
+} from "@kestrel-agents/protocol";
+import type {
   ExecutionPolicyOverride,
   InteractionMode,
   ActSubmode,
@@ -27,6 +31,21 @@ export interface RuntimeTurnSkillPack {
   allowedTools?: string[] | undefined;
 }
 
+export interface RuntimeTurnHistoryLine {
+  role: "user" | "assistant" | "system";
+  text: string;
+  timestamp: string;
+  attachments?: RunTurnAttachment[] | undefined;
+  data?: RunnerWaitingPromptHistoryDataV2 | undefined;
+}
+
+export interface RuntimeTurnProjectContext {
+  projectId: string;
+  contextRevisionId: string;
+  contextRevision: number;
+  content: string;
+}
+
 export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -42,14 +61,8 @@ export interface RuntimeTurnInput {
   actor?: RuntimeTurnActor | undefined;
   clientCapabilities?: ClientCapabilities | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
-  history?:
-    | Array<{
-        role: "user" | "assistant" | "system";
-        text: string;
-        timestamp: string;
-        attachments?: RunTurnAttachment[] | undefined;
-      }>
-    | undefined;
+  history?: RuntimeTurnHistoryLine[] | undefined;
+  projectContext?: RuntimeTurnProjectContext | undefined;
   manualCompaction?: boolean | undefined;
   autoCompaction?:
     | {
@@ -62,11 +75,7 @@ export interface RuntimeTurnInput {
   skillPack?: RuntimeTurnSkillPack | undefined;
 }
 
-export interface RuntimeTurnResult {
-  output: NormalizedOutput;
-  finalizedPayload?: unknown | undefined;
-  operatorAffordance?: unknown | undefined;
-}
+export interface RuntimeTurnResult extends RunnerResultV2<NormalizedOutput> {}
 
 export interface RuntimeTurnCoordinator {
   runTurn(input: RuntimeTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RuntimeTurnResult>;
@@ -197,6 +206,7 @@ export function materializeCompiledRuntimeTurn(
     },
     toolBatchCheckpointSize: prepared.toolBatchCheckpointSize,
     ...(prepared.input.history !== undefined ? { history: prepared.input.history } : {}),
+    ...(prepared.input.projectContext !== undefined ? { projectContext: prepared.input.projectContext } : {}),
     ...(prepared.compaction.apply ? { manualCompaction: true } : {}),
     ...(prepared.input.autoCompaction !== undefined
       ? {
@@ -316,6 +326,7 @@ function buildRuntimeTurnMetadata(input: {
     ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
     toolBatchCheckpointSize: input.toolBatchCheckpointSize,
     ...(input.input.history !== undefined ? { history: input.input.history } : {}),
+    ...(input.input.projectContext !== undefined ? { projectContext: input.input.projectContext } : {}),
     ...(input.input.workspace !== undefined ? { workspace: input.input.workspace } : {}),
     ...(input.input.skillPack !== undefined ? { skillPackId: input.input.skillPack.id } : {}),
     ...(input.input.actor !== undefined ? { actor: input.input.actor } : {}),

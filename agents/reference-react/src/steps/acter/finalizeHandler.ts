@@ -8,6 +8,7 @@ import {
 } from "../../../../../src/runtime/modelTranscript.js";
 import { createReferenceReactFinalizeCheckpoint } from "../../commandProcessor.js";
 import {
+  createReferenceReactAssistantTextPatch,
   createReferenceReactFinalOutputPatch,
   createReferenceReactNextActionPatch,
 } from "../../state.js";
@@ -76,6 +77,7 @@ export async function handleCannotSatisfyAction(input: {
     activeRegion: input.activeRegion,
     phase: "DONE",
     reactPatch: {
+      ...createReferenceReactAssistantTextPatch(input.action.message.trim()),
       ...createReferenceReactFinalOutputPatch(finalOutput),
       modelTranscript,
       activeTurnIntent: undefined,
@@ -98,6 +100,7 @@ export async function handleCannotSatisfyAction(input: {
       pendingEffectType: undefined,
     },
     regionReactPatch: {
+      ...createReferenceReactAssistantTextPatch(input.action.message.trim()),
       ...createReferenceReactFinalOutputPatch(finalOutput),
     },
     regionExecPatch: {
@@ -124,6 +127,7 @@ export async function handleFinalizeAction(input: {
   const finalized = buildFinalizePayload(input.reactState, input.action.input);
   const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, finalized.payload);
   const finalOutput = unwrapAgentToolOutput(finalToolResult);
+  const assistantText = String(input.action.input.message).trim();
   const modelTranscript = appendModelTranscriptItems(
     appendToolResultToTranscript({
       transcript: input.reactState.modelTranscript,
@@ -243,6 +247,7 @@ export async function handleFinalizeAction(input: {
       modelTranscript,
       decisionTrace: finalizeTrace,
       finalized: true,
+      ...createReferenceReactAssistantTextPatch(assistantText),
       ...createReferenceReactFinalOutputPatch(finalOutput),
       activeTurnIntent: undefined,
     },
@@ -251,6 +256,7 @@ export async function handleFinalizeAction(input: {
     },
     regionReactPatch: {
       finalized: true,
+      ...createReferenceReactAssistantTextPatch(assistantText),
     },
     regionExecPatch: {
       pendingBatch: undefined,

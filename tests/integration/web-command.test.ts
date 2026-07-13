@@ -41,7 +41,7 @@ test("kestrel web prints env exports and answers curl health checks", async (t) 
     },
     contracts: {
       command: "runner-command-v1",
-      events: "dotted-runtime-events-v1",
+      events: "dotted-runtime-events-v2",
     },
     capabilities: [
       "events.subscribe",

@@ -21,6 +21,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
       toolBatchCheckpointSize: 7,
     },
     getSession: async () => sessionRecord("session-threaded", {
+      assistantText: "done",
       finalOutput: { message: "done" },
     }),
     runKernel: async (input) => {
@@ -66,6 +67,12 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
           timestamp: "2026-05-22T00:00:00.000Z",
         },
       ],
+      projectContext: {
+        projectId: "project-atlas",
+        contextRevisionId: "revision-7",
+        contextRevision: 7,
+        content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+      },
       workspace: {
         workspaceRoot: "/tmp/project",
       },
@@ -104,6 +111,12 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
   assert.deepEqual(event?.payload.workspace, {
     workspaceRoot: "/tmp/project",
   });
+  assert.deepEqual(event?.payload.projectContext, {
+    projectId: "project-atlas",
+    contextRevisionId: "revision-7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+  });
   assert.deepEqual(event?.payload.skillPack, {
     id: "skill-pack:review",
     label: "Review",
@@ -118,6 +131,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
     approvalPolicyId: "approval:review",
   });
   assert.deepEqual(result.finalizedPayload, { message: "done" });
+  assert.equal(result.assistantText, "done");
 });
 
 test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {
