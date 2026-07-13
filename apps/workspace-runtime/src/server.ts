@@ -226,6 +226,18 @@ const server = createServer(async (request, response) => {
       writeJson(response, 201, { application });
       return;
     }
+    const applicationControl = url.pathname.match(
+      /^\/v1\/apps\/([^/]+)\/(start|stop)$/u
+    );
+    if (request.method === "POST" && applicationControl?.[1]) {
+      requireCapability(ticket.capabilities, "workspace.apps.write");
+      const application =
+        applicationControl[2] === "start"
+          ? await applications.start(applicationControl[1])
+          : await applications.stop(applicationControl[1]);
+      writeJson(response, 200, { application });
+      return;
+    }
     const applicationProxy = url.pathname.match(
       /^\/v1\/apps\/([^/]+)\/proxy(\/.*)?$/u
     );

@@ -246,6 +246,7 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   ]);
   assert.equal(machineBody.config.guest.memory_mb, 4096);
   assert.equal(machineBody.config.env.KESTREL_ENABLE_MANAGED_WORKTREES, "true");
+  assert.equal(machineBody.config.env.KESTREL_REQUIRE_MANAGED_WORKTREE, "true");
   assert.equal(
     machineBody.config.env.KESTREL_MANAGED_WORKTREE_ISOLATION,
     "session"

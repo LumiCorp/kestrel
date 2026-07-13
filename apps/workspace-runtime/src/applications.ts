@@ -85,6 +85,13 @@ export class WorkspaceApplicationRegistry {
     const application = this.applications.get(id);
     if (!application) throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
     if (this.processes.has(id)) return application;
+    Object.assign(application, {
+      desiredState: "running",
+      status: "starting",
+      processId: null,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.persist();
     const log = await open(
       path.join(this.workspaceRoot, ".kestrel", `application-${id}.log`),
       "a"
@@ -103,7 +110,10 @@ export class WorkspaceApplicationRegistry {
     child.once("exit", (code) => {
       this.processes.delete(id);
       Object.assign(application, {
-        status: code === 0 ? "stopped" : "failed",
+        status:
+          application.desiredState === "stopped" || code === 0
+            ? "stopped"
+            : "failed",
         processId: null,
         updatedAt: new Date().toISOString(),
       });
@@ -111,6 +121,21 @@ export class WorkspaceApplicationRegistry {
       void log.close();
     });
     await this.persist();
+    return application;
+  }
+
+  async stop(id: string) {
+    const application = this.applications.get(id);
+    if (!application) throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
+    const child = this.processes.get(id);
+    Object.assign(application, {
+      desiredState: "stopped",
+      status: child ? "running" : "stopped",
+      processId: child?.pid ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.persist();
+    child?.kill("SIGTERM");
     return application;
   }
 

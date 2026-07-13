@@ -19,7 +19,9 @@ type WorkspaceApplication = {
   id: string;
   name: string;
   port: number;
+  desiredState: "running" | "stopped";
   status: string;
+  processId: number | null;
 };
 
 type WorkspacePromotion = {
@@ -100,6 +102,15 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
   const [acceptingPromotion, setAcceptingPromotion] = useState(false);
   const [pushingPromotion, setPushingPromotion] = useState(false);
 
+  const loadApplications = useCallback(async () => {
+    const response = await fetch(`${base}/apps`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = (await response.json()) as {
+      applications?: WorkspaceApplication[];
+    };
+    setApplications(payload.applications ?? []);
+  }, [base]);
+
   const loadPromotions = useCallback(async () => {
     const response = await fetch(`${base}/promotions`, { cache: "no-store" });
     if (!response.ok) return;
@@ -179,20 +190,12 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         }
       }
     })();
-    void fetch(`${base}/apps`)
-      .then(async (response) => {
-        if (!response.ok) return;
-        const payload = (await response.json()) as {
-          applications?: WorkspaceApplication[];
-        };
-        setApplications(payload.applications ?? []);
-      })
-      .catch(() => {});
+    void loadApplications().catch(() => {});
     void loadPromotions();
     return () => {
       cancelled = true;
     };
-  }, [base, loadPromotions, loadTree, threadId]);
+  }, [base, loadApplications, loadPromotions, loadTree, threadId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -205,6 +208,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           setEntries(tree.entries);
         }
         await loadPromotions();
+        await loadApplications();
         if (!selectedPath) return;
         const fileResponse = await fetch(
           `${base}/files?path=${encodeURIComponent(selectedPath)}`
@@ -225,7 +229,15 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       })().catch(() => {});
     }, 2000);
     return () => window.clearInterval(interval);
-  }, [base, directory, fileDirty, fileRevision, loadPromotions, selectedPath]);
+  }, [
+    base,
+    directory,
+    fileDirty,
+    fileRevision,
+    loadApplications,
+    loadPromotions,
+    selectedPath,
+  ]);
 
   useEffect(() => {
     if (!terminalSessionId) return;
@@ -372,6 +384,35 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       payload.application!,
     ]);
     setStatus("Application started");
+  }
+
+  async function setApplicationState(
+    application: WorkspaceApplication,
+    action: "start" | "stop"
+  ) {
+    setStatus(
+      action === "start" ? "Starting application…" : "Stopping application…"
+    );
+    const response = await fetch(`${base}/apps/${application.id}/${action}`, {
+      method: "POST",
+    });
+    const payload = (await response.json()) as {
+      application?: WorkspaceApplication;
+      error?: { code?: string };
+    };
+    if (!(response.ok && payload.application)) {
+      throw new Error(
+        payload.error?.code ?? `Application could not ${action}.`
+      );
+    }
+    setApplications((current) =>
+      current.map((item) =>
+        item.id === payload.application!.id ? payload.application! : item
+      )
+    );
+    setStatus(
+      action === "start" ? "Application started" : "Application stopping"
+    );
   }
 
   async function openPromotion(promotionId: string) {
@@ -677,15 +718,54 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
               Start app
             </Button>
             {applications.map((application) => (
-              <Button asChild key={application.id} size="sm" variant="outline">
-                <a
-                  href={`${base}/apps/${application.id}/proxy/`}
-                  rel="noreferrer"
-                  target="_blank"
+              <div className="flex items-center gap-1" key={application.id}>
+                {application.status === "running" ? (
+                  <Button asChild size="sm" variant="outline">
+                    <a
+                      href={`${base}/apps/${application.id}/proxy/`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {application.name} ·{" "}
+                      {application.desiredState === "stopped"
+                        ? "stopping"
+                        : application.status}
+                    </a>
+                  </Button>
+                ) : (
+                  <Button disabled size="sm" variant="outline">
+                    {application.name} · {application.status}
+                  </Button>
+                )}
+                <Button
+                  disabled={
+                    application.status === "starting" ||
+                    (application.desiredState === "stopped" &&
+                      application.processId !== null)
+                  }
+                  onClick={() =>
+                    void setApplicationState(
+                      application,
+                      application.status === "running" ? "stop" : "start"
+                    ).catch((error: unknown) =>
+                      setStatus(
+                        error instanceof Error
+                          ? error.message
+                          : "Application action failed."
+                      )
+                    )
+                  }
+                  size="sm"
+                  variant="ghost"
                 >
-                  {application.name} · {application.status}
-                </a>
-              </Button>
+                  {application.desiredState === "stopped" &&
+                  application.status === "running"
+                    ? "Stopping"
+                    : application.status === "running"
+                      ? "Stop"
+                      : "Start"}
+                </Button>
+              </div>
             ))}
           </div>
           <div className="flex gap-2 border-zinc-800 border-b p-2">

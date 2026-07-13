@@ -54,3 +54,31 @@ test("desired applications restart when a sleeping Workspace wakes", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("application lifecycle controls persist the desired state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-apps-lifecycle-"));
+  try {
+    await mkdir(path.join(root, ".kestrel"));
+    const registry = new WorkspaceApplicationRegistry(root);
+    const application = await registry.register({
+      name: "Preview",
+      command: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 10000)"`,
+      port: 3000,
+    });
+    assert.equal(application.desiredState, "running");
+    assert.equal(application.status, "running");
+
+    const stopped = await registry.stop(application.id);
+    assert.equal(stopped.desiredState, "stopped");
+    assert.equal(stopped.status, "running");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(registry.get(application.id)?.status, "stopped");
+    const restarted = await registry.start(application.id);
+    assert.equal(restarted.desiredState, "running");
+    assert.equal(restarted.status, "running");
+    await registry.stopAll();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
