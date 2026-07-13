@@ -1,5 +1,19 @@
 import postgres from "postgres";
 
+const REQUIRED_HOSTED_ENVIRONMENT_RELATIONS = [
+  "environments",
+  "environment_workspaces",
+  "organization_feature_flags",
+  "user_tool_connections",
+  "user_tool_connection_resources",
+  "github_action_approvals",
+] as const;
+
+export type HostedEnvironmentSchemaReadiness = {
+  ready: boolean;
+  missingRelations: string[];
+};
+
 export type HostedEnvironmentCutoverSnapshot = {
   enabledOrganizationCount: number;
   enabledOrganizationWithoutReadyDefaultCount: number;
@@ -29,6 +43,35 @@ type SnapshotRow = {
   boundThreadCount: number;
   terminalExecutionCount: number;
 };
+
+export function evaluateHostedEnvironmentSchemaReadiness(
+  missingRelations: string[]
+): HostedEnvironmentSchemaReadiness {
+  return {
+    ready: missingRelations.length === 0,
+    missingRelations,
+  };
+}
+
+export async function inspectHostedEnvironmentSchemaReadiness(input: {
+  databaseUrl: string;
+}): Promise<HostedEnvironmentSchemaReadiness> {
+  const sql = postgres(input.databaseUrl, { max: 1 });
+  try {
+    const rows = await sql<Array<{ relation: string }>>`
+      SELECT required."relation"
+      FROM unnest(${sql.array([...REQUIRED_HOSTED_ENVIRONMENT_RELATIONS])}::text[])
+        AS required("relation")
+      WHERE to_regclass(format('public.%I', required."relation")) IS NULL
+      ORDER BY required."relation"
+    `;
+    return evaluateHostedEnvironmentSchemaReadiness(
+      rows.map((row) => row.relation)
+    );
+  } finally {
+    await sql.end({ timeout: 0 });
+  }
+}
 
 export function evaluateHostedEnvironmentCutoverReadiness(
   snapshot: HostedEnvironmentCutoverSnapshot

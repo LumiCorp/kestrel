@@ -2,8 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   evaluateHostedEnvironmentCutoverReadiness,
+  evaluateHostedEnvironmentSchemaReadiness,
   type HostedEnvironmentCutoverSnapshot,
 } from "./cutover-readiness";
+
+test("hosted preparation requires every Environment and GitHub migration relation", () => {
+  assert.deepEqual(evaluateHostedEnvironmentSchemaReadiness([]), {
+    ready: true,
+    missingRelations: [],
+  });
+  assert.deepEqual(
+    evaluateHostedEnvironmentSchemaReadiness([
+      "github_action_approvals",
+      "organization_feature_flags",
+    ]),
+    {
+      ready: false,
+      missingRelations: [
+        "github_action_approvals",
+        "organization_feature_flags",
+      ],
+    }
+  );
+});
 
 function validSnapshot(
   overrides: Partial<HostedEnvironmentCutoverSnapshot> = {}

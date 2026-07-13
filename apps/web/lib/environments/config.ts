@@ -10,6 +10,20 @@ export type HostedEnvironmentsRollout = {
   effectiveEnabled: boolean;
 };
 
+export type HostedEnvironmentBuildPreflightPhase = "prepare" | "cutover";
+
+export function getHostedEnvironmentBuildPreflightPhase(
+  env: Record<string, string | undefined> = process.env
+): HostedEnvironmentBuildPreflightPhase | null {
+  if (env.VERCEL_ENV !== "production") return null;
+  const value = env.KESTREL_ENVIRONMENTS_ENABLED?.trim().toLowerCase();
+  if (value === "false") return "prepare";
+  if (value === "true") return "cutover";
+  throw new Error(
+    "KESTREL_ENVIRONMENTS_ENABLED must be explicitly set to true or false for a production build."
+  );
+}
+
 const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "CRON_SECRET",
   "FLY_API_TOKEN",
@@ -50,20 +64,26 @@ export function hostedEnvironmentsEnabled(input: {
 export function assertHostedEnvironmentConfiguration(
   env: Record<string, string | undefined> = process.env
 ) {
-  const missing = REQUIRED_HOSTED_ENVIRONMENT_VALUES.filter(
-    (name) => !env[name]?.trim()
-  );
-  if (missing.length > 0) {
-    throw new Error(
-      `Hosted Environment configuration is incomplete: ${missing.join(", ")}.`
-    );
-  }
+  assertHostedEnvironmentRuntimeConfiguration(env);
   const legacy = LEGACY_GLOBAL_RUNNER_VALUES.filter((name) =>
     env[name]?.trim()
   );
   if (legacy.length > 0) {
     throw new Error(
       `Hosted Environment cutover requires removing legacy global runner configuration: ${legacy.join(", ")}.`
+    );
+  }
+}
+
+export function assertHostedEnvironmentRuntimeConfiguration(
+  env: Record<string, string | undefined> = process.env
+) {
+  const missing = REQUIRED_HOSTED_ENVIRONMENT_VALUES.filter(
+    (name) => !env[name]?.trim()
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Hosted Environment configuration is incomplete: ${missing.join(", ")}.`
     );
   }
   for (const imageName of [

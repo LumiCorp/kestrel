@@ -203,7 +203,10 @@ test("Fly start fails closed after ten stopped-state retries", async () => {
     requests.filter((request) => request.method === "GET").length,
     11
   );
-  assert.deepEqual(sleeps, Array.from({ length: 10 }, () => 1000));
+  assert.deepEqual(
+    sleeps,
+    Array.from({ length: 10 }, () => 1000)
+  );
 });
 
 test("Fly start fails closed when the authoritative state cannot be retried", async () => {

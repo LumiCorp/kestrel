@@ -3,9 +3,51 @@ import { generateKeyPairSync, randomBytes } from "node:crypto";
 import test from "node:test";
 import {
   assertHostedEnvironmentConfiguration,
+  assertHostedEnvironmentRuntimeConfiguration,
+  getHostedEnvironmentBuildPreflightPhase,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
 } from "./config";
+
+test("production builds select a fail-closed hosted Environment preflight phase", () => {
+  assert.equal(getHostedEnvironmentBuildPreflightPhase({}), null);
+  assert.equal(
+    getHostedEnvironmentBuildPreflightPhase({
+      VERCEL_ENV: "preview",
+      KESTREL_ENVIRONMENTS_ENABLED: "true",
+    }),
+    null
+  );
+  assert.equal(
+    getHostedEnvironmentBuildPreflightPhase({
+      VERCEL_ENV: "production",
+      KESTREL_ENVIRONMENTS_ENABLED: "false",
+    }),
+    "prepare"
+  );
+  assert.equal(
+    getHostedEnvironmentBuildPreflightPhase({
+      VERCEL_ENV: "production",
+      KESTREL_ENVIRONMENTS_ENABLED: "true",
+    }),
+    "cutover"
+  );
+  assert.throws(
+    () =>
+      getHostedEnvironmentBuildPreflightPhase({
+        VERCEL_ENV: "production",
+      }),
+    /explicitly set to true or false/u
+  );
+  assert.throws(
+    () =>
+      getHostedEnvironmentBuildPreflightPhase({
+        VERCEL_ENV: "production",
+        KESTREL_ENVIRONMENTS_ENABLED: "enabled",
+      }),
+    /explicitly set to true or false/u
+  );
+});
 
 function validEnvironment() {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -66,6 +108,16 @@ test("Environment rollout requires both deployment and organization flags", () =
 test("hosted cutover accepts complete immutable Environment configuration", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentConfiguration(validEnvironment())
+  );
+});
+
+test("hosted runtime preparation permits the legacy runner during staged deployment", () => {
+  assert.doesNotThrow(() =>
+    assertHostedEnvironmentRuntimeConfiguration({
+      ...validEnvironment(),
+      KESTREL_RUNNER_SERVICE_URL: "https://legacy-runner.example",
+      KESTREL_RUNNER_SERVICE_TOKEN: "legacy-token",
+    })
   );
 });
 

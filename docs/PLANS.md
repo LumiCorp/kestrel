@@ -13,6 +13,7 @@ depends_on:
   - plans/2026-06-15-desktop-page-primitives-standardization.md
   - plans/2026-06-17-kestrel-local-core-shell-model.md
   - runbooks/2026-06-17-local-core-beta-migration-evidence.md
+  - runbooks/2026-07-13-kestrel-one-environment-cutover.md
   - plans/2026-05-14-reference-react-command-processor-milestones.md
   - plans/2026-05-11-terminal-bench-completion-boundary-hardening.md
   - plans/2026-05-13-composer-multimodal-followups-design.md
@@ -53,6 +54,7 @@ This index separates active planning work from historical design records. If you
 
 ## Runbooks
 
+- [Kestrel One Environment cutover](runbooks/2026-07-13-kestrel-one-environment-cutover.md)
 - [MVP operator runbook](https://github.com/LumiCorp/kestrel/blob/main/docs/runbooks/2026-02-25-kestrel-mvp-operator-runbook.md)
 - [v3 migration runbook](https://github.com/LumiCorp/kestrel/blob/main/docs/runbooks/2026-02-26-v3-migration-runbook.md)
 - [Mountain Top runbook](https://github.com/LumiCorp/kestrel/blob/main/docs/runbooks/2026-03-23-mountaintop-runbook.md)
