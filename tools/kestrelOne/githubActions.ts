@@ -4,6 +4,7 @@ import type {
   SharedToolDefinition,
   SharedToolModule,
 } from "../contracts.js";
+import { parseObjectInput } from "../helpers.js";
 
 type GitHubActionToolOptions = {
   name: string;
@@ -57,13 +58,15 @@ function createGitHubActionTool(options: GitHubActionToolOptions): SharedToolMod
   return {
     definition,
     createHandler(context) {
-      return async (input: unknown) =>
-        invokeGitHubAction(context, {
+      return async (input: unknown) => {
+        const parsed = parseObjectInput(options.name, input);
+        return invokeGitHubAction(context, {
           operation: options.operation,
-          input,
+          input: parsed,
           requiresApproval: options.requiresApproval === true,
           toolName: options.name,
         });
+      };
     },
   };
 }
@@ -203,7 +206,7 @@ async function invokeGitHubAction(
   context: SharedToolContext,
   input: {
     operation: GitHubActionToolOptions["operation"];
-    input: unknown;
+    input: Record<string, unknown>;
     requiresApproval: boolean;
     toolName: string;
   }
@@ -229,11 +232,14 @@ async function invokeGitHubAction(
       },
       body: JSON.stringify({
         operation: input.operation,
-        ...(isRecord(input.input) ? input.input : {}),
+        ...input.input,
       }),
     }
   );
-  const body = await response.json().catch(() => ({}));
+  const body = parseObjectInput(
+    `${input.toolName} response`,
+    await response.json().catch(() => ({}))
+  );
   if (!response.ok) {
     throw new RuntimeFailure(
       "KESTREL_ONE_GITHUB_ACTION_FAILED",
@@ -263,8 +269,4 @@ function requireContextValue(value: string | undefined, label: string) {
     );
   }
   return value.trim();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

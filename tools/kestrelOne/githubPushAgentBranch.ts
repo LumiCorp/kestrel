@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
+import { parseObjectInput, readString } from "../helpers.js";
 
 const execFileAsync = promisify(execFile);
 const TOOL_NAME = "kestrel_one.github_push_agent_branch";
@@ -84,10 +85,12 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
           }),
         }
       );
-      const credential = (await credentialResponse.json().catch(() => ({}))) as {
-        token?: string;
-      };
-      if (!(credentialResponse.ok && credential.token)) {
+      const credential = parseObjectInput(
+        `${TOOL_NAME} credential response`,
+        await credentialResponse.json().catch(() => ({}))
+      );
+      const credentialToken = readString(credential, "token");
+      if (!(credentialResponse.ok && credentialToken)) {
         throw new RuntimeFailure(
           "KESTREL_ONE_GITHUB_PUSH_CREDENTIAL_FAILED",
           `Kestrel One rejected GitHub branch credentials with HTTP ${credentialResponse.status}.`,
@@ -125,7 +128,7 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
               ...process.env,
               GIT_ASKPASS: askPassPath,
               GIT_TERMINAL_PROMPT: "0",
-              KESTREL_GITHUB_TOKEN: credential.token,
+              KESTREL_GITHUB_TOKEN: credentialToken,
             },
             maxBuffer: 10 * 1024 * 1024,
           }
@@ -157,13 +160,10 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
 };
 
 function readRepository(input: unknown) {
-  const repository =
-    typeof input === "object" &&
-    input !== null &&
-    "repository" in input &&
-    typeof input.repository === "string"
-      ? input.repository.trim()
-      : "";
+  const repository = readString(
+    parseObjectInput(TOOL_NAME, input),
+    "repository"
+  )?.trim() ?? "";
   if (!/^[^/\s]+\/[^/\s]+$/u.test(repository)) {
     throw createRuntimeFailure(
       "TOOL_INPUT_SCHEMA_FAILED",
