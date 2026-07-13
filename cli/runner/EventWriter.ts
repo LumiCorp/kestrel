@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Writable } from "node:stream";
 
-import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerEventV2,
+  parseRunnerTerminalPayloadV2,
+} from "@kestrel-agents/protocol";
 
 import type {
   RunnerEventEnvelope,
@@ -51,7 +54,7 @@ export class EventWriter implements RunnerEventSink {
       payload: normalizedPayload,
     };
 
-    this.output.write(`${JSON.stringify(event)}\n`);
+    this.output.write(`${JSON.stringify(parseRunnerEventV2(event))}\n`);
   }
 }
 

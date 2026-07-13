@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   createRunnerHealthV1,
+  parseRunnerEventV2,
   type RunnerHealthV1,
 } from "@kestrel-agents/protocol";
 
@@ -104,17 +105,37 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       commandId?: string | undefined;
     } = {},
   ): void {
-    const normalizedPayload = normalizeRunnerEventPayload(type, payload);
-    const event = {
-      id: randomUUID(),
-      type,
-      ts: new Date().toISOString(),
-      ...(options.runId !== undefined ? { runId: options.runId } : {}),
-      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-      ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
-      ...(options.commandId !== undefined ? { commandId: options.commandId } : {}),
-      payload: normalizedPayload,
-    } as RunnerEvent;
+    const eventId = randomUUID();
+    const ts = new Date().toISOString();
+    let event: RunnerEvent;
+    try {
+      const normalizedPayload = normalizeRunnerEventPayload(type, payload);
+      event = parseRunnerEventV2({
+        id: eventId,
+        type,
+        ts,
+        ...(options.runId !== undefined ? { runId: options.runId } : {}),
+        ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
+        ...(options.commandId !== undefined ? { commandId: options.commandId } : {}),
+        payload: normalizedPayload,
+      }) as RunnerEvent;
+    } catch (error) {
+      const fallbackScope = normalizeRunnerEventScope(options);
+      event = parseRunnerEventV2({
+        id: eventId,
+        type: "runner.error",
+        ts,
+        ...fallbackScope,
+        payload: {
+          code: "RUNNER_PROTOCOL_INVALID",
+          message: `Runner emitted an invalid '${type}' event: ${error instanceof Error ? error.message : String(error)}`,
+          details: {
+            eventType: type,
+          },
+        },
+      }) as RunnerEvent;
+    }
 
     if (this.closing) {
       this.broadcast(event);
@@ -422,6 +443,34 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       // A failed subscriber shutdown callback must not block event publication or service shutdown.
     }
   }
+}
+
+function normalizeRunnerEventScope(options: {
+  runId?: string | undefined;
+  sessionId?: string | undefined;
+  threadId?: string | undefined;
+  commandId?: string | undefined;
+}): {
+  runId?: string | undefined;
+  sessionId?: string | undefined;
+  threadId?: string | undefined;
+  commandId?: string | undefined;
+} {
+  const runId = normalizeScopeValue(options.runId);
+  const sessionId = normalizeScopeValue(options.sessionId);
+  const threadId = normalizeScopeValue(options.threadId);
+  const commandId = normalizeScopeValue(options.commandId);
+  return {
+    ...(runId !== undefined ? { runId } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(commandId !== undefined ? { commandId } : {}),
+  };
+}
+
+function normalizeScopeValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized !== undefined && normalized.length > 0 ? normalized : undefined;
 }
 
 export class RunnerServiceHost {

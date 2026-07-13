@@ -68,6 +68,56 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
       return;
     }
     if (request.url === "/runtime/v2/commands/stream") {
+      if (body?.type === "job.run") {
+        const replay = {
+          version: "job_replay_pointer_v1",
+          sessionId: "session-local-job",
+          threadId: "thread-local-job",
+          runId: "run-local-job",
+          replayQuery: {
+            runId: "run-local-job",
+            sessionId: "session-local-job",
+            threadId: "thread-local-job",
+          },
+          commands: {
+            replay: "replay",
+            doctor: "doctor",
+            bundle: "bundle",
+          },
+        };
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(toSse("job.completed", {
+          id: "evt-local-job-completed",
+          type: "job.completed",
+          ts: new Date().toISOString(),
+          commandId: body.id,
+          sessionId: replay.sessionId,
+          threadId: replay.threadId,
+          runId: replay.runId,
+          payload: {
+            output: {
+              version: "job_run_result_v1",
+              sessionId: replay.sessionId,
+              threadId: replay.threadId,
+              runId: replay.runId,
+              status: "COMPLETED",
+              replay,
+              result: {
+                assistantText: "Local job completed.",
+                finalizedPayload: null,
+                output: {
+                  status: "COMPLETED",
+                  sessionId: replay.sessionId,
+                  runId: replay.runId,
+                  errors: [],
+                },
+              },
+            },
+            replay,
+          },
+        }));
+        return;
+      }
       assert.equal(body?.type, "run.start");
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(toSse("run.started", {
@@ -176,6 +226,19 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
     regions: ["iad1"],
   });
 
+  const job = await client.runJob({
+    profileId: "reference",
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "session-local-job",
+        message: "run local job",
+        eventType: "job.run",
+      },
+    },
+  }, context);
+  assert.equal(job.type, "job.completed");
+
   const subscription = client.subscribe({
     sessionId: "session-local",
     sinceEventId: "evt-local-started",
@@ -194,6 +257,7 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
     "/runtime/v2/health",
     "/runtime/v2/commands",
     "/runtime/v2/commands/stream",
+    "/runtime/v2/commands/stream",
     "/runtime/v2/events/stream",
   ]);
   assert.equal(
@@ -201,11 +265,11 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
     true,
   );
   assert.equal(
-    ((requests[3]?.body?.metadata as { actor?: { actorId?: string } } | undefined)?.actor?.actorId),
+    ((requests[4]?.body?.metadata as { actor?: { actorId?: string } } | undefined)?.actor?.actorId),
     "local-sdk-user",
   );
   assert.equal(
-    (requests[3]?.body?.filter as { sinceEventId?: string } | undefined)?.sinceEventId,
+    (requests[4]?.body?.filter as { sinceEventId?: string } | undefined)?.sinceEventId,
     "evt-local-started",
   );
   assert.equal(
@@ -259,6 +323,7 @@ test("KestrelClient cancellation closes local subscriptions without rejecting th
       payload: {
         task: { taskId: "task-local" },
         kind: "waiting",
+        assistantText: null,
       },
     }));
   });
@@ -445,6 +510,50 @@ test("KestrelClient rejects a local terminal SSE event without a command id", as
   );
 });
 
+test("KestrelClient rejects a local nonterminal SSE event for another command", async (t) => {
+  const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
+    assert.equal(request.url, "/runtime/v2/commands/stream");
+    await readRequestBody(request);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(toSse("run.started", {
+      id: "evt-local-wrong-progress-command",
+      type: "run.started",
+      ts: new Date().toISOString(),
+      commandId: "another-command",
+      sessionId: "session-local-wrong-progress",
+      payload: {
+        sessionId: "session-local-wrong-progress",
+        eventType: "user.message",
+      },
+    }));
+  });
+  t.after(close);
+
+  const client = new KestrelClient({
+    target: {
+      kind: "local",
+      socketPath,
+      authToken: "local-bearer-token",
+    },
+  });
+  t.after(async () => client.close());
+
+  await assert.rejects(
+    client.run({
+      profileId: "reference",
+      turn: {
+        sessionId: "session-local-wrong-progress",
+        message: "receive mismatched progress",
+        eventType: "user.message",
+      },
+    }, context),
+    (error: unknown) =>
+      error instanceof KestrelProtocolError
+      && error.code === "RUNNER_PROTOCOL_ERROR"
+      && error.details?.receivedCommandId === "another-command",
+  );
+});
+
 test("KestrelClient rejects mismatched local terminal events without cross-settling another run", async (t) => {
   let victimCommandId: string | undefined;
   let sourceCommandId: string | undefined;
@@ -546,6 +655,63 @@ test("KestrelClient rejects mismatched local terminal events without cross-settl
   await client.close();
   const closedVictim = await victimOutcome;
   assert.equal(closedVictim.status, "rejected");
+});
+
+test("local KestrelClient does not connect for an already-aborted job", async () => {
+  const client = new KestrelClient({
+    target: {
+      kind: "local",
+      socketPath: "/tmp/kestrel-sdk-pre-aborted-missing.sock",
+      authToken: "local-test-token",
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const stream = client.streamJob({
+    signal: controller.signal,
+    profileId: "reference",
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "session-local-pre-aborted-job",
+        message: "must not run",
+      },
+    },
+  }, context);
+
+  await assert.rejects(
+    stream.result,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  await client.close();
+});
+
+test("local KestrelClient rejects unary responses with a mismatched command id", async (t) => {
+  const { socketPath, close } = await startLocalCoreServer(async (_request, response) => {
+    sendJson(response, {
+      id: "evt-local-wrong-command-id",
+      type: "runner.pong",
+      ts: new Date().toISOString(),
+      commandId: "another-command",
+      payload: { nonce: "pong" },
+    });
+  });
+  t.after(close);
+  const client = new KestrelClient({
+    target: {
+      kind: "local",
+      socketPath,
+      authToken: "local-test-token",
+    },
+  });
+
+  await assert.rejects(
+    client.ping({ nonce: "ping" }, context),
+    (error: unknown) =>
+      error instanceof KestrelProtocolError &&
+      error.code === "RUNNER_PROTOCOL_ERROR",
+  );
+  await client.close();
 });
 
 test("KestrelClient rejects ambiguous targets and local targets outside Node", () => {

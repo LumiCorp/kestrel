@@ -35,7 +35,7 @@ export interface JobRunResultV1 {
   status: RunTurnResult["output"]["status"];
   waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
   replay: JobReplayPointerV1;
-  result?: RunTurnResult | undefined;
+  result: RunTurnResult;
   error?:
     | {
         code: string;

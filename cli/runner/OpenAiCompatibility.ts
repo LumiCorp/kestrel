@@ -190,21 +190,20 @@ export function buildRunStartCommand(
   headers: Record<string, string | undefined>,
 ): Extract<RunnerCommand, { type: "run.start" }> {
   const profile = resolveCompatibilityProfile(request.model);
-  const history = [...request.history];
+  const systemInstructions = request.history
+    .filter((entry) => entry.role === "system")
+    .map((entry) => entry.text);
+  const runnerHistory = request.history.filter(
+    (entry) => entry.role !== "system",
+  );
 
   if (request.instructions !== undefined) {
-    history.push({
-      role: "system",
-      text: request.instructions,
-      timestamp: new Date().toISOString(),
-    });
+    systemInstructions.push(request.instructions);
   }
   if (request.structuredOutput !== undefined) {
-    history.push({
-      role: "system",
-      text: buildStructuredOutputInstruction(request.structuredOutput),
-      timestamp: new Date().toISOString(),
-    });
+    systemInstructions.push(
+      buildStructuredOutputInstruction(request.structuredOutput),
+    );
   }
 
   return {
@@ -224,7 +223,8 @@ export function buildRunStartCommand(
         stepAgent: "reference-react",
         modeSystemV2Enabled: true,
         clientCapabilities: createWebClientCapabilities(),
-        ...(history.length > 0 ? { history } : {}),
+        ...(systemInstructions.length > 0 ? { systemInstructions } : {}),
+        ...(runnerHistory.length > 0 ? { history: runnerHistory } : {}),
       },
     },
   };
@@ -862,7 +862,8 @@ function normalizeMessages(
       continue;
     }
     if (role === "tool") {
-      normalized.push({ role: "system", text: `Tool result:\n${text}` });
+      // Tool output is untrusted conversation context, never a system instruction.
+      normalized.push({ role: "user", text: `Tool result:\n${text}` });
       continue;
     }
     return {

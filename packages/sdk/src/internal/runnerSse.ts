@@ -1,4 +1,4 @@
-import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
 
 import type { RunnerEvent } from "../contracts.js";
 import { KestrelProtocolError } from "../errors.js";
@@ -50,35 +50,17 @@ export function parseRunnerEvent(value: string): RunnerEvent | undefined {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return undefined;
   }
-  const record = parsed as Record<string, unknown>;
-  if (
-    typeof record.id !== "string" ||
-    typeof record.type !== "string" ||
-    typeof record.ts !== "string" ||
-    record.payload === undefined
-  ) {
-    return undefined;
-  }
-  const event = parsed as RunnerEvent;
-  if (
-    event.type !== "run.completed" &&
-    event.type !== "run.failed" &&
-    event.type !== "run.cancelled" &&
-    event.type !== "operator.controlled"
-  ) {
-    return event;
-  }
   try {
-    return {
-      ...event,
-      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
-    } as unknown as RunnerEvent;
+    return parseRunnerEventV2(parsed) as RunnerEvent;
   } catch (error) {
+    const eventType = typeof (parsed as Record<string, unknown>).type === "string"
+      ? String((parsed as Record<string, unknown>).type)
+      : "unknown";
     throw new KestrelProtocolError(
-      `Invalid ${event.type} terminal payload: ${error instanceof Error ? error.message : String(error)}`,
+      `Invalid runner event: ${error instanceof Error ? error.message : String(error)}`,
       {
         code: "RUNNER_PROTOCOL_INVALID",
-        details: { eventType: event.type },
+        details: { eventType },
       },
     );
   }

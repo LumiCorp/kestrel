@@ -3,6 +3,14 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 
 import {
+  isRunnerEventType,
+  isRunnerStreamingCommandType,
+  parseRunnerCommandV2,
+  parseRunnerEventV2,
+  type RunnerHealthV1,
+} from "@kestrel-agents/protocol";
+
+import {
   type RunnerActorMetadata,
   type RunnerCommand,
   type RunnerEvent,
@@ -10,7 +18,6 @@ import {
   type RunnerEventSubscriptionFilter,
   type RunnerEventSubscriptionRequest,
   type RunnerEventType,
-  isRunnerCommandEnvelope,
 } from "../protocol/contracts.js";
 import { RunnerHost, type RunnerProfileProvider } from "./RunnerHost.js";
 import { CommandRouter } from "./CommandRouter.js";
@@ -29,7 +36,6 @@ import {
   type RunnerServiceHostCloseOptions,
 } from "./RunnerServiceHost.js";
 import type { RunnerServiceEventJournal } from "./RunnerServiceEventJournal.js";
-import type { RunnerHealthV1 } from "@kestrel-agents/protocol";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream; charset=utf-8",
@@ -45,7 +51,6 @@ const JSON_HEADERS = {
 
 const DEFAULT_RUNNER_SERVICE_VERSION = "0.5.1";
 
-const STREAMING_COMMAND_TYPES = new Set<RunnerCommand["type"]>(["run.start", "job.run"]);
 const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "profile.listed",
   "profile.loaded",
@@ -431,11 +436,16 @@ async function handleRunnerServiceRequest(
     return;
   }
 
-  const command = await readCommandEnvelope(request);
-  if (command === undefined) {
-    writeEventResponse(response, 400, makeRunnerErrorEvent(undefined, "INVALID_COMMAND", "Command envelope must include id, type, payload"));
+  const parsedCommand = await readCommandEnvelope(request);
+  if (parsedCommand.ok === false) {
+    writeEventResponse(response, 400, makeRunnerErrorEvent(
+      parsedCommand.commandId,
+      "INVALID_COMMAND",
+      parsedCommand.message,
+    ));
     return;
   }
+  const command = parsedCommand.command;
 
   const authFailure = validateServiceAuth(request, authToken);
   if (authFailure !== undefined) {
@@ -450,7 +460,7 @@ async function handleRunnerServiceRequest(
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = STREAMING_COMMAND_TYPES.has(command.type);
+  const isStreamable = isRunnerStreamingCommandType(command.type);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -543,23 +553,28 @@ async function executeRunnerServiceRequest(
     };
   }
 
-  const command = parseCommandEnvelope(request.body);
-  if (command === undefined) {
+  const parsedCommand = parseCommandEnvelope(request.body);
+  if (parsedCommand.ok === false) {
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(
-        makeRunnerErrorEvent(undefined, "INVALID_COMMAND", "Command envelope must include id, type, payload"),
+      body: serializeRunnerEvent(
+        makeRunnerErrorEvent(
+          parsedCommand.commandId,
+          "INVALID_COMMAND",
+          parsedCommand.message,
+        ),
       ),
     };
   }
+  const command = parsedCommand.command;
 
   const authFailure = validateServiceAuthHeader(request.headers.authorization, authToken);
   if (authFailure !== undefined) {
     return {
       statusCode: 401,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", authFailure)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", authFailure)),
     };
   }
 
@@ -568,12 +583,12 @@ async function executeRunnerServiceRequest(
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", actorFailure)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", actorFailure)),
     };
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = STREAMING_COMMAND_TYPES.has(command.type);
+  const isStreamable = isRunnerStreamingCommandType(command.type);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -581,7 +596,7 @@ async function executeRunnerServiceRequest(
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", message)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", message)),
     };
   }
 
@@ -598,7 +613,7 @@ async function executeRunnerServiceRequest(
   return {
     statusCode: terminal.type === "runner.error" ? 400 : 200,
     headers: { ...JSON_HEADERS },
-    body: JSON.stringify(terminal),
+    body: serializeRunnerEvent(terminal),
   };
 }
 
@@ -971,7 +986,11 @@ async function waitForTerminalEvent(
   });
 }
 
-async function readCommandEnvelope(request: IncomingMessage): Promise<RunnerCommand | undefined> {
+type RunnerCommandParseResult =
+  | { ok: true; command: RunnerCommand }
+  | { ok: false; commandId?: string | undefined; message: string };
+
+async function readCommandEnvelope(request: IncomingMessage): Promise<RunnerCommandParseResult> {
   const body = await readRequestBody(request);
   return parseCommandEnvelope(body);
 }
@@ -981,17 +1000,47 @@ async function readSubscriptionRequest(request: IncomingMessage): Promise<Runner
   return parseSubscriptionRequest(body);
 }
 
-function parseCommandEnvelope(body: string): RunnerCommand | undefined {
+function parseCommandEnvelope(body: string): RunnerCommandParseResult {
   if (body.length === 0) {
-    return undefined;
+    return {
+      ok: false,
+      message: "Command body must contain an Execution Protocol v2 command envelope.",
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
+    return {
+      ok: false,
+      message: "Command body is not valid JSON.",
+    };
+  }
+  try {
+    return {
+      ok: true,
+      command: parseRunnerCommandV2(parsed) as RunnerCommand,
+    };
+  } catch (error) {
+    const commandId = readCandidateCommandId(parsed);
+    return {
+      ok: false,
+      ...(commandId !== undefined
+        ? { commandId }
+        : {}),
+      message: error instanceof Error
+        ? error.message
+        : "Command envelope is not valid Execution Protocol v2.",
+    };
+  }
+}
+
+function readCandidateCommandId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
   }
-  return isRunnerCommandEnvelope(parsed) ? parsed : undefined;
+  const id = (value as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
 }
 
 function parseSubscriptionRequest(body: string): RunnerEventSubscriptionRequest | undefined {
@@ -1222,19 +1271,13 @@ function makeRunnerErrorEvent(
   };
 }
 
-function isRunnerEventType(value: string): value is RunnerEventType {
-  return TERMINAL_EVENT_TYPES.has(value as RunnerEvent["type"]) || value === "run.started" ||
-    value === "job.started" ||
-    value === "job.progress" ||
-    value === "run.log" ||
-    value === "run.console" ||
-    value === "run.progress" ||
-    value === "run.reasoning" ||
-    value === "task.updated";
+function encodeSseChunk(event: RunnerEvent): string {
+  const parsed = parseRunnerEventV2(event);
+  return `event: ${parsed.type}\ndata: ${JSON.stringify(parsed)}\n\n`;
 }
 
-function encodeSseChunk(event: RunnerEvent): string {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+function serializeRunnerEvent(event: RunnerEvent): string {
+  return JSON.stringify(parseRunnerEventV2(event));
 }
 
 async function collectStreamingCommand(
@@ -1252,7 +1295,7 @@ async function collectStreamingCommand(
 
 function writeEventResponse(response: ServerResponse, status: number, event: RunnerEvent): void {
   response.writeHead(status, JSON_HEADERS);
-  response.end(JSON.stringify(event));
+  response.end(serializeRunnerEvent(event));
 }
 
 function writeJson(response: ServerResponse, status: number, payload: unknown): void {

@@ -392,6 +392,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         kind: "reference-react-deliberator",
         interactionMode: modeResolution.interactionMode,
         promptVariant: resolvedPromptVariant,
+        ...readSystemInstructions(eventPayload),
       },
       retryContext: asRecord(reactState.retryContext),
       activeWorkspace: activeWorkspaceModelContext,
@@ -534,6 +535,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           kind: "reference-react-deliberator",
           interactionMode: modeResolution.interactionMode,
           promptVariant: resolvedPromptVariant,
+          ...readSystemInstructions(eventPayload),
         },
         retryContext,
         activeWorkspace: activeWorkspaceModelContext,
@@ -1036,6 +1038,7 @@ async function compactContextRequestIfNeeded(input: {
       kind: "reference-react-deliberator",
       interactionMode: input.interactionMode,
       promptVariant: input.promptVariant,
+      ...readSystemInstructions(input.eventPayload),
     },
     activeWorkspace: input.activeWorkspace,
     activeProjectContext: input.activeProjectContext,
@@ -1061,6 +1064,23 @@ function readDeliberatorPromptInput(input: Record<string, unknown>): {
     ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
     ...(promptVariant !== undefined ? { promptVariant } : {}),
   };
+}
+
+function readSystemInstructions(
+  eventPayload: Record<string, unknown>,
+): { systemInstructions?: string[] | undefined } {
+  if (Array.isArray(eventPayload.systemInstructions) === false) {
+    return {};
+  }
+  const systemInstructions = eventPayload.systemInstructions.flatMap(
+    (entry) => {
+      const instruction = asString(entry)?.trim();
+      return instruction === undefined || instruction.length === 0
+        ? []
+        : [instruction];
+    },
+  );
+  return systemInstructions.length > 0 ? { systemInstructions } : {};
 }
 
 function readRuntimeAssemblyPromptVariant(eventPayload: Record<string, unknown>): string | undefined {

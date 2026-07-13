@@ -1,5 +1,13 @@
 import { request, type IncomingMessage } from "node:http";
 
+import {
+  isRunnerEventAllowedForCommand,
+  isRunnerExpectedResponseEvent,
+  isRunnerStreamingCommandType,
+  isRunnerTerminalResponseEvent,
+  parseRunnerCommandV2,
+} from "@kestrel-agents/protocol";
+
 import type {
   RunnerCommand,
   RunnerCommandMetadata,
@@ -12,10 +20,7 @@ import {
   KestrelProtocolError,
   toKestrelError,
 } from "../errors.js";
-import {
-  isTerminalResponseEvent,
-  type ProtocolTransport,
-} from "./ProtocolClient.js";
+import type { ProtocolTransport } from "./ProtocolClient.js";
 import { parseRunnerEvent, RunnerSseParser } from "./runnerSse.js";
 
 const LOCAL_CORE_RUNTIME_V2_PREFIX = "/runtime/v2";
@@ -64,7 +69,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
 
     let command: RunnerCommand;
     try {
-      command = JSON.parse(line) as RunnerCommand;
+      command = parseRunnerCommandV2(JSON.parse(line));
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -156,7 +161,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
 
   private async dispatch(command: RunnerCommand, controller: AbortController): Promise<void> {
     try {
-      const streaming = command.type === "run.start";
+      const streaming = isRunnerStreamingCommandType(command.type);
       const response = await this.openRequest({
         method: "POST",
         path: `${LOCAL_CORE_RUNTIME_V2_PREFIX}${streaming ? "/commands/stream" : "/commands"}`,
@@ -171,21 +176,24 @@ export class LocalRunnerTransport implements ProtocolTransport {
         await consumeIncomingSse(response, (eventType, data) => {
           const event = parseRunnerEvent(data);
           if (event !== undefined) {
-            if (isTerminalResponseEvent(event.type)) {
-              if (isRunStreamTerminalEvent(event) === false || event.commandId !== command.id) {
-                streamSettled = true;
-                this.emitEvent(makeSyntheticRunnerError(command.id, {
-                  code: "RUNNER_PROTOCOL_ERROR",
-                  message: "Local Core emitted a terminal SSE event for an unexpected command or response type.",
-                  details: {
-                    status,
-                    eventType: event.type,
-                    expectedCommandId: command.id,
-                    receivedCommandId: event.commandId ?? null,
-                  },
-                }));
-                return false;
-              }
+            if (
+              event.commandId !== command.id
+              || isRunnerEventAllowedForCommand(command.type, event) === false
+            ) {
+              streamSettled = true;
+              this.emitEvent(makeSyntheticRunnerError(command.id, {
+                code: "RUNNER_PROTOCOL_ERROR",
+                message: "Local Core emitted an SSE event for an unexpected command or response type.",
+                details: {
+                  status,
+                  eventType: event.type,
+                  expectedCommandId: command.id,
+                  receivedCommandId: event.commandId ?? null,
+                },
+              }));
+              return false;
+            }
+            if (isRunnerTerminalResponseEvent(event.type)) {
               streamSettled = true;
               this.emitEvent(event);
               return false;
@@ -215,6 +223,22 @@ export class LocalRunnerTransport implements ProtocolTransport {
       this.releaseController(command.id, controller);
       const event = parseRunnerEvent(body);
       if (event !== undefined) {
+        if (
+          event.commandId !== command.id
+          || isRunnerExpectedResponseEvent(command.type, event) === false
+        ) {
+          this.emitEvent(makeSyntheticRunnerError(command.id, {
+            code: "RUNNER_PROTOCOL_ERROR",
+            message: "Local Core returned an event for an unexpected command or response type.",
+            details: {
+              status,
+              eventType: event.type,
+              expectedCommandId: command.id,
+              receivedCommandId: event.commandId ?? null,
+            },
+          }));
+          return;
+        }
         this.emitEvent(event);
         return;
       }
@@ -347,14 +371,5 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && (
     error.name === "AbortError" ||
     ("code" in error && error.code === "ABORT_ERR")
-  );
-}
-
-function isRunStreamTerminalEvent(event: RunnerEvent): boolean {
-  return (
-    event.type === "run.completed" ||
-    event.type === "run.failed" ||
-    event.type === "run.cancelled" ||
-    event.type === "runner.error"
   );
 }

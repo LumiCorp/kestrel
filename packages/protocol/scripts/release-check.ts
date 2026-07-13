@@ -64,7 +64,24 @@ try {
   );
   assert.equal(typeof entryModule.createRunnerHealthV1, "function");
   assert.equal(typeof entryModule.parseRunnerHealthV1, "function");
+  assert.equal(entryModule.EXECUTION_PROTOCOL_VERSION, "execution-protocol-v2");
+  assert.equal(entryModule.RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v2");
+  assert.equal(typeof entryModule.parseRunnerCommandV2, "function");
+  assert.equal(typeof entryModule.parseRunnerEventV2, "function");
+  assert.ok(Array.isArray(entryModule.RUNNER_COMMAND_TYPES));
+  assert.ok(Array.isArray(entryModule.RUNNER_STREAMING_COMMAND_TYPES));
+  assert.ok(Array.isArray(entryModule.RUNNER_EVENT_TYPES));
+  assert.ok(Array.isArray(entryModule.RUNNER_JOB_STREAM_EVENT_TYPES));
   assert.ok(Array.isArray(entryModule.RUNNER_RUN_STREAM_EVENT_TYPES));
+  assert.equal(entryModule.RUNNER_COMMAND_TYPES.includes("job.run"), true);
+  assert.equal(entryModule.RUNNER_COMMAND_TYPES.includes("operator.runs"), true);
+  assert.deepEqual(entryModule.RUNNER_STREAMING_COMMAND_TYPES, ["job.run", "run.start"]);
+  assert.equal(entryModule.RUNNER_JOB_STREAM_EVENT_TYPES.includes("run.progress"), true);
+  assert.equal(typeof entryModule.isRunnerEventAllowedForCommand, "function");
+  const health = entryModule.createRunnerHealthV1({ serviceVersion: "0.6.0" });
+  assert.equal(health.contracts.execution, "execution-protocol-v2");
+  assert.equal(health.capabilities.includes("events.cursor"), true);
+  assert.equal(health.capabilities.includes("run.continue_on_disconnect"), true);
 
   console.log("protocol release-check passed");
 } finally {

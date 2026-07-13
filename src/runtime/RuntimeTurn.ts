@@ -68,6 +68,8 @@ export interface RuntimeTurnInput {
   actor?: RuntimeTurnActor | undefined;
   clientCapabilities?: ClientCapabilities | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
+  /** Trusted application instructions rendered in the model system message. */
+  systemInstructions?: string[] | undefined;
   history?: RuntimeTurnHistoryLine[] | undefined;
   projectContext?: RuntimeTurnProjectContext | undefined;
   manualCompaction?: boolean | undefined;
@@ -224,6 +226,9 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.executionPolicy !== undefined
       ? { executionPolicy: prepared.executionPolicy }
+      : {}),
+    ...(prepared.input.systemInstructions !== undefined
+      ? { systemInstructions: prepared.input.systemInstructions }
       : {}),
     ...(prepared.input.resumeBlockedRun === true
       ? { resumeBlockedRun: true }

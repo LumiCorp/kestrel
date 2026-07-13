@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, "..");
 const protocolPackageDir = path.resolve(packageDir, "..", "protocol");
+const repoRoot = path.resolve(packageDir, "..", "..");
 const packageJsonPath = path.join(packageDir, "package.json");
 
 const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
@@ -105,6 +106,159 @@ try {
       ...process.env,
       npm_config_store_dir: storeDir,
     },
+    stdio: "pipe",
+  });
+
+  writeFileSync(path.join(fixtureDir, "contract-check.ts"), `
+import type {
+  JobRunCommandPayload,
+  KestrelClient,
+  McpStatusCommandPayload,
+  ProjectActionCommandPayload,
+  RunStartCommandPayload,
+  RunnerAutoCompaction,
+  RunnerJobRunResultV1,
+  RunnerProfile,
+  RunnerResponseByCommandType,
+  WorkspaceCheckpointEventPayload,
+} from "@kestrel-agents/sdk/runner";
+
+const profile: RunnerProfile = {
+  id: "reference",
+  label: "Reference",
+  agent: "reference-react",
+  sessionPrefix: "reference",
+};
+const validRun: RunStartCommandPayload = {
+  profileId: "reference",
+  turn: {
+    sessionId: "session-1",
+    message: "run",
+    eventType: "user.message",
+    autoCompaction: { enabled: true, state: "armed", suppressOnce: false },
+  },
+};
+const validNestedJob: JobRunCommandPayload = {
+  input: {
+    version: "job_input_v1",
+    profileId: "reference",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+const validMcp: McpStatusCommandPayload = { profileId: "reference" };
+const validAction: ProjectActionCommandPayload = {
+  type: "branch.create",
+  sessionId: "session-1",
+  branchName: "feature/contracts",
+};
+void [validRun, validNestedJob, validMcp, validAction];
+
+function assertWorkspacePayloadTypes(payload: WorkspaceCheckpointEventPayload): void {
+  const checkpointId: string | undefined = payload.checkpoint?.checkpoint.checkpointId;
+  const diffFiles: Array<Record<string, unknown>> | undefined = payload.diff?.files;
+  const promotionStatus: string | undefined = payload.promotion?.status;
+  void [checkpointId, diffFiles, promotionStatus];
+}
+function assertWorkspaceResponseTypes(
+  response: RunnerResponseByCommandType["workspace.checkpoint.diff"],
+): void {
+  const diffId: string | undefined = response.payload.diff?.diffId;
+  const files: Array<Record<string, unknown>> | undefined = response.payload.diff?.files;
+  void [diffId, files];
+}
+void [assertWorkspacePayloadTypes, assertWorkspaceResponseTypes];
+type UndoWorkspacePromotionResult = Awaited<
+  ReturnType<KestrelClient["undoLatestWorkspacePromotion"]>
+>;
+function assertUndoWorkspacePromotionType(result: UndoWorkspacePromotionResult): void {
+  const restoreStatus: string | undefined = result.restore?.status;
+  void restoreStatus;
+}
+void assertUndoWorkspacePromotionType;
+
+// @ts-expect-error run.start requires profile or profileId
+const invalidRun: RunStartCommandPayload = {
+  turn: { sessionId: "session-1", message: "run", eventType: "user.message" },
+};
+// @ts-expect-error job.run requires an outer or nested profile reference
+const invalidJob: JobRunCommandPayload = {
+  input: {
+    version: "job_input_v1",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+// @ts-expect-error mcp.status requires profile or profileId
+const invalidMcp: McpStatusCommandPayload = {};
+// @ts-expect-error run.start profile and profileId are mutually exclusive
+const ambiguousRun: RunStartCommandPayload = {
+  profile,
+  profileId: "reference",
+  turn: { sessionId: "session-1", message: "run", eventType: "user.message" },
+};
+// @ts-expect-error mcp profile and profileId are mutually exclusive
+const ambiguousMcp: McpStatusCommandPayload = { profile, profileId: "reference" };
+// @ts-expect-error job.run cannot combine outer and nested profile references
+const ambiguousJob: JobRunCommandPayload = {
+  profileId: "reference",
+  input: {
+    version: "job_input_v1",
+    profileId: "nested-reference",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+// @ts-expect-error autoCompaction.enabled must be boolean
+const invalidAutoCompaction: RunnerAutoCompaction = { enabled: "yes" };
+// @ts-expect-error autoCompaction.state must be a supported state
+const invalidAutoCompactionState: RunnerAutoCompaction = { state: "arrmed" };
+// @ts-expect-error branch.create requires branchName
+const invalidAction: ProjectActionCommandPayload = {
+  type: "branch.create",
+  sessionId: "session-1",
+};
+// @ts-expect-error job terminals require the runtime result contract
+const invalidJobResult: RunnerJobRunResultV1 = {
+  version: "job_run_result_v1",
+  sessionId: "session-1",
+  threadId: "thread-1",
+  runId: "run-1",
+  status: "COMPLETED",
+  replay: {
+    version: "job_replay_pointer_v1",
+    sessionId: "session-1",
+    threadId: "thread-1",
+    runId: "run-1",
+    replayQuery: { sessionId: "session-1", threadId: "thread-1", runId: "run-1" },
+    commands: { replay: "replay", doctor: "doctor", bundle: "bundle" },
+  },
+};
+void [
+  invalidRun,
+  invalidJob,
+  invalidMcp,
+  ambiguousRun,
+  ambiguousMcp,
+  ambiguousJob,
+  invalidAutoCompaction,
+  invalidAutoCompactionState,
+  invalidAction,
+  invalidJobResult,
+];
+`);
+  writeFileSync(path.join(fixtureDir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      strict: true,
+      noEmit: true,
+      exactOptionalPropertyTypes: true,
+      skipLibCheck: true,
+      lib: ["ES2022", "DOM"],
+    },
+    include: ["contract-check.ts"],
+  }, null, 2));
+  execFileSync(path.join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], {
+    cwd: fixtureDir,
     stdio: "pipe",
   });
 

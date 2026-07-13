@@ -3,12 +3,15 @@ import { randomUUID } from "node:crypto";
 import type {
   KestrelClientOptions,
   KestrelRequestContext,
+  JobRunCommandPayload,
   RunnerEventSubscriptionFilter,
   KestrelRunRequest,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
   OperatorInboxCommandPayload,
+  OperatorRunCommandPayload,
+  OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
   ProfileGetCommandPayload,
   ProjectActionCommandPayload,
@@ -21,12 +24,17 @@ import type {
   RunnerCommandType,
   RunnerEvent,
   RunnerEventEnvelope,
+  RunnerJobStreamEvent,
+  RunnerJobTerminalEvent,
   RunnerOperatorInboxSnapshot,
+  RunnerOperatorRunIndexView,
+  RunnerOperatorRunView,
   RunnerOperatorThreadView,
   RunnerProfile,
   RunnerResponseByCommandType,
   RunnerRunTerminalEvent,
   RunnerRunStreamEvent,
+  RunnerStreamingCommandType,
   RunnerSessionState,
   RunnerStream,
   RunnerTaskGraph,
@@ -43,6 +51,7 @@ import type {
   WorkspacePromotionApplyCommandPayload,
   WorkspacePromotionListCommandPayload,
   WorkspacePromotionPreviewCommandPayload,
+  WorkspacePromotionUndoLatestCommandPayload,
   RunnerSessionDescription,
   RunnerProjectReviewDetail,
   RunnerProjectSnapshot,
@@ -64,6 +73,7 @@ import { RemoteRunnerTransport } from "./internal/RemoteRunnerTransport.js";
 import { consumeSseEventPayloads, parseRunnerEvent } from "./internal/runnerSse.js";
 import {
   parseRunnerHealthV1,
+  RUNNER_JOB_STREAM_EVENT_TYPES,
   RUNNER_RUN_STREAM_EVENT_TYPES,
   type RunnerHealthV1,
 } from "@kestrel-agents/protocol";
@@ -184,6 +194,38 @@ export class KestrelClient {
     }, context);
   }
 
+  async runJob(
+    input: JobRunCommandPayload,
+    context: KestrelRequestContext,
+  ): Promise<RunnerJobTerminalEvent> {
+    return this.sendCommand("job.run", input, context);
+  }
+
+  streamJob(
+    input: JobRunCommandPayload & {
+      signal?: AbortSignal | undefined;
+    },
+    context: KestrelRequestContext,
+  ): RunnerStream<RunnerJobStreamEvent, RunnerJobTerminalEvent> {
+    const { signal, ...payload } = input;
+    return this.createStream(
+      "job.run",
+      payload,
+      context,
+      {
+        signal,
+        isStreamEvent: isRunnerJobStreamEvent,
+        isTerminalEvent: isTerminalJobEvent,
+        onCancel: async (_runId, commandId) => {
+          await this.cancelRun({
+            sessionId: input.input.turn.sessionId,
+            commandId,
+          }, context);
+        },
+      },
+    );
+  }
+
   streamRun(
     input: KestrelRunRequest & {
       signal?: AbortSignal | undefined;
@@ -199,6 +241,8 @@ export class KestrelClient {
       context,
       {
         signal: input.signal,
+        isStreamEvent: isRunnerRunStreamEvent,
+        isTerminalEvent: isTerminalRunEvent,
         onCancel: async (runId, commandId) => {
           await this.cancelRun({
             sessionId: input.turn.sessionId,
@@ -218,6 +262,9 @@ export class KestrelClient {
     } = {},
   ): RunnerStream<RunnerEvent, void> {
     validateSubscriptionFilter(filter);
+    if (options.signal?.aborted === true) {
+      return createAbortedRunnerStream<RunnerEvent, void>();
+    }
     const controller = new AbortController();
     this.subscriptionControllers.add(controller);
     let settled = false;
@@ -313,6 +360,22 @@ export class KestrelClient {
     context: KestrelRequestContext,
   ): Promise<RunnerOperatorThreadView> {
     const event = await this.sendCommand("operator.thread", { threadId }, context);
+    return event.payload.view;
+  }
+
+  async listOperatorRuns(
+    input: OperatorRunsCommandPayload,
+    context: KestrelRequestContext,
+  ): Promise<RunnerOperatorRunIndexView> {
+    const event = await this.sendCommand("operator.runs", input, context);
+    return event.payload.view;
+  }
+
+  async getOperatorRun(
+    input: OperatorRunCommandPayload,
+    context: KestrelRequestContext,
+  ): Promise<RunnerOperatorRunView> {
+    const event = await this.sendCommand("operator.run", input, context);
     return event.payload.view;
   }
 
@@ -439,6 +502,21 @@ export class KestrelClient {
     return event.payload;
   }
 
+  async undoLatestWorkspacePromotion(
+    input: WorkspacePromotionUndoLatestCommandPayload,
+    context: KestrelRequestContext,
+  ): Promise<{
+    sessionId: string;
+    restore?: RunnerWorkspaceRestoreRecord | undefined;
+  }> {
+    const event = await this.sendCommand(
+      "workspace.promotion.undo_latest",
+      input,
+      context,
+    );
+    return event.payload;
+  }
+
   async getProjectSnapshot(
     input: ProjectSnapshotGetCommandPayload,
     context: KestrelRequestContext,
@@ -513,32 +591,41 @@ export class KestrelClient {
     await this.client.close();
   }
 
-  protected createStream(
-    type: "run.start",
-    payload: RunnerCommandPayloadByType["run.start"],
+  protected createStream<
+    TType extends RunnerStreamingCommandType,
+    TEvent extends RunnerEvent,
+    TTerminal extends TEvent,
+  >(
+    type: TType,
+    payload: RunnerCommandPayloadByType[TType],
     context: KestrelRequestContext,
     options: {
       signal?: AbortSignal | undefined;
+      isStreamEvent: (event: RunnerEvent) => event is TEvent;
+      isTerminalEvent: (event: TEvent) => event is TTerminal;
       onCancel?: ((runId: string | undefined, commandId: string) => Promise<void>) | undefined;
     },
-  ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
+  ): RunnerStream<TEvent, TTerminal> {
+    if (options.signal?.aborted === true) {
+      return createAbortedRunnerStream<TEvent, TTerminal>();
+    }
     const commandId = randomUUID();
     let settled = false;
     let cancelRequested = false;
     let latestRunId: string | undefined;
-    let stream!: BufferedRunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>;
+    let stream!: BufferedRunnerStream<TEvent, TTerminal>;
     const unsubscribe = this.client.onEvent((event) => {
       if (event.commandId !== commandId) {
         return;
       }
-      if (isRunnerRunStreamEvent(event) === false) {
+      if (options.isStreamEvent(event) === false) {
         return;
       }
       if (event.runId !== undefined) {
         latestRunId = event.runId;
       }
       stream.push(event);
-      if (isTerminalRunEvent(event)) {
+      if (options.isTerminalEvent(event)) {
         settled = true;
         unsubscribe();
         stream.finish();
@@ -555,9 +642,9 @@ export class KestrelClient {
         settled = true;
         unsubscribe();
         options.signal?.removeEventListener("abort", abortHandler);
-      });
+      }) as unknown as Promise<TTerminal>;
 
-    stream = new BufferedRunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>(
+    stream = new BufferedRunnerStream<TEvent, TTerminal>(
       result,
       async () => {
         if (settled || cancelRequested) {
@@ -674,10 +761,20 @@ function isTerminalRunEvent(event: RunnerEventEnvelope): event is RunnerRunTermi
   return event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled";
 }
 
+function isTerminalJobEvent(event: RunnerJobStreamEvent): event is RunnerJobTerminalEvent {
+  return event.type === "job.completed" || event.type === "job.failed";
+}
+
 function isRunnerRunStreamEvent(
   event: RunnerEventEnvelope,
 ): event is RunnerRunStreamEvent {
   return (RUNNER_RUN_STREAM_EVENT_TYPES as readonly string[]).includes(
+    event.type,
+  );
+}
+
+function isRunnerJobStreamEvent(event: RunnerEvent): event is RunnerJobStreamEvent {
+  return (RUNNER_JOB_STREAM_EVENT_TYPES as readonly string[]).includes(
     event.type,
   );
 }
@@ -687,4 +784,13 @@ function validateSubscriptionFilter(filter: RunnerEventSubscriptionFilter): void
     return;
   }
   throw new KestrelProtocolError("subscribe requires sessionId, threadId, or runId.");
+}
+
+function createAbortedRunnerStream<TEvent, TTerminal>(): RunnerStream<TEvent, TTerminal> {
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return new BufferedRunnerStream<TEvent, TTerminal>(
+    Promise.reject(error),
+    async () => {},
+  );
 }

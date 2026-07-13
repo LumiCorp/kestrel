@@ -25,6 +25,10 @@ import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import { KcronStateStore } from "../../cli/kcron/state.js";
 import { readRuntimeSettings, writeRuntimeSettings } from "../../cli/config/RuntimeSettings.js";
 import { KestrelClient as KestrelSdkClient } from "../../packages/sdk/src/runner.js";
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  RUNNER_COMMAND_CONTRACT_VERSION,
+} from "../../packages/protocol/src/index.js";
 
 test("Local Core API serves health/status with bearer token auth", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-"));
@@ -59,7 +63,8 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     try {
       const health = await sdk.getHealth();
       assert.equal(health.service.version, "0.6.0");
-      assert.equal(health.contracts.command, "runner-command-v1");
+      assert.equal(health.contracts.execution, EXECUTION_PROTOCOL_VERSION);
+      assert.equal(health.contracts.command, RUNNER_COMMAND_CONTRACT_VERSION);
       assert.deepEqual(await sdk.ping({ nonce: "local-core-sdk" }, {
         actor: {
           actorId: "local-core-api-test",

@@ -77,6 +77,7 @@ class MockTransport implements ProtocolTransport {
           commandId: command.id,
           payload: {
             sessionId: "session-123",
+            version: 1,
             updatedAt: new Date().toISOString(),
           },
         }),
@@ -367,7 +368,12 @@ test("ProtocolClient canonicalizes v2 terminal results before resolving or publi
     payload: {
       result: {
         assistantText: "  canonical response  ",
-        output: { status: "COMPLETED" },
+        output: {
+          status: "COMPLETED",
+          sessionId: "s-1",
+          runId: "run-1",
+          errors: [],
+        },
         finalizedPayload: { message: "structured" },
       },
     },
@@ -428,6 +434,111 @@ test("ProtocolClient rejects malformed v2 terminal results as protocol errors", 
     },
   );
   assert.deepEqual(seenEventTypes, ["runner.error"]);
+  await client.close();
+});
+
+test("ProtocolClient rejects unknown v2 events instead of publishing them", async () => {
+  const transport = new ControlledExitTransport();
+  transport.respondToPing = false;
+  const client = new ProtocolClient(transport);
+  const seenEventTypes: string[] = [];
+  client.onEvent((event) => {
+    seenEventTypes.push(event.type);
+  });
+
+  const pending = client.sendCommandWithId("command-unknown-event", "runner.ping", {
+    nonce: "unknown-event",
+  });
+  await tick();
+  transport.emitEvent({
+    id: "evt-unknown",
+    type: "runner.future_event",
+    ts: new Date().toISOString(),
+    commandId: "command-unknown-event",
+    payload: {},
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => {
+      const protocolError = error as ProtocolClientRunnerErrorForTest;
+      assert.equal(protocolError.code, "RUNNER_PROTOCOL_INVALID");
+      assert.match(protocolError.message, /supported Execution Protocol v2 event/u);
+      assert.deepEqual(protocolError.details, { eventType: "runner.future_event" });
+      return true;
+    },
+  );
+  assert.deepEqual(seenEventTypes, ["runner.error"]);
+  await client.close();
+});
+
+test("ProtocolClient rejects malformed nonterminal v2 event payloads", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+
+  const pending = client.sendCommandWithId("command-malformed-started", "run.start", {
+    profile: {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+    },
+    turn: {
+      sessionId: "s-1",
+      message: "hiya",
+      eventType: "user.message",
+    },
+  });
+  await tick();
+  transport.emitEvent({
+    id: "evt-malformed-started",
+    type: "run.started",
+    ts: new Date().toISOString(),
+    commandId: "command-malformed-started",
+    payload: {
+      sessionId: "s-1",
+    },
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => {
+      const protocolError = error as ProtocolClientRunnerErrorForTest;
+      assert.equal(protocolError.code, "RUNNER_PROTOCOL_INVALID");
+      assert.match(protocolError.message, /payload\.eventType must be a non-empty string/u);
+      assert.deepEqual(protocolError.details, { eventType: "run.started" });
+      return true;
+    },
+  );
+  await client.close();
+});
+
+test("ProtocolClient rejects a terminal event for the wrong command contract", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const pending = client.sendCommandWithId(
+    "command-wrong-response-contract",
+    "operator.runs",
+    { limit: 5 },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-wrong-response-contract",
+    type: "operator.run",
+    ts: new Date().toISOString(),
+    commandId: "command-wrong-response-contract",
+    payload: { view: { runId: "run-wrong" } },
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => {
+      const protocolError = error as ProtocolClientRunnerErrorForTest;
+      assert.equal(protocolError.code, "RUNNER_PROTOCOL_INVALID");
+      assert.deepEqual(protocolError.details, { eventType: "operator.run" });
+      return true;
+    },
+  );
   await client.close();
 });
 

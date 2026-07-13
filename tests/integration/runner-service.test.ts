@@ -566,6 +566,155 @@ test("runner service requires actor metadata", async () => {
   }
 });
 
+test("runner service rejects unknown command discriminants at the protocol boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("unknown commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await service.dispatch({
+      method: "POST",
+      url: "/commands",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        id: "cmd-unknown-discriminant",
+        type: "runner.unsupported",
+        metadata: {
+          actor: {
+            actorId: "test-operator",
+            actorType: "operator",
+          },
+        },
+        payload: {},
+      }),
+    });
+
+    const event = JSON.parse(response.body) as {
+      type: string;
+      payload: { code: string; message: string };
+    };
+    assert.equal(response.statusCode, 400);
+    assert.equal(event.type, "runner.error");
+    assert.equal(event.payload.code, "INVALID_COMMAND");
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service rejects malformed command envelopes at the protocol boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("malformed commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    for (const body of [
+      JSON.stringify({ id: "cmd-missing-payload", type: "runner.ping" }),
+      JSON.stringify({ id: " ", type: "runner.ping", payload: {} }),
+    ]) {
+      const response = await service.dispatch({
+        method: "POST",
+        url: "/commands",
+        headers: {
+          "content-type": "application/json",
+        },
+        body,
+      });
+      const event = JSON.parse(response.body) as {
+        type: string;
+        payload: { code: string };
+      };
+      assert.equal(response.statusCode, 400);
+      assert.equal(event.type, "runner.error");
+      assert.equal(event.payload.code, "INVALID_COMMAND");
+    }
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service routes run.start and job.run through the canonical streaming boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("wrong-route commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+  const metadata = {
+    actor: {
+      actorId: "test-operator",
+      actorType: "operator",
+    },
+  };
+
+  try {
+    const commands = [
+      {
+        id: "cmd-run-start-wrong-route",
+        type: "run.start",
+        metadata,
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-run-start-wrong-route",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      },
+      {
+        id: "cmd-job-run-wrong-route",
+        type: "job.run",
+        metadata,
+        payload: {
+          profile,
+          input: {
+            version: "job_input_v1",
+            turn: {
+              sessionId: "session-job-run-wrong-route",
+              message: "run unattended",
+              eventType: "job.run",
+            },
+          },
+        },
+      },
+    ];
+
+    for (const command of commands) {
+      const response = await service.dispatch({
+        method: "POST",
+        url: "/commands",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(command),
+      });
+      const event = JSON.parse(response.body) as {
+        type: string;
+        payload: { message: string };
+      };
+      assert.equal(response.statusCode, 400);
+      assert.equal(event.type, "runner.error");
+      assert.match(event.payload.message, /must use \/commands\/stream/i);
+    }
+  } finally {
+    await service.close();
+  }
+});
+
 test("runner service enforces bearer auth when configured", async () => {
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
@@ -645,7 +794,7 @@ test("runner service rejects malformed actor metadata with a structured error", 
     const event = JSON.parse(response.body) as { type: string; payload: { message: string } };
     assert.equal(response.statusCode, 400);
     assert.equal(event.type, "runner.error");
-    assert.match(event.payload.message, /requires actorId/i);
+    assert.match(event.payload.message, /actorId.*non-empty string/i);
   } finally {
     await service.close();
   }
@@ -745,6 +894,151 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
     assert.match(runResponse.body, /"assistantText":"profile response"/u);
     assert.doesNotMatch(runResponse.body, /  profile response  /u);
     assert.equal(capturedProfileId, "reference");
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service settles an invalid job terminal without a journal", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => ({
+        assistantText: "   ",
+        finalizedPayload: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-invalid-job-terminal",
+          runId: "run-invalid-job-terminal",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      }),
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await withTestTimeout(
+      service.dispatch({
+        method: "POST",
+        url: "/commands/stream",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "cmd-invalid-job-terminal",
+          type: "job.run",
+          metadata: {
+            actor: {
+              actorId: "test-operator",
+              actorType: "operator",
+            },
+          },
+          payload: {
+            profile,
+            input: {
+              version: "job_input_v1",
+              turn: {
+                sessionId: "session-invalid-job-terminal",
+                message: "return an invalid job terminal",
+                eventType: "job.run",
+              },
+            },
+          },
+        }),
+      }),
+      "invalid job terminal stream did not settle",
+      1_000,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /event: runner\.error/u);
+    assert.match(response.body, /"commandId":"cmd-invalid-job-terminal"/u);
+    assert.match(response.body, /"code":"RUNNER_PROTOCOL_INVALID"/u);
+    assert.match(response.body, /assistantText/u);
+    assert.doesNotMatch(response.body, /event: job\.completed/u);
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service settles an invalid runtime scope without a journal", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => ({
+        assistantText: "Finished.",
+        finalizedPayload: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-invalid-runtime-scope",
+          runId: "   ",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      }),
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await withTestTimeout(
+      service.dispatch({
+        method: "POST",
+        url: "/commands/stream",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "cmd-invalid-runtime-scope",
+          type: "run.start",
+          metadata: {
+            actor: {
+              actorId: "test-operator",
+              actorType: "operator",
+            },
+          },
+          payload: {
+            profile,
+            turn: {
+              sessionId: "session-invalid-runtime-scope",
+              message: "return an invalid runtime scope",
+              eventType: "user.message",
+            },
+          },
+        }),
+      }),
+      "invalid runtime scope stream did not settle",
+      1_000,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /event: runner\.error/u);
+    assert.match(response.body, /"commandId":"cmd-invalid-runtime-scope"/u);
+    assert.match(response.body, /"code":"RUNNER_PROTOCOL_INVALID"/u);
+    assert.doesNotMatch(response.body, /"runId":"\s*"/u);
+    assert.doesNotMatch(response.body, /event: run\.completed/u);
   } finally {
     await service.close();
   }

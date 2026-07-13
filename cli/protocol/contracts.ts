@@ -1,4 +1,8 @@
-import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
+import type {
+  RunnerCommandType as CanonicalRunnerCommandType,
+  RunnerEventType as CanonicalRunnerEventType,
+  RunnerRunStreamEventType,
+} from "@kestrel-agents/protocol";
 import type {
   ClientCapabilities,
   McpStatusSnapshot,
@@ -55,39 +59,7 @@ import type {
   RunTurnResult,
 } from "../runtime/KestrelChatRuntime.js";
 
-export type RunnerCommandType =
-  | "profile.list"
-  | "profile.get"
-  | "job.run"
-  | "run.start"
-  | "run.cancel"
-  | "session.describe"
-  | "session.state"
-  | "operator.inbox"
-  | "operator.thread"
-  | "operator.runs"
-  | "operator.run"
-  | "operator.control"
-  | "task.graph.get"
-  | "task.graph.update"
-  | "workspace.checkpoint.capture"
-  | "workspace.checkpoint.list"
-  | "workspace.checkpoint.inspect"
-  | "workspace.checkpoint.diff"
-  | "workspace.checkpoint.restore"
-  | "workspace.checkpoint.cleanup"
-  | "workspace.promotion.list"
-  | "workspace.promotion.preview"
-  | "workspace.promotion.apply"
-  | "workspace.promotion.undo_latest"
-  | "project.snapshot.get"
-  | "project.snapshot.update"
-  | "project.action"
-  | "project.review.get"
-  | "project.review.action"
-  | "runner.ping"
-  | "mcp.status"
-  | "mcp.refresh";
+export type RunnerCommandType = CanonicalRunnerCommandType;
 
 export type RunnerActorType = "end_user" | "operator" | "service";
 
@@ -127,17 +99,38 @@ export interface RunnerCommandEnvelope<
   metadata?: RunnerCommandMetadata | undefined;
 }
 
-export interface RunStartCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-  turn: RunTurnInput;
-}
+type TuiProfileReference =
+  | {
+      profile: TuiProfile;
+      profileId?: never;
+    }
+  | {
+      profile?: never;
+      profileId: string;
+    };
 
-export interface JobRunCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-  input: JobInputV1;
-}
+type JobInputBase = Omit<JobInputV1, "profile" | "profileId">;
+
+type JobInputWithoutProfileReference = JobInputBase & {
+  profile?: never;
+  profileId?: never;
+};
+
+type JobInputWithProfileReference = JobInputBase & TuiProfileReference;
+
+export type RunStartCommandPayload = TuiProfileReference & {
+  turn: RunTurnInput;
+};
+
+export type JobRunCommandPayload =
+  | (TuiProfileReference & {
+      input: JobInputWithoutProfileReference;
+    })
+  | {
+      profile?: never;
+      profileId?: never;
+      input: JobInputWithProfileReference;
+    };
 
 export type ProfileListCommandPayload = {};
 
@@ -334,15 +327,9 @@ export interface ProjectReviewActionCommandPayload {
   action: ProductReviewAction;
 }
 
-export interface McpStatusCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-}
+export type McpStatusCommandPayload = TuiProfileReference;
 
-export interface McpRefreshCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-}
+export type McpRefreshCommandPayload = TuiProfileReference;
 
 export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
@@ -379,30 +366,7 @@ export interface RunnerCommandPayloadByType {
   "mcp.refresh": McpRefreshCommandPayload;
 }
 
-export type RunnerEventType =
-  | "profile.listed"
-  | "profile.loaded"
-  | "job.started"
-  | "job.progress"
-  | "job.completed"
-  | "job.failed"
-  | RunnerRunStreamEventType
-  | "runner.error"
-  | "runner.pong"
-  | "session.described"
-  | "session.state"
-  | "operator.inbox"
-  | "operator.thread"
-  | "operator.runs"
-  | "operator.run"
-  | "operator.controlled"
-  | "task.updated"
-  | "task.graph"
-  | "workspace.checkpoint"
-  | "project.snapshot"
-  | "project.review"
-  | "mcp.status"
-  | "mcp.refreshed";
+export type RunnerEventType = CanonicalRunnerEventType;
 
 export interface RunnerEventEnvelope<
   TType extends RunnerEventType = RunnerEventType,

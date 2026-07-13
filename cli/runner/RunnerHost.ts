@@ -832,6 +832,7 @@ export class RunnerHost {
           ? { waitFor: result.output.waitFor }
           : {}),
         replay,
+        result,
       };
 
       this.writer.emit(
@@ -907,6 +908,12 @@ export class RunnerHost {
         runId,
       });
       const failure = this.normalizeTerminalError(error);
+      const result = buildNonResponsiveTerminalResult({
+        status: "FAILED",
+        sessionId: turn.sessionId,
+        runId,
+        error: failure,
+      });
       this.writer.emit(
         "job.failed",
         {
@@ -917,6 +924,7 @@ export class RunnerHost {
             runId,
             status: "FAILED",
             replay,
+            result,
             error: failure,
           },
           replay,

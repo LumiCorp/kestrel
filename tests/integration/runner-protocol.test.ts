@@ -50,6 +50,20 @@ test("CommandRouter emits runner.error for invalid command JSON", async () => {
   await host.close();
 });
 
+test("EventWriter rejects unknown event discriminants before serialization", () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+
+  assert.throws(
+    () => (writer.emit as (type: string, payload: unknown) => void)(
+      "runner.unsupported",
+      {},
+    ),
+    /runner event/i,
+  );
+  assert.equal(output.read(), null);
+});
+
 test("CommandRouter emits runner.error for unsupported command type", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -82,6 +96,42 @@ test("CommandRouter emits runner.error for unsupported command type", async () =
   assert.equal(events[0]?.type, "runner.error");
   assert.equal(events[0]?.commandId, "cmd-unknown-1");
   assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  rl.close();
+  await host.close();
+});
+
+test("CommandRouter rejects malformed command envelopes before dispatch", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("malformed commands must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+
+  const events: Array<{
+    type: string;
+    commandId?: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as {
+      type: string;
+      commandId?: string;
+      payload: Record<string, unknown>;
+    });
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-malformed-envelope",
+    type: "runner.ping",
+  }));
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.commandId, "cmd-malformed-envelope");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(String(events[0]?.payload.message), /payload/i);
   rl.close();
   await host.close();
 });
@@ -935,7 +985,7 @@ test("job.run emits started/progress/completed events with replay pointers", asy
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
-      assistantText: null,
+      assistantText: "Job completed.",
       output: {
         status: "COMPLETED",
         sessionId: "session-job-1",
@@ -1035,6 +1085,10 @@ test("job.run emits started/progress/completed events with replay pointers", asy
           sessionId?: string;
         };
       };
+      result?: {
+        assistantText?: string | null;
+        finalizedPayload?: unknown;
+      };
     };
     replay?: {
       replayQuery?: {
@@ -1058,6 +1112,10 @@ test("job.run emits started/progress/completed events with replay pointers", asy
     "session-job-1"
   );
   assert.equal(completedPayload.replay?.replayQuery?.runId, "run-job-1");
+  assert.equal(completedPayload.output?.result?.assistantText, "Job completed.");
+  assert.deepEqual(completedPayload.output?.result?.finalizedPayload, {
+    message: "done",
+  });
   rl.close();
   await host.close();
 });
@@ -1222,6 +1280,13 @@ test("job.run failure preserves resolved thread identity in progress and replay 
           sessionId?: string;
         };
       };
+      result?: {
+        assistantText?: string | null;
+        output?: {
+          status?: string;
+          errors?: Array<{ code?: string; message?: string }>;
+        };
+      };
     };
     replay?: {
       replayQuery?: {
@@ -1254,6 +1319,12 @@ test("job.run failure preserves resolved thread identity in progress and replay 
   assert.equal(failedPayload.replay?.replayQuery?.threadId, "thread-job-fail");
   assert.equal(failedPayload.error?.code, "RUNNER_RUNTIME_ERROR");
   assert.match(failedPayload.error?.message ?? "", /boom/u);
+  assert.equal(failedPayload.output?.result?.assistantText, null);
+  assert.equal(failedPayload.output?.result?.output?.status, "FAILED");
+  assert.equal(
+    failedPayload.output?.result?.output?.errors?.[0]?.code,
+    "RUNNER_RUNTIME_ERROR",
+  );
   rl.close();
   await host.close();
 });
@@ -1302,10 +1373,10 @@ test("CommandRouter emits runner.error for invalid job.run payload", async () =>
   await tick();
 
   assert.equal(events[0]?.type, "runner.error");
-  assert.equal(events[0]?.payload.code, "RUNNER_RUNTIME_ERROR");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
   assert.match(
     events[0]?.payload.message ?? "",
-    /job input version must be 'job_input_v1'/u
+    /payload\.input\.version must be 'job_input_v1'/u
   );
   rl.close();
   await host.close();
@@ -2658,7 +2729,7 @@ test("task graph commands emit graph snapshots through the runner protocol", asy
   await host.close();
 });
 
-test("CommandRouter enforces explicit bounded operator.runs filters", async () => {
+test("CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -2686,17 +2757,17 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
     {
       id: "cmd-operator-runs-limit",
       payload: { limit: 51 },
-      message: /integer from 1 to 50/,
+      message: /integer (?:from|between) 1 (?:to|and) 50/,
     },
     {
       id: "cmd-operator-runs-fraction",
       payload: { limit: 1.5 },
-      message: /integer from 1 to 50/,
+      message: /integer (?:from|between) 1 (?:to|and) 50/,
     },
     {
       id: "cmd-operator-runs-status",
       payload: { status: "STALLED" },
-      message: /status is invalid/,
+      message: /status (?:is invalid|must be one of)/,
     },
     {
       id: "cmd-operator-runs-session",
@@ -2706,7 +2777,7 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
     {
       id: "cmd-operator-runs-unknown",
       payload: { cursor: "next" },
-      message: /unsupported filters: cursor/,
+      message: /(?:unsupported filters: cursor|payload\.cursor is not supported)/,
     },
   ];
   for (const query of invalidQueries) {
@@ -2723,7 +2794,7 @@ test("CommandRouter enforces explicit bounded operator.runs filters", async () =
   assert.equal(events.length, invalidQueries.length);
   for (const [index, query] of invalidQueries.entries()) {
     assert.equal(events[index]?.type, "runner.error");
-    assert.equal(events[index]?.payload.code, "RUNNER_RUNTIME_ERROR");
+    assert.equal(events[index]?.payload.code, "INVALID_COMMAND");
     assert.match(events[index]?.payload.message ?? "", query.message);
   }
   rl.close();
@@ -2768,8 +2839,8 @@ test("CommandRouter emits runner.error for invalid operator.control payload", as
   await tick();
 
   assert.equal(events[0]?.type, "runner.error");
-  assert.equal(events[0]?.payload.code, "RUNNER_RUNTIME_ERROR");
-  assert.match(events[0]?.payload.message ?? "", /payload\.action is invalid/);
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(events[0]?.payload.message ?? "", /payload\.action must be one of/);
   rl.close();
   await host.close();
 });

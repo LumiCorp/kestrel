@@ -10,6 +10,8 @@ import {
 import type { RunnerServiceEventJournal } from "../../cli/runner/RunnerServiceEventJournal.js";
 import type { RunnerRuntime } from "../../cli/runner/RunnerHost.js";
 import {
+  EXECUTION_PROTOCOL_VERSION,
+  RUNNER_CAPABILITIES,
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
@@ -396,23 +398,11 @@ test("runner service http exposes health and enforces auth and actor metadata", 
         version: "0.5.1",
       },
       contracts: {
+        execution: EXECUTION_PROTOCOL_VERSION,
         command: RUNNER_COMMAND_CONTRACT_VERSION,
         events: RUNNER_EVENT_CONTRACT_VERSION,
       },
-      capabilities: [
-        "events.subscribe",
-        "mcp.refresh",
-        "operator.control",
-        "operator.inspect",
-        "profile.read",
-        "project.manage",
-        "run.cancel",
-        "run.resume",
-        "run.stream",
-        "session.read",
-        "task.graph",
-        "workspace.checkpoint",
-      ],
+      capabilities: [...RUNNER_CAPABILITIES],
     });
 
     const unauthorizedResponse = await fetch(`${server.url}/commands`, {

@@ -113,6 +113,46 @@ const terminal = await stream.result;
 
 If the caller cancels the stream, the SDK cancels that exact run and `stream.result` resolves with `run.cancelled`.
 
+## Run a Durable Job
+
+```ts
+import { KestrelClient } from "@kestrel-agents/sdk/runner";
+
+const client = new KestrelClient({
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
+});
+
+const job = client.streamJob(
+  {
+    profileId: "support",
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "session-123",
+        message: "Deploy the approved release",
+      },
+    },
+  },
+  context,
+);
+
+for await (const event of job) {
+  console.log(event.type, event.payload);
+}
+
+const terminal = await job.result;
+console.log(terminal.payload.output.result.assistantText);
+console.log(terminal.payload.output.result.finalizedPayload);
+```
+
+Every job terminal contains the same explicit `assistantText` and
+`finalizedPayload` result contract as an interactive run. The SDK does not infer
+assistant text from structured payloads.
+
 ## Resume a Blocked Run
 
 ```ts
@@ -171,6 +211,7 @@ Check runner compatibility before enabling runtime-dependent product controls:
 
 ```ts
 import {
+  EXECUTION_PROTOCOL_VERSION,
   KestrelClient,
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_EVENT_CONTRACT_VERSION,
@@ -186,6 +227,7 @@ const client = new KestrelClient({
 const health = await client.getHealth();
 
 if (
+  health.contracts.execution !== EXECUTION_PROTOCOL_VERSION ||
   health.contracts.command !== RUNNER_COMMAND_CONTRACT_VERSION ||
   health.contracts.events !== RUNNER_EVENT_CONTRACT_VERSION
 ) {

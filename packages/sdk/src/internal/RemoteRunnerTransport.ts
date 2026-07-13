@@ -1,9 +1,14 @@
+import {
+  isRunnerEventAllowedForCommand,
+  isRunnerExpectedResponseEvent,
+  isRunnerStreamingCommandType,
+  isRunnerTerminalResponseEvent,
+  parseRunnerCommandV2,
+} from "@kestrel-agents/protocol";
+
 import type { RunnerCommand, RunnerErrorEventPayload, RunnerEvent } from "../contracts.js";
 import { KestrelProtocolError } from "../errors.js";
-import {
-  isTerminalResponseEvent,
-  type ProtocolTransport,
-} from "./ProtocolClient.js";
+import type { ProtocolTransport } from "./ProtocolClient.js";
 import { consumeSseEventPayloads, parseRunnerEvent } from "./runnerSse.js";
 
 export interface RemoteRunnerTransportOptions {
@@ -48,7 +53,7 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
     let command: RunnerCommand;
     try {
-      command = JSON.parse(line) as RunnerCommand;
+      command = parseRunnerCommandV2(JSON.parse(line));
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -74,11 +79,12 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
   private async dispatch(command: RunnerCommand, controller: AbortController): Promise<void> {
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}${isStreamingCommand(command.type) ? "/commands/stream" : "/commands"}`, {
+      const streaming = isRunnerStreamingCommandType(command.type);
+      const response = await this.fetchImpl(`${this.baseUrl}${streaming ? "/commands/stream" : "/commands"}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          accept: isStreamingCommand(command.type) ? "text/event-stream, application/json" : "application/json",
+          accept: streaming ? "text/event-stream, application/json" : "application/json",
           ...(this.authToken !== undefined ? { authorization: `Bearer ${this.authToken}` } : {}),
         },
         body: JSON.stringify(command),
@@ -87,13 +93,29 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) {
-        await this.consumeSseResponse(response, command.id, controller);
+        await this.consumeSseResponse(response, command, controller);
         return;
       }
 
       const body = await response.text();
       const event = parseRunnerEvent(body);
       if (event !== undefined) {
+        if (
+          event.commandId !== command.id
+          || isRunnerExpectedResponseEvent(command.type, event) === false
+        ) {
+          this.emitEvent(makeSyntheticRunnerError(command.id, {
+            code: "RUNNER_PROTOCOL_ERROR",
+            message: "Remote runner returned an event for an unexpected command or response type.",
+            details: {
+              status: response.status,
+              eventType: event.type,
+              expectedCommandId: command.id,
+              receivedCommandId: event.commandId ?? null,
+            },
+          }));
+          return;
+        }
         this.emitEvent(event);
         return;
       }
@@ -139,29 +161,33 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
   private async consumeSseResponse(
     response: Response,
-    commandId: string,
+    command: RunnerCommand,
     controller: AbortController,
   ): Promise<void> {
+    const commandId = command.id;
     let streamSettled = false;
     try {
       await consumeSseEventPayloads(response, (eventType, data) => {
         const event = parseRunnerEvent(data);
         if (event !== undefined) {
-          if (isTerminalResponseEvent(event.type)) {
-            if (isRunStreamTerminalEvent(event) === false || event.commandId !== commandId) {
-              streamSettled = true;
-              this.emitEvent(makeSyntheticRunnerError(commandId, {
-                code: "RUNNER_PROTOCOL_ERROR",
-                message: "Remote runner emitted a terminal SSE event for an unexpected command or response type.",
-                details: {
-                  status: response.status,
-                  eventType: event.type,
-                  expectedCommandId: commandId,
-                  receivedCommandId: event.commandId ?? null,
-                },
-              }));
-              return false;
-            }
+          if (
+            event.commandId !== commandId
+            || isRunnerEventAllowedForCommand(command.type, event) === false
+          ) {
+            streamSettled = true;
+            this.emitEvent(makeSyntheticRunnerError(commandId, {
+              code: "RUNNER_PROTOCOL_ERROR",
+              message: "Remote runner emitted an SSE event for an unexpected command or response type.",
+              details: {
+                status: response.status,
+                eventType: event.type,
+                expectedCommandId: commandId,
+                receivedCommandId: event.commandId ?? null,
+              },
+            }));
+            return false;
+          }
+          if (isRunnerTerminalResponseEvent(event.type)) {
             streamSettled = true;
             this.emitEvent(event);
             return false;
@@ -218,19 +244,6 @@ export class RemoteRunnerTransport implements ProtocolTransport {
   private emitEvent(event: RunnerEvent): void {
     this.handlers?.onLine(JSON.stringify(event));
   }
-}
-
-function isStreamingCommand(type: RunnerCommand["type"]): boolean {
-  return type === "run.start";
-}
-
-function isRunStreamTerminalEvent(event: RunnerEvent): boolean {
-  return (
-    event.type === "run.completed" ||
-    event.type === "run.failed" ||
-    event.type === "run.cancelled" ||
-    event.type === "runner.error"
-  );
 }
 
 function makeSyntheticRunnerError(commandId: string, payload: RunnerErrorEventPayload): RunnerEvent {

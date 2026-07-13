@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 
-import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+import {
+  isRunnerEventAllowedForCommand,
+  isRunnerTerminalResponseEvent,
+  parseRunnerCommandV2,
+  parseRunnerEventV2,
+} from "@kestrel-agents/protocol";
 
 import type {
   RunnerCommandEnvelope,
@@ -9,12 +14,12 @@ import type {
   RunnerCommandPayloadByType,
   RunnerCommandType,
   RunnerEvent,
-  RunnerEventType,
 } from "../protocol/contracts.js";
 
 const protocolClientRequire = createRequire(import.meta.url);
 
 interface PendingRequest {
+  commandType: RunnerCommandType;
   resolve: (event: RunnerEvent) => void;
   reject: (error: Error) => void;
 }
@@ -108,11 +113,12 @@ export class ProtocolClient {
       payload,
       ...(metadata !== undefined ? { metadata } : {}),
     };
+    const serializedCommand = JSON.stringify(parseRunnerCommandV2(command));
 
     const response = await new Promise<RunnerEvent>((resolve, reject) => {
-      this.pending.set(commandId, { resolve, reject });
+      this.pending.set(commandId, { commandType: type, resolve, reject });
       try {
-        this.transport.send(JSON.stringify(command));
+        this.transport.send(serializedCommand);
       } catch (error) {
         this.pending.delete(commandId);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -150,15 +156,25 @@ export class ProtocolClient {
       return;
     }
 
-    if (isRunnerEventEnvelope(decoded) === false) {
-      return;
-    }
-
     let event: RunnerEvent;
     try {
-      event = validateV2TerminalResult(decoded);
+      event = parseRunnerEventV2(decoded) as unknown as RunnerEvent;
     } catch (error) {
       event = createProtocolErrorEvent(decoded, error);
+    }
+    const correlatedPending = event.commandId === undefined
+      ? undefined
+      : this.pending.get(event.commandId);
+    if (
+      correlatedPending !== undefined
+      && isRunnerEventAllowedForCommand(correlatedPending.commandType, event) === false
+    ) {
+      event = createProtocolErrorEvent(
+        event,
+        new Error(
+          `Command '${correlatedPending.commandType}' received unexpected event '${event.type}'.`,
+        ),
+      );
     }
     if (event.type === "runner.error" && event.commandId === undefined) {
       this.lastProcessError = normalizeDiagnosticLine(event.payload.message);
@@ -181,7 +197,7 @@ export class ProtocolClient {
       return;
     }
 
-    if (isTerminalResponseEvent(event.type)) {
+    if (isRunnerTerminalResponseEvent(event.type)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
         const error = new Error(event.payload.message) as ProtocolClientRunnerError;
@@ -288,73 +304,40 @@ function normalizeDiagnosticLine(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-function isTerminalResponseEvent(type: RunnerEventType): boolean {
-  return (
-    type === "profile.listed" ||
-    type === "profile.loaded" ||
-    type === "job.completed" ||
-    type === "job.failed" ||
-    type === "run.completed" ||
-    type === "run.failed" ||
-    type === "run.cancelled" ||
-    type === "runner.pong" ||
-    type === "session.described" ||
-    type === "session.state" ||
-    type === "operator.inbox" ||
-    type === "operator.thread" ||
-    type === "operator.runs" ||
-    type === "operator.run" ||
-    type === "operator.controlled" ||
-    type === "task.graph" ||
-    type === "workspace.checkpoint" ||
-    type === "project.snapshot" ||
-    type === "project.review" ||
-    type === "runner.error" ||
-    type === "mcp.status" ||
-    type === "mcp.refreshed"
-  );
-}
-
-function validateV2TerminalResult(event: RunnerEvent): RunnerEvent {
-  if (
-    event.type === "run.completed" ||
-    event.type === "run.failed" ||
-    event.type === "run.cancelled" ||
-    event.type === "operator.controlled"
-  ) {
-    return {
-      ...event,
-      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
-    } as unknown as RunnerEvent;
-  }
-  return event;
-}
-
-function createProtocolErrorEvent(event: RunnerEvent, cause: unknown): RunnerEvent {
+function createProtocolErrorEvent(value: unknown, cause: unknown): RunnerEvent {
+  const source = isRecord(value) ? value : {};
+  const eventType = optionalNonEmptyString(source.type);
+  const runId = optionalNonEmptyString(source.runId);
+  const sessionId = optionalNonEmptyString(source.sessionId);
+  const threadId = optionalNonEmptyString(source.threadId);
+  const commandId = optionalNonEmptyString(source.commandId);
   const detail = cause instanceof Error ? cause.message : String(cause);
   return {
-    ...event,
+    id: optionalNonEmptyString(source.id) ?? `runner-protocol-error-${randomUUID()}`,
     type: "runner.error",
+    ts: optionalNonEmptyString(source.ts) ?? new Date().toISOString(),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(commandId !== undefined ? { commandId } : {}),
     payload: {
       code: "RUNNER_PROTOCOL_INVALID",
-      message: `Invalid ${event.type} terminal payload: ${detail}`,
-      details: { eventType: event.type },
+      message: `Invalid runner event${eventType === undefined ? "" : ` '${eventType}'`}: ${detail}`,
+      details: eventType === undefined ? {} : { eventType },
     },
-  } as RunnerEvent;
+  };
 }
 
-function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && Array.isArray(value) === false;
+}
 
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.type === "string" &&
-    typeof record.ts === "string" &&
-    record.payload !== undefined
-  );
+function optionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 export type { ProtocolTransport };

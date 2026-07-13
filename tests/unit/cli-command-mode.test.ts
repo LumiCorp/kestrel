@@ -4,7 +4,14 @@ import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { runCliCommand, resolveCommandModeRunnerModeForTests, shouldRunCommandMode } from "../../cli/commandMode.js";
+import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
+
+import {
+  buildResolvedJobRunCommandPayload,
+  runCliCommand,
+  resolveCommandModeRunnerModeForTests,
+  shouldRunCommandMode,
+} from "../../cli/commandMode.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { resolveDefaultDevShellBaseDir } from "../../src/devshell/paths.js";
 
@@ -64,6 +71,35 @@ test("command mode honors the in-process runner environment switch", () => {
   assert.equal(resolveCommandModeRunnerModeForTests({}), "child");
   assert.equal(resolveCommandModeRunnerModeForTests({ KESTREL_RUNNER_PROCESS_MODE: "inprocess" }), "inprocess");
   assert.equal(resolveCommandModeRunnerModeForTests({ KCHAT_RUNNER_MODE: "in_process" }), "inprocess");
+});
+
+test("command mode emits one resolved profile for profile-bearing jobs", () => {
+  const profile = {
+    id: "reference",
+    label: "Reference",
+    agent: "reference-react" as const,
+    sessionPrefix: "reference",
+  };
+  const turn = {
+    sessionId: "session-job-profile",
+    message: "Run the job",
+    eventType: "job.run",
+  };
+
+  for (const input of [
+    { version: "job_input_v1" as const, profileId: profile.id, turn },
+    { version: "job_input_v1" as const, profile, turn },
+  ]) {
+    const payload = buildResolvedJobRunCommandPayload(input, profile);
+    assert.equal(payload.input.profile, undefined);
+    assert.equal(payload.input.profileId, undefined);
+    assert.equal(payload.input.turn.eventType, "job.run");
+    assert.doesNotThrow(() => parseRunnerCommandV2({
+      id: "command-job-profile",
+      type: "job.run",
+      payload,
+    }));
+  }
 });
 
 test("command mode model show and set operate on shared model policy", async () => {
