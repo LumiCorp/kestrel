@@ -58,6 +58,10 @@ try {
   assert.ok(tarEntries.includes("package/dist/runner.js"), "packed SDK tarball is missing dist/runner.js.");
   assert.ok(tarEntries.includes("package/dist/runner.d.ts"), "packed SDK tarball is missing dist/runner.d.ts.");
   assert.ok(
+    tarEntries.includes("package/dist/internal/LocalRunnerTransport.js"),
+    "packed SDK tarball is missing the Local Core transport.",
+  );
+  assert.ok(
     tarEntries.every((entry) => entry.includes("NativeRunnerClient") === false),
     "packed SDK tarball still includes removed NativeRunnerClient artifacts.",
   );
@@ -110,7 +114,17 @@ try {
   assert.equal(typeof entryModule.createAgent, "function", "packed SDK root does not export createAgent.");
   assert.equal(typeof runnerModule.KestrelClient, "function", "packed SDK runner subpath does not export KestrelClient.");
   void entryModule.createAgent({ id: "release-check", profileId: "reference", baseUrl: "http://127.0.0.1:1" });
-  void new runnerModule.KestrelClient({ baseUrl: "http://127.0.0.1:1" });
+  const remoteClient = new runnerModule.KestrelClient({
+    target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+  });
+  const localClient = new runnerModule.KestrelClient({
+    target: {
+      kind: "local",
+      socketPath: path.join(fixtureDir, "core.sock"),
+      authToken: "release-check-token",
+    },
+  });
+  await Promise.all([remoteClient.close(), localClient.close()]);
 
   console.log("sdk release-check passed");
 } finally {

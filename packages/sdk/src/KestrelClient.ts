@@ -55,8 +55,10 @@ import type {
   RunnerWorkspacePromotionPreview,
   RunnerWorkspacePromotionRecord,
 } from "./contracts.js";
-import { KestrelConfigurationError, KestrelHttpError, KestrelProtocolError, toKestrelError } from "./errors.js";
+import { KestrelHttpError, KestrelProtocolError, toKestrelError } from "./errors.js";
 import { BufferedRunnerStream } from "./RunnerStream.js";
+import { resolveClientTarget, type ResolvedClientTarget } from "./internal/clientTarget.js";
+import { LocalRunnerTransport } from "./internal/LocalRunnerTransport.js";
 import { ProtocolClient } from "./internal/ProtocolClient.js";
 import { RemoteRunnerTransport } from "./internal/RemoteRunnerTransport.js";
 import { consumeSseEventPayloads, parseRunnerEvent } from "./internal/runnerSse.js";
@@ -68,34 +70,45 @@ import {
 
 export class KestrelClient {
   private readonly client: ProtocolClient;
-  private readonly baseUrl: string;
-  private readonly authToken: string | undefined;
-  private readonly fetchImpl: typeof fetch;
+  private readonly target: ResolvedClientTarget;
+  private readonly localTransport: LocalRunnerTransport | undefined;
   private readonly subscriptionControllers = new Set<AbortController>();
 
   constructor(options: KestrelClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? resolveBaseUrlFromEnv();
-    this.authToken = options.authToken;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.client = new ProtocolClient(
-      new RemoteRunnerTransport({
-        baseUrl: this.baseUrl,
-        authToken: this.authToken,
-        fetchImpl: this.fetchImpl,
-      }),
-    );
+    this.target = resolveClientTarget(options);
+    if (this.target.kind === "local") {
+      this.localTransport = new LocalRunnerTransport(this.target);
+      this.client = new ProtocolClient(this.localTransport);
+      return;
+    }
+    this.localTransport = undefined;
+    this.client = new ProtocolClient(new RemoteRunnerTransport(this.target));
   }
 
   async getHealth(): Promise<RunnerHealthV1> {
-    let response: Response;
+    let body: string;
+    let status: number;
     try {
-      response = await this.fetchImpl(new URL("/health", `${this.baseUrl}/`).toString(), {
-        method: "GET",
-        headers: {
-          accept: "application/json",
-          ...(this.authToken !== undefined ? { authorization: `Bearer ${this.authToken}` } : {}),
-        },
-      });
+      if (this.target.kind === "local") {
+        const response = await this.localTransport!.getHealth();
+        body = response.body;
+        status = response.status;
+      } else {
+        const response = await this.target.fetchImpl(
+          new URL("/health", `${this.target.baseUrl}/`).toString(),
+          {
+            method: "GET",
+            headers: {
+              accept: "application/json",
+              ...(this.target.authToken !== undefined
+                ? { authorization: `Bearer ${this.target.authToken}` }
+                : {}),
+            },
+          },
+        );
+        body = await response.text();
+        status = response.status;
+      }
     } catch (error) {
       throw new KestrelProtocolError("Runner health request failed.", {
         code: "RUNNER_TRANSPORT_ERROR",
@@ -105,33 +118,41 @@ export class KestrelClient {
       });
     }
 
-    const body = await response.text();
-    if (response.ok === false) {
-      throw new KestrelHttpError(`Remote runner returned HTTP ${response.status}.`, {
-        status: response.status,
-        body,
-      });
+    if (status < 200 || status >= 300) {
+      throw new KestrelHttpError(
+        `${this.target.kind === "local" ? "Local Core" : "Remote runner"} returned HTTP ${status}.`,
+        {
+          status,
+          body,
+        },
+      );
     }
 
     let decoded: unknown;
     try {
       decoded = JSON.parse(body);
     } catch {
-      throw new KestrelProtocolError("Remote runner returned unreadable health JSON.", {
-        code: "RUNNER_HEALTH_INVALID",
-        details: { body },
-      });
+      throw new KestrelProtocolError(
+        `${this.target.kind === "local" ? "Local Core" : "Remote runner"} returned unreadable health JSON.`,
+        {
+          code: "RUNNER_HEALTH_INVALID",
+          details: { body },
+        },
+      );
     }
 
     try {
       return parseRunnerHealthV1(decoded);
     } catch (error) {
-      throw new KestrelProtocolError("Remote runner returned an invalid health contract.", {
-        code: "RUNNER_HEALTH_INVALID",
-        details: {
-          cause: error instanceof Error ? error.message : String(error),
+      throw new KestrelProtocolError(
+        `${this.target.kind === "local" ? "Local Core" : "Remote runner"} returned an invalid health contract.`,
+        {
+          code: "RUNNER_HEALTH_INVALID",
+          details: {
+            cause: error instanceof Error ? error.message : String(error),
+          },
         },
-      });
+      );
     }
   }
 
@@ -558,12 +579,31 @@ export class KestrelClient {
     controller: AbortController,
     onEvent: (event: RunnerEvent) => void,
   ): Promise<void> {
-    const response = await this.fetchImpl(`${this.baseUrl}/events/stream`, {
+    if (this.target.kind === "local") {
+      try {
+        await this.localTransport!.subscribe(
+          filter,
+          toCommandMetadata(context),
+          controller,
+          onEvent,
+        );
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    const response = await this.target.fetchImpl(`${this.target.baseUrl}/events/stream`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "text/event-stream, application/json",
-        ...(this.authToken !== undefined ? { authorization: `Bearer ${this.authToken}` } : {}),
+        ...(this.target.authToken !== undefined
+          ? { authorization: `Bearer ${this.target.authToken}` }
+          : {}),
       },
       body: JSON.stringify({
         filter,
@@ -626,17 +666,8 @@ function toCommandMetadata(context: KestrelRequestContext): RunnerCommandMetadat
     actor: context.actor,
     ...(context.tenantId !== undefined ? { tenantId: context.tenantId } : {}),
     ...(context.profile !== undefined ? { profile: context.profile } : {}),
+    ...(context.durability !== undefined ? { durability: context.durability } : {}),
   };
-}
-
-function resolveBaseUrlFromEnv(): string {
-  const baseUrl = process.env.KESTREL_RUNNER_SERVICE_URL?.trim();
-  if (baseUrl === undefined || baseUrl.length === 0) {
-    throw new KestrelConfigurationError(
-      "KestrelClient requires baseUrl or KESTREL_RUNNER_SERVICE_URL.",
-    );
-  }
-  return baseUrl;
 }
 
 function isTerminalRunEvent(event: RunnerEventEnvelope): event is RunnerRunTerminalEvent {

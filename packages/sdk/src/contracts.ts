@@ -208,6 +208,7 @@ export interface RunnerCommandMetadata {
   actor?: RunnerActorMetadata | undefined;
   tenantId?: string | undefined;
   profile?: RunnerProfile | undefined;
+  durability?: "cancel_on_disconnect" | "continue_on_disconnect" | undefined;
 }
 
 export interface RunnerEventSubscriptionFilter {
@@ -215,17 +216,39 @@ export interface RunnerEventSubscriptionFilter {
   threadId?: string | undefined;
   runId?: string | undefined;
   eventTypes?: RunnerEventType[] | undefined;
+  sinceEventId?: string | undefined;
 }
 
 export interface KestrelRequestContext {
   actor: RunnerActorMetadata;
   tenantId?: string | undefined;
   profile?: RunnerProfile | undefined;
+  durability?: "cancel_on_disconnect" | "continue_on_disconnect" | undefined;
 }
 
-export interface KestrelClientOptions {
-  baseUrl?: string | undefined;
+export interface KestrelRemoteTarget {
+  kind: "remote";
+  baseUrl: string;
   authToken?: string | undefined;
+  fetchImpl?: typeof fetch | undefined;
+}
+
+export interface KestrelLocalTarget {
+  kind: "local";
+  socketPath: string;
+  authToken: string;
+}
+
+export type KestrelClientTarget = KestrelRemoteTarget | KestrelLocalTarget;
+
+export interface KestrelClientOptions {
+  /** Preferred explicit connection target. */
+  target?: KestrelClientTarget | undefined;
+  /** @deprecated Use target: { kind: "remote", baseUrl } instead. */
+  baseUrl?: string | undefined;
+  /** @deprecated Set authToken on target instead. */
+  authToken?: string | undefined;
+  /** @deprecated Set fetchImpl on a remote target instead. */
   fetchImpl?: typeof fetch | undefined;
 }
 

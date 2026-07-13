@@ -1853,6 +1853,363 @@ test("mcp.refresh emits refreshed event from tool runtime refresh hook", async (
   await host.close();
 });
 
+test("profile replacement waits for in-flight commands and shutdown drains retired runtime close", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let releaseFirstStatus: (() => void) | undefined;
+  const firstStatus = new Promise<void>((resolve) => {
+    releaseFirstStatus = resolve;
+  });
+  let markFirstStatusStarted: (() => void) | undefined;
+  const firstStatusStarted = new Promise<void>((resolve) => {
+    markFirstStatusStarted = resolve;
+  });
+  let markFirstCloseStarted: (() => void) | undefined;
+  const firstCloseStarted = new Promise<void>((resolve) => {
+    markFirstCloseStarted = resolve;
+  });
+  let releaseFirstClose: (() => void) | undefined;
+  const firstClose = new Promise<void>((resolve) => {
+    releaseFirstClose = resolve;
+  });
+  let firstClosed = false;
+  let runtimeCount = 0;
+  const host = new RunnerHost(writer, () => {
+    runtimeCount += 1;
+    const runtimeNumber = runtimeCount;
+    return {
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      getToolRuntimeStatus: async () => {
+        if (runtimeNumber === 1) {
+          markFirstStatusStarted?.();
+          await firstStatus;
+        }
+        return {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          providers: {},
+        };
+      },
+      close: async () => {
+        if (runtimeNumber === 1) {
+          firstClosed = true;
+          markFirstCloseStarted?.();
+          await firstClose;
+        }
+      },
+    };
+  });
+  const router = new CommandRouter(host, writer);
+
+  const firstCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-mcp-status-old-profile",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await firstStatusStarted;
+
+  const replacementProfile = { ...profile, label: "Replacement" };
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mcp-status-new-profile",
+    type: "mcp.status",
+    payload: { profile: replacementProfile },
+  }));
+  assert.equal(runtimeCount, 2);
+  assert.equal(firstClosed, false);
+
+  releaseFirstStatus?.();
+  await firstCommand;
+  await firstCloseStarted;
+  assert.equal(firstClosed, true);
+
+  let closeSettled = false;
+  const closePromise = host.close().then(() => {
+    closeSettled = true;
+  });
+  await tick();
+  assert.equal(closeSettled, false);
+  releaseFirstClose?.();
+  await closePromise;
+  assert.equal(closeSettled, true);
+});
+
+test("retired profile runtime closes while an unrelated profile run remains active", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const longProfile: TuiProfile = {
+    ...profile,
+    id: "long-running",
+    label: "Long running",
+    sessionPrefix: "long-running",
+  };
+  let markLongRunStarted: (() => void) | undefined;
+  const longRunStarted = new Promise<void>((resolve) => {
+    markLongRunStarted = resolve;
+  });
+  let releaseLongRun: (() => void) | undefined;
+  const longRunGate = new Promise<void>((resolve) => {
+    releaseLongRun = resolve;
+  });
+  let longRunSettled = false;
+  let markOldStatusStarted: (() => void) | undefined;
+  const oldStatusStarted = new Promise<void>((resolve) => {
+    markOldStatusStarted = resolve;
+  });
+  let releaseOldStatus: (() => void) | undefined;
+  const oldStatusGate = new Promise<void>((resolve) => {
+    releaseOldStatus = resolve;
+  });
+  let markOldRuntimeClosed: (() => void) | undefined;
+  const oldRuntimeClosed = new Promise<void>((resolve) => {
+    markOldRuntimeClosed = resolve;
+  });
+
+  const host = new RunnerHost(writer, (runtimeProfile) => {
+    if (runtimeProfile.id === longProfile.id) {
+      return {
+        runTurn: async (turn) => {
+          markLongRunStarted?.();
+          await longRunGate;
+          return {
+            assistantText: "Long run completed.",
+            finalizedPayload: null,
+            output: {
+              status: "COMPLETED",
+              sessionId: turn.sessionId,
+              runId: "run-long-profile",
+              errors: [],
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
+            },
+          };
+        },
+        close: async () => {},
+      };
+    }
+
+    const isOldRuntime = runtimeProfile.label === profile.label;
+    return {
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      getToolRuntimeStatus: async () => {
+        if (isOldRuntime) {
+          markOldStatusStarted?.();
+          await oldStatusGate;
+        }
+        return {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          providers: {},
+        };
+      },
+      close: async () => {
+        if (isOldRuntime) {
+          markOldRuntimeClosed?.();
+        }
+      },
+    };
+  });
+  const router = new CommandRouter(host, writer);
+
+  const longCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-long-unrelated-run",
+    type: "run.start",
+    payload: {
+      profile: longProfile,
+      turn: {
+        sessionId: "session-long-unrelated-run",
+        message: "stay active",
+        eventType: "user.message",
+      },
+    },
+  })).finally(() => {
+    longRunSettled = true;
+  });
+  await longRunStarted;
+
+  const oldStatusCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-old-profile-status",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await oldStatusStarted;
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-replacement-profile-status",
+    type: "mcp.status",
+    payload: { profile: { ...profile, label: "Replacement profile" } },
+  }));
+
+  releaseOldStatus?.();
+  await oldStatusCommand;
+  await oldRuntimeClosed;
+  assert.equal(longRunSettled, false);
+
+  releaseLongRun?.();
+  await longCommand;
+  await host.close();
+});
+
+test("runtime leases share object identity across profile aliases and close singletons once", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let singletonCloseCalls = 0;
+  let replacementCloseCalls = 0;
+  const singletonRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      singletonCloseCalls += 1;
+    },
+  };
+  const replacementRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      replacementCloseCalls += 1;
+    },
+  };
+  const host = new RunnerHost(writer, (runtimeProfile) =>
+    runtimeProfile.label === "Replacement primary"
+      ? replacementRuntime
+      : singletonRuntime);
+  const router = new CommandRouter(host, writer);
+  const secondaryProfile: TuiProfile = {
+    ...profile,
+    id: "secondary",
+    label: "Secondary",
+    sessionPrefix: "secondary",
+  };
+
+  for (const [id, runtimeProfile] of [
+    ["cmd-singleton-primary", profile],
+    ["cmd-singleton-secondary", secondaryProfile],
+    ["cmd-replace-primary", { ...profile, label: "Replacement primary" }],
+  ] as const) {
+    await router.acceptLine(JSON.stringify({
+      id,
+      type: "mcp.status",
+      payload: { profile: runtimeProfile },
+    }));
+  }
+
+  assert.equal(singletonCloseCalls, 0);
+  await host.close();
+  assert.equal(singletonCloseCalls, 1);
+  assert.equal(replacementCloseCalls, 1);
+});
+
+test("a leased retired runtime can be reused by another profile before close begins", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let statusCalls = 0;
+  let markFirstStatusStarted: (() => void) | undefined;
+  const firstStatusStarted = new Promise<void>((resolve) => {
+    markFirstStatusStarted = resolve;
+  });
+  let releaseFirstStatus: (() => void) | undefined;
+  const firstStatusGate = new Promise<void>((resolve) => {
+    releaseFirstStatus = resolve;
+  });
+  let oldRuntimeCloseCalls = 0;
+  let replacementCloseCalls = 0;
+  const oldRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        markFirstStatusStarted?.();
+        await firstStatusGate;
+      }
+      return {
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+        providers: {},
+      };
+    },
+    close: async () => {
+      oldRuntimeCloseCalls += 1;
+    },
+  };
+  const replacementRuntime: RunnerRuntime = {
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {},
+    }),
+    close: async () => {
+      replacementCloseCalls += 1;
+    },
+  };
+  const host = new RunnerHost(writer, (runtimeProfile) =>
+    runtimeProfile.label === "Replacement"
+      ? replacementRuntime
+      : oldRuntime);
+  const router = new CommandRouter(host, writer);
+
+  const firstStatusCommand = router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-first",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await firstStatusStarted;
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-replacement",
+    type: "mcp.status",
+    payload: { profile: { ...profile, label: "Replacement" } },
+  }));
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-retired-reuse-alias",
+    type: "mcp.status",
+    payload: {
+      profile: {
+        ...profile,
+        id: "revived-alias",
+        label: "Revived alias",
+        sessionPrefix: "revived-alias",
+      },
+    },
+  }));
+  assert.equal(oldRuntimeCloseCalls, 0);
+
+  releaseFirstStatus?.();
+  await firstStatusCommand;
+  assert.equal(oldRuntimeCloseCalls, 0);
+
+  await host.close();
+  assert.equal(oldRuntimeCloseCalls, 1);
+  assert.equal(replacementCloseCalls, 1);
+});
+
 test("operator commands emit inbox, thread, run, and controlled responses", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

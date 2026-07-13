@@ -1,5 +1,9 @@
 import type { RunnerCommand, RunnerErrorEventPayload, RunnerEvent } from "../contracts.js";
-import type { ProtocolTransport } from "./ProtocolClient.js";
+import { KestrelProtocolError } from "../errors.js";
+import {
+  isTerminalResponseEvent,
+  type ProtocolTransport,
+} from "./ProtocolClient.js";
 import { consumeSseEventPayloads, parseRunnerEvent } from "./runnerSse.js";
 
 export interface RemoteRunnerTransportOptions {
@@ -118,6 +122,14 @@ export class RemoteRunnerTransport implements ProtocolTransport {
       if (controller.signal.aborted) {
         return;
       }
+      if (error instanceof KestrelProtocolError) {
+        this.emitEvent(makeSyntheticRunnerError(command.id, {
+          code: error.code,
+          message: error.message,
+          ...(error.details !== undefined ? { details: error.details } : {}),
+        }));
+        return;
+      }
       this.emitEvent(makeSyntheticRunnerError(command.id, {
         code: "RUNNER_TRANSPORT_ERROR",
         message: error instanceof Error ? error.message : String(error),
@@ -130,13 +142,34 @@ export class RemoteRunnerTransport implements ProtocolTransport {
     commandId: string,
     controller: AbortController,
   ): Promise<void> {
+    let streamSettled = false;
     try {
       await consumeSseEventPayloads(response, (eventType, data) => {
         const event = parseRunnerEvent(data);
         if (event !== undefined) {
+          if (isTerminalResponseEvent(event.type)) {
+            if (isRunStreamTerminalEvent(event) === false || event.commandId !== commandId) {
+              streamSettled = true;
+              this.emitEvent(makeSyntheticRunnerError(commandId, {
+                code: "RUNNER_PROTOCOL_ERROR",
+                message: "Remote runner emitted a terminal SSE event for an unexpected command or response type.",
+                details: {
+                  status: response.status,
+                  eventType: event.type,
+                  expectedCommandId: commandId,
+                  receivedCommandId: event.commandId ?? null,
+                },
+              }));
+              return false;
+            }
+            streamSettled = true;
+            this.emitEvent(event);
+            return false;
+          }
           this.emitEvent(event);
-          return;
+          return undefined;
         }
+        streamSettled = true;
         this.emitEvent(makeSyntheticRunnerError(commandId, {
           code: "RUNNER_PROTOCOL_ERROR",
           message: `Remote runner emitted invalid SSE payload for '${eventType || "message"}'.`,
@@ -145,9 +178,31 @@ export class RemoteRunnerTransport implements ProtocolTransport {
             body: data,
           },
         }));
+        return false;
       });
+      if (streamSettled === false) {
+        this.emitEvent(makeSyntheticRunnerError(commandId, {
+          code: "RUNNER_PROTOCOL_ERROR",
+          message: "Remote runner SSE stream ended before a terminal event.",
+          details: { status: response.status },
+        }));
+      }
     } catch (error) {
+      if (streamSettled) {
+        return;
+      }
       if (controller.signal.aborted || isAbortError(error)) {
+        return;
+      }
+      if (error instanceof KestrelProtocolError) {
+        this.emitEvent(makeSyntheticRunnerError(commandId, {
+          code: error.code,
+          message: error.message,
+          details: {
+            ...(error.details ?? {}),
+            status: response.status,
+          },
+        }));
         return;
       }
       this.emitEvent(makeSyntheticRunnerError(commandId, {
@@ -167,6 +222,15 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
 function isStreamingCommand(type: RunnerCommand["type"]): boolean {
   return type === "run.start";
+}
+
+function isRunStreamTerminalEvent(event: RunnerEvent): boolean {
+  return (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled" ||
+    event.type === "runner.error"
+  );
 }
 
 function makeSyntheticRunnerError(commandId: string, payload: RunnerErrorEventPayload): RunnerEvent {

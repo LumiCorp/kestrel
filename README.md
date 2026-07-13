@@ -11,8 +11,10 @@ specifications.
 - **Kestrel** owns the runtime, local services, public clients, packages, and
   product surfaces in this repository.
 - **Kestrel One** is the canonical hosted web product under `apps/web`.
-- **Kestrel Desktop** is an independent local application with a bundled
-  PostgreSQL runtime. It does not require an externally managed database.
+- **Kestrel Desktop** is the independent local UI surface. The target
+  architecture makes it a Local Core client; its current compatibility path
+  still starts Local Core with the bundled managed database until the client
+  cutover and packaging migration land.
 - **Kestrel Studio** is a separate private commercial product that consumes
   exact released Kestrel packages. Studio source does not belong here.
 - **Ruhroh** is a separate project that owns evaluation execution, reporting,
@@ -60,9 +62,11 @@ Model-backed flows require `OPENROUTER_API_KEY`. Internet-backed flows require
 `TAVILY_API_KEY`. Kestrel One also requires its hosted service configuration;
 see `apps/web/.env.example`.
 
-Desktop starts its bundled Local Core and managed PostgreSQL runtime by
-default. External PostgreSQL remains an explicit development or deployment
-choice, not a Desktop prerequisite.
+Desktop starts or connects to Local Core through the transitional
+managed-database path. Local Core's 0.6 default is embedded PGlite; external
+PostgreSQL remains an explicit advanced deployment choice. Migration of every
+legacy local runner path and removal of compatibility packaging are tracked in
+the local platform architecture plan.
 
 ## Registry Install
 

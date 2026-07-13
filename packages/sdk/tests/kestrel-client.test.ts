@@ -643,6 +643,203 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
   await client.close();
 });
 
+test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal event", async () => {
+  const client = new KestrelClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as { id: string };
+      return new Response(
+        `event: run.started\ndata: ${JSON.stringify({
+          id: "evt-remote-truncated-started",
+          type: "run.started",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          sessionId: "session-remote-truncated",
+          payload: {
+            sessionId: "session-remote-truncated",
+            eventType: "user.message",
+          },
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  await assert.rejects(
+    client.run({
+      profileId: "reference",
+      turn: {
+        sessionId: "session-remote-truncated",
+        message: "run until disconnected",
+        eventType: "user.message",
+      },
+    }, context),
+    (error: unknown) =>
+      error instanceof KestrelProtocolError &&
+      error.code === "RUNNER_PROTOCOL_ERROR" &&
+      /ended before a terminal event/u.test(error.message),
+  );
+  await client.close();
+});
+
+test("RemoteRunnerTransport rejects a terminal SSE event without a command id", async () => {
+  const client = new KestrelClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async () => new Response(
+      `event: run.completed\ndata: ${JSON.stringify({
+        id: "evt-remote-unscoped-terminal",
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        sessionId: "session-remote-unscoped",
+        runId: "run-remote-unscoped",
+        payload: {
+          result: {
+            assistantText: "Unscoped terminal.",
+            finalizedPayload: null,
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-remote-unscoped",
+              runId: "run-remote-unscoped",
+              errors: [],
+            },
+          },
+        },
+      })}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    ),
+  });
+
+  await assert.rejects(
+    Promise.race([
+      client.run({
+        profileId: "reference",
+        turn: {
+          sessionId: "session-remote-unscoped",
+          message: "receive an unscoped terminal",
+          eventType: "user.message",
+        },
+      }, context),
+      rejectAfter(500, "Remote unscoped-terminal request did not settle."),
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof KestrelProtocolError);
+      assert.equal(error.code, "RUNNER_PROTOCOL_ERROR");
+      assert.equal(typeof error.details?.expectedCommandId, "string");
+      assert.equal(error.details?.receivedCommandId, null);
+      return true;
+    },
+  );
+  await client.close();
+});
+
+test("RemoteRunnerTransport rejects mismatched terminal events without cross-settling another run", async (t) => {
+  let victimCommandId: string | undefined;
+  let sourceCommandId: string | undefined;
+  let markVictimReady!: () => void;
+  const victimReady = new Promise<void>((resolve) => {
+    markVictimReady = resolve;
+  });
+  const client = new KestrelClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as {
+        id: string;
+        payload: { turn: { sessionId: string } };
+      };
+      if (command.payload.turn.sessionId === "session-remote-victim") {
+        victimCommandId = command.id;
+        let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller;
+            markVictimReady();
+          },
+        });
+        init?.signal?.addEventListener("abort", () => {
+          bodyController?.error(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+        return new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+
+      assert.equal(typeof victimCommandId, "string");
+      sourceCommandId = command.id;
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify({
+          id: "evt-remote-cross-terminal",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: victimCommandId,
+          sessionId: "session-remote-source",
+          runId: "run-remote-source",
+          payload: {
+            result: {
+              assistantText: "Wrongly scoped terminal.",
+              finalizedPayload: null,
+              output: {
+                status: "COMPLETED",
+                sessionId: "session-remote-source",
+                runId: "run-remote-source",
+                errors: [],
+              },
+            },
+          },
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  t.after(async () => client.close());
+
+  const victimOutcome = client.run({
+    profileId: "reference",
+    turn: {
+      sessionId: "session-remote-victim",
+      message: "wait for the correct terminal",
+      eventType: "user.message",
+    },
+  }, context).then(
+    () => ({ status: "resolved" as const }),
+    (error: unknown) => ({ status: "rejected" as const, error }),
+  );
+  await victimReady;
+
+  await assert.rejects(
+    Promise.race([
+      client.run({
+        profileId: "reference",
+        turn: {
+          sessionId: "session-remote-source",
+          message: "receive a mismatched terminal",
+          eventType: "user.message",
+        },
+      }, context),
+      rejectAfter(500, "Remote mismatched-terminal request did not settle."),
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof KestrelProtocolError);
+      assert.equal(error.code, "RUNNER_PROTOCOL_ERROR");
+      assert.match(error.message, /unexpected command/u);
+      assert.equal(error.details?.expectedCommandId, sourceCommandId);
+      assert.equal(error.details?.receivedCommandId, victimCommandId);
+      return true;
+    },
+  );
+  assert.equal(
+    await Promise.race([
+      victimOutcome.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]),
+    "pending",
+  );
+
+  await client.close();
+  const closedVictim = await victimOutcome;
+  assert.equal(closedVictim.status, "rejected");
+});
+
 test("RemoteRunnerTransport does not emit protocol errors when a local close aborts an SSE stream", async () => {
   const events: Array<{ type: string; payload?: { code?: string } }> = [];
   const transport = new RemoteRunnerTransport({
@@ -1014,3 +1211,10 @@ test("SDK package manifest and README are publish-ready", async () => {
   assert.match(readme, /bun add @kestrel-agents\/sdk/u);
   assert.match(readme, /Browser and edge-runtime usage are not supported/u);
 });
+
+function rejectAfter(milliseconds: number, message: string): Promise<never> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    timer.unref();
+  });
+}

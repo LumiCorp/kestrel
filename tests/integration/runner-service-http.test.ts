@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import test, { type TestContext } from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
-import { createRunnerServiceServer } from "../../cli/runner/RunnerService.js";
+import {
+  createRunnerServiceHttpHandler,
+  createRunnerServiceServer,
+} from "../../cli/runner/RunnerService.js";
+import type { RunnerServiceEventJournal } from "../../cli/runner/RunnerServiceEventJournal.js";
 import type { RunnerRuntime } from "../../cli/runner/RunnerHost.js";
 import {
   RUNNER_COMMAND_CONTRACT_VERSION,
@@ -26,6 +31,344 @@ const actorMetadata = {
   },
   tenantId: "internal",
 };
+
+test("shared runner service handler mounts under a prefix and reports active executions", async (t) => {
+  let resolveRunEntered: (() => void) | undefined;
+  const runEntered = new Promise<void>((resolve) => {
+    resolveRunEntered = resolve;
+  });
+  let resolveRun: (() => void) | undefined;
+  const finishRun = new Promise<void>((resolve) => {
+    resolveRun = resolve;
+  });
+  const handler = createRunnerServiceHttpHandler({
+    pathPrefix: "/runtime/v2/",
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        resolveRunEntered?.();
+        await finishRun;
+        return {
+          assistantText: "done",
+          output: {
+            status: "COMPLETED",
+            sessionId: "session-shared-handler",
+            runId: "run-shared-handler",
+            errors: [],
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 0,
+              modelCalls: 0,
+              durationMs: 1,
+            },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+  const mounted = await mountRunnerHandlerOrSkip(t, handler.handle);
+  if (mounted === undefined) {
+    await handler.close();
+    return;
+  }
+
+  try {
+    await handler.ready();
+    assert.equal(handler.hasActiveExecutions(), false);
+
+    const rootHealth = await fetch(`${mounted.url}/health`);
+    assert.equal(rootHealth.status, 404);
+    const prefixedHealth = await fetch(`${mounted.url}/runtime/v2/health`);
+    assert.equal(prefixedHealth.status, 200);
+
+    const commandResponsePromise = fetch(`${mounted.url}/runtime/v2/commands/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        id: "cmd-shared-handler",
+        type: "run.start",
+        metadata: {
+          ...actorMetadata,
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-shared-handler",
+            runId: "run-shared-handler",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+
+    await runEntered;
+    assert.equal(handler.hasActiveExecutions(), true);
+    resolveRun?.();
+
+    const commandResponse = await commandResponsePromise;
+    assert.equal(commandResponse.status, 200);
+    assert.match(await commandResponse.text(), /"type":"run\.completed"/);
+    assert.equal(handler.hasActiveExecutions(), false);
+  } finally {
+    resolveRun?.();
+    await handler.close();
+    await closeHttpServer(mounted.server);
+  }
+});
+
+test("shared runner service close waits for aborted execution cleanup", async (t) => {
+  let markRunEntered: (() => void) | undefined;
+  const runEntered = new Promise<void>((resolve) => {
+    markRunEntered = resolve;
+  });
+  let markAbortObserved: (() => void) | undefined;
+  const abortObserved = new Promise<void>((resolve) => {
+    markAbortObserved = resolve;
+  });
+  let releaseExecutionCleanup: (() => void) | undefined;
+  const executionCleanup = new Promise<void>((resolve) => {
+    releaseExecutionCleanup = resolve;
+  });
+  let runtimeCloseCalled = false;
+  const handler = createRunnerServiceHttpHandler({
+    runtimeFactory: () => ({
+      runTurn: async (_turn, options) => {
+        markRunEntered?.();
+        const signal = options?.signal;
+        assert.ok(signal);
+        if (signal.aborted === false) {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+        markAbortObserved?.();
+        await executionCleanup;
+        throw new Error("execution aborted");
+      },
+      close: async () => {
+        runtimeCloseCalled = true;
+      },
+    }),
+  });
+  const mounted = await mountRunnerHandlerOrSkip(t, handler.handle);
+  if (mounted === undefined) {
+    await handler.close();
+    return;
+  }
+
+  try {
+    const responsePromise = fetch(`${mounted.url}/commands/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        id: "cmd-close-waits",
+        type: "run.start",
+        metadata: {
+          ...actorMetadata,
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-close-waits",
+            runId: "run-close-waits",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    await runEntered;
+
+    let closeSettled = false;
+    const closePromise = handler.close({ abortActiveRuns: true }).then(() => {
+      closeSettled = true;
+    });
+    await abortObserved;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(runtimeCloseCalled, false);
+    assert.equal(closeSettled, false);
+
+    releaseExecutionCleanup?.();
+    await closePromise;
+    assert.equal(runtimeCloseCalled, true);
+    assert.equal(closeSettled, true);
+    assert.equal(handler.hasActiveExecutions(), false);
+
+    const response = await responsePromise;
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /"type":"run\.cancelled"/);
+  } finally {
+    releaseExecutionCleanup?.();
+    await handler.close();
+    await closeHttpServer(mounted.server);
+  }
+});
+
+test("shared runner service drains unary runtime commands and rejects new work during close", async (t) => {
+  let markStatusEntered: (() => void) | undefined;
+  const statusEntered = new Promise<void>((resolve) => {
+    markStatusEntered = resolve;
+  });
+  let releaseStatus: (() => void) | undefined;
+  const statusGate = new Promise<void>((resolve) => {
+    releaseStatus = resolve;
+  });
+  let runtimeCloseCalled = false;
+  const handler = createRunnerServiceHttpHandler({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      getToolRuntimeStatus: async () => {
+        markStatusEntered?.();
+        await statusGate;
+        return {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          providers: {},
+        };
+      },
+      close: async () => {
+        runtimeCloseCalled = true;
+      },
+    }),
+  });
+  const mounted = await mountRunnerHandlerOrSkip(t, handler.handle);
+  if (mounted === undefined) {
+    await handler.close();
+    return;
+  }
+
+  try {
+    const statusResponsePromise = fetch(`${mounted.url}/commands`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        id: "cmd-unary-close-barrier",
+        type: "mcp.status",
+        metadata: actorMetadata,
+        payload: { profile },
+      }),
+    });
+    await statusEntered;
+    assert.equal(handler.hasActiveExecutions(), true);
+
+    let closeSettled = false;
+    const closePromise = handler.close({ abortActiveRuns: false }).then(() => {
+      closeSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(closeSettled, false);
+    assert.equal(runtimeCloseCalled, false);
+
+    const rejectedResponse = await fetch(`${mounted.url}/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-rejected-during-close",
+        type: "runner.ping",
+        metadata: actorMetadata,
+        payload: { nonce: "closing" },
+      }),
+    });
+    assert.equal(rejectedResponse.status, 400);
+    assert.match(await rejectedResponse.text(), /closing and cannot accept new commands/u);
+
+    releaseStatus?.();
+    const statusResponse = await statusResponsePromise;
+    assert.equal(statusResponse.status, 200);
+    assert.match(await statusResponse.text(), /"type":"mcp\.status"/u);
+    await closePromise;
+    assert.equal(closeSettled, true);
+    assert.equal(runtimeCloseCalled, true);
+    assert.equal(handler.hasActiveExecutions(), false);
+  } finally {
+    releaseStatus?.();
+    await handler.close();
+    await closeHttpServer(mounted.server);
+  }
+});
+
+test("shared runner service aborts durable replay when its client disconnects", async (t) => {
+  let markReplayStarted: (() => void) | undefined;
+  const replayStarted = new Promise<void>((resolve) => {
+    markReplayStarted = resolve;
+  });
+  let markReplayAborted: (() => void) | undefined;
+  const replayAborted = new Promise<void>((resolve) => {
+    markReplayAborted = resolve;
+  });
+  const journal: RunnerServiceEventJournal = {
+    ready() {},
+    append() {},
+    async replayAfter(_sinceEventId, _filter, _onEvent, options) {
+      markReplayStarted?.();
+      options?.onReplayBoundary?.();
+      if (options?.signal?.aborted !== true) {
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+      markReplayAborted?.();
+      return { status: "cancelled" };
+    },
+  };
+  const handler = createRunnerServiceHttpHandler({ eventJournal: journal });
+  const mounted = await mountRunnerHandlerOrSkip(t, handler.handle);
+  if (mounted === undefined) {
+    await handler.close();
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const responsePromise = fetch(`${mounted.url}/events/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        filter: {
+          runId: "run-disconnected-replay",
+          sinceEventId: "event-disconnected-replay",
+        },
+        metadata: actorMetadata,
+      }),
+      signal: controller.signal,
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await replayStarted;
+    controller.abort();
+    await replayAborted;
+    const responseError = await responsePromise;
+    assert.ok(responseError instanceof Error);
+    assert.equal(responseError.name, "AbortError");
+  } finally {
+    await handler.close();
+    await closeHttpServer(mounted.server);
+  }
+});
 
 test("runner service http exposes health and enforces auth and actor metadata", async (t) => {
   const server = await createHttpServerOrSkip(t, {
@@ -517,4 +860,45 @@ function isListenPermissionError(error: unknown): boolean {
     (error as Error & { code?: string }).code === "EPERM" &&
     /listen/i.test(error.message)
   );
+}
+
+async function mountRunnerHandlerOrSkip(
+  context: TestContext,
+  handler: http.RequestListener,
+): Promise<{ server: http.Server; url: string } | undefined> {
+  const server = http.createServer(handler);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+  } catch (error) {
+    if (isListenPermissionError(error)) {
+      context.skip("sandbox denied localhost listener setup for shared runner-service handler test");
+      return undefined;
+    }
+    throw error;
+  }
+  const address = server.address();
+  assert.ok(address !== null && typeof address !== "string");
+  return {
+    server,
+    url: `http://127.0.0.1:${address.port}`,
+  };
+}
+
+async function closeHttpServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error !== undefined && error !== null) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+    server.closeIdleConnections?.();
+  });
 }

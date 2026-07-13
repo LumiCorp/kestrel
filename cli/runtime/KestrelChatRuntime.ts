@@ -67,6 +67,7 @@ import type {
   ModelGateway,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
+import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 
 import type { SharedToolContext } from "../../tools/index.js";
@@ -930,7 +931,66 @@ function createDefaultRuntime(
   const storeHandle = createSessionStoreFromEnv({
     ...(profile.storeDriver !== undefined ? { driver: profile.storeDriver } : {}),
   });
-  const store = storeHandle.store;
+  return createRuntimeWithStore(
+    profile,
+    onFinalize,
+    onRunLog,
+    onProgress,
+    onConsole,
+    onReasoning,
+    onTaskUpdate,
+    onRunEvent,
+    storeHandle.store,
+    storeHandle.close,
+  );
+}
+
+/**
+ * Creates runtimes that share a host-owned persistence boundary.
+ *
+ * Local Core owns and closes this store once for the lifetime of the host;
+ * individual profile runtimes only release their profile-specific resources.
+ */
+export function createRuntimeFactoryWithStore(store: SessionStore): RuntimeFactory {
+  return {
+    create(
+      profile,
+      onFinalize,
+      onRunLog,
+      onProgress,
+      onConsole,
+      onReasoning,
+      onTaskUpdate,
+      onRunEvent,
+    ) {
+      return createRuntimeWithStore(
+        profile,
+        onFinalize,
+        onRunLog,
+        onProgress,
+        onConsole,
+        onReasoning,
+        onTaskUpdate,
+        onRunEvent,
+        store,
+        async () => {},
+      );
+    },
+  };
+}
+
+function createRuntimeWithStore(
+  profile: TuiProfile,
+  onFinalize: (payload: unknown) => unknown,
+  onRunLog: ((entry: RunLogEntry) => void) | undefined,
+  onProgress: ((update: ProgressUpdateV1) => void) | undefined,
+  onConsole: ((update: RunConsoleUpdateV1) => void) | undefined,
+  onReasoning: ((update: ReasoningUpdateV1) => void) | undefined,
+  onTaskUpdate: ((update: DelegationTaskUpdate) => void) | undefined,
+  onRunEvent: ((event: RunEvent) => void) | undefined,
+  store: SessionStore,
+  closeStore: () => Promise<void>,
+): RuntimeBootstrap {
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
@@ -1108,7 +1168,7 @@ function createDefaultRuntime(
     close: async () =>
       closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
-        storeHandle.close,
+        closeStore,
         devShellService instanceof LocalDevShellService ? devShellService.close.bind(devShellService) : undefined,
       ),
   };

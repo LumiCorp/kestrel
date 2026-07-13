@@ -17,6 +17,7 @@ pnpm run sdk:release-check
 - the tarball includes `README.md`, `LICENSE`, and built entrypoints
 - the root package exports the agent-first API
 - the advanced `./runner` subpath remains importable
+- the packed runner client contains both explicit remote and Local Core transports
 - removed artifacts such as `NativeRunnerClient` are not shipped
 - the packed package can be imported as installed output
 

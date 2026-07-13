@@ -216,7 +216,7 @@ function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {
   );
 }
 
-function isTerminalResponseEvent(type: RunnerEventType): boolean {
+export function isTerminalResponseEvent(type: RunnerEventType): boolean {
   return (
     type === "profile.listed" ||
     type === "profile.loaded" ||

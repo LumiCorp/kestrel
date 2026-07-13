@@ -1,4 +1,7 @@
+import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+
 import type { RunnerEvent } from "../contracts.js";
+import { KestrelProtocolError } from "../errors.js";
 
 interface RunnerSseError extends Error {
   code: string;
@@ -7,7 +10,7 @@ interface RunnerSseError extends Error {
 
 export async function consumeSseEventPayloads(
   response: Response,
-  onMessage: (eventType: string, data: string) => void,
+  onMessage: (eventType: string, data: string) => void | boolean,
 ): Promise<void> {
   if (response.body === null) {
     throw createRunnerSseError("KESTREL_SSE_BODY_UNREADABLE", "SSE response body is empty.");
@@ -15,58 +18,23 @@ export async function consumeSseEventPayloads(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  let eventType = "";
-  let data = "";
-
-  const flushEvent = () => {
-    if (data.length === 0) {
-      eventType = "";
-      return;
-    }
-    onMessage(eventType, data);
-    eventType = "";
-    data = "";
-  };
+  const parser = new RunnerSseParser(onMessage);
 
   while (true) {
     const chunk = await reader.read();
     if (chunk.done) {
-      buffer += decoder.decode();
+      if (parser.push(decoder.decode()) === false) {
+        return;
+      }
       break;
     }
-    buffer += decoder.decode(chunk.value, { stream: true });
-    let boundary = buffer.indexOf("\n");
-    while (boundary >= 0) {
-      const rawLine = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 1);
-      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-      if (line.length === 0) {
-        flushEvent();
-      } else if (line.startsWith("event:")) {
-        eventType = line.slice("event:".length).trim();
-      } else if (line.startsWith("data:")) {
-        const next = line.slice("data:".length).trim();
-        data = data.length === 0 ? next : `${data}\n${next}`;
-      }
-      boundary = buffer.indexOf("\n");
+    if (parser.push(decoder.decode(chunk.value, { stream: true })) === false) {
+      await reader.cancel();
+      return;
     }
   }
 
-  const trailing = buffer.trim();
-  if (trailing.length > 0) {
-    const lines = trailing.split(/\r?\n/u);
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        eventType = line.slice("event:".length).trim();
-      } else if (line.startsWith("data:")) {
-        const next = line.slice("data:".length).trim();
-        data = data.length === 0 ? next : `${data}\n${next}`;
-      }
-    }
-  }
-
-  flushEvent();
+  parser.finish();
 }
 
 export function parseRunnerEvent(value: string): RunnerEvent | undefined {
@@ -91,7 +59,91 @@ export function parseRunnerEvent(value: string): RunnerEvent | undefined {
   ) {
     return undefined;
   }
-  return parsed as RunnerEvent;
+  const event = parsed as RunnerEvent;
+  if (
+    event.type !== "run.completed" &&
+    event.type !== "run.failed" &&
+    event.type !== "run.cancelled" &&
+    event.type !== "operator.controlled"
+  ) {
+    return event;
+  }
+  try {
+    return {
+      ...event,
+      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
+    } as unknown as RunnerEvent;
+  } catch (error) {
+    throw new KestrelProtocolError(
+      `Invalid ${event.type} terminal payload: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        code: "RUNNER_PROTOCOL_INVALID",
+        details: { eventType: event.type },
+      },
+    );
+  }
+}
+
+export class RunnerSseParser {
+  private buffer = "";
+  private eventType = "";
+  private data = "";
+  private stopped = false;
+
+  constructor(
+    private readonly onMessage: (eventType: string, data: string) => void | boolean,
+  ) {}
+
+  push(chunk: string): boolean {
+    if (this.stopped) {
+      return false;
+    }
+    this.buffer += chunk;
+    let boundary = this.buffer.indexOf("\n");
+    while (boundary >= 0 && this.stopped === false) {
+      const rawLine = this.buffer.slice(0, boundary);
+      this.buffer = this.buffer.slice(boundary + 1);
+      this.consumeLine(rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine);
+      boundary = this.buffer.indexOf("\n");
+    }
+    return this.stopped === false;
+  }
+
+  finish(): boolean {
+    if (this.stopped) {
+      return false;
+    }
+    if (this.buffer.length > 0) {
+      const rawLine = this.buffer;
+      this.buffer = "";
+      this.consumeLine(rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine);
+    }
+    this.flushEvent();
+    return this.stopped === false;
+  }
+
+  private consumeLine(line: string): void {
+    if (line.length === 0) {
+      this.flushEvent();
+      return;
+    }
+    if (line.startsWith("event:")) {
+      this.eventType = line.slice("event:".length).trim();
+      return;
+    }
+    if (line.startsWith("data:")) {
+      const next = line.slice("data:".length).trim();
+      this.data = this.data.length === 0 ? next : `${this.data}\n${next}`;
+    }
+  }
+
+  private flushEvent(): void {
+    if (this.data.length > 0) {
+      this.stopped = this.onMessage(this.eventType, this.data) === false;
+    }
+    this.eventType = "";
+    this.data = "";
+  }
 }
 
 function createRunnerSseError(

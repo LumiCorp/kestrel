@@ -92,7 +92,11 @@ export class CommandRouter {
     }
 
     const command = decoded as RunnerCommand;
-    await this.dispatch(command, options);
+    try {
+      await this.host.executeCommand(() => this.dispatch(command, options));
+    } catch (error) {
+      this.emitCommandFailure(command, error);
+    }
   }
 
   private async dispatch(
@@ -370,23 +374,27 @@ export class CommandRouter {
       );
       return;
     } catch (error) {
-      const runtimeError = asRuntimeError(error);
-      const normalizedFailure = normalizeDatabaseRuntimeFailure(error);
-      const details = {
-        runtimeCode: runtimeError.code,
-        ...(runtimeError.details !== undefined ? runtimeError.details : {}),
-        ...(normalizedFailure?.details ?? {}),
-      };
-      this.writer.emit(
-        "runner.error",
-        {
-          code: normalizedFailure?.code ?? "RUNNER_RUNTIME_ERROR",
-          message: normalizedFailure?.message ?? runtimeError.message,
-          details,
-        },
-        { commandId: command.id }
-      );
+      this.emitCommandFailure(command, error);
     }
+  }
+
+  private emitCommandFailure(command: RunnerCommand, error: unknown): void {
+    const runtimeError = asRuntimeError(error);
+    const normalizedFailure = normalizeDatabaseRuntimeFailure(error);
+    const details = {
+      runtimeCode: runtimeError.code,
+      ...(runtimeError.details !== undefined ? runtimeError.details : {}),
+      ...(normalizedFailure?.details ?? {}),
+    };
+    this.writer.emit(
+      "runner.error",
+      {
+        code: normalizedFailure?.code ?? "RUNNER_RUNTIME_ERROR",
+        message: normalizedFailure?.message ?? runtimeError.message,
+        details,
+      },
+      { commandId: command.id },
+    );
   }
 }
 function normalizeDatabaseRuntimeFailure(error: unknown) {

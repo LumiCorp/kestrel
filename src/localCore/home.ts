@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import path from "node:path";
-import type { KestrelCoreHomeResolution, LocalCorePaths } from "./contracts.js";
+import {
+  LOCAL_CORE_STATE_EPOCH,
+  type KestrelCoreHomeResolution,
+  type LocalCorePaths,
+} from "./contracts.js";
 
 export function resolveKestrelCoreHome(
   env: NodeJS.ProcessEnv = process.env,
@@ -8,47 +12,52 @@ export function resolveKestrelCoreHome(
 ): KestrelCoreHomeResolution {
   const explicitCoreHome = normalizeString(env.KESTREL_CORE_HOME);
   if (explicitCoreHome !== undefined) {
-    return {
-      homePath: resolvePathWithHome(explicitCoreHome),
+    return createHomeResolution({
+      candidatePath: resolvePathWithHome(explicitCoreHome),
       source: "explicit_core_home",
       isolated: false,
       platform,
-    };
+    });
   }
 
   const isolatedHome = normalizeString(env.KESTREL_HOME);
   if (isolatedHome !== undefined) {
-    return {
-      homePath: resolvePathWithHome(isolatedHome),
+    return createHomeResolution({
+      candidatePath: resolvePathWithHome(isolatedHome),
       source: "isolated_dev_home",
       isolated: true,
       platform,
-    };
+    });
   }
 
-  return {
-    homePath: defaultCoreHomePath(platform),
+  return createHomeResolution({
+    candidatePath: defaultCoreProductRootPath(platform),
     source: "default",
     isolated: false,
     platform,
-  };
+  });
 }
 
 export function resolveLocalCorePaths(homePath: string): LocalCorePaths {
-  const corePath = path.join(homePath, "core");
+  const { productRootPath, stateRootPath } = resolveStateLocation(homePath);
+  const corePath = path.join(stateRootPath, "core");
   const postgresPath = path.join(corePath, "postgres");
+  const runtimePath = path.join(corePath, "runtime");
   return {
+    productRootPath,
+    stateRootPath,
     corePath,
     manifestPath: path.join(corePath, "manifest.json"),
     lockPath: path.join(corePath, "lock.json"),
     migrationLockPath: path.join(corePath, "migration.lock.json"),
     apiSocketPath: path.join(corePath, "api.sock"),
     apiTokenPath: path.join(corePath, "api.token"),
-    runtimePath: path.join(corePath, "runtime"),
-    settingsPath: path.join(homePath, "settings"),
-    workspaceRegistryPath: path.join(homePath, "workspaces"),
+    runtimePath,
+    settingsPath: path.join(stateRootPath, "settings"),
+    workspaceRegistryPath: path.join(stateRootPath, "workspaces"),
     logsPath: path.join(corePath, "logs"),
-    diagnosticsPath: path.join(homePath, "diagnostics"),
+    diagnosticsPath: path.join(stateRootPath, "diagnostics"),
+    pgliteDataPath: path.join(corePath, "database", "pglite"),
     postgresDataPath: path.join(postgresPath, "data"),
     postgresSocketPath: path.join(postgresPath, "socket"),
     postgresMetadataPath: path.join(postgresPath, "metadata.json"),
@@ -56,7 +65,44 @@ export function resolveLocalCorePaths(homePath: string): LocalCorePaths {
   };
 }
 
-function defaultCoreHomePath(platform: NodeJS.Platform): string {
+function createHomeResolution(input: {
+  candidatePath: string;
+  source: KestrelCoreHomeResolution["source"];
+  isolated: boolean;
+  platform: NodeJS.Platform;
+}): KestrelCoreHomeResolution {
+  const location = resolveStateLocation(input.candidatePath);
+  return {
+    productRootPath: location.productRootPath,
+    homePath: location.stateRootPath,
+    stateEpoch: LOCAL_CORE_STATE_EPOCH,
+    source: input.source,
+    isolated: input.isolated,
+    platform: input.platform,
+  };
+}
+
+function resolveStateLocation(candidatePath: string): {
+  productRootPath: string;
+  stateRootPath: string;
+} {
+  const resolvedPath = path.resolve(candidatePath);
+  const parentPath = path.dirname(resolvedPath);
+  const isCanonicalStateRoot = path.basename(resolvedPath) === LOCAL_CORE_STATE_EPOCH
+    && path.basename(parentPath) === "state";
+  if (isCanonicalStateRoot) {
+    return {
+      productRootPath: path.dirname(parentPath),
+      stateRootPath: resolvedPath,
+    };
+  }
+  return {
+    productRootPath: resolvedPath,
+    stateRootPath: path.join(resolvedPath, "state", LOCAL_CORE_STATE_EPOCH),
+  };
+}
+
+function defaultCoreProductRootPath(platform: NodeJS.Platform): string {
   if (platform === "darwin") {
     return path.join(homedir(), "Library", "Application Support", "Kestrel");
   }
