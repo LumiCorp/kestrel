@@ -19,21 +19,22 @@ the current Kestrel One web deployment or GitHub OAuth canary has completed.
 
 ## Verified Artifact Set
 
-- Source commit: `cc1add10`
+- Control-plane provider and canary source: `86458e10`
 - Region: `iad`
 - Fly organization: `personal`
 - [Environment router](../../apps/environment-router/Dockerfile):
   `registry.fly.io/kestrel-one-runner@sha256:88b5c69878bb5a2dd9becfbfa0f817e3486450d2d8b68e8daae30dd50cf42df3`
 - [Workspace runtime](../../apps/workspace-runtime/Dockerfile):
-  `registry.fly.io/kestrel-one-runner@sha256:f59f7a1ef705da16e3a36071b99432248c6a85c6d8c2e92c1d147f7770799ef7`
+  `registry.fly.io/kestrel-one-runner@sha256:9a0bd3d862ca68d502e91da95f26a8c3dfc1bb4df70baaa069863248c9a40b00`
 
-Both images were built from the source commit for `linux/amd64`, exported to
-the private Fly registry, and resolved to immutable manifest digests before the
-canary ran.
+The router image remains the immutable artifact built from `cc1add10`. The
+Workspace image was rebuilt from `93d5c94f` for `linux/amd64`. Both artifacts
+were exported to the private Fly registry and resolved to immutable manifest
+digests before the canary ran.
 
 ## Live Canary Result
 
-At `2026-07-13T14:30:07Z`,
+At `2026-07-13T15:03:50Z`, the run and its post-run cleanup had completed.
 `pnpm --filter @kestrel/kestrel-one canary:environment:fly` completed with exit
 code `0`. The harness provisioned two independent Environment Apps, gateways,
 private Workspace Machines, and encrypted volumes, then proved:
@@ -46,8 +47,14 @@ private Workspace Machines, and encrypted volumes, then proved:
 - backup export and restore into a replacement encrypted volume; and
 - idempotent provider ensure operations.
 
-The two temporary Apps were `kestrel-env-392d21505e8240318327` and
-`kestrel-env-e3eff9e9fd084fd1ab4c`. The harness deleted both Apps after the
+The persistence proof ran through the bounded Fly start implementation in
+`86458e10`. Its unit proofs additionally establish that HTTP 412 responses are
+resolved against authoritative Machine state, retries occur no faster than
+once per second while the Machine remains stopped, and the operation fails
+closed after ten retries or for any other state.
+
+The two temporary Apps were `kestrel-env-af8954406a564846a08c` and
+`kestrel-env-2ef5f51e2dad4860afc8`. The harness deleted both Apps after the
 proofs completed and verified each deletion with the Fly API. A subsequent
 `fly apps list --json` returned only the pre-existing `kestrel-one-runner` App,
 confirming that the canary left no temporary Fly App behind.
