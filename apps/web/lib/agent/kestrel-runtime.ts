@@ -148,8 +148,11 @@ function createModelAwareKestrelOneAgent(input: {
             status: "running",
           });
           client = new KestrelOneRunnerClient({
-            baseUrl: route.baseUrl,
-            authToken: route.authToken,
+            target: {
+              kind: "remote",
+              baseUrl: route.baseUrl,
+              authToken: route.authToken,
+            },
           });
           clients.add(client);
           const { signal, ...turn } = turnInput;
@@ -298,8 +301,11 @@ export async function generateKestrelOneExternalReply(input: {
     recordExecution: {},
   });
   const client = new KestrelOneRunnerClient({
-    baseUrl: route.baseUrl,
-    authToken: route.authToken,
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    },
   });
   const context: KestrelRequestContext = {
     actor: input.actor,

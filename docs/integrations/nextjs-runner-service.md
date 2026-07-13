@@ -294,8 +294,11 @@ export function createRunnerAgent() {
   return createAgent({
     id: "support-agent",
     profileId: "support",
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+    target: {
+      kind: "remote",
+      baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+      authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+    },
   });
 }
 ```

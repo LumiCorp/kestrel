@@ -39,14 +39,8 @@ export interface KestrelLocalTarget {
 export type KestrelClientTarget = KestrelRemoteTarget | KestrelLocalTarget;
 
 export interface KestrelClientOptions {
-  /** Preferred explicit connection target. */
-  target?: KestrelClientTarget | undefined;
-  /** @deprecated Use target: { kind: "remote", baseUrl } instead. */
-  baseUrl?: string | undefined;
-  /** @deprecated Set authToken on target instead. */
-  authToken?: string | undefined;
-  /** @deprecated Set fetchImpl on a remote target instead. */
-  fetchImpl?: typeof fetch | undefined;
+  /** Explicit local or remote execution authority. */
+  target: KestrelClientTarget;
 }
 
 export interface KestrelRunRequest {

@@ -29,6 +29,7 @@ test("subscription async iteration fails on malformed SSE after partial delivery
             taskId: "task-1",
           },
           kind: "waiting",
+          assistantText: null,
         },
       })}\n\n`,
     );
@@ -44,7 +45,10 @@ test("subscription async iteration fails on malformed SSE after partial delivery
   assert.ok(address && typeof address !== "string");
 
   const client = new KestrelClient({
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    target: {
+      kind: "remote",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+    },
   });
   t.after(async () => {
     await client.close();

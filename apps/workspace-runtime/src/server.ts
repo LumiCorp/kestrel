@@ -389,8 +389,11 @@ function ensureRunnerReady() {
 
 async function waitForRunnerService() {
   const client = new KestrelClient({
-    baseUrl: "http://127.0.0.1:43105",
-    authToken: runnerToken,
+    target: {
+      kind: "remote",
+      baseUrl: "http://127.0.0.1:43105",
+      authToken: runnerToken,
+    },
   });
   try {
     await waitForRunner(client);
@@ -408,8 +411,11 @@ async function withRunnerClient<T>(
 ): Promise<T> {
   await ensureRunnerReady();
   const client = new KestrelClient({
-    baseUrl: "http://127.0.0.1:43105",
-    authToken: runnerToken,
+    target: {
+      kind: "remote",
+      baseUrl: "http://127.0.0.1:43105",
+      authToken: runnerToken,
+    },
   });
   try {
     const context: KestrelRequestContext = {

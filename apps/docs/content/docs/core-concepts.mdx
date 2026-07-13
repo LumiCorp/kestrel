@@ -16,7 +16,7 @@ The runner service is the HTTP boundary that executes Kestrel work on behalf of 
 
 ## Agent
 
-An agent is the application-facing definition created with `createAgent()`. It binds an `id`, a `profileId`, runner-service credentials, and methods such as `run`, `stream`, `resume`, `session`, and `subscribe`. It is the cleanest package-level expression of the runtime contract.
+An agent is the application-facing definition created with `createAgent()`. It binds an `id`, a `profileId`, an explicit local or remote execution target, and methods such as `run`, `stream`, `resume`, `session`, and `subscribe`. It is the cleanest package-level expression of the runtime contract.
 
 ## Session
 

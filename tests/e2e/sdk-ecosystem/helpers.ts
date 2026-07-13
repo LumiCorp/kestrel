@@ -91,6 +91,7 @@ export function createSdkE2eRuntimeFactory(
       session.runCount += 1;
       onTaskUpdate({
         kind: "waiting",
+        assistantText: null,
         task: {
           taskId: `task-${session.runCount}`,
           parentSessionId: input.sessionId,

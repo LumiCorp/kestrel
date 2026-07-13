@@ -47,8 +47,11 @@ import { createAgent } from "@kestrel-agents/sdk";
 export const workspaceCopilotAgent = createAgent({
   id: "workspace-copilot",
   profileId: "workspace-copilot",
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
 });
 
 export async function resolveWorkspaceCopilotContext() {

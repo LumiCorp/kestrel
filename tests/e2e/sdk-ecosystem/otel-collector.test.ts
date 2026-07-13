@@ -81,7 +81,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 const agent = createAgent({
   id: "otel-fixture-agent",
   profileId: "reference",
-  baseUrl: process.env.RUNNER_URL,
+  target: { kind: "remote", baseUrl: process.env.RUNNER_URL },
 });
 
 const otlpExporter = new OTLPTraceExporter({
