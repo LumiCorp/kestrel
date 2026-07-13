@@ -164,7 +164,69 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       icon: "github",
       category: "integration",
     },
-    capabilities: [],
+    capabilities: [
+      createCapability({
+        key: "repository.read",
+        runtimeName: "githubRepositoryRead",
+        displayName: "Read repository",
+        description: "Clone and read an explicitly granted GitHub repository.",
+        accessMode: "read",
+        defaultPolicy: { approvalMode: "auto", loggingMode: "metadata_only" },
+      }),
+      createCapability({
+        key: "repository.push_agent_branch",
+        runtimeName: "githubPushAgentBranch",
+        displayName: "Push agent branch",
+        description:
+          "Push the current managed worktree to a Kestrel-owned agent branch in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "auto" },
+      }),
+      createCapability({
+        key: "pull_request.write",
+        runtimeName: "githubPullRequestWrite",
+        displayName: "Create and update pull requests",
+        description:
+          "Create or update pull requests in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+      createCapability({
+        key: "issue.write",
+        runtimeName: "githubIssueWrite",
+        displayName: "Create and update issues",
+        description:
+          "Create or update issues in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+      createCapability({
+        key: "merge.write",
+        runtimeName: "githubMergeWrite",
+        displayName: "Merge pull requests",
+        description:
+          "Merge an approved pull request in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+      createCapability({
+        key: "release.write",
+        runtimeName: "githubReleaseWrite",
+        displayName: "Create releases",
+        description: "Create a release in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+      createCapability({
+        key: "workflow.dispatch",
+        runtimeName: "githubWorkflowDispatch",
+        displayName: "Dispatch workflows",
+        description:
+          "Dispatch a selected workflow in an explicitly granted repository.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+    ],
   },
   {
     key: "discord",

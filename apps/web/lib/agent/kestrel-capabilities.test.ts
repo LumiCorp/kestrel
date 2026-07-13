@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
+import {
+  ENVIRONMENT_ROUTER_AUDIENCE,
+  signEnvironmentExecutionTicket,
+} from "@lumi/kestrel-environment-auth";
 import {
   buildKestrelOneCapabilityDescriptors,
   parseRunnerKnowledgeCapabilityRequest,
@@ -72,6 +77,67 @@ test("parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", (
           },
         }
       ),
+    })
+  );
+});
+
+test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment ticket", () => {
+  const keys = generateKeyPairSync("ed25519");
+  const privateKey = keys.privateKey
+    .export({ type: "pkcs8", format: "pem" })
+    .toString();
+  const publicKey = keys.publicKey
+    .export({ type: "spki", format: "pem" })
+    .toString();
+  const now = Math.floor(Date.now() / 1000);
+  const token = signEnvironmentExecutionTicket({
+    privateKey,
+    ticket: {
+      version: 1,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: "org_123",
+      environmentId: "environment-1",
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      actorId: "user-1",
+      agentId: "kestrel-one",
+      flyAppName: "app-1",
+      flyMachineId: "machine-1",
+      capabilities: ["knowledge.search"],
+      issuedAt: now,
+      expiresAt: now + 300,
+      nonce: "nonce-1",
+    },
+  });
+  const request = new Request(
+    "https://app.example.test/api/kestrel/tools/search",
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-kestrel-tenant-id": "org_123",
+      },
+    }
+  );
+  assert.deepEqual(
+    parseRunnerKnowledgeCapabilityRequest({
+      expectedToken: undefined,
+      environmentTicketPublicKey: publicKey,
+      request,
+    }),
+    { organizationId: "org_123" }
+  );
+  assert.throws(() =>
+    parseRunnerKnowledgeCapabilityRequest({
+      expectedToken: undefined,
+      environmentTicketPublicKey: publicKey,
+      request: new Request(request, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-kestrel-tenant-id": "org_other",
+        },
+      }),
     })
   );
 });

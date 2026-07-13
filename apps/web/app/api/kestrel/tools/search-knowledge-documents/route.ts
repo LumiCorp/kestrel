@@ -69,6 +69,8 @@ async function resolveCapabilityOrganization(request: Request) {
     const parsed = parseRunnerKnowledgeCapabilityRequest({
       request,
       expectedToken: process.env.KESTREL_ONE_TOOL_TOKEN,
+      environmentTicketPublicKey:
+        process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
     });
     if (!parsed.contextGrantId) {
       return { organizationId: parsed.organizationId };

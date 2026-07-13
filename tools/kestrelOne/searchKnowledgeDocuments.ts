@@ -42,14 +42,16 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
     return async (input: unknown) => {
       const payload = parseKestrelOneSearchKnowledgeDocumentsInput(input);
       const appUrl = readConfiguredString(context.kestrelOne?.appUrl, "KESTREL_ONE_APP_URL");
-      const toolToken = readConfiguredString(context.kestrelOne?.toolToken, "KESTREL_ONE_TOOL_TOKEN");
+      const toolToken =
+        context.kestrelOne?.executionTicket?.trim() ||
+        readConfiguredString(context.kestrelOne?.toolToken, "KESTREL_ONE_TOOL_TOKEN");
       const tenantId = context.kestrelOne?.tenantId?.trim();
 
       if (!appUrl) {
         throw configurationFailure("KESTREL_ONE_APP_URL");
       }
       if (!toolToken) {
-        throw configurationFailure("KESTREL_ONE_TOOL_TOKEN");
+        throw configurationFailure("Environment execution ticket");
       }
       if (!tenantId) {
         throw createRuntimeFailure(

@@ -1,3 +1,4 @@
+import { verifyEnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { z } from "zod";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -63,6 +64,7 @@ export function buildKestrelOneCapabilityDescriptors(input: {
 export function parseRunnerKnowledgeCapabilityRequest(input: {
   request: Request;
   expectedToken: string | undefined;
+  environmentTicketPublicKey?: string | undefined;
 }) {
   const parsed = runnerKnowledgeCapabilityRequestSchema.parse({
     authorization: input.request.headers.get("authorization") ?? "",
@@ -76,14 +78,32 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
   const actualToken = parsed.authorization.replace(/^Bearer\s+/i, "").trim();
   const expectedToken = input.expectedToken?.trim();
 
-  if (!expectedToken || actualToken !== expectedToken) {
-    throw Object.assign(new Error("Unauthorized"), {
-      code: "UNAUTHORIZED",
-    });
+  if (expectedToken && actualToken === expectedToken) {
+    return {
+      organizationId: parsed.tenantId,
+      ...(parsed.contextGrantId
+        ? { contextGrantId: parsed.contextGrantId }
+        : {}),
+    };
   }
-
-  return {
-    organizationId: parsed.tenantId,
-    ...(parsed.contextGrantId ? { contextGrantId: parsed.contextGrantId } : {}),
-  };
+  try {
+    const ticket = verifyEnvironmentExecutionTicket({
+      token: actualToken,
+      publicKey: input.environmentTicketPublicKey ?? "",
+    });
+    if (
+      ticket.organizationId !== parsed.tenantId ||
+      !ticket.capabilities.includes("knowledge.search")
+    ) {
+      throw new Error("Environment knowledge capability denied.");
+    }
+    return {
+      organizationId: ticket.organizationId,
+      ...(parsed.contextGrantId
+        ? { contextGrantId: parsed.contextGrantId }
+        : {}),
+    };
+  } catch {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
+  }
 }
