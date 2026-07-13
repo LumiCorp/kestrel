@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 
 import { ProtocolClient, type ProtocolTransport } from "../../cli/client/ProtocolClient.js";
 
+interface ProtocolClientRunnerErrorForTest extends Error {
+  code?: string | undefined;
+  details?: Record<string, unknown> | undefined;
+}
+
 class MockTransport implements ProtocolTransport {
   private handlers?:
     | {
@@ -181,6 +186,7 @@ class MockTransport implements ProtocolTransport {
         runId: "run-1",
         payload: {
           result: {
+            assistantText: "done",
             output: {
               status: "COMPLETED",
               sessionId: "s-1",
@@ -322,8 +328,106 @@ test("ProtocolClient resolves run.start command with completed response", async 
     throw new Error("expected completed response");
   }
   assert.equal(response.payload.result.output.status, "COMPLETED");
+  assert.equal(response.payload.result.assistantText, "done");
   assert.equal(seenEventTypes.includes("run.progress"), true);
 
+  await client.close();
+});
+
+test("ProtocolClient canonicalizes v2 terminal results before resolving or publishing them", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seenAssistantText: Array<string | null> = [];
+  client.onEvent((event) => {
+    if (event.type === "run.completed") {
+      seenAssistantText.push(event.payload.result.assistantText);
+    }
+  });
+
+  const pending = client.sendCommandWithId("command-canonical", "run.start", {
+    profile: {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+    },
+    turn: {
+      sessionId: "s-1",
+      message: "hiya",
+      eventType: "user.message",
+    },
+  });
+  await tick();
+  transport.emitEvent({
+    id: "evt-canonical",
+    type: "run.completed",
+    ts: new Date().toISOString(),
+    commandId: "command-canonical",
+    runId: "run-1",
+    payload: {
+      result: {
+        assistantText: "  canonical response  ",
+        output: { status: "COMPLETED" },
+        finalizedPayload: { message: "structured" },
+      },
+    },
+  });
+
+  const response = await pending;
+  if (response.type !== "run.completed") {
+    throw new Error("expected completed response");
+  }
+  assert.equal(response.payload.result.assistantText, "canonical response");
+  assert.deepEqual(response.payload.result.finalizedPayload, { message: "structured" });
+  assert.deepEqual(seenAssistantText, ["canonical response"]);
+  await client.close();
+});
+
+test("ProtocolClient rejects malformed v2 terminal results as protocol errors", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seenEventTypes: string[] = [];
+  client.onEvent((event) => {
+    seenEventTypes.push(event.type);
+  });
+
+  const pending = client.sendCommandWithId("command-invalid", "run.start", {
+    profile: {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+    },
+    turn: {
+      sessionId: "s-1",
+      message: "hiya",
+      eventType: "user.message",
+    },
+  });
+  await tick();
+  transport.emitEvent({
+    id: "evt-invalid",
+    type: "run.completed",
+    ts: new Date().toISOString(),
+    commandId: "command-invalid",
+    payload: {
+      result: {
+        output: { status: "COMPLETED" },
+      },
+    },
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => {
+      const protocolError = error as ProtocolClientRunnerErrorForTest;
+      assert.equal(protocolError.code, "RUNNER_PROTOCOL_INVALID");
+      assert.match(protocolError.message, /assistantText is required/u);
+      assert.deepEqual(protocolError.details, { eventType: "run.completed" });
+      return true;
+    },
+  );
+  assert.deepEqual(seenEventTypes, ["runner.error"]);
   await client.close();
 });
 

@@ -308,7 +308,9 @@ export async function generateKestrelOneExternalReply(input: {
       executionId: route.runId,
       status: "running",
     });
-    const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({});
+    const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
+      organizationId: input.organizationId,
+    });
     if (!resolvedModel) {
       throw new Error(
         getGatewayResolutionFailureMessage({
@@ -322,7 +324,10 @@ export async function generateKestrelOneExternalReply(input: {
     );
     const profile = applyKestrelOneModelToProfile(
       baseProfile,
-      toKestrelOneRuntimeModelSelection(resolvedModel.model)
+      toKestrelOneRuntimeModelSelection({
+        ...resolvedModel.model,
+        organizationId: input.organizationId,
+      })
     );
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: createProfileBoundExternalReplyAgent({
@@ -367,6 +372,7 @@ export async function createKestrelOneAgentResponse(
 ) {
   const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
     selection: input.modelId,
+    organizationId: input.organizationId,
   });
   if (!resolvedModel) {
     throw new Error(
@@ -377,7 +383,10 @@ export async function createKestrelOneAgentResponse(
     );
   }
 
-  const runtimeModel = toKestrelOneRuntimeModelSelection(resolvedModel.model);
+  const runtimeModel = toKestrelOneRuntimeModelSelection({
+    ...resolvedModel.model,
+    organizationId: input.organizationId,
+  });
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)

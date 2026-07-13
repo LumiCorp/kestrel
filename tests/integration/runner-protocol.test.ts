@@ -119,6 +119,7 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
           model: "openai/gpt-5.4",
           modelCredential: {
             source: "kestrel-one",
+            organizationId: "org-acme",
             gatewayId: "gateway-openrouter",
             rawModelId: "z-ai/glm-5.2",
           },
@@ -143,6 +144,119 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
   await host.close();
 });
 
+test("run.start rejects a stale gateway-managed agent loop model", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("invalid profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{
+    type: string;
+    commandId?: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        type: string;
+        commandId?: string;
+        payload: Record<string, unknown>;
+      },
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-managed-stage-invalid",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          model: "openai/gpt-5.4",
+          agentStageConfig: {
+            modelByStage: { "agent.loop": "z-ai/glm-5.2" },
+          },
+          modelCredential: {
+            source: "kestrel-one",
+            organizationId: "org-acme",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "openai/gpt-5.4",
+          },
+        },
+        turn: {
+          sessionId: "session-invalid-managed-stage",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.commandId, "cmd-managed-stage-invalid");
+  assert.match(
+    String(events[0]?.payload.message),
+    /agentStageConfig\.modelByStage\.agent\.loop must match .*modelCredential\.rawModelId/,
+  );
+  rl.close();
+  await host.close();
+});
+
+test("run.start binds a gateway-managed credential to command tenant context", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("cross-tenant profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-cross-tenant-managed-profile",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.4",
+          agentStageConfig: {
+            modelByStage: { "agent.loop": "openai/gpt-5.4" },
+          },
+          modelCredential: {
+            source: "kestrel-one",
+            organizationId: "org-acme",
+            gatewayId: "gateway-openrouter",
+            rawModelId: "openai/gpt-5.4",
+          },
+        },
+        turn: {
+          sessionId: "session-cross-tenant",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+      metadata: { tenantId: "org-other" },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.match(
+    String(events[0]?.payload.message),
+    /does not belong to the authenticated tenant/u,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("run.start emits started/log/completed protocol events", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -150,8 +264,12 @@ test("run.start emits started/log/completed protocol events", async () => {
     ...profile,
     modelProvider: "openrouter",
     model: "openai/gpt-5.4",
+    agentStageConfig: {
+      modelByStage: { "agent.loop": "openai/gpt-5.4" },
+    },
     modelCredential: {
       source: "kestrel-one",
+      organizationId: "org-acme",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
     },
@@ -208,6 +326,7 @@ test("run.start emits started/log/completed protocol events", async () => {
         },
       });
       return {
+        assistantText: "  done  ",
         output: {
           status: "COMPLETED",
           sessionId: "session-1",
@@ -283,7 +402,8 @@ test("run.start emits started/log/completed protocol events", async () => {
           },
         },
       },
-    })
+      metadata: { tenantId: "org-acme" },
+    }),
   );
 
   await tick();
@@ -300,6 +420,12 @@ test("run.start emits started/log/completed protocol events", async () => {
     | { clientCapabilities?: { surface?: string | undefined } | undefined }
     | undefined;
   assert.equal(startedPayload?.clientCapabilities?.surface, "tui");
+  const completedResult = (
+    events.at(-1)?.payload as
+      | { result?: { assistantText?: string } }
+      | undefined
+  )?.result;
+  assert.equal(completedResult?.assistantText, "done");
   assert.deepEqual(
     receivedProfile?.modelCredential,
     managedProfile.modelCredential
@@ -313,6 +439,7 @@ test("run.start accepts build interactionMode and forwards it in run.started", a
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,
@@ -397,6 +524,7 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
         unknown
       >;
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: input.sessionId,
@@ -490,6 +618,7 @@ test("run.start fails closed when runtime returns a different runId than request
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,
@@ -588,6 +717,7 @@ test("run.start treats finalized assistant payload as completed under the accept
           })
         );
         return {
+          assistantText: "done",
           output: {
             status: "COMPLETED",
             sessionId: input.sessionId,
@@ -655,6 +785,7 @@ test("run.start treats finalized assistant payload as completed under the accept
   assert.equal(toolUpdate?.toolName, "FinalizeAnswer");
   assert.equal(completed?.runId, "run-requested-finalize");
   assert.equal(completedResult?.output.runId, "run-requested-finalize");
+  assert.equal(completedResult?.assistantText, "done");
   assert.deepEqual(completedResult?.finalizedPayload, { message: "done" });
   assert.equal(
     events.some((event) => event.type === "run.failed"),
@@ -678,6 +809,7 @@ test("run.start forwards actor metadata into runtime turn input", async () => {
     runTurn: async (input) => {
       capturedActor = input.actor;
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: input.sessionId,
@@ -736,12 +868,74 @@ test("run.start forwards actor metadata into runtime turn input", async () => {
   await host.close();
 });
 
+test("run.start validates and forwards Project context into runtime turn input", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let capturedProjectContext: unknown;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async (input) => {
+      capturedProjectContext = input.projectContext;
+      return {
+        assistantText: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: input.runId ?? "run-project-context",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-run-project-context",
+    type: "run.start",
+    payload: {
+      profile,
+      turn: {
+        sessionId: "session-project-context",
+        message: "hello",
+        eventType: "user.message",
+        projectContext: {
+          projectId: "project-atlas",
+          contextRevisionId: "revision-7",
+          contextRevision: 7,
+          content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+        },
+      },
+    },
+  }));
+
+  assert.deepEqual(capturedProjectContext, {
+    projectId: "project-atlas",
+    contextRevisionId: "revision-7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+  });
+  await host.close();
+});
+
 test("job.run emits started/progress/completed events with replay pointers", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: "session-job-1",
@@ -887,6 +1081,7 @@ test("job.run runtime_progress events preserve resolved thread identity", async 
         persist: true,
       });
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: "session-job-progress",
@@ -1124,6 +1319,7 @@ test("workspace checkpoint commands dispatch through CommandRouter", async () =>
 
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => ({
+      assistantText: null,
       output: {
         status: "COMPLETED",
         sessionId: "unused",
@@ -1445,6 +1641,7 @@ test("run.cancel clears a persisted active run when no in-process run is active"
   let cancelledSessionId: string | undefined;
   const runtime: RunnerRuntime = {
     runTurn: async (input) => ({
+      assistantText: null,
       output: {
         status: "FAILED",
         sessionId: input.sessionId,

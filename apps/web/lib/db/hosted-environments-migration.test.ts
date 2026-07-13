@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const migration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0014_hosted_environments.sql"
+    "migrations/0016_hosted_environments.sql"
   ),
   "utf8"
 );
@@ -35,7 +35,7 @@ test("Environment ownership is canonical on Projects after the follow-up migrati
   const ownershipMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
-      "migrations/0016_environment_project_ownership.sql"
+      "migrations/0018_environment_project_ownership.sql"
     ),
     "utf8"
   );
@@ -67,7 +67,7 @@ test("Environment router fields converge for databases that applied the original
   const upgradeMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
-      "migrations/0018_environment_router_upgrade.sql"
+      "migrations/0020_environment_router_upgrade.sql"
     ),
     "utf8"
   );

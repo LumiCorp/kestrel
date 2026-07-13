@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   encryptGatewayCredential,
@@ -66,4 +67,17 @@ test("gateway credential migration arguments fail closed on unknown flags", () =
     () => parseGatewayCredentialMigrationMode(["--dry-run", "--verify"]),
     /Usage:/
   );
+});
+
+test("gateway credential migration entrypoint runs in the CommonJS web package", async () => {
+  const source = await readFile(
+    new URL("../../scripts/migrate-gateway-credentials.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.doesNotMatch(
+    source,
+    /^\s*await runGatewayCredentialMigration\(\)/mu
+  );
+  assert.match(source, /runGatewayCredentialMigration\(\)\.catch\(/u);
 });

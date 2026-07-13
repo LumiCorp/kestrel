@@ -54,6 +54,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
       runTurn: async (input) => {
         seenSessionIds.push(input.sessionId);
         return {
+          assistantText: "Compatibility hello",
           output: {
             status: "COMPLETED",
             sessionId: input.sessionId,
@@ -75,9 +76,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
               totalTokens: 20,
             },
           },
-          finalizedPayload: {
-            message: "Compatibility hello",
-          },
+          finalizedPayload: null,
         };
       },
       close: async () => {},
@@ -125,6 +124,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
         kestrel?: {
           session_id?: string;
           run_id?: string;
+          source?: unknown;
         };
       };
     };
@@ -142,6 +142,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
     });
     assert.equal(body.metadata?.kestrel?.session_id, "session-sticky");
     assert.equal(body.metadata?.kestrel?.run_id, "run-chat-1");
+    assert.equal(body.metadata?.kestrel?.source, null);
     assert.deepEqual(seenSessionIds, ["session-sticky"]);
   } finally {
     await service.close();
@@ -176,6 +177,7 @@ test("OpenAI compatibility streams chat completion chunks and mirrors internal t
             },
           } as ProgressUpdateV1 & { toolInput: Record<string, unknown> });
           return {
+            assistantText: "Streamed answer",
             output: {
               status: "COMPLETED",
               sessionId: input.sessionId,
@@ -241,6 +243,7 @@ test("OpenAI compatibility returns responses output and enforces structured outp
     authToken: "secret-token",
     runtimeFactory: (): RunnerRuntime => ({
       runTurn: async (input) => ({
+        assistantText: "{\"status\":\"ok\"}",
         output: {
           status: "COMPLETED",
           sessionId: input.sessionId,

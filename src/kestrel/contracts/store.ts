@@ -268,7 +268,7 @@ export interface SessionRepository {
     sessionId: string;
     snapshot: ProductProjectSnapshot;
   }): Promise<SessionProductStateRecord>;
-  patchSessionState?(input: {
+  patchSessionState(input: {
     sessionId: string;
     statePatch: Record<string, unknown>;
     expectedVersion?: number | undefined;

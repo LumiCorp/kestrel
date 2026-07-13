@@ -5,6 +5,7 @@ import path from "node:path";
 import { shouldCopyDesktopResourceEntry } from "./prepare-desktop-resources.js";
 import {
   packPublicProtocolPackage,
+  resolveRuntimePackageDependencies,
   resolveRuntimeDependencyInstallArgs,
 } from "./runtime-package-dependencies.js";
 import {
@@ -55,10 +56,12 @@ execFileSync("tar", ["-czf", artifactPath, "-C", stageDir, "."], {
 console.log(`[cli] packaged ${artifactPath}`);
 
 function writeCliRuntimeManifest(): void {
-  const dependencies = {
-    ...(rootPackageJson.dependencies ?? {}),
-    ...(rootPackageJson.devDependencies?.tsx !== undefined ? { tsx: rootPackageJson.devDependencies.tsx } : {}),
-  };
+  const dependencies = resolveRuntimePackageDependencies({
+    repoRoot,
+    runtimeVersion: rootPackageJson.version,
+    dependencies: rootPackageJson.dependencies,
+    tsxVersion: rootPackageJson.devDependencies?.tsx,
+  });
 
   writeFileSync(
     path.join(libexecDir, "package.json"),

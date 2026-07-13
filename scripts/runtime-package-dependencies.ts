@@ -1,6 +1,43 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+
+const PUBLIC_PROTOCOL_PACKAGE_NAME = "@kestrel-agents/protocol";
+
+export function resolveRuntimePackageDependencies(input: {
+  repoRoot: string;
+  runtimeVersion: string;
+  dependencies?: Record<string, string> | undefined;
+  tsxVersion?: string | undefined;
+}): Record<string, string> {
+  if (input.dependencies?.[PUBLIC_PROTOCOL_PACKAGE_NAME] === undefined) {
+    throw new Error(`Runtime manifest must declare ${PUBLIC_PROTOCOL_PACKAGE_NAME}.`);
+  }
+
+  const protocolManifestPath = path.join(input.repoRoot, "packages", "protocol", "package.json");
+  const protocolManifest = JSON.parse(readFileSync(protocolManifestPath, "utf8")) as {
+    name?: unknown;
+    version?: unknown;
+  };
+  if (protocolManifest.name !== PUBLIC_PROTOCOL_PACKAGE_NAME) {
+    throw new Error(`Protocol manifest at '${protocolManifestPath}' must be named ${PUBLIC_PROTOCOL_PACKAGE_NAME}.`);
+  }
+  if (typeof protocolManifest.version !== "string" || protocolManifest.version.trim().length === 0) {
+    throw new Error(`Protocol manifest at '${protocolManifestPath}' must declare a version.`);
+  }
+  const protocolVersion = protocolManifest.version.trim();
+  if (protocolVersion !== input.runtimeVersion) {
+    throw new Error(
+      `Runtime version ${input.runtimeVersion} must match ${PUBLIC_PROTOCOL_PACKAGE_NAME} ${protocolVersion}.`,
+    );
+  }
+
+  return {
+    ...input.dependencies,
+    ...(input.tsxVersion !== undefined ? { tsx: input.tsxVersion } : {}),
+    [PUBLIC_PROTOCOL_PACKAGE_NAME]: protocolVersion,
+  };
+}
 
 export function packPublicProtocolPackage(input: {
   repoRoot: string;

@@ -426,6 +426,19 @@ export class RunnerHost {
     metadata?: RunnerCommandMetadata | undefined
   ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "run.start");
+    const tenantId = metadata?.actor?.tenantId ?? metadata?.tenantId;
+    if (profile.modelCredential) {
+      if (!tenantId) {
+        throw new Error(
+          "Gateway-managed execution requires an authenticated tenant context.",
+        );
+      }
+      if (profile.modelCredential.organizationId !== tenantId) {
+        throw new Error(
+          "Gateway-managed execution credential does not belong to the authenticated tenant.",
+        );
+      }
+    }
     const turn: RunTurnInput = {
       ...payload.turn,
       ...(metadata?.actor !== undefined
@@ -534,7 +547,10 @@ export class RunnerHost {
         this.writer.emit(
           "run.failed",
           {
-            result: terminalResult,
+            result: {
+              ...terminalResult,
+              assistantText: null,
+            },
             error,
           },
           {
@@ -613,6 +629,11 @@ export class RunnerHost {
           {
             sessionId: turn.sessionId,
             ...(active.runId !== undefined ? { runId: active.runId } : {}),
+            result: buildNonResponsiveTerminalResult({
+              status: "CANCELLED",
+              sessionId: turn.sessionId,
+              runId: active.runId ?? requestedRunId ?? commandId,
+            }),
           },
           {
             commandId,
@@ -626,6 +647,12 @@ export class RunnerHost {
       this.writer.emit(
         "run.failed",
         {
+          result: buildNonResponsiveTerminalResult({
+            status: "FAILED",
+            sessionId: turn.sessionId,
+            runId: active?.runId ?? requestedRunId ?? commandId,
+            error: failure,
+          }),
           error: {
             code: failure.code,
             message: failure.message,
@@ -976,6 +1003,11 @@ export class RunnerHost {
       {
         sessionId: payload.sessionId,
         ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {}),
+        result: buildNonResponsiveTerminalResult({
+          status: "CANCELLED",
+          sessionId: payload.sessionId,
+          runId: cancelledRunId ?? payload.runId ?? active?.runId ?? commandId,
+        }),
       },
       {
         commandId,
@@ -2107,6 +2139,7 @@ export class RunnerHost {
       {
         task: update.task,
         kind: update.kind,
+        assistantText: update.assistantText,
         ...(update.finalizedPayload !== undefined
           ? { finalizedPayload: update.finalizedPayload }
           : {}),
@@ -2137,6 +2170,41 @@ export class RunnerHost {
       // Diagnostics must never change terminal handoff behavior.
     }
   }
+}
+
+function buildNonResponsiveTerminalResult(input: {
+  status: "FAILED" | "CANCELLED";
+  sessionId: string;
+  runId: string;
+  error?: { code: string; message: string; details?: Record<string, unknown> | undefined } | undefined;
+}): RunTurnResult {
+  return {
+    assistantText: null,
+    output: {
+      status: "FAILED",
+      sessionId: input.sessionId,
+      runId: input.runId,
+      quality: {
+        citationCoverage: 0,
+        unresolvedClaims: 0,
+        reworkRate: 0,
+        thrashIndex: 0,
+      },
+      errors: input.error === undefined
+        ? []
+        : [{
+            code: input.error.code,
+            message: input.error.message,
+            ...(input.error.details !== undefined ? { details: input.error.details } : {}),
+          }],
+      telemetry: {
+        stepsExecuted: 0,
+        toolCalls: 0,
+        modelCalls: 0,
+        durationMs: 0,
+      },
+    },
+  };
 }
 
 function isSessionVersionConflictError(error: unknown): error is Error {

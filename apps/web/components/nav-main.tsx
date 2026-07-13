@@ -11,8 +11,10 @@ import {
   FolderKanban,
   FolderOpen,
   HardDrive,
+  HardDriveDownload,
   KeyRound,
   Logs,
+  Mail,
   PlugZap,
   User,
   Users,
@@ -44,6 +46,11 @@ const workspaceItems = [
     title: "Knowledge",
     url: "/knowledge",
     icon: FolderKanban,
+  },
+  {
+    title: "Model Deployments",
+    url: "/model-deployments",
+    icon: HardDriveDownload,
   },
 ];
 
@@ -90,9 +97,19 @@ const adminItems = [
     icon: Cpu,
   },
   {
+    title: "Deployments",
+    url: "/admin/deployments",
+    icon: HardDriveDownload,
+  },
+  {
     title: "Tools",
     url: "/admin/tools",
     icon: PlugZap,
+  },
+  {
+    title: "Integrations",
+    url: "/admin/integrations",
+    icon: Mail,
   },
   {
     title: "Users",

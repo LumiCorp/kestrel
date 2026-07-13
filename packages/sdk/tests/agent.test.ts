@@ -43,6 +43,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
             sessionId: "session-agent-1",
             payload: {
               result: {
+                assistantText: null,
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-agent-1",
@@ -61,6 +62,12 @@ test("createAgent runs and resumes with the configured profile", async () => {
     {
       sessionId: "session-agent-1",
       message: "hello",
+      projectContext: {
+        projectId: "project-atlas",
+        contextRevisionId: "revision-7",
+        contextRevision: 7,
+        content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+      },
     },
     context,
   );
@@ -75,6 +82,15 @@ test("createAgent runs and resumes with the configured profile", async () => {
   assert.equal(terminal.type, "run.completed");
   assert.equal(resumed.type, "run.completed");
   assert.equal((requests[0]?.payload as { profileId?: string })?.profileId, "support-profile");
+  assert.deepEqual(
+    (requests[0]?.payload as { turn?: { projectContext?: unknown } })?.turn?.projectContext,
+    {
+      projectId: "project-atlas",
+      contextRevisionId: "revision-7",
+      contextRevision: 7,
+      content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+    },
+  );
   assert.equal((requests[1]?.payload as { profileId?: string })?.profileId, "support-profile");
   assert.equal(
     ((requests[1]?.payload as { turn?: { resumeBlockedRun?: boolean } })?.turn?.resumeBlockedRun),

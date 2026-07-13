@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const migration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0016_environment_project_ownership.sql"
+    "migrations/0018_environment_project_ownership.sql"
   ),
   "utf8"
 );

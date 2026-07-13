@@ -96,6 +96,141 @@ test("weather forecast throws when no location is provided", async () => {
   );
 });
 
+test("weather forecast describes days as the date-range control", () => {
+  assert.match(weatherForecastTool.definition.description, /Use days for date ranges/u);
+  const properties = weatherForecastTool.definition.inputSchema.properties as Record<string, Record<string, unknown>>;
+  assert.match(String(properties.days?.description), /date range/u);
+  assert.match(String(properties.localHour?.description), /exactly one of localDate or dayOffset/u);
+});
+
+test("weather forecast starts unselected hourly evidence at the provider's current local hour", async () => {
+  const requestedUrls: string[] = [];
+  const hourlyTimes = Array.from({ length: 36 }, (_, index) => {
+    const day = index < 24 ? "12" : "13";
+    const hour = index % 24;
+    return `2026-07-${day}T${String(hour).padStart(2, "0")}:00`;
+  });
+  const handler = weatherForecastTool.createHandler({
+    fetchImpl: async (url) => {
+      requestedUrls.push(typeof url === "string" ? url : String(url));
+      return new Response(
+        JSON.stringify({
+          timezone: "America/New_York",
+          current: { time: "2026-07-12T20:45", temperature_2m: 26 },
+          hourly: {
+            time: hourlyTimes,
+            temperature_2m: hourlyTimes.map((_, index) => index),
+            apparent_temperature: hourlyTimes.map((_, index) => index + 1),
+            precipitation_probability: hourlyTimes.map(() => 0),
+            precipitation: hourlyTimes.map(() => 0),
+            wind_speed_10m: hourlyTimes.map(() => 5),
+          },
+          daily: {
+            time: ["2026-07-12", "2026-07-13"],
+            temperature_2m_max: [30, 31],
+            temperature_2m_min: [21, 22],
+            precipitation_probability_max: [10, 20],
+            precipitation_sum: [0, 0.2],
+            wind_speed_10m_max: [8, 9],
+            weather_code: [1, 2],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const output = await handler({
+    latitude: 39.1031,
+    longitude: -84.512,
+    days: 2,
+  }) as Record<string, unknown>;
+  const target = output.target as Record<string, unknown>;
+  const nextHours = output.nextHours as Array<Record<string, unknown>>;
+
+  assert.equal(target.time, "2026-07-12T20:00");
+  assert.equal(target.temperatureC, 20);
+  assert.equal(nextHours.length, 12);
+  assert.equal(nextHours[0]?.time, "2026-07-12T20:00");
+  assert.equal(nextHours[11]?.time, "2026-07-13T07:00");
+  assert.equal(requestedUrls[0]?.includes("current=temperature_2m"), true);
+});
+
+test("weather forecast rejects incomplete or conflicting target selectors before provider use", async () => {
+  let fetchCalls = 0;
+  const handler = weatherForecastTool.createHandler({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("provider should not be called");
+    },
+  });
+  const invalidInputs = [
+    { latitude: 39.1031, longitude: -84.512, localDate: "2026-07-15" },
+    { latitude: 39.1031, longitude: -84.512, dayOffset: 3 },
+    { latitude: 39.1031, longitude: -84.512, localHour: 9 },
+    { latitude: 39.1031, longitude: -84.512, localDate: "2026-07-15", dayOffset: 3, localHour: 9 },
+  ];
+
+  for (const input of invalidInputs) {
+    await assert.rejects(
+      () => handler(input),
+      (error: unknown) => {
+        const runtimeError = error as { code?: string; details?: Record<string, unknown> };
+        assert.equal(runtimeError.code, "TOOL_INPUT_INVALID");
+        assert.match(String(runtimeError.details?.reason), /target_selector/u);
+        return true;
+      },
+    );
+  }
+  assert.equal(fetchCalls, 0);
+});
+
+test("weather forecast reports an explicit out-of-range target instead of selecting the first hour", async () => {
+  const handler = weatherForecastTool.createHandler({
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          timezone: "America/New_York",
+          hourly: {
+            time: ["2026-07-12T08:00", "2026-07-12T09:00"],
+            temperature_2m: [24, 25],
+            apparent_temperature: [25, 26],
+            precipitation_probability: [10, 20],
+            precipitation: [0, 0],
+            wind_speed_10m: [5, 6],
+          },
+          daily: {
+            time: ["2026-07-12", "2026-07-13"],
+            temperature_2m_max: [30, 31],
+            temperature_2m_min: [21, 22],
+            precipitation_probability_max: [20, 30],
+            precipitation_sum: [0, 0.2],
+            wind_speed_10m_max: [8, 9],
+            weather_code: [1, 2],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () => handler({
+      latitude: 39.1031,
+      longitude: -84.512,
+      localDate: "2026-07-15",
+      localHour: 9,
+      days: 2,
+    }),
+    (error: unknown) => {
+      const runtimeError = error as { code?: string; details?: Record<string, unknown> };
+      assert.equal(runtimeError.code, "TOOL_INPUT_INVALID");
+      assert.equal(runtimeError.details?.reason, "hourly_target_out_of_range");
+      assert.equal(runtimeError.details?.requestedDays, 2);
+      return true;
+    },
+  );
+});
+
 test("weather forecast falls back to nominatim when open-meteo geocode has no results", async () => {
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async (url) => {

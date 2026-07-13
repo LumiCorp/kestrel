@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildRunPodServerlessBaseUrl,
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
   getProviderSupportedModalities,
   isKestrelRuntimeLanguageProvider,
+  isRunPodServerlessBaseUrl,
   normalizeGatewayModelMetadata,
   normalizeOpenAICompatibleBaseUrl,
   selectGatewayModelSelection,
@@ -19,6 +21,28 @@ test("Lumi is registered with OpenAI-style default modalities", () => {
     "speech",
     "embedding",
   ]);
+});
+
+test("RunPod is a language provider with an exact serverless endpoint contract", () => {
+  assert.ok(GATEWAY_PROVIDERS.includes("runpod"));
+  assert.deepEqual(getProviderSupportedModalities("runpod"), ["language"]);
+  assert.equal(
+    buildRunPodServerlessBaseUrl("endpoint_123"),
+    "https://api.runpod.ai/v2/endpoint_123/openai/v1"
+  );
+  assert.equal(
+    isRunPodServerlessBaseUrl(
+      "https://api.runpod.ai/v2/endpoint_123/openai/v1"
+    ),
+    true
+  );
+  assert.equal(
+    isRunPodServerlessBaseUrl(
+      "https://internal.example/v2/endpoint_123/openai/v1"
+    ),
+    false
+  );
+  assert.throws(() => buildRunPodServerlessBaseUrl("../admin"));
 });
 
 test("an explicit unavailable model never falls back to the gateway default", () => {
@@ -46,6 +70,7 @@ test("external Kestrel chat runtime excludes unsupported gateway providers", () 
   assert.equal(isKestrelRuntimeLanguageProvider("anthropic"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("ollama"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("openrouter"), true);
+  assert.equal(isKestrelRuntimeLanguageProvider("runpod"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("lumi"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("replicate"), false);
 });

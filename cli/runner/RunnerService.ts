@@ -14,7 +14,7 @@ import {
 } from "../protocol/contracts.js";
 import { RunnerHost, type RunnerProfileProvider } from "./RunnerHost.js";
 import { CommandRouter } from "./CommandRouter.js";
-import type { RunnerEventSink } from "./EventWriter.js";
+import { normalizeRunnerEventPayload, type RunnerEventSink } from "./EventWriter.js";
 import {
   buildCompatibilityHeaders,
   buildOpenAiErrorResponse,
@@ -125,6 +125,7 @@ class RunnerServiceEventBus implements RunnerEventSink {
       commandId?: string | undefined;
     } = {},
   ): void {
+    const normalizedPayload = normalizeRunnerEventPayload(type, payload);
     const event = {
       id: randomUUID(),
       type,
@@ -133,7 +134,7 @@ class RunnerServiceEventBus implements RunnerEventSink {
       ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
       ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
       ...(options.commandId !== undefined ? { commandId: options.commandId } : {}),
-      payload,
+      payload: normalizedPayload,
     } as RunnerEvent;
     this.history.push(event);
     if (this.history.length > 1000) {

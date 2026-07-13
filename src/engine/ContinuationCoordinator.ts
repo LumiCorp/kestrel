@@ -352,6 +352,7 @@ export class ContinuationCoordinator {
         agent: clearRuntimeWaitState({
           ...reactState,
           continuation: undefined,
+          assistantText: partialOutput?.message ?? null,
           ...(partialOutput !== undefined ? { finalOutput: partialOutput } : {}),
           terminal: {
             status: partialOutput !== undefined ? "COMPLETED" : "FAILED",
@@ -638,6 +639,7 @@ export class ContinuationCoordinator {
       nextAction: undefined,
       commandBatch: undefined,
       pendingContinuationOffer: undefined,
+      assistantText: null,
       finalOutput: undefined,
       finalized: undefined,
       goalMet: undefined,
@@ -780,7 +782,7 @@ function buildContinuationSummary(
   const nextAction = asRecord(reactState.nextAction);
   const nextIfApproved = buildContinuationNextActions(nextAction, currentStep);
   const partialAnswer = buildContinuationPartialAnswer(
-    asRecord(reactState.finalOutput),
+    asString(reactState.assistantText),
     lastObservation,
     completedSoFar,
   );
@@ -956,12 +958,12 @@ function buildContinuationNextActions(
 }
 
 function buildContinuationPartialAnswer(
-  finalOutput: Record<string, unknown> | undefined,
+  assistantText: string | undefined,
   lastObservation: string,
   completedSoFar: string[],
 ): string | undefined {
-  if (typeof finalOutput?.message === "string" && finalOutput.message.trim().length > 0) {
-    return finalOutput.message.trim();
+  if (assistantText !== undefined && assistantText.trim().length > 0) {
+    return assistantText.trim();
   }
   if (completedSoFar.length > 1) {
     return `Current verified progress so far:\n- ${completedSoFar.join("\n- ")}`;

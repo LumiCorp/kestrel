@@ -9,10 +9,10 @@ importers:
   .:
     dependencies:
       '@electric-sql/pglite':
-        specifier: ^0.4.2
-        version: 0.4.2
+        specifier: ^0.4.6
+        version: 0.4.6
       '@kestrel-agents/protocol':
-        specifier: 0.5.1
+        specifier: workspace:*
         version: link:packages/protocol
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
@@ -1347,8 +1347,8 @@ packages:
   '@electric-sql/pglite@0.4.1':
     resolution: {integrity: sha512-mZ9NzzUSYPOCnxHH1oAHPRzoMFJHY472raDKwXl/+6oPbpdJ7g8LsCN4FSaIIfkiCKHhb3iF/Zqo3NYxaIhU7Q==}
 
-  '@electric-sql/pglite@0.4.2':
-    resolution: {integrity: sha512-1GUUl/MZpy5QWgWisD3Epho3GkJrZ1MzVgQpo2pifQWUs96F9rXKZxeVLPhkwFYck34CH/kQ8lis6wX9ifn3kg==}
+  '@electric-sql/pglite@0.4.6':
+    resolution: {integrity: sha512-qmlmfN8UyKCee35qkV0r/MBp+Znl8FjBz7OpoglNvww3GJpw0/DLP0o1ZymvLNmcD5DTLOQdzKPtF8Hd3mdl1w==}
 
   '@electron-forge/cli@7.11.1':
     resolution: {integrity: sha512-pk8AoLsr7t7LBAt0cFD06XFA6uxtPdvtLx06xeal7O9o7GHGCbj29WGwFoJ8Br/ENM0Ho868S3PrAn1PtBXt5g==}
@@ -10239,7 +10239,7 @@ snapshots:
 
   '@electric-sql/pglite@0.4.1': {}
 
-  '@electric-sql/pglite@0.4.2': {}
+  '@electric-sql/pglite@0.4.6': {}
 
   '@electron-forge/cli@7.11.1(encoding@0.1.13)':
     dependencies:

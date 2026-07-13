@@ -57,6 +57,28 @@ Public-repo defaults:
 - Billing is opt-in. Set `NEXT_PUBLIC_BILLING_ENABLED=true` only after configuring all required Stripe env vars for org-owned subscriptions.
 - `ADMIN_USER_IDS` is empty by default; no hardcoded public admin IDs ship with the repo.
 
+## RunPod Serverless models
+
+Administrators can add an existing RunPod Serverless vLLM endpoint from
+`/admin/gateways`. Supply its endpoint ID and either paste a credential for
+encrypted storage or configure `RUNPOD_API_KEY`. Kestrel derives the canonical
+`https://api.runpod.ai/v2/{endpointId}/openai/v1` URL; arbitrary endpoints and
+RunPod Pod lifecycle management are not supported by the unmanaged gateway
+flow.
+
+Managed RunPod deployments are separately gated by
+`RUNPOD_MANAGED_DEPLOYMENTS_ENABLED`. When enabled, platform administrators can
+qualify immutable digest-pinned Serverless vLLM profiles, enable organization
+quotas, and allow entitled members to launch organization-owned endpoints from
+those profiles. Managed endpoints remain unavailable until the expected model passes
+the same streaming and tool-result validation as externally configured RunPod
+gateways. Raw Pods, arbitrary images, user-controlled infrastructure fields, and
+customer billing are outside this release.
+
+Synced models start unapproved. Each language model must pass the admin
+connection test, which verifies OpenAI-compatible streaming plus a complete
+tool-call/tool-result round trip, before it can be approved for chat.
+
 ## Local Dev
 
 ```bash

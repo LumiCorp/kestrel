@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+
 import type {
   RunnerCommand,
   RunnerCommandMetadata,
@@ -96,6 +98,7 @@ export class ProtocolClient {
     }
     this.pending.clear();
     await this.transport.stop();
+    this.listeners.clear();
   }
 
   private start(): void {
@@ -130,9 +133,18 @@ export class ProtocolClient {
       return;
     }
 
-    const event = decoded;
+    let event: RunnerEvent;
+    try {
+      event = validateV2TerminalResult(decoded);
+    } catch (error) {
+      event = createProtocolErrorEvent(decoded, error);
+    }
     for (const listener of this.listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // Listener failures must not prevent terminal request settlement.
+      }
     }
 
     const commandId = event.commandId;
@@ -161,6 +173,34 @@ export class ProtocolClient {
     }
     this.pending.clear();
   }
+}
+
+function validateV2TerminalResult(event: RunnerEvent): RunnerEvent {
+  if (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled" ||
+    event.type === "operator.controlled"
+  ) {
+    return {
+      ...event,
+      payload: parseRunnerTerminalPayloadV2(event.type, event.payload),
+    } as unknown as RunnerEvent;
+  }
+  return event;
+}
+
+function createProtocolErrorEvent(event: RunnerEvent, cause: unknown): RunnerEvent {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return {
+    ...event,
+    type: "runner.error",
+    payload: {
+      code: "RUNNER_PROTOCOL_INVALID",
+      message: `Invalid ${event.type} terminal payload: ${detail}`,
+      details: { eventType: event.type },
+    },
+  } as RunnerEvent;
 }
 
 function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {

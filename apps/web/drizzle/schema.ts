@@ -22,6 +22,7 @@ import {
   real,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
@@ -2210,12 +2211,142 @@ export const agentConfig = pgTable("agent_config", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const aiProviderConnections = pgTable(
+  "ai_provider_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    provider: text("provider", { enum: ["runpod"] }).notNull(),
+    scope: text("scope", { enum: ["platform"] })
+      .notNull()
+      .default("platform"),
+    displayName: text("display_name").notNull(),
+    apiKeyEnvVar: text("api_key_env_var"),
+    apiKey: text("api_key"),
+    enabled: boolean("enabled").notNull().default(true),
+    status: text("status", {
+      enum: ["not_configured", "ready", "degraded"],
+    })
+      .notNull()
+      .default("not_configured"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    metadata: jsonb("metadata"),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_provider_connections_provider_scope_idx").on(
+      table.provider,
+      table.scope
+    ),
+  ]
+);
+
+export const aiDeploymentProfiles = pgTable(
+  "ai_deployment_profiles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileKey: text("profile_key").notNull(),
+    version: integer("version").notNull(),
+    displayName: text("display_name").notNull(),
+    description: text("description"),
+    provider: text("provider", { enum: ["runpod"] }).notNull(),
+    status: text("status", {
+      enum: ["draft", "qualifying", "active", "deprecated"],
+    })
+      .notNull()
+      .default("draft"),
+    imageRef: text("image_ref").notNull(),
+    expectedModelId: text("expected_model_id").notNull(),
+    specHash: text("spec_hash").notNull(),
+    templateSpec: jsonb("template_spec").notNull(),
+    endpointSpec: jsonb("endpoint_spec").notNull(),
+    costLimitUsdPerHour: real("cost_limit_usd_per_hour").notNull(),
+    qualificationEvidence: jsonb("qualification_evidence"),
+    qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    activatedByUserId: text("activated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_deployment_profiles_key_version_idx").on(
+      table.profileKey,
+      table.version
+    ),
+    uniqueIndex("ai_deployment_profiles_spec_hash_idx").on(table.specHash),
+    index("ai_deployment_profiles_status_idx").on(table.status),
+  ]
+);
+
+export const organizationAiDeploymentPolicies = pgTable(
+  "organization_ai_deployment_policies",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    maxActiveDeployments: integer("max_active_deployments")
+      .notNull()
+      .default(0),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  }
+);
+
+export const organizationAiDeploymentEntitlements = pgTable(
+  "organization_ai_deployment_entitlements",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedByUserId: text("granted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId] }),
+    index("organization_ai_deployment_entitlements_user_idx").on(table.userId),
+  ]
+);
+
 export const aiGateways = pgTable(
   "ai_gateways",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    deploymentId: text("deployment_id"),
+    providerConnectionId: text("provider_connection_id").references(
+      () => aiProviderConnections.id,
+      { onDelete: "restrict" }
+    ),
     provider: text("provider", {
       enum: [
         "anthropic",
@@ -2223,6 +2354,7 @@ export const aiGateways = pgTable(
         "openai",
         "openrouter",
         "ollama",
+        "runpod",
         "replicate",
       ],
     }).notNull(),
@@ -2244,10 +2376,14 @@ export const aiGateways = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("ai_gateways_provider_display_name_idx").on(
-      table.provider,
-      table.displayName
-    ),
+    uniqueIndex("ai_gateways_deployment_id_idx").on(table.deploymentId),
+    uniqueIndex("ai_gateways_global_provider_display_name_idx")
+      .on(table.provider, table.displayName)
+      .where(sql`${table.organizationId} IS NULL`),
+    uniqueIndex("ai_gateways_org_provider_display_name_idx")
+      .on(table.organizationId, table.provider, table.displayName)
+      .where(sql`${table.organizationId} IS NOT NULL`),
+    index("ai_gateways_org_id_idx").on(table.organizationId),
     index("ai_gateways_enabled_idx").on(table.enabled),
     index("ai_gateways_provider_idx").on(table.provider),
   ]
@@ -2285,6 +2421,139 @@ export const aiGatewayModels = pgTable(
       table.rawModelId
     ),
     uniqueIndex("ai_gateway_models_alias_idx").on(table.alias),
+  ]
+);
+
+export const aiDeployments = pgTable(
+  "ai_deployments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => aiDeploymentProfiles.id, { onDelete: "restrict" }),
+    displayName: text("display_name").notNull(),
+    status: text("status", {
+      enum: [
+        "requested",
+        "provisioning_template",
+        "provisioning_endpoint",
+        "waiting_for_capacity",
+        "validating",
+        "ready",
+        "failed",
+        "deleting",
+        "delete_failed",
+        "deleted",
+      ],
+    })
+      .notNull()
+      .default("requested"),
+    providerTemplateId: text("provider_template_id"),
+    providerEndpointId: text("provider_endpoint_id"),
+    gatewayId: text("gateway_id").references(() => aiGateways.id, {
+      onDelete: "set null",
+    }),
+    specSnapshot: jsonb("spec_snapshot").notNull(),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    reconciliationDeadline: timestamp("reconciliation_deadline", {
+      withTimezone: true,
+    }),
+    lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_deployments_active_org_profile_idx")
+      .on(table.organizationId, table.profileId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("ai_deployments_provider_endpoint_idx").on(
+      table.providerEndpointId
+    ),
+    index("ai_deployments_org_id_idx").on(table.organizationId),
+    index("ai_deployments_status_idx").on(table.status),
+  ]
+);
+
+export const aiDeploymentRuns = pgTable(
+  "ai_deployment_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    kind: text("kind", {
+      enum: ["qualification", "provision", "reconcile", "delete", "usage"],
+    }).notNull(),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => aiDeploymentProfiles.id, { onDelete: "restrict" }),
+    deploymentId: text("deployment_id").references(() => aiDeployments.id, {
+      onDelete: "cascade",
+    }),
+    status: text("status", {
+      enum: ["queued", "running", "succeeded", "failed"],
+    })
+      .notNull()
+      .default("queued"),
+    providerTemplateId: text("provider_template_id"),
+    providerEndpointId: text("provider_endpoint_id"),
+    attempt: integer("attempt").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    metadata: jsonb("metadata"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("ai_deployment_runs_deployment_idx").on(table.deploymentId),
+    index("ai_deployment_runs_profile_idx").on(table.profileId),
+    index("ai_deployment_runs_status_idx").on(table.status),
+  ]
+);
+
+export const aiDeploymentUsage = pgTable(
+  "ai_deployment_usage",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    deploymentId: text("deployment_id")
+      .notNull()
+      .references(() => aiDeployments.id, { onDelete: "cascade" }),
+    providerEndpointId: text("provider_endpoint_id").notNull(),
+    bucketStartedAt: timestamp("bucket_started_at", {
+      withTimezone: true,
+    }).notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    timeBilledMs: integer("time_billed_ms").notNull().default(0),
+    diskSpaceBilledGb: integer("disk_space_billed_gb").notNull().default(0),
+    gpuTypeId: text("gpu_type_id"),
+    metadata: jsonb("metadata"),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("ai_deployment_usage_bucket_idx")
+      .on(table.deploymentId, table.bucketStartedAt, table.gpuTypeId)
+      .nullsNotDistinct(),
+    index("ai_deployment_usage_endpoint_idx").on(table.providerEndpointId),
   ]
 );
 
@@ -2783,6 +3052,36 @@ export const adminEventLogs = pgTable(
   ]
 );
 
+export const platformEmailConfig = pgTable("platform_email_config", {
+  id: text("id").primaryKey().notNull(),
+  provider: text("provider", { enum: ["resend"] })
+    .notNull()
+    .default("resend"),
+  enabled: boolean("enabled").notNull().default(false),
+  credentialSource: text("credential_source", {
+    enum: ["stored", "environment"],
+  })
+    .notNull()
+    .default("environment"),
+  encryptedApiKey: text("encrypted_api_key"),
+  fromName: text("from_name").notNull().default("Kestrel One"),
+  fromEmail: text("from_email").notNull(),
+  replyTo: text("reply_to"),
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+  lastTestMessageId: text("last_test_message_id"),
+  lastTestConfigFingerprint: text("last_test_config_fingerprint"),
+  lastErrorCode: text("last_error_code"),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const adminApiKeys = pgTable(
   "admin_api_keys",
   {
@@ -2900,6 +3199,7 @@ export type UsageStat = InferSelectModel<typeof usageStats>;
 export type ArtifactDocument = InferSelectModel<typeof artifactDocuments>;
 export type ArtifactSuggestion = InferSelectModel<typeof artifactSuggestions>;
 export type AdminEventLog = InferSelectModel<typeof adminEventLogs>;
+export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeSnapshot = InferSelectModel<typeof knowledgeSnapshots>;
 export type KnowledgeSyncRun = InferSelectModel<typeof knowledgeSyncRuns>;

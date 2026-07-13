@@ -14,6 +14,7 @@ import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 
 const reference = {
   source: "kestrel-one" as const,
+  organizationId: "org-acme",
   gatewayId: "gateway-openrouter",
   rawModelId: "openai/gpt-5.4",
 };
@@ -25,6 +26,7 @@ function lease(input: {
   return {
     version: GATEWAY_CREDENTIAL_LEASE_VERSION,
     leaseId: input.leaseId,
+    organizationId: reference.organizationId,
     gatewayId: reference.gatewayId,
     rawModelId: reference.rawModelId,
     provider: "openrouter",
@@ -57,6 +59,7 @@ test("credential broker client sends its dedicated token and validates the lease
 
   assert.equal(authorization, "Bearer broker-secret");
   assert.equal(requestBody?.gatewayId, reference.gatewayId);
+  assert.equal(requestBody?.organizationId, reference.organizationId);
   assert.equal(result.leaseId, "lease-1");
 });
 
@@ -125,6 +128,29 @@ test("credential cache reuses a lease until its bounded expiry", async () => {
   assert.equal((await cache.get(reference)).leaseId, "lease-1");
   now += GATEWAY_CREDENTIAL_CACHE_TTL_MS;
   assert.equal((await cache.get(reference)).leaseId, "lease-2");
+  assert.equal(loads, 2);
+});
+
+test("credential cache isolates otherwise identical references by organization", async () => {
+  let loads = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async (current) => ({
+      ...lease({
+        leaseId: `lease-${++loads}`,
+        expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+      }),
+      organizationId: current.organizationId,
+    }),
+  });
+
+  const first = await cache.get(reference);
+  const second = await cache.get({
+    ...reference,
+    organizationId: "org-other",
+  });
+  assert.equal(first.leaseId, "lease-1");
+  assert.equal(second.leaseId, "lease-2");
   assert.equal(loads, 2);
 });
 
@@ -327,6 +353,40 @@ test("brokered model gateway refreshes once after provider authentication failur
   ]);
 });
 
+test("brokered model gateway refreshes once after provider authorization failure", async () => {
+  let loads = 0;
+  let providerCalls = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async () =>
+      lease({
+        leaseId: `lease-${++loads}`,
+        expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+      }),
+  });
+  const gateway = new BrokeredModelGateway({
+    reference,
+    cache,
+    createProvider: (currentLease) => ({
+      async call<T>() {
+        providerCalls += 1;
+        if (currentLease.leaseId === "lease-1") {
+          throw Object.assign(new Error("provider authorization rejected"), {
+            status: 403,
+          });
+        }
+        return { text: "selected model answered" } as T;
+      },
+    }),
+  });
+
+  const result = await gateway.call<{ text: string }>({ input: "hello" });
+
+  assert.equal(result.text, "selected model answered");
+  assert.equal(loads, 2);
+  assert.equal(providerCalls, 2);
+});
+
 test("managed provider errors cannot expose leased credentials after refresh", async () => {
   let loads = 0;
   const cache = new GatewayCredentialLeaseCache({
@@ -430,6 +490,13 @@ test("all approved language gateway transports construct from leased credentials
       { ...base, provider: "lumi", protocol: "openai", rawModelId: "gpt-5.4" },
       {
         ...base,
+        provider: "runpod",
+        protocol: "openai",
+        rawModelId: "Qwen/Qwen3-32B",
+        baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai",
+      },
+      {
+        ...base,
         provider: "lumi",
         protocol: "anthropic",
         rawModelId: "claude-sonnet",
@@ -524,6 +591,19 @@ test("all gateway transports send the leased model and credential to the expecte
       expectedAnthropicKey: "provider-secret",
     },
     {
+      name: "RunPod",
+      lease: {
+        ...lease({ leaseId: "runpod", expiresAtMs: Date.now() + 60_000 }),
+        provider: "runpod",
+        rawModelId: "Qwen/Qwen3-32B",
+        baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai",
+      },
+      expectedUrl:
+        "https://api.runpod.ai/v2/endpoint_123/openai/v1/chat/completions",
+      expectedAuthorization: "Bearer provider-secret",
+      expectedAnthropicKey: null,
+    },
+    {
       name: "Ollama",
       lease: {
         ...lease({ leaseId: "ollama", expiresAtMs: Date.now() + 60_000 }),
@@ -598,6 +678,36 @@ test("all gateway transports send the leased model and credential to the expecte
     );
     assert.equal(captured?.body.model, current.lease.rawModelId, current.name);
   }
+});
+
+test("RunPod gateway responses preserve RunPod model provenance", async () => {
+  const gateway = createProviderGatewayForLease(
+    {
+      ...lease({
+        leaseId: "runpod-provenance",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+      provider: "runpod",
+      protocol: "openai",
+      rawModelId: "Qwen/Qwen3-32B",
+      baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai",
+    },
+    {
+      fetchImpl: async () =>
+        Response.json({
+          model: "Qwen/Qwen3-32B",
+          choices: [{ message: { content: "ready" } }],
+        }),
+    },
+  );
+  const response = await gateway.call<{
+    provider: { name: string; model: string };
+  }>({ input: "hello" });
+  assert.deepEqual(response.provider, {
+    name: "runpod",
+    model: "Qwen/Qwen3-32B",
+    endpoint: "chat",
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined) {

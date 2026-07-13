@@ -51,7 +51,7 @@ test("resolveWebCommandConfig accepts env-provided token and port", () => {
   assert.equal(resolved.tokenSource, "provided");
 });
 
-test("formatWebCommandStartupLines emits machine-readable metadata and quoted exports", () => {
+test("formatWebCommandStartupLines redacts a provided token from startup output", () => {
   const metadata = createWebCommandStartupMetadata(
     {
       url: "http://127.0.0.1:43102",
@@ -66,9 +66,29 @@ test("formatWebCommandStartupLines emits machine-readable metadata and quoted ex
   );
 
   const lines = formatWebCommandStartupLines(metadata);
-  assert.equal(lines[0], JSON.stringify(metadata));
+  assert.equal(lines[0], JSON.stringify({ ...metadata, token: "[redacted]" }));
   assert.equal(lines[2], "export KESTREL_RUNNER_SERVICE_URL='http://127.0.0.1:43102'");
-  assert.equal(lines[3], "export KESTREL_RUNNER_SERVICE_TOKEN='abc'\\''def'");
+  assert.equal(lines[3], "KESTREL_RUNNER_SERVICE_TOKEN is configured; value withheld.");
+  assert.doesNotMatch(lines.join("\n"), /abc|def/u);
+});
+
+test("formatWebCommandStartupLines emits a generated token for local setup", () => {
+  const metadata = createWebCommandStartupMetadata(
+    {
+      url: "http://127.0.0.1:43102",
+      host: "127.0.0.1",
+      port: 43102,
+    },
+    {
+      host: "127.0.0.1",
+      token: "generated-token",
+      tokenSource: "generated",
+    },
+  );
+
+  const lines = formatWebCommandStartupLines(metadata);
+  assert.equal(lines[0], JSON.stringify(metadata));
+  assert.equal(lines[3], "export KESTREL_RUNNER_SERVICE_TOKEN='generated-token'");
 });
 
 test("createWebCommandStartupMetadata rewrites wildcard bind hosts to a local connect URL", () => {

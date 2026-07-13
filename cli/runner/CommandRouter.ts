@@ -1287,6 +1287,9 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
       "run.start payload.turn.workspace must be an object when present"
     );
   }
+  if (turnRecord.projectContext !== undefined) {
+    validateProjectContextPayload(turnRecord.projectContext, "run.start payload.turn.projectContext");
+  }
   return {
     ...(hasProfileObject
       ? { profile: profile as NonNullable<RunStartCommandPayload["profile"]> }
@@ -1300,6 +1303,23 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
         : {}),
     },
   };
+}
+
+function validateProjectContextPayload(value: unknown, label: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object when present`);
+  }
+  const projectContext = value as Record<string, unknown>;
+  requireNonEmptyString(projectContext.projectId, `${label}.projectId`);
+  requireNonEmptyString(projectContext.contextRevisionId, `${label}.contextRevisionId`);
+  if (
+    typeof projectContext.contextRevision !== "number" ||
+    Number.isSafeInteger(projectContext.contextRevision) === false ||
+    projectContext.contextRevision < 1
+  ) {
+    throw new Error(`${label}.contextRevision must be a positive integer`);
+  }
+  requireNonEmptyString(projectContext.content, `${label}.content`);
 }
 
 function validateJobRunPayload(value: unknown): JobRunCommandPayload {
@@ -1760,6 +1780,10 @@ function validateModelCredentialPayload(
     reference.gatewayId,
     `${path}.modelCredential.gatewayId`
   );
+  const organizationId = requireNonEmptyString(
+    reference.organizationId,
+    `${path}.modelCredential.organizationId`,
+  );
   const rawModelId = requireNonEmptyString(
     reference.rawModelId,
     `${path}.modelCredential.rawModelId`
@@ -1770,9 +1794,31 @@ function validateModelCredentialPayload(
       `${path}.model must match ${path}.modelCredential.rawModelId for gateway-managed execution`
     );
   }
+  const agentStageConfig = ensureObjectPayload(
+    profile.agentStageConfig,
+    `${path}.agentStageConfig`,
+  );
+  const modelByStage = ensureObjectPayload(
+    agentStageConfig.modelByStage,
+    `${path}.agentStageConfig.modelByStage`,
+  );
+  const agentLoopModel = requireNonEmptyString(
+    modelByStage["agent.loop"],
+    `${path}.agentStageConfig.modelByStage.agent.loop`,
+  );
+  if (agentLoopModel.trim() !== rawModelId.trim()) {
+    throw new Error(
+      `${path}.agentStageConfig.modelByStage.agent.loop must match ${path}.modelCredential.rawModelId for gateway-managed execution`,
+    );
+  }
   if (gatewayId.trim() !== reference.gatewayId) {
     throw new Error(
       `${path}.modelCredential.gatewayId must not contain surrounding whitespace`
+    );
+  }
+  if (organizationId.trim() !== reference.organizationId) {
+    throw new Error(
+      `${path}.modelCredential.organizationId must not contain surrounding whitespace`,
     );
   }
   if (rawModelId.trim() !== reference.rawModelId) {

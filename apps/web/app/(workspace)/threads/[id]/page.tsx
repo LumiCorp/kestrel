@@ -30,7 +30,9 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const chatModelFromCookie = cookieStore.get("chat-model");
   const initialChatModel = await resolvePreferredLanguageModelId(
-    chatModelFromCookie?.value
+    chatModelFromCookie?.value,
+    null,
+    organizationId
   );
   const [projectDetail, projectRows] = await Promise.all([
     chat?.projectId

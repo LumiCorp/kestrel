@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,8 @@ interface NpmPackResult {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const npmCacheDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-cache-"));
+const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-"));
+const extractDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-extract-"));
 
 const forbiddenPrefixes = [
   "apps/",
@@ -91,13 +93,36 @@ try {
   assert.equal(manifest.name, "@kestrel-agents/kestrel");
   assert.equal(manifest.main, "dist/src/index.js");
   assert.equal(manifest.types, "dist/src/index.d.ts");
-  assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "0.5.1");
+  assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
   assert.ok(filePaths.has(manifest.types), `runtime package types '${manifest.types}' are not packed`);
+
+  execFileSync("pnpm", ["pack", "--pack-destination", packDir], {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  const tarballName = readdirSync(packDir).find(
+    (entry) => entry.startsWith("kestrel-agents-kestrel-") && entry.endsWith(".tgz"),
+  );
+  assert.ok(tarballName, "pnpm pack did not produce a runtime tarball.");
+  execFileSync("tar", ["-xzf", path.join(packDir, tarballName), "-C", extractDir], {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  const packedManifest = JSON.parse(
+    readFileSync(path.join(extractDir, "package", "package.json"), "utf8"),
+  ) as { dependencies?: Record<string, string>; version?: string };
+  assert.equal(
+    packedManifest.dependencies?.["@kestrel-agents/protocol"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching protocol version",
+  );
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);
 } finally {
   rmSync(npmCacheDir, { recursive: true, force: true });
+  rmSync(packDir, { recursive: true, force: true });
+  rmSync(extractDir, { recursive: true, force: true });
 }
 
 function isSensitiveOrTestPath(filePath: string): boolean {

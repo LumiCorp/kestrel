@@ -113,6 +113,7 @@ test("ThreadRuntime emits normalized thread and supervisor failures", async () =
   const runtime = new ThreadRuntime({
     sessionStore: store,
     executor: new StaticTurnExecutor(store, {
+      assistantText: null,
       output: buildOutput({
         runId: "run-a",
         status: "COMPLETED",
@@ -146,6 +147,7 @@ test("ThreadRuntime keeps prior active run when failed output run is not persist
   const runtime = new ThreadRuntime({
     sessionStore: store,
     executor: new StaticTurnExecutor(store, {
+      assistantText: null,
       output: buildOutput({
         runId: "run-unpersisted",
         status: "FAILED",
@@ -207,6 +209,7 @@ test("DelegationSupervisor emits normalized limit and compatibility failures", a
     runtimeStore: store,
     orchestrationStore: store,
     submitChildTurn: async (_input: SubmitTurnInput) => ({
+      assistantText: null,
       thread: {
         threadId: "child-thread",
         sessionId: "child-thread",
@@ -314,6 +317,7 @@ test("DelegationSupervisor emits normalized not-persisted failure when orchestra
     runtimeStore: store,
     orchestrationStore,
     submitChildTurn: async (_input: SubmitTurnInput) => ({
+      assistantText: null,
       thread: {
         threadId: "child-thread",
         sessionId: "child-thread",

@@ -163,9 +163,12 @@ export class RuntimeThreadedTurnExecutor {
       }
     );
     const session = await this.getSession(input.sessionId);
-    const finalOutput = asRecord(session?.state.agent)?.finalOutput;
+    const agentState = asRecord(session?.state.agent);
+    const finalOutput = agentState?.finalOutput;
+    const assistantText = readAssistantText(agentState?.assistantText);
     return {
       output,
+      assistantText: output.status === "COMPLETED" ? assistantText : null,
       ...(session !== null ? { session } : {}),
       ...(output.status === "COMPLETED" && finalOutput !== undefined
         ? { finalizedPayload: finalOutput }
@@ -241,6 +244,8 @@ export class RuntimeThreadedTurnExecutor {
             input.orchestrationMetadata?.executionPolicy
           ) as ExecutionPolicyOverride)
         : undefined);
+    const projectContext = input.baseRuntimeTurn?.projectContext ??
+      readRuntimeTurnProjectContext(input.input.metadata?.projectContext);
     return {
       ...(input.baseRuntimeTurn ?? {}),
       sessionId: input.input.sessionId,
@@ -281,6 +286,7 @@ export class RuntimeThreadedTurnExecutor {
                 .history as RuntimeTurnInput["history"],
             }
           : {}),
+      ...(projectContext !== undefined ? { projectContext } : {}),
       ...(skillPack !== undefined ? { skillPack } : {}),
       metadata: {
         ...(input.baseRuntimeTurn?.metadata ?? {}),
@@ -299,6 +305,38 @@ export class RuntimeThreadedTurnExecutor {
       },
     };
   }
+}
+
+function readAssistantText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readRuntimeTurnProjectContext(
+  value: unknown,
+): NonNullable<RuntimeTurnInput["projectContext"]> | undefined {
+  const projectContext = asRecord(value);
+  const projectId = asString(projectContext?.projectId)?.trim();
+  const contextRevisionId = asString(projectContext?.contextRevisionId)?.trim();
+  const contextRevision = projectContext?.contextRevision;
+  const content = asString(projectContext?.content)?.trim();
+  if (
+    projectId === undefined || projectId.length === 0 ||
+    contextRevisionId === undefined || contextRevisionId.length === 0 ||
+    typeof contextRevision !== "number" || Number.isSafeInteger(contextRevision) === false || contextRevision < 1 ||
+    content === undefined || content.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    projectId,
+    contextRevisionId,
+    contextRevision,
+    content,
+  };
 }
 
 export function resolveRuntimeThreadedStepAgent(input: {

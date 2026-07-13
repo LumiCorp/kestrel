@@ -1,4 +1,5 @@
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
+import type { RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
 import type { TaskAction } from "../missionControl/contracts.js";
 import type {
   ProductProjectBoardAction,
@@ -107,11 +108,21 @@ export interface DesktopUiStateSyncResult {
   updated: boolean;
 }
 
-export interface DesktopRunHistoryLine {
-  role: "user" | "assistant" | "system";
+interface DesktopRunHistoryLineBase {
   text: string;
   timestamp: string;
 }
+
+export type DesktopRunHistoryLine = DesktopRunHistoryLineBase & (
+  | {
+      role: "user" | "assistant";
+      data?: undefined;
+    }
+  | {
+      role: "system";
+      data: RunnerWaitingPromptHistoryDataV2;
+    }
+);
 
 export interface DesktopRunTurnRequest {
   sessionId: string;
@@ -409,10 +420,34 @@ function parseDesktopRunHistoryLine(value: unknown, index: number): DesktopRunHi
   ) {
     throw new Error(`Desktop run history[${index}].timestamp must be an ISO timestamp.`);
   }
-  return {
-    role: input.role,
+  const parsed = {
     text: parseRequiredDesktopText(input.text, `history[${index}].text`),
     timestamp,
+  };
+  if (input.role === "system") {
+    const data = typeof input.data === "object" && input.data !== null && Array.isArray(input.data) === false
+      ? input.data as Record<string, unknown>
+      : undefined;
+    if (data?.kind !== "runtime.waiting_prompt") {
+      throw new Error(
+        `Desktop run history[${index}] system entries must be tagged as runtime.waiting_prompt.`,
+      );
+    }
+    const runId = typeof data.runId === "string" && data.runId.trim().length > 0
+      ? data.runId.trim()
+      : undefined;
+    return {
+      ...parsed,
+      role: "system",
+      data: {
+        kind: "runtime.waiting_prompt",
+        ...(runId !== undefined ? { runId } : {}),
+      },
+    };
+  }
+  return {
+    ...parsed,
+    role: input.role,
   };
 }
 

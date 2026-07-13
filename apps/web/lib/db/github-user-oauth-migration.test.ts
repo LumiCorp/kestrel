@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const migration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0015_github_user_oauth.sql"
+    "migrations/0017_github_user_oauth.sql"
   ),
   "utf8"
 );

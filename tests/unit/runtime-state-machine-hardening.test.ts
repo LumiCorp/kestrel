@@ -2524,6 +2524,7 @@ test("fresh user turns clear stale finalized control state before routing", asyn
     finalOutput: {
       message: "old answer",
     },
+    assistantText: "old answer",
     lastAction: {
       kind: "tool",
       name: "fs.read_text",
@@ -2671,10 +2672,12 @@ test("fresh user turns clear stale finalized control state before routing", asyn
   assert.equal(observedRouteReact?.lastActionResult, undefined);
   assert.equal(observedRouteReact?.postToolVerification, undefined);
   assert.equal(observedRouteReact?.commandBatch, undefined);
+  assert.equal(observedRouteReact?.assistantText ?? null, null);
 
   const session = await store.getSession("fresh-turn-session");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
   assert.equal((react.finalOutput as Record<string, unknown>).message, "fresh:hello");
+  assert.equal(react.assistantText, null);
   assert.equal((react.terminal as Record<string, unknown>).status, "COMPLETED");
   assert.equal((react.waitingFor ?? null), null);
   assert.equal((react.toolIntent ?? null), null);

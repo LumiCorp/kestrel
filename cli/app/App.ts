@@ -1593,11 +1593,11 @@ export class App {
           this.shouldApplyCompactionOnContinuationResume(session),
         buildSessionOperatorState: (input) => this.buildSessionOperatorState(input),
         appendDiagnosticsLog: (input) => this.appendDiagnosticsLog(input),
-        handleTaskUpdatedEvent: (task, kind, finalizedPayload) =>
-          this.handleTaskUpdatedEvent(task, kind, finalizedPayload),
+        handleTaskUpdatedEvent: (task, kind, assistantText, finalizedPayload) =>
+          this.handleTaskUpdatedEvent(task, kind, assistantText, finalizedPayload),
         syncBackgroundSessionProgress: (sessionId) => this.syncBackgroundSessionProgress(sessionId),
-        syncBackgroundSessionResult: (output, finalizedPayload, operatorState) =>
-          this.syncBackgroundSessionResult(output, finalizedPayload, operatorState),
+        syncBackgroundSessionResult: (output, assistantText, finalizedPayload, operatorState) =>
+          this.syncBackgroundSessionResult(output, assistantText, finalizedPayload, operatorState),
         syncBackgroundSessionFailure: (sessionId, message) =>
           this.syncBackgroundSessionFailure(sessionId, message),
         clearProgressForRun: (runId) => {
@@ -4361,6 +4361,7 @@ export class App {
   private async handleTaskUpdatedEvent(
     task: DelegationTaskMeta,
     kind: "spawned" | "waiting" | "completed" | "failed",
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
   ): Promise<void> {
     await this.updateTaskSessionFromMeta(task);
@@ -4384,14 +4385,17 @@ export class App {
     }
     if (kind === "completed") {
       const parsed = parseFinalizePayload(finalizedPayload);
-      if (parsed.ok === true && parsed.payload !== undefined) {
+      if (assistantText !== null) {
+        const structuredData = parsed.ok === true ? parsed.payload?.data : undefined;
         await this.appendSessionHistoryLine(
           session,
           "assistant",
-          parsed.payload.message,
-          parsed.payload.data,
+          assistantText,
+          structuredData,
         );
-        const reportingGroundingNotice = buildFinalizeReportingGroundingNotice(parsed.payload.data);
+        const reportingGroundingNotice = structuredData === undefined
+          ? undefined
+          : buildFinalizeReportingGroundingNotice(structuredData);
         if (reportingGroundingNotice !== undefined) {
           await this.appendSessionHistoryLine(session, "system", reportingGroundingNotice);
         }
@@ -4425,6 +4429,7 @@ export class App {
 
   private async syncBackgroundSessionResult(
     output: import("../../src/index.js").NormalizedOutput,
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void> {
@@ -4432,7 +4437,6 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    const parsed = parseFinalizePayload(finalizedPayload);
     await this.updateTaskSessionFromMeta({
       ...session.delegation,
       status: output.status === "WAITING" ? "WAITING" : "COMPLETED",
@@ -4440,9 +4444,7 @@ export class App {
       resultSummary:
         output.status === "WAITING"
           ? session.delegation.resultSummary
-          : parsed.ok === true
-            ? parsed.payload?.message
-            : session.delegation.resultSummary,
+          : assistantText ?? session.delegation.resultSummary,
       updatedAt: new Date().toISOString(),
     });
     if (operatorState !== undefined) {

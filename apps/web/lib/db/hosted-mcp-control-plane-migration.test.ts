@@ -7,21 +7,21 @@ import { fileURLToPath } from "node:url";
 const migration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0017_hosted_mcp_control_plane.sql"
+    "migrations/0019_hosted_mcp_control_plane.sql"
   ),
   "utf8"
 );
 const interactionHardeningMigration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0019_mcp_interaction_hardening.sql"
+    "migrations/0021_mcp_interaction_hardening.sql"
   ),
   "utf8"
 );
 const interactionDeadlineMigration = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0020_mcp_sampling_processing_deadline.sql"
+    "migrations/0022_mcp_sampling_processing_deadline.sql"
   ),
   "utf8"
 );

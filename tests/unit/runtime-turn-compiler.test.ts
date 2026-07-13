@@ -46,6 +46,12 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
         timestamp: "2026-05-22T12:00:00.000Z",
       },
     ],
+    projectContext: {
+      projectId: "project-atlas",
+      contextRevisionId: "revision-7",
+      contextRevision: 7,
+      content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+    },
     workspace: {
       workspaceRoot: "/tmp/runtime-turn",
       repoRoot: "/tmp/runtime-turn",
@@ -83,6 +89,7 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
   assert.equal(compiled.metadata.toolBatchCheckpointSize, 7);
   assert.deepEqual(compiled.metadata.actor, input.actor);
   assert.deepEqual(compiled.metadata.history, input.history);
+  assert.deepEqual(compiled.metadata.projectContext, input.projectContext);
   assert.deepEqual(compiled.metadata.workspace, input.workspace);
   assert.equal(compiled.metadata.skillPackId, "builder");
   assert.deepEqual(compiled.payload, {
@@ -100,6 +107,7 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
     },
     toolBatchCheckpointSize: 7,
     history: input.history,
+    projectContext: input.projectContext,
     manualCompaction: true,
     workspace: input.workspace,
     skillPack: {

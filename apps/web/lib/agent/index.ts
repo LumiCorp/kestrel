@@ -5,7 +5,6 @@ export * from "./kestrel-runtime";
 export {
   createKestrelOneAgentResponseFromAgent,
   createKestrelOneRequestContext,
-  extractFinalizedAssistantText,
 } from "./kestrel-runtime-core";
 export type {
   KestrelOneAgent,

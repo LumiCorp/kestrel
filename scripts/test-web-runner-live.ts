@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
-import { extractFinalizedAssistantText } from "../cli/runner/finalizedOutput.js";
 
 async function main(): Promise<void> {
   await loadShellAndDotEnv(process.cwd(), {
@@ -178,6 +177,7 @@ async function runLiveTurn(input: {
             toolCalls?: number | undefined;
           } | undefined;
         } | undefined;
+        assistantText: string | null;
         finalizedPayload?: unknown;
       } | undefined;
     } | undefined;
@@ -186,7 +186,7 @@ async function runLiveTurn(input: {
   const result = payload.payload?.result;
   assert.equal(result?.output?.status, "COMPLETED");
 
-  const text = extractFinalizedAssistantText(result?.finalizedPayload);
+  const text = result?.assistantText ?? undefined;
   assert.match(String(text ?? ""), /\S/u);
   assert.ok((result?.output?.telemetry?.modelCalls ?? 0) > 0, "Expected at least one model call.");
 

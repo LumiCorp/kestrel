@@ -99,6 +99,7 @@ export function createSdkE2eRuntimeFactory(
       } as never);
 
       const complete = () => ({
+        assistantText: null,
         output: {
           status: "COMPLETED" as const,
           sessionId: input.sessionId,

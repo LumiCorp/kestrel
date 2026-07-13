@@ -643,6 +643,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
           sessionId: threadWithIdentity.sessionId,
           runId: `assembly-${resolved.request.requestId}`,
         }),
+        assistantText: null,
       };
     }
     await this.appendRunEventForExistingRun({
@@ -1455,6 +1456,7 @@ export function createTurnExecutor(options: {
       const result = await options.runTurn(input);
       return {
         output: result.output,
+        assistantText: result.assistantText ?? null,
         ...(result.session !== undefined ? { session: result.session } : {}),
         ...(result.finalizedPayload !== undefined ? { finalizedPayload: result.finalizedPayload } : {}),
       };
@@ -1562,7 +1564,10 @@ function hasUsableCheckpointContinuationEvidence(
     if (record.role === "user" && hasOriginalUserTask === false) {
       hasOriginalUserTask = true;
     }
-    if (record.role === "assistant") {
+    const data = typeof record.data === "object" && record.data !== null && Array.isArray(record.data) === false
+      ? record.data as Record<string, unknown>
+      : undefined;
+    if (record.role === "assistant" || (record.role === "system" && data?.kind === "runtime.waiting_prompt")) {
       hasAssistantState = true;
     }
   }
