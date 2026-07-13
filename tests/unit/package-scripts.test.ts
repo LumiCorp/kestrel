@@ -125,7 +125,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
 
   assert.equal(
     rootPackage.scripts?.["web:prepare"],
-    "pnpm run sdk:build && pnpm run next:build",
+    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run sdk:build && pnpm run next:build",
   );
   assert.equal(
     rootPackage.scripts?.["web:build"],
