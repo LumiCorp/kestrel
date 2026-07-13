@@ -67,6 +67,12 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
           timestamp: "2026-05-22T00:00:00.000Z",
         },
       ],
+      projectContext: {
+        projectId: "project-atlas",
+        contextRevisionId: "revision-7",
+        contextRevision: 7,
+        content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+      },
       workspace: {
         workspaceRoot: "/tmp/project",
       },
@@ -104,6 +110,12 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
   assert.equal(event?.payload.toolBatchCheckpointSize, 7);
   assert.deepEqual(event?.payload.workspace, {
     workspaceRoot: "/tmp/project",
+  });
+  assert.deepEqual(event?.payload.projectContext, {
+    projectId: "project-atlas",
+    contextRevisionId: "revision-7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
   });
   assert.deepEqual(event?.payload.skillPack, {
     id: "skill-pack:review",

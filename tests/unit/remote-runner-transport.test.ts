@@ -86,6 +86,7 @@ test("RemoteRunnerTransport preserves streamed runner events over SSE", async ()
         runId: "run-1",
         payload: {
           result: {
+            assistantText: "Remote runner completed.",
             output: {
               status: "COMPLETED",
               sessionId: "session-1",

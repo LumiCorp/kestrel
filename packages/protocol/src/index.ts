@@ -2,6 +2,12 @@ export const RUNNER_HEALTH_VERSION = "runner-health-v1" as const;
 export const RUNNER_SERVICE_NAME = "kestrel-runner" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v1" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v2" as const;
+export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
+
+export interface RunnerWaitingPromptHistoryDataV2 {
+  kind: typeof RUNNER_WAITING_PROMPT_HISTORY_KIND;
+  runId?: string | undefined;
+}
 
 export const RUNNER_RUN_STREAM_EVENT_TYPES = [
   "run.started",

@@ -97,7 +97,9 @@ export class TuiRunController {
     const workspace = await this.context.refreshWorkspaceForActiveSession();
     const baseHistorySource =
       pendingWait !== undefined
-        ? state.transcript.filter((line) => line.role !== "system")
+        ? state.transcript.filter((line) =>
+            line.role !== "system" || isRuntimeWaitingPromptHistoryLine(line)
+          )
         : state.transcript;
     const historySource =
       input.modelHistoryMessage !== undefined
@@ -275,7 +277,13 @@ export class TuiRunController {
         if (shouldAppendWaitLine) {
           const waitLineData = {
             waitEventType: waitEvent,
-            ...(waitPrompt === undefined ? {} : { prompt: waitPrompt }),
+            ...(waitPrompt === undefined
+              ? {}
+              : {
+                  kind: "runtime.waiting_prompt" as const,
+                  runId: output.runId,
+                  prompt: waitPrompt,
+                }),
           };
           await this.context.appendHistoryLine(
             "system",
@@ -875,6 +883,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   }
 
   return value as Record<string, unknown>;
+}
+
+function isRuntimeWaitingPromptHistoryLine(line: TranscriptLine): boolean {
+  return line.role === "system" && asRecord(line.data)?.kind === "runtime.waiting_prompt";
 }
 
 function stringifyDiagnosticDetails(value: unknown): string | undefined {

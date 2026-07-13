@@ -98,6 +98,7 @@ export class ProtocolClient {
     }
     this.pending.clear();
     await this.transport.stop();
+    this.listeners.clear();
   }
 
   private start(): void {
@@ -132,9 +133,18 @@ export class ProtocolClient {
       return;
     }
 
-    const event = validateV2TerminalResult(decoded);
+    let event: RunnerEvent;
+    try {
+      event = validateV2TerminalResult(decoded);
+    } catch (error) {
+      event = createProtocolErrorEvent(decoded, error);
+    }
     for (const listener of this.listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // Listener failures must not prevent terminal request settlement.
+      }
     }
 
     const commandId = event.commandId;
@@ -178,6 +188,19 @@ function validateV2TerminalResult(event: RunnerEvent): RunnerEvent {
     } as unknown as RunnerEvent;
   }
   return event;
+}
+
+function createProtocolErrorEvent(event: RunnerEvent, cause: unknown): RunnerEvent {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return {
+    ...event,
+    type: "runner.error",
+    payload: {
+      code: "RUNNER_PROTOCOL_INVALID",
+      message: `Invalid ${event.type} terminal payload: ${detail}`,
+      details: { eventType: event.type },
+    },
+  } as RunnerEvent;
 }
 
 function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {

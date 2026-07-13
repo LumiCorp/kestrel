@@ -5,6 +5,35 @@ import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
 import { createWebRunnerAdapter } from "../../src/web/index.js";
 import type { ProtocolTransport } from "../../cli/client/ProtocolClient.js";
 
+function createTerminalResult(input: {
+  sessionId: string;
+  runId: string;
+  status: "COMPLETED" | "FAILED";
+  assistantText: string | null;
+}) {
+  return {
+    assistantText: input.assistantText,
+    output: {
+      status: input.status,
+      sessionId: input.sessionId,
+      runId: input.runId,
+      quality: {
+        citationCoverage: 0,
+        unresolvedClaims: 0,
+        reworkRate: 0,
+        thrashIndex: 0,
+      },
+      errors: [],
+      telemetry: {
+        stepsExecuted: input.status === "COMPLETED" ? 1 : 0,
+        toolCalls: 0,
+        modelCalls: input.status === "COMPLETED" ? 1 : 0,
+        durationMs: 2,
+      },
+    },
+  };
+}
+
 class MockTransport implements ProtocolTransport {
   private handlers:
     | {
@@ -104,18 +133,12 @@ class MockTransport implements ProtocolTransport {
           runId: "run-1",
           payload: {
             result: {
-              output: {
-                status: "COMPLETED",
+              ...createTerminalResult({
                 sessionId: command.payload.turn?.sessionId ?? "unknown",
                 runId: "run-1",
-                errors: [],
-                telemetry: {
-                  stepsExecuted: 1,
-                  toolCalls: 0,
-                  modelCalls: 1,
-                  durationMs: 2,
-                },
-              },
+                status: "COMPLETED",
+                assistantText: "done",
+              }),
               finalizedPayload: {
                 message: "done",
               },
@@ -150,6 +173,13 @@ class MockTransport implements ProtocolTransport {
           commandId: command.id,
           payload: {
             sessionId: "session-web",
+            runId: "run-1",
+            result: createTerminalResult({
+              sessionId: "session-web",
+              runId: "run-1",
+              status: "FAILED",
+              assistantText: null,
+            }),
           },
         }),
       );
@@ -443,6 +473,12 @@ class SlowRunTransport implements ProtocolTransport {
             payload: {
               sessionId: active.sessionId,
               runId: active.runId,
+              result: createTerminalResult({
+                sessionId: active.sessionId,
+                runId: active.runId,
+                status: "FAILED",
+                assistantText: null,
+              }),
             },
           }),
         );
@@ -459,6 +495,12 @@ class SlowRunTransport implements ProtocolTransport {
           payload: {
             sessionId: payload.sessionId ?? "session-durable",
             ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+            result: createTerminalResult({
+              sessionId: payload.sessionId ?? "session-durable",
+              runId: payload.runId ?? "run-durable",
+              status: "FAILED",
+              assistantText: null,
+            }),
           },
         }),
       );
@@ -501,20 +543,12 @@ class SlowRunTransport implements ProtocolTransport {
         runId,
         sessionId,
         payload: {
-          result: {
-            output: {
-              status: "COMPLETED",
-              sessionId,
-              runId,
-              errors: [],
-              telemetry: {
-                stepsExecuted: 1,
-                toolCalls: 0,
-                modelCalls: 1,
-                durationMs: 2,
-              },
-            },
-          },
+          result: createTerminalResult({
+            sessionId,
+            runId,
+            status: "COMPLETED",
+            assistantText: "done",
+          }),
         },
       }),
     );

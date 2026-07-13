@@ -14,6 +14,7 @@ import type {
 } from "./contracts.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
+import { extractWaitPrompt } from "../runtime/waitForPrompt.js";
 
 export class TurnOrchestrator {
   private readonly executor: TurnExecutor;
@@ -88,6 +89,7 @@ export class TurnOrchestrator {
       assistantText: execution.assistantText ?? null,
       status: execution.output.status,
       waitFor: execution.output.waitFor,
+      runId: execution.output.runId,
       timestamp: updatedAt,
     });
     const updatedThread: ThreadRecord = {
@@ -243,9 +245,37 @@ export function mergeSubmittedHistoryMetadata(
   }
   const currentHistory = normalizeSubmittedHistory(current?.history) ?? [];
   const submittedHistory = normalizeSubmittedHistory(submitted.history) ?? [];
+  const currentWaitingPrompts = new Map(
+    currentHistory.flatMap((line) => {
+      const runId = readWaitingPromptRunId(line);
+      return runId === undefined ? [] : [[runId, line] as const];
+    }),
+  );
+  const submittedWaitingPromptRunIds = new Set(
+    submittedHistory.flatMap((line) => {
+      const runId = readWaitingPromptRunId(line);
+      return runId === undefined ? [] : [runId];
+    }),
+  );
+  const reconciledCurrentHistory = currentHistory.filter((line) => {
+    const runId = readWaitingPromptRunId(line);
+    return runId === undefined || submittedWaitingPromptRunIds.has(runId) === false;
+  });
+  const reconciledSubmittedHistory = submittedHistory.map((line) => {
+    const runId = readWaitingPromptRunId(line);
+    return runId === undefined ? line : currentWaitingPrompts.get(runId) ?? line;
+  });
   const seen = new Set<string>();
+  const seenWaitingPromptRunIds = new Set<string>();
   const history = normalizeSubmittedHistory(
-    [...currentHistory, ...submittedHistory].filter((line) => {
+    [...reconciledCurrentHistory, ...reconciledSubmittedHistory].filter((line) => {
+      const waitingPromptRunId = readWaitingPromptRunId(line);
+      if (waitingPromptRunId !== undefined) {
+        if (seenWaitingPromptRunIds.has(waitingPromptRunId)) {
+          return false;
+        }
+        seenWaitingPromptRunIds.add(waitingPromptRunId);
+      }
       const key = `${line.role}\u0000${line.timestamp}\u0000${line.text}`;
       if (seen.has(key)) {
         return false;
@@ -270,6 +300,7 @@ function appendAssistantHistory(input: {
   assistantText: string | null;
   status: SubmitTurnResult["output"]["status"];
   waitFor?: SubmitTurnResult["output"]["waitFor"] | undefined;
+  runId: string;
   timestamp: string;
 }): Record<string, unknown> | undefined {
   const entry = input.status === "COMPLETED" && input.assistantText !== null
@@ -284,7 +315,11 @@ function appendAssistantHistory(input: {
   const metadata = input.metadata ?? {};
   const history = Array.isArray(metadata.history) ? metadata.history : [];
   const last = history[history.length - 1];
-  if (isRecord(last) && last.role === entry.role && last.text === entry.text) {
+  const duplicateLastEntry = isRecord(last)
+    && last.role === entry.role
+    && last.text === entry.text
+    && (entry.role !== "system" || readWaitingPromptRunId(last) === input.runId);
+  if (duplicateLastEntry) {
     return metadata;
   }
 
@@ -296,7 +331,9 @@ function appendAssistantHistory(input: {
         role: entry.role,
         text: entry.text,
         timestamp: input.timestamp,
-        ...(entry.role === "system" ? { data: { kind: "runtime.waiting_prompt" } } : {}),
+        ...(entry.role === "system"
+          ? { data: { kind: "runtime.waiting_prompt", runId: input.runId } }
+          : {}),
       },
     ],
   };
@@ -305,16 +342,20 @@ function appendAssistantHistory(input: {
 function readWaitingPrompt(
   waitFor: SubmitTurnResult["output"]["waitFor"] | undefined,
 ): { role: "system"; text: string } | undefined {
-  if (isRecord(waitFor) === false) {
+  const prompt = extractWaitPrompt(waitFor);
+  return prompt !== undefined ? { role: "system", text: prompt } : undefined;
+}
+
+function readWaitingPromptRunId(value: unknown): string | undefined {
+  if (isRecord(value) === false || value.role !== "system") {
     return undefined;
   }
-  const metadata = isRecord(waitFor.metadata) ? waitFor.metadata : undefined;
-  const prompt = metadata !== undefined && typeof metadata.prompt === "string"
-    ? metadata.prompt.trim()
-    : typeof waitFor.prompt === "string"
-      ? waitFor.prompt.trim()
-      : "";
-  return prompt.length > 0 ? { role: "system", text: prompt } : undefined;
+  const data = isRecord(value.data) ? value.data : undefined;
+  if (data?.kind !== "runtime.waiting_prompt" || typeof data.runId !== "string") {
+    return undefined;
+  }
+  const runId = data.runId.trim();
+  return runId.length > 0 ? runId : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

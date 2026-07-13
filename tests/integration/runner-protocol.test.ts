@@ -671,6 +671,67 @@ test("run.start forwards actor metadata into runtime turn input", async () => {
   await host.close();
 });
 
+test("run.start validates and forwards Project context into runtime turn input", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let capturedProjectContext: unknown;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async (input) => {
+      capturedProjectContext = input.projectContext;
+      return {
+        assistantText: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: input.runId ?? "run-project-context",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-run-project-context",
+    type: "run.start",
+    payload: {
+      profile,
+      turn: {
+        sessionId: "session-project-context",
+        message: "hello",
+        eventType: "user.message",
+        projectContext: {
+          projectId: "project-atlas",
+          contextRevisionId: "revision-7",
+          contextRevision: 7,
+          content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+        },
+      },
+    },
+  }));
+
+  assert.deepEqual(capturedProjectContext, {
+    projectId: "project-atlas",
+    contextRevisionId: "revision-7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
+  });
+  await host.close();
+});
+
 test("job.run emits started/progress/completed events with replay pointers", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

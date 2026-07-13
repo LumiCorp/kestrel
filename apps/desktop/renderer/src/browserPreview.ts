@@ -234,7 +234,8 @@ export function ensureBrowserPreviewBridge(): void {
       } as DesktopRunnerEvent;
       emit(started);
       await new Promise((resolve) => setTimeout(resolve, 450));
-      const completed = {
+      const assistantText = `Preview response for: ${request.message.trim()}`;
+      const completed: Extract<DesktopRunnerEvent, { type: "run.completed" }> = {
         id: crypto.randomUUID(),
         type: "run.completed",
         ts: new Date().toISOString(),
@@ -243,24 +244,69 @@ export function ensureBrowserPreviewBridge(): void {
         sessionId: request.sessionId,
         payload: {
           result: {
-            output: { status: "COMPLETED" },
+            assistantText,
+            output: {
+              status: "COMPLETED",
+              sessionId: request.sessionId,
+              runId,
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 1,
+                durationMs: 450,
+              },
+            },
             finalizedPayload: {
-              message: `Preview response for: ${request.message.trim()}`,
+              message: assistantText,
             },
           },
         },
-      } as DesktopRunnerEvent;
+      };
       emit(completed);
       return completed;
     },
-    async cancelRun(request: { sessionId: string }) {
-      return {
+    async cancelRun(request: { sessionId: string; runId?: string }) {
+      const runId = request.runId ?? crypto.randomUUID();
+      const cancelled: Extract<DesktopRunnerEvent, { type: "run.cancelled" }> = {
         id: crypto.randomUUID(),
         type: "run.cancelled",
         ts: new Date().toISOString(),
+        runId,
         sessionId: request.sessionId,
-        payload: { sessionId: request.sessionId },
-      } as DesktopRunnerEvent;
+        payload: {
+          sessionId: request.sessionId,
+          runId,
+          result: {
+            assistantText: null,
+            output: {
+              status: "FAILED",
+              sessionId: request.sessionId,
+              runId,
+              quality: {
+                citationCoverage: 0,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 0,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 0,
+              },
+            },
+          },
+        },
+      };
+      return cancelled;
     },
     async restartRuntime() {
       return { running: true, recentStdout: [], recentStderr: [], logPath: "/tmp/kestrel.log" };

@@ -71,7 +71,12 @@ function createRunHarness(input: {
   controller: TuiRunController;
   uiStore: UiStore;
   commands: Array<{ type: string; payload: Record<string, unknown> }>;
-  history: Array<{ role: string; text: string; output?: NormalizedOutput | undefined }>;
+  history: Array<{
+    role: string;
+    text: string;
+    data?: Record<string, unknown> | undefined;
+    output?: NormalizedOutput | undefined;
+  }>;
   diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }>;
   runLogs: AgentRunLogLine[];
   reasoning: ReasoningUpdateV1[];
@@ -115,7 +120,12 @@ function createRunHarness(input: {
   );
 
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
-  const history: Array<{ role: string; text: string; output?: NormalizedOutput | undefined }> = [];
+  const history: Array<{
+    role: string;
+    text: string;
+    data?: Record<string, unknown> | undefined;
+    output?: NormalizedOutput | undefined;
+  }> = [];
   const diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }> = [];
   const runLogs: AgentRunLogLine[] = [];
   const reasoning: ReasoningUpdateV1[] = [];
@@ -169,10 +179,10 @@ function createRunHarness(input: {
     appendHistoryLine: async (
       role: TranscriptLine["role"],
       text: string,
-      _data?: Record<string, unknown> | undefined,
+      data?: Record<string, unknown> | undefined,
       output?: NormalizedOutput | undefined,
     ) => {
-      history.push({ role, text, output });
+      history.push({ role, text, ...(data !== undefined ? { data } : {}), output });
     },
     persistSessionAndUi: async () => undefined,
     persistUiState: async () => undefined,
@@ -258,6 +268,86 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.tui_response_received"));
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.persist_completed"));
   assert.equal(harness.uiStore.getState().running, false);
+});
+
+test("TuiRunController tags and retains only runtime waiting prompts on continuation", async () => {
+  const waitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+    metadata: { prompt: "Which workspace should I inspect?" },
+  };
+  let callCount = 0;
+  const harness = createRunHarness({
+    sendCommand: async (type, payload) => {
+      harness.commands.push({ type, payload: payload as unknown as Record<string, unknown> });
+      callCount += 1;
+      return makeRunnerEvent({
+        type: "run.completed",
+        commandId: `command-${callCount}`,
+        payload: {
+          result: callCount === 1
+            ? {
+                assistantText: null,
+                output: {
+                  ...makeCompletedOutput("session-1", "run-waiting"),
+                  status: "WAITING" as const,
+                  waitFor,
+                },
+              }
+            : {
+                assistantText: "done",
+                output: makeCompletedOutput("session-1", "run-resumed"),
+              },
+        },
+      });
+    },
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "Inspect the workspace" });
+  const waitingLine = harness.history.at(-1);
+  assert.deepEqual(waitingLine?.data, {
+    kind: "runtime.waiting_prompt",
+    runId: "run-waiting",
+    waitEventType: "user.reply",
+    prompt: "Which workspace should I inspect?",
+  });
+
+  harness.uiStore.patch({
+    transcript: [
+      {
+        role: "system",
+        text: "Local status: connected",
+        timestamp: "2026-05-14T00:00:00.000Z",
+      },
+      {
+        role: "user",
+        text: "Inspect the workspace",
+        timestamp: "2026-05-14T00:00:01.000Z",
+      },
+      {
+        role: "system",
+        text: waitingLine!.text,
+        timestamp: "2026-05-14T00:00:02.000Z",
+        data: waitingLine!.data,
+      },
+    ],
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "Use this one" });
+  const resumedTurn = harness.commands[1]?.payload.turn as Record<string, unknown>;
+  assert.deepEqual(resumedTurn.history, [
+    {
+      role: "user",
+      text: "Inspect the workspace",
+      timestamp: "2026-05-14T00:00:01.000Z",
+    },
+    {
+      role: "system",
+      text: waitingLine!.text,
+      timestamp: "2026-05-14T00:00:02.000Z",
+      data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+    },
+  ]);
 });
 
 test("TuiRunController clears submitted wait state while blocked resume is in flight", async () => {

@@ -248,7 +248,7 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
   assert.equal(persistedText, "Final answer");
 });
 
-test("createKestrelOneAgentResponse binds Project context to runner capabilities and model-visible history", async () => {
+test("createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({
     terminal: completedTerminal("Project answer", { message: "Structured project data" }),
@@ -287,13 +287,13 @@ test("createKestrelOneAgentResponse binds Project context to runner capabilities
     | Record<string, unknown>
     | undefined;
   assert.equal(capturedInput.sessionId, "thread_project");
-  assert.deepEqual(capturedInput.history, [
-    {
-      role: "system",
-      text: "Project: Atlas\n\nProject context revision: 7",
-      timestamp: capturedInput.history?.[0]?.timestamp,
-    },
-  ]);
+  assert.deepEqual(capturedInput.history, []);
+  assert.deepEqual(capturedInput.projectContext, {
+    projectId: "project_123",
+    contextRevisionId: "revision_7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject context revision: 7",
+  });
   assert.deepEqual(kestrelOneCapabilities, {
     requestId: "req_123",
     correlationId: "req_123",

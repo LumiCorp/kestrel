@@ -157,13 +157,6 @@ export function createKestrelOneAgentResponseFromAgent(
   });
   const latestUserMessage = getLatestUserText(input.messages);
   const history = toKestrelHistory(input.messages.slice(0, -1));
-  if (input.projectContext?.systemContext) {
-    history.unshift({
-      role: "system",
-      text: input.projectContext.systemContext,
-      timestamp: new Date().toISOString(),
-    });
-  }
   const assistantMessageId = crypto.randomUUID();
   const textPartId = crypto.randomUUID();
   const reasoningPartId = crypto.randomUUID();
@@ -196,6 +189,16 @@ export function createKestrelOneAgentResponseFromAgent(
             sessionId: input.threadId,
             message: latestUserMessage,
             history,
+            ...(input.projectContext
+              ? {
+                  projectContext: {
+                    projectId: input.projectContext.projectId,
+                    contextRevisionId: input.projectContext.contextRevisionId,
+                    contextRevision: input.projectContext.contextRevision,
+                    content: input.projectContext.systemContext,
+                  },
+                }
+              : {}),
             clientCapabilities: {
               kestrelOne: {
                 requestId: input.correlation.requestId,
@@ -287,15 +290,14 @@ function getLatestUserText(messages: UIMessage[]): string {
   return text || "Continue.";
 }
 
-function toKestrelHistory(messages: UIMessage[]) {
+function toKestrelHistory(messages: UIMessage[]): RunnerHistoryEntry[] {
   return messages
     .filter(
       (
         message
-      ): message is UIMessage & { role: "user" | "assistant" | "system" } =>
+      ): message is UIMessage & { role: "user" | "assistant" } =>
         message.role === "user" ||
-        message.role === "assistant" ||
-        message.role === "system"
+        message.role === "assistant"
     )
     .map((message) => ({
       role: message.role,

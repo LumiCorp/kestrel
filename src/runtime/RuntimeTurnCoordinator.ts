@@ -109,7 +109,9 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
         : undefined;
     const session = result.session ?? await this.getSession?.(input.sessionId);
     const assistantText = result.output.status === "COMPLETED"
-      ? readAssistantText(asRecord(session?.state.agent)?.assistantText)
+      ? result.assistantText !== undefined
+        ? result.assistantText
+        : readAssistantText(asRecord(session?.state.agent)?.assistantText)
       : null;
     const affordanceInput = {
       session,
@@ -182,6 +184,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     return {
       prepared,
       output: result.output,
+      assistantText: result.assistantText,
       session: result.session,
       finalizedPayload: result.finalizedPayload,
       threadStatus,
@@ -238,6 +241,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
 interface RuntimeTurnExecutionResult {
   prepared: PreparedRuntimeTurn;
   output: NormalizedOutput;
+  assistantText?: string | null | undefined;
   session?: SessionRecord | undefined;
   finalizedPayload?: unknown | undefined;
   threadStatus?: ThreadStatusSnapshot | null | undefined;

@@ -5,6 +5,7 @@ import {
   buildModelHistoryWindow,
   normalizeSubmittedHistory,
 } from "../../src/runtime/submittedHistory.js";
+import { mergeSubmittedHistoryMetadata } from "../../src/orchestration/TurnOrchestrator.js";
 
 test("normalizeSubmittedHistory keeps conversation rows and drops UI-only rows", () => {
   const history = normalizeSubmittedHistory([
@@ -17,7 +18,7 @@ test("normalizeSubmittedHistory keeps conversation rows and drops UI-only rows",
       role: "system",
       text: "Would you like me to proceed?",
       timestamp: "2026-05-13T12:00:30.000Z",
-      data: { kind: "runtime.waiting_prompt" },
+      data: { kind: "runtime.waiting_prompt", runId: " run-waiting " },
     },
     {
       role: "user",
@@ -64,7 +65,7 @@ test("tagged runtime waiting prompts survive repeated history normalization", ()
       role: "system",
       text: "Would you like me to begin implementation?",
       timestamp: "2026-05-13T12:01:00.000Z",
-      data: { kind: "runtime.waiting_prompt" },
+      data: { kind: "runtime.waiting_prompt", runId: " run-waiting " },
     },
     {
       role: "user",
@@ -82,8 +83,76 @@ test("tagged runtime waiting prompts survive repeated history normalization", ()
     role: "system",
     text: "Would you like me to begin implementation?",
     timestamp: "2026-05-13T12:01:00.000Z",
-    data: { kind: "runtime.waiting_prompt" },
+    data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
   });
+});
+
+test("submitted waiting prompt echoes reuse runtime identity and canonical placement", () => {
+  const merged = mergeSubmittedHistoryMetadata(
+    {
+      history: [{
+        role: "system",
+        text: "Which workspace should I inspect?",
+        timestamp: "2026-05-13T12:01:00.000Z",
+        data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+      }],
+    },
+    {
+      history: [
+        {
+          role: "user",
+          text: "Inspect the workspace",
+          timestamp: "2026-05-13T12:00:00.000Z",
+        },
+        {
+          role: "system",
+          text: "Which workspace should I inspect?",
+          timestamp: "2026-05-13T12:01:00.250Z",
+          data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(merged?.history, [
+    {
+      role: "user",
+      text: "Inspect the workspace",
+      timestamp: "2026-05-13T12:00:00.000Z",
+    },
+    {
+      role: "system",
+      text: "Which workspace should I inspect?",
+      timestamp: "2026-05-13T12:01:00.000Z",
+      data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+    },
+  ]);
+});
+
+test("identical waiting prompt text from different runs remains distinct", () => {
+  const merged = mergeSubmittedHistoryMetadata(
+    {
+      history: [{
+        role: "system",
+        text: "Should I continue?",
+        timestamp: "2026-05-13T12:01:00.000Z",
+        data: { kind: "runtime.waiting_prompt", runId: "run-one" },
+      }],
+    },
+    {
+      history: [{
+        role: "system",
+        text: "Should I continue?",
+        timestamp: "2026-05-13T12:02:00.000Z",
+        data: { kind: "runtime.waiting_prompt", runId: "run-two" },
+      }],
+    },
+  );
+
+  assert.deepEqual(
+    (merged?.history as Array<{ data?: { runId?: string } }>).map((line) => line.data?.runId),
+    ["run-one", "run-two"],
+  );
 });
 
 test("normalizeSubmittedHistory preserves attachments on retained rows", () => {

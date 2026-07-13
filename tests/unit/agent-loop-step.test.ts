@@ -1729,7 +1729,7 @@ test("agent loop persists compiled decision verification for downstream finalize
   });
 });
 
-test("agent loop sends workspace and skill pack context in the user prompt, not system messages", async () => {
+test("agent loop sends workspace, Project, and skill pack context in the user prompt, not system messages", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   ctx.event.payload.workspace = {
@@ -1744,6 +1744,12 @@ test("agent loop sends workspace and skill pack context in the user prompt, not 
     label: "Research",
     instructions: ["Prefer grounded sources."],
     allowedTools: ["internet.search"],
+  };
+  ctx.event.payload.projectContext = {
+    projectId: "project-atlas",
+    contextRevisionId: "revision-7",
+    contextRevision: 7,
+    content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
   };
 
   await buildStep()(ctx, {
@@ -1770,6 +1776,10 @@ test("agent loop sends workspace and skill pack context in the user prompt, not 
   assert.match(userMessage as string, /<runtime_context>/u);
   assert.match(userMessage as string, /Workspace: workspace-1 \(Project\)\./u);
   assert.match(userMessage as string, /- root: \/repo/u);
+  assert.match(userMessage as string, /Project context:/u);
+  assert.match(userMessage as string, /- projectId: project-atlas/u);
+  assert.match(userMessage as string, /- contextRevision: 7/u);
+  assert.match(userMessage as string, /Prefer verified sources\./u);
   assert.match(userMessage as string, /Skill pack: research \(Research\)\./u);
   assert.match(userMessage as string, /Prefer grounded sources\./u);
 });

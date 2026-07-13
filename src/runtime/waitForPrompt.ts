@@ -3,6 +3,7 @@ import { formatModeSwitchCommand, formatModeSwitchReply, formatUserFacingModeLab
 export interface WaitForLike {
   eventType?: string | undefined;
   metadata?: unknown;
+  prompt?: unknown;
 }
 
 export function extractWaitPrompt(waitFor: WaitForLike | undefined): string | undefined {
@@ -11,7 +12,13 @@ export function extractWaitPrompt(waitFor: WaitForLike | undefined): string | un
   }
 
   const metadata = asRecord(waitFor.metadata);
-  return readFirstNonEmptyString(metadata, ["question", "prompt", "text", "message"]);
+  const metadataPrompt = readFirstNonEmptyString(metadata, ["question", "prompt", "text", "message"]);
+  if (metadataPrompt !== undefined) {
+    return metadataPrompt;
+  }
+  return typeof waitFor.prompt === "string" && waitFor.prompt.trim().length > 0
+    ? waitFor.prompt.trim()
+    : undefined;
 }
 
 export function extractUserReplyQuestion(waitFor: WaitForLike | undefined): string | undefined {

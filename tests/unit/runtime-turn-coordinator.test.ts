@@ -501,6 +501,7 @@ test("RuntimeTurnCoordinatorService preserves an explicit null finalized payload
     eventType: "user.message",
   });
 
+  assert.equal(result.assistantText, "Done.");
   assert.equal(result.finalizedPayload, null);
   assert.equal(persistedPayloadReads, 0);
 });

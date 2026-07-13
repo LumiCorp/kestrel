@@ -166,6 +166,7 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   const releaseScript = await readFile(path.join(ROOT, "scripts", "check-cli-release.ts"), "utf8");
 
   assert.match(packageScript, /packPublicProtocolPackage\(\{ repoRoot, packDir: localPackageDir \}\)/u);
+  assert.match(packageScript, /resolveRuntimePackageDependencies\(\{/u);
   assert.match(packageScript, /resolveRuntimeDependencyInstallArgs\(localPackages\)/u);
   assert.match(packageScript, /rmSync\(localPackageDir, \{ recursive: true, force: true \}\)/u);
   assert.match(packageScript, /prepareDesktopPostgresBundle\(\{/u);
@@ -201,6 +202,7 @@ test("Desktop package stage preserves npm overrides for static runtime audits", 
   assert.match(resourcesScript, /overrides\?: Record<string, string> \| undefined/u);
   assert.match(resourcesScript, /\.\.\.\(desktopPackage\.overrides !== undefined \? \{ overrides: desktopPackage\.overrides \} : \{\}\)/u);
   assert.match(resourcesScript, /resolveRuntimeDependencyInstallArgs\(input\?\.localPackages\)/u);
+  assert.match(resourcesScript, /resolveRuntimePackageDependencies\(\{/u);
   assert.doesNotMatch(resourcesScript, /"packages\/protocol"/u);
   assert.doesNotMatch(resourcesScript, /"apps\/web"/u);
   assert.doesNotMatch(resourcesScript, /rootPackage\.devDependencies\?\.typescript/u);

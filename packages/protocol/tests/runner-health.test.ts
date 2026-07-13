@@ -6,6 +6,7 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
   RUNNER_RUN_STREAM_EVENT_TYPES,
+  RUNNER_WAITING_PROMPT_HISTORY_KIND,
   createRunnerHealthV1,
   parseRunnerResultV2,
   parseRunnerTerminalPayloadV2,
@@ -88,6 +89,7 @@ test("every v2 terminal payload requires a result while operator results are val
 });
 
 test("public run stream event names include tool and console activity", () => {
+  assert.equal(RUNNER_WAITING_PROMPT_HISTORY_KIND, "runtime.waiting_prompt");
   assert.deepEqual(RUNNER_RUN_STREAM_EVENT_TYPES, [
     "run.started",
     "run.cancelled",

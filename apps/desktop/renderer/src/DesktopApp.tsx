@@ -41,6 +41,7 @@ import {
   appendRendererTranscript,
   getRendererTurnContinuation,
   getTerminalWaitEventType,
+  getTerminalWaitingPrompt,
   readDesktopRendererState,
   selectRendererThread,
   serializeDesktopRendererState,
@@ -204,16 +205,30 @@ export function DesktopApp() {
       });
       const assistantText = extractTerminalMessage(terminal);
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
-      if (assistantText !== undefined) {
+      const waitingPrompt = getTerminalWaitingPrompt(terminal);
+      const terminalLine = assistantText !== undefined
+        ? {
+            role: "assistant" as const,
+            text: assistantText,
+            timestamp: new Date().toISOString(),
+          }
+        : waitingPrompt !== undefined
+          ? {
+              role: "system" as const,
+              text: waitingPrompt.text,
+              timestamp: new Date().toISOString(),
+              data: {
+                kind: "runtime.waiting_prompt" as const,
+                runId: waitingPrompt.runId,
+              },
+            }
+          : undefined;
+      if (terminalLine !== undefined) {
         setState((current) => {
           if (current === undefined) {
             return current;
           }
-          const appended = appendRendererTranscript(current, threadId, {
-            role: "assistant",
-            text: assistantText,
-            timestamp: new Date().toISOString(),
-          });
+          const appended = appendRendererTranscript(current, threadId, terminalLine);
           return updateRendererThread(appended, threadId, (thread) => ({
             ...thread,
             pendingWaitEventType,

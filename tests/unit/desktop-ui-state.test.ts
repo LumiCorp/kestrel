@@ -5,6 +5,7 @@ import {
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
+  parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
 
@@ -35,5 +36,42 @@ test("Desktop UI state rejects unknown storage keys and non-string values", () =
   assert.throws(
     () => parseDesktopLegacyUiStateEntries({ "kchat:web:theme-mode": { mode: "dark" } }),
     /must be a string/u,
+  );
+});
+
+test("Desktop run requests admit only tagged runtime system prompts", () => {
+  const timestamp = "2026-07-09T12:00:00.000Z";
+  const request = parseDesktopRunTurnRequest({
+    sessionId: "session-1",
+    message: "Continue",
+    eventType: "user.reply",
+    history: [
+      { role: "user", text: "Start", timestamp },
+      {
+        role: "system",
+        text: "Which workspace?",
+        timestamp,
+        data: { kind: "runtime.waiting_prompt", runId: "  run-waiting  ", ignored: true },
+      },
+    ],
+  });
+
+  assert.deepEqual(request.history, [
+    { role: "user", text: "Start", timestamp },
+    {
+      role: "system",
+      text: "Which workspace?",
+      timestamp,
+      data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+    },
+  ]);
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      history: [{ role: "system", text: "Local status", timestamp }],
+    }),
+    /must be tagged as runtime\.waiting_prompt/u,
   );
 });
