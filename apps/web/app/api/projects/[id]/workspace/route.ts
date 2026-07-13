@@ -1,5 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import * as schema from "@/drizzle/schema";
 import { workspaceSourceSchema } from "@/lib/environments/contracts";
 import {
   createOrConfigureProjectWorkspace,
@@ -45,16 +47,37 @@ export async function GET(
               ),
           })
         : Promise.resolve(null),
-      knowledgeDb.query.toolConnectionResources.findMany({
-        where: (table, { and, eq }) =>
+      knowledgeDb
+        .select({ resource: schema.toolConnectionResources })
+        .from(schema.userToolConnections)
+        .innerJoin(
+          schema.userToolConnectionResources,
+          eq(
+            schema.userToolConnectionResources.connectionId,
+            schema.userToolConnections.id
+          )
+        )
+        .innerJoin(
+          schema.toolConnectionResources,
+          eq(
+            schema.toolConnectionResources.id,
+            schema.userToolConnectionResources.resourceId
+          )
+        )
+        .where(
           and(
-            eq(table.organizationId, organizationId),
-            eq(table.providerKey, "github"),
-            eq(table.resourceType, "repository"),
-            eq(table.enabled, true)
-          ),
-        orderBy: (table, { asc }) => [asc(table.label)],
-      }),
+            eq(schema.userToolConnections.organizationId, organizationId),
+            eq(schema.userToolConnections.providerKey, "github"),
+            eq(schema.userToolConnections.userId, session.user.id),
+            eq(schema.userToolConnections.status, "connected"),
+            eq(schema.userToolConnectionResources.canPull, true),
+            eq(schema.toolConnectionResources.organizationId, organizationId),
+            eq(schema.toolConnectionResources.resourceType, "repository"),
+            eq(schema.toolConnectionResources.enabled, true)
+          )
+        )
+        .orderBy(schema.toolConnectionResources.label)
+        .then((rows) => rows.map((row) => row.resource)),
       environments.length > 0
         ? knowledgeDb.query.environmentCapabilityGrants.findMany({
             where: (table, { and, eq, inArray, notInArray }) =>

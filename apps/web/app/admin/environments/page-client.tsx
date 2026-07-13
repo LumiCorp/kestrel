@@ -15,7 +15,6 @@ import type {
   Environment,
   EnvironmentCapabilityGrant,
   EnvironmentWorkspace,
-  ToolConnectionResource,
   WorkspaceBackup,
 } from "@/drizzle/schema";
 
@@ -26,10 +25,8 @@ type CreateEnvironmentResponse = {
 
 export function EnvironmentsAdminClient({
   initialEnvironments,
-  initialResources,
 }: {
   initialEnvironments: Environment[];
-  initialResources: ToolConnectionResource[];
 }) {
   const [environments, setEnvironments] = useState(initialEnvironments);
   const [name, setName] = useState("");
@@ -142,7 +139,7 @@ export function EnvironmentsAdminClient({
 
   async function setGitHubGrant(input: {
     environmentId: string;
-    resourceId: string;
+    resourceId: string | null;
     capabilityKey:
       | "repository.read"
       | "repository.push_agent_branch"
@@ -283,14 +280,12 @@ export function EnvironmentsAdminClient({
           <div>
             <CardTitle>Organization tooling</CardTitle>
             <p className="mt-1 text-muted-foreground text-sm">
-              Connect the GitHub App once, then grant repositories to each
-              Environment explicitly.
+              Members link their own GitHub identities. Environment policy sets
+              the maximum GitHub capabilities any run may receive.
             </p>
           </div>
           <Button asChild variant="outline">
-            <a href="/api/admin/integrations/github/install">
-              Connect GitHub App
-            </a>
+            <a href="/dashboard/user">Manage my GitHub connection</a>
           </Button>
         </CardHeader>
       </Card>
@@ -389,129 +384,54 @@ export function EnvironmentsAdminClient({
                     Update runtime
                   </Button>
                 </div>
-                {initialResources.some(
-                  (resource) =>
-                    resource.providerKey === "github" &&
-                    resource.resourceType === "repository"
-                ) ? (
-                  <div className="space-y-2 border-t pt-4">
-                    <div className="font-medium text-sm">
-                      GitHub repositories
-                    </div>
-                    {initialResources
-                      .filter(
-                        (resource) =>
-                          resource.providerKey === "github" &&
-                          resource.resourceType === "repository"
-                      )
-                      .map((resource) => {
-                        const readGrant = grants.find(
-                          (grant) =>
-                            grant.environmentId === environment.id &&
-                            grant.resourceId === resource.id &&
-                            grant.capabilityKey === "repository.read"
-                        );
-                        const pushGrant = grants.find(
-                          (grant) =>
-                            grant.environmentId === environment.id &&
-                            grant.resourceId === resource.id &&
-                            grant.capabilityKey ===
-                              "repository.push_agent_branch"
-                        );
-                        const approvedActions = [
-                          ["issue.write", "Issues"],
-                          ["pull_request.write", "Pull requests"],
-                          ["merge.write", "Merges"],
-                          ["release.write", "Releases"],
-                          ["workflow.dispatch", "Workflows"],
-                        ] as const;
-                        return (
-                          <div
-                            className="flex flex-wrap items-center gap-2 rounded-md border p-2"
-                            key={resource.id}
-                          >
-                            <span className="mr-auto truncate text-sm">
-                              {resource.label}
-                            </span>
-                            <Button
-                              onClick={() =>
-                                void setGitHubGrant({
-                                  environmentId: environment.id,
-                                  resourceId: resource.id,
-                                  capabilityKey: "repository.read",
-                                  approvalMode:
-                                    readGrant?.approvalMode === "auto"
-                                      ? "deny"
-                                      : "auto",
-                                })
-                              }
-                              size="sm"
-                              variant={
-                                readGrant?.approvalMode === "auto"
-                                  ? "default"
-                                  : "outline"
-                              }
-                            >
-                              Read
-                            </Button>
-                            <Button
-                              onClick={() =>
-                                void setGitHubGrant({
-                                  environmentId: environment.id,
-                                  resourceId: resource.id,
-                                  capabilityKey: "repository.push_agent_branch",
-                                  approvalMode:
-                                    pushGrant?.approvalMode === "auto"
-                                      ? "deny"
-                                      : "auto",
-                                })
-                              }
-                              size="sm"
-                              variant={
-                                pushGrant?.approvalMode === "auto"
-                                  ? "default"
-                                  : "outline"
-                              }
-                            >
-                              Push agent branches
-                            </Button>
-                            {approvedActions.map(([capabilityKey, label]) => {
-                              const grant = grants.find(
-                                (candidate) =>
-                                  candidate.environmentId === environment.id &&
-                                  candidate.resourceId === resource.id &&
-                                  candidate.capabilityKey === capabilityKey
-                              );
-                              return (
-                                <Button
-                                  key={capabilityKey}
-                                  onClick={() =>
-                                    void setGitHubGrant({
-                                      environmentId: environment.id,
-                                      resourceId: resource.id,
-                                      capabilityKey,
-                                      approvalMode:
-                                        grant?.approvalMode === "ask"
-                                          ? "deny"
-                                          : "ask",
-                                    })
-                                  }
-                                  size="sm"
-                                  variant={
-                                    grant?.approvalMode === "ask"
-                                      ? "default"
-                                      : "outline"
-                                  }
-                                >
-                                  {label} · approval
-                                </Button>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
+                <div className="space-y-2 border-t pt-4">
+                  <div className="font-medium text-sm">
+                    GitHub capability ceiling
                   </div>
-                ) : null}
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+                    {(
+                      [
+                        ["repository.read", "Read", "auto"],
+                        [
+                          "repository.push_agent_branch",
+                          "Push agent branches",
+                          "auto",
+                        ],
+                        ["issue.write", "Issues", "ask"],
+                        ["pull_request.write", "Pull requests", "ask"],
+                        ["merge.write", "Merges", "ask"],
+                        ["release.write", "Releases", "ask"],
+                        ["workflow.dispatch", "Workflows", "ask"],
+                      ] as const
+                    ).map(([capabilityKey, label, enabledMode]) => {
+                      const grant = grants.find(
+                        (candidate) =>
+                          candidate.environmentId === environment.id &&
+                          candidate.resourceId === null &&
+                          candidate.capabilityKey === capabilityKey
+                      );
+                      const enabled = grant?.approvalMode === enabledMode;
+                      return (
+                        <Button
+                          key={capabilityKey}
+                          onClick={() =>
+                            void setGitHubGrant({
+                              environmentId: environment.id,
+                              resourceId: null,
+                              capabilityKey,
+                              approvalMode: enabled ? "deny" : enabledMode,
+                            })
+                          }
+                          size="sm"
+                          variant={enabled ? "default" : "outline"}
+                        >
+                          {label}
+                          {enabledMode === "ask" ? " · approval" : ""}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
                 {workspaces.some(
                   (workspace) => workspace.environmentId === environment.id
                 ) ? (

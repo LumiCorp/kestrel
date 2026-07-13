@@ -850,7 +850,7 @@ export const environmentWorkspaces = pgTable(
     sourceType: text("source_type", { enum: ["blank", "github"] })
       .notNull()
       .default("blank"),
-    sourceConnectionId: text("source_connection_id"),
+    sourceResourceId: text("source_resource_id"),
     sourceRepository: text("source_repository"),
     sourceDefaultBranch: text("source_default_branch"),
     status: text("status", {
@@ -917,9 +917,9 @@ export const environmentWorkspaces = pgTable(
     check(
       "environment_workspaces_source_check",
       sql`(
-        (${table.sourceType} = 'blank' and ${table.sourceRepository} is null)
+        (${table.sourceType} = 'blank' and ${table.sourceResourceId} is null and ${table.sourceRepository} is null)
         or
-        (${table.sourceType} = 'github' and ${table.sourceRepository} is not null)
+        (${table.sourceType} = 'github' and ${table.sourceResourceId} is not null and ${table.sourceRepository} is not null)
       )`
     ),
   ]
@@ -1268,6 +1268,89 @@ export const toolConnectionResources = pgTable(
       table.organizationId,
       table.providerKey
     ),
+  ]
+);
+
+export const userToolConnections = pgTable(
+  "user_tool_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key")
+      .notNull()
+      .references(() => toolProviders.key, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    authAccountId: text("auth_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["connected", "degraded", "disconnected"],
+    })
+      .notNull()
+      .default("connected"),
+    providerAccountId: text("provider_account_id").notNull(),
+    providerLogin: text("provider_login").notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+    failureCode: text("failure_code"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("user_tool_connections_org_provider_user_idx").on(
+      table.organizationId,
+      table.providerKey,
+      table.userId
+    ),
+    uniqueIndex("user_tool_connections_org_provider_account_idx").on(
+      table.organizationId,
+      table.providerKey,
+      table.authAccountId
+    ),
+    index("user_tool_connections_status_idx").on(
+      table.organizationId,
+      table.providerKey,
+      table.status
+    ),
+  ]
+);
+
+export const userToolConnectionResources = pgTable(
+  "user_tool_connection_resources",
+  {
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => userToolConnections.id, { onDelete: "cascade" }),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => toolConnectionResources.id, { onDelete: "cascade" }),
+    canPull: boolean("can_pull").notNull().default(true),
+    canPush: boolean("can_push").notNull().default(false),
+    canAdmin: boolean("can_admin").notNull().default(false),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectionId, table.resourceId] }),
+    index("user_tool_connection_resources_resource_idx").on(table.resourceId),
   ]
 );
 
@@ -2124,6 +2207,10 @@ export type EnvironmentApplication = InferSelectModel<
 export type WorkspaceBackup = InferSelectModel<typeof workspaceBackups>;
 export type ToolConnectionResource = InferSelectModel<
   typeof toolConnectionResources
+>;
+export type UserToolConnection = InferSelectModel<typeof userToolConnections>;
+export type UserToolConnectionResource = InferSelectModel<
+  typeof userToolConnectionResources
 >;
 export type EnvironmentCapabilityGrant = InferSelectModel<
   typeof environmentCapabilityGrants

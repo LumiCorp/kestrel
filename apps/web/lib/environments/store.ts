@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   type CreateEnvironmentInput,
@@ -556,36 +556,69 @@ export async function createOrConfigureProjectWorkspace(input: {
         "Project or Environment is unavailable."
       );
     }
-    if (input.source.type === "github") {
-      const source = input.source;
-      const resource =
-        await transaction.query.toolConnectionResources.findFirst({
-          where: (table, { and, eq }) =>
-            and(
-              eq(table.id, source.connectionId),
-              eq(table.organizationId, input.organizationId),
-              eq(table.providerKey, "github"),
-              eq(table.resourceType, "repository"),
-              eq(table.externalId, `repository:${source.repository}`),
-              eq(table.enabled, true)
-            ),
-        });
-      const grant = resource
+    const source = input.source;
+    const sourceResource =
+      source.type === "github"
+        ? await transaction.query.toolConnectionResources.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.id, source.resourceId),
+                eq(table.organizationId, input.organizationId),
+                eq(table.providerKey, "github"),
+                eq(table.resourceType, "repository"),
+                eq(table.enabled, true)
+              ),
+          })
+        : null;
+    if (source.type === "github") {
+      const [actorAccess] = sourceResource
+        ? await transaction
+            .select({ id: schema.userToolConnections.id })
+            .from(schema.userToolConnections)
+            .innerJoin(
+              schema.userToolConnectionResources,
+              eq(
+                schema.userToolConnectionResources.connectionId,
+                schema.userToolConnections.id
+              )
+            )
+            .where(
+              and(
+                eq(
+                  schema.userToolConnections.organizationId,
+                  input.organizationId
+                ),
+                eq(schema.userToolConnections.providerKey, "github"),
+                eq(schema.userToolConnections.userId, input.userId),
+                eq(schema.userToolConnections.status, "connected"),
+                eq(
+                  schema.userToolConnectionResources.resourceId,
+                  sourceResource.id
+                ),
+                eq(schema.userToolConnectionResources.canPull, true)
+              )
+            )
+            .limit(1)
+        : [];
+      const grant = sourceResource
         ? await transaction.query.environmentCapabilityGrants.findFirst({
             where: (table, { and, eq, notInArray }) =>
               and(
                 eq(table.environmentId, input.environmentId),
                 eq(table.providerKey, "github"),
                 eq(table.capabilityKey, "repository.read"),
-                eq(table.resourceId, resource.id),
+                or(
+                  isNull(table.resourceId),
+                  eq(table.resourceId, sourceResource.id)
+                ),
                 notInArray(table.approvalMode, ["deny"])
               ),
           })
         : null;
-      if (!(resource && grant)) {
+      if (!(sourceResource && actorAccess && grant)) {
         throw new EnvironmentContractError(
           "WORKSPACE_SOURCE_FORBIDDEN",
-          "Repository is not granted to this Environment."
+          "You or this Environment cannot read the repository."
         );
       }
     }
@@ -622,15 +655,17 @@ export async function createOrConfigureProjectWorkspace(input: {
     }
     const now = new Date();
     const workspaceId = existing?.id ?? crypto.randomUUID();
+    const sourceMetadata = sourceResource?.metadata;
     const values = {
       sourceType: input.source.type,
-      sourceConnectionId:
-        input.source.type === "github" ? input.source.connectionId : null,
-      sourceRepository:
-        input.source.type === "github" ? input.source.repository : null,
+      sourceResourceId: sourceResource?.id ?? null,
+      sourceRepository: sourceResource?.label ?? null,
       sourceDefaultBranch:
-        input.source.type === "github"
-          ? (input.source.defaultBranch ?? null)
+        sourceMetadata &&
+        typeof sourceMetadata === "object" &&
+        "defaultBranch" in sourceMetadata &&
+        typeof sourceMetadata.defaultBranch === "string"
+          ? sourceMetadata.defaultBranch
           : null,
       updatedAt: now,
     } as const;

@@ -53,7 +53,7 @@ export function ProjectWorkspaceClient({
         );
         if (payload.workspace?.sourceType === "github") {
           setSourceType("github");
-          setResourceId(payload.workspace.sourceConnectionId ?? "");
+          setResourceId(payload.workspace.sourceResourceId ?? "");
         }
       })
       .catch((error: unknown) =>
@@ -65,38 +65,32 @@ export function ProjectWorkspaceClient({
 
   const repositories = useMemo(() => {
     if (!setup) return [];
+    const grantsAllRepositories = setup.grants.some(
+      (grant) =>
+        grant.environmentId === environmentId && grant.resourceId === null
+    );
     const granted = new Set(
       setup.grants
         .filter((grant) => grant.environmentId === environmentId)
         .map((grant) => grant.resourceId)
     );
-    return setup.repositories.filter((repository) =>
-      granted.has(repository.id)
+    return setup.repositories.filter(
+      (repository) => grantsAllRepositories || granted.has(repository.id)
     );
   }, [environmentId, setup]);
 
   async function save() {
     if (!setup) return;
-    const repository = setup.repositories.find(
-      (item) => item.id === resourceId
-    );
     const response = await fetch(`/api/projects/${projectId}/workspace`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         environmentId,
         source:
-          sourceType === "github" && repository
+          sourceType === "github"
             ? {
                 type: "github",
-                connectionId: repository.id,
-                repository: repository.label,
-                defaultBranch:
-                  typeof repository.metadata === "object" &&
-                  repository.metadata !== null &&
-                  "defaultBranch" in repository.metadata
-                    ? repository.metadata.defaultBranch
-                    : undefined,
+                resourceId,
               }
             : { type: "blank" },
       }),

@@ -85,12 +85,7 @@ const blankWorkspaceSourceSchema = z.object({
 
 const githubWorkspaceSourceSchema = z.object({
   type: z.literal("github"),
-  connectionId: z.string().trim().min(1),
-  repository: z
-    .string()
-    .trim()
-    .regex(/^[^/\s]+\/[^/\s]+$/u),
-  defaultBranch: z.string().trim().min(1).max(255).optional(),
+  resourceId: z.string().uuid(),
 });
 
 export const workspaceSourceSchema = z.discriminatedUnion("type", [
