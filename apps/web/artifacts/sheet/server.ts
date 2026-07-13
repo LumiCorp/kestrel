@@ -6,11 +6,12 @@ import { createDocumentHandler } from "@/lib/artifacts/server";
 
 export const sheetDocumentHandler = createDocumentHandler<"sheet">({
   kind: "sheet",
-  onCreateDocument: async ({ title, modelId, dataStream }) => {
+  onCreateDocument: async ({ title, modelId, dataStream, organizationId }) => {
     let draftContent = "";
     const resolvedArtifactModel = await resolveRequiredLanguageModel({
       modelId,
       surface: "artifact",
+      organizationId,
     });
 
     const { fullStream } = streamObject({
@@ -46,11 +47,18 @@ export const sheetDocumentHandler = createDocumentHandler<"sheet">({
 
     return draftContent;
   },
-  onUpdateDocument: async ({ document, description, modelId, dataStream }) => {
+  onUpdateDocument: async ({
+    document,
+    description,
+    modelId,
+    dataStream,
+    organizationId,
+  }) => {
     let draftContent = "";
     const resolvedArtifactModel = await resolveRequiredLanguageModel({
       modelId,
       surface: "artifact",
+      organizationId,
     });
 
     const { fullStream } = streamObject({

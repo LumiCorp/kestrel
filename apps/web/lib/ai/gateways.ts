@@ -3,7 +3,7 @@ import "server-only";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ProviderV3 } from "@ai-sdk/provider";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getDefaultAIModel } from "./config";
 import {
@@ -18,6 +18,7 @@ import {
   shouldClearStoredGatewayCredentialForUpdate,
 } from "./gateway-credential-source";
 import {
+  buildRunPodServerlessBaseUrl,
   GATEWAY_MODALITIES,
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
@@ -29,6 +30,13 @@ import {
   selectPreferredGatewayModelId,
 } from "./gateway-utils";
 import type { ChatModel } from "./models";
+import {
+  getMatchingRunPodValidationEvidence,
+  mergeRunPodValidationEvidence,
+  preserveTrustedRunPodValidation,
+  type RunPodFetch,
+  validateRunPodToolRoundTrip,
+} from "./runpod-connection-test";
 
 export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
 export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
@@ -53,6 +61,7 @@ const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
   openai: "OpenAI",
   openrouter: "OpenRouter",
   ollama: "Ollama",
+  runpod: "RunPod",
   replicate: "Replicate",
 };
 
@@ -89,6 +98,8 @@ function getDefaultBaseUrl(provider: GatewayProvider) {
       return "http://127.0.0.1:11434/v1";
     case "openai":
       return "https://api.openai.com/v1";
+    case "runpod":
+      return null;
     default:
       return null;
   }
@@ -104,6 +115,8 @@ function getDefaultApiKeyEnvVar(provider: GatewayProvider) {
       return "OPENROUTER_API_KEY";
     case "anthropic":
       return "ANTHROPIC_API_KEY";
+    case "runpod":
+      return "RUNPOD_API_KEY";
     case "replicate":
       return "REPLICATE_API_TOKEN";
     default:
@@ -425,6 +438,7 @@ async function fetchGatewayModels(gateway: GatewayRecord) {
     case "lumi":
     case "openai":
     case "openrouter":
+    case "runpod":
       return fetchOpenAICompatibleModels(gateway);
     case "anthropic":
       return fetchAnthropicModels(gateway);
@@ -453,6 +467,7 @@ export async function listAIGatewaysWithModels() {
     knowledgeDb
       .select()
       .from(schema.aiGateways)
+      .where(isNull(schema.aiGateways.organizationId))
       .orderBy(
         asc(schema.aiGateways.provider),
         asc(schema.aiGateways.displayName)
@@ -484,7 +499,10 @@ export async function listAIGatewaysWithModels() {
   }));
 }
 
-export async function listApprovedModels(modality: GatewayModality) {
+export async function listApprovedModels(
+  modality: GatewayModality,
+  organizationId?: string
+) {
   const rows = await knowledgeDb
     .select({
       gateway: schema.aiGateways,
@@ -499,7 +517,13 @@ export async function listApprovedModels(modality: GatewayModality) {
       and(
         eq(schema.aiGatewayModels.approved, true),
         eq(schema.aiGatewayModels.modality, modality),
-        eq(schema.aiGateways.enabled, true)
+        eq(schema.aiGateways.enabled, true),
+        organizationId
+          ? or(
+              isNull(schema.aiGateways.organizationId),
+              eq(schema.aiGateways.organizationId, organizationId)
+            )
+          : isNull(schema.aiGateways.organizationId)
       )
     )
     .orderBy(
@@ -529,12 +553,14 @@ export async function listApprovedModels(modality: GatewayModality) {
   })) as GatewayCatalogModel[];
 }
 
-export async function getApprovedLanguageModels() {
-  return listApprovedModels("language");
+export async function getApprovedLanguageModels(organizationId?: string) {
+  return listApprovedModels("language", organizationId);
 }
 
-export async function getApprovedKestrelRuntimeLanguageModels() {
-  const models = await getApprovedLanguageModels();
+export async function getApprovedKestrelRuntimeLanguageModels(
+  organizationId?: string
+) {
+  const models = await getApprovedLanguageModels(organizationId);
   return models.filter((model) =>
     isKestrelRuntimeLanguageProvider(model.gatewayProvider)
   );
@@ -542,9 +568,11 @@ export async function getApprovedKestrelRuntimeLanguageModels() {
 
 export async function resolvePreferredLanguageModelId(
   selectedModelId?: string | null,
-  fallbackModelId?: string | null
+  fallbackModelId?: string | null,
+  organizationId?: string
 ) {
-  const languageModels = await getApprovedKestrelRuntimeLanguageModels();
+  const languageModels =
+    await getApprovedKestrelRuntimeLanguageModels(organizationId);
   return (
     selectPreferredGatewayModelId(
       languageModels,
@@ -555,10 +583,11 @@ export async function resolvePreferredLanguageModelId(
 }
 
 export async function getSpeechModelForLanguageSelection(
-  languageModelId?: string | null
+  languageModelId?: string | null,
+  organizationId?: string
 ) {
-  const languageModels = await getApprovedLanguageModels();
-  const speechModels = await listApprovedModels("speech");
+  const languageModels = await getApprovedLanguageModels(organizationId);
+  const speechModels = await listApprovedModels("speech", organizationId);
 
   if (speechModels.length === 0) {
     return null;
@@ -581,21 +610,26 @@ export async function getSpeechModelForLanguageSelection(
   );
 }
 
-export async function getGenerationModelsByKind(kind: "image" | "video") {
-  return listApprovedModels(kind);
+export async function getGenerationModelsByKind(
+  kind: "image" | "video",
+  organizationId?: string
+) {
+  return listApprovedModels(kind, organizationId);
 }
 
 export async function resolveGatewayModelSelection(input: {
   selection?: string | null;
   modality: GatewayModality;
+  organizationId?: string;
 }) {
-  const models = await listApprovedModels(input.modality);
+  const models = await listApprovedModels(input.modality, input.organizationId);
 
   return selectGatewayModelSelection(models, input.selection);
 }
 
 export async function createGateway(input: {
   provider: GatewayProvider;
+  endpointId?: string;
   displayName?: string;
   baseUrl?: string | null;
   apiKeyEnvVar?: string | null;
@@ -603,16 +637,26 @@ export async function createGateway(input: {
   enabled?: boolean;
   supportedModalities?: GatewayModality[];
   metadata?: Record<string, unknown> | null;
+  organizationId?: string | null;
+  deploymentId?: string | null;
+  providerConnectionId?: string | null;
 }) {
   const gatewayId = crypto.randomUUID();
   const apiKey = normalizeGatewayStoredCredential(input.apiKey);
+  const baseUrl =
+    input.provider === "runpod"
+      ? buildRunPodServerlessBaseUrl(input.endpointId)
+      : input.baseUrl || getDefaultBaseUrl(input.provider);
   const [gateway] = await knowledgeDb
     .insert(schema.aiGateways)
     .values({
       id: gatewayId,
+      organizationId: input.organizationId ?? null,
+      deploymentId: input.deploymentId ?? null,
+      providerConnectionId: input.providerConnectionId ?? null,
       provider: input.provider,
       displayName: input.displayName || getProviderDisplayName(input.provider),
-      baseUrl: input.baseUrl || getDefaultBaseUrl(input.provider),
+      baseUrl,
       apiKeyEnvVar: selectGatewayCredentialEnvVarForCreate({
         apiKey,
         apiKeyEnvVar: input.apiKeyEnvVar,
@@ -736,6 +780,7 @@ export async function syncGatewayModels(gatewayId: string) {
           null,
       }),
       gatewayProvider: gateway.provider,
+      gatewayBaseUrl: gateway.baseUrl,
     });
     savedModels.push(savedModel);
   }
@@ -773,6 +818,7 @@ export async function saveGatewayModel(input: {
   id?: string;
   gatewayId: string;
   gatewayProvider?: GatewayProvider;
+  gatewayBaseUrl?: string | null;
   rawModelId: string;
   alias?: string | null;
   modality: GatewayModality;
@@ -781,23 +827,82 @@ export async function saveGatewayModel(input: {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
-  const gatewayProvider =
-    input.gatewayProvider ||
-    (
-      await knowledgeDb.query.aiGateways.findFirst({
-        columns: { provider: true },
-        where: (table, operators) => operators.eq(table.id, input.gatewayId),
-      })
-    )?.provider;
+  const [gateway, storedModel] = await Promise.all([
+    input.gatewayProvider
+      ? Promise.resolve({
+          provider: input.gatewayProvider,
+          baseUrl: input.gatewayBaseUrl ?? null,
+        })
+      : knowledgeDb.query.aiGateways.findFirst({
+          columns: { provider: true, baseUrl: true },
+          where: (table, operators) => operators.eq(table.id, input.gatewayId),
+        }),
+    input.id
+      ? knowledgeDb.query.aiGatewayModels.findFirst({
+          columns: {
+            metadata: true,
+            rawModelId: true,
+            modality: true,
+          },
+          where: (table, operators) =>
+            operators.and(
+              operators.eq(table.id, input.id!),
+              operators.eq(table.gatewayId, input.gatewayId)
+            ),
+        })
+      : Promise.resolve(undefined),
+  ]);
+  const gatewayProvider = gateway?.provider;
+  const runPodBaseUrl =
+    gatewayProvider === "runpod" && gateway?.baseUrl
+      ? normalizeOpenAICompatibleBaseUrl(gateway.baseUrl)
+      : null;
+  const inputMetadata =
+    gatewayProvider === "runpod" && storedModel && runPodBaseUrl
+      ? preserveTrustedRunPodValidation({
+          incomingMetadata: input.metadata,
+          storedMetadata: storedModel.metadata,
+          storedRawModelId: storedModel.rawModelId,
+          storedModality: storedModel.modality,
+          nextRawModelId: input.rawModelId,
+          nextModality: input.modality,
+          baseUrl: runPodBaseUrl,
+        })
+      : gatewayProvider === "runpod"
+        ? preserveTrustedRunPodValidation({
+            incomingMetadata: input.metadata,
+            storedMetadata: null,
+            storedRawModelId: "",
+            storedModality: "",
+            nextRawModelId: input.rawModelId,
+            nextModality: input.modality,
+            baseUrl: runPodBaseUrl ?? "",
+          })
+        : input.metadata;
 
   const metadata =
     gatewayProvider != null
       ? normalizeGatewayModelMetadata({
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
-          metadata: input.metadata,
+          metadata: inputMetadata,
         })
-      : (input.metadata ?? null);
+      : (inputMetadata ?? null);
+
+  if (
+    gatewayProvider === "runpod" &&
+    (input.approved ?? true) &&
+    !(
+      runPodBaseUrl &&
+      getMatchingRunPodValidationEvidence({
+        metadata,
+        rawModelId: input.rawModelId,
+        baseUrl: runPodBaseUrl,
+      })
+    )
+  ) {
+    throw new Error("RunPod model validation is required before approval.");
+  }
 
   if (input.isDefault) {
     await knowledgeDb
@@ -858,6 +963,72 @@ export async function saveGatewayModel(input: {
   return created;
 }
 
+export async function validateRunPodGatewayModel(input: {
+  gatewayId: string;
+  modelId: string;
+  fetchImpl?: RunPodFetch;
+  now?: Date;
+}) {
+  const row = await knowledgeDb
+    .select({ gateway: schema.aiGateways, model: schema.aiGatewayModels })
+    .from(schema.aiGatewayModels)
+    .innerJoin(
+      schema.aiGateways,
+      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
+    )
+    .where(
+      and(
+        eq(schema.aiGateways.id, input.gatewayId),
+        eq(schema.aiGatewayModels.id, input.modelId)
+      )
+    )
+    .limit(1);
+  const selected = row[0];
+  if (!selected) {
+    throw new Error("Gateway model not found");
+  }
+  if (
+    selected.gateway.provider !== "runpod" ||
+    selected.model.modality !== "language"
+  ) {
+    throw new Error("RunPod language model validation is required.");
+  }
+  const apiKey = getGatewayApiKey(selected.gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(selected.gateway);
+  if (!(apiKey && baseUrl)) {
+    throw new Error("RunPod gateway credential or endpoint is missing.");
+  }
+  const evidence = await validateRunPodToolRoundTrip({
+    apiKey,
+    baseUrl,
+    model: selected.model.rawModelId,
+    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    ...(input.now ? { now: input.now } : {}),
+  });
+  const [updated] = await knowledgeDb
+    .update(schema.aiGatewayModels)
+    .set({
+      metadata: mergeRunPodValidationEvidence({
+        metadata: selected.model.metadata,
+        evidence,
+      }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.aiGatewayModels.id, input.modelId),
+        eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+        eq(schema.aiGatewayModels.rawModelId, selected.model.rawModelId),
+        eq(schema.aiGatewayModels.modality, selected.model.modality)
+      )
+    )
+    .returning();
+  if (!updated) {
+    throw new Error("Gateway model changed during RunPod validation.");
+  }
+  return { model: updated, validation: evidence };
+}
+
 type ResolvedGatewayModel = {
   gateway: GatewayRecord;
   model: GatewayCatalogModel;
@@ -866,6 +1037,7 @@ type ResolvedGatewayModel = {
 async function getResolvedGatewayModel(input: {
   selection?: string | null;
   modality: GatewayModality;
+  organizationId?: string;
 }): Promise<ResolvedGatewayModel | null> {
   const selection = await resolveGatewayModelSelection(input);
 
@@ -896,14 +1068,18 @@ async function hydrateResolvedGatewayModel(
 export async function getResolvedGatewayExecutionModel(input: {
   selection?: string | null;
   modality: GatewayModality;
+  organizationId?: string;
 }) {
   return getResolvedGatewayModel(input);
 }
 
 export async function getResolvedKestrelRuntimeExecutionModel(input: {
   selection?: string | null;
+  organizationId?: string;
 }) {
-  const models = await getApprovedKestrelRuntimeLanguageModels();
+  const models = await getApprovedKestrelRuntimeLanguageModels(
+    input.organizationId
+  );
   return hydrateResolvedGatewayModel(
     selectGatewayModelSelection(models, input.selection)
   );
@@ -956,6 +1132,7 @@ function createGatewayProvider(input: {
     case "openai":
     case "openrouter":
     case "ollama":
+    case "runpod":
       return createOpenAICompatibleProvider(input.gateway);
     case "anthropic":
       return createAnthropic({
@@ -973,10 +1150,12 @@ function createGatewayProvider(input: {
 export async function resolveLanguageModelHandle(input: {
   selection?: string | null;
   usage?: "default" | "tool-loop";
+  organizationId?: string;
 }) {
   const resolved = await getResolvedGatewayModel({
     selection: input.selection,
     modality: "language",
+    organizationId: input.organizationId,
   });
 
   if (!resolved) {

@@ -158,6 +158,7 @@ export async function resolveOptionalLanguageModel(input: {
   modelId?: string | null;
   usage?: LanguageModelUsage;
   surface: AISurface;
+  organizationId?: string;
 }): Promise<ResolvedLanguageModel | null> {
   if (getAISurfacePolicy(input.surface) !== "gateway-required") {
     throw new Error(
@@ -168,6 +169,7 @@ export async function resolveOptionalLanguageModel(input: {
   const resolved = await resolveLanguageModelHandle({
     selection: input.modelId,
     usage: input.usage,
+    organizationId: input.organizationId,
   });
 
   if (!resolved) {
@@ -185,6 +187,7 @@ export async function resolveRequiredLanguageModel(input: {
   modelId?: string | null;
   usage?: LanguageModelUsage;
   surface: AISurface;
+  organizationId?: string;
 }): Promise<ResolvedLanguageModel> {
   const resolved = await resolveOptionalLanguageModel(input);
 
@@ -192,7 +195,10 @@ export async function resolveRequiredLanguageModel(input: {
     return resolved;
   }
 
-  const approvedLanguageModels = await listApprovedModels("language");
+  const approvedLanguageModels = await listApprovedModels(
+    "language",
+    input.organizationId
+  );
 
   console.warn("Gateway model resolution failed", {
     surface: input.surface,

@@ -33,6 +33,14 @@ export type UpdateDocumentCallbackProps = {
   session: AuthSession;
 };
 
+type ScopedCreateDocumentCallbackProps = CreateDocumentCallbackProps & {
+  organizationId: string;
+};
+
+type ScopedUpdateDocumentCallbackProps = UpdateDocumentCallbackProps & {
+  organizationId: string;
+};
+
 export type DocumentHandler<T = ArtifactKind> = {
   kind: T;
   onCreateDocument: (args: CreateDocumentCallbackProps) => Promise<void>;
@@ -41,31 +49,34 @@ export type DocumentHandler<T = ArtifactKind> = {
 
 export function createDocumentHandler<T extends ArtifactKind>(config: {
   kind: T;
-  onCreateDocument: (params: CreateDocumentCallbackProps) => Promise<string>;
-  onUpdateDocument: (params: UpdateDocumentCallbackProps) => Promise<string>;
+  onCreateDocument: (
+    params: ScopedCreateDocumentCallbackProps
+  ) => Promise<string>;
+  onUpdateDocument: (
+    params: ScopedUpdateDocumentCallbackProps
+  ) => Promise<string>;
 }): DocumentHandler<T> {
   return {
     kind: config.kind,
     onCreateDocument: async (args: CreateDocumentCallbackProps) => {
+      const organizationId = (
+        args.session as typeof args.session & {
+          session?: { activeOrganizationId?: string | null };
+        }
+      ).session?.activeOrganizationId;
+      if (!organizationId) {
+        throw new Error("Active organization required");
+      }
       const draftContent = await config.onCreateDocument({
         id: args.id,
         title: args.title,
         modelId: args.modelId,
         dataStream: args.dataStream,
         session: args.session,
+        organizationId,
       });
 
       if (args.session?.user?.id) {
-        const organizationId = (
-          args.session as typeof args.session & {
-            session?: { activeOrganizationId?: string | null };
-          }
-        ).session?.activeOrganizationId;
-
-        if (!organizationId) {
-          throw new Error("Active organization required");
-        }
-
         await saveArtifactDocument({
           id: args.id,
           title: args.title,
@@ -79,25 +90,24 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
       return;
     },
     onUpdateDocument: async (args: UpdateDocumentCallbackProps) => {
+      const organizationId = (
+        args.session as typeof args.session & {
+          session?: { activeOrganizationId?: string | null };
+        }
+      ).session?.activeOrganizationId;
+      if (!organizationId) {
+        throw new Error("Active organization required");
+      }
       const draftContent = await config.onUpdateDocument({
         document: args.document,
         description: args.description,
         modelId: args.modelId,
         dataStream: args.dataStream,
         session: args.session,
+        organizationId,
       });
 
       if (args.session?.user?.id) {
-        const organizationId = (
-          args.session as typeof args.session & {
-            session?: { activeOrganizationId?: string | null };
-          }
-        ).session?.activeOrganizationId;
-
-        if (!organizationId) {
-          throw new Error("Active organization required");
-        }
-
         await saveArtifactDocument({
           id: args.document.id,
           title: args.document.title,

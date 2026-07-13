@@ -82,6 +82,7 @@ test("gateway-managed profiles use the credential broker path instead of provide
       model: "openai/gpt-5.4",
       modelCredential: {
         source: "kestrel-one",
+        organizationId: "org-acme",
         gatewayId: "gateway-openrouter",
         rawModelId: "openai/gpt-5.4",
       },

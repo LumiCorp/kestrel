@@ -185,6 +185,7 @@ export interface ToolQueueProfileConfig {
 export interface ModelCredentialReference {
   source: "kestrel-one";
   gatewayId: string;
+  organizationId: string;
   rawModelId: string;
 }
 

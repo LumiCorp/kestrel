@@ -52,8 +52,11 @@ export async function getAgentConfigForOrganization(
         responseStyle: config.responseStyle ?? "concise",
         language: config.language ?? "en",
         defaultModel:
-          (await resolvePreferredLanguageModelId(config.defaultModel)) ??
-          getDefaultAIModel(),
+          (await resolvePreferredLanguageModelId(
+            config.defaultModel,
+            null,
+            organizationId
+          )) ?? getDefaultAIModel(),
         maxStepsMultiplier: config.maxStepsMultiplier ?? 1,
         temperature: config.temperature ?? 0.7,
         searchInstructions: config.searchInstructions,

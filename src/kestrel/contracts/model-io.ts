@@ -153,7 +153,8 @@ export interface ModelResponse<TOutput = unknown> {
       | "anthropic"
       | "ollama"
       | "lmstudio"
-      | "lumi";
+      | "lumi"
+      | "runpod";
     model: string;
     endpoint: "chat" | "responses";
     requestId?: string | undefined;

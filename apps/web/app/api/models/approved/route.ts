@@ -17,15 +17,16 @@ const querySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    await requireActiveOrganization();
+    const { organizationId } = await requireActiveOrganization();
     const query = querySchema.parse(
       Object.fromEntries(request.nextUrl.searchParams.entries())
     );
 
     if (query.modality === "language" || !query.modality) {
-      const languageModels = await getApprovedLanguageModels();
+      const languageModels = await getApprovedLanguageModels(organizationId);
       const pairedSpeech = await getSpeechModelForLanguageSelection(
-        query.pairedWith
+        query.pairedWith,
+        organizationId
       );
       return NextResponse.json({
         models: languageModels,
@@ -35,12 +36,12 @@ export async function GET(request: NextRequest) {
 
     if (query.modality === "image" || query.modality === "video") {
       return NextResponse.json({
-        models: await getGenerationModelsByKind(query.modality),
+        models: await getGenerationModelsByKind(query.modality, organizationId),
       });
     }
 
     return NextResponse.json({
-      models: await listApprovedModels(query.modality),
+      models: await listApprovedModels(query.modality, organizationId),
     });
   } catch (error) {
     return errorResponse(error);

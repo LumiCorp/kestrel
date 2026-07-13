@@ -5,11 +5,12 @@ import { createDocumentHandler } from "@/lib/artifacts/server";
 
 export const textDocumentHandler = createDocumentHandler<"text">({
   kind: "text",
-  onCreateDocument: async ({ title, modelId, dataStream }) => {
+  onCreateDocument: async ({ title, modelId, dataStream, organizationId }) => {
     let draftContent = "";
     const resolvedArtifactModel = await resolveRequiredLanguageModel({
       modelId,
       surface: "artifact",
+      organizationId,
     });
 
     const { fullStream } = streamText({
@@ -34,11 +35,18 @@ export const textDocumentHandler = createDocumentHandler<"text">({
 
     return draftContent;
   },
-  onUpdateDocument: async ({ document, description, modelId, dataStream }) => {
+  onUpdateDocument: async ({
+    document,
+    description,
+    modelId,
+    dataStream,
+    organizationId,
+  }) => {
     let draftContent = "";
     const resolvedArtifactModel = await resolveRequiredLanguageModel({
       modelId,
       surface: "artifact",
+      organizationId,
     });
 
     const { fullStream } = streamText({

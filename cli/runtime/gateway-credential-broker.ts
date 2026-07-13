@@ -12,7 +12,7 @@ import type { TuiProfile } from "../contracts.js";
 
 /** Versioned runner-to-Kestrel-One credential lease contract. */
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
-  "gateway-credential-lease-v1" as const;
+  "gateway-credential-lease-v2" as const;
 export const GATEWAY_CREDENTIAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const GATEWAY_CREDENTIAL_CACHE_JITTER_MS = 30 * 1000;
 const GATEWAY_CREDENTIAL_CACHE_MAX_ENTRIES = 64;
@@ -20,6 +20,7 @@ const GATEWAY_CREDENTIAL_CACHE_MAX_ENTRIES = 64;
 export interface GatewayCredentialReference {
   source: "kestrel-one";
   gatewayId: string;
+  organizationId: string;
   rawModelId: string;
 }
 
@@ -27,8 +28,15 @@ export interface GatewayCredentialLease {
   version: typeof GATEWAY_CREDENTIAL_LEASE_VERSION;
   leaseId: string;
   gatewayId: string;
+  organizationId: string;
   rawModelId: string;
-  provider: "openai" | "openrouter" | "anthropic" | "ollama" | "lumi";
+  provider:
+    | "openai"
+    | "openrouter"
+    | "anthropic"
+    | "ollama"
+    | "lumi"
+    | "runpod";
   protocol: "openai" | "anthropic";
   baseUrl: string | null;
   apiKey: string | null;
@@ -88,6 +96,7 @@ export class GatewayCredentialBrokerClient {
         body: JSON.stringify({
           version: GATEWAY_CREDENTIAL_LEASE_VERSION,
           gatewayId: reference.gatewayId,
+          organizationId: reference.organizationId,
           rawModelId: reference.rawModelId,
         }),
       });
@@ -393,8 +402,16 @@ export function createProviderGatewayForLease(
     envConfig: {
       apiKey: lease.apiKey,
       model: lease.rawModelId,
-      providerName: lease.provider === "lumi" ? "lumi" : "openai",
-      providerLabel: lease.provider === "lumi" ? "Lumi" : "OpenAI",
+      providerName:
+        lease.provider === "lumi" || lease.provider === "runpod"
+          ? lease.provider
+          : "openai",
+      providerLabel:
+        lease.provider === "lumi"
+          ? "Lumi"
+          : lease.provider === "runpod"
+            ? "RunPod"
+            : "OpenAI",
       ...(lease.baseUrl ? { baseUrl: lease.baseUrl } : {}),
     },
   });
@@ -412,8 +429,16 @@ function parseGatewayCredentialLease(
     lease?.version !== GATEWAY_CREDENTIAL_LEASE_VERSION ||
     asNonEmptyString(lease.leaseId) === undefined ||
     lease.gatewayId !== reference.gatewayId ||
+    lease.organizationId !== reference.organizationId ||
     lease.rawModelId !== reference.rawModelId ||
-    !["openai", "openrouter", "anthropic", "ollama", "lumi"].includes(
+    ![
+      "openai",
+      "openrouter",
+      "anthropic",
+      "ollama",
+      "lumi",
+      "runpod",
+    ].includes(
       String(provider)
     ) ||
     (protocol !== "openai" && protocol !== "anthropic") ||
@@ -448,7 +473,7 @@ function isLoopbackHostname(hostname: string) {
 }
 
 function credentialCacheKey(reference: GatewayCredentialReference) {
-  return `${reference.gatewayId}\u0000${reference.rawModelId}`;
+  return `${reference.organizationId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
 }
 
 function isModelAuthenticationError(error: unknown) {

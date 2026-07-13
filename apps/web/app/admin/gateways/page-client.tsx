@@ -54,6 +54,7 @@ type Gateway = {
     | "openai"
     | "openrouter"
     | "ollama"
+    | "runpod"
     | "replicate";
   displayName: string;
   enabled: boolean;
@@ -85,12 +86,14 @@ const providerLabels: Record<Gateway["provider"], string> = {
   openai: "OpenAI",
   openrouter: "OpenRouter",
   ollama: "Ollama",
+  runpod: "RunPod",
   replicate: "Replicate",
 };
 
 const emptyGatewayForm = {
   provider: "openai" as Gateway["provider"],
   apiKey: "",
+  endpointId: "",
 };
 
 type ModelDraft = {
@@ -124,6 +127,24 @@ function isMetadataRecord(
   value: GatewayModel["metadata"]
 ): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isRunPodModelValidated(model: GatewayModel) {
+  if (!isMetadataRecord(model.metadata)) {
+    return false;
+  }
+  const evidence = model.metadata.kestrelRunPodValidation;
+  const evidenceRecord =
+    evidence && typeof evidence === "object" && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>)
+      : null;
+  return (
+    evidenceRecord !== null &&
+    evidenceRecord.version === "runpod-tool-round-trip-v2" &&
+    evidenceRecord.streaming === true &&
+    evidenceRecord.toolRoundTrip === true &&
+    evidenceRecord.rawModelId === model.rawModelId
+  );
 }
 
 function isLumiLanguageModel(gateway: Gateway, model: GatewayModel) {
@@ -212,7 +233,14 @@ export function GatewayAdminClient() {
 
       <div className="overflow-hidden border border-border/70 bg-card">
         <div className="border-border/70 border-b px-6 py-5">
-          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)_auto]">
+          <div
+            className={cn(
+              "grid gap-4",
+              gatewayForm.provider === "runpod"
+                ? "lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                : "lg:grid-cols-[220px_minmax(0,1fr)_auto]"
+            )}
+          >
             <div className="space-y-2">
               <Label className="text-[11px] text-muted-foreground/80 uppercase tracking-[0.18em]">
                 Provider
@@ -232,10 +260,30 @@ export function GatewayAdminClient() {
                   <SelectItem value="openrouter">OpenRouter</SelectItem>
                   <SelectItem value="anthropic">Anthropic</SelectItem>
                   <SelectItem value="ollama">Ollama</SelectItem>
+                  <SelectItem value="runpod">RunPod</SelectItem>
                   <SelectItem value="replicate">Replicate</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {gatewayForm.provider === "runpod" ? (
+              <div className="space-y-2">
+                <Label className="text-[11px] text-muted-foreground/80 uppercase tracking-[0.18em]">
+                  Endpoint ID
+                </Label>
+                <Input
+                  className="h-11 border-border/70 bg-background"
+                  onChange={(event) =>
+                    setGatewayForm((current) => ({
+                      ...current,
+                      endpointId: event.target.value,
+                    }))
+                  }
+                  placeholder="RunPod Serverless endpoint ID"
+                  value={gatewayForm.endpointId}
+                />
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label className="text-[11px] text-muted-foreground/80 uppercase tracking-[0.18em]">
@@ -262,7 +310,11 @@ export function GatewayAdminClient() {
             <div className="flex items-end">
               <Button
                 className="h-11 min-w-36 px-5"
-                disabled={creatingGateway}
+                disabled={
+                  creatingGateway ||
+                  (gatewayForm.provider === "runpod" &&
+                    !gatewayForm.endpointId.trim())
+                }
                 onClick={async () => {
                   try {
                     setCreatingGateway(true);
@@ -274,6 +326,9 @@ export function GatewayAdminClient() {
                       body: JSON.stringify({
                         provider: gatewayForm.provider,
                         apiKey: gatewayForm.apiKey || null,
+                        ...(gatewayForm.provider === "runpod"
+                          ? { endpointId: gatewayForm.endpointId }
+                          : {}),
                       }),
                     });
                     const json = await response.json().catch(() => ({}));
@@ -438,6 +493,9 @@ function GatewayDetailPane({
     getEmptyNewModelDraft(bundle.gateway)
   );
   const [savingModelId, setSavingModelId] = useState<string | null>(null);
+  const [validatingModelId, setValidatingModelId] = useState<string | null>(
+    null
+  );
   const [filter, setFilter] = useState("");
   const [modalityFilter, setModalityFilter] = useState<
     "all" | GatewayModel["modality"]
@@ -567,7 +625,7 @@ function GatewayDetailPane({
             rawModelId,
             alias: newModelDraft.alias.trim() || null,
             modality: newModelDraft.modality,
-            approved: true,
+            approved: bundle.gateway.provider !== "runpod",
             isDefault: false,
             description: null,
             metadata:
@@ -583,7 +641,11 @@ function GatewayDetailPane({
         throw new Error(json.error || "Failed to add model.");
       }
 
-      toast.success("Model added and approved.");
+      toast.success(
+        bundle.gateway.provider === "runpod"
+          ? "Model added. Validate it before approval."
+          : "Model added and approved."
+      );
       setNewModelDraft(getEmptyNewModelDraft(bundle.gateway));
       setIsAddModelOpen(false);
       setFilter("");
@@ -966,6 +1028,9 @@ function GatewayDetailPane({
               ) : null}
 
               {filteredModels.map((model) => {
+                const runPodValidated =
+                  bundle.gateway.provider !== "runpod" ||
+                  isRunPodModelValidated(model);
                 const draft = modelDrafts[model.id] || {
                   alias: model.alias || "",
                   approved: model.approved,
@@ -1062,9 +1127,61 @@ function GatewayDetailPane({
                     </TableCell>
                     <TableCell className="py-3 text-right align-top">
                       <div className="flex justify-end gap-2">
+                        {bundle.gateway.provider === "runpod" ? (
+                          <IconActionButton
+                            className="h-9 w-9 rounded-lg p-0"
+                            disabled={
+                              Boolean(savingModelId) ||
+                              validatingModelId === model.id ||
+                              model.modality !== "language"
+                            }
+                            icon={
+                              validatingModelId === model.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="size-4" />
+                              )
+                            }
+                            label={
+                              runPodValidated
+                                ? "Revalidate RunPod model"
+                                : "Validate RunPod model"
+                            }
+                            onClick={async () => {
+                              try {
+                                setValidatingModelId(model.id);
+                                const response = await fetch(
+                                  `/api/admin/gateways/${bundle.gateway.id}/models/${model.id}/validate`,
+                                  { method: "POST" }
+                                );
+                                const json = await response
+                                  .json()
+                                  .catch(() => ({}));
+                                if (!response.ok) {
+                                  throw new Error(
+                                    json.error || "RunPod validation failed."
+                                  );
+                                }
+                                toast.success(
+                                  "RunPod streaming and tool round trip validated."
+                                );
+                                onRefresh();
+                              } catch (error) {
+                                toast.error(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "RunPod validation failed."
+                                );
+                              } finally {
+                                setValidatingModelId(null);
+                              }
+                            }}
+                            variant={runPodValidated ? "secondary" : "outline"}
+                          />
+                        ) : null}
                         <IconActionButton
                           className="h-9 w-9 rounded-lg p-0"
-                          disabled={Boolean(savingModelId)}
+                          disabled={Boolean(savingModelId) || !runPodValidated}
                           icon={
                             draft.approved ? (
                               <ShieldOff className="size-4" />
@@ -1096,7 +1213,7 @@ function GatewayDetailPane({
                         />
                         <IconActionButton
                           className="h-9 w-9 rounded-lg p-0"
-                          disabled={Boolean(savingModelId)}
+                          disabled={Boolean(savingModelId) || !runPodValidated}
                           icon={<Star className="size-4" />}
                           label={
                             draft.isDefault ? "Default model" : "Make default"

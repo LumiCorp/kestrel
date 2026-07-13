@@ -242,6 +242,19 @@ export class RunnerHost {
     metadata?: RunnerCommandMetadata | undefined,
   ): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "run.start");
+    const tenantId = metadata?.actor?.tenantId ?? metadata?.tenantId;
+    if (profile.modelCredential) {
+      if (!tenantId) {
+        throw new Error(
+          "Gateway-managed execution requires an authenticated tenant context.",
+        );
+      }
+      if (profile.modelCredential.organizationId !== tenantId) {
+        throw new Error(
+          "Gateway-managed execution credential does not belong to the authenticated tenant.",
+        );
+      }
+    }
     const turn: RunTurnInput = {
       ...payload.turn,
       ...(metadata?.actor !== undefined

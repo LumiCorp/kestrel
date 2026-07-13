@@ -14,12 +14,27 @@ function safeErrorResponse(error: unknown, fallbackStatus?: number) {
   return NextResponse.json(result.body, { status: result.status });
 }
 
-const bodySchema = z.object({
-  provider: z.enum(GATEWAY_PROVIDERS),
-  displayName: z.string().trim().min(1).optional(),
-  apiKey: z.string().trim().min(1).nullable().optional(),
-  enabled: z.boolean().optional(),
-});
+const bodySchema = z
+  .object({
+    provider: z.enum(GATEWAY_PROVIDERS),
+    endpointId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u)
+      .optional(),
+    displayName: z.string().trim().min(1).optional(),
+    apiKey: z.string().trim().min(1).nullable().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.provider === "runpod" && !value.endpointId) {
+      context.addIssue({
+        code: "custom",
+        path: ["endpointId"],
+        message: "RunPod endpoint ID is required.",
+      });
+    }
+  });
 
 export async function GET() {
   try {

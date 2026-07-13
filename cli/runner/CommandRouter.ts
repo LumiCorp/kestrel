@@ -1205,6 +1205,10 @@ function validateModelCredentialPayload(
     reference.gatewayId,
     `${path}.modelCredential.gatewayId`,
   );
+  const organizationId = requireNonEmptyString(
+    reference.organizationId,
+    `${path}.modelCredential.organizationId`,
+  );
   const rawModelId = requireNonEmptyString(
     reference.rawModelId,
     `${path}.modelCredential.rawModelId`,
@@ -1234,6 +1238,11 @@ function validateModelCredentialPayload(
   }
   if (gatewayId.trim() !== reference.gatewayId) {
     throw new Error(`${path}.modelCredential.gatewayId must not contain surrounding whitespace`);
+  }
+  if (organizationId.trim() !== reference.organizationId) {
+    throw new Error(
+      `${path}.modelCredential.organizationId must not contain surrounding whitespace`,
+    );
   }
   if (rawModelId.trim() !== reference.rawModelId) {
     throw new Error(`${path}.modelCredential.rawModelId must not contain surrounding whitespace`);
