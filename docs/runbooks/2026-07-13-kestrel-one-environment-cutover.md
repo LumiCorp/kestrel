@@ -28,6 +28,13 @@ Environment provisioning, GitHub OAuth proof, and execution cutover.
 - The production project still has `KESTREL_RUNNER_SERVICE_URL` and
   `KESTREL_RUNNER_SERVICE_TOKEN` and does not yet have the complete Environment
   or GitHub OAuth configuration.
+- `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`, and `AI_AGENT_SITE_URL` all resolve
+  to the verified canonical origin `https://kestrel-one-green.vercel.app`.
+  Vercel resolves that alias to the current production deployment and the
+  origin returns HTTP 200.
+- The authenticated Fly organization is `personal`. Its only retained App is
+  the legacy `kestrel-one-runner`; no managed organization Environment exists
+  yet.
 - A read-only production schema probe on 2026-07-13 confirmed that none of the
   required `environments`, `environment_workspaces`,
   `organization_feature_flags`, `user_tool_connections`,
@@ -80,6 +87,12 @@ The ticket keys must be one matching Ed25519 pair. The backup key must be one
 base64-encoded 32-byte key with a stable key ID. Both Fly images must use the
 immutable digests recorded in the canary evidence. `KESTREL_ONE_APP_URL`,
 `BETTER_AUTH_URL`, and `NEXT_PUBLIC_APP_URL` must have the same origin.
+
+Create `FLY_API_TOKEN` as a bounded-expiry organization token scoped to the
+`personal` Fly organization. Do not copy the operator's personal Fly login
+token into Vercel. Create the GitHub credentials from one Kestrel-owned OAuth
+App whose authorization callback is
+`https://kestrel-one-green.vercel.app/api/auth/callback/github`.
 
 Keep the existing credential-broker, tool-token, and gateway-encryption values.
 Keep both legacy runner values during this phase.
