@@ -9,7 +9,7 @@
     "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev --port 43103 --webpack",
     "dev:all": "./scripts/dev-all.sh",
     "dev:secure": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev --port 43103 --webpack --experimental-https",
-    "build": "tsx lib/db/migrate.ts && next build",
+    "build": "tsx lib/db/migrate.ts && next build --webpack",
     "start": "next start --port 43103",
     "format": "ultracite fix",
     "lint": "ultracite check",
