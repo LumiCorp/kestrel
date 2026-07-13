@@ -11,6 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   Environment,
   EnvironmentCapabilityGrant,
@@ -20,13 +27,14 @@ import type {
 } from "@/drizzle/schema";
 import type { HostedEnvironmentsRollout } from "@/lib/environments/config";
 import { describeEnvironmentOperation } from "@/lib/environments/operation-presentation";
+import { DEFAULT_FLY_REGION, FLY_REGIONS } from "@/lib/environments/regions";
 
 type CreateEnvironmentResponse = {
   environment?: Environment;
   error?: string;
 };
 
-const LIVE_STATE_REFRESH_MS = 2000;
+const LIVE_STATE_REFRESH_MS = 1000;
 
 function preserveEqualRows<T>(current: T[], next: T[]) {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
@@ -41,7 +49,7 @@ export function EnvironmentsAdminClient({
 }) {
   const [environments, setEnvironments] = useState(initialEnvironments);
   const [name, setName] = useState("");
-  const [region, setRegion] = useState("");
+  const [region, setRegion] = useState<string>(DEFAULT_FLY_REGION);
   const [busy, setBusy] = useState(false);
   const [rollout, setRollout] = useState(initialRollout);
   const [rolloutBusy, setRolloutBusy] = useState(false);
@@ -60,6 +68,9 @@ export function EnvironmentsAdminClient({
   const [restoreConfirmation, setRestoreConfirmation] = useState<string | null>(
     null
   );
+  const [liveState, setLiveState] = useState<
+    "connecting" | "live" | "retrying"
+  >("connecting");
 
   useEffect(() => {
     void Promise.all(
@@ -145,6 +156,7 @@ export function EnvironmentsAdminClient({
       preserveEqualRows(current, operationRows.flat())
     );
     if (payload.rollout) setRollout(payload.rollout);
+    setLiveState("live");
   }, []);
 
   useEffect(() => {
@@ -154,6 +166,7 @@ export function EnvironmentsAdminClient({
       try {
         await refreshLiveState(controller.signal);
       } catch {
+        if (!controller.signal.aborted) setLiveState("retrying");
       } finally {
         if (!controller.signal.aborted) {
           timeout = window.setTimeout(refresh, LIVE_STATE_REFRESH_MS);
@@ -181,7 +194,7 @@ export function EnvironmentsAdminClient({
       }
       setEnvironments((current) => [...current, payload.environment!]);
       setName("");
-      setRegion("");
+      setRegion(DEFAULT_FLY_REGION);
       toast.success("Environment provisioning requested.");
     } catch (error) {
       toast.error(
@@ -449,13 +462,22 @@ export function EnvironmentsAdminClient({
           </div>
           <div className="space-y-2">
             <Label htmlFor="environment-region">Fly region</Label>
-            <Input
-              id="environment-region"
-              maxLength={16}
-              onChange={(event) => setRegion(event.target.value.toLowerCase())}
-              placeholder="iad"
-              value={region}
-            />
+            <Select onValueChange={setRegion} value={region}>
+              <SelectTrigger className="w-full" id="environment-region">
+                <SelectValue placeholder="Select a Fly region" />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {FLY_REGIONS.map((flyRegion) => (
+                  <SelectItem key={flyRegion.code} value={flyRegion.code}>
+                    {flyRegion.name} · {flyRegion.code}
+                    {"requiresPaidPlan" in flyRegion &&
+                    flyRegion.requiresPaidPlan
+                      ? " · paid plan"
+                      : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             disabled={busy || !name.trim() || !region.trim()}
@@ -504,17 +526,29 @@ export function EnvironmentsAdminClient({
                         <div className="font-medium text-sm">
                           {operationPresentation.label}
                         </div>
-                        <Badge
-                          variant={
-                            operationPresentation.tone === "error"
-                              ? "destructive"
-                              : latestOperation.status === "completed"
-                                ? "default"
-                                : "outline"
-                          }
-                        >
-                          {latestOperation.status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {latestOperation.status === "queued" ||
+                          latestOperation.status === "running" ? (
+                            <span className="text-muted-foreground text-xs">
+                              {liveState === "live"
+                                ? "Live updates"
+                                : liveState === "retrying"
+                                  ? "Reconnecting…"
+                                  : "Connecting…"}
+                            </span>
+                          ) : null}
+                          <Badge
+                            variant={
+                              operationPresentation.tone === "error"
+                                ? "destructive"
+                                : latestOperation.status === "completed"
+                                  ? "default"
+                                  : "outline"
+                            }
+                          >
+                            {latestOperation.status}
+                          </Badge>
+                        </div>
                       </div>
                       <div
                         className={

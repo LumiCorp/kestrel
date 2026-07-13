@@ -86,6 +86,10 @@ export interface EnvironmentProvisioningRepository {
     workspaceId: string;
     runtimeImage: string;
   }): Promise<void>;
+  updateOperationStage(input: {
+    operationId: string;
+    stage: string;
+  }): Promise<void>;
   completeOperation(input: {
     operationId: string;
     stage: string;
@@ -241,7 +245,15 @@ export class EnvironmentProvisioner {
     const appName =
       environment.flyAppName ?? flyEnvironmentAppName(environment.id);
     const networkName = flyEnvironmentNetworkName(environment.id);
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.runtime.connecting",
+    });
     await this.provider.ensureEnvironmentApp({ appName, networkName });
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.machine.starting",
+    });
     const gateway = await this.provider.ensureEnvironmentGateway({
       appName,
       environmentId: environment.id,
@@ -257,6 +269,10 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 60,
       });
     }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.health.checking",
+    });
     await this.provider.waitForMachineHealth({
       appName,
       machineId: gateway.machineId,
@@ -317,10 +333,18 @@ export class EnvironmentProvisioner {
       "provisioning"
     );
     await this.repository.setWorkspaceProvisioning(workspace.id);
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.workspace.mounting",
+    });
     const volume = await this.provider.ensureWorkspaceVolume({
       appName: environment.flyAppName,
       workspaceId: workspace.id,
       region: environment.region,
+    });
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.machine.starting",
     });
     const machine = await this.provider.ensureWorkspaceMachine({
       appName: environment.flyAppName,
@@ -356,6 +380,10 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 60,
       });
     }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.health.checking",
+    });
     await this.provider.waitForMachineHealth({
       appName: environment.flyAppName,
       machineId: machine.id,
@@ -403,6 +431,10 @@ export class EnvironmentProvisioner {
       "starting"
     );
     await this.repository.setWorkspaceStarting(workspace.id);
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.machine.starting",
+    });
     await this.provider.startMachine({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
@@ -412,6 +444,10 @@ export class EnvironmentProvisioner {
       machineId: workspace.flyMachineId,
       state: "started",
       timeoutSeconds: 60,
+    });
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.health.checking",
     });
     await this.provider.waitForMachineHealth({
       appName: environment.flyAppName,
@@ -455,6 +491,10 @@ export class EnvironmentProvisioner {
       assertWorkspaceOperationTransition(workspaceStatus, "stopping");
       await this.repository.setWorkspaceStopping(workspace.id);
     }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.machine.stopping",
+    });
     await this.provider.stopMachine({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
@@ -583,6 +623,10 @@ export class EnvironmentProvisioner {
       "starting"
     );
     await this.repository.setWorkspaceStarting(workspace.id);
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.machine.starting",
+    });
     const machine = await this.provider.updateMachineImage({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
@@ -596,6 +640,10 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 90,
       });
     }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.health.checking",
+    });
     await this.provider.waitForMachineHealth({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
@@ -886,6 +934,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           updatedAt: now,
         })
         .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    },
+    async updateOperationStage(input) {
+      await knowledgeDb
+        .update(schema.environmentOperations)
+        .set({ stage: input.stage, updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.environmentOperations.id, input.operationId),
+            eq(schema.environmentOperations.status, "running")
+          )
+        );
     },
     async completeOperation(input) {
       const now = new Date();

@@ -33,6 +33,8 @@ const STAGE_DETAILS: Record<string, string> = {
   requested: "Waiting for Kestrel One to start this operation.",
   "environment.activation.requested": "Preparing the Environment…",
   "environment.runtime.connecting": "Creating the private Environment runtime…",
+  "environment.workspace.mounting": "Attaching persistent Workspace storage…",
+  "environment.health.checking": "Checking runtime health…",
   "environment.provider.retrying":
     "The infrastructure provider is retrying this operation…",
   "environment.machine.starting": "Waking the Workspace Machine…",

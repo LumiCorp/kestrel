@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isFlyRegionCode } from "./regions";
 
 export const ENVIRONMENT_RUNTIME_TEMPLATE = "kestrel-standard-v1" as const;
 export const ENVIRONMENT_IDLE_TIMEOUT_MINUTES = 15;
@@ -72,7 +73,8 @@ export const createEnvironmentInputSchema = z.object({
     .trim()
     .min(2)
     .max(16)
-    .regex(/^[a-z0-9-]+$/u),
+    .regex(/^[a-z0-9-]+$/u)
+    .refine(isFlyRegionCode, "Select a supported Fly region."),
   isDefault: z.boolean().optional(),
 });
 export type CreateEnvironmentInput = z.infer<

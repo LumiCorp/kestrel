@@ -17,6 +17,18 @@ test("Environment operations expose human-readable provisioning and wake progres
   );
   assert.deepEqual(
     describeEnvironmentOperation({
+      type: "environment.provision",
+      status: "running",
+      stage: "environment.health.checking",
+    }),
+    {
+      label: "Environment provisioning",
+      detail: "Checking runtime health…",
+      tone: "neutral",
+    }
+  );
+  assert.deepEqual(
+    describeEnvironmentOperation({
       type: "workspace.start",
       status: "running",
       stage: "environment.machine.starting",
