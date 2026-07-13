@@ -54,6 +54,7 @@ This index maps the repo-level source-of-truth docs. Use it to find the canonica
 ## Reference Contracts
 
 - [Runtime simplification boundaries ADR](docs/adr/0004-runtime-simplification-boundaries.md)
+- [Managed RunPod Serverless control plane ADR](adr/0005-managed-runpod-serverless-control-plane.md)
 - [Architecture rules](docs/references/architecture-rules.json)
 - [Artifact evidence recovery contract](docs/references/artifact-evidence-recovery-contract.md)
 - [Heuristic hotspots](docs/references/heuristic-hotspots.md)

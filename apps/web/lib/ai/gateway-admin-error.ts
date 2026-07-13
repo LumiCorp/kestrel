@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
 import { GatewayCredentialSourceError } from "./gateway-credential-source";
+import { RunPodConnectionTestError } from "./runpod-connection-test";
 
 type GatewayAdminErrorBody = {
   code: string;
@@ -41,6 +42,16 @@ export function getSafeGatewayAdminError(
     };
   }
 
+  if (error instanceof RunPodConnectionTestError) {
+    return {
+      body: {
+        code: error.code,
+        error: error.message,
+      },
+      status: 422,
+    };
+  }
+
   const message = error instanceof Error ? error.message : "";
   if (message === "Unauthorized") {
     return {
@@ -58,6 +69,18 @@ export function getSafeGatewayAdminError(
     return {
       body: { code: "GATEWAY_NOT_FOUND", error: "Gateway not found" },
       status: 404,
+    };
+  }
+  if (message === "Gateway model not found") {
+    return {
+      body: { code: "GATEWAY_MODEL_NOT_FOUND", error: message },
+      status: 404,
+    };
+  }
+  if (message === "RunPod model validation is required before approval.") {
+    return {
+      body: { code: "RUNPOD_VALIDATION_REQUIRED", error: message },
+      status: 409,
     };
   }
 
