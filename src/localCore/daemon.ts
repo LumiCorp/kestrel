@@ -28,6 +28,7 @@ export interface LocalCoreDaemonReady {
 export interface EnsureLocalCoreDaemonReadyOptions extends EnsureLocalCoreReadyOptions {
   waitTimeoutMs?: number | undefined;
   probeIntervalMs?: number | undefined;
+  idleTimeoutMs?: number | undefined;
 }
 
 export async function ensureLocalCoreDaemonReady(
@@ -68,6 +69,7 @@ export async function ensureLocalCoreDaemonReady(
     postgresBundleRootPath: options.postgresBundleRootPath,
     runMigrations: options.runMigrations,
     repoRoot: options.repoRoot,
+    idleTimeoutMs: options.idleTimeoutMs,
   });
 
   const started = await waitForDaemon({
@@ -131,24 +133,13 @@ function spawnDaemon(input: {
   postgresBundleRootPath?: string | undefined;
   runMigrations?: boolean | undefined;
   repoRoot?: string | undefined;
+  idleTimeoutMs?: number | undefined;
 }): void {
   const runtime = resolveDaemonRuntime(input.env);
-  const electronRunAsNode = resolveLocalCoreDaemonNodeMode();
-  const childEnv = {
-    ...input.env,
-    ...(electronRunAsNode !== undefined ? { ELECTRON_RUN_AS_NODE: electronRunAsNode } : {}),
-    KESTREL_LOCAL_CORE_DAEMON: "1",
-    KESTREL_CORE_VERSION: input.coreVersion,
-    ...(input.schemaVersion !== undefined ? { KESTREL_CORE_SCHEMA_VERSION: String(input.schemaVersion) } : {}),
-    KESTREL_CORE_OWNER_EXECUTABLE: runtime.entrypoint,
-    ...(input.platform !== undefined ? { KESTREL_CORE_PLATFORM: input.platform } : {}),
-    ...(input.databaseMode !== undefined ? { KESTREL_CORE_DATABASE_MODE: input.databaseMode } : {}),
-    ...(input.externalDatabaseUrl !== undefined ? { KESTREL_CORE_EXTERNAL_DATABASE_URL: input.externalDatabaseUrl } : {}),
-    ...(input.allowInheritedDatabaseUrl === true ? { KESTREL_CORE_ALLOW_INHERITED_DATABASE_URL: "1" } : {}),
-    ...(input.postgresBundleRootPath !== undefined ? { KESTREL_LOCAL_CORE_POSTGRES_BUNDLE: input.postgresBundleRootPath } : {}),
-    ...(input.runMigrations === true ? { KESTREL_CORE_RUN_MIGRATIONS: "1" } : {}),
-    ...(input.repoRoot !== undefined ? { KESTREL_CORE_REPO_ROOT: input.repoRoot } : {}),
-  };
+  const childEnv = buildLocalCoreDaemonEnvironment({
+    ...input,
+    ownerExecutable: runtime.entrypoint,
+  });
   const child = spawn(process.execPath, ["--import", runtime.tsxImport, runtime.entrypoint], {
     cwd: runtime.cwd,
     env: childEnv,
@@ -156,6 +147,40 @@ function spawnDaemon(input: {
     stdio: "ignore",
   });
   child.unref();
+}
+
+export function buildLocalCoreDaemonEnvironment(input: {
+  env: NodeJS.ProcessEnv;
+  ownerExecutable: string;
+  platform?: NodeJS.Platform | undefined;
+  coreVersion: string;
+  schemaVersion?: number | undefined;
+  databaseMode?: "pglite" | "managed" | "external" | undefined;
+  externalDatabaseUrl?: string | undefined;
+  allowInheritedDatabaseUrl?: boolean | undefined;
+  postgresBundleRootPath?: string | undefined;
+  runMigrations?: boolean | undefined;
+  repoRoot?: string | undefined;
+  idleTimeoutMs?: number | undefined;
+  versions?: { electron?: string | undefined } | undefined;
+}): NodeJS.ProcessEnv {
+  const electronRunAsNode = resolveLocalCoreDaemonNodeMode(input.versions);
+  return {
+    ...input.env,
+    ...(electronRunAsNode !== undefined ? { ELECTRON_RUN_AS_NODE: electronRunAsNode } : {}),
+    KESTREL_LOCAL_CORE_DAEMON: "1",
+    KESTREL_CORE_VERSION: input.coreVersion,
+    ...(input.schemaVersion !== undefined ? { KESTREL_CORE_SCHEMA_VERSION: String(input.schemaVersion) } : {}),
+    KESTREL_CORE_OWNER_EXECUTABLE: input.ownerExecutable,
+    ...(input.platform !== undefined ? { KESTREL_CORE_PLATFORM: input.platform } : {}),
+    ...(input.databaseMode !== undefined ? { KESTREL_CORE_DATABASE_MODE: input.databaseMode } : {}),
+    ...(input.externalDatabaseUrl !== undefined ? { KESTREL_CORE_EXTERNAL_DATABASE_URL: input.externalDatabaseUrl } : {}),
+    ...(input.allowInheritedDatabaseUrl === true ? { KESTREL_CORE_ALLOW_INHERITED_DATABASE_URL: "1" } : {}),
+    ...(input.postgresBundleRootPath !== undefined ? { KESTREL_LOCAL_CORE_POSTGRES_BUNDLE: input.postgresBundleRootPath } : {}),
+    ...(input.runMigrations === true ? { KESTREL_CORE_RUN_MIGRATIONS: "1" } : {}),
+    ...(input.repoRoot !== undefined ? { KESTREL_CORE_REPO_ROOT: input.repoRoot } : {}),
+    ...(input.idleTimeoutMs !== undefined ? { KESTREL_CORE_IDLE_TIMEOUT_MS: String(input.idleTimeoutMs) } : {}),
+  };
 }
 
 export function resolveLocalCoreDaemonNodeMode(

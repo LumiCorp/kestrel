@@ -2273,6 +2273,7 @@ async function ensureDesktopLocalCoreReady(
     databaseMode: "pglite",
     repoRoot: config.repoRoot,
     runMigrations: true,
+    idleTimeoutMs: 0,
   });
   if (ready.client === undefined) {
     throw createDesktopError({

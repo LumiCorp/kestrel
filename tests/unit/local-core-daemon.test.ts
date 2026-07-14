@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildLocalCoreDaemonEnvironment,
   ensureLocalCoreDaemonReady,
   isLocalCoreDaemonElectronAppLaunch,
   resolveLocalCoreDaemonNodeMode,
@@ -65,4 +66,20 @@ test("Local Core daemon readiness returns a redaction-aware in-memory connection
     await server.close();
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("Local Core daemon launch honors a Desktop-owned disabled idle timeout", () => {
+  const env = buildLocalCoreDaemonEnvironment({
+    env: {
+      KESTREL_CORE_IDLE_TIMEOUT_MS: "900000",
+    },
+    ownerExecutable: "/Applications/Kestrel.app/Contents/MacOS/Kestrel",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    versions: { electron: "37.10.3" },
+  });
+
+  assert.equal(env.KESTREL_CORE_IDLE_TIMEOUT_MS, "0");
+  assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(env.KESTREL_LOCAL_CORE_DAEMON, "1");
 });
