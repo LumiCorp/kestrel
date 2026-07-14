@@ -25,6 +25,22 @@ const workerDockerfile = fs.readFileSync(
   ),
   "utf8"
 );
+const workerEntrypoint = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../scripts/turn-worker.ts"
+  ),
+  "utf8"
+);
+const webPackage = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../package.json"
+    ),
+    "utf8"
+  )
+) as { scripts: Record<string, string> };
 
 test("durable turns establish the shared queue and replay ledger", () => {
   for (const table of [
@@ -74,4 +90,16 @@ test("the production worker image retains its TypeScript runtime toolchain", () 
     /pnpm install --frozen-lockfile --prod=false/u
   );
   assert.match(workerDockerfile, /"worker:turns"/u);
+});
+
+test("the production worker entrypoint is CommonJS transform compatible", () => {
+  assert.doesNotMatch(
+    workerEntrypoint,
+    /\nawait\s+startDurableThreadTurnWorker\(\);/u
+  );
+  assert.match(workerEntrypoint, /void main\(\)\.catch/u);
+  assert.equal(
+    webPackage.scripts["worker:turns"],
+    "node --conditions=react-server --import tsx scripts/turn-worker.ts"
+  );
 });
