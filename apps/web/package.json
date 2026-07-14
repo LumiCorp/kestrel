@@ -11,7 +11,7 @@
     "dev:secure": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev --port 43103 --webpack --experimental-https",
     "build": "tsx lib/db/migrate.ts && tsx scripts/hosted-environment-build-preflight.ts && next build --webpack",
     "start": "next start --port 43103",
-    "worker:turns": "tsx scripts/turn-worker.ts",
+    "worker:turns": "node --conditions=react-server --import tsx scripts/turn-worker.ts",
     "format": "ultracite fix",
     "lint": "ultracite check",
     "lint:fix": "ultracite fix",
