@@ -2,6 +2,11 @@
 .github
 .codex
 .agents
+.artifacts
+.hf-cache
+.kestrel
+.venv*
+.vercel
 .env
 .env.*
 **/.env
@@ -14,5 +19,10 @@
 **/test-results
 **/*.log
 .pnpm-store
-apps/kestrel-one
-apps/studio
+apps
+jobs
+logs
+output
+outputs
+runs
+tmp

@@ -1,4 +1,8 @@
 .git
+.artifacts
+.hf-cache
+.venv*
+.vercel
 .pnpm-store
 **/node_modules
 **/.next

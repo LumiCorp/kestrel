@@ -30,7 +30,9 @@ COPY --from=build /app/apps/workspace-runtime ./apps/workspace-runtime
 COPY --from=build /app/packages/environment-auth ./packages/environment-auth
 COPY --from=build /app/packages/protocol ./packages/protocol
 COPY --from=build /app/packages/sdk ./packages/sdk
-RUN test -f /app/dist/db/migrations/001_sessions_runs.sql && mkdir -p /workspace
+RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
+    && test -f /app/dist/cli/runner/service.js \
+    && mkdir -p /workspace
 ENV NODE_ENV=production KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]

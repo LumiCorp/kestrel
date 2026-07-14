@@ -9,9 +9,11 @@ WORKDIR /workspace
 COPY . .
 
 RUN pnpm install --frozen-lockfile
+RUN pnpm run build
 RUN pnpm --config.link-workspace-packages=false \
   --filter @kestrel-agents/kestrel \
   deploy /opt/kestrel --prod
+RUN chmod -R a+rX /opt/kestrel
 
 FROM node:22-bookworm-slim AS runtime
 
@@ -32,9 +34,12 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /opt/kestrel /app
+COPY --from=builder /workspace/package.json /app/dist/package.json
+COPY --from=builder /opt/kestrel/db/migrations /app/dist/db/migrations
 COPY --chmod=0755 deploy/fly/kestrel-one-runner/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY deploy/fly/kestrel-one-runner/runner-entrypoint.mjs /app/runner-entrypoint.mjs
 
 EXPOSE 8080
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["node", "bin/kestrel.js", "web", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["node", "runner-entrypoint.mjs", "--host", "0.0.0.0", "--port", "8080"]

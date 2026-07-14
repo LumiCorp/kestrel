@@ -14,7 +14,6 @@ import {
   stat,
 } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
@@ -24,6 +23,7 @@ import { requestGitHubToolCredential } from "./github-credentials.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
+import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
 
@@ -400,9 +400,7 @@ process.on("SIGTERM", () => shutdown(0));
 process.on("SIGINT", () => shutdown(0));
 
 function startRunner(authToken: string): ChildProcess {
-  const require = createRequire(import.meta.url);
-  const packageJson = require.resolve("@kestrel-agents/kestrel/package.json");
-  const entrypoint = path.join(path.dirname(packageJson), "dist/cli/runner/service.js");
+  const entrypoint = resolveRunnerServiceEntrypoint();
   const child = spawn(process.execPath, [entrypoint], {
     cwd: config.workspaceRoot,
     stdio: ["ignore", "inherit", "inherit"],
