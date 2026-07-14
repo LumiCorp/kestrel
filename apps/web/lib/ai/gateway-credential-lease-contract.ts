@@ -8,13 +8,14 @@ import {
 import { getMatchingRunPodValidationEvidence } from "./runpod-connection-test";
 
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
-  "gateway-credential-lease-v2" as const;
+  "gateway-credential-lease-v3" as const;
 export const GATEWAY_CREDENTIAL_LEASE_TTL_MS = 5 * 60 * 1000;
 
 export type GatewayCredentialLeaseRequest = {
   version: typeof GATEWAY_CREDENTIAL_LEASE_VERSION;
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   rawModelId: string;
 };
 
@@ -23,6 +24,7 @@ export type GatewayCredentialLease = {
   leaseId: string;
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   rawModelId: string;
   provider: Exclude<GatewayProtocolProvider, "replicate">;
   protocol: GatewayLanguageProtocol;
@@ -124,6 +126,7 @@ export function authorizeGatewayCredentialBroker(input: {
 
 export function buildGatewayCredentialLease(input: {
   organizationId: string;
+  environmentId: string;
   gateway: {
     id: string;
     provider: Exclude<GatewayProtocolProvider, "replicate">;
@@ -163,6 +166,7 @@ export function buildGatewayCredentialLease(input: {
     leaseId: randomUUID(),
     gatewayId: input.gateway.id,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
     rawModelId: input.model.rawModelId,
     provider,
     protocol,

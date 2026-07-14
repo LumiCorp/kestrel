@@ -190,6 +190,20 @@
       "when": 1783987200000,
       "tag": "0024_account_deletion_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783990800000,
+      "tag": "0025_schema_reconciliation_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1783994400000,
+      "tag": "0026_environment_private_inference_expand",
+      "breakpoints": true
     }
   ]
 }

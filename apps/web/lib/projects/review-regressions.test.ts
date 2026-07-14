@@ -49,23 +49,29 @@ test("Project collaborators use canonical Thread access for message actions", ()
   }
 });
 
-test("Thread responses bind Project context before dispatching durable work", () => {
-  const source = readAppSource("app/api/threads/[id]/route.ts");
+test("mobile Thread responses pin Project context and Environment before durable dispatch", () => {
+  const source = readAppSource(
+    "app/api/mobile/v1/threads/[id]/turns/route.ts"
+  );
   assert.match(source, /await resolveProjectRuntimeContext\(/);
+  assert.match(source, /await resolveThreadEnvironment\(/);
   assert.match(source, /await createDurableThreadTurn\(/);
   assert.match(source, /projectContextRevisionId:[\s\S]*contextRevision\.id/u);
+  assert.match(source, /requestedEnvironmentId: environment\.id/u);
   assert.match(source, /await enqueueDurableThreadTurn\(/);
   assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
 });
 
-test("web approval responses preserve the approval contract across durable dispatch", () => {
-  const route = readAppSource("app/api/threads/[id]/route.ts");
+test("durable approvals preserve the approval contract through runtime dispatch", () => {
+  const store = readAppSource("lib/turns/store.ts");
   const worker = readAppSource("lib/turns/process-runtime.ts");
+  const runtime = readAppSource("lib/agent/kestrel-runtime-core.ts");
 
-  assert.match(route, /findNewToolApprovalResponse\(/);
-  assert.match(route, /await decideGitHubActionApproval\(/);
-  assert.match(route, /messageId: null,[\s\S]*approvalDecision:/u);
+  assert.match(store, /approvalDecision:[\s\S]*approvalId: string/u);
+  assert.match(store, /approvalId: input\.approvalDecision\?\.approvalId/u);
   assert.match(worker, /approvalDecision:[\s\S]*turn\.approvalId/u);
+  assert.match(runtime, /eventType: input\.approvalDecision/u);
+  assert.match(runtime, /"user\.approval"/u);
 });
 
 test("durable turn creation never rebinds an existing message ID", () => {

@@ -6,7 +6,7 @@ import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
 import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
 import type { Session } from "@/lib/auth-types";
-import { generateTitleFromUserMessage } from "@/lib/chat/actions";
+import { generateTitleForOrganization } from "@/lib/chat/title";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   issueProjectContextGrant,
@@ -166,11 +166,15 @@ export async function processDurableThreadTurn(turnId: string) {
     const submittedUserMessage = [...messages]
       .reverse()
       .find((message) => message.role === "user");
+    if (!turn.requestedEnvironmentId) {
+      throw new Error("Durable turn is missing its requested Environment.");
+    }
     projectContext = await loadBoundProjectContext(turn);
     const response = await createKestrelOneAgentResponse({
       request: workerRequest(turn.id),
       session,
       organizationId: turn.organizationId,
+      environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
       messages,
       modelId: turn.requestedModelId ?? undefined,
@@ -186,9 +190,10 @@ export async function processDurableThreadTurn(turnId: string) {
       transientTitle: turn.approvalId
         ? null
         : submittedUserMessage
-          ? generateTitleFromUserMessage({
+          ? generateTitleForOrganization({
               message: submittedUserMessage,
               modelId: turn.requestedModelId ?? undefined,
+              organizationId: turn.organizationId,
             }).catch(() => null)
           : null,
       signal: cancellation.signal,

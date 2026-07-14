@@ -97,6 +97,7 @@ export type KestrelOneAgentResponseInput = {
   agent?: KestrelAgent;
   session: Session;
   organizationId: string;
+  environmentId: string;
   threadId: string;
   messages: UIMessage[];
   approvalDecision?:
@@ -126,6 +127,7 @@ export type KestrelOneAgentResponseInput = {
 
 function createModelAwareKestrelOneAgent(input: {
   organizationId: string;
+  environmentId: string;
   threadId: string;
   actorUserId: string;
   projectContextRevisionId?: string | undefined;
@@ -141,6 +143,7 @@ function createModelAwareKestrelOneAgent(input: {
         try {
           const route = await resolveEnvironmentExecutionRoute({
             organizationId: input.organizationId,
+            expectedEnvironmentId: input.environmentId,
             threadId: input.threadId,
             actorUserId: input.actorUserId,
             agentId: getKestrelOneProfileId(),
@@ -394,6 +397,7 @@ export async function generateKestrelOneExternalReply(input: {
     });
     const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
       organizationId: input.organizationId,
+      environmentId: route.environmentId,
     });
     if (!resolvedModel) {
       throw new Error(
@@ -411,6 +415,7 @@ export async function generateKestrelOneExternalReply(input: {
       toKestrelOneRuntimeModelSelection({
         ...resolvedModel.model,
         organizationId: input.organizationId,
+        environmentId: route.environmentId,
       })
     );
     const result = await generateKestrelOneExternalReplyFromAgent({
@@ -457,6 +462,7 @@ export async function createKestrelOneAgentResponse(
   const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
     selection: input.modelId,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
   if (!resolvedModel) {
     throw new Error(
@@ -470,12 +476,14 @@ export async function createKestrelOneAgentResponse(
   const runtimeModel = toKestrelOneRuntimeModelSelection({
     ...resolvedModel.model,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)
     : createModelAwareKestrelOneAgent({
         organizationId: input.organizationId,
+        environmentId: input.environmentId,
         threadId: input.threadId,
         actorUserId: input.session.user.id,
         projectContextRevisionId: input.projectContext?.contextRevisionId,

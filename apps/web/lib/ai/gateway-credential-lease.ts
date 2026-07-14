@@ -30,7 +30,13 @@ export async function issueGatewayCredentialLease(
         eq(schema.aiGateways.id, input.gatewayId),
         or(
           isNull(schema.aiGateways.organizationId),
-          eq(schema.aiGateways.organizationId, input.organizationId)
+          and(
+            eq(schema.aiGateways.organizationId, input.organizationId),
+            or(
+              isNull(schema.aiGateways.environmentId),
+              eq(schema.aiGateways.environmentId, input.environmentId)
+            )
+          )
         ),
         eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
         eq(schema.aiGatewayModels.rawModelId, input.rawModelId)
@@ -51,6 +57,7 @@ export async function issueGatewayCredentialLease(
       where: and(
         eq(schema.aiDeployments.id, row.gateway.deploymentId),
         eq(schema.aiDeployments.organizationId, input.organizationId),
+        eq(schema.aiDeployments.environmentId, input.environmentId),
         eq(schema.aiDeployments.status, "ready")
       ),
       columns: { id: true },
@@ -84,6 +91,7 @@ export async function issueGatewayCredentialLease(
 
   return buildGatewayCredentialLease({
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
     gateway: {
       id: row.gateway.id,
       provider: row.gateway.provider as Exclude<GatewayProvider, "replicate">,

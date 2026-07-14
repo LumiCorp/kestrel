@@ -84,40 +84,6 @@ export async function getKnowledgeBoss() {
       }
     );
     await boss.work(
-      MANAGED_RUNPOD_RUN_QUEUE,
-      async (jobs: Array<{ data?: unknown }>) => {
-        const { processManagedRunPodRun } = await import(
-          "@/lib/ai/managed-runpod-runtime"
-        );
-        for (const job of jobs) {
-          const payload = job.data as { runId?: string } | null;
-          if (payload?.runId) {
-            await processManagedRunPodRun(payload.runId);
-          }
-        }
-      }
-    );
-    await boss.work(MANAGED_RUNPOD_RECONCILE_QUEUE, async () => {
-      await recoverQueuedManagedRunPodRuns(boss);
-      const { reconcileManagedRunPodFleet } = await import(
-        "@/lib/ai/managed-runpod-runtime"
-      );
-      await reconcileManagedRunPodFleet();
-    });
-    await boss.work(MANAGED_RUNPOD_USAGE_QUEUE, async () => {
-      const { ingestManagedRunPodUsage } = await import(
-        "@/lib/ai/managed-runpod-runtime"
-      );
-      await ingestManagedRunPodUsage();
-    });
-    const { isManagedRunPodEnabled } = await import(
-      "@/lib/ai/managed-runpod-config"
-    );
-    if (isManagedRunPodEnabled()) {
-      await boss.schedule(MANAGED_RUNPOD_RECONCILE_QUEUE, "*/5 * * * *", {});
-      await boss.schedule(MANAGED_RUNPOD_USAGE_QUEUE, "15 * * * *", {});
-    }
-    await boss.work(
       KNOWLEDGE_DOCUMENT_QUEUE,
       async (jobs: Array<{ data?: unknown }>) => {
         const { processKnowledgeDocumentRun } = await import(
@@ -156,6 +122,53 @@ export async function getKnowledgeBoss() {
   return boss;
 }
 
+async function getKnowledgeBossProducer() {
+  if (!knowledgeQueueState.bossPromise) {
+    knowledgeQueueState.bossPromise = createBoss();
+  }
+  return knowledgeQueueState.bossPromise;
+}
+
+export async function startManagedRunPodWorker() {
+  const boss = await getKnowledgeBossProducer();
+  if (knowledgeQueueState.managedRunPodWorkersRegistered) return boss;
+  knowledgeQueueState.managedRunPodWorkersRegistered = true;
+  await boss.work(
+    MANAGED_RUNPOD_RUN_QUEUE,
+    async (jobs: Array<{ data?: unknown }>) => {
+      const { processManagedRunPodRun } = await import(
+        "@/lib/ai/managed-runpod-runtime"
+      );
+      for (const job of jobs) {
+        const payload = job.data as { runId?: string } | null;
+        if (payload?.runId) await processManagedRunPodRun(payload.runId);
+      }
+    }
+  );
+  await boss.work(MANAGED_RUNPOD_RECONCILE_QUEUE, async () => {
+    await recoverQueuedManagedRunPodRuns(boss);
+    const { reconcileManagedRunPodFleet } = await import(
+      "@/lib/ai/managed-runpod-runtime"
+    );
+    await reconcileManagedRunPodFleet();
+  });
+  await boss.work(MANAGED_RUNPOD_USAGE_QUEUE, async () => {
+    const { ingestManagedRunPodUsage } = await import(
+      "@/lib/ai/managed-runpod-runtime"
+    );
+    await ingestManagedRunPodUsage();
+  });
+  const { isManagedRunPodEnabled } = await import(
+    "@/lib/ai/managed-runpod-config"
+  );
+  if (isManagedRunPodEnabled()) {
+    await boss.schedule(MANAGED_RUNPOD_RECONCILE_QUEUE, "*/5 * * * *", {});
+    await boss.schedule(MANAGED_RUNPOD_USAGE_QUEUE, "15 * * * *", {});
+  }
+  await recoverQueuedManagedRunPodRuns(boss);
+  return boss;
+}
+
 export async function enqueueKnowledgeSyncRun(runId: string) {
   const boss = await getKnowledgeBoss();
   await boss.send(KNOWLEDGE_SYNC_QUEUE, { runId });
@@ -176,17 +189,17 @@ export async function enqueueEnvironmentOperation(operationId: string) {
 }
 
 export async function enqueueManagedRunPodRun(runId: string) {
-  const boss = await getKnowledgeBoss();
+  const boss = await getKnowledgeBossProducer();
   await sendManagedRunPodRun(boss, runId);
 }
 
 export async function enqueueManagedRunPodReconciliation() {
-  const boss = await getKnowledgeBoss();
+  const boss = await getKnowledgeBossProducer();
   await boss.send(MANAGED_RUNPOD_RECONCILE_QUEUE, {});
 }
 
 export async function enqueueManagedRunPodUsageIngestion() {
-  const boss = await getKnowledgeBoss();
+  const boss = await getKnowledgeBossProducer();
   await boss.send(MANAGED_RUNPOD_USAGE_QUEUE, {});
 }
 

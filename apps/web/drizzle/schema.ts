@@ -596,6 +596,7 @@ export const threadTurns = pgTable(
       () => environmentRunExecutions.id,
       { onDelete: "set null" }
     ),
+    requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sequence: integer("sequence").notNull(),
     source: text("source", { enum: ["web", "mobile", "api"] })
@@ -645,6 +646,12 @@ export const threadTurns = pgTable(
       table.projectContextRevisionId
     ),
     index("thread_turns_execution_idx").on(table.environmentExecutionId),
+    index("thread_turns_environment_idx").on(table.requestedEnvironmentId),
+    foreignKey({
+      columns: [table.organizationId, table.requestedEnvironmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "thread_turns_organization_environment_fk",
+    }).onDelete("restrict"),
     check(
       "thread_turns_input_contract_check",
       sql`(
@@ -2762,6 +2769,7 @@ export const aiGateways = pgTable(
     organizationId: text("organization_id").references(() => organizations.id, {
       onDelete: "cascade",
     }),
+    environmentId: text("environment_id"),
     deploymentId: text("deployment_id"),
     providerConnectionId: text("provider_connection_id").references(
       () => aiProviderConnections.id,
@@ -2800,12 +2808,27 @@ export const aiGateways = pgTable(
     uniqueIndex("ai_gateways_global_provider_display_name_idx")
       .on(table.provider, table.displayName)
       .where(sql`${table.organizationId} IS NULL`),
-    uniqueIndex("ai_gateways_org_provider_display_name_idx")
+    uniqueIndex("ai_gateways_org_shared_provider_display_name_idx")
       .on(table.organizationId, table.provider, table.displayName)
-      .where(sql`${table.organizationId} IS NOT NULL`),
+      .where(
+        sql`${table.organizationId} IS NOT NULL AND ${table.environmentId} IS NULL`
+      ),
+    uniqueIndex("ai_gateways_environment_provider_display_name_idx")
+      .on(table.environmentId, table.provider, table.displayName)
+      .where(sql`${table.environmentId} IS NOT NULL`),
     index("ai_gateways_org_id_idx").on(table.organizationId),
+    index("ai_gateways_environment_id_idx").on(table.environmentId),
     index("ai_gateways_enabled_idx").on(table.enabled),
     index("ai_gateways_provider_idx").on(table.provider),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "ai_gateways_organization_environment_fk",
+    }).onDelete("restrict"),
+    check(
+      "ai_gateways_environment_scope_check",
+      sql`${table.environmentId} IS NULL OR ${table.organizationId} IS NOT NULL`
+    ),
   ]
 );
 
@@ -2844,6 +2867,38 @@ export const aiGatewayModels = pgTable(
   ]
 );
 
+export const environmentAiModelDefaults = pgTable(
+  "environment_ai_model_defaults",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
+    modality: text("modality", {
+      enum: ["language", "image", "speech", "video", "embedding"],
+    }).notNull(),
+    modelId: text("model_id")
+      .notNull()
+      .references(() => aiGatewayModels.id, { onDelete: "cascade" }),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.environmentId, table.modality] }),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "environment_ai_model_defaults_organization_environment_fk",
+    }).onDelete("cascade"),
+    index("environment_ai_model_defaults_model_idx").on(table.modelId),
+  ]
+);
+
 export const aiDeployments = pgTable(
   "ai_deployments",
   {
@@ -2853,6 +2908,7 @@ export const aiDeployments = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
@@ -2895,14 +2951,20 @@ export const aiDeployments = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("ai_deployments_active_org_profile_idx")
-      .on(table.organizationId, table.profileId)
+    uniqueIndex("ai_deployments_active_environment_profile_idx")
+      .on(table.environmentId, table.profileId)
       .where(sql`${table.deletedAt} IS NULL`),
     uniqueIndex("ai_deployments_provider_endpoint_idx").on(
       table.providerEndpointId
     ),
     index("ai_deployments_org_id_idx").on(table.organizationId),
+    index("ai_deployments_environment_id_idx").on(table.environmentId),
     index("ai_deployments_status_idx").on(table.status),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "ai_deployments_organization_environment_fk",
+    }).onDelete("restrict"),
   ]
 );
 

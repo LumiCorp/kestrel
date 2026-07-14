@@ -431,6 +431,70 @@ export async function getProjectEnvironmentBinding(input: {
   });
 }
 
+export async function resolveThreadEnvironment(input: {
+  organizationId: string;
+  threadId: string;
+}) {
+  const thread = await knowledgeDb.query.threads.findFirst({
+    where: (table, { and, eq, isNull }) =>
+      and(
+        eq(table.id, input.threadId),
+        eq(table.organizationId, input.organizationId),
+        isNull(table.archivedAt)
+      ),
+    columns: { id: true, projectId: true },
+  });
+  if (!thread) return null;
+  const binding = await knowledgeDb.query.threadExecutionBindings.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.threadId, thread.id),
+        eq(table.organizationId, input.organizationId)
+      ),
+    columns: { environmentId: true },
+  });
+  const project =
+    !binding && thread.projectId
+      ? await knowledgeDb.query.projects.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, thread.projectId!),
+              eq(table.organizationId, input.organizationId)
+            ),
+          columns: { environmentId: true },
+        })
+      : null;
+  return knowledgeDb.query.environments.findFirst({
+    where: (table, { and, eq, isNull, notInArray }) =>
+      and(
+        eq(table.organizationId, input.organizationId),
+        binding
+          ? eq(table.id, binding.environmentId)
+          : project
+            ? eq(table.id, project.environmentId)
+            : eq(table.isDefault, true),
+        isNull(table.archivedAt),
+        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+      ),
+    columns: { id: true, name: true, slug: true, status: true },
+  });
+}
+
+export async function getDefaultOrganizationEnvironment(
+  organizationId: string
+) {
+  return knowledgeDb.query.environments.findFirst({
+    where: (table, { and, eq, isNull, notInArray }) =>
+      and(
+        eq(table.organizationId, organizationId),
+        eq(table.isDefault, true),
+        isNull(table.archivedAt),
+        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+      ),
+    columns: { id: true, name: true, slug: true, status: true },
+  });
+}
+
 export async function resolveOrCreateThreadExecutionBinding(input: {
   organizationId: string;
   threadId: string;

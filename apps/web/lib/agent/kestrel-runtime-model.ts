@@ -11,6 +11,7 @@ export type KestrelOneRuntimeModelSelection = {
   id: string;
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   model: string;
   provider: RunnerModelProvider;
 };
@@ -22,6 +23,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
   gatewayProvider: GatewayProtocolProvider;
   metadata?: unknown;
   organizationId: string;
+  environmentId: string;
 }): KestrelOneRuntimeModelSelection {
   if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) {
     throw new Error(
@@ -46,6 +48,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     id: input.id,
     gatewayId: input.gatewayId,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
   };
@@ -75,6 +78,7 @@ export function applyKestrelOneModelToProfile(
       source: "kestrel-one",
       gatewayId: selection.gatewayId,
       organizationId: selection.organizationId,
+      environmentId: selection.environmentId,
       rawModelId: selection.model,
     },
     default: false,

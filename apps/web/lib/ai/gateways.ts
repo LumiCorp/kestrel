@@ -23,6 +23,7 @@ import {
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
   getProviderSupportedModalities as getSharedProviderSupportedModalities,
+  isGatewayModelDefault,
   isKestrelRuntimeLanguageProvider,
   normalizeGatewayModelMetadata,
   normalizeOpenAICompatibleBaseUrl,
@@ -46,6 +47,7 @@ export type GatewayRecord = typeof schema.aiGateways.$inferSelect;
 export type GatewayModelRecord = typeof schema.aiGatewayModels.$inferSelect;
 
 export type GatewayCatalogModel = ChatModel & {
+  gatewayModelId: string;
   alias: string | null;
   rawModelId: string;
   modality: GatewayModality;
@@ -53,6 +55,8 @@ export type GatewayCatalogModel = ChatModel & {
   gatewayProvider: GatewayProvider;
   isDefault: boolean;
   metadata: Record<string, unknown> | null;
+  environmentId: string | null;
+  scope: "platform" | "organization" | "environment";
 };
 
 const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
@@ -501,39 +505,63 @@ export async function listAIGatewaysWithModels() {
 
 export async function listApprovedModels(
   modality: GatewayModality,
-  organizationId?: string
+  organizationId?: string,
+  environmentId?: string
 ) {
-  const rows = await knowledgeDb
-    .select({
-      gateway: schema.aiGateways,
-      model: schema.aiGatewayModels,
-    })
-    .from(schema.aiGatewayModels)
-    .innerJoin(
-      schema.aiGateways,
-      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
-    )
-    .where(
-      and(
-        eq(schema.aiGatewayModels.approved, true),
-        eq(schema.aiGatewayModels.modality, modality),
-        eq(schema.aiGateways.enabled, true),
-        organizationId
-          ? or(
-              isNull(schema.aiGateways.organizationId),
-              eq(schema.aiGateways.organizationId, organizationId)
-            )
-          : isNull(schema.aiGateways.organizationId)
+  const [rows, environmentDefault] = await Promise.all([
+    knowledgeDb
+      .select({
+        gateway: schema.aiGateways,
+        model: schema.aiGatewayModels,
+      })
+      .from(schema.aiGatewayModels)
+      .innerJoin(
+        schema.aiGateways,
+        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
       )
-    )
-    .orderBy(
-      desc(schema.aiGatewayModels.isDefault),
-      asc(schema.aiGateways.displayName),
-      asc(schema.aiGatewayModels.alias),
-      asc(schema.aiGatewayModels.rawModelId)
-    );
+      .where(
+        and(
+          eq(schema.aiGatewayModels.approved, true),
+          eq(schema.aiGatewayModels.modality, modality),
+          eq(schema.aiGateways.enabled, true),
+          organizationId && environmentId
+            ? or(
+                isNull(schema.aiGateways.organizationId),
+                and(
+                  eq(schema.aiGateways.organizationId, organizationId),
+                  or(
+                    isNull(schema.aiGateways.environmentId),
+                    eq(schema.aiGateways.environmentId, environmentId)
+                  )
+                )
+              )
+            : organizationId
+              ? or(
+                  isNull(schema.aiGateways.organizationId),
+                  eq(schema.aiGateways.organizationId, organizationId)
+                )
+              : isNull(schema.aiGateways.organizationId)
+        )
+      )
+      .orderBy(
+        desc(schema.aiGatewayModels.isDefault),
+        asc(schema.aiGateways.displayName),
+        asc(schema.aiGatewayModels.alias),
+        asc(schema.aiGatewayModels.rawModelId)
+      ),
+    environmentId
+      ? knowledgeDb.query.environmentAiModelDefaults.findFirst({
+          where: and(
+            eq(schema.environmentAiModelDefaults.environmentId, environmentId),
+            eq(schema.environmentAiModelDefaults.modality, modality)
+          ),
+          columns: { modelId: true },
+        })
+      : Promise.resolve(undefined),
+  ]);
 
   return rows.map(({ gateway, model }) => ({
+    gatewayModelId: model.id,
     id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
     name: normalizeModelLabel(model),
     provider: gateway.provider,
@@ -544,7 +572,17 @@ export async function listApprovedModels(
     modality: model.modality as GatewayModality,
     gatewayId: gateway.id,
     gatewayProvider: gateway.provider as GatewayProvider,
-    isDefault: model.isDefault,
+    isDefault: isGatewayModelDefault({
+      environmentDefaultModelId: environmentDefault?.modelId,
+      modelId: model.id,
+      modelIsDefault: model.isDefault,
+    }),
+    environmentId: gateway.environmentId,
+    scope: gateway.environmentId
+      ? "environment"
+      : gateway.organizationId
+        ? "organization"
+        : "platform",
     metadata: normalizeGatewayModelMetadata({
       gatewayProvider: gateway.provider as GatewayProvider,
       modality: model.modality as GatewayModality,
@@ -553,14 +591,18 @@ export async function listApprovedModels(
   })) as GatewayCatalogModel[];
 }
 
-export async function getApprovedLanguageModels(organizationId?: string) {
-  return listApprovedModels("language", organizationId);
+export async function getApprovedLanguageModels(
+  organizationId?: string,
+  environmentId?: string
+) {
+  return listApprovedModels("language", organizationId, environmentId);
 }
 
 export async function getApprovedKestrelRuntimeLanguageModels(
-  organizationId?: string
+  organizationId?: string,
+  environmentId?: string
 ) {
-  const models = await getApprovedLanguageModels(organizationId);
+  const models = await getApprovedLanguageModels(organizationId, environmentId);
   return models.filter((model) =>
     isKestrelRuntimeLanguageProvider(model.gatewayProvider)
   );
@@ -569,10 +611,13 @@ export async function getApprovedKestrelRuntimeLanguageModels(
 export async function resolvePreferredLanguageModelId(
   selectedModelId?: string | null,
   fallbackModelId?: string | null,
-  organizationId?: string
+  organizationId?: string,
+  environmentId?: string
 ) {
-  const languageModels =
-    await getApprovedKestrelRuntimeLanguageModels(organizationId);
+  const languageModels = await getApprovedKestrelRuntimeLanguageModels(
+    organizationId,
+    environmentId
+  );
   return (
     selectPreferredGatewayModelId(
       languageModels,
@@ -584,10 +629,18 @@ export async function resolvePreferredLanguageModelId(
 
 export async function getSpeechModelForLanguageSelection(
   languageModelId?: string | null,
-  organizationId?: string
+  organizationId?: string,
+  environmentId?: string
 ) {
-  const languageModels = await getApprovedLanguageModels(organizationId);
-  const speechModels = await listApprovedModels("speech", organizationId);
+  const languageModels = await getApprovedLanguageModels(
+    organizationId,
+    environmentId
+  );
+  const speechModels = await listApprovedModels(
+    "speech",
+    organizationId,
+    environmentId
+  );
 
   if (speechModels.length === 0) {
     return null;
@@ -621,8 +674,13 @@ export async function resolveGatewayModelSelection(input: {
   selection?: string | null;
   modality: GatewayModality;
   organizationId?: string;
+  environmentId?: string;
 }) {
-  const models = await listApprovedModels(input.modality, input.organizationId);
+  const models = await listApprovedModels(
+    input.modality,
+    input.organizationId,
+    input.environmentId
+  );
 
   return selectGatewayModelSelection(models, input.selection);
 }
@@ -638,6 +696,7 @@ export async function createGateway(input: {
   supportedModalities?: GatewayModality[];
   metadata?: Record<string, unknown> | null;
   organizationId?: string | null;
+  environmentId?: string | null;
   deploymentId?: string | null;
   providerConnectionId?: string | null;
 }) {
@@ -652,6 +711,7 @@ export async function createGateway(input: {
     .values({
       id: gatewayId,
       organizationId: input.organizationId ?? null,
+      environmentId: input.environmentId ?? null,
       deploymentId: input.deploymentId ?? null,
       providerConnectionId: input.providerConnectionId ?? null,
       provider: input.provider,
@@ -966,6 +1026,7 @@ export async function saveGatewayModel(input: {
 export async function validateRunPodGatewayModel(input: {
   gatewayId: string;
   modelId: string;
+  timeoutMs?: number;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }) {
@@ -1002,6 +1063,7 @@ export async function validateRunPodGatewayModel(input: {
     apiKey,
     baseUrl,
     model: selected.model.rawModelId,
+    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     ...(input.now ? { now: input.now } : {}),
   });
@@ -1029,6 +1091,73 @@ export async function validateRunPodGatewayModel(input: {
   return { model: updated, validation: evidence };
 }
 
+export async function validateRunPodGatewayModelByRawId(input: {
+  gatewayId: string;
+  rawModelId: string;
+  isDefault?: boolean;
+  timeoutMs?: number;
+  fetchImpl?: RunPodFetch;
+  now?: Date;
+}) {
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: (table, operators) => operators.eq(table.id, input.gatewayId),
+  });
+  if (gateway?.provider !== "runpod") {
+    throw new Error("RunPod gateway not found.");
+  }
+  const apiKey = getGatewayApiKey(gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!(apiKey && baseUrl)) {
+    throw new Error("RunPod gateway credential or endpoint is missing.");
+  }
+
+  const rawModelId = input.rawModelId.trim();
+  if (!rawModelId) {
+    throw new Error("Served model ID is required.");
+  }
+  const existing = await knowledgeDb.query.aiGatewayModels.findFirst({
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.gatewayId, gateway.id),
+        operators.eq(table.rawModelId, rawModelId)
+      ),
+  });
+  const candidate =
+    existing ??
+    (await saveGatewayModel({
+      gatewayId: gateway.id,
+      gatewayProvider: "runpod",
+      gatewayBaseUrl: gateway.baseUrl,
+      rawModelId,
+      modality: "language",
+      approved: false,
+      isDefault: false,
+      metadata: null,
+    }));
+  const validation = await validateRunPodGatewayModel({
+    gatewayId: gateway.id,
+    modelId: candidate.id,
+    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    ...(input.now ? { now: input.now } : {}),
+  });
+  const model = await saveGatewayModel({
+    id: validation.model.id,
+    gatewayId: gateway.id,
+    gatewayProvider: "runpod",
+    gatewayBaseUrl: gateway.baseUrl,
+    rawModelId,
+    alias: validation.model.alias,
+    modality: "language",
+    approved: true,
+    isDefault: input.isDefault ?? validation.model.isDefault,
+    description: validation.model.description,
+    metadata: validation.model.metadata as Record<string, unknown> | null,
+  });
+
+  return { model, validation: validation.validation };
+}
+
 type ResolvedGatewayModel = {
   gateway: GatewayRecord;
   model: GatewayCatalogModel;
@@ -1038,6 +1167,7 @@ async function getResolvedGatewayModel(input: {
   selection?: string | null;
   modality: GatewayModality;
   organizationId?: string;
+  environmentId?: string;
 }): Promise<ResolvedGatewayModel | null> {
   const selection = await resolveGatewayModelSelection(input);
 
@@ -1069,6 +1199,7 @@ export async function getResolvedGatewayExecutionModel(input: {
   selection?: string | null;
   modality: GatewayModality;
   organizationId?: string;
+  environmentId?: string;
 }) {
   return getResolvedGatewayModel(input);
 }
@@ -1076,12 +1207,16 @@ export async function getResolvedGatewayExecutionModel(input: {
 export async function getResolvedKestrelRuntimeExecutionModel(input: {
   selection?: string | null;
   organizationId?: string;
+  environmentId?: string;
 }) {
   const models = await getApprovedKestrelRuntimeLanguageModels(
-    input.organizationId
+    input.organizationId,
+    input.environmentId
   );
   return hydrateResolvedGatewayModel(
-    selectGatewayModelSelection(models, input.selection)
+    input.selection
+      ? selectGatewayModelSelection(models, input.selection)
+      : (models.find((model) => model.isDefault) ?? null)
   );
 }
 
@@ -1151,11 +1286,13 @@ export async function resolveLanguageModelHandle(input: {
   selection?: string | null;
   usage?: "default" | "tool-loop";
   organizationId?: string;
+  environmentId?: string;
 }) {
   const resolved = await getResolvedGatewayModel({
     selection: input.selection,
     modality: "language",
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
 
   if (!resolved) {

@@ -1,0 +1,19 @@
+app = "kestrel-one-runpod-worker"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 35
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  worker = "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts"
+
+[[vm]]
+  processes = ["worker"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+
+[[restart]]
+  policy = "always"

@@ -134,3 +134,27 @@ test("control-plane billing requests use hourly endpoint attribution", async () 
   assert.match(requestedUrl, /bucketSize=hour/u);
   assert.equal(rows[0]?.endpointId, "endpoint-1");
 });
+
+test("control-plane billing normalizes RunPod's timezone-free UTC buckets", async () => {
+  const client = new RunPodControlPlaneClient({
+    apiKey: "runpod-secret",
+    fetchImpl: async () =>
+      Response.json([
+        {
+          amount: 1.25,
+          diskSpaceBilledGb: 50,
+          endpointId: "endpoint-1",
+          gpuTypeId: "NVIDIA L40S",
+          time: "2026-07-12 12:00:00",
+          timeBilledMs: 3_600_000,
+        },
+      ]),
+  });
+
+  const rows = await client.listBilling({
+    startTime: new Date("2026-07-12T12:00:00.000Z"),
+    endTime: new Date("2026-07-12T13:00:00.000Z"),
+  });
+
+  assert.equal(rows[0]?.time, "2026-07-12T12:00:00.000Z");
+});

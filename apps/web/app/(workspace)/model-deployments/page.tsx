@@ -1,12 +1,12 @@
-import { AppPage } from "@/components/app-page";
-import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { ManagedRunPodDeploymentsClient } from "./page-client";
+import { redirect } from "next/navigation";
+import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 
 export default async function ModelDeploymentsPage() {
-  await requireActiveOrganization();
-  return (
-    <AppPage className="mx-auto w-full max-w-6xl p-6">
-      <ManagedRunPodDeploymentsClient />
-    </AppPage>
-  );
+  const { organizationId, session } = await requireOrganizationAdmin();
+  const { environment } = await ensureOrganizationDefaultEnvironment({
+    organizationId,
+    userId: session.user.id,
+  });
+  redirect(`/settings/environments/${environment.id}/inference`);
 }

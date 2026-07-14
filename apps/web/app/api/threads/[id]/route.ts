@@ -6,6 +6,7 @@ import {
   hasToolApprovalResponse,
 } from "@/lib/chat/tool-approval-response";
 import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
+import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
@@ -157,6 +158,13 @@ export async function POST(
       organizationId,
       userId: user.id,
     });
+    const environment = await resolveThreadEnvironment({
+      organizationId,
+      threadId: thread.id,
+    });
+    if (!environment) {
+      throw new Error("No Environment is available for this Thread.");
+    }
     if (approvalResponse) {
       await decideGitHubActionApproval({
         organizationId,
@@ -203,6 +211,7 @@ export async function POST(
             : {}),
         },
         idempotencyKey,
+        requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
         source: "web",
@@ -221,6 +230,7 @@ export async function POST(
         messageId: submittedUserMessage.id,
         messageParts: submittedUserMessage.parts,
         idempotencyKey,
+        requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
         source: "web",
