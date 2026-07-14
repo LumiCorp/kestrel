@@ -78,9 +78,6 @@ test(
     const repositoryResourceId = crypto.randomUUID();
     const githubAccountId = `github-account-${suffix}`;
     const githubConnectionId = crypto.randomUUID();
-    const environmentGrantId = crypto.randomUUID();
-    const repositoryReadGrantId = crypto.randomUUID();
-    const projectRestrictionId = crypto.randomUUID();
     const actorRestrictionId = crypto.randomUUID();
     const agentRestrictionId = crypto.randomUUID();
     const now = new Date();
@@ -183,7 +180,7 @@ test(
     assert.equal(repeatedProjectBinding.created, false);
     assert.equal(
       repeatedProjectBinding.workspace.id,
-      projectBinding.workspace.id,
+      projectBinding.workspace.id
     );
 
     const scratchBinding =
@@ -246,6 +243,43 @@ test(
     assert.equal(route.environmentId, createdEnvironment.environment.id);
     assert.equal(route.workspaceId, projectBinding.workspace.id);
     assert.equal(route.baseUrl, "https://environment.example");
+    assert.ok(
+      route.effectiveCapabilities.includes(
+        "app:built_in.weather.getWeather:auto"
+      )
+    );
+    assert.ok(
+      route.effectiveCapabilities.includes(
+        "app:built_in.knowledge_search.searchKnowledgeDocuments:auto"
+      )
+    );
+
+    await sql`
+      INSERT INTO "project_apps" (
+        "project_id", "app_key", "enabled", "added_by_user_id"
+      ) VALUES (
+        ${projectId}, 'built_in.weather', false, ${userA}
+      )
+    `;
+    const routeAfterWeatherDisabled =
+      await executionRoute.resolveEnvironmentExecutionRoute({
+        organizationId: organizationA,
+        threadId: projectThreadId,
+        actorUserId: userA,
+        agentId: "kestrel-one",
+        recordExecution: {},
+      });
+    assert.equal(
+      routeAfterWeatherDisabled.effectiveCapabilities.some((capability) =>
+        capability.startsWith("app:built_in.weather.")
+      ),
+      false
+    );
+    assert.ok(
+      routeAfterWeatherDisabled.effectiveCapabilities.includes(
+        "app:built_in.knowledge_search.searchKnowledgeDocuments:auto"
+      )
+    );
 
     const ticket = auth.verifyEnvironmentExecutionTicket({
       publicKey: publicKey.export({ format: "pem", type: "spki" }).toString(),
@@ -383,25 +417,6 @@ test(
     assert.deepEqual(preservedThread, { id: projectThreadId, projectId });
 
     await sql`
-      INSERT INTO "organization_tool_connections" (
-        "organization_id", "provider_key", "auth_source", "status",
-        "account_id", "metadata"
-      ) VALUES (
-        ${organizationA}, 'github', 'oauth', 'connected', NULL,
-        ${sql.json({ connectionModel: "user_oauth" })}
-      )
-    `;
-    await sql`
-      INSERT INTO "tool_connection_resources" (
-        "id", "organization_id", "provider_key", "external_id",
-        "resource_type", "label", "metadata"
-      ) VALUES (
-        ${repositoryResourceId}, ${organizationA}, 'github',
-        'repository:acme/support', 'repository', 'acme/support',
-        ${sql.json({ defaultBranch: "main", private: true })}
-      )
-    `;
-    await sql`
       INSERT INTO "account" (
         "id", "accountId", "providerId", "userId", "scope",
         "createdAt", "updatedAt"
@@ -411,21 +426,46 @@ test(
       )
     `;
     await sql`
-      INSERT INTO "user_tool_connections" (
-        "id", "organization_id", "provider_key", "user_id",
-        "auth_account_id", "status", "provider_account_id", "provider_login",
-        "scopes"
+      INSERT INTO "app_installations" (
+        "organization_id", "app_key", "status", "installed_by_user_id"
       ) VALUES (
-        ${githubConnectionId}, ${organizationA}, 'github', ${userA},
-        ${githubAccountId}, 'connected', 'github-user-42', 'environment-user-a',
-        ${sql.json(["repo"])}
+        ${organizationA}, 'github', 'installed', ${userA}
       )
     `;
     await sql`
-      INSERT INTO "user_tool_connection_resources" (
-        "connection_id", "resource_id", "can_pull", "can_push", "can_admin"
+      INSERT INTO "app_connections" (
+        "id", "organization_id", "app_key", "owner_type", "user_id",
+        "auth_account_id", "name", "status", "external_account_id",
+        "external_account_label", "scopes"
       ) VALUES (
-        ${githubConnectionId}, ${repositoryResourceId}, true, true, false
+        ${githubConnectionId}, ${organizationA}, 'github', 'personal', ${userA},
+        ${githubAccountId}, 'environment-user-a', 'connected', 'github-user-42',
+        'environment-user-a', ${sql.json(["repo"])}
+      )
+    `;
+    await sql`
+      INSERT INTO "app_connection_resources" (
+        "id", "connection_id", "external_id", "resource_type", "label",
+        "permissions", "metadata"
+      ) VALUES (
+        ${repositoryResourceId}, ${githubConnectionId}, 'repository:acme/support',
+        'repository', 'acme/support',
+        ${sql.json({ pull: true, push: true, admin: false })},
+        ${sql.json({ defaultBranch: "main", private: true })}
+      )
+    `;
+    await sql`
+      INSERT INTO "project_apps" (
+        "project_id", "app_key", "enabled", "added_by_user_id"
+      ) VALUES (${projectId}, 'github', true, ${userA})
+    `;
+    await sql`
+      INSERT INTO "project_app_connections" (
+        "project_id", "app_key", "connection_id", "scope", "user_id",
+        "is_default", "added_by_user_id"
+      ) VALUES (
+        ${projectId}, 'github', ${githubConnectionId}, 'personal', ${userA},
+        true, ${userA}
       )
     `;
     await sql`
@@ -438,18 +478,16 @@ test(
       WHERE "id" = ${projectBinding.workspace.id}
     `;
     await sql`
-      INSERT INTO "environment_capability_grants" (
-        "id", "environment_id", "provider_key", "capability_key",
-        "resource_id", "approval_mode"
+      INSERT INTO "environment_app_capability_grants" (
+        "environment_id", "app_key", "capability_key", "enabled",
+        "approval_mode", "logging_mode", "rate_limit_mode"
       ) VALUES
-        (
-          ${environmentGrantId}, ${createdEnvironment.environment.id}, 'github',
-          'issue.write', ${repositoryResourceId}, 'auto'
-        ),
-        (
-          ${repositoryReadGrantId}, ${createdEnvironment.environment.id},
-          'github', 'repository.read', ${repositoryResourceId}, 'auto'
-        )
+        (${createdEnvironment.environment.id}, 'github', 'issue.write', true,
+         'auto', 'metadata_only', 'default'),
+        (${createdEnvironment.environment.id}, 'github', 'repository.read', true,
+         'auto', 'metadata_only', 'default')
+      ON CONFLICT ("environment_id", "app_key", "capability_key")
+      DO UPDATE SET "enabled" = true, "approval_mode" = 'auto'
     `;
 
     const configuredScratchWorkspace =
@@ -495,12 +533,12 @@ test(
       configuredScratchWorkspace.workspace.id
     );
     await sql`
-      INSERT INTO "project_capability_restrictions" (
-        "id", "project_id", "provider_key", "capability_key", "resource_id",
-        "enabled", "approval_mode"
+      INSERT INTO "project_app_capability_policies" (
+        "project_id", "app_key", "capability_key", "enabled",
+        "approval_mode", "logging_mode", "rate_limit_mode"
       ) VALUES (
-        ${projectRestrictionId}, ${projectId}, 'github', 'issue.write',
-        ${repositoryResourceId}, true, 'auto'
+        ${projectId}, 'github', 'issue.write', true, 'auto',
+        'metadata_only', 'default'
       )
     `;
     await sql`
@@ -512,12 +550,12 @@ test(
         (
           ${actorRestrictionId}, ${organizationA},
           ${createdEnvironment.environment.id}, 'actor', ${userA}, 'github',
-          'issue.write', ${repositoryResourceId}, true, 'auto'
+          'issue.write', NULL, true, 'auto'
         ),
         (
           ${agentRestrictionId}, ${organizationA},
           ${createdEnvironment.environment.id}, 'agent', 'kestrel-one',
-          'github', 'issue.write', ${repositoryResourceId}, true, 'auto'
+          'github', 'issue.write', NULL, true, 'auto'
         )
     `;
 
@@ -537,8 +575,7 @@ test(
       await assert.rejects(
         githubPolicy.authorizeGitHubCapability(authorizationInput),
         (error: unknown) =>
-          error instanceof githubPolicy.GitHubPolicyError &&
-          error.code === code,
+          error instanceof githubPolicy.GitHubPolicyError && error.code === code
       );
     };
     await sql`
@@ -564,30 +601,37 @@ test(
       WHERE "id" = ${agentRestrictionId}
     `;
     await sql`
-      UPDATE "project_capability_restrictions"
+      UPDATE "project_app_capability_policies"
       SET "enabled" = false
-      WHERE "id" = ${projectRestrictionId}
+      WHERE "project_id" = ${projectId}
+        AND "app_key" = 'github'
+        AND "capability_key" = 'issue.write'
     `;
-    await assertGitHubDenied("GITHUB_RESTRICTION_DENIED");
+    await assertGitHubDenied("GITHUB_CAPABILITY_DENIED");
     await sql`
-      UPDATE "project_capability_restrictions"
+      UPDATE "project_app_capability_policies"
       SET "enabled" = true
-      WHERE "id" = ${projectRestrictionId}
+      WHERE "project_id" = ${projectId}
+        AND "app_key" = 'github'
+        AND "capability_key" = 'issue.write'
     `;
     await sql`
-      UPDATE "user_tool_connections"
+      UPDATE "app_connections"
       SET "status" = 'disconnected'
       WHERE "id" = ${githubConnectionId}
     `;
-    await assertGitHubDenied("GITHUB_CONTEXT_DENIED");
+    await assertGitHubDenied("GITHUB_CAPABILITY_DENIED");
     await sql`
-      UPDATE "user_tool_connections"
+      UPDATE "app_connections"
       SET "status" = 'connected'
       WHERE "id" = ${githubConnectionId}
     `;
     await sql`
-      DELETE FROM "environment_capability_grants"
-      WHERE "id" = ${environmentGrantId}
+      UPDATE "environment_app_capability_grants"
+      SET "enabled" = false, "approval_mode" = 'deny'
+      WHERE "environment_id" = ${createdEnvironment.environment.id}
+        AND "app_key" = 'github'
+        AND "capability_key" = 'issue.write'
     `;
     await assertGitHubDenied("GITHUB_CAPABILITY_DENIED");
 
@@ -600,7 +644,7 @@ test(
       (error: unknown) =>
         error instanceof Error &&
         "code" in error &&
-        error.code === "ENVIRONMENT_BINDING_NOT_FOUND",
+        error.code === "ENVIRONMENT_BINDING_NOT_FOUND"
     );
 
     const secondary = await environmentStore.createOrganizationEnvironment({
@@ -619,12 +663,12 @@ test(
     `;
     await assert.rejects(
       databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
-        createdEnvironment.environment.id,
+        createdEnvironment.environment.id
       ),
       (error: unknown) =>
         error instanceof Error &&
         "code" in error &&
-        error.code === "ENVIRONMENT_IS_DEFAULT",
+        error.code === "ENVIRONMENT_IS_DEFAULT"
     );
     const projectOwned = await environmentStore.createOrganizationEnvironment({
       organizationId: organizationA,
@@ -650,15 +694,20 @@ test(
           ${userA}, 'Owned Project'
         )
       `;
+      await transaction`
+        INSERT INTO "project_members" (
+          "project_id", "organization_member_id", "role"
+        ) VALUES (${ownedProjectId}, ${memberA}, 'owner')
+      `;
     });
     await assert.rejects(
       databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
-        projectOwned.environment.id,
+        projectOwned.environment.id
       ),
       (error: unknown) =>
         error instanceof Error &&
         "code" in error &&
-        error.code === "ENVIRONMENT_HAS_PROJECTS",
+        error.code === "ENVIRONMENT_HAS_PROJECTS"
     );
     const [projectOwnedAfterConflict] = await sql<Array<{ status: string }>>`
       SELECT "status"
@@ -672,12 +721,12 @@ test(
         environmentId: secondary.environment.id,
       }),
       databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
-        secondary.environment.id,
+        secondary.environment.id
       ),
     ]);
     assert.equal(
       lifecycleRace.filter((result) => result.status === "fulfilled").length,
-      1,
+      1
     );
     const [racedEnvironment] = await sql<
       Array<{ status: string; isDefault: boolean }>
@@ -690,7 +739,7 @@ test(
     assert.equal(
       racedEnvironment.status === "deleting" && racedEnvironment.isDefault,
       false,
-      "a deleting Environment must never become the organization default",
+      "a deleting Environment must never become the organization default"
     );
 
     const automaticTarget =
@@ -714,7 +763,7 @@ test(
         userId: userB,
       }),
       databaseEnvironmentProvisioningRepository.setEnvironmentDeleting(
-        automaticTarget.environment.id,
+        automaticTarget.environment.id
       ),
     ]);
     const ensuredDefault = automaticDefaultRace[0];
@@ -731,15 +780,15 @@ test(
       automaticTargetAfterRace.status === "deleting" &&
         automaticTargetAfterRace.isDefault,
       false,
-      "automatic default selection must not claim a deleting Environment",
+      "automatic default selection must not claim a deleting Environment"
     );
     if (automaticDefaultRace[1]?.status === "fulfilled") {
       assert.notEqual(
         ensuredDefault.status === "fulfilled"
           ? ensuredDefault.value.environment.id
           : undefined,
-        automaticTarget.environment.id,
+        automaticTarget.environment.id
       );
     }
-  },
+  }
 );

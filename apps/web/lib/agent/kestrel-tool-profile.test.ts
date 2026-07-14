@@ -1,0 +1,114 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
+import { restrictKestrelOneProfileTools } from "./kestrel-tool-profile";
+
+const profile = {
+  id: "kestrel-one",
+  label: "Kestrel One",
+  agent: "reference-react",
+  sessionPrefix: "kestrel-one",
+  toolAllowlist: [
+    "kestrel_one.search_knowledge_documents",
+    "kestrel_one.google_calendar_list_events",
+    "kestrel_one.google_calendar_create_event",
+    "kestrel_one.google_calendar_check_availability",
+  ],
+} as RunnerProfile;
+
+test("calendar tools are exposed only for effective Project capabilities", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile,
+    effectiveCapabilities: [
+      "app:built_in.knowledge_search.searchKnowledgeDocuments:auto",
+      "app:google_workspace.calendar.events.read:auto",
+      "app:google_workspace.calendar.availability.read:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.search_knowledge_documents",
+    "kestrel_one.google_calendar_list_events",
+    "kestrel_one.google_calendar_check_availability",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.search_knowledge_documents": "auto",
+    "kestrel_one.google_calendar_list_events": "auto",
+    "kestrel_one.google_calendar_check_availability": "ask",
+  });
+});
+
+test("calendar tools are removed when the user has no effective capability", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile,
+    effectiveCapabilities: [],
+  });
+  assert.deepEqual(restricted.toolAllowlist, []);
+});
+
+test("Tavily tools and approval modes come only from effective Project Apps", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        ...(profile.toolAllowlist ?? []),
+        "internet.search",
+        "internet.crawl",
+        "internet.usage",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:built_in.knowledge_search.searchKnowledgeDocuments:auto",
+      "app:tavily.search:auto",
+      "app:tavily.crawl:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.search_knowledge_documents",
+    "internet.search",
+    "internet.crawl",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.search_knowledge_documents": "auto",
+    "internet.search": "auto",
+    "internet.crawl": "ask",
+  });
+});
+
+test("built-in agent tools are governed by their effective App capabilities", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "getWeather",
+        "kestrel_one.search_knowledge_documents",
+        "bash",
+        "bash_batch",
+        "createDocument",
+        "updateDocument",
+        "requestSuggestions",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:built_in.weather.getWeather:auto",
+      "app:built_in.knowledge_search.searchKnowledgeDocuments:ask",
+      "app:built_in.sandbox.bash_batch:auto",
+      "app:built_in.artifacts.createDocument:ask",
+      "app:built_in.artifacts.requestSuggestions:auto",
+    ],
+  });
+
+  assert.deepEqual(restricted.toolAllowlist, [
+    "getWeather",
+    "kestrel_one.search_knowledge_documents",
+    "bash_batch",
+    "createDocument",
+    "requestSuggestions",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    getWeather: "auto",
+    "kestrel_one.search_knowledge_documents": "ask",
+    bash_batch: "auto",
+    createDocument: "ask",
+    requestSuggestions: "auto",
+  });
+});

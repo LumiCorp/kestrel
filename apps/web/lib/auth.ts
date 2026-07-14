@@ -21,7 +21,7 @@ import { Stripe } from "stripe";
 import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
-import { isDisallowedGithubSignIn } from "./auth-policy";
+import { isDisallowedToolProviderSignIn } from "./auth-policy";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
 import { reactResetPasswordEmail } from "./email/reset-password";
@@ -96,6 +96,9 @@ const stripeEnvConfigured = stripeConfigStatus.isReady;
 const githubOAuthConfigured = Boolean(
   process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
 );
+const googleOAuthConfigured = Boolean(
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+);
 
 export const auth = betterAuth({
   appName: "Kestrel One",
@@ -119,32 +122,46 @@ export const auth = betterAuth({
   account: {
     encryptOAuthTokens: true,
     accountLinking: {
-      trustedProviders: ["kestrel-one"],
+      trustedProviders: ["kestrel-one", "github", "google"],
       disableImplicitLinking: true,
       allowDifferentEmails: true,
       updateUserInfoOnLink: false,
     },
   },
-  socialProviders: githubOAuthConfigured
-    ? {
-        github: {
+  socialProviders: {
+    ...(githubOAuthConfigured
+      ? {
+          github: {
           clientId: process.env.GITHUB_CLIENT_ID as string,
           clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
           scope: ["repo"],
           disableImplicitSignUp: true,
-        },
-      }
-    : undefined,
+          },
+        }
+      : {}),
+    ...(googleOAuthConfigured
+      ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID as string,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+            accessType: "offline" as const,
+            prompt: "select_account consent",
+            disableImplicitSignUp: true,
+          },
+        }
+      : {}),
+  },
   hooks: {
     before: createAuthMiddleware(async (context) => {
       if (
-        isDisallowedGithubSignIn({
+        isDisallowedToolProviderSignIn({
           path: context.path,
           body: context.body,
         })
       ) {
         throw new APIError("BAD_REQUEST", {
-          message: "GitHub is available only as a linked organizational tool.",
+          message:
+            "This provider is available only as a linked organizational tool.",
         });
       }
     }),

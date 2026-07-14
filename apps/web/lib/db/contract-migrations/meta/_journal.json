@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1783998000000,
+      "tag": "0000_environment_private_inference_contract",
+      "breakpoints": true
+    }
+  ]
+}

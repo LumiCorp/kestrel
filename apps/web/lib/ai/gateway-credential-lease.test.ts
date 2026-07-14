@@ -62,6 +62,7 @@ test("gateway leases expire after exactly five minutes", () => {
   const now = new Date("2026-07-11T12:00:00.000Z");
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
+    environmentId: "env-1",
     gateway: {
       id: "gateway-openrouter",
       provider: "openrouter",
@@ -77,12 +78,14 @@ test("gateway leases expire after exactly five minutes", () => {
     GATEWAY_CREDENTIAL_LEASE_TTL_MS
   );
   assert.equal(lease.baseUrl, "https://openrouter.ai");
+  assert.equal(lease.environmentId, "env-1");
   assert.equal(lease.apiKey, "provider-secret");
 });
 
 test("Lumi leases preserve their configured language protocol", () => {
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
+    environmentId: "env-1",
     gateway: {
       id: "gateway-lumi",
       provider: "lumi",
@@ -105,6 +108,7 @@ test("credential leases fail closed when a provider key is missing", () => {
     () =>
       buildGatewayCredentialLease({
         organizationId: "org-1",
+        environmentId: "env-1",
         gateway: {
           id: "gateway-openai",
           provider: "openai",
@@ -123,6 +127,7 @@ test("credential leases fail closed when a provider key is missing", () => {
 test("validated RunPod models lease the OpenAI protocol and canonical endpoint", () => {
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
+    environmentId: "env-1",
     gateway: {
       id: "gateway-runpod",
       provider: "runpod",

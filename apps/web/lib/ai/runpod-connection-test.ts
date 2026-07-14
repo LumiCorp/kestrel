@@ -20,12 +20,40 @@ export type RunPodValidationEvidence = {
 
 export class RunPodConnectionTestError extends Error {
   readonly code: string;
+  readonly retryable: boolean;
+  readonly status: number | null;
 
-  constructor(code: string, message: string) {
+  constructor(
+    code: string,
+    message: string,
+    options?: { retryable?: boolean; status?: number }
+  ) {
     super(message);
     this.name = "RunPodConnectionTestError";
     this.code = code;
+    this.retryable = options?.retryable ?? false;
+    this.status = options?.status ?? null;
   }
+}
+
+export function isRunPodConnectionTestError(
+  error: unknown
+): error is RunPodConnectionTestError {
+  if (error instanceof RunPodConnectionTestError) return true;
+  if (!(error instanceof Error) || error.name !== "RunPodConnectionTestError") {
+    return false;
+  }
+  const candidate = error as Error & {
+    code?: unknown;
+    retryable?: unknown;
+    status?: unknown;
+  };
+  return (
+    typeof candidate.code === "string" &&
+    candidate.code.startsWith("RUNPOD_") &&
+    typeof candidate.retryable === "boolean" &&
+    (candidate.status === null || typeof candidate.status === "number")
+  );
 }
 
 export function getRunPodValidationEvidence(
@@ -104,6 +132,7 @@ export async function validateRunPodToolRoundTrip(input: {
   apiKey: string;
   baseUrl: string;
   model: string;
+  timeoutMs?: number;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }): Promise<RunPodValidationEvidence> {
@@ -136,6 +165,7 @@ export async function validateRunPodToolRoundTrip(input: {
     fetchImpl,
     headers,
     phase: "tool_call",
+    timeoutMs: input.timeoutMs ?? 30_000,
     body: {
       model: input.model,
       messages: [
@@ -151,6 +181,8 @@ export async function validateRunPodToolRoundTrip(input: {
       },
       parallel_tool_calls: false,
       stream: true,
+      temperature: 0,
+      seed: 0,
       max_tokens: 128,
     },
   });
@@ -167,6 +199,7 @@ export async function validateRunPodToolRoundTrip(input: {
     fetchImpl,
     headers,
     phase: "tool_result",
+    timeoutMs: input.timeoutMs ?? 30_000,
     body: {
       model: input.model,
       messages: [
@@ -202,6 +235,8 @@ export async function validateRunPodToolRoundTrip(input: {
       tools,
       tool_choice: "none",
       stream: true,
+      temperature: 0,
+      seed: 0,
       max_tokens: 128,
     },
   });
@@ -228,6 +263,7 @@ async function postStreamingCompletion(input: {
   fetchImpl: RunPodFetch;
   headers: Record<string, string>;
   phase: string;
+  timeoutMs: number;
   body: Record<string, unknown>;
 }) {
   let response: Response;
@@ -236,18 +272,33 @@ async function postStreamingCompletion(input: {
       method: "POST",
       headers: input.headers,
       body: JSON.stringify(input.body),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(input.timeoutMs),
     });
   } catch {
     throw new RunPodConnectionTestError(
       "RUNPOD_CONNECTION_FAILED",
-      `RunPod ${input.phase} validation request failed.`
+      `RunPod ${input.phase} validation request failed.`,
+      { retryable: true }
     );
   }
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new RunPodConnectionTestError(
+        "RUNPOD_OPENAI_CHAT_UNAVAILABLE",
+        "RunPod could not find OpenAI-compatible /chat/completions. Confirm the endpoint ID and template; queue-only /run and /runsync handlers are not supported yet.",
+        { status: response.status }
+      );
+    }
     throw new RunPodConnectionTestError(
       "RUNPOD_CONNECTION_REJECTED",
-      `RunPod ${input.phase} validation was rejected (${response.status}).`
+      `RunPod ${input.phase} validation was rejected (${response.status}).`,
+      {
+        retryable:
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status >= 500,
+        status: response.status,
+      }
     );
   }
   const isEventStream = response.headers
@@ -260,7 +311,19 @@ async function postStreamingCompletion(input: {
       "RunPod model did not return an OpenAI-compatible event stream."
     );
   }
-  const text = await readBoundedStream(response.body);
+  let text: string;
+  try {
+    text = await readBoundedStream(response.body);
+  } catch (error) {
+    if (error instanceof RunPodConnectionTestError) {
+      throw error;
+    }
+    throw new RunPodConnectionTestError(
+      "RUNPOD_STREAM_INTERRUPTED",
+      "RunPod validation stream was interrupted before completion.",
+      { retryable: true }
+    );
+  }
   const events = text
     .split(/\r?\n\r?\n/u)
     .flatMap((block) =>

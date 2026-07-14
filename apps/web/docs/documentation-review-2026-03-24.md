@@ -26,7 +26,7 @@ Reviewed Markdown docs in the repository and evaluated staleness against the cur
 ## Doc-by-doc report
 
 - `README.md`
-  Update the canonical API section to reflect the current route model. Replace the generic `/api/sandbox` entry with `/api/sandbox/shell` and `/api/sandbox/snapshot`, and consider whether `/api/chats/[id]/stream`, `/api/messages/[id]/speech`, and `/api/tools/runtime` now belong in the supported surface.
+  Update the canonical API section to reflect the current route model. Replace the generic `/api/sandbox` entry with `/api/sandbox/shell` and `/api/sandbox/snapshot`, and consider whether `/api/chats/[id]/stream`, `/api/messages/[id]/speech`, and `/api/runtime/apps` now belong in the supported surface.
 - `docs/knowledge-library-user-guide.md`
   No update needed. The upload types, promotion flow, statuses, and 32 MB limit match the current knowledge document implementation.
 - `content/admin-docs/admin-mode.md`

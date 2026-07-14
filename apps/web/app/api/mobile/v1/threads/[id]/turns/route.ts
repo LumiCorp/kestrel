@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
@@ -59,10 +60,18 @@ export async function POST(
       organizationId,
       userId: session.user.id,
     });
+    const environment = await resolveThreadEnvironment({
+      organizationId,
+      threadId: thread.id,
+    });
+    if (!environment) {
+      throw new Error("No Environment is available for this Thread.");
+    }
     const durable = await createDurableThreadTurn({
       threadId: thread.id,
       organizationId,
       authorUserId: session.user.id,
+      requestedEnvironmentId: environment.id,
       messageId: body.message.id,
       messageParts: body.message.parts,
       idempotencyKey:

@@ -35,11 +35,22 @@ export type DirectRuntimeConfig = AIRuntimeConfig & {
 };
 
 const PLACEHOLDER_RUNTIME_API_KEYS = new Set(["sk_your_provider_key"]);
+const DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small";
 const warnedPlaceholderSurfaces = new Set<DirectRuntimeSurface>();
 
 function getTrimmedEnvValue(value: string | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function isOfficialOpenRouterBaseURL(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
 }
 
 export function getAISurfacePolicy(surface: AISurface): AISurfacePolicy {
@@ -80,12 +91,69 @@ function getDirectRuntimeApiKeyForSurface(
     return getAIRuntimeConfig(env).apiKey;
   }
 
-  const prefix = surface === "embedding" ? "AI_EMBEDDING" : "AI_OCR";
   return (
-    getTrimmedEnvValue(env[`${prefix}_API_KEY`]) ||
+    getTrimmedEnvValue(env.AI_OCR_API_KEY) ||
     getTrimmedEnvValue(env.OPENAI_API_KEY) ||
     getTrimmedEnvValue(env.AI_AGENT_API_KEY)
   );
+}
+
+function getEmbeddingDirectRuntimeConfig(
+  env: NodeJS.ProcessEnv
+): DirectRuntimeConfig {
+  const agentConfig = getAIRuntimeConfig(env);
+  const explicitApiKey = getTrimmedEnvValue(env.AI_EMBEDDING_API_KEY);
+  const openAIKey = getTrimmedEnvValue(env.OPENAI_API_KEY);
+  const openRouterKey = getTrimmedEnvValue(env.OPENROUTER_API_KEY);
+  const explicitProvider = getTrimmedEnvValue(env.AI_EMBEDDING_PROVIDER);
+  const explicitBaseURL = getTrimmedEnvValue(env.AI_EMBEDDING_BASE_URL);
+  const inferredExplicitProvider = explicitBaseURL
+    ? inferProvider({
+        ...env,
+        AI_PROVIDER: "",
+        AI_AGENT_BASE_URL: explicitBaseURL,
+      })
+    : null;
+  const configuredProvider = explicitProvider || inferredExplicitProvider;
+  const agentUsesOfficialOpenRouter =
+    agentConfig.provider === "openrouter" &&
+    isOfficialOpenRouterBaseURL(agentConfig.baseURL);
+  const provider =
+    configuredProvider ||
+    (explicitApiKey || openAIKey
+      ? "openai"
+      : agentUsesOfficialOpenRouter || openRouterKey
+        ? "openrouter"
+        : "openai");
+  const baseURL =
+    explicitBaseURL ||
+    (provider === "openrouter" && agentUsesOfficialOpenRouter
+      ? agentConfig.baseURL
+      : getDefaultBaseURL(provider));
+  const canReuseAgentApiKey =
+    provider === "openrouter" &&
+    agentUsesOfficialOpenRouter &&
+    isOfficialOpenRouterBaseURL(baseURL) &&
+    isOfficialOpenRouterBaseURL(agentConfig.baseURL);
+  const apiKey =
+    explicitApiKey ||
+    (provider === "openai" ? openAIKey : null) ||
+    (provider === "openrouter" ? openRouterKey : null) ||
+    (canReuseAgentApiKey ? agentConfig.apiKey : null);
+  const model =
+    getTrimmedEnvValue(env.AI_EMBEDDING_MODEL) ||
+    (provider === "openrouter"
+      ? DEFAULT_OPENROUTER_EMBEDDING_MODEL
+      : DEFAULT_OPENAI_EMBEDDING_MODEL);
+
+  return buildDirectRuntimeConfig({
+    surface: "embedding",
+    provider,
+    apiKey,
+    baseURL,
+    model,
+    headers: getProviderHeaders(provider, env),
+  });
 }
 
 function getDirectRuntimeProviderForSurface(
@@ -154,8 +222,12 @@ export function getDirectRuntimeConfig(
     });
   }
 
+  if (surface === "embedding") {
+    return getEmbeddingDirectRuntimeConfig(env);
+  }
+
   const provider = getDirectRuntimeProviderForSurface(surface, env);
-  const prefix = surface === "embedding" ? "AI_EMBEDDING" : "AI_OCR";
+  const prefix = "AI_OCR";
   const baseURL =
     getTrimmedEnvValue(env[`${prefix}_BASE_URL`]) ||
     getDefaultBaseURL(provider);

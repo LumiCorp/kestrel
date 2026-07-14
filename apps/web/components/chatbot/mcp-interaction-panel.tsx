@@ -32,7 +32,7 @@ export function McpInteractionPanel({
           `/api/threads/${threadId}/mcp/interactions`,
           { signal: controller.signal }
         );
-        if (!response.ok) throw new Error("MCP interaction status failed.");
+        if (!response.ok) throw new Error("App request status failed.");
         const payload = (await response.json()) as {
           interactions?: PendingInteraction[];
         };
@@ -43,7 +43,7 @@ export function McpInteractionPanel({
           setError(
             caught instanceof Error
               ? caught.message
-              : "MCP interaction status failed."
+              : "App request status failed."
           );
         }
       }
@@ -87,7 +87,7 @@ export function McpInteractionPanel({
       );
       const payload = (await response.json()) as { error?: string };
       if (!response.ok)
-        throw new Error(payload.error ?? "MCP interaction resolution failed.");
+        throw new Error(payload.error ?? "App request could not be resolved.");
       setInteractions((current) =>
         current.filter((candidate) => candidate.id !== interaction.id)
       );
@@ -95,7 +95,7 @@ export function McpInteractionPanel({
       setError(
         caught instanceof Error
           ? caught.message
-          : "MCP interaction resolution failed."
+          : "App request could not be resolved."
       );
     } finally {
       setBusy(null);
@@ -116,8 +116,8 @@ export function McpInteractionPanel({
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">
                 {interaction.kind === "sampling"
-                  ? "MCP server requests model sampling"
-                  : "MCP server requests information"}
+                  ? "An App wants to use the model"
+                  : "An App needs information"}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -138,7 +138,7 @@ export function McpInteractionPanel({
                 </div>
               ) : interaction.kind === "elicitation" ? (
                 <Textarea
-                  aria-label="Elicitation response as JSON"
+                  aria-label="App response as JSON"
                   onChange={(event) =>
                     setContent((current) => ({
                       ...current,

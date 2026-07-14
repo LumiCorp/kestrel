@@ -35,6 +35,7 @@ function createDocument(
     mediaType: "application/pdf",
     sizeBytes: 4096,
     status: "ready",
+    retrievalMode: "lexical",
     chunkCount: 12,
     createdAt: "2026-03-19T09:00:00.000Z",
     updatedAt: "2026-03-19T09:30:00.000Z",

@@ -5,6 +5,7 @@ import {
   GATEWAY_PROVIDERS,
   getGatewayLanguageProtocol,
   getProviderSupportedModalities,
+  isGatewayModelDefault,
   isKestrelRuntimeLanguageProvider,
   isRunPodServerlessBaseUrl,
   normalizeGatewayModelMetadata,
@@ -73,6 +74,32 @@ test("external Kestrel chat runtime excludes unsupported gateway providers", () 
   assert.equal(isKestrelRuntimeLanguageProvider("runpod"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("lumi"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("replicate"), false);
+});
+
+test("Environment defaults override but do not erase the platform default", () => {
+  assert.equal(
+    isGatewayModelDefault({
+      modelId: "platform-default",
+      modelIsDefault: true,
+    }),
+    true
+  );
+  assert.equal(
+    isGatewayModelDefault({
+      environmentDefaultModelId: "environment-default",
+      modelId: "platform-default",
+      modelIsDefault: true,
+    }),
+    false
+  );
+  assert.equal(
+    isGatewayModelDefault({
+      environmentDefaultModelId: "environment-default",
+      modelId: "environment-default",
+      modelIsDefault: false,
+    }),
+    true
+  );
 });
 
 test("OpenAI-compatible base URLs normalize to /v1 only when needed", () => {

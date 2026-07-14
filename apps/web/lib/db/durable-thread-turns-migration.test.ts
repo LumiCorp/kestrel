@@ -32,6 +32,27 @@ const workerEntrypoint = fs.readFileSync(
   ),
   "utf8"
 );
+const workerRuntime = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../turns/process-runtime.ts"
+  ),
+  "utf8"
+);
+const turnStore = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../turns/store.ts"
+  ),
+  "utf8"
+);
+const workerServerOnlyLoader = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../scripts/server-only-loader.mjs"
+  ),
+  "utf8"
+);
 const webPackage = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -40,7 +61,7 @@ const webPackage = JSON.parse(
     ),
     "utf8"
   )
-) as { scripts: Record<string, string> };
+) as { type?: string; scripts: Record<string, string> };
 
 test("durable turns establish the shared queue and replay ledger", () => {
   for (const table of [
@@ -84,6 +105,10 @@ test("durable turn migration is registered with the unified migrator", () => {
   assert.match(journal, /"tag": "0023_durable_thread_turns"/u);
 });
 
+test("the durable turn worker runs the web package as ESM", () => {
+  assert.equal(webPackage.type, "module");
+});
+
 test("the production worker image retains its TypeScript runtime toolchain", () => {
   assert.match(
     workerDockerfile,
@@ -92,7 +117,7 @@ test("the production worker image retains its TypeScript runtime toolchain", () 
   assert.match(workerDockerfile, /"worker:turns"/u);
 });
 
-test("the production worker entrypoint is CommonJS transform compatible", () => {
+test("the production worker entrypoint starts without top-level await", () => {
   assert.doesNotMatch(
     workerEntrypoint,
     /\nawait\s+startDurableThreadTurnWorker\(\);/u
@@ -100,6 +125,25 @@ test("the production worker entrypoint is CommonJS transform compatible", () => 
   assert.match(workerEntrypoint, /void main\(\)\.catch/u);
   assert.equal(
     webPackage.scripts["worker:turns"],
-    "node --conditions=react-server --import tsx scripts/turn-worker.ts"
+    "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts"
+  );
+  assert.doesNotMatch(webPackage.scripts["worker:turns"] ?? "", /react-server/u);
+  assert.match(workerServerOnlyLoader, /specifier === "server-only"/u);
+});
+
+test("the durable worker uses pinned organization context without request auth", () => {
+  assert.doesNotMatch(workerRuntime, /@\/lib\/chat\/actions/u);
+  assert.match(workerRuntime, /generateTitleForOrganization/u);
+  assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
+});
+
+test("durable replay binds the cutoff through the timestamp column encoder", () => {
+  assert.match(
+    turnStore,
+    /lte\(schema\.threadMessages\.createdAt, turn\.createdAt\)/u
+  );
+  assert.doesNotMatch(
+    turnStore,
+    /threadMessages\.createdAt\} <= \$\{turn\.createdAt/u
   );
 });

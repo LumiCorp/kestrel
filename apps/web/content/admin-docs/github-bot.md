@@ -1,6 +1,8 @@
 # GitHub Bot
 
-GitHub bot support is wired into the adapter-backed Kestrel One runtime through `/api/webhooks/github`, with readiness surfaced in `/admin/tools`.
+GitHub bot support is wired into the adapter-backed Kestrel One runtime through
+`/api/webhooks/github`. GitHub appears in Apps, while repository sources remain
+managed in Knowledge.
 
 GitHub sources still provide the repo-backed retrieval corpus for bot answers.
 
@@ -9,9 +11,9 @@ GitHub sources still provide the repo-backed retrieval corpus for bot answers.
 1. Create a GitHub source in `/knowledge`.
 2. Run sync to refresh the source set and build an active snapshot.
 3. Configure GitHub App or PAT credentials and the webhook secret in the server environment.
-4. Verify the webhook URL and snapshot status from `/admin/tools`.
+4. Verify the webhook URL in the GitHub App and confirm snapshot status in Knowledge.
 5. Point the GitHub App webhook at `/api/webhooks/github`.
-6. Confirm `/admin/tools` reports the adapter runtime and state backend you expect.
+6. Confirm the deployment reports the adapter runtime and state backend you expect.
 
 ## Operational note
 

@@ -307,6 +307,10 @@ function ChatShell({
   setMessages,
   showPendingAssistant,
   status,
+  activeEnvironment,
+  modelScopeQuery,
+  project,
+  threadTitle,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   attachments: Attachment[];
@@ -331,6 +335,10 @@ function ChatShell({
   setMessages: ChatController["setMessages"];
   showPendingAssistant?: boolean;
   status: ChatController["status"];
+  activeEnvironment?: { id: string; name: string };
+  modelScopeQuery?: string;
+  project?: { id: string; name: string } | null;
+  threadTitle?: string;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -339,8 +347,10 @@ function ChatShell({
       <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
         <ChatHeader
           isReadonly={headerReadonly}
+          project={project}
           selectedVisibilityType={selectedVisibilityType}
           threadId={threadId}
+          threadTitle={threadTitle}
         />
 
         <Messages
@@ -368,10 +378,12 @@ function ChatShell({
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
           {!isReadonly && (
             <MultimodalInput
+              activeEnvironmentName={activeEnvironment?.name}
               attachments={attachments}
               clearError={clearError}
               input={input}
               messages={messages}
+              modelScopeQuery={modelScopeQuery}
               onModelChange={onModelChange}
               selectedModelId={currentModelId}
               selectedVisibilityType={selectedVisibilityType}
@@ -444,10 +456,14 @@ export function BootstrapChat({
   id,
   initialChatModel,
   projectId,
+  projectName,
+  activeEnvironment,
 }: {
   id: string;
   initialChatModel: string;
   projectId?: string;
+  projectName?: string;
+  activeEnvironment?: { id: string; name: string };
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
@@ -513,6 +529,7 @@ export function BootstrapChat({
   return (
     <>
       <ChatShell
+        activeEnvironment={activeEnvironment}
         addToolApprovalResponse={async () => {}}
         attachments={shared.attachments}
         clearError={() => {
@@ -524,8 +541,14 @@ export function BootstrapChat({
         input={shared.input}
         isReadonly={false}
         messages={[]}
+        modelScopeQuery={
+          projectId ? `&projectId=${encodeURIComponent(projectId)}` : undefined
+        }
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
+        project={
+          projectId && projectName ? { id: projectId, name: projectName } : null
+        }
         regenerate={async () => {}}
         selectedVisibilityType="private"
         sendMessage={sendBootstrapMessage}
@@ -535,6 +558,7 @@ export function BootstrapChat({
         showPendingAssistant={false}
         status="ready"
         threadId={id}
+        threadTitle="New Thread"
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}
@@ -553,6 +577,9 @@ export function Chat({
   initialChatExists,
   isReadonly,
   canPublish = true,
+  activeEnvironment,
+  project,
+  threadTitle,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -562,6 +589,9 @@ export function Chat({
   initialChatExists: boolean;
   isReadonly: boolean;
   canPublish?: boolean;
+  activeEnvironment?: { id: string; name: string };
+  project?: { id: string; name: string } | null;
+  threadTitle?: string;
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
@@ -759,6 +789,7 @@ export function Chat({
   return (
     <>
       <ChatShell
+        activeEnvironment={activeEnvironment}
         addToolApprovalResponse={controller.addToolApprovalResponse}
         attachments={shared.attachments}
         clearError={() => {
@@ -771,6 +802,7 @@ export function Chat({
         input={shared.input}
         isReadonly={isReadonly}
         messages={displayMessages}
+        modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
         onFeedbackChange={(messageId, feedback) => {
           shared.setFeedbackOverrides((current) => ({
             ...current,
@@ -778,6 +810,7 @@ export function Chat({
           }));
         }}
         onModelChange={shared.setCurrentModelId}
+        project={project}
         regenerate={controller.regenerate}
         selectedVisibilityType={visibilityType}
         sendMessage={controller.sendMessage}
@@ -787,6 +820,7 @@ export function Chat({
         showPendingAssistant={showPendingAssistant}
         status={controller.status}
         threadId={id}
+        threadTitle={threadTitle}
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}

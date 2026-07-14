@@ -49,7 +49,7 @@ function PureMessages({
     const loadSpeechAvailability = async () => {
       try {
         const response = await fetch(
-          `/api/models/approved?pairedWith=${encodeURIComponent(selectedModelId)}`
+          `/api/models/approved?pairedWith=${encodeURIComponent(selectedModelId)}&threadId=${encodeURIComponent(threadId)}`
         );
 
         if (!response.ok) {

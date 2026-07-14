@@ -9,6 +9,7 @@ import {
 
 test("durable turn transitions reject replay-unsafe state changes", () => {
   assert.doesNotThrow(() => assertThreadTurnTransition("queued", "running"));
+  assert.doesNotThrow(() => assertThreadTurnTransition("queued", "failed"));
   assert.doesNotThrow(() =>
     assertThreadTurnTransition("running", "waiting_for_input")
   );

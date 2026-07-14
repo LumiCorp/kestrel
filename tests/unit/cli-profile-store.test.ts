@@ -155,6 +155,7 @@ test("ProfileStore never persists transient gateway credential references", asyn
           modelCredential: {
             source: "kestrel-one",
             organizationId: "org-acme",
+            environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
           },

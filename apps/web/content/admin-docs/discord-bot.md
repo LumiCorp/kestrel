@@ -1,6 +1,7 @@
 # Discord Bot
 
-Discord support is configured from `/admin/tools`.
+Discord remains a deployment-managed messaging adapter and is not part of the
+first Apps release. It no longer has a separate admin setup surface.
 
 The Kestrel One runtime uses:
 
@@ -14,11 +15,9 @@ Discord replies reuse the same active knowledge snapshot and chat persistence mo
 ## Required configuration
 
 1. Set `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_PUBLIC_KEY`.
-2. Open `/admin/tools`.
-3. Save the organization’s Discord `guildId` and optional `guildName`.
-4. Copy the interactions endpoint URL into the Discord application settings.
-5. Use the install URL from the tools page to add the bot to the guild.
-6. Activate the gateway listener from the same page.
+2. Copy the interactions endpoint URL into the Discord application settings.
+3. Add the bot to the intended guild through Discord.
+4. Activate the gateway listener through the deployment process.
 
 ## Behavior
 

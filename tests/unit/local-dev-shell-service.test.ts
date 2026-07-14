@@ -247,6 +247,57 @@ test("LocalDevShellService starts with sqlite store when DATABASE_URL is missing
   assert.equal(payload.text, "ok");
 });
 
+test("LocalDevShellService quarantines a failed sqlite process store and retries startup once", {
+  skip: realSupervisorSmokeSkipReason,
+}, async () => {
+  const serviceModuleUrl = new URL("../../src/devshell/LocalDevShellService.ts", import.meta.url).href;
+  const script = `
+    import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+    import path from "node:path";
+    import { LocalDevShellService } from ${JSON.stringify(serviceModuleUrl)};
+
+    const baseDir = await mkdtemp(path.join("/tmp", "ldss-recovery-"));
+    await writeFile(path.join(baseDir, "store.db"), "invalid pglite store", "utf8");
+    const service = new LocalDevShellService(baseDir, {
+      startupTimeoutMs: 10_000,
+      pollIntervalMs: 25,
+    });
+    delete process.env.DATABASE_URL;
+    process.env.KESTREL_STORE_DRIVER = "sqlite";
+    process.env.KESTREL_HOME = path.join(baseDir, "runtime-home");
+
+    const result = await service.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf recovered",
+      timeoutMs: 2_000,
+    });
+    await service.close();
+    const entries = await readdir(baseDir);
+    console.log(JSON.stringify({
+      status: result.status,
+      text: result.text,
+      recoveryStores: entries.filter((entry) => entry.startsWith("store.db.recovery-")),
+    }));
+  `;
+
+  const env: NodeJS.ProcessEnv = { ...process.env, KESTREL_STORE_DRIVER: "sqlite" };
+  delete env.DATABASE_URL;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "-e", script], {
+    encoding: "utf8",
+    env,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim()) as {
+    status: string;
+    text: string;
+    recoveryStores: string[];
+  };
+  assert.equal(payload.status, "COMPLETED");
+  assert.equal(payload.text, "recovered");
+  assert.equal(payload.recoveryStores.length, 1);
+});
+
 test("LocalDevShellService starts with explicit split socket, log, and status paths", {
   skip: realSupervisorSmokeSkipReason,
 }, async () => {

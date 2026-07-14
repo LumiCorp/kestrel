@@ -322,11 +322,23 @@ function toSpecSnapshot(
 
 export async function createManagedRunPodDeployment(input: {
   organizationId: string;
+  environmentId: string;
   actorUserId: string;
   profileId: string;
   displayName: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
+    const environment = await tx.query.environments.findFirst({
+      where: and(
+        eq(schema.environments.id, input.environmentId),
+        eq(schema.environments.organizationId, input.organizationId),
+        isNull(schema.environments.archivedAt)
+      ),
+      columns: { id: true },
+    });
+    if (!environment) {
+      throw new Error("Environment not found or unavailable.");
+    }
     const [policy] = await tx
       .select()
       .from(schema.organizationAiDeploymentPolicies)
@@ -354,7 +366,7 @@ export async function createManagedRunPodDeployment(input: {
     }
     const existingDeployment = await tx.query.aiDeployments.findFirst({
       where: and(
-        eq(schema.aiDeployments.organizationId, input.organizationId),
+        eq(schema.aiDeployments.environmentId, input.environmentId),
         eq(schema.aiDeployments.profileId, input.profileId),
         isNull(schema.aiDeployments.deletedAt)
       ),
@@ -362,7 +374,7 @@ export async function createManagedRunPodDeployment(input: {
     });
     if (existingDeployment) {
       throw new Error(
-        "An active managed RunPod deployment already exists for this profile."
+        "This Environment already has an active deployment for this profile."
       );
     }
     const [aggregate] = await tx
@@ -384,6 +396,7 @@ export async function createManagedRunPodDeployment(input: {
       .values({
         id: deploymentId,
         organizationId: input.organizationId,
+        environmentId: input.environmentId,
         createdByUserId: input.actorUserId,
         profileId: profile.id,
         displayName: input.displayName,
@@ -408,7 +421,10 @@ export async function createManagedRunPodDeployment(input: {
   });
 }
 
-export async function listManagedRunPodDeployments(organizationId: string) {
+export async function listManagedRunPodDeployments(
+  organizationId: string,
+  environmentId?: string
+) {
   const rows = await knowledgeDb
     .select({
       deployment: schema.aiDeployments,
@@ -422,6 +438,9 @@ export async function listManagedRunPodDeployments(organizationId: string) {
     .where(
       and(
         eq(schema.aiDeployments.organizationId, organizationId),
+        environmentId
+          ? eq(schema.aiDeployments.environmentId, environmentId)
+          : undefined,
         ne(schema.aiDeployments.status, "deleted")
       )
     )
@@ -470,6 +489,7 @@ export async function listManagedRunPodFleet() {
 export async function getManagedRunPodDeployment(input: {
   deploymentId: string;
   organizationId: string;
+  environmentId?: string;
 }) {
   const [row] = await knowledgeDb
     .select({
@@ -484,7 +504,10 @@ export async function getManagedRunPodDeployment(input: {
     .where(
       and(
         eq(schema.aiDeployments.id, input.deploymentId),
-        eq(schema.aiDeployments.organizationId, input.organizationId)
+        eq(schema.aiDeployments.organizationId, input.organizationId),
+        input.environmentId
+          ? eq(schema.aiDeployments.environmentId, input.environmentId)
+          : undefined
       )
     )
     .limit(1);
@@ -512,6 +535,7 @@ export async function getManagedRunPodDeployment(input: {
 export async function queueManagedRunPodDeletion(input: {
   deploymentId: string;
   organizationId: string;
+  environmentId?: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
     const [deployment] = await tx
@@ -520,7 +544,10 @@ export async function queueManagedRunPodDeletion(input: {
       .where(
         and(
           eq(schema.aiDeployments.id, input.deploymentId),
-          eq(schema.aiDeployments.organizationId, input.organizationId)
+          eq(schema.aiDeployments.organizationId, input.organizationId),
+          input.environmentId
+            ? eq(schema.aiDeployments.environmentId, input.environmentId)
+            : undefined
         )
       )
       .limit(1)
@@ -555,6 +582,7 @@ export async function queueManagedRunPodDeletion(input: {
 export async function queueManagedRunPodRetry(input: {
   deploymentId: string;
   organizationId: string;
+  environmentId?: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
     const [deployment] = await tx
@@ -563,7 +591,10 @@ export async function queueManagedRunPodRetry(input: {
       .where(
         and(
           eq(schema.aiDeployments.id, input.deploymentId),
-          eq(schema.aiDeployments.organizationId, input.organizationId)
+          eq(schema.aiDeployments.organizationId, input.organizationId),
+          input.environmentId
+            ? eq(schema.aiDeployments.environmentId, input.environmentId)
+            : undefined
         )
       )
       .limit(1)

@@ -69,6 +69,12 @@ const KESTREL_ONE_TOOL_NAMES = [
   "kestrel_one.github_pull_request_merge",
   "kestrel_one.github_release_create",
   "kestrel_one.github_workflow_dispatch",
+  "kestrel_one.google_calendar_list_events",
+  "kestrel_one.google_calendar_create_event",
+  "kestrel_one.google_calendar_update_event",
+  "kestrel_one.google_calendar_delete_event",
+  "kestrel_one.google_calendar_list_availability_subjects",
+  "kestrel_one.google_calendar_check_availability",
 ] as const;
 
 function createDefaultCliProfile(input: {
@@ -546,6 +552,8 @@ function parseModelCredential(
     candidate.gatewayId.trim().length === 0 ||
     typeof candidate.organizationId !== "string" ||
     candidate.organizationId.trim().length === 0 ||
+    typeof candidate.environmentId !== "string" ||
+    candidate.environmentId.trim().length === 0 ||
     typeof candidate.rawModelId !== "string" ||
     candidate.rawModelId.trim().length === 0
   ) {
@@ -555,6 +563,7 @@ function parseModelCredential(
     source: "kestrel-one",
     gatewayId: candidate.gatewayId.trim(),
     organizationId: candidate.organizationId.trim(),
+    environmentId: candidate.environmentId.trim(),
     rawModelId: candidate.rawModelId.trim(),
   };
 }

@@ -101,11 +101,17 @@ test.describe("Authenticated unified flows", () => {
       page.getByRole("heading", { name: "API Keys", exact: true })
     ).toBeVisible();
 
-    await page.goto("/admin/tools");
-    await expect(page).toHaveURL(/\/admin\/tools$/);
+    await page.goto("/apps");
+    await expect(page).toHaveURL(/\/apps$/);
     await expect(
-      page.getByRole("heading", { name: "Tools", exact: true })
+      page.getByRole("heading", { name: "Apps", exact: true })
     ).toBeVisible();
+    await expect(page.getByText("Tavily", { exact: true })).toBeVisible();
+
+    const removedToolsResponse = await page.goto("/admin/tools");
+    expect(removedToolsResponse?.status()).toBe(404);
+    const removedIntegrationsResponse = await page.goto("/admin/integrations");
+    expect(removedIntegrationsResponse?.status()).toBe(404);
 
     await page.goto("/admin/docs");
     await expect(page).toHaveURL(/\/admin\/docs$/);
@@ -820,61 +826,6 @@ test.describe("Authenticated unified flows", () => {
       "Configuration reset."
     );
     await expect(page.getByLabel("Additional prompt")).toHaveValue("");
-  });
-
-  test("admin can save a Discord guild binding from tools", async ({
-    page,
-  }) => {
-    const guildId = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(
-      0,
-      18
-    );
-    const guildName = `PW Guild ${randomUUID().slice(0, 6)}`;
-
-    await page.goto("/admin/tools");
-    await page.getByTestId("tools-provider-card-discord").click();
-    await page.getByTestId("discord-guild-id").fill(guildId);
-    await page.getByTestId("discord-guild-name").fill(guildName);
-    await page.getByTestId("discord-save-binding").click();
-
-    await expect(page.getByTestId("tools-status-banner")).toContainText(
-      "Discord binding saved."
-    );
-    await expect(page.getByTestId("discord-guild-id")).toHaveValue(guildId);
-    await expect(page.getByTestId("discord-guild-name")).toHaveValue(guildName);
-    await expect(
-      page.getByTestId("tools-no-runtime-capabilities")
-    ).toContainText("does not expose runnable tools yet");
-  });
-
-  test("github provider is connection-only in tools", async ({ page }) => {
-    await page.goto("/admin/tools");
-    await page.getByTestId("tools-provider-card-github").click();
-
-    await expect(
-      page.getByTestId("tools-no-runtime-capabilities")
-    ).toContainText("does not expose runnable tools yet");
-    await expect(page.getByText("placeholder configuration only")).toHaveCount(
-      0
-    );
-  });
-
-  test("admin can disable and re-enable the weather tool", async ({ page }) => {
-    await page.goto("/admin/tools");
-    await page.getByTestId("tools-provider-card-built-in-weather").click();
-
-    const toggle = page.getByTestId("tool-capability-enabled-getWeather");
-    await toggle.click();
-    await page.getByTestId("tool-capability-save-getWeather").click();
-    await expect(page.getByTestId("tools-status-banner")).toContainText(
-      "Tool capability saved."
-    );
-
-    await toggle.click();
-    await page.getByTestId("tool-capability-save-getWeather").click();
-    await expect(page.getByTestId("tools-status-banner")).toContainText(
-      "Tool capability saved."
-    );
   });
 
   test("debug sandbox UI can sync sources, create a snapshot, and run shell commands", async ({

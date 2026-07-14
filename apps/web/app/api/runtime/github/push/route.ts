@@ -69,12 +69,10 @@ export async function POST(request: Request) {
     ) {
       throw new GitHubPolicyError("GITHUB_CREDENTIAL_SCOPE_DENIED");
     }
-    const resource = await knowledgeDb.query.toolConnectionResources.findFirst({
+    const resource = await knowledgeDb.query.appConnectionResources.findFirst({
       where: (table, { and, eq }) =>
         and(
           eq(table.id, input.resourceId),
-          eq(table.organizationId, verifiedTicket.organizationId),
-          eq(table.providerKey, "github"),
           eq(table.resourceType, "repository"),
           eq(table.enabled, true)
         ),
@@ -101,7 +99,7 @@ export async function POST(request: Request) {
     const credential = await auth.api.getAccessToken({
       body: {
         providerId: "github",
-        accountId: policy.connection.providerAccountId,
+        accountId: policy.providerAccountId,
         userId: verifiedTicket.actorId,
       },
     });

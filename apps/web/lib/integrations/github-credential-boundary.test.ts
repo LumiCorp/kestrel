@@ -40,10 +40,12 @@ test("broad GitHub OAuth tokens remain inside Kestrel One broker routes", () => 
     )
     .map((file) => path.relative(webRoot, file).replaceAll(path.sep, "/"));
   assert.deepEqual(accessTokenConsumers, [
-    "app/api/integrations/github/sync/route.ts",
+    "app/api/apps/github/sync/route.ts",
+    "app/api/projects/[id]/apps/google/sync/route.ts",
     "app/api/runtime/github/action/route.ts",
     "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
     "app/api/runtime/github/push/route.ts",
+    "app/api/runtime/google-calendar/action/route.ts",
   ]);
 
   const workspaceRuntimeSource = listTypeScriptFiles(workspaceRuntimeRoot)

@@ -8,7 +8,7 @@ const server = {
   providerKey: "mcp.browser-github",
   credentialId: null,
   createdByUserId: "user-browser",
-  name: "Browser GitHub MCP",
+  name: "Browser GitHub App",
   slug: "browser-github",
   sourceType: "remote",
   transport: "streamable_http",
@@ -29,7 +29,7 @@ const server = {
   updatedAt: now,
 } as const;
 
-test("Environment admins can operate MCP servers and inspect replay-safe health", async ({
+test("Environment admins can operate Custom Apps and inspect replay-safe health", async ({
   page,
 }) => {
   let installedBody: Record<string, unknown> | undefined;
@@ -56,7 +56,7 @@ test("Environment admins can operate MCP servers and inspect replay-safe health"
               ...server,
               id: "mcp-server-oci",
               providerKey: "mcp.browser-oci",
-              name: "Browser OCI MCP",
+              name: "Browser OCI App",
               slug: "browser-oci",
               sourceType: "oci",
               transport: "stdio",
@@ -153,18 +153,23 @@ test("Environment admins can operate MCP servers and inspect replay-safe health"
   await expect(
     page.getByRole("heading", { name: "Environments" })
   ).toBeVisible();
-  await expect(page.getByText("Browser GitHub MCP")).toBeVisible();
+  await page.getByRole("link", { name: "Open Environment" }).first().click();
+  await page.getByRole("link", { name: "Apps", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Apps", exact: true })
+  ).toBeVisible();
+  await expect(page.getByText("Browser GitHub App")).toBeVisible();
 
   await page.getByText("Health and recent activity").click();
-  await expect(page.getByText("Interactions pending")).toBeVisible();
+  await expect(page.getByText("Requests pending")).toBeVisible();
   await expect(page.getByText("MCP_UPSTREAM_FAILED")).toBeVisible();
   await expect(
     page.getByText(/Request bodies, responses, and credentials are omitted/u)
   ).toBeVisible();
 
-  await page.getByText("Install MCP server", { exact: true }).click();
+  await page.getByText("Add Custom App", { exact: true }).click();
   await page.getByRole("button", { name: "OCI stdio" }).click();
-  await page.getByLabel("Name", { exact: true }).last().fill("Browser OCI MCP");
+  await page.getByLabel("Name", { exact: true }).last().fill("Browser OCI App");
   await page.getByLabel("Slug", { exact: true }).fill("browser-oci");
   await page
     .getByLabel("Digest-pinned OCI image")
@@ -172,8 +177,8 @@ test("Environment admins can operate MCP servers and inspect replay-safe health"
   await page
     .getByLabel("Allowed HTTPS origins (one per line)")
     .fill("https://api.example.com");
-  await page.getByRole("button", { name: "Install server" }).click();
-  await expect(page.getByText("Browser OCI MCP")).toBeVisible();
+  await page.getByRole("button", { name: "Add App" }).click();
+  await expect(page.getByText("Browser OCI App")).toBeVisible();
   expect(installedBody).toMatchObject({
     sourceType: "oci",
     transport: "stdio",
@@ -182,11 +187,11 @@ test("Environment admins can operate MCP servers and inspect replay-safe health"
   });
 
   await page
-    .getByText("Browser GitHub MCP", { exact: true })
+    .getByText("Browser GitHub App", { exact: true })
     .locator("..")
     .getByRole("button", { name: "Review" })
     .click();
-  await page.getByRole("button", { name: "Approve snapshot" }).click();
+  await page.getByRole("button", { name: "Approve capabilities" }).click();
   expect(snapshotDecision).toEqual({ decision: "approve" });
 });
 
@@ -247,16 +252,16 @@ test("Threads pause for sampling and elicitation and submit explicit decisions",
 
   await page.goto("/threads/new");
   const samplingCard = page.locator("[data-slot='card']").filter({
-    hasText: "MCP server requests model sampling",
+    hasText: "An App wants to use the model",
   });
   await expect(samplingCard).toBeVisible();
   await samplingCard.getByRole("button", { name: "Allow sample" }).click();
 
   const elicitationCard = page.locator("[data-slot='card']").filter({
-    hasText: "MCP server requests information",
+    hasText: "An App needs information",
   });
   await elicitationCard
-    .getByLabel("Elicitation response as JSON")
+    .getByLabel("App response as JSON")
     .fill('{"region":"iad"}');
   await elicitationCard.getByRole("button", { name: "Submit" }).click();
 
