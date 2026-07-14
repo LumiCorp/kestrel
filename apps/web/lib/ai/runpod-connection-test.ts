@@ -285,7 +285,7 @@ async function postStreamingCompletion(input: {
     if (response.status === 404) {
       throw new RunPodConnectionTestError(
         "RUNPOD_OPENAI_CHAT_UNAVAILABLE",
-        "This RunPod endpoint does not expose OpenAI-compatible /chat/completions. Queue-only /run and /runsync handlers are not supported yet.",
+        "RunPod could not find OpenAI-compatible /chat/completions. Confirm the endpoint ID and template; queue-only /run and /runsync handlers are not supported yet.",
         { status: response.status }
       );
     }

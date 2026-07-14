@@ -121,7 +121,7 @@ test("RunPod validation rejects a non-streaming provider response safely", async
   );
 });
 
-test("RunPod validation identifies queue-only handlers precisely", async () => {
+test("RunPod validation explains missing OpenAI routes without assuming the cause", async () => {
   await assert.rejects(
     validateRunPodToolRoundTrip({
       apiKey: "secret-not-in-error",
@@ -134,7 +134,8 @@ test("RunPod validation identifies queue-only handlers precisely", async () => {
         (error as { code?: string }).code,
         "RUNPOD_OPENAI_CHAT_UNAVAILABLE"
       );
-      assert.match(String(error), /Queue-only \/run and \/runsync/u);
+      assert.match(String(error), /Confirm the endpoint ID and template/u);
+      assert.match(String(error), /queue-only \/run and \/runsync/u);
       assert.equal(String(error).includes("secret-not-in-error"), false);
       return true;
     }
