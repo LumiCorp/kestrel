@@ -1,9 +1,6 @@
 import type { UIMessage } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
-import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
-import { generateTitleFromUserMessage } from "@/lib/chat/actions";
 import {
   findNewToolApprovalResponse,
   hasToolApprovalResponse,
@@ -12,14 +9,7 @@ import { decideGitHubActionApproval } from "@/lib/integrations/github-action-app
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
-import {
-  issueProjectContextGrant,
-  revokeProjectContextGrant,
-} from "@/lib/projects/context-grants";
-import {
-  formatProjectSystemContext,
-  resolveProjectRuntimeContext,
-} from "@/lib/projects/runtime-context";
+import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import {
   archiveThreadForUser,
   assignStandaloneThreadToProject,
@@ -29,10 +19,10 @@ import {
   saveThreadMessages,
   updateThreadTitleForUser,
 } from "@/lib/threads/store";
-import {
-  convertToUIMessages,
-  isPersistableAssistantMessage,
-} from "@/lib/utils";
+import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
+import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
+import { createDurableThreadTurn } from "@/lib/turns/store";
+import { convertToUIMessages } from "@/lib/utils";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const turnBodySchema = z.object({
@@ -167,34 +157,6 @@ export async function POST(
       organizationId,
       userId: user.id,
     });
-    const issuedGrant = projectContext
-      ? await issueProjectContextGrant({
-          organizationId,
-          projectId: projectContext.project.id,
-          threadId: thread.id,
-          actorUserId: user.id,
-          contextRevisionId: projectContext.contextRevision.id,
-          contextRevision: projectContext.contextRevision.revision,
-        })
-      : null;
-
-    const isNewUserMessage =
-      submittedUserMessage !== undefined &&
-      !thread.messages.some(
-        (message) => message.id === submittedUserMessage.id
-      );
-    if (isNewUserMessage && submittedUserMessage) {
-      await saveThreadMessages([
-        {
-          id: submittedUserMessage.id,
-          threadId: thread.id,
-          role: "user",
-          authorUserId: user.id,
-          projectContextRevisionId: projectContext?.contextRevision.id ?? null,
-          parts: submittedUserMessage.parts,
-        },
-      ]);
-    }
     if (approvalResponse) {
       await decideGitHubActionApproval({
         organizationId,
@@ -215,110 +177,62 @@ export async function POST(
       ]);
     }
 
-    const canonicalThread = await getThreadWithMessagesForUser(
-      thread.id,
-      user.id,
-      organizationId
-    );
-    if (!canonicalThread) {
-      throw new Error("Thread became unavailable.");
+    const idempotencyKey =
+      request.headers.get("idempotency-key")?.trim() ||
+      (approvalResponse
+        ? `approval:${approvalResponse.approvalId}`
+        : submittedUserMessage?.id);
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: "An idempotency key is required." },
+        { status: 400 }
+      );
     }
-    const canonicalMessages = convertToUIMessages(canonicalThread.messages);
-    const hasPriorUserMessage = submittedUserMessage
-      ? canonicalThread.messages.some(
-          (message) =>
-            message.role === "user" && message.id !== submittedUserMessage.id
-        )
-      : true;
-
-    try {
-      return await createKestrelOneAgentResponse({
-        request,
-        session,
+    let durable;
+    if (approvalResponse) {
+      durable = await createDurableThreadTurn({
+        threadId: thread.id,
         organizationId,
-        threadId: canonicalThread.id,
-        messages: canonicalMessages,
-        modelId: body.model,
-        approvalDecision: approvalResponse
-          ? {
-              approvalId: approvalResponse.approvalId,
-              approved: approvalResponse.approved,
-              reason: approvalResponse.reason,
-            }
-          : undefined,
-        projectContext:
-          projectContext && issuedGrant
-            ? {
-                projectId: projectContext.project.id,
-                contextRevisionId: projectContext.contextRevision.id,
-                contextRevision: projectContext.contextRevision.revision,
-                grantId: issuedGrant.grantId,
-                systemContext: formatProjectSystemContext({
-                  projectName: projectContext.contextRevision.projectName,
-                  instructions: projectContext.contextRevision.instructions,
-                  revision: projectContext.contextRevision.revision,
-                }),
-              }
-            : undefined,
-        transientTitle:
-          approvalResponse ||
-          canonicalThread.title ||
-          hasPriorUserMessage ||
-          !submittedUserMessage
-            ? null
-            : generateTitleFromUserMessage({
-                message: submittedUserMessage,
-                modelId: body.model,
-              }).catch(() => null),
-        onFinishPersist: async (messages, meta) => {
-          try {
-            const messagesForPersistence =
-              prepareKestrelRuntimeMessagesForPersistence(messages, meta);
-            const assistantMessages = messagesForPersistence.filter(
-              (message) =>
-                message.role === "assistant" &&
-                isPersistableAssistantMessage(message)
-            );
-            await saveThreadMessages(
-              Array.from(
-                new Map(
-                  assistantMessages.map((message) => [
-                    message.id,
-                    {
-                      id: message.id,
-                      threadId: canonicalThread.id,
-                      role: "assistant" as const,
-                      authorUserId: null,
-                      projectContextRevisionId:
-                        projectContext?.contextRevision.id ?? null,
-                      parts: message.parts,
-                      model: meta.model,
-                    },
-                  ])
-                ).values()
-              )
-            );
-            if (meta.title) {
-              await updateThreadTitleForUser({
-                id: canonicalThread.id,
-                userId: user.id,
-                organizationId,
-                title: meta.title,
-              });
-            }
-          } finally {
-            if (issuedGrant) {
-              await revokeProjectContextGrant(issuedGrant.grantId);
-            }
-          }
+        authorUserId: user.id,
+        messageId: null,
+        approvalDecision: {
+          approvalId: approvalResponse.approvalId,
+          approved: approvalResponse.approved,
+          ...(approvalResponse.reason
+            ? { reason: approvalResponse.reason }
+            : {}),
         },
+        idempotencyKey,
+        projectContextRevisionId: projectContext?.contextRevision.id ?? null,
+        requestedModelId: body.model ?? null,
+        source: "web",
       });
-    } catch (error) {
-      if (issuedGrant) {
-        await revokeProjectContextGrant(issuedGrant.grantId);
+    } else {
+      if (!submittedUserMessage) {
+        return NextResponse.json(
+          { error: "A new user message or approval response is required." },
+          { status: 400 }
+        );
       }
-      throw error;
+      durable = await createDurableThreadTurn({
+        threadId: thread.id,
+        organizationId,
+        authorUserId: user.id,
+        messageId: submittedUserMessage.id,
+        messageParts: submittedUserMessage.parts,
+        idempotencyKey,
+        projectContextRevisionId: projectContext?.contextRevision.id ?? null,
+        requestedModelId: body.model ?? null,
+        source: "web",
+      });
     }
+    if (durable.shouldDispatch) {
+      await enqueueDurableThreadTurn(durable.turn.id);
+    }
+    return createDurableTurnReplayResponse({
+      turnId: durable.turn.id,
+      signal: request.signal,
+    });
   } catch (error) {
     return errorResponse(error, 400);
   }

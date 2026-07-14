@@ -19,7 +19,15 @@ const journal = JSON.parse(
     ),
     "utf8"
   )
-) as { entries: Array<{ idx: number; tag: string }> };
+) as {
+  entries: Array<{
+    idx: number;
+    version: string;
+    when: number;
+    tag: string;
+    breakpoints: boolean;
+  }>;
+};
 
 test("GitHub action approvals bind the actor, runtime, resource, and payload", () => {
   assert.match(migration, /CREATE TABLE "github_action_approvals"/u);
@@ -54,11 +62,16 @@ test("GitHub action approvals enforce single-use lifecycle evidence", () => {
   assert.match(migration, /"consumed_execution_id" IS NOT NULL/u);
   assert.match(migration, /consumed_execution_fk[\s\S]*ON DELETE RESTRICT/u);
   assert.match(migration, /"decided_by_user_id" IS NOT NULL/u);
-  assert.deepEqual(journal.entries.at(-1), {
-    idx: 17,
-    version: "7",
-    when: 1_783_972_800_000,
-    tag: "0017_github_action_approvals",
-    breakpoints: true,
-  });
+  assert.deepEqual(
+    journal.entries.find(
+      (entry) => entry.tag === "0017_github_action_approvals"
+    ),
+    {
+      idx: 17,
+      version: "7",
+      when: 1_783_972_800_000,
+      tag: "0017_github_action_approvals",
+      breakpoints: true,
+    }
+  );
 });

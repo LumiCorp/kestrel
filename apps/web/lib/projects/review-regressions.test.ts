@@ -49,7 +49,21 @@ test("Project collaborators use canonical Thread access for message actions", ()
   }
 });
 
-test("Thread response setup is awaited inside the Project grant cleanup scope", () => {
+test("Thread responses bind Project context before dispatching durable work", () => {
   const source = readAppSource("app/api/threads/[id]/route.ts");
-  assert.match(source, /return await createKestrelOneAgentResponse\(/);
+  assert.match(source, /await resolveProjectRuntimeContext\(/);
+  assert.match(source, /await createDurableThreadTurn\(/);
+  assert.match(source, /projectContextRevisionId:[\s\S]*contextRevision\.id/u);
+  assert.match(source, /await enqueueDurableThreadTurn\(/);
+  assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
+});
+
+test("web approval responses preserve the approval contract across durable dispatch", () => {
+  const route = readAppSource("app/api/threads/[id]/route.ts");
+  const worker = readAppSource("lib/turns/process-runtime.ts");
+
+  assert.match(route, /findNewToolApprovalResponse\(/);
+  assert.match(route, /await decideGitHubActionApproval\(/);
+  assert.match(route, /messageId: null,[\s\S]*approvalDecision:/u);
+  assert.match(worker, /approvalDecision:[\s\S]*turn\.approvalId/u);
 });

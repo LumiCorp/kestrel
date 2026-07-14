@@ -6,7 +6,7 @@ import {
   type KestrelTerminalStatus,
 } from "@/lib/agent/kestrel-stream-events";
 
-type KestrelUiStreamChunk =
+export type KestrelUiStreamChunk =
   | { type: "start"; messageId: string }
   | { type: "text-start"; id: string }
   | { type: "reasoning-start"; id: string }
@@ -25,6 +25,11 @@ type KestrelUiStreamChunk =
   | {
       type: "message-metadata";
       messageMetadata: { kestrelTerminalStatus: KestrelTerminalStatus };
+    }
+  | {
+      type: "data-chat-title";
+      data: { title: string };
+      transient: true;
     }
   | { type: "finish"; finishReason: "stop" };
 

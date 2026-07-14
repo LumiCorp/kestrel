@@ -1,0 +1,353 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kestrel One Mobile API",
+    "version": "1.0.0",
+    "description": "The narrow, authenticated companion API for Kestrel One Mobile. Projects are read-only; Threads, durable turns, interactions, and device registrations are the only mutable product surfaces."
+  },
+  "servers": [{ "url": "/api/mobile/v1" }],
+  "security": [{ "sessionCookie": [] }, { "sessionBearer": [] }],
+  "paths": {
+    "/account/deletion-request": {
+      "get": {
+        "operationId": "getMobileAccountDeletionRequest",
+        "responses": {
+          "200": {
+            "description": "The signed-in user's latest hosted deletion request."
+          }
+        }
+      },
+      "post": {
+        "operationId": "requestMobileAccountDeletion",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["confirmation"],
+                "properties": {
+                  "confirmation": { "type": "string", "const": "DELETE" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Email confirmation sent for the hosted deletion request."
+          }
+        }
+      }
+    },
+    "/bootstrap": {
+      "get": {
+        "operationId": "getMobileBootstrap",
+        "responses": {
+          "200": {
+            "description": "Identity, organizations, version, and mobile capabilities."
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listMobileProjects",
+        "responses": {
+          "200": { "description": "Read-only Project summaries." }
+        }
+      }
+    },
+    "/projects/{id}": {
+      "get": {
+        "operationId": "getMobileProject",
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": { "description": "A read-only Project and its Threads." },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/threads": {
+      "get": {
+        "operationId": "listMobileThreads",
+        "parameters": [
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50 }
+          },
+          { "name": "projectId", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Recent chat Threads." } }
+      },
+      "post": {
+        "operationId": "createMobileThread",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateThreadInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Created standalone or Project Thread." }
+        }
+      }
+    },
+    "/threads/{id}": {
+      "get": {
+        "operationId": "getMobileThread",
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": { "description": "Thread metadata and persisted transcript." },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/threads/{id}/turns": {
+      "get": {
+        "operationId": "listMobileThreadQueue",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ordered visible durable Turn queue and pause state."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createMobileTurn",
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateTurnInput" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Durable turn accepted." },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/threads/{id}/queue/resume": {
+      "post": {
+        "operationId": "resumeMobileThreadQueue",
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": {
+            "description": "Queue resumed; returns the next Turn ID when present."
+          },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/threads/{id}/interactions": {
+      "get": {
+        "operationId": "listMobileInteractions",
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": {
+            "description": "Pending agent questions and approval checkpoints."
+          }
+        }
+      }
+    },
+    "/threads/{id}/interactions/{checkpointId}": {
+      "post": {
+        "operationId": "resolveMobileInteraction",
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/CheckpointId" }
+        ],
+        "responses": {
+          "200": { "description": "Interaction resolved exactly once." },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/turns/{turnId}": {
+      "get": {
+        "operationId": "getMobileTurn",
+        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
+        "responses": {
+          "200": { "description": "Durable turn status." },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "removeQueuedMobileTurn",
+        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
+        "responses": {
+          "200": {
+            "description": "Author-owned queued Turn removed before execution."
+          },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/turns/{turnId}/events": {
+      "get": {
+        "operationId": "streamMobileTurnEvents",
+        "parameters": [
+          { "$ref": "#/components/parameters/TurnId" },
+          { "$ref": "#/components/parameters/LastEventId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resumable SSE stream. Event IDs are opaque cursors.",
+            "content": { "text/event-stream": {} }
+          }
+        }
+      }
+    },
+    "/turns/{turnId}/stop": {
+      "post": {
+        "operationId": "stopMobileTurn",
+        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
+        "responses": {
+          "202": {
+            "description": "Cancellation requested; the queue pauses when cancellation settles."
+          },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/devices": {
+      "post": {
+        "operationId": "registerMobileDevice",
+        "responses": {
+          "200": {
+            "description": "Expo push token registered for the signed-in user."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disableMobileDevice",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Device registration disabled." }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token"
+      },
+      "sessionBearer": { "type": "http", "scheme": "bearer" }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "TurnId": {
+        "name": "turnId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "CheckpointId": {
+        "name": "checkpointId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string" }
+      },
+      "LastEventId": {
+        "name": "Last-Event-ID",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "The resource is absent or not visible in the selected organization."
+      },
+      "Conflict": {
+        "description": "The durable Turn or queue state no longer permits the requested transition."
+      }
+    },
+    "schemas": {
+      "CreateThreadInput": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      },
+      "CreateTurnInput": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "object",
+            "required": ["id", "parts"],
+            "properties": {
+              "id": { "type": "string" },
+              "parts": { "type": "array", "items": { "type": "object" } }
+            }
+          },
+          "model": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "x-kestrel-product-boundary": {
+    "allowed": [
+      "authentication",
+      "account-deletion-request",
+      "organization-switching",
+      "read-only-projects",
+      "threads",
+      "durable-turns",
+      "interactions",
+      "push-registration"
+    ],
+    "forbidden": [
+      "signup",
+      "billing",
+      "administration",
+      "project-mutation",
+      "agent-configuration",
+      "model-management",
+      "uploads",
+      "artifact-editing",
+      "runner-management"
+    ]
+  }
+}
