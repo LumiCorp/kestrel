@@ -10,4 +10,6 @@ WORKDIR /workspace
 COPY . .
 RUN pnpm install --frozen-lockfile
 
-CMD ["pnpm", "--filter", "@kestrel/kestrel-one", "worker:runpod"]
+WORKDIR /workspace/apps/web
+
+CMD ["node", "--import", "tsx", "scripts/managed-runpod-worker.ts"]

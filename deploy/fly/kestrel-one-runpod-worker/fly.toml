@@ -7,7 +7,7 @@ kill_timeout = 35
   dockerfile = "Dockerfile"
 
 [processes]
-  worker = "pnpm --filter @kestrel/kestrel-one worker:runpod"
+  worker = "node --import tsx scripts/managed-runpod-worker.ts"
 
 [[vm]]
   processes = ["worker"]
