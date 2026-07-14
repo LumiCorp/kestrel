@@ -42,10 +42,11 @@ export interface CreateSessionStoreOptions {
   driver?: StoreDriver | undefined;
   databaseUrl?: string | undefined;
   sqlitePath?: string | undefined;
+  migrationsDir?: string | undefined;
   enforceSchemaV3?: boolean | undefined;
 }
 
-const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");
+const DEFAULT_MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");
 
 export function createSessionStoreFromEnv(options: CreateSessionStoreOptions = {}): SessionStoreHandle {
   const handle = createSqlExecutorFromEnv(options);
@@ -108,7 +109,11 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
   mkdirSync(path.dirname(sqlitePath), { recursive: true });
   // "sqlite" is a local durable mode backed by PGlite so we can preserve Postgres semantics.
   const db = new PGlite(sqlitePath);
-  const ready = createSqliteReadyPromise(db, sqlitePath);
+  const ready = createSqliteReadyPromise(
+    db,
+    sqlitePath,
+    options.migrationsDir ?? DEFAULT_MIGRATIONS_DIR,
+  );
   const executor = new LazyReadySqlExecutor(new PGliteSqlExecutor(db), ready);
 
   return {
@@ -220,7 +225,7 @@ class LazyReadySqlExecutor implements SqlExecutor {
   }
 }
 
-async function applySqliteMigrations(db: PGlite): Promise<void> {
+async function applySqliteMigrations(db: PGlite, migrationsDir: string): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
@@ -228,7 +233,7 @@ async function applySqliteMigrations(db: PGlite): Promise<void> {
     )
   `);
 
-  const migrationFiles = readdirSync(MIGRATIONS_DIR)
+  const migrationFiles = readdirSync(migrationsDir)
     .filter((file) => file.endsWith(".sql"))
     .sort((left, right) => left.localeCompare(right));
 
@@ -240,7 +245,7 @@ async function applySqliteMigrations(db: PGlite): Promise<void> {
       continue;
     }
 
-    const sql = readFileSync(path.join(MIGRATIONS_DIR, file), "utf8");
+    const sql = readFileSync(path.join(migrationsDir, file), "utf8");
     await db.transaction(async (tx) => {
       await tx.exec(sql);
       await tx.query("INSERT INTO schema_migrations (name) VALUES ($1)", [file]);
@@ -248,8 +253,12 @@ async function applySqliteMigrations(db: PGlite): Promise<void> {
   }
 }
 
-function createSqliteReadyPromise(db: PGlite, sqlitePath: string): Promise<void> {
-  return applySqliteMigrations(db).catch((error) => {
+function createSqliteReadyPromise(
+  db: PGlite,
+  sqlitePath: string,
+  migrationsDir: string,
+): Promise<void> {
+  return applySqliteMigrations(db, migrationsDir).catch((error) => {
     throw createRuntimeFailure(
       "STORE_SQLITE_INIT_FAILED",
       `Failed to initialize local runtime store at '${sqlitePath}': ${describeSqliteInitError(error)}`,

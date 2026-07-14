@@ -12,6 +12,7 @@ export * from "./api.js";
 export * from "./client.js";
 export * from "./profileProvider.js";
 export * from "./daemon.js";
+export * from "./connectionManager.js";
 export * from "./desktopUiState.js";
 export {
   LOCAL_CORE_CREDENTIAL_IDS,

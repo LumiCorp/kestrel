@@ -26,7 +26,7 @@ export function resolveDesktopLibexecRoot(input: {
   if (currentValue !== undefined && currentValue.length > 0) {
     return currentValue;
   }
-  return input.isPackaged ? input.repoRoot : undefined;
+  return input.repoRoot;
 }
 
 export function resolveDesktopPathConfig(input: {

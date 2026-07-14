@@ -34,6 +34,7 @@ import {
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import { LocalCoreClient } from "../../../src/localCore/client.js";
+import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import {
   createWebRunnerAdapter,
@@ -158,7 +159,7 @@ let databaseStatus: DesktopDatabaseStatus = {
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
 let desktopModelPolicy: ResolvedModelPolicy = createDefaultModelPolicy();
-let localCoreClient: LocalCoreClient | undefined;
+let localCoreConnectionManager: LocalCoreConnectionManager | undefined;
 let desktopRunnerAdapter: WebRunnerAdapter | undefined;
 let unsubscribeProjectRunEvents: (() => void) | undefined;
 let desktopProfileOverrideVersion = 0;
@@ -232,9 +233,18 @@ async function main(): Promise<void> {
   if (desktopLibexecRoot !== undefined) {
     process.env.KESTREL_CLI_LIBEXEC = desktopLibexecRoot;
   }
-  const ready = await ensureDesktopLocalCoreReady(desktopConfig);
+  const localCoreConfig = desktopConfig;
+  const ready = await ensureDesktopLocalCoreReady(localCoreConfig);
   localCoreStatus = ready.status;
-  localCoreClient = ready.client;
+  localCoreConnectionManager = new LocalCoreConnectionManager({
+    initialConnection: ready,
+    connect: async () => await ensureDesktopLocalCoreReady(localCoreConfig),
+    onConnected(connection) {
+      localCoreStatus = connection.status;
+      currentDatabaseUrl = connection.status.databaseUrl;
+      subscribeToCoreProjectRuns(connection.client);
+    },
+  });
   await refreshDesktopCoreState();
   if (desktopSettings.selectedProvider !== desktopModelPolicy.provider) {
     await saveDesktopCoreSettings({
@@ -247,9 +257,9 @@ async function main(): Promise<void> {
   }
   syncDesktopWebEnvironment(desktopSettings);
   applyDesktopProfileOverride(desktopSettings);
-  await reconfigureDatabaseController(desktopConfig, desktopSettings);
+  await reconfigureDatabaseController(desktopSettings);
   runnerTransport = new LocalCoreRunnerTransport({
-    client: localCoreClient,
+    connectionManager: localCoreConnectionManager,
     logPath: desktopConfig.runtimeLogPath,
   });
   subscribeToCoreProjectRuns();
@@ -302,7 +312,12 @@ if (shouldStartDesktopMain) {
     mainWindow.show();
     mainWindow.focus();
   });
-  void main();
+  void main().catch((error) => {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    console.error("Kestrel Desktop failed to start", { error });
+    dialog.showErrorBox("Kestrel could not start", message);
+    app.quit();
+  });
 }
 
 async function ensureMainWindow(): Promise<void> {
@@ -527,8 +542,10 @@ function registerIpcHandlers(
     isPackaged: app.isPackaged,
   }));
   ipcMain.handle("desktop:get-support-bundle", async () => {
-    const client = requireLocalCoreClient();
-    const coreBundle = await client.supportBundle().catch((error) => ({
+    const manager = requireLocalCoreConnectionManager();
+    const coreBundle = await manager.executeIdempotent(
+      async (client) => await client.supportBundle(),
+    ).catch((error) => ({
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     }));
@@ -543,7 +560,9 @@ function registerIpcHandlers(
       runtimeHealth,
       databaseStatus,
       settings: desktopSettings,
-      projectRuns: await client.listDesktopProjectRuns(),
+      projectRuns: await manager.executeIdempotent(
+        async (client) => await client.listDesktopProjectRuns(),
+      ),
       runtimeStatus: runnerTransport.getStatus(),
       paths: {
         runtimeLogPath: runnerTransport.getStatus().logPath,
@@ -554,7 +573,9 @@ function registerIpcHandlers(
   });
   ipcMain.handle("desktop:get-settings", async () => toDesktopRendererSettings(desktopSettings));
   ipcMain.handle("desktop:get-ui-state", async () => {
-    return await requireLocalCoreClient().getDesktopUiState();
+    return await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.getDesktopUiState(),
+    );
   });
   ipcMain.handle("desktop:sync-legacy-ui-state", async (_event, input: unknown) => {
     let entries: DesktopLegacyUiStateEntries;
@@ -574,7 +595,9 @@ function registerIpcHandlers(
       capturedAt: new Date().toISOString(),
       entries,
     };
-    return await requireLocalCoreClient().syncDesktopUiState(state);
+    return await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.syncDesktopUiState(state),
+    );
   });
   ipcMain.handle("desktop:save-ui-state", async (_event, input: unknown) => {
     let entries: DesktopLegacyUiStateEntries;
@@ -594,7 +617,9 @@ function registerIpcHandlers(
       capturedAt: new Date().toISOString(),
       entries,
     };
-    return await requireLocalCoreClient().syncDesktopUiState(state);
+    return await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.syncDesktopUiState(state),
+    );
   });
   ipcMain.handle("desktop:run-turn", async (event, input: unknown) => {
     let request: DesktopRunTurnRequest;
@@ -1193,15 +1218,19 @@ function registerIpcHandlers(
         message: "desktop.readProjectLauncher requires a project path.",
       });
     }
-    return requireLocalCoreClient().readDesktopProjectLauncher({
-      projectPath,
-      ...(packageManagerOverride === "npm" || packageManagerOverride === "pnpm"
-        ? { packageManagerOverride }
-        : {}),
-    });
+    return requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.readDesktopProjectLauncher({
+        projectPath,
+        ...(packageManagerOverride === "npm" || packageManagerOverride === "pnpm"
+          ? { packageManagerOverride }
+          : {}),
+      }),
+    );
   });
   ipcMain.handle("desktop:list-project-runs", async (): Promise<DesktopManagedProjectRun[]> => {
-    return requireLocalCoreClient().listDesktopProjectRuns();
+    return requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.listDesktopProjectRuns(),
+    );
   });
   ipcMain.handle("desktop:start-project-run", async (_event, input: unknown): Promise<DesktopManagedProjectRun> => {
     if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -1223,13 +1252,18 @@ function registerIpcHandlers(
         message: "desktop.startProjectRun requires a script name.",
       });
     }
-    return requireLocalCoreClient().startDesktopProjectRun({
-      projectPath: payload.projectPath,
-      scriptName: payload.scriptName,
-      ...(payload.packageManagerOverride === "npm" || payload.packageManagerOverride === "pnpm"
-        ? { packageManagerOverride: payload.packageManagerOverride }
-        : {}),
-    });
+    const projectPath = payload.projectPath;
+    const scriptName = payload.scriptName;
+    const packageManagerOverride = payload.packageManagerOverride === "npm" || payload.packageManagerOverride === "pnpm"
+      ? payload.packageManagerOverride
+      : undefined;
+    return requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.startDesktopProjectRun({
+        projectPath,
+        scriptName,
+        ...(packageManagerOverride !== undefined ? { packageManagerOverride } : {}),
+      }),
+    );
   });
   ipcMain.handle("desktop:stop-project-run", async (_event, runId: unknown): Promise<DesktopManagedProjectRun | undefined> => {
     if (typeof runId !== "string" || runId.trim().length === 0) {
@@ -1238,7 +1272,9 @@ function registerIpcHandlers(
         message: "desktop.stopProjectRun requires a run id.",
       });
     }
-    return requireLocalCoreClient().stopDesktopProjectRun(runId);
+    return requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.stopDesktopProjectRun(runId),
+    );
   });
   ipcMain.handle("desktop:restart-project-run", async (_event, runId: unknown): Promise<DesktopManagedProjectRun> => {
     if (typeof runId !== "string" || runId.trim().length === 0) {
@@ -1247,7 +1283,9 @@ function registerIpcHandlers(
         message: "desktop.restartProjectRun requires a run id.",
       });
     }
-    return requireLocalCoreClient().restartDesktopProjectRun(runId);
+    return requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.restartDesktopProjectRun(runId),
+    );
   });
   ipcMain.handle("desktop:get-project-snapshot", async (_event, sessionId: unknown) => {
     return getDesktopProjectSnapshot({
@@ -2071,14 +2109,14 @@ async function prepareDesktopSettingsProjectRegistrations(
   return prepared;
 }
 
-function requireLocalCoreClient(): LocalCoreClient {
-  if (localCoreClient === undefined) {
+function requireLocalCoreConnectionManager(): LocalCoreConnectionManager {
+  if (localCoreConnectionManager === undefined) {
     throw createDesktopError({
       code: "desktop.local_core_api_unavailable",
       message: "Kestrel Local Core API is unavailable.",
     });
   }
-  return localCoreClient;
+  return localCoreConnectionManager;
 }
 
 function requireLocalCoreStatus(): LocalCoreStatus {
@@ -2110,7 +2148,9 @@ async function resetDesktopRunnerAdapter(): Promise<void> {
 }
 
 async function refreshDesktopCoreState(): Promise<void> {
-  const response = await requireLocalCoreClient().desktopSettings<Partial<DesktopSettings>>();
+  const response = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
+  );
   desktopSettings = normalizeDesktopSettings(response.settings);
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
@@ -2120,10 +2160,12 @@ async function saveDesktopCoreSettings(
   settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined },
 ): Promise<void> {
   const normalized = normalizeDesktopSettings(settings);
-  const response = await requireLocalCoreClient().patchDesktopSettings<Partial<DesktopSettings>>({
-    ...normalized,
-    ...(settings.modelPolicy !== undefined ? { modelPolicy: settings.modelPolicy } : {}),
-  });
+  const response = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.patchDesktopSettings<Partial<DesktopSettings>>({
+      ...normalized,
+      ...(settings.modelPolicy !== undefined ? { modelPolicy: settings.modelPolicy } : {}),
+    }),
+  );
   desktopSettings = normalizeDesktopSettings(response.settings);
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
@@ -2168,30 +2210,41 @@ async function persistDesktopRendererConfiguration(
   return toDesktopRendererSettings(desktopSettings);
 }
 
-function subscribeToCoreProjectRuns(): void {
+function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {
+  const activeClient = client ?? requireLocalCoreConnectionManager().current()?.client;
+  if (activeClient === undefined) {
+    throw createDesktopError({
+      code: "desktop.local_core_api_unavailable",
+      message: "Kestrel Local Core API is unavailable.",
+    });
+  }
   unsubscribeProjectRunEvents?.();
-  unsubscribeProjectRunEvents = requireLocalCoreClient().subscribeDesktopProjectRuns({
+  unsubscribeProjectRunEvents = activeClient.subscribeDesktopProjectRuns({
     onRuns(runs) {
       mainWindow?.webContents.send("desktop:project-runs", runs);
     },
     onError(error) {
+      requireLocalCoreConnectionManager().invalidate(activeClient);
       console.warn("Desktop project run event stream failed", { error });
     },
   });
 }
 
 async function stopCoreProjectRuns(): Promise<void> {
-  if (localCoreClient === undefined) {
+  const client = localCoreConnectionManager?.current()?.client;
+  if (client === undefined) {
     return;
   }
-  const runs = await localCoreClient.listDesktopProjectRuns().catch(() => []);
+  const runs = await client.listDesktopProjectRuns().catch(() => []);
   await Promise.all(runs
     .filter((run) => run.status === "running" || run.status === "stopping")
-    .map((run) => localCoreClient?.stopDesktopProjectRun(run.runId).catch(() => undefined)));
+    .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => undefined)));
 }
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {
-  localCoreStatus = await requireLocalCoreClient().restart();
+  localCoreStatus = await requireLocalCoreConnectionManager().executeOnce(
+    async (client) => await client.restart(),
+  );
   currentDatabaseUrl = localCoreStatus.databaseUrl;
 }
 
@@ -2202,7 +2255,9 @@ async function resolveCoreProjectRunPreviewUrl(input: {
   run: DesktopManagedProjectRun;
   url: string;
 }> {
-  const run = (await requireLocalCoreClient().listDesktopProjectRuns())
+  const run = (await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.listDesktopProjectRuns(),
+  ))
     .find((entry) => entry.runId === input.runId);
   if (run === undefined) {
     throw createDesktopError({
@@ -2251,13 +2306,12 @@ function readDesktopErrorCode(error: unknown): string | undefined {
 }
 
 async function reconfigureDatabaseController(
-  config: ReturnType<typeof resolveDesktopPathConfig>,
   settings: DesktopSettings,
 ): Promise<void> {
   if (databaseController !== undefined) {
     await databaseController.close().catch(() => undefined);
   }
-  databaseController = createAppDatabaseController(config, settings);
+  databaseController = createAppDatabaseController(settings);
   currentDatabaseUrl = databaseController.getDatabaseUrl();
   databaseStatus = await databaseController.getStatus();
 }
@@ -2273,7 +2327,6 @@ async function ensureDesktopLocalCoreReady(
     databaseMode: "pglite",
     repoRoot: config.repoRoot,
     runMigrations: true,
-    idleTimeoutMs: 0,
   });
   if (ready.client === undefined) {
     throw createDesktopError({
@@ -2288,16 +2341,15 @@ async function ensureDesktopLocalCoreReady(
 }
 
 function createAppDatabaseController(
-  config: ReturnType<typeof resolveDesktopPathConfig>,
   settings: DesktopSettings,
 ): DesktopDatabaseController {
   currentDatabaseUrlSource = settings.databaseMode === "external" ? "desktop_external" : "desktop_managed";
   return createCoreOwnedDesktopDatabaseController({
     readCurrentStatus: () => localCoreStatus,
     ensureReady: async () => {
-      const ready = await ensureDesktopLocalCoreReady(config);
-      localCoreStatus = ready.status;
-      localCoreClient = ready.client;
+      localCoreStatus = await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.status(),
+      );
       currentDatabaseUrl = localCoreStatus.databaseUrl;
       return localCoreStatus;
     },

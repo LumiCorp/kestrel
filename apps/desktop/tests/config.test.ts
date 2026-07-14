@@ -8,7 +8,7 @@ import {
   resolveDesktopPathConfig,
 } from "../src/config.js";
 
-test("resolveDesktopLibexecRoot points packaged Local Core bootstrap at bundled runtime sources", () => {
+test("resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: true,
     repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-repo",
@@ -21,7 +21,7 @@ test("resolveDesktopLibexecRoot points packaged Local Core bootstrap at bundled 
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: false,
     repoRoot: "/workspace/kestrel",
-  }), undefined);
+  }), "/workspace/kestrel");
 });
 
 test("resolveDesktopPathConfig uses repo-relative paths in development", () => {

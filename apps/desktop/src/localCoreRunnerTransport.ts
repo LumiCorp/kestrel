@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
+import type { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { DesktopProtocolTransport, DesktopRuntimeStatus } from "./contracts.js";
 import type { RunnerProtocolObserver } from "./runnerTransport.js";
 
@@ -12,7 +13,7 @@ export interface DesktopRunnerControlTransport extends DesktopProtocolTransport 
 }
 
 export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
-  private readonly client: LocalCoreClient;
+  private readonly connectionManager: Pick<LocalCoreConnectionManager, "executeOnce">;
   private readonly logPath: string;
   private readonly controllers = new Map<string, AbortController>();
   private readonly observers = new Set<RunnerProtocolObserver>();
@@ -26,8 +27,11 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
   private started = false;
   private recentStderr: string[] = [];
 
-  constructor(input: { client: LocalCoreClient; logPath: string }) {
-    this.client = input.client;
+  constructor(input: {
+    connectionManager: Pick<LocalCoreConnectionManager, "executeOnce">;
+    logPath: string;
+  }) {
+    this.connectionManager = input.connectionManager;
     this.logPath = input.logPath;
   }
 
@@ -58,10 +62,10 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
     const commandId = readCommandId(line);
     const controller = new AbortController();
     this.controllers.set(commandId, controller);
-    void this.client.sendRunnerCommand(line, {
+    void this.connectionManager.executeOnce(async (client) => await client.sendRunnerCommand(line, {
       signal: controller.signal,
       onLine: (eventLine) => this.emitLine(eventLine),
-    }).catch((error: unknown) => {
+    })).catch((error: unknown) => {
       if (controller.signal.aborted) {
         return;
       }
@@ -83,7 +87,7 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
 
   async restart(): Promise<DesktopRuntimeStatus> {
     this.abortActiveRequests();
-    await this.client.restart();
+    await this.connectionManager.executeOnce(async (client) => await client.restart());
     this.started = true;
     return this.getStatus();
   }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
+import type { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import { LocalCoreRunnerTransport } from "../src/localCoreRunnerTransport.js";
 
 test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Core", async () => {
@@ -23,7 +24,10 @@ test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Cor
       return {};
     },
   } as unknown as LocalCoreClient;
-  const transport = new LocalCoreRunnerTransport({ client, logPath: "/tmp/kestrel-core.log" });
+  const transport = new LocalCoreRunnerTransport({
+    connectionManager: createConnectionManager(client),
+    logPath: "/tmp/kestrel-core.log",
+  });
   const events: string[] = [];
   transport.observe({ onLine: (line) => events.push(line) });
   transport.ensureStarted();
@@ -44,7 +48,10 @@ test("LocalCoreRunnerTransport reports Core request failures as protocol events"
       throw new Error("socket unavailable");
     },
   } as unknown as LocalCoreClient;
-  const transport = new LocalCoreRunnerTransport({ client, logPath: "/tmp/kestrel-core.log" });
+  const transport = new LocalCoreRunnerTransport({
+    connectionManager: createConnectionManager(client),
+    logPath: "/tmp/kestrel-core.log",
+  });
   const events: Array<{ type?: string; commandId?: string }> = [];
   transport.observe({
     onLine: (line) => events.push(JSON.parse(line) as { type?: string; commandId?: string }),
@@ -91,7 +98,10 @@ test("LocalCoreRunnerTransport forwards streamed run updates before the terminal
       }));
     },
   } as unknown as LocalCoreClient;
-  const transport = new LocalCoreRunnerTransport({ client, logPath: "/tmp/kestrel-core.log" });
+  const transport = new LocalCoreRunnerTransport({
+    connectionManager: createConnectionManager(client),
+    logPath: "/tmp/kestrel-core.log",
+  });
   const eventTypes: string[] = [];
   transport.observe({
     onLine: (line) => eventTypes.push((JSON.parse(line) as { type: string }).type),
@@ -118,4 +128,14 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.equal(predicate(), true);
+}
+
+function createConnectionManager(
+  client: LocalCoreClient,
+): Pick<LocalCoreConnectionManager, "executeOnce"> {
+  return {
+    async executeOnce<T>(operation: (current: LocalCoreClient) => Promise<T>): Promise<T> {
+      return await operation(client);
+    },
+  };
 }
