@@ -341,11 +341,11 @@ importers:
         specifier: ^13.7.0
         version: 13.13.0(react@19.2.4)
       '@kestrel-agents/next':
-        specifier: 0.6.0
-        version: link:../../packages/next
+        specifier: 0.5.1
+        version: 0.5.1
       '@kestrel-agents/sdk':
-        specifier: 0.6.0
-        version: link:../../packages/sdk
+        specifier: 0.5.1
+        version: 0.5.1
       '@kestrel/mcp-security':
         specifier: workspace:*
         version: link:../../packages/mcp-security
@@ -2233,10 +2233,22 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@kestrel-agents/next@0.5.1':
+    resolution: {integrity: sha512-1oWIGdGKbMjuaFvAjsLP0oHbGOEKlkRvCCdE/4DBk6l+L5xzjBA2i+/7UI4+RPUiCMcqB4nBNKT3k3+TDag4BQ==}
+    engines: {node: '>=20'}
+
+  '@kestrel-agents/protocol@0.5.1':
+    resolution: {integrity: sha512-wb1UE7Miqi+PEH+sBJKR+wtAS4rwXo/8NuB0Cp/ClMHutHuPYa2YETRba6gAE7rFxOUV+R6hlJUsltnlC78Wog==}
+    engines: {node: '>=20'}
+
   '@kestrel-agents/ruhroh@0.6.0-beta.0':
     resolution: {integrity: sha512-5oy3yblBbkBZvmQkJ7zewWb20vkTeh+s1c1KMG/09AOyTQ9EBSedfZtIuhGjp/zq5X+olxHWdcA1LjxgDbJ6TQ==}
     engines: {node: '>=20'}
     hasBin: true
+
+  '@kestrel-agents/sdk@0.5.1':
+    resolution: {integrity: sha512-sHcg3epgohixpFh3as1/z+OmaySWaxi2CAXC2MO/5lYFqXkgP53de/C52vOKrHGMIkSY3n/b5JzK/IA2GnIUVw==}
+    engines: {node: '>=20'}
 
   '@kurkle/color@0.3.4':
     resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
@@ -11155,7 +11167,17 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@kestrel-agents/next@0.5.1':
+    dependencies:
+      '@kestrel-agents/sdk': 0.5.1
+
+  '@kestrel-agents/protocol@0.5.1': {}
+
   '@kestrel-agents/ruhroh@0.6.0-beta.0': {}
+
+  '@kestrel-agents/sdk@0.5.1':
+    dependencies:
+      '@kestrel-agents/protocol': 0.5.1
 
   '@kurkle/color@0.3.4':
     optional: true

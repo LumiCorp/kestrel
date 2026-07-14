@@ -28,13 +28,10 @@ test("root package exposes public product scripts and a broad monorepo test gate
     "node --import tsx scripts/check-public-boundary.ts",
   );
   assert.equal(scripts["check:desktop-resources"], "node --import tsx scripts/check-desktop-resources.ts");
-  assert.equal(
-    scripts["desktop:postgres-smoke"],
-    "node --import tsx scripts/desktop-postgres-package-smoke.ts",
-  );
+  assert.equal(scripts["desktop:postgres-smoke"], undefined);
   assert.equal(
     scripts["desktop:package-smoke"],
-    "pnpm run desktop:postgres-smoke && node --import tsx scripts/desktop-package-smoke.ts",
+    "node --import tsx scripts/desktop-package-smoke.ts",
   );
   assert.equal(scripts["check:evals"], "node --import tsx scripts/validate-ruhroh-evals.ts");
   assert.equal(scripts["evals:validate"], "node --import tsx scripts/validate-ruhroh-evals.ts");
@@ -218,28 +215,24 @@ test("Desktop package stage preserves npm overrides for static runtime audits", 
   assert.equal(pkg.dependencies?.next, undefined);
 });
 
-test("Desktop packaging validates and verifies portable macOS resources", async () => {
+test("Desktop packaging validates the native 0.6 macOS release", async () => {
   const packageScript = await readFile(path.join(ROOT, "scripts", "package-desktop.ts"), "utf8");
   const releaseScript = await readFile(path.join(ROOT, "scripts", "check-desktop-release.ts"), "utf8");
-  const smokeScript = await readFile(
-    path.join(ROOT, "scripts", "desktop-postgres-package-smoke.ts"),
-    "utf8",
-  );
 
-  assert.match(packageScript, /verifyPreparedDesktopPostgresBundle/u);
+  assert.doesNotMatch(packageScript, /verifyPreparedDesktopPostgresBundle/u);
   assert.match(packageScript, /KESTREL_DESKTOP_SIGN_IDENTITY/u);
+  assert.match(packageScript, /KESTREL_DESKTOP_NOTARY_PROFILE/u);
+  assert.match(packageScript, /notarytool/u);
+  assert.match(packageScript, /stapler/u);
+  assert.match(packageScript, /spctl/u);
   assert.match(packageScript, /identityValidation: false/u);
   assert.match(packageScript, /codesign/u);
   assert.match(packageScript, /darwinSigning\?\.identity !== "-"/u);
   assert.match(packageScript, /signDesktopPackageAdHoc/u);
   assert.match(packageScript, /\["--force", "--deep", "--sign", "-", appPath\]/u);
-  assert.match(releaseScript, /Desktop Postgres bundle is not portable/u);
+  assert.match(releaseScript, /must not include the retired bundled Postgres runtime/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);
-  assert.match(smokeScript, /ensureLocalCoreManagedPostgres/u);
-  assert.match(smokeScript, /stopManagedPostgres/u);
-  assert.match(smokeScript, /stopSmokeProcesses/u);
-  assert.doesNotMatch(smokeScript, /stopManagedPostgres\(bundleRootPath\)\.catch/u);
 });
 
 test("Desktop package smoke is single-run, isolated, and cleanup-owned", async () => {
@@ -254,7 +247,8 @@ test("Desktop package smoke is single-run, isolated, and cleanup-owned", async (
   assert.match(script, /await cleanupIsolatedSmoke\(\{/u);
   assert.match(script, /app\.close\(\)\.catch/u);
   assert.match(script, /stopIsolatedLocalCore/u);
-  assert.match(script, /stopIsolatedManagedPostgres/u);
+  assert.doesNotMatch(script, /stopIsolatedManagedPostgres/u);
+  assert.match(script, /KESTREL_DESKTOP_PACKAGE_SMOKE_LIVE_MODEL_APPROVED/u);
   assert.match(script, /stopOwnedProcess/u);
   assert.match(script, /listPackagedDesktopProcessIds\(packagedRoot\)/u);
   assert.match(script, /stopPackagedDesktopProcesses\(input\.packagedRoot\)/u);
