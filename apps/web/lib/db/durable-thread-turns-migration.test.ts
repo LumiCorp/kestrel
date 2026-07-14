@@ -47,7 +47,7 @@ const webPackage = JSON.parse(
     ),
     "utf8"
   )
-) as { scripts: Record<string, string> };
+) as { type?: string; scripts: Record<string, string> };
 
 test("durable turns establish the shared queue and replay ledger", () => {
   for (const table of [
@@ -91,6 +91,10 @@ test("durable turn migration is registered with the unified migrator", () => {
   assert.match(journal, /"tag": "0023_durable_thread_turns"/u);
 });
 
+test("the durable turn worker runs the web package as ESM", () => {
+  assert.equal(webPackage.type, "module");
+});
+
 test("the production worker image retains its TypeScript runtime toolchain", () => {
   assert.match(
     workerDockerfile,
@@ -99,7 +103,7 @@ test("the production worker image retains its TypeScript runtime toolchain", () 
   assert.match(workerDockerfile, /"worker:turns"/u);
 });
 
-test("the production worker entrypoint is CommonJS transform compatible", () => {
+test("the production worker entrypoint starts without top-level await", () => {
   assert.doesNotMatch(
     workerEntrypoint,
     /\nawait\s+startDurableThreadTurnWorker\(\);/u

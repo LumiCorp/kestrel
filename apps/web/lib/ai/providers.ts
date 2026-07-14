@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
   customProvider,
@@ -26,6 +27,7 @@ import {
   warnIfPlaceholderRuntimeConfig,
 } from "./surface-policy";
 
+const require = createRequire(import.meta.url);
 const THINKING_SUFFIX_REGEX = /-thinking$/;
 const directRuntimeConfig = getDirectRuntimeConfig("runtime-direct");
 const hasProviderKey = directRuntimeConfig.mode === "live";

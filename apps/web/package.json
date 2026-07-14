@@ -2,6 +2,7 @@
   "name": "@kestrel/kestrel-one",
   "version": "0.5.1",
   "private": true,
+  "type": "module",
   "description": "Kestrel One application platform with auth, chat, and knowledge-agent capabilities",
   "scripts": {
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
