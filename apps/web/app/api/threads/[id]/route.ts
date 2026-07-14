@@ -4,6 +4,11 @@ import { z } from "zod";
 import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
 import { generateTitleFromUserMessage } from "@/lib/chat/actions";
+import {
+  findNewToolApprovalResponse,
+  hasToolApprovalResponse,
+} from "@/lib/chat/tool-approval-response";
+import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
@@ -105,7 +110,7 @@ export async function POST(
     const submittedUserMessage = [...body.messages]
       .reverse()
       .find((message) => message.role === "user");
-    if (!submittedUserMessage) {
+    if (!(submittedUserMessage || hasToolApprovalResponse(body.messages))) {
       return NextResponse.json(
         { error: "A user message is required." },
         { status: 400 }
@@ -145,6 +150,18 @@ export async function POST(
       );
     }
 
+    const persistedMessages = convertToUIMessages(thread.messages);
+    const approvalResponse = findNewToolApprovalResponse({
+      submittedMessages: body.messages,
+      persistedMessages,
+    });
+    if (!(submittedUserMessage || approvalResponse)) {
+      return NextResponse.json(
+        { error: "A new user message or approval response is required." },
+        { status: 400 }
+      );
+    }
+
     const projectContext = await resolveProjectRuntimeContext({
       projectId: thread.projectId,
       organizationId,
@@ -161,10 +178,12 @@ export async function POST(
         })
       : null;
 
-    const isNewUserMessage = !thread.messages.some(
-      (message) => message.id === submittedUserMessage.id
-    );
-    if (isNewUserMessage) {
+    const isNewUserMessage =
+      submittedUserMessage !== undefined &&
+      !thread.messages.some(
+        (message) => message.id === submittedUserMessage.id
+      );
+    if (isNewUserMessage && submittedUserMessage) {
       await saveThreadMessages([
         {
           id: submittedUserMessage.id,
@@ -173,6 +192,25 @@ export async function POST(
           authorUserId: user.id,
           projectContextRevisionId: projectContext?.contextRevision.id ?? null,
           parts: submittedUserMessage.parts,
+        },
+      ]);
+    }
+    if (approvalResponse) {
+      await decideGitHubActionApproval({
+        organizationId,
+        threadId: thread.id,
+        userId: user.id,
+        runtimeApprovalId: approvalResponse.approvalId,
+        approved: approvalResponse.approved,
+      });
+      await saveThreadMessages([
+        {
+          id: approvalResponse.assistantMessage.id,
+          threadId: thread.id,
+          role: "assistant",
+          authorUserId: null,
+          projectContextRevisionId: projectContext?.contextRevision.id ?? null,
+          parts: approvalResponse.assistantMessage.parts,
         },
       ]);
     }
@@ -186,10 +224,12 @@ export async function POST(
       throw new Error("Thread became unavailable.");
     }
     const canonicalMessages = convertToUIMessages(canonicalThread.messages);
-    const hasPriorUserMessage = canonicalThread.messages.some(
-      (message) =>
-        message.role === "user" && message.id !== submittedUserMessage.id
-    );
+    const hasPriorUserMessage = submittedUserMessage
+      ? canonicalThread.messages.some(
+          (message) =>
+            message.role === "user" && message.id !== submittedUserMessage.id
+        )
+      : true;
 
     try {
       return await createKestrelOneAgentResponse({
@@ -199,6 +239,13 @@ export async function POST(
         threadId: canonicalThread.id,
         messages: canonicalMessages,
         modelId: body.model,
+        approvalDecision: approvalResponse
+          ? {
+              approvalId: approvalResponse.approvalId,
+              approved: approvalResponse.approved,
+              reason: approvalResponse.reason,
+            }
+          : undefined,
         projectContext:
           projectContext && issuedGrant
             ? {
@@ -214,7 +261,10 @@ export async function POST(
               }
             : undefined,
         transientTitle:
-          canonicalThread.title || hasPriorUserMessage
+          approvalResponse ||
+          canonicalThread.title ||
+          hasPriorUserMessage ||
+          !submittedUserMessage
             ? null
             : generateTitleFromUserMessage({
                 message: submittedUserMessage,

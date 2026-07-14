@@ -93,6 +93,24 @@ export function adaptKestrelAgentForKestrelOne(
   };
 }
 
+export function resolveKestrelOneTurnEventType(input: {
+  requestedEventType: string;
+  waitFor: unknown;
+}) {
+  if (input.requestedEventType !== "user.message") {
+    return input.requestedEventType;
+  }
+  const waitFor =
+    typeof input.waitFor === "object" &&
+    input.waitFor !== null &&
+    !Array.isArray(input.waitFor)
+      ? (input.waitFor as Record<string, unknown>)
+      : undefined;
+  return waitFor?.eventType === "user.reply"
+    ? "user.reply"
+    : input.requestedEventType;
+}
+
 export type KestrelOneAgentResponsePersistMeta = {
   model: string;
   title: string | null;
@@ -110,6 +128,13 @@ export type KestrelOneAgentResponseInput = {
   correlation: KestrelOneRequestCorrelation;
   threadId: string;
   messages: UIMessage[];
+  approvalDecision?:
+    | {
+        approvalId: string;
+        approved: boolean;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   runtimeModel?: KestrelOneRuntimeModelSelection;
   projectContext?: {
@@ -155,7 +180,11 @@ export function createKestrelOneAgentResponseFromAgent(
     organizationId: input.organizationId,
     correlation: input.correlation,
   });
-  const latestUserMessage = getLatestUserText(input.messages);
+  const latestUserMessage = input.approvalDecision
+    ? input.approvalDecision.approved
+      ? "approve"
+      : "deny"
+    : getLatestUserText(input.messages);
   const history = toKestrelHistory(input.messages.slice(0, -1));
   const assistantMessageId = crypto.randomUUID();
   const textPartId = crypto.randomUUID();
@@ -181,6 +210,12 @@ export function createKestrelOneAgentResponseFromAgent(
         errorMessage: null as string | null,
         failureVisible: false,
         terminalStatus: "empty" as KestrelTerminalStatus,
+        approvalRequests: [] as Array<{
+          approvalId: string;
+          toolCallId: string;
+          toolName: string;
+          input: Record<string, unknown>;
+        }>,
       };
 
       try {
@@ -188,6 +223,9 @@ export function createKestrelOneAgentResponseFromAgent(
           {
             sessionId: input.threadId,
             message: latestUserMessage,
+            eventType: input.approvalDecision
+              ? "user.approval"
+              : "user.message",
             history,
             ...(input.projectContext
               ? {
@@ -255,7 +293,19 @@ export function createKestrelOneAgentResponseFromAgent(
           {
             id: assistantMessageId,
             role: "assistant",
-            parts: [{ type: "text", text: streamResult.finalText }],
+            parts: [
+              ...(streamResult.finalText
+                ? [{ type: "text" as const, text: streamResult.finalText }]
+                : []),
+              ...streamResult.approvalRequests.map((approval) => ({
+                type: "dynamic-tool" as const,
+                toolName: approval.toolName,
+                toolCallId: approval.toolCallId,
+                state: "approval-requested" as const,
+                approval: { id: approval.approvalId },
+                input: approval.input,
+              })),
+            ],
           },
         ],
         {

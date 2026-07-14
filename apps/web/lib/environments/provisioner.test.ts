@@ -98,6 +98,9 @@ function fixture(type: string, workspaceId: string | null = null) {
     async completeWorkspaceRebuild() {
       calls.push("workspace:rebuilt");
     },
+    async updateOperationStage(input) {
+      calls.push(`operation:stage:${input.stage}`);
+    },
     async completeOperation() {
       calls.push("operation:completed");
     },
@@ -168,6 +171,9 @@ function fixture(type: string, workspaceId: string | null = null) {
     async waitForMachine() {
       calls.push("provider:wait");
     },
+    async waitForMachineHealth() {
+      calls.push("provider:health");
+    },
     async createVolumeSnapshot() {
       return { id: "snapshot-id", state: "prepare" };
     },
@@ -200,9 +206,13 @@ test("Environment provisioning durably follows requested through ready", async (
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(calls, [
     "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
     "provider:app",
+    "operation:stage:environment.machine.starting",
     "provider:gateway",
     "provider:wait",
+    "operation:stage:environment.health.checking",
+    "provider:health",
     "environment:ready",
     "operation:completed",
   ]);
@@ -218,9 +228,13 @@ test("Workspace provisioning persists provider resources only after readiness", 
   await provisioner.process("operation-id");
   assert.deepEqual(calls, [
     "workspace:provisioning",
+    "operation:stage:environment.workspace.mounting",
     "provider:volume",
+    "operation:stage:environment.machine.starting",
     "provider:machine",
     "provider:wait",
+    "operation:stage:environment.health.checking",
+    "provider:health",
     "workspace:ready",
     "operation:completed",
   ]);
@@ -237,6 +251,7 @@ test("Provider failures are reflected on the resource and operation", async () =
   await provisioner.process("operation-id");
   assert.deepEqual(calls, [
     "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
     "environment:failed:FLY_PROVIDER_REJECTED",
     "operation:failed:FLY_PROVIDER_REJECTED",
   ]);
@@ -254,6 +269,7 @@ test("transient Fly failures return the durable operation to its retry queue", a
   assert.equal(await provisioner.process("operation-id"), "deferred");
   assert.deepEqual(calls, [
     "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
     "operation:deferred:Fly is temporarily unavailable.",
   ]);
 });
@@ -303,8 +319,11 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
   await provisioner.process("operation-id");
   assert.deepEqual(calls, [
     "workspace:starting",
+    "operation:stage:environment.machine.starting",
     "provider:start",
     "provider:wait",
+    "operation:stage:environment.health.checking",
+    "provider:health",
     "workspace:ready",
     "operation:completed",
   ]);
@@ -333,6 +352,37 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
   await createProvisioner(repository, provider).process("operation-id");
   assert.deepEqual(calls, [
     "workspace:stopping",
+    "operation:stage:environment.machine.stopping",
+    "provider:stop",
+    "provider:wait",
+    "workspace:stopped",
+    "operation:completed",
+  ]);
+});
+
+test("Workspace idle stop continues from the control-plane stopping state", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.stop",
+    "workspace-id"
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "stopping",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    sourceType: "blank",
+    sourceResourceId: null,
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.stopMachine = async () => {
+    calls.push("provider:stop");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "operation:stage:environment.machine.stopping",
     "provider:stop",
     "provider:wait",
     "workspace:stopped",

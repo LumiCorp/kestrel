@@ -24,6 +24,7 @@ import {
   createKestrelOneAgentResponseFromAgent,
   type KestrelOneAgent,
   type KestrelOneAgentResponsePersistMeta,
+  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   applyKestrelOneModelToProfile,
@@ -36,6 +37,7 @@ import {
   resolveEnvironmentExecutionRoute,
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
+import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 
@@ -96,6 +98,13 @@ export type KestrelOneAgentResponseInput = {
   organizationId: string;
   threadId: string;
   messages: UIMessage[];
+  approvalDecision?:
+    | {
+        approvalId: string;
+        approved: boolean;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   projectContext?: {
     projectId: string;
@@ -156,9 +165,17 @@ function createModelAwareKestrelOneAgent(input: {
           });
           clients.add(client);
           const { signal, ...turn } = turnInput;
+          const requestedEventType = turn.eventType || "user.message";
+          const eventType = await resolveEnvironmentTurnEventType({
+            client,
+            context,
+            sessionId: turn.sessionId,
+            requestedEventType,
+            hasHistory: (turn.history?.length ?? 0) > 0,
+          });
           const normalizedTurn = {
             ...turn,
-            eventType: turn.eventType || "user.message",
+            eventType,
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
             mcpAuthorization: { executionTicket: route.authToken },
           };
@@ -183,7 +200,21 @@ function createModelAwareKestrelOneAgent(input: {
                 context
               );
           routed.attachCancel(() => downstream.cancel());
-          for await (const event of downstream) routed.push(event);
+          for await (const event of downstream) {
+            await recordGitHubActionApprovalRequest({
+              identity: {
+                organizationId: input.organizationId,
+                environmentId: route.environmentId,
+                workspaceId: route.workspaceId,
+                threadId: input.threadId,
+                actorId: input.actorUserId,
+                agentId: getKestrelOneProfileId(),
+              },
+              requestedExecutionId: route.runId,
+              event,
+            });
+            routed.push(event);
+          }
           const terminal = await downstream.result;
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
@@ -214,6 +245,43 @@ function createModelAwareKestrelOneAgent(input: {
       clients.clear();
     },
   };
+}
+
+async function resolveEnvironmentTurnEventType(input: {
+  client: KestrelOneRunnerClient;
+  context: KestrelRequestContext;
+  sessionId: string;
+  requestedEventType: string;
+  hasHistory: boolean;
+}) {
+  if (input.requestedEventType !== "user.message" || !input.hasHistory) {
+    return input.requestedEventType;
+  }
+
+  try {
+    const session = await input.client.describeSession(
+      input.sessionId,
+      input.context
+    );
+    return resolveKestrelOneTurnEventType({
+      requestedEventType: input.requestedEventType,
+      waitFor: session.waitFor,
+    });
+  } catch (error) {
+    if (isMissingRunnerSession(error)) {
+      return input.requestedEventType;
+    }
+    throw error;
+  }
+}
+
+function isMissingRunnerSession(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "STORE_SESSION_NOT_FOUND"
+  );
 }
 
 class EnvironmentRoutedRunnerStream
@@ -416,6 +484,7 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     messages: input.messages,
+    approvalDecision: input.approvalDecision,
     modelId: resolvedModel.model.id,
     runtimeModel,
     projectContext: input.projectContext,

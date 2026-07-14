@@ -45,6 +45,9 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
   } else if (
     code === "PROJECT_CONTEXT_CONFLICT" ||
     code === "PROJECT_LAST_OWNER" ||
+    code === "GITHUB_APPROVAL_REQUIRED" ||
+    code === "GITHUB_APPROVAL_INVALID" ||
+    code === "GITHUB_APPROVAL_NOT_PENDING" ||
     code === "ENVIRONMENT_INVALID_TRANSITION" ||
     code === "WORKSPACE_INVALID_TRANSITION" ||
     code === "ENVIRONMENT_UNAVAILABLE" ||

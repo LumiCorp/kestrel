@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
+import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
@@ -49,7 +50,11 @@ async function createBoss() {
   await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE);
   await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE);
   await boss.createQueue(ENVIRONMENT_RECONCILE_QUEUE);
-  await boss.schedule(ENVIRONMENT_RECONCILE_QUEUE, "*/5 * * * *", {});
+  await boss.schedule(
+    ENVIRONMENT_RECONCILE_QUEUE,
+    ENVIRONMENT_RECONCILE_CRON,
+    {}
+  );
   await boss.createQueue(MANAGED_RUNPOD_RUN_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_RECONCILE_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_USAGE_QUEUE);
@@ -141,10 +146,10 @@ export async function getKnowledgeBoss() {
       }
     );
     await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
-      const { reconcileHostedEnvironments } = await import(
-        "@/lib/environments/reconcile"
+      const { runScheduledEnvironmentReconciliation } = await import(
+        "@/lib/environments/reconcile-schedule"
       );
-      await reconcileHostedEnvironments();
+      await runScheduledEnvironmentReconciliation();
     });
   }
 

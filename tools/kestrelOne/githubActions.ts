@@ -219,6 +219,12 @@ async function invokeGitHubAction(
     context.kestrelOne?.executionTicket,
     "Environment execution ticket"
   );
+  const approvalId = input.requiresApproval
+    ? requireContextValue(
+        context.runtime?.approvalId,
+        "Runtime GitHub approval ID"
+      )
+    : undefined;
   const response = await (context.fetchImpl ?? fetch)(
     new URL("/api/runtime/github/action", appUrl),
     {
@@ -226,9 +232,7 @@ async function invokeGitHubAction(
       headers: {
         authorization: `Bearer ${ticket}`,
         "content-type": "application/json",
-        ...(input.requiresApproval
-          ? { "x-kestrel-runtime-approval": "confirmed" }
-          : {}),
+        ...(approvalId ? { "x-kestrel-approval-id": approvalId } : {}),
       },
       body: JSON.stringify({
         operation: input.operation,

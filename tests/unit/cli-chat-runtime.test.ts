@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
+  applyRequiredManagedWorkspacePolicy,
   createModelGatewayForProfile,
   resolveManagedWorktreesEnabledForRuntime,
   resolveReasoningModelForProfile,
@@ -90,6 +91,66 @@ test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit 
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "true" }), true);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "false" }), false);
+});
+
+test("required managed Workspace policy injects the Environment-owned canonical root", () => {
+  assert.deepEqual(
+    applyRequiredManagedWorkspacePolicy(undefined, {
+      KESTREL_REQUIRE_MANAGED_WORKTREE: "true",
+      KESTREL_WORKSPACE_ID: "workspace-1",
+      KESTREL_WORKSPACE_ROOT: "/workspace",
+      KESTREL_MANAGED_WORKTREE_ISOLATION: "session",
+    }),
+    {
+      workspaceId: "workspace-1",
+      workspaceRoot: "/workspace",
+      appRoot: ".",
+      commands: {},
+      managedWorktreeRequired: true,
+      sourceWorkspaceRoot: "/workspace",
+      managedWorktreeIsolation: "session",
+    },
+  );
+});
+
+test("required managed Workspace policy cannot be weakened by a client turn", () => {
+  assert.deepEqual(
+    applyRequiredManagedWorkspacePolicy(
+      {
+        workspaceId: "client-workspace",
+        workspaceRoot: "/tmp/client-root",
+        appRoot: "client-app",
+        commands: { test: "pnpm test" },
+        managedWorktreeRequired: false,
+      },
+      {
+        KESTREL_REQUIRE_MANAGED_WORKTREE: "true",
+        KESTREL_WORKSPACE_ID: "workspace-1",
+        KESTREL_WORKSPACE_ROOT: "/workspace",
+        KESTREL_MANAGED_WORKTREE_ISOLATION: "session",
+      },
+    ),
+    {
+      workspaceId: "workspace-1",
+      workspaceRoot: "/workspace",
+      appRoot: ".",
+      commands: {},
+      managedWorktreeRequired: true,
+      sourceWorkspaceRoot: "/workspace",
+      managedWorktreeIsolation: "session",
+    },
+  );
+});
+
+test("required managed Workspace policy fails closed when its root binding is incomplete", () => {
+  assert.throws(
+    () =>
+      applyRequiredManagedWorkspacePolicy(undefined, {
+        KESTREL_REQUIRE_MANAGED_WORKTREE: "true",
+        KESTREL_WORKSPACE_ID: "workspace-1",
+      }),
+    /requires KESTREL_WORKSPACE_ID and KESTREL_WORKSPACE_ROOT/u,
+  );
 });
 
 test("gateway-managed profiles use the credential broker path instead of provider environment defaults", () => {

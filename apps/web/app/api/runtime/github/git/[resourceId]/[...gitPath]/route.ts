@@ -1,6 +1,6 @@
 import {
-  type EnvironmentExecutionTicket,
-  verifyEnvironmentExecutionTicket,
+  type EnvironmentToolCredentialTicket,
+  verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
@@ -13,6 +13,10 @@ import {
   authorizeGitHubCapability,
   GitHubPolicyError,
 } from "@/lib/integrations/github-policy";
+import {
+  githubToolCredentialMatchesRequest,
+  githubToolCredentialRequestSchema,
+} from "@/lib/integrations/github-tool-credential-contract";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -29,14 +33,26 @@ export async function POST(request: Request, context: RouteContext) {
 }
 
 async function proxyGitUploadPack(request: Request, context: RouteContext) {
-  let ticket: EnvironmentExecutionTicket | null = null;
+  let ticket: EnvironmentToolCredentialTicket | null = null;
   try {
-    const verifiedTicket = verifyEnvironmentExecutionTicket({
+    const verifiedTicket = verifyEnvironmentToolCredential({
       token: readBearer(request.headers.get("authorization")),
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
     ticket = verifiedTicket;
     const { resourceId, gitPath } = await context.params;
+    const credentialRequest = githubToolCredentialRequestSchema.parse({
+      operation: "git.upload_pack",
+      resourceId,
+    });
+    if (
+      !githubToolCredentialMatchesRequest({
+        ticket: verifiedTicket,
+        request: credentialRequest,
+      })
+    ) {
+      throw new GitHubPolicyError("GITHUB_CREDENTIAL_SCOPE_DENIED");
+    }
     const url = new URL(request.url);
     assertGitUploadPackRequest(request.method, gitPath, url.searchParams);
     const resource = await knowledgeDb.query.toolConnectionResources.findFirst({
@@ -170,6 +186,8 @@ function passthroughHeaders(headers: Headers) {
 
 function readBearer(value: string | null) {
   const match = value?.match(/^Bearer ([^\s]+)$/u);
-  if (!match?.[1]) throw new Error("Environment execution ticket is required.");
+  if (!match?.[1]) {
+    throw new Error("A scoped GitHub credential is required.");
+  }
   return match[1];
 }

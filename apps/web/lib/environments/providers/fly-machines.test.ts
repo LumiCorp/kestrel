@@ -15,6 +15,286 @@ test("Fly resource names are deterministic and provider-safe", () => {
   );
 });
 
+test("Fly waits split long deadlines into accepted request windows", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return requests.length === 1
+        ? new Response(null, { status: 408 })
+        : Response.json({});
+    }) as typeof fetch,
+  });
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "started",
+    timeoutSeconds: 90,
+  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[0] ?? "", /[?&]timeout=60(?:&|$)/u);
+});
+
+test("Fly stopped waits bind the current Machine instance", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (!String(url).includes("/wait?")) {
+        return Response.json({
+          id: "machine-1",
+          instance_id: "instance-1",
+          state: "stopping",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch,
+  });
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "stopped",
+    timeoutSeconds: 60,
+  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[1] ?? "", /[?&]instance_id=instance-1(?:&|$)/u);
+});
+
+test("Fly start is idempotent when another request already started the Machine", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ method: init?.method ?? "GET", url: String(url) });
+      if (requests.length === 1) return new Response(null, { status: 412 });
+      return Response.json({
+        id: "machine-1",
+        state: "starting",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET"]
+  );
+});
+
+test("Fly start waits out an in-progress stop before issuing the start", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async () => {},
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (requests.length === 1) return new Response(null, { status: 412 });
+      if (request.url.includes("/wait?")) return Response.json({ ok: true });
+      if (request.method === "POST") return Response.json({ ok: true });
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "stopping",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET", "GET", "GET", "POST"]
+  );
+  assert.match(requests[3]?.url ?? "", /[?&]state=stopped(?:&|$)/u);
+});
+
+test("Fly start retries a transient stopped-state rejection once per interval", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const sleeps: number[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (request.method === "POST" && requests.length === 1) {
+        return new Response(null, { status: 412 });
+      }
+      if (request.method === "GET") {
+        return Response.json({
+          id: "machine-1",
+          state: "stopped",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+  });
+
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET", "POST"]
+  );
+  assert.deepEqual(sleeps, [1000]);
+});
+
+test("Fly start fails closed after ten stopped-state retries", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const sleeps: number[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (request.method === "POST") {
+        return new Response(null, { status: 412 });
+      }
+      return Response.json({
+        id: "machine-1",
+        state: "stopped",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.startMachine({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+    }),
+    /remained stopped after 10 bounded start retries/u
+  );
+
+  assert.equal(
+    requests.filter((request) => request.method === "POST").length,
+    11
+  );
+  assert.equal(
+    requests.filter((request) => request.method === "GET").length,
+    11
+  );
+  assert.deepEqual(
+    sleeps,
+    Array.from({ length: 10 }, () => 1000)
+  );
+});
+
+test("Fly start fails closed when the authoritative state cannot be retried", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return new Response(null, { status: 412 });
+      }
+      return Response.json({
+        id: "machine-1",
+        state: "suspended",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.startMachine({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+    }),
+    /authoritative Machine state was suspended/u
+  );
+});
+
+test("Fly readiness waits for the exact named Machine check to pass", async () => {
+  const responses = [
+    {
+      id: "machine-1",
+      state: "started",
+      region: "iad",
+      checks: [{ name: "workspace", status: "warning" }],
+    },
+    {
+      id: "machine-1",
+      state: "started",
+      region: "iad",
+      checks: [
+        { name: "another-check", status: "passing" },
+        { name: "workspace", status: "passing" },
+      ],
+    },
+  ];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    fetchImpl: (async () =>
+      Response.json(responses.shift())) as unknown as typeof fetch,
+  });
+
+  await client.waitForMachineHealth({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    checkName: "workspace",
+    timeoutSeconds: 1,
+  });
+  assert.equal(responses.length, 0);
+});
+
+test("Fly readiness fails closed when the named Machine check never passes", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    fetchImpl: (async () =>
+      Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        checks: [{ name: "workspace", status: "critical" }],
+      })) as unknown as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.waitForMachineHealth({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+      checkName: "workspace",
+      timeoutSeconds: 0,
+    }),
+    /workspace did not pass/u
+  );
+});
+
 test("Environment App creation always supplies the custom network", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
@@ -38,6 +318,33 @@ test("Environment App creation always supplies the custom network", async () => 
     org_slug: "kestrel-test",
     network: "kestrel-abc-network",
   });
+});
+
+test("Environment App ownership resolves configured organization aliases", async () => {
+  const requests: string[] = [];
+  const app = {
+    id: "fly-app-id",
+    name: "kestrel-env-abc",
+    network: "kestrel-abc-network",
+    organization: { slug: "canonical-organization" },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "personal",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return requests.length === 1
+        ? Response.json(app)
+        : Response.json({ total_apps: 1, apps: [app] });
+    }) as typeof fetch,
+  });
+  const resolved = await client.ensureEnvironmentApp({
+    appName: app.name,
+    networkName: app.network,
+  });
+  assert.equal(resolved.id, app.id);
+  assert.equal(resolved.organizationSlug, "canonical-organization");
+  assert.match(requests[1] ?? "", /[?&]org_slug=personal(?:&|$)/u);
 });
 
 test("Workspace provisioning requests encrypted storage and a private runtime Machine", async () => {
@@ -108,6 +415,7 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   ]);
   assert.equal(machineBody.config.guest.memory_mb, 4096);
   assert.equal(machineBody.config.env.KESTREL_ENABLE_MANAGED_WORKTREES, "true");
+  assert.equal(machineBody.config.env.KESTREL_REQUIRE_MANAGED_WORKTREE, "true");
   assert.equal(
     machineBody.config.env.KESTREL_MANAGED_WORKTREE_ISOLATION,
     "session"
@@ -147,7 +455,13 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
         return Response.json({ ips: [] });
       }
       if (path.endsWith("/ip_assignments") && init?.method === "POST") {
-        return Response.json({ ip: "203.0.113.1", shared: true });
+        return Response.json({
+          created_at: null,
+          ip: "203.0.113.1",
+          region: null,
+          service_name: null,
+          shared: false,
+        });
       }
       if (path.includes("/machines?")) return Response.json([]);
       return Response.json({

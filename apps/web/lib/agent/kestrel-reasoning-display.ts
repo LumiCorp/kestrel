@@ -14,6 +14,9 @@ export function getReasoningTriggerLabel(input: {
   if (input.terminalStatus === "runner_error") {
     return "Interrupted";
   }
+  if (input.terminalStatus === "waiting") {
+    return "Waiting";
+  }
 
   return input.isStreaming || input.duration === 0
     ? "Thinking"

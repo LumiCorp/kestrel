@@ -135,7 +135,9 @@ export interface WorkspaceRuntimeContext {
   packageManager?: string | undefined;
   commands: WorkspaceCommandContract;
   label?: string | undefined;
+  managedWorktreeRequired?: boolean | undefined;
   managedWorktreeIsolation?: "scoped" | "session" | undefined;
+  sourceWorkspaceRoot?: string | undefined;
 }
 
 export interface ResolvedWorkspace {

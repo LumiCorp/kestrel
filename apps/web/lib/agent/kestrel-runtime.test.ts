@@ -11,6 +11,7 @@ import type {
 import {
   createKestrelOneAgentResponseFromAgent,
   createKestrelOneRequestContext,
+  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import type { Session } from "@/lib/auth-types";
 
@@ -43,6 +44,29 @@ test("createKestrelOneRequestContext maps session and organization into runner c
   });
 });
 
+test("resolveKestrelOneTurnEventType resumes only an explicit user reply wait", () => {
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.message",
+      waitFor: { eventType: "user.reply" },
+    }),
+    "user.reply"
+  );
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.message",
+      waitFor: { eventType: "system.timer" },
+    }),
+    "user.message"
+  );
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.approval",
+      waitFor: { eventType: "user.reply" },
+    }),
+    "user.approval"
+  );
+});
 test("createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   let capturedContext: KestrelOneRequestContext | undefined;

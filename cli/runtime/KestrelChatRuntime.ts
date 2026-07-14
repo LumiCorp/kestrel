@@ -313,18 +313,19 @@ export class KestrelChatRuntime {
       message: requireRunTurnMessage(input.message),
     };
     const effectiveInput = await applyActiveTaskRuntimeMetadata(normalizedInput, this.taskGraphStore);
+    const policyBoundWorkspace = applyRequiredManagedWorkspacePolicy(effectiveInput.workspace);
     const authorizedInput: RunTurnInput = {
       ...effectiveInput,
-      ...(effectiveInput.workspace !== undefined
+      ...(policyBoundWorkspace !== undefined
         ? {
             workspace:
               resolveRuntimeWorkspaceAuthority({
-                workspace: effectiveInput.workspace,
+                workspace: policyBoundWorkspace,
                 interactionMode: effectiveInput.interactionMode,
                 actSubmode: effectiveInput.actSubmode,
                 defaultInteractionMode: this.defaultInteractionMode,
                 defaultActSubmode: this.defaultActSubmode,
-              }) ?? effectiveInput.workspace,
+              }) ?? policyBoundWorkspace,
           }
         : {}),
     };
@@ -1310,6 +1311,38 @@ export function resolveManagedWorktreesEnabledForRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return parseEnvBoolean("KESTREL_ENABLE_MANAGED_WORKTREES", env) === true;
+}
+
+export function applyRequiredManagedWorkspacePolicy(
+  workspace: WorkspaceRuntimeContext | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): WorkspaceRuntimeContext | undefined {
+  if (parseEnvBoolean("KESTREL_REQUIRE_MANAGED_WORKTREE", env) !== true) {
+    return workspace;
+  }
+  const workspaceId = parseEnvString("KESTREL_WORKSPACE_ID", env);
+  const workspaceRoot = parseEnvString("KESTREL_WORKSPACE_ROOT", env);
+  if (workspaceId === undefined || workspaceRoot === undefined) {
+    throw new Error(
+      "KESTREL_REQUIRE_MANAGED_WORKTREE requires KESTREL_WORKSPACE_ID and KESTREL_WORKSPACE_ROOT.",
+    );
+  }
+  const isolation = parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
+  if (isolation !== undefined && isolation !== "scoped" && isolation !== "session") {
+    throw new Error(
+      "KESTREL_MANAGED_WORKTREE_ISOLATION must be 'scoped' or 'session'.",
+    );
+  }
+  return {
+    workspaceId,
+    workspaceRoot,
+    appRoot: ".",
+    commands: {},
+    ...(workspace?.label !== undefined ? { label: workspace.label } : {}),
+    managedWorktreeRequired: true,
+    sourceWorkspaceRoot: workspaceRoot,
+    ...(isolation !== undefined ? { managedWorktreeIsolation: isolation } : {}),
+  };
 }
 
 function parseEnvInt(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {

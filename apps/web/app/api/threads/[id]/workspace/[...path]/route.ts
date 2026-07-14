@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { resolveEnvironmentExecutionRoute } from "@/lib/environments/execution-route";
@@ -33,6 +34,7 @@ async function handle(
     const { id, path } = await context.params;
     const apiPath = path.join("/");
     const isApplicationProxy = /^apps\/[^/]+\/proxy(?:\/.*)?$/u.test(apiPath);
+    const isApplicationControl = /^apps\/[^/]+\/(?:start|stop)$/u.test(apiPath);
     const isTerminalSession =
       /^terminal\/sessions(?:\/[^/]+(?:\/(?:input|output))?)?$/u.test(apiPath);
     const isPromotion =
@@ -42,6 +44,7 @@ async function handle(
       !(
         ALLOWED_PATHS.has(apiPath) ||
         isApplicationProxy ||
+        isApplicationControl ||
         isTerminalSession ||
         isPromotion
       )
@@ -139,6 +142,30 @@ async function handle(
       return NextResponse.json(payload, { status: upstream.status });
     }
     if (
+      /^terminal\/sessions\/[^/]+\/input$/u.test(apiPath) &&
+      request.method === "POST" &&
+      upstream.ok
+    ) {
+      const terminalSessionId = apiPath.split("/")[2] ?? null;
+      const inputBytes = Buffer.from(requestBody ?? new ArrayBuffer(0));
+      await logAdminEvent({
+        organizationId,
+        actorUserId: session.user.id,
+        category: "environment-workspace",
+        action: "workspace.terminal.input",
+        targetType: "workspace",
+        targetId: route.workspaceId,
+        message: "Sent input to an authorized Workspace PTY terminal.",
+        metadata: {
+          environmentId: route.environmentId,
+          threadId: id,
+          terminalSessionId,
+          byteLength: inputBytes.byteLength,
+          inputSha256: createHash("sha256").update(inputBytes).digest("hex"),
+        },
+      });
+    }
+    if (
       /^terminal\/sessions\/[^/]+$/u.test(apiPath) &&
       request.method === "DELETE" &&
       upstream.ok
@@ -182,6 +209,46 @@ async function handle(
           environmentId: route.environmentId,
           workspaceId: route.workspaceId,
           actorUserId: session.user.id,
+        });
+      }
+      return NextResponse.json(payload, { status: upstream.status });
+    }
+    if (
+      /^apps\/[^/]+\/(?:start|stop)$/u.test(apiPath) &&
+      request.method === "POST" &&
+      upstream.ok
+    ) {
+      const payload = (await upstream.json()) as {
+        application?: WorkspaceApplicationPayload;
+      };
+      if (payload.application) {
+        await syncApplication({
+          application: payload.application,
+          organizationId,
+          environmentId: route.environmentId,
+          workspaceId: route.workspaceId,
+          actorUserId: session.user.id,
+        });
+        await logAdminEvent({
+          organizationId,
+          actorUserId: session.user.id,
+          category: "environment-workspace",
+          action:
+            payload.application.desiredState === "stopped"
+              ? "workspace.application.stop_requested"
+              : "workspace.application.started",
+          targetType: "workspace-application",
+          targetId: payload.application.id,
+          message:
+            payload.application.desiredState === "stopped"
+              ? "Requested a supervised private Workspace application stop."
+              : "Started a supervised private Workspace application.",
+          metadata: {
+            environmentId: route.environmentId,
+            workspaceId: route.workspaceId,
+            threadId: id,
+            status: payload.application.status,
+          },
         });
       }
       return NextResponse.json(payload, { status: upstream.status });

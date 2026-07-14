@@ -30,46 +30,50 @@ const environmentA = canaryIdentity();
 const environmentB = canaryIdentity();
 const createdApps: string[] = [];
 
-try {
-  const a = await provisionCanaryEnvironment(environmentA);
-  const b = await provisionCanaryEnvironment(environmentB);
-  await assertGatewayBoundary(a);
-  await assertGatewayBoundary(b);
-  await assertCrossNetworkIsolation(a, b);
-  await assertPersistence(a);
-  await assertBackupRestore(a);
-  process.stdout.write(
-    `${JSON.stringify({
-      ok: true,
-      region,
-      environments: [
-        summarize(a),
-        summarize(b),
-      ],
-      proofs: [
-        "dedicated_custom_networks",
-        "gateway_only_public_ingress",
-        "signed_private_routing",
-        "cross_network_dns_isolation",
-        "stop_start_persistence",
-        "replacement_volume_backup_restore",
-        "idempotent_provider_ensure",
-      ],
-    })}\n`
-  );
-} finally {
-  for (const appName of createdApps.reverse()) {
-    await provider.deleteEnvironmentApp({ appName }).catch(() => undefined);
-  }
-  for (const appName of createdApps) {
-    const response = await flyRequest(`/apps/${encodeURIComponent(appName)}`, {
-      method: "GET",
-    });
-    if (response.status !== 404) {
-      throw new Error(`Fly canary cleanup did not delete ${appName}.`);
+async function main() {
+  try {
+    const a = await provisionCanaryEnvironment(environmentA);
+    const b = await provisionCanaryEnvironment(environmentB);
+    await assertGatewayBoundary(a);
+    await assertGatewayBoundary(b);
+    await assertCrossNetworkIsolation(a, b);
+    await assertPersistence(a);
+    await assertBackupRestore(a);
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        region,
+        environments: [summarize(a), summarize(b)],
+        proofs: [
+          "dedicated_custom_networks",
+          "gateway_only_public_ingress",
+          "signed_private_routing",
+          "cross_network_dns_isolation",
+          "stop_start_persistence",
+          "replacement_volume_backup_restore",
+          "idempotent_provider_ensure",
+        ],
+      })}\n`
+    );
+  } finally {
+    for (const appName of createdApps.reverse()) {
+      await provider.deleteEnvironmentApp({ appName }).catch(() => undefined);
+    }
+    for (const appName of createdApps) {
+      const response = await flyRequest(`/apps/${encodeURIComponent(appName)}`, {
+        method: "GET",
+      });
+      if (response.status !== 404) {
+        throw new Error(`Fly canary cleanup did not delete ${appName}.`);
+      }
     }
   }
 }
+
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
 type CanaryIdentity = ReturnType<typeof canaryIdentity>;
 type CanaryEnvironment = Awaited<ReturnType<typeof provisionCanaryEnvironment>>;
@@ -104,6 +108,12 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
       timeoutSeconds: 90,
     });
   }
+  await provider.waitForMachineHealth({
+    appName: identity.appName,
+    machineId: gateway.machineId,
+    checkName: "gateway",
+    timeoutSeconds: 90,
+  });
   const volume = await provider.ensureWorkspaceVolume({
     appName: identity.appName,
     workspaceId: identity.workspaceId,
@@ -132,6 +142,12 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
       timeoutSeconds: 90,
     });
   }
+  await provider.waitForMachineHealth({
+    appName: identity.appName,
+    machineId: machine.id,
+    checkName: "workspace",
+    timeoutSeconds: 90,
+  });
   const repeated = await Promise.all([
     provider.ensureEnvironmentApp(identity),
     provider.ensureEnvironmentGateway({
@@ -193,8 +209,34 @@ async function assertGatewayBoundary(environment: CanaryEnvironment) {
     capability: "workspace.files.read",
   });
   if (!response.ok) {
-    throw new Error(`Signed private routing failed with HTTP ${response.status}.`);
+    const [body, reachability] = await Promise.all([
+      response.text(),
+      describeGatewayReachability(environment),
+    ]);
+    throw new Error(
+      `Signed private routing failed with HTTP ${response.status}: ${body}; gateway reachability: ${reachability}`
+    );
   }
+}
+
+async function describeGatewayReachability(environment: CanaryEnvironment) {
+  const host = `${environment.machine.id}.vm.${environment.appName}.internal`;
+  const code = `const dns=require('node:dns').promises;const http=require('node:http');dns.lookup(${JSON.stringify(host)},{all:true}).then(addresses=>{const request=http.get({host:${JSON.stringify(host)},port:43104,path:'/health'},response=>{let body='';response.on('data',chunk=>body+=chunk);response.on('end',()=>console.log(JSON.stringify({addresses,status:response.statusCode,body})));});request.on('error',error=>console.log(JSON.stringify({addresses,error:{code:error.code,message:error.message}})));}).catch(error=>console.log(JSON.stringify({dnsError:{code:error.code,message:error.message}})));`;
+  const { stdout } = await execFileAsync(
+    "fly",
+    [
+      "machine",
+      "exec",
+      "--app",
+      environment.appName,
+      "--timeout",
+      "30",
+      environment.gateway.machineId,
+      remoteNodeCommand(code),
+    ],
+    { timeout: 40_000 }
+  );
+  return stdout.trim();
 }
 
 async function assertCrossNetworkIsolation(
@@ -213,9 +255,7 @@ async function assertCrossNetworkIsolation(
       "--timeout",
       "30",
       source.machine.id,
-      "node",
-      "-e",
-      code,
+      remoteNodeCommand(code),
     ],
     {
       env: { ...process.env, FLY_API_TOKEN: token },
@@ -259,6 +299,12 @@ async function assertPersistence(environment: CanaryEnvironment) {
     state: "started",
     timeoutSeconds: 90,
   });
+  await provider.waitForMachineHealth({
+    appName: environment.appName,
+    machineId: environment.machine.id,
+    checkName: "workspace",
+    timeoutSeconds: 90,
+  });
   await assertCanaryFile(environment, environment.machine.id);
 }
 
@@ -289,6 +335,12 @@ async function assertBackupRestore(environment: CanaryEnvironment) {
       timeoutSeconds: 90,
     });
   }
+  await provider.waitForMachineHealth({
+    appName: environment.appName,
+    machineId: replacementMachine.id,
+    checkName: "workspace",
+    timeoutSeconds: 90,
+  });
   const route = (pathname: string, init: RequestInit = {}) =>
     routeFetch(environment, pathname, {
       capability: "workspace.backups.restore",
@@ -382,6 +434,11 @@ async function machineDetails(appName: string, machineId: string) {
   return flyJson<{ config?: { services?: unknown[] } }>(
     `/apps/${encodeURIComponent(appName)}/machines/${encodeURIComponent(machineId)}`
   );
+}
+
+function remoteNodeCommand(code: string) {
+  const encoded = Buffer.from(code).toString("base64");
+  return `node -e "eval(Buffer.from('${encoded}','base64').toString())"`;
 }
 
 async function flyJson<T>(pathname: string): Promise<T> {

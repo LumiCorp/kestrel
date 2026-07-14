@@ -1,6 +1,10 @@
 import { eq } from "drizzle-orm";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { createWorkspaceBackup } from "@/lib/environments/backups";
+import {
+  getHostedEnvironmentsRollout,
+  setHostedEnvironmentsOrganizationFlag,
+} from "@/lib/environments/config";
 import type { CreateEnvironmentInput } from "@/lib/environments/contracts";
 import {
   createOrganizationEnvironment,
@@ -40,6 +44,32 @@ export async function createAdminEnvironment(input: {
 
 export async function listAdminEnvironments(organizationId: string) {
   return listOrganizationEnvironments(organizationId);
+}
+
+export async function getAdminEnvironmentRollout(organizationId: string) {
+  return getHostedEnvironmentsRollout({ organizationId });
+}
+
+export async function setAdminEnvironmentRollout(input: {
+  organizationId: string;
+  actorUserId: string;
+  enabled: boolean;
+}) {
+  await setHostedEnvironmentsOrganizationFlag(input);
+  const rollout = await getHostedEnvironmentsRollout({
+    organizationId: input.organizationId,
+  });
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.rollout.updated",
+    targetType: "organization",
+    targetId: input.organizationId,
+    message: `${input.enabled ? "Enabled" : "Disabled"} hosted Environment execution for the organization.`,
+    metadata: rollout,
+  });
+  return rollout;
 }
 
 export async function setAdminDefaultEnvironment(input: {

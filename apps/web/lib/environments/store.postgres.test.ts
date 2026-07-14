@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
 
@@ -17,11 +17,31 @@ test(
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
     process.env.KESTREL_ENVIRONMENTS_ENABLED = "true";
+    process.env.CRON_SECRET = "cron-secret";
 
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
       .export({ format: "pem", type: "pkcs8" })
       .toString();
+    process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = publicKey
+      .export({ format: "pem", type: "spki" })
+      .toString();
+    process.env.FLY_API_TOKEN = "FlyV1 test";
+    process.env.KESTREL_FLY_ORGANIZATION_SLUG = "test-org";
+    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE = `registry.fly.io/kestrel-test@sha256:${"a".repeat(64)}`;
+    process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE = `registry.fly.io/kestrel-test@sha256:${"b".repeat(64)}`;
+    process.env.KESTREL_WORKSPACE_BACKUP_KEY =
+      randomBytes(32).toString("base64");
+    process.env.KESTREL_WORKSPACE_BACKUP_KEY_ID = "test-backup-v1";
+    process.env.KESTREL_ONE_APP_URL = "https://kestrel.example";
+    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN = "broker-secret";
+    process.env.KESTREL_ONE_TOOL_TOKEN = "tool-secret";
+    process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
+    process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+      "test-key": randomBytes(32).toString("base64"),
+    });
+    Reflect.deleteProperty(process.env, "KESTREL_RUNNER_SERVICE_URL");
+    Reflect.deleteProperty(process.env, "KESTREL_RUNNER_SERVICE_TOKEN");
 
     const [
       { resetDbRuntimeForTests },
@@ -53,11 +73,13 @@ test(
     const projectId = `project-${suffix}`;
     const projectThreadId = `thread-project-${suffix}`;
     const scratchThreadId = `thread-scratch-${suffix}`;
+    const configuredScratchThreadId = `thread-configured-scratch-${suffix}`;
     const revisionId = `revision-${suffix}`;
     const repositoryResourceId = crypto.randomUUID();
     const githubAccountId = `github-account-${suffix}`;
     const githubConnectionId = crypto.randomUUID();
     const environmentGrantId = crypto.randomUUID();
+    const repositoryReadGrantId = crypto.randomUUID();
     const projectRestrictionId = crypto.randomUUID();
     const actorRestrictionId = crypto.randomUUID();
     const agentRestrictionId = crypto.randomUUID();
@@ -96,6 +118,11 @@ test(
 
     await sql.begin(async (transaction) => {
       await transaction`
+        INSERT INTO "organization_feature_flags" (
+          "organization_id", "key", "enabled", "updated_by_user_id"
+        ) VALUES (${organizationA}, 'hosted_environments', false, ${userA})
+      `;
+      await transaction`
         INSERT INTO "projects" (
           "id", "organization_id", "environment_id", "created_by_user_id", "name"
         ) VALUES (
@@ -127,6 +154,10 @@ test(
           ),
           (
             ${scratchThreadId}, 'Scratch Environment Thread', ${userA},
+            ${organizationA}, NULL
+          ),
+          (
+            ${configuredScratchThreadId}, 'Configured Scratch Thread', ${userA},
             ${organizationA}, NULL
           )
       `;
@@ -188,6 +219,23 @@ test(
       WHERE "id" = ${projectBinding.workspace.id}
     `;
 
+    await assert.rejects(
+      executionRoute.resolveEnvironmentExecutionRoute({
+        organizationId: organizationA,
+        threadId: projectThreadId,
+        actorUserId: userA,
+        agentId: "kestrel-one",
+        recordExecution: { projectContextRevisionId: revisionId },
+      }),
+      /not enabled for this organization/u
+    );
+    await sql`
+      UPDATE "organization_feature_flags"
+      SET "enabled" = true, "updated_at" = now()
+      WHERE "organization_id" = ${organizationA}
+        AND "key" = 'hosted_environments'
+    `;
+
     const route = await executionRoute.resolveEnvironmentExecutionRoute({
       organizationId: organizationA,
       threadId: projectThreadId,
@@ -247,6 +295,83 @@ test(
       effectiveCapabilities: execution?.effectiveCapabilities,
     });
     assert.ok(execution?.effectiveCapabilities.includes("route:run.stream"));
+
+    const idleAt = new Date("2026-07-13T12:00:00.000Z");
+    const idleOperation = await environmentStore.requestWorkspaceIdleStop({
+      organizationId: organizationA,
+      environmentId: createdEnvironment.environment.id,
+      workspaceId: projectBinding.workspace.id,
+      machineId: `machine-${suffix}`,
+      lastActivityAt: idleAt,
+    });
+    assert.equal(idleOperation?.type, "workspace.stop");
+    assert.deepEqual(idleOperation?.input, {
+      reason: "idle_timeout",
+      lastActivityAt: idleAt.toISOString(),
+      machineId: `machine-${suffix}`,
+    });
+    const [idleWorkspace] = await sql<
+      Array<{ status: string; lastActivityAt: Date }>
+    >`
+      SELECT "status", "last_activity_at" AS "lastActivityAt"
+      FROM "environment_workspaces"
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    assert.equal(idleWorkspace?.status, "stopping");
+    assert.equal(
+      idleWorkspace?.lastActivityAt.toISOString(),
+      idleAt.toISOString()
+    );
+    assert.equal(
+      (
+        await databaseEnvironmentProvisioningRepository.claimOperation(
+          idleOperation?.id ?? ""
+        )
+      )?.id,
+      idleOperation?.id
+    );
+    assert.equal(
+      (
+        await databaseEnvironmentProvisioningRepository.claimOperation(
+          idleOperation?.id ?? ""
+        )
+      )?.id,
+      idleOperation?.id
+    );
+    await assert.rejects(
+      environmentStore.requestWorkspaceIdleStop({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        machineId: "another-machine",
+        lastActivityAt: idleAt,
+      }),
+      /does not match the provisioned Machine/u
+    );
+    await sql`
+      DELETE FROM "environment_operations"
+      WHERE "id" = ${idleOperation?.id ?? ""}
+    `;
+    await sql`
+      UPDATE "environment_workspaces"
+      SET "status" = 'stopped'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    await assert.rejects(
+      environmentStore.requestWorkspaceIdleStop({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        machineId: `machine-${suffix}`,
+        lastActivityAt: idleAt,
+      }),
+      /cannot enter idle stop from 'stopped'/u
+    );
+    await sql`
+      UPDATE "environment_workspaces"
+      SET "status" = 'ready'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
 
     const [preservedThread] = await sql<
       Array<{ id: string; projectId: string | null }>
@@ -316,11 +441,59 @@ test(
       INSERT INTO "environment_capability_grants" (
         "id", "environment_id", "provider_key", "capability_key",
         "resource_id", "approval_mode"
-      ) VALUES (
-        ${environmentGrantId}, ${createdEnvironment.environment.id}, 'github',
-        'issue.write', ${repositoryResourceId}, 'auto'
-      )
+      ) VALUES
+        (
+          ${environmentGrantId}, ${createdEnvironment.environment.id}, 'github',
+          'issue.write', ${repositoryResourceId}, 'auto'
+        ),
+        (
+          ${repositoryReadGrantId}, ${createdEnvironment.environment.id},
+          'github', 'repository.read', ${repositoryResourceId}, 'auto'
+        )
     `;
+
+    const configuredScratchWorkspace =
+      await environmentStore.createOrConfigureStandaloneThreadWorkspace({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        threadId: configuredScratchThreadId,
+        userId: userA,
+        source: { type: "github", resourceId: repositoryResourceId },
+      });
+    assert.equal(
+      configuredScratchWorkspace.binding.threadId,
+      configuredScratchThreadId
+    );
+    assert.equal(configuredScratchWorkspace.binding.source, "thread");
+    assert.equal(
+      configuredScratchWorkspace.workspace.standaloneThreadId,
+      configuredScratchThreadId
+    );
+    assert.equal(configuredScratchWorkspace.workspace.sourceType, "github");
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceResourceId,
+      repositoryResourceId
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceRepository,
+      "acme/support"
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.sourceDefaultBranch,
+      "main"
+    );
+    assert.equal(configuredScratchWorkspace.operation.status, "queued");
+    const resolvedConfiguredScratch =
+      await environmentStore.resolveOrCreateThreadExecutionBinding({
+        organizationId: organizationA,
+        threadId: configuredScratchThreadId,
+        userId: userA,
+      });
+    assert.equal(resolvedConfiguredScratch.created, false);
+    assert.equal(
+      resolvedConfiguredScratch.workspace.id,
+      configuredScratchWorkspace.workspace.id
+    );
     await sql`
       INSERT INTO "project_capability_restrictions" (
         "id", "project_id", "provider_key", "capability_key", "resource_id",

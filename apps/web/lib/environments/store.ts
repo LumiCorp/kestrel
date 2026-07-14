@@ -589,6 +589,97 @@ type EnvironmentTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
 >[0];
 
+async function resolveWorkspaceSourceForActor(
+  transaction: EnvironmentTransaction,
+  input: {
+    organizationId: string;
+    environmentId: string;
+    userId: string;
+    source: WorkspaceSource;
+  }
+) {
+  if (input.source.type === "blank") {
+    return {
+      sourceType: "blank" as const,
+      sourceResourceId: null,
+      sourceRepository: null,
+      sourceDefaultBranch: null,
+    };
+  }
+  const resourceId = input.source.resourceId;
+  const sourceResource =
+    await transaction.query.toolConnectionResources.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, resourceId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerKey, "github"),
+          eq(table.resourceType, "repository"),
+          eq(table.enabled, true)
+        ),
+    });
+  const [actorAccess] = sourceResource
+    ? await transaction
+        .select({ id: schema.userToolConnections.id })
+        .from(schema.userToolConnections)
+        .innerJoin(
+          schema.userToolConnectionResources,
+          eq(
+            schema.userToolConnectionResources.connectionId,
+            schema.userToolConnections.id
+          )
+        )
+        .where(
+          and(
+            eq(schema.userToolConnections.organizationId, input.organizationId),
+            eq(schema.userToolConnections.providerKey, "github"),
+            eq(schema.userToolConnections.userId, input.userId),
+            eq(schema.userToolConnections.status, "connected"),
+            eq(
+              schema.userToolConnectionResources.resourceId,
+              sourceResource.id
+            ),
+            eq(schema.userToolConnectionResources.canPull, true)
+          )
+        )
+        .limit(1)
+    : [];
+  const grant = sourceResource
+    ? await transaction.query.environmentCapabilityGrants.findFirst({
+        where: (table, { and, eq, notInArray }) =>
+          and(
+            eq(table.environmentId, input.environmentId),
+            eq(table.providerKey, "github"),
+            eq(table.capabilityKey, "repository.read"),
+            or(
+              isNull(table.resourceId),
+              eq(table.resourceId, sourceResource.id)
+            ),
+            notInArray(table.approvalMode, ["deny"])
+          ),
+      })
+    : null;
+  if (!(sourceResource && actorAccess && grant)) {
+    throw new EnvironmentContractError(
+      "WORKSPACE_SOURCE_FORBIDDEN",
+      "You or this Environment cannot read the repository."
+    );
+  }
+  const metadata = sourceResource.metadata;
+  return {
+    sourceType: "github" as const,
+    sourceResourceId: sourceResource.id,
+    sourceRepository: sourceResource.label,
+    sourceDefaultBranch:
+      metadata &&
+      typeof metadata === "object" &&
+      "defaultBranch" in metadata &&
+      typeof metadata.defaultBranch === "string"
+        ? metadata.defaultBranch
+        : null,
+  };
+}
+
 async function findOrCreateWorkspace(
   transaction: EnvironmentTransaction,
   input: {
@@ -673,7 +764,7 @@ export async function requestWorkspaceStart(input: {
   workspaceId: string;
   userId: string;
 }) {
-  const lockKey = `kestrel:workspace:start:${input.workspaceId}`;
+  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
@@ -724,6 +815,98 @@ export async function requestWorkspaceStart(input: {
   });
 }
 
+export async function requestWorkspaceIdleStop(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  machineId: string;
+  lastActivityAt: Date;
+}) {
+  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.flyMachineId, input.machineId),
+          isNull(table.deletedAt)
+        ),
+    });
+    if (!workspace) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_FORBIDDEN",
+        "Workspace idle identity does not match the provisioned Machine."
+      );
+    }
+    const active = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          eq(table.type, "workspace.stop"),
+          inArray(table.status, ["queued", "running"])
+        ),
+    });
+    if (active) return active;
+    if (workspace.status !== "ready") {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        `Workspace cannot enter idle stop from '${workspace.status}'.`
+      );
+    }
+    const operationId = crypto.randomUUID();
+    const now = new Date();
+    const [updatedWorkspace] = await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "stopping",
+        lastActivityAt: input.lastActivityAt,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.environmentWorkspaces.id, workspace.id),
+          eq(schema.environmentWorkspaces.status, "ready")
+        )
+      )
+      .returning({ id: schema.environmentWorkspaces.id });
+    if (!updatedWorkspace) {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        "Workspace lifecycle changed before the idle stop was accepted."
+      );
+    }
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: operationId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        type: "workspace.stop",
+        status: "queued",
+        stage: "environment.machine.stopping",
+        idempotencyKey: `workspace.idle-stop:${workspace.id}:${input.lastActivityAt.toISOString()}`,
+        input: {
+          reason: "idle_timeout",
+          lastActivityAt: input.lastActivityAt.toISOString(),
+          machineId: input.machineId,
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!operation) {
+      throw new Error("Workspace idle stop operation could not be created.");
+    }
+    return operation;
+  });
+}
+
 export async function createOrConfigureProjectWorkspace(input: {
   organizationId: string;
   environmentId: string;
@@ -766,72 +949,12 @@ export async function createOrConfigureProjectWorkspace(input: {
         "Move the Project to this Environment before configuring its Workspace.",
       );
     }
-    const source = input.source;
-    const sourceResource =
-      source.type === "github"
-        ? await transaction.query.toolConnectionResources.findFirst({
-            where: (table, { and, eq }) =>
-              and(
-                eq(table.id, source.resourceId),
-                eq(table.organizationId, input.organizationId),
-                eq(table.providerKey, "github"),
-                eq(table.resourceType, "repository"),
-                eq(table.enabled, true),
-              ),
-          })
-        : null;
-    if (source.type === "github") {
-      const [actorAccess] = sourceResource
-        ? await transaction
-            .select({ id: schema.userToolConnections.id })
-            .from(schema.userToolConnections)
-            .innerJoin(
-              schema.userToolConnectionResources,
-              eq(
-                schema.userToolConnectionResources.connectionId,
-                schema.userToolConnections.id,
-              ),
-            )
-            .where(
-              and(
-                eq(
-                  schema.userToolConnections.organizationId,
-                  input.organizationId,
-                ),
-                eq(schema.userToolConnections.providerKey, "github"),
-                eq(schema.userToolConnections.userId, input.userId),
-                eq(schema.userToolConnections.status, "connected"),
-                eq(
-                  schema.userToolConnectionResources.resourceId,
-                  sourceResource.id,
-                ),
-                eq(schema.userToolConnectionResources.canPull, true),
-              ),
-            )
-            .limit(1)
-        : [];
-      const grant = sourceResource
-        ? await transaction.query.environmentCapabilityGrants.findFirst({
-            where: (table, { and, eq, notInArray }) =>
-              and(
-                eq(table.environmentId, input.environmentId),
-                eq(table.providerKey, "github"),
-                eq(table.capabilityKey, "repository.read"),
-                or(
-                  isNull(table.resourceId),
-                  eq(table.resourceId, sourceResource.id),
-                ),
-                notInArray(table.approvalMode, ["deny"]),
-              ),
-          })
-        : null;
-      if (!(sourceResource && actorAccess && grant)) {
-        throw new EnvironmentContractError(
-          "WORKSPACE_SOURCE_FORBIDDEN",
-          "You or this Environment cannot read the repository.",
-        );
-      }
-    }
+    const sourceValues = await resolveWorkspaceSourceForActor(transaction, {
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      userId: input.userId,
+      source: input.source,
+    });
     await transaction
       .insert(schema.projectEnvironmentBindings)
       .values({
@@ -865,18 +988,8 @@ export async function createOrConfigureProjectWorkspace(input: {
     }
     const now = new Date();
     const workspaceId = existing?.id ?? crypto.randomUUID();
-    const sourceMetadata = sourceResource?.metadata;
     const values = {
-      sourceType: input.source.type,
-      sourceResourceId: sourceResource?.id ?? null,
-      sourceRepository: sourceResource?.label ?? null,
-      sourceDefaultBranch:
-        sourceMetadata &&
-        typeof sourceMetadata === "object" &&
-        "defaultBranch" in sourceMetadata &&
-        typeof sourceMetadata.defaultBranch === "string"
-          ? sourceMetadata.defaultBranch
-          : null,
+      ...sourceValues,
       updatedAt: now,
     } as const;
     const workspace = existing
@@ -932,5 +1045,197 @@ export async function createOrConfigureProjectWorkspace(input: {
         .returning();
     }
     return { workspace, operation };
+  });
+}
+
+export async function createOrConfigureStandaloneThreadWorkspace(input: {
+  organizationId: string;
+  environmentId: string;
+  threadId: string;
+  userId: string;
+  source: WorkspaceSource;
+}) {
+  const lockKey = `kestrel:thread-environment:${input.threadId}`;
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
+    const [thread, environment] = await Promise.all([
+      transaction.query.threads.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.id, input.threadId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.createdByUserId, input.userId),
+            isNull(table.projectId),
+            isNull(table.archivedAt)
+          ),
+      }),
+      transaction.query.environments.findFirst({
+        where: (table, { and, eq, isNull, notInArray }) =>
+          and(
+            eq(table.id, input.environmentId),
+            eq(table.organizationId, input.organizationId),
+            isNull(table.archivedAt),
+            notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+          ),
+      }),
+    ]);
+    if (!(thread && environment)) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_NOT_FOUND",
+        "Standalone Thread or Environment is unavailable."
+      );
+    }
+    const [existing, existingBinding] = await Promise.all([
+      transaction.query.environmentWorkspaces.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.standaloneThreadId, input.threadId),
+            isNull(table.deletedAt)
+          ),
+      }),
+      transaction.query.threadExecutionBindings.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.threadId, input.threadId),
+            eq(table.organizationId, input.organizationId)
+          ),
+      }),
+    ]);
+    if (existing && existing.status !== "requested") {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Workspace source cannot change after provisioning has started."
+      );
+    }
+    if (
+      existingBinding &&
+      (!existing || existingBinding.workspaceId !== existing.id)
+    ) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_BINDING_NOT_FOUND",
+        "Thread Environment binding references a different Workspace."
+      );
+    }
+    const existingOperation = existing
+      ? await transaction.query.environmentOperations.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.workspaceId, existing.id),
+              eq(table.type, "workspace.provision")
+            ),
+        })
+      : null;
+    if (existingOperation && existingOperation.status !== "queued") {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Workspace source cannot change after provisioning has started."
+      );
+    }
+    const sourceValues = await resolveWorkspaceSourceForActor(transaction, {
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      userId: input.userId,
+      source: input.source,
+    });
+    const now = new Date();
+    const workspaceId = existing?.id ?? crypto.randomUUID();
+    const workspace = existing
+      ? (
+          await transaction
+            .update(schema.environmentWorkspaces)
+            .set({
+              environmentId: input.environmentId,
+              ...sourceValues,
+              updatedAt: now,
+            })
+            .where(eq(schema.environmentWorkspaces.id, existing.id))
+            .returning()
+        )[0]
+      : (
+          await transaction
+            .insert(schema.environmentWorkspaces)
+            .values({
+              id: workspaceId,
+              organizationId: input.organizationId,
+              environmentId: input.environmentId,
+              standaloneThreadId: input.threadId,
+              createdByUserId: input.userId,
+              name: thread.title || "Thread workspace",
+              kind: "scratch",
+              status: "requested",
+              createdAt: now,
+              updatedAt: now,
+              ...sourceValues,
+            })
+            .returning()
+        )[0];
+    if (!workspace) {
+      throw new Error("Standalone Thread Workspace creation failed.");
+    }
+    const [binding] = await transaction
+      .insert(schema.threadExecutionBindings)
+      .values({
+        threadId: input.threadId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: workspace.id,
+        source: "thread",
+        boundByUserId: input.userId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.threadExecutionBindings.threadId,
+        set: {
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: workspace.id,
+          source: "thread",
+          boundByUserId: input.userId,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    if (!binding) {
+      throw new Error("Standalone Thread Environment binding failed.");
+    }
+    const operation = existingOperation
+      ? (
+          await transaction
+            .update(schema.environmentOperations)
+            .set({
+              environmentId: input.environmentId,
+              input: { sourceType: input.source.type },
+              updatedAt: now,
+            })
+            .where(eq(schema.environmentOperations.id, existingOperation.id))
+            .returning()
+        )[0]
+      : (
+          await transaction
+            .insert(schema.environmentOperations)
+            .values({
+              id: crypto.randomUUID(),
+              organizationId: input.organizationId,
+              environmentId: input.environmentId,
+              workspaceId: workspace.id,
+              requestedByUserId: input.userId,
+              type: "workspace.provision",
+              status: "queued",
+              stage: "environment.activation.requested",
+              idempotencyKey: workspaceProvisionIdempotencyKey(workspace.id),
+              input: { sourceType: input.source.type },
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning()
+        )[0];
+    if (!operation) {
+      throw new Error("Standalone Thread Workspace operation failed.");
+    }
+    return { binding, workspace, operation };
   });
 }

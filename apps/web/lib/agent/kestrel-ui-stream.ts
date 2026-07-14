@@ -1,6 +1,7 @@
 import {
   createKestrelStreamUiUpdateFilter,
   getKestrelStreamUiUpdate,
+  getKestrelToolApprovalRequest,
   type KestrelStreamEventForUi,
   type KestrelTerminalStatus,
 } from "@/lib/agent/kestrel-stream-events";
@@ -13,6 +14,14 @@ type KestrelUiStreamChunk =
   | { type: "reasoning-end"; id: string }
   | { type: "text-delta"; id: string; delta: string }
   | { type: "text-end"; id: string }
+  | {
+      type: "tool-input-available";
+      toolCallId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      dynamic: true;
+    }
+  | { type: "tool-approval-request"; approvalId: string; toolCallId: string }
   | {
       type: "message-metadata";
       messageMetadata: { kestrelTerminalStatus: KestrelTerminalStatus };
@@ -28,6 +37,12 @@ export type KestrelUiStreamResult = {
   errorMessage: string | null;
   terminalStatus: KestrelTerminalStatus;
   failureVisible: boolean;
+  approvalRequests: Array<{
+    approvalId: string;
+    toolCallId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }>;
 };
 
 export async function writeKestrelRunnerEventsToUi(input: {
@@ -45,6 +60,15 @@ export async function writeKestrelRunnerEventsToUi(input: {
   let terminalStatus: KestrelTerminalStatus | null = null;
   let runnerErrorFallback = "";
   let terminalEventSeen = false;
+  const approvalRequests = new Map<
+    string,
+    {
+      approvalId: string;
+      toolCallId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    }
+  >();
 
   const writeReasoningLine = (text: string) => {
     const trimmed = text.trim();
@@ -107,6 +131,27 @@ export async function writeKestrelRunnerEventsToUi(input: {
 
   try {
     for await (const event of input.events) {
+      const approval = getKestrelToolApprovalRequest(event);
+      if (approval && !approvalRequests.has(approval.approvalId)) {
+        approvalRequests.set(approval.approvalId, {
+          approvalId: approval.approvalId,
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName,
+          input: approval.input,
+        });
+        input.writer.write({
+          type: "tool-input-available",
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName,
+          input: approval.input,
+          dynamic: true,
+        });
+        input.writer.write({
+          type: "tool-approval-request",
+          approvalId: approval.approvalId,
+          toolCallId: approval.toolCallId,
+        });
+      }
       const update = updateFilter.read(event);
       if (!update) {
         continue;
@@ -179,13 +224,12 @@ export async function writeKestrelRunnerEventsToUi(input: {
     errorMessage,
     terminalStatus,
     failureVisible,
+    approvalRequests: [...approvalRequests.values()],
   };
 }
 
 function isVisibleFailureStatus(status: KestrelTerminalStatus) {
   return (
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "runner_error"
+    status === "failed" || status === "cancelled" || status === "runner_error"
   );
 }

@@ -9,6 +9,7 @@ import {
   toEnvironmentSlug,
   workspaceSourceSchema,
 } from "./contracts";
+import { DEFAULT_FLY_REGION, FLY_REGIONS } from "./regions";
 
 test("environment and workspace lifecycles allow owned transitions", () => {
   assert.doesNotThrow(() =>
@@ -46,6 +47,19 @@ test("environment creation requires an explicit provider region", () => {
     }),
     { name: "Development", region: "iad" }
   );
+  assert.equal(
+    createEnvironmentInputSchema.safeParse({
+      name: "Development",
+      region: "unknown",
+    }).success,
+    false
+  );
+});
+
+test("Fly region choices have unique codes and include the default", () => {
+  const codes = FLY_REGIONS.map((region) => region.code);
+  assert.equal(new Set(codes).size, codes.length);
+  assert.equal(codes.includes(DEFAULT_FLY_REGION), true);
 });
 
 test("workspace sources distinguish blank state from a selected GitHub repo", () => {

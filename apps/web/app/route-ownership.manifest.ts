@@ -165,13 +165,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
 
   page(
-    "app/(workspace)/page.tsx",
-    "/",
-    "threads",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-  page(
     "app/(workspace)/threads/page.tsx",
     "/threads",
     "threads",
@@ -471,6 +464,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/github/credentials/route.ts",
+    "/api/runtime/github/credentials",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
     "/api/runtime/github/git/[resourceId]/[...gitPath]",
     "credential-boundary",
@@ -480,6 +480,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/runtime/github/push/route.ts",
     "/api/runtime/github/push",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
+    "app/api/cron/environments/reconcile/route.ts",
+    "/api/cron/environments/reconcile",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
+    "app/api/runtime/environments/idle/route.ts",
+    "/api/runtime/environments/idle",
     "credential-boundary",
     "service-boundary",
     "service-bearer"
@@ -924,6 +938,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/threads/[id]/environment/route.ts",
     "/api/threads/:id/environment",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/workspace/route.ts",
+    "/api/threads/:id/workspace",
     "environments",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized

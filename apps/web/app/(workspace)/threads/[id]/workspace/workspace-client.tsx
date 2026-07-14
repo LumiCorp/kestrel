@@ -1,10 +1,24 @@
 "use client";
 
-import { ArrowLeft, File, Folder, Play, Save } from "lucide-react";
+import {
+  ArrowLeft,
+  CircleCheck,
+  File,
+  Folder,
+  LoaderCircle,
+  Play,
+  Save,
+  TriangleAlert,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StandaloneWorkspaceSetup } from "./standalone-workspace-setup";
+import {
+  type EnvironmentActivation,
+  waitForWorkspaceActivation,
+} from "./workspace-activation";
 
 type TreeEntry = {
   name: string;
@@ -18,7 +32,9 @@ type WorkspaceApplication = {
   id: string;
   name: string;
   port: number;
+  desiredState: "running" | "stopped";
   status: string;
+  processId: number | null;
 };
 
 type WorkspacePromotion = {
@@ -47,13 +63,27 @@ type WorkspacePromotionPreview = {
   };
 };
 
-type EnvironmentActivation = {
-  stage: string;
-  detail: string;
-  status: "pending" | "ready" | "failed";
-};
+export function WorkspaceClient({
+  standalone,
+  threadId,
+}: {
+  standalone: boolean;
+  threadId: string;
+}) {
+  const [configured, setConfigured] = useState(!standalone);
+  const handleConfigured = useCallback(() => setConfigured(true), []);
+  if (!configured) {
+    return (
+      <StandaloneWorkspaceSetup
+        onConfigured={handleConfigured}
+        threadId={threadId}
+      />
+    );
+  }
+  return <ConnectedWorkspaceClient threadId={threadId} />;
+}
 
-export function WorkspaceClient({ threadId }: { threadId: string }) {
+function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
   const base = `/api/threads/${threadId}/workspace`;
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<TreeEntry[]>([]);
@@ -69,6 +99,11 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
   );
   const [terminalCursor, setTerminalCursor] = useState(0);
   const [status, setStatus] = useState("Connecting to the Environment…");
+  const [activation, setActivation] = useState<EnvironmentActivation>({
+    stage: "environment.activation.requested",
+    detail: "Connecting to the Environment…",
+    status: "pending",
+  });
   const [applications, setApplications] = useState<WorkspaceApplication[]>([]);
   const [appName, setAppName] = useState("Preview");
   const [appCommand, setAppCommand] = useState("pnpm dev");
@@ -78,6 +113,15 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
     useState<WorkspacePromotionPreview | null>(null);
   const [acceptingPromotion, setAcceptingPromotion] = useState(false);
   const [pushingPromotion, setPushingPromotion] = useState(false);
+
+  const loadApplications = useCallback(async () => {
+    const response = await fetch(`${base}/apps`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = (await response.json()) as {
+      applications?: WorkspaceApplication[];
+    };
+    setApplications(payload.applications ?? []);
+  }, [base]);
 
   const loadPromotions = useCallback(async () => {
     const response = await fetch(`${base}/promotions`, { cache: "no-store" });
@@ -105,7 +149,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    let settled = false;
+    const activationController = new AbortController();
     void (async () => {
       try {
         const startResponse = await fetch(
@@ -123,57 +167,58 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
             startPayload.error ?? "Workspace activation could not start."
           );
         }
-        if (!cancelled) setStatus(startPayload.activation.detail);
-
-        const pollActivation = async () => {
-          while (!(cancelled || settled)) {
+        const ready = await waitForWorkspaceActivation({
+          initial: startPayload.activation,
+          read: async () => {
             const response = await fetch(
               `/api/threads/${threadId}/environment`,
-              { cache: "no-store" }
+              { cache: "no-store", signal: activationController.signal }
             );
-            if (response.ok) {
-              const payload = (await response.json()) as {
-                activation?: EnvironmentActivation;
-              };
-              if (payload.activation && !cancelled) {
-                setStatus(payload.activation.detail);
-              }
+            const payload = (await response.json()) as {
+              activation?: EnvironmentActivation;
+              error?: string;
+            };
+            if (!(response.ok && payload.activation)) {
+              throw new Error(
+                payload.error ?? "Environment activation is unavailable."
+              );
             }
-            await new Promise((resolve) => window.setTimeout(resolve, 500));
-          }
-        };
-        const polling = pollActivation();
-        try {
-          await loadTree("", false);
-        } finally {
-          settled = true;
-          await polling;
-        }
+            return payload.activation;
+          },
+          onProgress: (current) => {
+            if (cancelled) return;
+            setActivation(current);
+            setStatus(current.detail);
+          },
+          signal: activationController.signal,
+          sleep: (milliseconds) =>
+            new Promise((resolve) => window.setTimeout(resolve, milliseconds)),
+        });
+        if (!(ready && !cancelled)) return;
+        await loadTree("", false);
+        await Promise.all([loadApplications(), loadPromotions()]);
         if (!cancelled) setStatus("Environment ready");
       } catch (error) {
         if (!cancelled) {
-          setStatus(
-            error instanceof Error ? error.message : "Workspace unavailable."
-          );
+          const detail =
+            error instanceof Error ? error.message : "Workspace unavailable.";
+          setActivation({
+            stage: "environment.activation.failed",
+            detail,
+            status: "failed",
+          });
+          setStatus(detail);
         }
       }
     })();
-    void fetch(`${base}/apps`)
-      .then(async (response) => {
-        if (!response.ok) return;
-        const payload = (await response.json()) as {
-          applications?: WorkspaceApplication[];
-        };
-        setApplications(payload.applications ?? []);
-      })
-      .catch(() => {});
-    void loadPromotions();
     return () => {
       cancelled = true;
+      activationController.abort();
     };
-  }, [base, loadPromotions, loadTree, threadId]);
+  }, [base, loadApplications, loadPromotions, loadTree, threadId]);
 
   useEffect(() => {
+    if (activation.status !== "ready") return;
     const interval = window.setInterval(() => {
       void (async () => {
         const treeResponse = await fetch(
@@ -184,6 +229,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
           setEntries(tree.entries);
         }
         await loadPromotions();
+        await loadApplications();
         if (!selectedPath) return;
         const fileResponse = await fetch(
           `${base}/files?path=${encodeURIComponent(selectedPath)}`
@@ -204,10 +250,19 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
       })().catch(() => {});
     }, 2000);
     return () => window.clearInterval(interval);
-  }, [base, directory, fileDirty, fileRevision, loadPromotions, selectedPath]);
+  }, [
+    activation.status,
+    base,
+    directory,
+    fileDirty,
+    fileRevision,
+    loadApplications,
+    loadPromotions,
+    selectedPath,
+  ]);
 
   useEffect(() => {
-    if (!terminalSessionId) return;
+    if (!(activation.status === "ready" && terminalSessionId)) return;
     const interval = window.setInterval(() => {
       void fetch(
         `${base}/terminal/sessions/${terminalSessionId}/output?cursor=${terminalCursor}`
@@ -233,7 +288,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
         .catch(() => {});
     }, 500);
     return () => window.clearInterval(interval);
-  }, [base, terminalCursor, terminalSessionId]);
+  }, [activation.status, base, terminalCursor, terminalSessionId]);
 
   async function openFile(path: string) {
     setStatus(`Opening ${path}…`);
@@ -353,6 +408,35 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
     setStatus("Application started");
   }
 
+  async function setApplicationState(
+    application: WorkspaceApplication,
+    action: "start" | "stop"
+  ) {
+    setStatus(
+      action === "start" ? "Starting application…" : "Stopping application…"
+    );
+    const response = await fetch(`${base}/apps/${application.id}/${action}`, {
+      method: "POST",
+    });
+    const payload = (await response.json()) as {
+      application?: WorkspaceApplication;
+      error?: { code?: string };
+    };
+    if (!(response.ok && payload.application)) {
+      throw new Error(
+        payload.error?.code ?? `Application could not ${action}.`
+      );
+    }
+    setApplications((current) =>
+      current.map((item) =>
+        item.id === payload.application!.id ? payload.application! : item
+      )
+    );
+    setStatus(
+      action === "start" ? "Application started" : "Application stopping"
+    );
+  }
+
   async function openPromotion(promotionId: string) {
     setStatus("Loading candidate preview…");
     const response = await fetch(`${base}/promotions/${promotionId}`, {
@@ -434,8 +518,13 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
     }
   }
 
+  const environmentReady = activation.status === "ready";
+
   return (
-    <main className="flex h-dvh min-w-0 flex-col bg-background">
+    <main
+      aria-busy={activation.status === "pending"}
+      className="flex h-dvh min-w-0 flex-col bg-background"
+    >
       <header className="flex h-12 items-center gap-3 border-b px-3">
         <Button asChild size="sm" variant="ghost">
           <Link href={`/threads/${threadId}`}>
@@ -444,10 +533,35 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
           </Link>
         </Button>
         <div className="font-medium">Workspace</div>
-        <div className="ml-auto text-muted-foreground text-xs">{status}</div>
+        <div
+          aria-atomic="true"
+          aria-live={activation.status === "failed" ? "assertive" : "polite"}
+          className="ml-auto flex items-center gap-1.5 text-muted-foreground text-xs"
+          role={activation.status === "failed" ? "alert" : "status"}
+        >
+          {activation.status === "pending" ? (
+            <LoaderCircle
+              aria-hidden="true"
+              className="size-3.5 animate-spin"
+            />
+          ) : activation.status === "failed" ? (
+            <TriangleAlert
+              aria-hidden="true"
+              className="size-3.5 text-destructive"
+            />
+          ) : (
+            <CircleCheck aria-hidden="true" className="size-3.5" />
+          )}
+          <span>
+            {activation.status === "ready" ? status : activation.detail}
+          </span>
+        </div>
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_340px] grid-rows-[minmax(0,1fr)_220px]">
-        <aside className="row-span-2 overflow-auto border-r p-2 text-sm">
+        <aside
+          aria-label="Workspace files"
+          className="row-span-2 overflow-auto border-r p-2 text-sm"
+        >
           {directory && (
             <button
               className="mb-1 block w-full rounded px-2 py-1 text-left hover:bg-muted"
@@ -500,6 +614,9 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
             </Button>
           </div>
           <textarea
+            aria-label={
+              selectedPath ? `Editing ${selectedPath}` : "Workspace file editor"
+            }
             className="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-sm outline-none"
             disabled={!selectedPath}
             onChange={(event) => {
@@ -510,7 +627,10 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
             value={content}
           />
         </section>
-        <aside className="min-h-0 overflow-auto border-l p-3 text-sm">
+        <aside
+          aria-label="Workspace candidates"
+          className="min-h-0 overflow-auto border-l p-3 text-sm"
+        >
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-medium">Candidates</h2>
             <span className="text-muted-foreground text-xs">
@@ -626,21 +746,28 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
         <section className="col-span-2 flex min-h-0 flex-col border-t bg-zinc-950 text-zinc-100">
           <div className="flex flex-wrap items-center gap-2 border-zinc-800 border-b p-2">
             <Input
+              aria-label="Application name"
               className="h-8 w-28 border-zinc-700 bg-zinc-900"
+              disabled={!environmentReady}
               onChange={(event) => setAppName(event.target.value)}
               value={appName}
             />
             <Input
+              aria-label="Application start command"
               className="h-8 min-w-48 flex-1 border-zinc-700 bg-zinc-900 font-mono"
+              disabled={!environmentReady}
               onChange={(event) => setAppCommand(event.target.value)}
               value={appCommand}
             />
             <Input
+              aria-label="Application port"
               className="h-8 w-20 border-zinc-700 bg-zinc-900 font-mono"
+              disabled={!environmentReady}
               onChange={(event) => setAppPort(event.target.value)}
               value={appPort}
             />
             <Button
+              disabled={!environmentReady}
               onClick={() =>
                 void registerApplication().catch((error: unknown) =>
                   setStatus(
@@ -656,20 +783,62 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
               Start app
             </Button>
             {applications.map((application) => (
-              <Button asChild key={application.id} size="sm" variant="outline">
-                <a
-                  href={`${base}/apps/${application.id}/proxy/`}
-                  rel="noreferrer"
-                  target="_blank"
+              <div className="flex items-center gap-1" key={application.id}>
+                {application.status === "running" ? (
+                  <Button asChild size="sm" variant="outline">
+                    <a
+                      href={`${base}/apps/${application.id}/proxy/`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {application.name} ·{" "}
+                      {application.desiredState === "stopped"
+                        ? "stopping"
+                        : application.status}
+                    </a>
+                  </Button>
+                ) : (
+                  <Button disabled size="sm" variant="outline">
+                    {application.name} · {application.status}
+                  </Button>
+                )}
+                <Button
+                  disabled={
+                    !environmentReady ||
+                    application.status === "starting" ||
+                    (application.desiredState === "stopped" &&
+                      application.processId !== null)
+                  }
+                  onClick={() =>
+                    void setApplicationState(
+                      application,
+                      application.status === "running" ? "stop" : "start"
+                    ).catch((error: unknown) =>
+                      setStatus(
+                        error instanceof Error
+                          ? error.message
+                          : "Application action failed."
+                      )
+                    )
+                  }
+                  size="sm"
+                  variant="ghost"
                 >
-                  {application.name} · {application.status}
-                </a>
-              </Button>
+                  {application.desiredState === "stopped" &&
+                  application.status === "running"
+                    ? "Stopping"
+                    : application.status === "running"
+                      ? "Stop"
+                      : "Start"}
+                </Button>
+              </div>
             ))}
           </div>
           <div className="flex gap-2 border-zinc-800 border-b p-2">
             <Input
+              aria-label="Terminal input"
               className="border-zinc-700 bg-zinc-900 font-mono text-zinc-100"
+              disabled={!environmentReady}
               onChange={(event) => setCommand(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter")
@@ -682,6 +851,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
               value={command}
             />
             <Button
+              disabled={!environmentReady}
               onClick={() =>
                 void sendTerminalInput().catch((error: unknown) =>
                   setStatus(
@@ -695,6 +865,7 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
               Send
             </Button>
             <Button
+              disabled={!environmentReady}
               onClick={() =>
                 void (
                   terminalSessionId ? closeTerminal() : openTerminal()
@@ -712,7 +883,11 @@ export function WorkspaceClient({ threadId }: { threadId: string }) {
               {terminalSessionId ? "Close" : "Open terminal"}
             </Button>
           </div>
-          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap p-3 font-mono text-xs">
+          <pre
+            aria-label="Terminal output"
+            className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap p-3 font-mono text-xs"
+            role="log"
+          >
             {terminal}
           </pre>
         </section>

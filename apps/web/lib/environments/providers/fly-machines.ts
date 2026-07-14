@@ -24,10 +24,12 @@ const appDetailsSchema = z.object({
 
 const appCreateSchema = z.object({ id: z.string().min(1) });
 
+const appListSchema = z.object({ apps: z.array(appDetailsSchema) });
+
 const ipAssignmentSchema = z.object({
   ip: z.string().min(1),
   shared: z.boolean().optional(),
-  service_name: z.string().optional(),
+  service_name: z.string().nullable().optional(),
 });
 
 const ipAssignmentsSchema = z.object({
@@ -47,6 +49,16 @@ const machineSchema = z.object({
   state: z.string().min(1),
   region: z.string().min(1),
   instance_id: z.string().min(1).optional(),
+  checks: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        status: z.string().min(1),
+        output: z.string().optional(),
+        updated_at: z.string().optional(),
+      })
+    )
+    .optional(),
   config: z
     .object({
       image: z.string().min(1).optional(),
@@ -68,17 +80,24 @@ const snapshotResponseSchema = z.object({
   }),
 });
 
+const MACHINE_START_RETRY_INTERVAL_MS = 1000;
+const MACHINE_START_RETRY_ATTEMPTS = 10;
+
 export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   private readonly token: string;
   private readonly organizationSlug: string;
   private readonly apiBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly healthPollIntervalMs: number;
+  private readonly sleepImpl: (milliseconds: number) => Promise<void>;
 
   constructor(input: {
     token: string;
     organizationSlug: string;
     apiBaseUrl?: string | undefined;
     fetchImpl?: typeof fetch | undefined;
+    healthPollIntervalMs?: number | undefined;
+    sleepImpl?: ((milliseconds: number) => Promise<void>) | undefined;
   }) {
     this.token = requireConfigured(input.token, "Fly API token");
     this.organizationSlug = requireConfigured(
@@ -90,6 +109,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       ""
     );
     this.fetchImpl = input.fetchImpl ?? fetch;
+    this.healthPollIntervalMs = input.healthPollIntervalMs ?? 1000;
+    this.sleepImpl = input.sleepImpl ?? sleep;
   }
 
   async ensureEnvironmentApp(input: {
@@ -103,8 +124,19 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     if (existing !== null) {
       const parsed = parseResponse(appDetailsSchema, existing);
+      const organizationApps = parseResponse(
+        appListSchema,
+        await this.request(
+          `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
+          { method: "GET" }
+        )
+      );
+      const belongsToConfiguredOrganization = organizationApps.apps.some(
+        (app) => app.id === parsed.id && app.name === parsed.name
+      );
       if (
-        parsed.organization.slug !== this.organizationSlug ||
+        !belongsToConfiguredOrganization ||
+        parsed.name !== input.appName ||
         (parsed.network !== undefined && parsed.network !== input.networkName)
       ) {
         throw new EnvironmentProviderError(
@@ -409,10 +441,53 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 
   async startMachine(input: { appName: string; machineId: string }) {
-    await this.request(
-      `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/start`,
-      { method: "POST" }
-    );
+    const startPath =
+      `/apps/${encodeURIComponent(input.appName)}/machines/` +
+      `${encodeURIComponent(input.machineId)}/start`;
+    let retriesRemaining = MACHINE_START_RETRY_ATTEMPTS;
+    while (true) {
+      try {
+        await this.request(startPath, { method: "POST" });
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof EnvironmentProviderError) ||
+          error.status !== 412
+        ) {
+          throw error;
+        }
+        const machine = await this.getMachine(input);
+        if (
+          machine?.state === "started" ||
+          machine?.state === "starting" ||
+          machine?.state === "restarting"
+        ) {
+          return;
+        }
+        if (machine?.state === "stopping") {
+          await this.waitForMachine({
+            ...input,
+            state: "stopped",
+            timeoutSeconds: 60,
+          });
+        } else if (machine?.state !== "stopped") {
+          throw new EnvironmentProviderError(
+            "FLY_PROVIDER_REJECTED",
+            `Fly Machine start was rejected while the authoritative Machine state was ${machine?.state ?? "unavailable"}.`,
+            412
+          );
+        }
+        if (retriesRemaining === 0) {
+          throw new EnvironmentProviderError(
+            "FLY_PROVIDER_REJECTED",
+            "Fly Machine remained stopped after 10 bounded start retries.",
+            412
+          );
+        }
+        retriesRemaining -= 1;
+        await this.sleepImpl(MACHINE_START_RETRY_INTERVAL_MS);
+      }
+    }
   }
 
   async stopMachine(input: { appName: string; machineId: string }) {
@@ -479,14 +554,78 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     state: "started" | "stopped" | "destroyed";
     timeoutSeconds?: number;
   }) {
-    const query = new URLSearchParams({ state: input.state });
-    if (input.timeoutSeconds !== undefined) {
-      query.set("timeout", String(input.timeoutSeconds));
+    const instanceId =
+      input.state === "stopped"
+        ? parseResponse(
+            machineSchema,
+            await this.request(
+              `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+              { method: "GET" }
+            )
+          ).instance_id
+        : undefined;
+    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
+    while (true) {
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((deadline - Date.now()) / 1000)
+      );
+      const query = new URLSearchParams({
+        state: input.state,
+        timeout: String(Math.min(remainingSeconds, 60)),
+      });
+      if (instanceId) query.set("instance_id", instanceId);
+      try {
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
+          { method: "GET" }
+        );
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof EnvironmentProviderError) ||
+          error.status !== 408 ||
+          Date.now() >= deadline
+        ) {
+          throw error;
+        }
+      }
     }
-    await this.request(
-      `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
-      { method: "GET" }
+  }
+
+  async waitForMachineHealth(input: {
+    appName: string;
+    machineId: string;
+    checkName: string;
+    timeoutSeconds?: number;
+  }) {
+    const checkName = requireConfigured(
+      input.checkName,
+      "Fly health check name"
     );
+    const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
+    while (true) {
+      const machine = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          { method: "GET" }
+        )
+      );
+      const check = machine.checks?.find(
+        (candidate) => candidate.name === checkName
+      );
+      if (check?.status === "passing") return;
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_MACHINE_UNHEALTHY",
+          `Fly Machine health check ${checkName} did not pass before the readiness deadline.`
+        );
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.healthPollIntervalMs)
+      );
+    }
   }
 
   async createVolumeSnapshot(input: { appName: string; volumeId: string }) {
@@ -577,6 +716,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 }
 
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 export function flyEnvironmentAppName(environmentId: string): string {
   return `kestrel-env-${compactId(environmentId, 20)}`;
 }
@@ -599,6 +742,7 @@ function workspaceMachineConfig(
       KESTREL_WORKSPACE_ROOT: "/workspace",
       KESTREL_WORKSPACE_PORT: String(KESTREL_WORKSPACE_SERVICE_PORT),
       KESTREL_ENABLE_MANAGED_WORKTREES: "true",
+      KESTREL_REQUIRE_MANAGED_WORKTREE: "true",
       KESTREL_MANAGED_WORKTREE_ISOLATION: "session",
       KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
       KESTREL_CONTROL_PLANE_URL: input.controlPlaneUrl,

@@ -20,6 +20,9 @@ import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
+import { requestGitHubToolCredential } from "./github-credentials.js";
+import { notifyWorkspaceIdle } from "./idle.js";
+import { workspaceListenHost } from "./network.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
@@ -37,10 +40,19 @@ let runnerReady: Promise<void> | null = null;
 let sourceInitialization: Promise<void> | null = null;
 let lastActivityAt = Date.now();
 let activeRequests = 0;
+let idleNotificationInFlight = false;
+let idleStopAccepted = false;
+let drainingForIdleStop = false;
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     writeJson(response, 200, { ok: true, workspaceId: config.workspaceId });
+    return;
+  }
+  if (drainingForIdleStop) {
+    writeJson(response, 503, {
+      error: { code: "WORKSPACE_IDLE_STOPPING" },
+    });
     return;
   }
   activeRequests += 1;
@@ -214,6 +226,18 @@ const server = createServer(async (request, response) => {
       writeJson(response, 201, { application });
       return;
     }
+    const applicationControl = url.pathname.match(
+      /^\/v1\/apps\/([^/]+)\/(start|stop)$/u
+    );
+    if (request.method === "POST" && applicationControl?.[1]) {
+      requireCapability(ticket.capabilities, "workspace.apps.write");
+      const application =
+        applicationControl[2] === "start"
+          ? await applications.start(applicationControl[1])
+          : await applications.stop(applicationControl[1]);
+      writeJson(response, 200, { application });
+      return;
+    }
     const applicationProxy = url.pathname.match(
       /^\/v1\/apps\/([^/]+)\/proxy(\/.*)?$/u
     );
@@ -340,14 +364,34 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(config.port, "0.0.0.0");
+server.listen(config.port, config.listenHost);
 const idleTimer = setInterval(() => {
   if (
+    !idleNotificationInFlight &&
+    !idleStopAccepted &&
     activeRequests === 0 &&
     terminals.activeCount === 0 &&
     Date.now() - lastActivityAt >= config.idleTimeoutMinutes * 60_000
   ) {
-    shutdown(0);
+    const reportedLastActivityAt = new Date(lastActivityAt);
+    idleNotificationInFlight = true;
+    drainingForIdleStop = true;
+    void notifyWorkspaceIdle({
+      controlPlaneUrl: config.controlPlaneUrl,
+      authorizationToken: config.credentialBrokerToken,
+      organizationId: config.organizationId,
+      environmentId: config.environmentId,
+      workspaceId: config.workspaceId,
+      machineId: config.machineId,
+      lastActivityAt: reportedLastActivityAt,
+    })
+      .then((accepted) => {
+        idleStopAccepted = accepted;
+        if (!accepted) drainingForIdleStop = false;
+      })
+      .finally(() => {
+        idleNotificationInFlight = false;
+      });
   }
 }, 30_000);
 idleTimer.unref();
@@ -471,6 +515,12 @@ async function initializeGitHubSource(authorization: string) {
     config.controlPlaneUrl
   );
   try {
+    const credential = await requestGitHubToolCredential({
+      controlPlaneUrl: config.controlPlaneUrl,
+      executionAuthorization: authorization,
+      resourceId: config.sourceResourceId,
+      operation: "git.upload_pack",
+    });
     await runProcess(
       "git",
       [
@@ -486,7 +536,7 @@ async function initializeGitHubSource(authorization: string) {
       {
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "http.extraHeader",
-        GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
+        GIT_CONFIG_VALUE_0: `Authorization: ${credential.authorization}`,
         GIT_TERMINAL_PROMPT: "0",
       }
     );
@@ -595,12 +645,19 @@ async function pushManagedCandidateBranch(input: {
     const bundleStream = Readable.toWeb(
       createReadStream(bundlePath)
     ) as ReadableStream<Uint8Array>;
+    const credential = await requestGitHubToolCredential({
+      controlPlaneUrl: config.controlPlaneUrl,
+      executionAuthorization: input.authorization,
+      resourceId: config.sourceResourceId,
+      operation: "repository.push_agent_branch",
+      candidateFingerprint: input.candidateFingerprint,
+    });
     const pushResponse = await fetch(
       new URL("/api/runtime/github/push", config.controlPlaneUrl),
       {
         method: "POST",
         headers: {
-          authorization: input.authorization,
+          authorization: credential.authorization,
           "content-type": "application/x-git-bundle",
           "x-kestrel-resource-id": config.sourceResourceId,
           "x-kestrel-candidate-fingerprint": input.candidateFingerprint,
@@ -793,6 +850,10 @@ function readConfig() {
   };
   return {
     port: Number.parseInt(process.env.KESTREL_WORKSPACE_PORT ?? "43104", 10),
+    listenHost: workspaceListenHost({
+      flyPrivateIp: process.env.FLY_PRIVATE_IP,
+      configuredHost: process.env.KESTREL_WORKSPACE_HOST,
+    }),
     workspaceRoot: path.resolve(process.env.KESTREL_WORKSPACE_ROOT ?? "/workspace"),
     workspaceId: required("KESTREL_WORKSPACE_ID"),
     organizationId: required("KESTREL_ORGANIZATION_ID"),
@@ -800,7 +861,10 @@ function readConfig() {
     machineId: required("FLY_MACHINE_ID"),
     ticketPublicKey: required("KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY"),
     profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel-one",
-    controlPlaneUrl: process.env.KESTREL_CONTROL_PLANE_URL?.trim() ?? "",
+    controlPlaneUrl: required("KESTREL_CONTROL_PLANE_URL"),
+    credentialBrokerToken: required(
+      "KESTREL_ONE_CREDENTIAL_BROKER_TOKEN"
+    ),
     sourceType: process.env.KESTREL_WORKSPACE_SOURCE_TYPE?.trim() ?? "blank",
     sourceResourceId:
       process.env.KESTREL_WORKSPACE_SOURCE_RESOURCE_ID?.trim() ?? "",

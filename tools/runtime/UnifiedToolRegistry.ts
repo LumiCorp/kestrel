@@ -766,7 +766,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       resolveRuntimeToolRunContext(
         runContext.runId,
         runContext.sessionId,
-        runContext.payload
+        runContext.payload,
+        runContext.sessionState
       ),
       hasTrustedManagedWorktreeBinding(
         runContext.runId,
@@ -1098,7 +1099,8 @@ function resolveDevShellSourceWriteAllowedWriteRoots(
 function resolveRuntimeToolRunContext(
   runId: string,
   sessionId: string,
-  payload: unknown
+  payload: unknown,
+  sessionState: unknown
 ): RuntimeToolRunContext {
   const payloadRecord = asRecord(payload);
   const orchestration = asRecord(payloadRecord?.orchestration);
@@ -1120,15 +1122,25 @@ function resolveRuntimeToolRunContext(
   const delegationDepth =
     asFiniteNumber(orchestration?.delegationDepth) ??
     asFiniteNumber(metadata?.delegationDepth);
+  const approvalId = readPendingApprovalId(sessionState);
   return {
     runId,
     sessionId,
+    ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
   };
+}
+
+function readPendingApprovalId(state: unknown): string | undefined {
+  const stateRecord = asRecord(state);
+  const pendingApproval =
+    asRecord(asRecord(asRecord(stateRecord?.agent)?.exec)?.pendingApproval) ??
+    asRecord(asRecord(asRecord(stateRecord?.react)?.exec)?.pendingApproval);
+  return asNonEmptyString(pendingApproval?.approvalId);
 }
 
 function hasTrustedManagedWorktreeBinding(

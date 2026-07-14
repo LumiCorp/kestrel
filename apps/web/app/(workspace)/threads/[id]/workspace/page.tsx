@@ -10,8 +10,18 @@ export default async function WorkspacePage({
 }) {
   const { id } = await params;
   const { organizationId, session } = await requireActiveOrganization();
-  if (!(await getThreadAccessForUser(id, session.user.id, organizationId))) {
+  const access = await getThreadAccessForUser(
+    id,
+    session.user.id,
+    organizationId
+  );
+  if (!access) {
     notFound();
   }
-  return <WorkspaceClient threadId={id} />;
+  return (
+    <WorkspaceClient
+      standalone={access.thread.projectId === null}
+      threadId={id}
+    />
+  );
 }
