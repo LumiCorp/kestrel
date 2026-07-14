@@ -64,12 +64,18 @@ test("root package exposes public product scripts and a broad monorepo test gate
 });
 
 test("runtime package publishes only the public executable boundary", async () => {
+  const rawPackage = await readFile(path.join(ROOT, "package.json"), "utf8");
   const pkg = await readPackage(path.join(ROOT, "package.json"));
   const files = pkg.files ?? [];
 
   assert.equal(pkg.main, "dist/src/index.js");
   assert.equal(pkg.types, "dist/src/index.d.ts");
-  assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "0.5.1");
+  assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
+  assert.equal(
+    [...rawPackage.matchAll(/"@kestrel-agents\/protocol"\s*:/gu)].length,
+    1,
+    "runtime package must declare the protocol dependency exactly once",
+  );
   assert.equal(
     pkg.scripts?.["runtime:release-check"],
     "pnpm run build && node --import tsx scripts/check-runtime-package.ts",
@@ -119,7 +125,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
 
   assert.equal(
     rootPackage.scripts?.["web:prepare"],
-    "pnpm run sdk:build && pnpm run next:build",
+    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run sdk:build && pnpm run next:build",
   );
   assert.equal(
     rootPackage.scripts?.["web:build"],
@@ -160,14 +166,22 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   const releaseScript = await readFile(path.join(ROOT, "scripts", "check-cli-release.ts"), "utf8");
 
   assert.match(packageScript, /packPublicProtocolPackage\(\{ repoRoot, packDir: localPackageDir \}\)/u);
+  assert.match(packageScript, /resolveRuntimePackageDependencies\(\{/u);
   assert.match(packageScript, /resolveRuntimeDependencyInstallArgs\(localPackages\)/u);
   assert.match(packageScript, /rmSync\(localPackageDir, \{ recursive: true, force: true \}\)/u);
   assert.match(packageScript, /prepareDesktopPostgresBundle\(\{/u);
   assert.match(packageScript, /strict: true/u);
   assert.match(packageScript, /verifyPreparedDesktopPostgresBundle\(\{/u);
+  assert.match(packageScript, /CLI_EXCLUDED_RUNTIME_PATHS/u);
+  assert.match(packageScript, /cli\/client\/InProcessRunnerTransport\.ts/u);
+  assert.match(packageScript, /cli\/client\/RunnerProcess\.ts/u);
+  assert.match(packageScript, /cli\/runner\/main\.ts/u);
   assert.match(releaseScript, /must install @kestrel-agents\/protocol/u);
   assert.match(releaseScript, /must install protocol from its packed artifact/u);
   assert.match(releaseScript, /parseRunnerHealthV1\(health\.body\)/u);
+  assert.match(releaseScript, /FORBIDDEN_LIBEXEC_PATHS/u);
+  assert.match(releaseScript, /smokePackagedProtocolClient/u);
+  assert.match(releaseScript, /scripts\/kchat-smoke\.ts/u);
 });
 
 test("public CI packages and verifies macOS release artifacts from a clean checkout", async () => {
@@ -195,6 +209,7 @@ test("Desktop package stage preserves npm overrides for static runtime audits", 
   assert.match(resourcesScript, /overrides\?: Record<string, string> \| undefined/u);
   assert.match(resourcesScript, /\.\.\.\(desktopPackage\.overrides !== undefined \? \{ overrides: desktopPackage\.overrides \} : \{\}\)/u);
   assert.match(resourcesScript, /resolveRuntimeDependencyInstallArgs\(input\?\.localPackages\)/u);
+  assert.match(resourcesScript, /resolveRuntimePackageDependencies\(\{/u);
   assert.doesNotMatch(resourcesScript, /"packages\/protocol"/u);
   assert.doesNotMatch(resourcesScript, /"apps\/web"/u);
   assert.doesNotMatch(resourcesScript, /rootPackage\.devDependencies\?\.typescript/u);

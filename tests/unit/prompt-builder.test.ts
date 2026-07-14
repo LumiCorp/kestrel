@@ -103,6 +103,20 @@ test("deliberator prompt keeps durable role rules out of context rendering", () 
   }
 });
 
+test("deliberator prompt preserves application instructions at system priority", () => {
+  const prompt = buildDeliberatorSystemPrompt({
+    interactionMode: "chat",
+    systemInstructions: [
+      "Answer only from the supplied document.",
+      "Return a JSON object matching the requested schema.",
+    ],
+  });
+
+  assert.match(prompt, /Application system instructions:/u);
+  assert.match(prompt, /1\. Answer only from the supplied document\./u);
+  assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
+});
+
 test("deliberator prompt resolver selects real mode prompts", () => {
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "reference-react:plan");
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "reference-react:build");

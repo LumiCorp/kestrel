@@ -3,7 +3,7 @@ id: plans-index
 domain: docs
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-06-30
+last_verified_at: 2026-07-13
 depends_on:
   - index.md
   - plans/2026-05-06-full-kestrel-backlog-queue.md
@@ -12,6 +12,7 @@ depends_on:
   - plans/2026-06-08-runtime-simplification-baseline.md
   - plans/2026-06-15-desktop-page-primitives-standardization.md
   - plans/2026-06-17-kestrel-local-core-shell-model.md
+  - plans/2026-07-13-kestrel-local-platform-architecture.md
   - runbooks/2026-06-17-local-core-beta-migration-evidence.md
   - runbooks/2026-07-13-kestrel-one-environment-cutover.md
   - plans/2026-05-14-reference-react-command-processor-milestones.md
@@ -33,6 +34,7 @@ This index separates active planning work from historical design records. If you
 
 ## Active Plans And Audits
 
+- [Kestrel local platform architecture](https://github.com/LumiCorp/kestrel/blob/main/docs/plans/2026-07-13-kestrel-local-platform-architecture.md)
 - [Full Kestrel backlog queue](https://github.com/LumiCorp/kestrel/blob/main/docs/plans/2026-05-06-full-kestrel-backlog-queue.md)
 - [TUI session evidence recovery and final answer hardening](https://github.com/LumiCorp/kestrel/blob/main/docs/plans/2026-05-16-tui-session-evidence-recovery-final-answer-hardening.md)
 - [Runtime recovery context audit](https://github.com/LumiCorp/kestrel/blob/main/docs/plans/2026-05-19-runtime-recovery-context-audit.md)

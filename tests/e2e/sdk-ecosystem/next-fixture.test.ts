@@ -206,7 +206,7 @@ import { createAgent } from "@kestrel-agents/sdk";
 export const agent = createAgent({
   id: "next-fixture-agent",
   profileId: "reference",
-  baseUrl: process.env.RUNNER_URL,
+  target: { kind: "remote", baseUrl: process.env.RUNNER_URL },
 });
 
 export function resolveContext() {

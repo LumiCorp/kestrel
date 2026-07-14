@@ -6,6 +6,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
+import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -338,6 +339,82 @@ test("reference harness routes default plan-mode weather asks into tooling route
   assert.equal(result.toolCalls.some((entry) => entry.name === "free.weather.current"), true);
 });
 
+test("reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
+  const forecastHandler = weatherForecastTool.createHandler({
+    fetchImpl: async (url) => {
+      const target = typeof url === "string" ? url : String(url);
+      if (target.includes("geocoding-api.open-meteo.com")) {
+        return new Response(
+          JSON.stringify({
+            results: [{ latitude: 39.1031, longitude: -84.512 }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const hourlyTimes = Array.from(
+        { length: 24 },
+        (_, hour) => `2026-07-12T${String(hour).padStart(2, "0")}:00`,
+      );
+      return new Response(
+        JSON.stringify({
+          timezone: "America/New_York",
+          current: { time: "2026-07-12T15:45", temperature_2m: 27 },
+          hourly: {
+            time: hourlyTimes,
+            temperature_2m: hourlyTimes.map((_, hour) => 20 + hour / 2),
+            apparent_temperature: hourlyTimes.map((_, hour) => 21 + hour / 2),
+            precipitation_probability: hourlyTimes.map((_, hour) => hour),
+            precipitation: hourlyTimes.map(() => 0),
+            wind_speed_10m: hourlyTimes.map(() => 9),
+          },
+          daily: {
+            time: ["2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15"],
+            temperature_2m_max: [30, 32, 33, 31],
+            temperature_2m_min: [21, 22, 23, 21],
+            precipitation_probability_max: [20, 30, 50, 40],
+            precipitation_sum: [0, 0.5, 2.4, 1.2],
+            wind_speed_10m_max: [9, 10, 14, 12],
+            weather_code: [1, 2, 61, 80],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+  const result = await runReferenceRecoveryScenario({
+    sessionId: "session-weather-range-1",
+    message: "whats the weather in cincinnati oh between now and wednesday",
+    extractorObjective: "Get Cincinnati weather from now through Wednesday",
+    toolName: "free.weather.forecast",
+    toolInputSchema: {
+      type: "object",
+      properties: {
+        city: { type: "string" },
+        days: { type: "number", minimum: 1, maximum: 10 },
+      },
+      required: ["city", "days"],
+      additionalProperties: false,
+    },
+    capabilityClasses: ["weather.forecast"],
+    toolResult: async (toolInput) =>
+      await forecastHandler(toolInput) as Record<string, unknown>,
+    expectedToolInput: {
+      city: "Cincinnati, OH",
+      days: 4,
+    },
+    expectedLoopEvidence: [
+      "time=2026-07-12T15:00",
+      "maxTemperatureC=31",
+    ],
+    finalMessage: "Cincinnati stays warm through Wednesday, with highs near 30-33C and the best rain chances Tuesday and Wednesday.",
+  });
+
+  assert.deepEqual(
+    result.toolCalls.map((entry) => entry.name),
+    ["free.weather.forecast", "FinalizeAnswer"],
+  );
+});
+
 test("reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-fx-1",
@@ -430,9 +507,11 @@ async function runReferenceRecoveryScenario(input: {
   toolName: string;
   toolInputSchema: Record<string, unknown>;
   capabilityClasses: string[];
-  toolResult: Record<string, unknown>;
+  toolResult:
+    | Record<string, unknown>
+    | ((toolInput: unknown) => Promise<Record<string, unknown>>);
   expectedToolInput: Record<string, unknown>;
-  expectedLoopEvidence: string;
+  expectedLoopEvidence: string | string[];
   finalMessage: string;
   interactionMode?: "plan" | "build";
   expectedExecutionLane?: "chat" | "tooling";
@@ -444,12 +523,16 @@ async function runReferenceRecoveryScenario(input: {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
+  let observedLoopEvidence = false;
 
   const toolGateway: ToolGateway = {
     async call<T>(name: string, payload: unknown): Promise<T> {
       toolCalls.push({ name, input: payload });
       if (name === input.toolName) {
-        return input.toolResult as T;
+        const toolResult = typeof input.toolResult === "function"
+          ? await input.toolResult(payload)
+          : input.toolResult;
+        return toolResult as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(payload as Record<string, unknown>);
@@ -470,6 +553,21 @@ async function runReferenceRecoveryScenario(input: {
 
     if (schemaName === "kestrel_agent_action" || request.tools !== undefined) {
       if (toolCalls.some((entry) => entry.name === input.toolName)) {
+        const modelVisibleRequest = JSON.stringify({
+          input: request.input,
+          messages: request.messages,
+        });
+        const expectedLoopEvidence = Array.isArray(input.expectedLoopEvidence)
+          ? input.expectedLoopEvidence
+          : [input.expectedLoopEvidence];
+        observedLoopEvidence = expectedLoopEvidence.every((evidence) =>
+          modelVisibleRequest.includes(evidence)
+        );
+        assert.equal(
+          observedLoopEvidence,
+          true,
+          `Expected next model request to include tool evidence '${expectedLoopEvidence.join("', '")}'.`,
+        );
         return modelResponse({
           nextAction: {
             kind: "finalize",
@@ -536,6 +634,7 @@ async function runReferenceRecoveryScenario(input: {
   assert.equal(output.status, "COMPLETED", JSON.stringify(output.errors));
   assert.deepEqual(toolCalls.find((entry) => entry.name === input.toolName)?.input, input.expectedToolInput);
   assert.equal(finalized.length, 1);
+  assert.equal(observedLoopEvidence, true);
   assert.equal(input.expectedExecutionLane === undefined || input.expectedExecutionLane === "tooling", true);
 
   return {

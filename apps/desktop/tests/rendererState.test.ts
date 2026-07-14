@@ -5,10 +5,12 @@ import {
   appendRendererTranscript,
   getRendererTurnContinuation,
   getTerminalWaitEventType,
+  getTerminalWaitingPrompt,
   MAX_PERSISTED_TRANSCRIPT_BYTES,
   MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD,
   readDesktopRendererState,
   serializeDesktopRendererState,
+  toDesktopRunHistory,
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 
@@ -98,17 +100,42 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     },
   );
   const terminal = {
+    id: "event-waiting",
     type: "run.completed",
+    ts: "2026-07-09T12:00:00.000Z",
     payload: {
       result: {
+        assistantText: null,
         output: {
           status: "WAITING",
-          waitFor: { eventType: "user.reply" },
+          sessionId: "session-waiting",
+          runId: "run-waiting",
+          waitFor: {
+            eventType: "user.reply",
+            metadata: { question: "Which workspace should I inspect?" },
+          },
+          quality: {
+            citationCoverage: 0,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          errors: [],
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 1,
+            durationMs: 1,
+          },
         },
       },
     },
-  } as DesktopRunnerEvent;
+  } satisfies DesktopRunnerEvent;
   assert.equal(getTerminalWaitEventType(terminal), "user.reply");
+  assert.deepEqual(getTerminalWaitingPrompt(terminal), {
+    text: "Which workspace should I inspect?",
+    runId: "run-waiting",
+  });
 
   assert.deepEqual(
     getRendererTurnContinuation({
@@ -133,6 +160,45 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     hydrated.threads[0]?.pendingWaitEventType,
     "user.approval",
   );
+});
+
+test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {
+  const state = readDesktopRendererState(null);
+  const thread = {
+    ...state.threads[0]!,
+    transcript: [
+      {
+        role: "user" as const,
+        text: "Inspect the workspace",
+        timestamp: "2026-07-09T12:00:00.000Z",
+      },
+      {
+        role: "system" as const,
+        text: "Local status: connected",
+        timestamp: "2026-07-09T12:00:01.000Z",
+      },
+      {
+        role: "system" as const,
+        text: "Which workspace should I inspect?",
+        timestamp: "2026-07-09T12:00:02.000Z",
+        data: { kind: "runtime.waiting_prompt" as const, runId: "run-waiting" },
+      },
+    ],
+  };
+
+  assert.deepEqual(toDesktopRunHistory(thread), [
+    {
+      role: "user",
+      text: "Inspect the workspace",
+      timestamp: "2026-07-09T12:00:00.000Z",
+    },
+    {
+      role: "system",
+      text: "Which workspace should I inspect?",
+      timestamp: "2026-07-09T12:00:02.000Z",
+      data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
+    },
+  ]);
 });
 
 test("Vite renderer bounds persisted transcript history below the UI-state cap", () => {

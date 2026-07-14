@@ -4,7 +4,7 @@ import {
   createWorkspaceBackup,
   listWorkspaceBackups,
 } from "@/lib/environments/backups";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
 const backupInputSchema = z.object({
@@ -18,7 +18,7 @@ export async function GET(
   context: { params: Promise<{ id: string; workspaceId: string }> }
 ) {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     const { id, workspaceId } = await context.params;
     return NextResponse.json({
       backups: await listWorkspaceBackups({
@@ -37,7 +37,7 @@ export async function POST(
   context: { params: Promise<{ id: string; workspaceId: string }> }
 ) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const { id, workspaceId } = await context.params;
     const { reason } = backupInputSchema.parse(await request.json());
     return NextResponse.json(

@@ -807,6 +807,46 @@ test("ModelReasoningSidecar can be disabled explicitly", async () => {
   assert.equal(calls, 0);
 });
 
+test("ModelReasoningSidecar can reject ambient process environment fallback", async () => {
+  const previous = process.env.KCHAT_REASONING_ENABLED;
+  process.env.KCHAT_REASONING_ENABLED = "false";
+  let calls = 0;
+  try {
+    const sidecar = new ModelReasoningSidecar(
+      ({
+        call: async () => {
+          calls += 1;
+          return { message: "I am continuing with the explicit runtime configuration." };
+        },
+      } as any),
+      { inheritProcessEnv: false },
+    );
+
+    await sidecar.generate({
+      runId: "run-no-ambient-env",
+      sessionId: "session-no-ambient-env",
+      seq: 1,
+      milestone: "phase_changed",
+      stepAgent: "agent.loop",
+      stepIndex: 1,
+      previousState: { agent: { phase: "THINK" } },
+      currentState: { agent: { phase: "ACT" } },
+      transition: {
+        status: "RUNNING",
+        nextStepAgent: "agent.exec.dispatch",
+      },
+    });
+
+    assert.equal(calls, 1);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.KCHAT_REASONING_ENABLED;
+    } else {
+      process.env.KCHAT_REASONING_ENABLED = previous;
+    }
+  }
+});
+
 test("ModelReasoningSidecar forwards explicit model and budget overrides", async () => {
   let requestModel: string | undefined;
   let requestMaxTokens: number | undefined;
@@ -878,6 +918,9 @@ test("ModelReasoningSidecar forwards explicit model and budget overrides", async
   assert.equal(systemPrompt.includes("Continue the recent narrative"), true);
   assert.equal(systemPrompt.includes("engaged assistant narrating concrete work"), true);
   assert.equal(systemPrompt.includes("Treat beat as the only source"), true);
+  assert.equal(systemPrompt.includes("do not call an attempt last or final"), true);
+  assert.equal(systemPrompt.includes("promise imminent completion"), true);
+  assert.equal(userPrompt.includes("do not claim an attempt is last or final"), true);
   assert.equal(systemPrompt.includes("beat.reason"), true);
   assert.equal(systemPrompt.includes("one more substantive task-level update"), true);
   assert.equal(systemPrompt.includes("runtimeBeat is present"), false);

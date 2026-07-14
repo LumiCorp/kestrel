@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 import process from "node:process";
 
 import { loadShellAndDotEnv } from "./config/EnvLoader.js";
-import { createRunnerServiceServer, type RunnerServiceServer } from "./runner/RunnerService.js";
+import {
+  createWebRunnerProxyServer,
+  type WebRunnerProxyServer,
+} from "./webRunnerProxy.js";
+import { ensureCliLocalCoreReady } from "./localCoreShell.js";
 import { DEFAULT_KESTREL_RUNNER_SERVICE_PORT } from "../src/config/localDev.js";
 
 const DEFAULT_RUNNER_SERVICE_HOST = "127.0.0.1";
@@ -30,6 +34,11 @@ export interface WebCommandStartupMetadata {
   tokenSource: "provided" | "generated";
 }
 
+export interface WebCommandLocalCoreTarget {
+  socketPath: string;
+  authToken: string;
+}
+
 export async function runWebCommand(args: string[], cwd = process.cwd()): Promise<void> {
   await loadShellAndDotEnv(cwd, {
     preferDotEnvKeys: [
@@ -38,15 +47,19 @@ export async function runWebCommand(args: string[], cwd = process.cwd()): Promis
       "KESTREL_RUNNER_SERVICE_TOKEN",
     ],
   });
+  await ensureCliLocalCoreReady();
 
   const config = resolveWebCommandConfig(args, process.env);
-  let server: RunnerServiceServer;
+  const localCore = resolveWebCommandLocalCoreTarget(process.env);
+  let server: WebRunnerProxyServer;
 
   try {
-    server = await createRunnerServiceServer({
+    server = await createWebRunnerProxyServer({
       host: config.host,
       port: config.port,
       authToken: config.token,
+      localCoreSocketPath: localCore.socketPath,
+      localCoreAuthToken: localCore.authToken,
     });
   } catch (error) {
     throw new Error(formatStartupError(config, error));
@@ -135,8 +148,21 @@ export function generateRunnerServiceToken(): string {
   return randomBytes(24).toString("hex");
 }
 
+export function resolveWebCommandLocalCoreTarget(
+  env: NodeJS.ProcessEnv = process.env,
+): WebCommandLocalCoreTarget {
+  const socketPath = readNonEmptyString(env.KESTREL_LOCAL_CORE_API_SOCKET);
+  const authToken = readNonEmptyString(env.KESTREL_LOCAL_CORE_API_TOKEN);
+  if (socketPath === undefined || authToken === undefined) {
+    throw new Error(
+      "kestrel web requires an already-ready Local Core API socket and token.",
+    );
+  }
+  return { socketPath, authToken };
+}
+
 export function createWebCommandStartupMetadata(
-  server: Pick<RunnerServiceServer, "url" | "host" | "port">,
+  server: Pick<WebRunnerProxyServer, "url" | "host" | "port">,
   config: Pick<WebCommandConfig, "host" | "token" | "tokenSource">,
 ): WebCommandStartupMetadata {
   return {
@@ -150,17 +176,31 @@ export function createWebCommandStartupMetadata(
 }
 
 export function formatWebCommandStartupLines(metadata: WebCommandStartupMetadata): string[] {
-  return [
-    JSON.stringify(metadata),
+  const publicMetadata =
+    metadata.tokenSource === "generated"
+      ? metadata
+      : { ...metadata, token: "[redacted]" };
+  const lines = [
+    JSON.stringify(publicMetadata),
     "kestrel web: runner service is ready",
     `export KESTREL_RUNNER_SERVICE_URL=${toShellLiteral(metadata.url)}`,
-    `export KESTREL_RUNNER_SERVICE_TOKEN=${toShellLiteral(metadata.token)}`,
-    "Use these exports in your web app server environment. Press Ctrl+C to stop.",
   ];
+  if (metadata.tokenSource === "generated") {
+    lines.push(
+      `export KESTREL_RUNNER_SERVICE_TOKEN=${toShellLiteral(metadata.token)}`,
+      "Use these exports in your web app server environment. Press Ctrl+C to stop.",
+    );
+  } else {
+    lines.push(
+      "KESTREL_RUNNER_SERVICE_TOKEN is configured; value withheld.",
+      "Use the configured runner service token in your web app server environment. Press Ctrl+C to stop.",
+    );
+  }
+  return lines;
 }
 
 function waitForShutdownSignal(
-  server: Pick<RunnerServiceServer, "gracefulClose" | "forceClose">,
+  server: Pick<WebRunnerProxyServer, "gracefulClose" | "forceClose">,
   graceMs: number,
 ): Promise<{ forced: boolean }> {
   return new Promise((resolve) => {

@@ -49,8 +49,11 @@ export async function GET(
       actorUserId: user.id,
     });
     const client = new KestrelClient({
-      baseUrl: environmentRoute.baseUrl,
-      authToken: environmentRoute.authToken,
+      target: {
+        kind: "remote",
+        baseUrl: environmentRoute.baseUrl,
+        authToken: environmentRoute.authToken,
+      },
     });
     const runnerContext = createKestrelOneRequestContext({
       session,

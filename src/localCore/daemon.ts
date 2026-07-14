@@ -5,8 +5,15 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { EnsureLocalCoreReadyOptions, LocalCoreStatus } from "./contracts.js";
+import type {
+  EnsureLocalCoreReadyOptions,
+  LocalCoreStatus,
+} from "./contracts.js";
 import { LocalCoreClient } from "./client.js";
+import {
+  createLocalCoreConnectionDescriptor,
+  type LocalCoreConnectionDescriptor,
+} from "./connection.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { readCoreLock } from "./lock.js";
 import { ensureLocalCoreReady } from "./ready.js";
@@ -14,6 +21,7 @@ import { ensureLocalCoreReady } from "./ready.js";
 export interface LocalCoreDaemonReady {
   status: LocalCoreStatus;
   client?: LocalCoreClient | undefined;
+  connection?: LocalCoreConnectionDescriptor | undefined;
   daemonStarted: boolean;
 }
 
@@ -80,7 +88,11 @@ async function connectIfLive(input: {
   socketPath: string;
   tokenPath: string;
   isPidAlive?: ((pid: number) => boolean) | undefined;
-}): Promise<{ status: LocalCoreStatus; client: LocalCoreClient } | undefined> {
+}): Promise<{
+  status: LocalCoreStatus;
+  client: LocalCoreClient;
+  connection: LocalCoreConnectionDescriptor;
+} | undefined> {
   const lock = await readCoreLock({
     homePath: input.homePath,
     currentCoreVersion: input.coreVersion,
@@ -95,9 +107,14 @@ async function connectIfLive(input: {
   }
   try {
     const token = (await readFile(input.tokenPath, "utf8")).trim();
-    const client = new LocalCoreClient({ socketPath, token, timeoutMs: 2_000 });
+    const connection = createLocalCoreConnectionDescriptor({ socketPath, authToken: token });
+    const client = new LocalCoreClient({
+      socketPath: connection.socketPath,
+      token: connection.authToken,
+      timeoutMs: 2_000,
+    });
     const status = await client.status();
-    return { status, client };
+    return { status, client, connection };
   } catch {
     return undefined;
   }
@@ -108,7 +125,7 @@ function spawnDaemon(input: {
   platform?: NodeJS.Platform | undefined;
   coreVersion: string;
   schemaVersion?: number | undefined;
-  databaseMode?: "managed" | "external" | undefined;
+  databaseMode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
   allowInheritedDatabaseUrl?: boolean | undefined;
   postgresBundleRootPath?: string | undefined;
@@ -166,15 +183,27 @@ async function waitForDaemon(input: {
   tokenPath: string;
   timeoutMs: number;
   intervalMs: number;
-}): Promise<{ status: LocalCoreStatus; client: LocalCoreClient }> {
+}): Promise<{
+  status: LocalCoreStatus;
+  client: LocalCoreClient;
+  connection: LocalCoreConnectionDescriptor;
+}> {
   const startedAt = Date.now();
   let lastError: unknown;
   while (Date.now() - startedAt < input.timeoutMs) {
     try {
       const token = (await readFile(input.tokenPath, "utf8")).trim();
-      const client = new LocalCoreClient({ socketPath: input.socketPath, token, timeoutMs: 2_000 });
+      const connection = createLocalCoreConnectionDescriptor({
+        socketPath: input.socketPath,
+        authToken: token,
+      });
+      const client = new LocalCoreClient({
+        socketPath: connection.socketPath,
+        token: connection.authToken,
+        timeoutMs: 2_000,
+      });
       const status = await client.status();
-      return { status, client };
+      return { status, client, connection };
     } catch (error) {
       lastError = error;
       await sleep(input.intervalMs);

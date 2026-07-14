@@ -21,8 +21,25 @@ import type {
   ToolConnectionResource,
 } from "@/drizzle/schema";
 
+type ProjectMcpCapability = {
+  id: string;
+  capabilityKey: string;
+  displayName: string | null;
+  description: string | null;
+  kind: string;
+  approvalMode: "auto" | "ask" | "deny";
+  serverName: string;
+};
+
+type ProjectMcpRestriction = {
+  capabilityId: string;
+  enabled: boolean;
+  approvalMode: "auto" | "ask" | "deny";
+};
+
 type WorkspaceSetup = {
   environments: Environment[];
+  binding: { environmentId: string };
   workspace: EnvironmentWorkspace | null;
   repositories: ToolConnectionResource[];
   grants: EnvironmentCapabilityGrant[];
@@ -41,6 +58,12 @@ export function ProjectWorkspaceClient({
   const [environmentId, setEnvironmentId] = useState("");
   const [sourceType, setSourceType] = useState<"blank" | "github">("blank");
   const [resourceId, setResourceId] = useState("");
+  const [mcpCapabilities, setMcpCapabilities] = useState<
+    ProjectMcpCapability[]
+  >([]);
+  const [mcpRestrictions, setMcpRestrictions] = useState<
+    ProjectMcpRestriction[]
+  >([]);
 
   useEffect(() => {
     void fetch(`/api/projects/${projectId}/workspace`)
@@ -49,7 +72,10 @@ export function ProjectWorkspaceClient({
         const payload = (await response.json()) as WorkspaceSetup;
         setSetup(payload);
         setEnvironmentId(
-          payload.workspace?.environmentId ?? payload.environments[0]?.id ?? ""
+          payload.binding.environmentId ??
+            payload.workspace?.environmentId ??
+            payload.environments[0]?.id ??
+            ""
         );
         if (payload.workspace?.sourceType === "github") {
           setSourceType("github");
@@ -59,6 +85,29 @@ export function ProjectWorkspaceClient({
       .catch((error: unknown) =>
         toast.error(
           error instanceof Error ? error.message : "Workspace unavailable."
+        )
+      );
+  }, [projectId]);
+
+  useEffect(() => {
+    void fetch(`/api/projects/${projectId}/capabilities`)
+      .then(async (response) => {
+        if (!response.ok)
+          throw new Error("Project capabilities are unavailable.");
+        return (await response.json()) as {
+          mcpCapabilities?: ProjectMcpCapability[];
+          mcpRestrictions?: ProjectMcpRestriction[];
+        };
+      })
+      .then((payload) => {
+        setMcpCapabilities(payload.mcpCapabilities ?? []);
+        setMcpRestrictions(payload.mcpRestrictions ?? []);
+      })
+      .catch((error: unknown) =>
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Project capabilities are unavailable."
         )
       );
   }, [projectId]);
@@ -81,6 +130,27 @@ export function ProjectWorkspaceClient({
 
   async function save() {
     if (!setup) return;
+    if (setup.binding.environmentId !== environmentId) {
+      const moveResponse = await fetch(
+        `/api/projects/${projectId}/environment`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ environmentId }),
+        }
+      );
+      const movePayload = (await moveResponse.json()) as {
+        binding?: { environmentId: string };
+        error?: string;
+      };
+      if (!(moveResponse.ok && movePayload.binding)) {
+        toast.error(movePayload.error ?? "Project Environment move failed.");
+        return;
+      }
+      setSetup((current) =>
+        current ? { ...current, binding: movePayload.binding! } : current
+      );
+    }
     const response = await fetch(`/api/projects/${projectId}/workspace`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -104,9 +174,49 @@ export function ProjectWorkspaceClient({
       return;
     }
     setSetup((current) =>
-      current ? { ...current, workspace: payload.workspace! } : current
+      current
+        ? {
+            ...current,
+            binding: { environmentId },
+            workspace: payload.workspace!,
+          }
+        : current
     );
-    toast.success("Project Workspace provisioning requested.");
+    toast.success(
+      setup.binding.environmentId === environmentId
+        ? "Project Workspace provisioning requested."
+        : "Project Environment moved and its new Workspace was requested."
+    );
+  }
+
+  async function setMcpRestriction(
+    capability: ProjectMcpCapability,
+    approvalMode: "auto" | "ask" | "deny"
+  ) {
+    const response = await fetch(`/api/projects/${projectId}/capabilities`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mcpCapabilityId: capability.id,
+        enabled: approvalMode !== "deny",
+        approvalMode,
+      }),
+    });
+    const payload = (await response.json()) as {
+      mcpRestriction?: ProjectMcpRestriction;
+      error?: string;
+    };
+    if (!(response.ok && payload.mcpRestriction)) {
+      toast.error(payload.error ?? "Project MCP restriction failed.");
+      return;
+    }
+    setMcpRestrictions((current) => [
+      ...current.filter(
+        (restriction) => restriction.capabilityId !== capability.id
+      ),
+      payload.mcpRestriction!,
+    ]);
+    toast.success("Project MCP access updated.");
   }
 
   return (
@@ -128,12 +238,7 @@ export function ProjectWorkspaceClient({
           <div className="space-y-2">
             <Label>Environment</Label>
             <Select
-              disabled={
-                !canEdit ||
-                Boolean(
-                  setup?.workspace && setup.workspace.status !== "requested"
-                )
-              }
+              disabled={!canEdit}
               onValueChange={setEnvironmentId}
               value={environmentId}
             >
@@ -155,7 +260,9 @@ export function ProjectWorkspaceClient({
               disabled={
                 !canEdit ||
                 Boolean(
-                  setup?.workspace && setup.workspace.status !== "requested"
+                  setup?.workspace &&
+                    setup.workspace.environmentId === environmentId &&
+                    setup.workspace.status !== "requested"
                 )
               }
               onValueChange={(value) =>
@@ -196,7 +303,9 @@ export function ProjectWorkspaceClient({
           <div className="flex items-center justify-between border-t pt-4">
             <div className="text-muted-foreground text-sm">
               {setup?.workspace
-                ? `Status: ${setup.workspace.status}`
+                ? setup.binding.environmentId === environmentId
+                  ? `Status: ${setup.workspace.status}`
+                  : "Moving creates an isolated Workspace in the selected Environment. Active runs block the move."
                 : "The Workspace will be created lazily and retained across Threads."}
             </div>
             <Button
@@ -206,9 +315,66 @@ export function ProjectWorkspaceClient({
               }
               onClick={() => void save()}
             >
-              Configure Workspace
+              {setup?.binding.environmentId === environmentId
+                ? "Configure Workspace"
+                : "Move and Configure"}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Project MCP capabilities</CardTitle>
+          <p className="text-muted-foreground text-sm">
+            Select a subset of capabilities approved by this Environment. A
+            Project can require more approval or deny access, but cannot widen
+            the Environment ceiling.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {mcpCapabilities.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              This Environment has no approved MCP capabilities.
+            </p>
+          ) : (
+            mcpCapabilities.map((capability) => {
+              const restriction = mcpRestrictions.find(
+                (candidate) => candidate.capabilityId === capability.id
+              );
+              const selected = restriction?.enabled
+                ? restriction.approvalMode
+                : "deny";
+              return (
+                <div
+                  className="flex flex-wrap items-center gap-2 rounded-md border p-3"
+                  key={capability.id}
+                >
+                  <div className="mr-auto min-w-0">
+                    <p className="truncate font-medium text-sm">
+                      {capability.displayName ?? capability.capabilityKey}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      {capability.serverName} · {capability.kind}
+                    </p>
+                  </div>
+                  {(["auto", "ask", "deny"] as const).map((mode) => (
+                    <Button
+                      disabled={
+                        !canEdit ||
+                        (mode === "auto" && capability.approvalMode !== "auto")
+                      }
+                      key={mode}
+                      onClick={() => void setMcpRestriction(capability, mode)}
+                      size="sm"
+                      variant={selected === mode ? "default" : "outline"}
+                    >
+                      {mode}
+                    </Button>
+                  ))}
+                </div>
+              );
+            })
+          )}
         </CardContent>
       </Card>
     </AppPage>

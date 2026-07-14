@@ -1,4 +1,7 @@
-import { readAgentState } from "../../../src/runtime/state.js";
+import {
+  CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
+  readAgentState,
+} from "../../../src/runtime/state.js";
 import type {
   RuntimeAgentState,
   RuntimeCanonicalWaitingForState,
@@ -28,6 +31,7 @@ export interface ReferenceReactAgentState extends Omit<
   waitingFor?: ReactWaitState | RuntimeCanonicalWaitingForState | ReferenceReactStateRecord | undefined;
   terminal?: ReferenceReactTerminalPatch | undefined;
   finalOutput?: unknown;
+  assistantText: string | null;
   retryContext?: ReferenceReactStateRecord | undefined;
 }
 
@@ -44,7 +48,7 @@ export function getAgentState(value: unknown): ReferenceReactAgentState {
       : {};
   const agent = readAgentState({
     runtime: {
-      schemaVersion: 1,
+      schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
     },
     agent: record,
   }) as ReferenceReactAgentState;
@@ -103,6 +107,12 @@ export function createReferenceReactFinalOutputPatch(
   finalOutput: ReferenceReactAgentState["finalOutput"],
 ): Pick<ReferenceReactAgentState, "finalOutput"> {
   return { finalOutput };
+}
+
+export function createReferenceReactAssistantTextPatch(
+  assistantText: ReferenceReactAgentState["assistantText"],
+): Pick<ReferenceReactAgentState, "assistantText"> {
+  return { assistantText };
 }
 
 export function createReferenceReactRetryContextPatch(

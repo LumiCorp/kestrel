@@ -170,6 +170,7 @@ export async function createMediaGenerationJob(input: CreateMediaJobInput) {
   const resolved = await getResolvedGatewayExecutionModel({
     selection: input.modelId,
     modality: input.kind,
+    organizationId: input.organizationId,
   });
 
   if (!resolved) {

@@ -742,7 +742,10 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_LOG_PATH=/kestrel-attempt/kestrel-home/dev-shell/service.log"));
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STATUS_PATH=/kestrel-attempt/kestrel-home/dev-shell/bootstrap-status.json"));
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000"));
-    assert.ok(dockerRun.args.includes("KESTREL_RUNNER_PROCESS_MODE=inprocess"));
+    assert.equal(
+      dockerRun.args.some((arg) => arg.startsWith("KESTREL_RUNNER_PROCESS_MODE=")),
+      false,
+    );
     assert.ok(dockerRun.args.includes("KESTREL_MODEL_PROMPT_DUMP=1"));
     assert.ok(dockerRun.args.includes("KESTREL_MODEL_PROMPT_DUMP_DIR=/kestrel-attempt/model-prompts"));
     const attemptRoot = path.join(

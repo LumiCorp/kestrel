@@ -30,8 +30,11 @@ Use that loop when a run is blocked, a child thread needs attention, or an opera
 import { KestrelClient } from "@kestrel-agents/sdk/runner";
 
 const client = new KestrelClient({
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
 });
 
 const context = {

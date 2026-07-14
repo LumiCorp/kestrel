@@ -11,7 +11,6 @@
     "typecheck": "pnpm --filter @kestrel-agents/sdk build && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@kestrel-agents/kestrel": "0.5.1",
     "@kestrel-agents/sdk": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:*"
   },

@@ -1,4 +1,9 @@
 import type {
+  RunnerCommandType as CanonicalRunnerCommandType,
+  RunnerEventType as CanonicalRunnerEventType,
+  RunnerRunStreamEventType,
+} from "@kestrel-agents/protocol";
+import type {
   ClientCapabilities,
   McpStatusSnapshot,
   ProductProjectAction,
@@ -10,8 +15,8 @@ import type {
   ProgressUpdateV1,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
-  RunToolUpdateV1,
   RunLogEntry,
+  RunToolUpdateV1,
   ToolExecutionClass,
   WorkspaceCheckpointCleanupPolicy,
   WorkspaceCheckpointCleanupResult,
@@ -22,23 +27,7 @@ import type {
   WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
 } from "../../src/index.js";
-import type { RunnerRunStreamEventType } from "@kestrel-agents/protocol";
-import type { DelegationTaskMeta, TuiProfile } from "../contracts.js";
-import type { JobInputV1, JobReplayPointerV1, JobRunResultV1 } from "../job/contracts.js";
-import type { OperatorAssemblySummary } from "../contracts.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
-
-import type {
-  OperatorChildBlockerChainSummary,
-  OperatorCheckpointSummary,
-  OperatorChildBlockerSummary,
-  OperatorFanInDispositionSummary,
-  OperatorSupervisionSummary,
-  OperatorSupervisedChildSummary,
-  OperatorInboxSummary,
-  OperatorSteeringSummary,
-} from "../contracts.js";
-import type { RunTurnInput, RunTurnResult } from "../runtime/KestrelChatRuntime.js";
 import type {
   OperatorInboxSnapshot,
   OperatorRunIndexView,
@@ -47,40 +36,30 @@ import type {
   OperatorThreadView,
 } from "../../src/orchestration/contracts.js";
 import type { VisibleTodoState } from "../../src/runtime/visibleTodos.js";
+import type {
+  DelegationTaskMeta,
+  OperatorAssemblySummary,
+  OperatorCheckpointSummary,
+  OperatorChildBlockerChainSummary,
+  OperatorChildBlockerSummary,
+  OperatorFanInDispositionSummary,
+  OperatorInboxSummary,
+  OperatorSteeringSummary,
+  OperatorSupervisedChildSummary,
+  OperatorSupervisionSummary,
+  TuiProfile,
+} from "../contracts.js";
+import type {
+  JobInputV1,
+  JobReplayPointerV1,
+  JobRunResultV1,
+} from "../job/contracts.js";
+import type {
+  RunTurnInput,
+  RunTurnResult,
+} from "../runtime/KestrelChatRuntime.js";
 
-export type RunnerCommandType =
-  | "profile.list"
-  | "profile.get"
-  | "job.run"
-  | "run.start"
-  | "run.cancel"
-  | "session.describe"
-  | "session.state"
-  | "operator.inbox"
-  | "operator.thread"
-  | "operator.runs"
-  | "operator.run"
-  | "operator.control"
-  | "task.graph.get"
-  | "task.graph.update"
-  | "workspace.checkpoint.capture"
-  | "workspace.checkpoint.list"
-  | "workspace.checkpoint.inspect"
-  | "workspace.checkpoint.diff"
-  | "workspace.checkpoint.restore"
-  | "workspace.checkpoint.cleanup"
-  | "workspace.promotion.list"
-  | "workspace.promotion.preview"
-  | "workspace.promotion.apply"
-  | "workspace.promotion.undo_latest"
-  | "project.snapshot.get"
-  | "project.snapshot.update"
-  | "project.action"
-  | "project.review.get"
-  | "project.review.action"
-  | "runner.ping"
-  | "mcp.status"
-  | "mcp.refresh";
+export type RunnerCommandType = CanonicalRunnerCommandType;
 
 export type RunnerActorType = "end_user" | "operator" | "service";
 
@@ -111,26 +90,49 @@ export interface RunnerEventSubscriptionRequest {
   metadata?: RunnerCommandMetadata | undefined;
 }
 
-export interface RunnerCommandEnvelope<TType extends RunnerCommandType = RunnerCommandType> {
+export interface RunnerCommandEnvelope<
+  TType extends RunnerCommandType = RunnerCommandType,
+> {
   id: string;
   type: TType;
   payload: RunnerCommandPayloadByType[TType];
   metadata?: RunnerCommandMetadata | undefined;
 }
 
-export interface RunStartCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
+type TuiProfileReference =
+  | {
+      profile: TuiProfile;
+      profileId?: never;
+    }
+  | {
+      profile?: never;
+      profileId: string;
+    };
+
+type JobInputBase = Omit<JobInputV1, "profile" | "profileId">;
+
+type JobInputWithoutProfileReference = JobInputBase & {
+  profile?: never;
+  profileId?: never;
+};
+
+type JobInputWithProfileReference = JobInputBase & TuiProfileReference;
+
+export type RunStartCommandPayload = TuiProfileReference & {
   turn: RunTurnInput;
-}
+};
 
-export interface JobRunCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-  input: JobInputV1;
-}
+export type JobRunCommandPayload =
+  | (TuiProfileReference & {
+      input: JobInputWithoutProfileReference;
+    })
+  | {
+      profile?: never;
+      profileId?: never;
+      input: JobInputWithProfileReference;
+    };
 
-export interface ProfileListCommandPayload {}
+export type ProfileListCommandPayload = {};
 
 export interface ProfileGetCommandPayload {
   profileId: string;
@@ -208,7 +210,13 @@ export interface OperatorControlCommandPayload {
   rolePrompt?: string | undefined;
   goal?: string | undefined;
   profileId?: string | undefined;
-  provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  provider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   skillPackId?: string | undefined;
   maxTurns?: number | undefined;
@@ -319,15 +327,9 @@ export interface ProjectReviewActionCommandPayload {
   action: ProductReviewAction;
 }
 
-export interface McpStatusCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-}
+export type McpStatusCommandPayload = TuiProfileReference;
 
-export interface McpRefreshCommandPayload {
-  profile?: TuiProfile | undefined;
-  profileId?: string | undefined;
-}
+export type McpRefreshCommandPayload = TuiProfileReference;
 
 export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
@@ -364,32 +366,11 @@ export interface RunnerCommandPayloadByType {
   "mcp.refresh": McpRefreshCommandPayload;
 }
 
-export type RunnerEventType =
-  | "profile.listed"
-  | "profile.loaded"
-  | "job.started"
-  | "job.progress"
-  | "job.completed"
-  | "job.failed"
-  | RunnerRunStreamEventType
-  | "runner.error"
-  | "runner.pong"
-  | "session.described"
-  | "session.state"
-  | "operator.inbox"
-  | "operator.thread"
-  | "operator.runs"
-  | "operator.run"
-  | "operator.controlled"
-  | "task.updated"
-  | "task.graph"
-  | "workspace.checkpoint"
-  | "project.snapshot"
-  | "project.review"
-  | "mcp.status"
-  | "mcp.refreshed";
+export type RunnerEventType = CanonicalRunnerEventType;
 
-export interface RunnerEventEnvelope<TType extends RunnerEventType = RunnerEventType> {
+export interface RunnerEventEnvelope<
+  TType extends RunnerEventType = RunnerEventType,
+> {
   id: string;
   type: TType;
   ts: string;
@@ -408,13 +389,13 @@ export type RunnerEvent = {
   [K in RunnerEventType]: RunnerEventEnvelope<K>;
 }[RunnerEventType];
 
-export const RUN_STARTED_INTERACTION_MODES = [
-  "chat",
-  "plan",
-  "build",
-] as const;
+export const RUN_STARTED_INTERACTION_MODES = ["chat", "plan", "build"] as const;
 
-export const RUN_STARTED_ACT_SUBMODES = ["strict", "safe", "full_auto"] as const;
+export const RUN_STARTED_ACT_SUBMODES = [
+  "strict",
+  "safe",
+  "full_auto",
+] as const;
 
 export interface RunStartedEventPayload {
   sessionId: string;
@@ -424,14 +405,26 @@ export interface RunStartedEventPayload {
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  mcpContext?:
+    | import("../../src/mcp/hosted-contracts.js").HostedMcpContext
+    | undefined;
   clientCapabilities?: ClientCapabilities | undefined;
   executionPolicy?:
     | {
-        toolClassPolicy?: Partial<Record<"read_only" | "sandboxed_only" | "external_side_effect", boolean>> | undefined;
+        toolClassPolicy?:
+          | Partial<
+              Record<
+                "read_only" | "sandboxed_only" | "external_side_effect",
+                boolean
+              >
+            >
+          | undefined;
         capabilityPolicy?: Record<string, boolean> | undefined;
-        approvalPolicy?: {
-          strictApprovalPerCall?: boolean | undefined;
-        } | undefined;
+        approvalPolicy?:
+          | {
+              strictApprovalPerCall?: boolean | undefined;
+            }
+          | undefined;
       }
     | undefined;
 }
@@ -489,6 +482,7 @@ export interface RunToolEventPayload {
 export interface RunCancelledEventPayload {
   sessionId: string;
   runId?: string | undefined;
+  result: RunTurnResult;
 }
 
 export interface RunCompletedEventPayload {
@@ -496,7 +490,7 @@ export interface RunCompletedEventPayload {
 }
 
 export interface RunFailedEventPayload {
-  result?: RunTurnResult | undefined;
+  result: RunTurnResult;
   error: {
     code: string;
     message: string;
@@ -533,9 +527,15 @@ export interface SessionDescribedEventPayload {
   latestCheckpointDisposition?: OperatorCheckpointSummary["status"] | undefined;
   latestFanInDisposition?: OperatorFanInDispositionSummary | undefined;
   latestSteering?: OperatorSteeringSummary | undefined;
-  latestReasoning?: import("../contracts.js").OperatorReasoningSummary | undefined;
-  latestAdaptation?: import("../contracts.js").OperatorAdaptationSummary | undefined;
-  latestEvidenceRecovery?: import("../contracts.js").OperatorEvidenceRecoverySummary | undefined;
+  latestReasoning?:
+    | import("../contracts.js").OperatorReasoningSummary
+    | undefined;
+  latestAdaptation?:
+    | import("../contracts.js").OperatorAdaptationSummary
+    | undefined;
+  latestEvidenceRecovery?:
+    | import("../contracts.js").OperatorEvidenceRecoverySummary
+    | undefined;
   supervision?: OperatorSupervisionSummary | undefined;
   nextAction?: string | undefined;
   visibleTodos?: VisibleTodoState | undefined;
@@ -585,6 +585,7 @@ export interface ProfileLoadedEventPayload {
 export interface TaskUpdatedEventPayload {
   task: DelegationTaskMeta;
   kind: "spawned" | "waiting" | "completed" | "failed";
+  assistantText: string | null;
   finalizedPayload?: unknown | undefined;
 }
 
@@ -674,7 +675,9 @@ export interface RunnerEventPayloadByType {
   "mcp.refreshed": McpRefreshedEventPayload;
 }
 
-export function isRunnerCommandEnvelope(value: unknown): value is RunnerCommand {
+export function isRunnerCommandEnvelope(
+  value: unknown
+): value is RunnerCommand {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }

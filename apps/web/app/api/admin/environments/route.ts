@@ -6,12 +6,12 @@ import {
   setAdminEnvironmentRollout,
 } from "@/lib/admin/environments";
 import { createEnvironmentInputSchema } from "@/lib/environments/contracts";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
 export async function GET() {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     return NextResponse.json({
       environments: await listAdminEnvironments(organizationId),
       rollout: await getAdminEnvironmentRollout(organizationId),
@@ -23,7 +23,7 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const payload = (await request.json()) as { enabled?: unknown };
     if (typeof payload.enabled !== "boolean") {
       return NextResponse.json(
@@ -45,7 +45,7 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const environment = createEnvironmentInputSchema.parse(
       await request.json()
     );

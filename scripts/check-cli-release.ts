@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { request } from "node:http";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -15,15 +16,32 @@ const REQUIRED_LIBEXEC_PATHS = [
   "package.json",
   "cli/tui.ts",
   "cli/kcron.ts",
-  "cli/runner/main.ts",
+  "cli/client/ProtocolClient.ts",
+  "cli/client/RemoteRunnerTransport.ts",
+  "src/localCore/LocalCoreRunnerTransport.ts",
+  "cli/client/configuredTransport.ts",
+  "cli/client/configuredClient.ts",
+  "cli/client/coreExecutionProfile.ts",
+  "cli/webRunnerProxy.ts",
+  "cli/runner/RunnerServiceEventJournal.ts",
+  "cli/runner/RunnerServiceHost.ts",
   "src/localCore/index.ts",
   "src/localCore/contracts.ts",
   "src/localCore/home.ts",
   "src/localCore/api.ts",
   "src/localCore/client.ts",
+  "src/localCore/connection.ts",
+  "src/localCore/credentialStore.ts",
   "src/localCore/daemon.ts",
   "src/localCore/daemonMain.ts",
   "src/localCore/legacyState.ts",
+  "src/localCore/executionRuntime.ts",
+  "src/localCore/macosKeychainCredentialStore.ts",
+  "src/localCore/profileProvider.ts",
+  "src/localCore/protocolEventJournal.ts",
+  "src/localCore/runtimeEnvironment.ts",
+  "src/localCore/store.ts",
+  "src/replay/RuntimeReplayBundle.ts",
   "postgres-bundle/darwin-arm64/bin/initdb",
   "postgres-bundle/darwin-arm64/bin/postgres",
   "postgres-bundle/darwin-arm64/bin/pg_ctl",
@@ -32,11 +50,18 @@ const REQUIRED_LIBEXEC_PATHS = [
   "agents/reference-react/src/index.ts",
   "tools/createDefaultToolGateway.ts",
   "db/migrations/001_sessions_runs.sql",
+  "db/migrations/023_runner_protocol_events.sql",
   "scripts/migrate.ts",
+  "scripts/kchat-smoke.ts",
   "scripts/local-core-release-smoke.ts",
   "models/ollama/createOllamaModelGateway.ts",
   "bin/kestrel.js",
   "bin/kestrel-core.js",
+] as const;
+const FORBIDDEN_LIBEXEC_PATHS = [
+  "cli/client/InProcessRunnerTransport.ts",
+  "cli/client/RunnerProcess.ts",
+  "cli/runner/main.ts",
 ] as const;
 const REQUIRED_DEPENDENCIES = [
   "tsx",
@@ -80,7 +105,7 @@ function checkSuiteVersion(): void {
 
 async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   const binRoot = path.join(extractRoot, "bin");
-  const libexecRoot = path.join(extractRoot, "libexec");
+  const libexecRoot = realpathSync(path.join(extractRoot, "libexec"));
   for (const name of CLI_NAMES) {
     const launcherPath = path.join(binRoot, name);
     if (!existsSync(launcherPath)) {
@@ -110,6 +135,11 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   for (const relativePath of REQUIRED_LIBEXEC_PATHS) {
     if (!existsSync(path.join(libexecRoot, relativePath))) {
       errors.push(`artifact missing libexec/${relativePath}`);
+    }
+  }
+  for (const relativePath of FORBIDDEN_LIBEXEC_PATHS) {
+    if (existsSync(path.join(libexecRoot, relativePath))) {
+      errors.push(`artifact must not include embedded CLI execution authority libexec/${relativePath}`);
     }
   }
 
@@ -176,10 +206,39 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
     expectOutput(kestrel, ["status"], cwd, env, /Kestrel Local Core|Local Core/u, "kestrel status");
     expectOutput(kcron, ["--version"], cwd, env, /0\.5\.1/u, "kcron --version");
     expectOutput(kcron, ["status"], cwd, env, /kcron:/u, "kcron status");
+    smokePackagedProtocolClient(extractRoot, cwd, env);
     await smokeWebRunner(kestrel, cwd, env);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+function smokePackagedProtocolClient(
+  extractRoot: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const libexecRoot = realpathSync(path.join(extractRoot, "libexec"));
+  const require = createRequire(path.join(libexecRoot, "package.json"));
+  const tsxImport = require.resolve("tsx");
+  const smokeScript = path.join(libexecRoot, "scripts", "kchat-smoke.ts");
+  try {
+    const output = execFileSync(process.execPath, ["--import", tsxImport, smokeScript], {
+      cwd,
+      env: {
+        ...env,
+        KESTREL_CLI_LIBEXEC: libexecRoot,
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    });
+    if (!/kchat smoke: protocol ok/u.test(output)) {
+      errors.push(`packaged protocol client smoke output was unexpected: ${JSON.stringify(output.slice(0, 400))}`);
+    }
+  } catch (error) {
+    errors.push(`packaged protocol client smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

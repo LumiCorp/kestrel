@@ -1,18 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 
+import {
+  isRunnerEventAllowedForCommand,
+  isRunnerTerminalResponseEvent,
+  parseRunnerCommandV2,
+  parseRunnerEventV2,
+} from "@kestrel-agents/protocol";
+
 import type {
   RunnerCommandEnvelope,
   RunnerCommandMetadata,
   RunnerCommandPayloadByType,
   RunnerCommandType,
   RunnerEvent,
-  RunnerEventType,
 } from "../protocol/contracts.js";
 
 const protocolClientRequire = createRequire(import.meta.url);
 
 interface PendingRequest {
+  commandType: RunnerCommandType;
   resolve: (event: RunnerEvent) => void;
   reject: (error: Error) => void;
 }
@@ -20,6 +27,11 @@ interface PendingRequest {
 export interface RunnerExitDiagnostics {
   lastProcessError?: string | undefined;
   recentStderr: string[];
+}
+
+export interface ProtocolClientOptions {
+  defaultMetadata?: RunnerCommandMetadata | undefined;
+  defaultExecutionDurability?: RunnerCommandMetadata["durability"] | undefined;
 }
 
 interface ProtocolClientRunnerError extends Error {
@@ -39,6 +51,8 @@ interface ProtocolTransport {
 
 export class ProtocolClient {
   private readonly transport: ProtocolTransport;
+  private readonly defaultMetadata: RunnerCommandMetadata | undefined;
+  private readonly defaultExecutionDurability: RunnerCommandMetadata["durability"] | undefined;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Set<(event: RunnerEvent) => void>();
   private readonly recentStderr: string[] = [];
@@ -46,8 +60,13 @@ export class ProtocolClient {
   private closed = false;
   private lastProcessError: string | undefined;
 
-  constructor(transport: ProtocolTransport = createDefaultTransport()) {
+  constructor(
+    transport: ProtocolTransport = createDefaultTransport(),
+    options: ProtocolClientOptions = {},
+  ) {
     this.transport = transport;
+    this.defaultMetadata = options.defaultMetadata;
+    this.defaultExecutionDurability = options.defaultExecutionDurability;
   }
 
   start(): void {
@@ -100,17 +119,25 @@ export class ProtocolClient {
       throw new Error(`Protocol command id '${commandId}' is already in use`);
     }
 
+    const effectiveMetadata = mergeRunnerCommandMetadata({
+      defaults: this.defaultMetadata,
+      command: metadata,
+      executionDurability: isExecutionCommand(type)
+        ? this.defaultExecutionDurability
+        : undefined,
+    });
     const command: RunnerCommandEnvelope<TType> = {
       id: commandId,
       type,
       payload,
-      ...(metadata !== undefined ? { metadata } : {}),
+      ...(effectiveMetadata !== undefined ? { metadata: effectiveMetadata } : {}),
     };
+    const serializedCommand = JSON.stringify(parseRunnerCommandV2(command));
 
     const response = await new Promise<RunnerEvent>((resolve, reject) => {
-      this.pending.set(commandId, { resolve, reject });
+      this.pending.set(commandId, { commandType: type, resolve, reject });
       try {
-        this.transport.send(JSON.stringify(command));
+        this.transport.send(serializedCommand);
       } catch (error) {
         this.pending.delete(commandId);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -148,11 +175,26 @@ export class ProtocolClient {
       return;
     }
 
-    if (isRunnerEventEnvelope(decoded) === false) {
-      return;
+    let event: RunnerEvent;
+    try {
+      event = parseRunnerEventV2(decoded) as unknown as RunnerEvent;
+    } catch (error) {
+      event = createProtocolErrorEvent(decoded, error);
     }
-
-    const event = decoded;
+    const correlatedPending = event.commandId === undefined
+      ? undefined
+      : this.pending.get(event.commandId);
+    if (
+      correlatedPending !== undefined
+      && isRunnerEventAllowedForCommand(correlatedPending.commandType, event) === false
+    ) {
+      event = createProtocolErrorEvent(
+        event,
+        new Error(
+          `Command '${correlatedPending.commandType}' received unexpected event '${event.type}'.`,
+        ),
+      );
+    }
     if (event.type === "runner.error" && event.commandId === undefined) {
       this.lastProcessError = normalizeDiagnosticLine(event.payload.message);
     }
@@ -174,7 +216,7 @@ export class ProtocolClient {
       return;
     }
 
-    if (isTerminalResponseEvent(event.type)) {
+    if (isRunnerTerminalResponseEvent(event.type)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
         const error = new Error(event.payload.message) as ProtocolClientRunnerError;
@@ -229,9 +271,44 @@ export class ProtocolClient {
   }
 }
 
+function isExecutionCommand(type: RunnerCommandType): boolean {
+  return type === "run.start" || type === "job.run";
+}
+
+function mergeRunnerCommandMetadata(input: {
+  defaults?: RunnerCommandMetadata | undefined;
+  command?: RunnerCommandMetadata | undefined;
+  executionDurability?: RunnerCommandMetadata["durability"] | undefined;
+}): RunnerCommandMetadata | undefined {
+  const actor = input.command?.actor ?? input.defaults?.actor;
+  const tenantId = input.command?.tenantId ?? input.defaults?.tenantId;
+  const profile = input.command?.profile ?? input.defaults?.profile;
+  const durability = input.command?.durability
+    ?? input.executionDurability
+    ?? input.defaults?.durability;
+
+  if (
+    actor === undefined
+    && tenantId === undefined
+    && profile === undefined
+    && durability === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(actor !== undefined ? { actor } : {}),
+    ...(tenantId !== undefined ? { tenantId } : {}),
+    ...(profile !== undefined ? { profile } : {}),
+    ...(durability !== undefined ? { durability } : {}),
+  };
+}
+
 function createDefaultTransport(): ProtocolTransport {
-  const { RunnerProcess } = protocolClientRequire("./RunnerProcess.js") as typeof import("./RunnerProcess.js");
-  return new RunnerProcess();
+  const { createConfiguredRunnerTransport } = protocolClientRequire(
+    "./configuredTransport.js",
+  ) as typeof import("./configuredTransport.js");
+  return createConfiguredRunnerTransport();
 }
 
 const MAX_RECENT_STDERR_LINES = 32;
@@ -281,45 +358,40 @@ function normalizeDiagnosticLine(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-function isTerminalResponseEvent(type: RunnerEventType): boolean {
-  return (
-    type === "profile.listed" ||
-    type === "profile.loaded" ||
-    type === "job.completed" ||
-    type === "job.failed" ||
-    type === "run.completed" ||
-    type === "run.failed" ||
-    type === "run.cancelled" ||
-    type === "runner.pong" ||
-    type === "session.described" ||
-    type === "session.state" ||
-    type === "operator.inbox" ||
-    type === "operator.thread" ||
-    type === "operator.runs" ||
-    type === "operator.run" ||
-    type === "operator.controlled" ||
-    type === "task.graph" ||
-    type === "workspace.checkpoint" ||
-    type === "project.snapshot" ||
-    type === "project.review" ||
-    type === "runner.error" ||
-    type === "mcp.status" ||
-    type === "mcp.refreshed"
-  );
+function createProtocolErrorEvent(value: unknown, cause: unknown): RunnerEvent {
+  const source = isRecord(value) ? value : {};
+  const eventType = optionalNonEmptyString(source.type);
+  const runId = optionalNonEmptyString(source.runId);
+  const sessionId = optionalNonEmptyString(source.sessionId);
+  const threadId = optionalNonEmptyString(source.threadId);
+  const commandId = optionalNonEmptyString(source.commandId);
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return {
+    id: optionalNonEmptyString(source.id) ?? `runner-protocol-error-${randomUUID()}`,
+    type: "runner.error",
+    ts: optionalNonEmptyString(source.ts) ?? new Date().toISOString(),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(commandId !== undefined ? { commandId } : {}),
+    payload: {
+      code: "RUNNER_PROTOCOL_INVALID",
+      message: `Invalid runner event${eventType === undefined ? "" : ` '${eventType}'`}: ${detail}`,
+      details: eventType === undefined ? {} : { eventType },
+    },
+  };
 }
 
-function isRunnerEventEnvelope(value: unknown): value is RunnerEvent {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && Array.isArray(value) === false;
+}
 
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.type === "string" &&
-    typeof record.ts === "string" &&
-    record.payload !== undefined
-  );
+function optionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 export type { ProtocolTransport };

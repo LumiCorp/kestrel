@@ -63,6 +63,26 @@ test("RemoteRunnerTransport sends unary commands over HTTP with auth", async () 
   await client.close();
 });
 
+test("RemoteRunnerTransport rejects unary responses with a mismatched command id", async () => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async () => Response.json({
+      id: "evt-wrong-command-id",
+      type: "runner.pong",
+      ts: new Date().toISOString(),
+      commandId: "another-command",
+      payload: { nonce: "ok" },
+    }),
+  });
+  const client = new ProtocolClient(transport);
+
+  await assert.rejects(
+    client.sendCommand("runner.ping", { nonce: "ok" }),
+    /unexpected command or response type/i,
+  );
+  await client.close();
+});
+
 test("RemoteRunnerTransport preserves streamed runner events over SSE", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
@@ -86,6 +106,7 @@ test("RemoteRunnerTransport preserves streamed runner events over SSE", async ()
         runId: "run-1",
         payload: {
           result: {
+            assistantText: "Remote runner completed.",
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -146,6 +167,125 @@ test("RemoteRunnerTransport preserves streamed runner events over SSE", async ()
   await client.close();
 });
 
+test("RemoteRunnerTransport rejects nonterminal SSE events for another command", async () => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async () => new Response(
+      `event: run.started\ndata: ${JSON.stringify({
+        id: "evt-wrong-progress-command",
+        type: "run.started",
+        ts: new Date().toISOString(),
+        commandId: "another-command",
+        payload: {
+          sessionId: "session-wrong-progress",
+          eventType: "user.message",
+        },
+      })}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    ),
+  });
+  const client = new ProtocolClient(transport);
+
+  await assert.rejects(
+    client.sendCommandWithId("cmd-wrong-progress", "run.start", {
+      profile,
+      turn: {
+        sessionId: "session-wrong-progress",
+        message: "receive mismatched progress",
+        eventType: "user.message",
+      },
+    }),
+    /unexpected command or response type/i,
+  );
+  await client.close();
+});
+
+test("RemoteRunnerTransport routes job.run through the canonical streaming endpoint", async () => {
+  const requests: Array<{ url: string; accept: string | undefined; command: RunnerCommand }> = [];
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal/",
+    fetchImpl: async (input, init) => {
+      const command = JSON.parse(String(init?.body)) as RunnerCommand;
+      requests.push({
+        url: String(input),
+        accept: (init?.headers as Record<string, string> | undefined)?.Accept,
+        command,
+      });
+      const replay = {
+        version: "job_replay_pointer_v1",
+        sessionId: "session-job-1",
+        threadId: "thread-job-1",
+        runId: "run-job-1",
+        replayQuery: {
+          sessionId: "session-job-1",
+          threadId: "thread-job-1",
+          runId: "run-job-1",
+        },
+        commands: {
+          replay: "kestrel runtime replay --run-id run-job-1",
+          doctor: "kestrel runtime doctor --run-id run-job-1",
+          bundle: "kestrel runtime bundle --run-id run-job-1 --out bundle.json",
+        },
+      } as const;
+      const completed = {
+        id: "evt-job-completed",
+        type: "job.completed",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        payload: {
+          output: {
+            version: "job_run_result_v1",
+            sessionId: "session-job-1",
+            threadId: "thread-job-1",
+            runId: "run-job-1",
+            status: "COMPLETED",
+            replay,
+            result: {
+              assistantText: "Job completed.",
+              finalizedPayload: null,
+              output: {
+                status: "COMPLETED",
+                sessionId: "session-job-1",
+                runId: "run-job-1",
+                errors: [],
+              },
+            },
+          },
+          replay,
+        },
+      };
+      return new Response(
+        `event: job.completed\ndata: ${JSON.stringify(completed)}\n\n`,
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+
+  const response = await client.sendCommandWithId("cmd-job-1", "job.run", {
+    profile,
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "session-job-1",
+        message: "run unattended",
+        eventType: "job.run",
+      },
+    },
+  });
+
+  assert.equal(response.type, "job.completed");
+  assert.equal(requests[0]?.url, "http://runner.internal/commands/stream");
+  assert.equal(requests[0]?.accept, "text/event-stream, application/json");
+  assert.equal(requests[0]?.command.type, "job.run");
+  await client.close();
+});
+
 test("RemoteRunnerTransport rejects unreadable unary responses with a synthetic runner error", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
@@ -174,6 +314,40 @@ test("RemoteRunnerTransport rejects unreadable unary responses with a synthetic 
         },
       ),
     /unreadable response \(502\)/i,
+  );
+
+  await client.close();
+});
+
+test("RemoteRunnerTransport rejects schema-invalid runner events", async () => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as RunnerCommand;
+      return new Response(
+        JSON.stringify({
+          id: "evt-malformed-pong",
+          type: "runner.pong",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            nonce: 42,
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+
+  await assert.rejects(
+    () => client.sendCommand("runner.ping", { nonce: "ok" }),
+    /payload\.nonce must be a string/u,
   );
 
   await client.close();

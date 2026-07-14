@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listEnvironmentOperations } from "@/lib/environments/store";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -12,7 +12,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     const { id } = paramsSchema.parse(await context.params);
     return NextResponse.json({
       operations: await listEnvironmentOperations({

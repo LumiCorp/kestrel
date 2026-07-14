@@ -81,6 +81,7 @@ export function toKestrelError(payload: RunnerErrorEventPayload): KestrelSdkErro
   }
   if (
     payload.code === "RUNNER_PROTOCOL_ERROR" ||
+    payload.code === "RUNNER_PROTOCOL_INVALID" ||
     payload.code === "RUNNER_TRANSPORT_ERROR"
   ) {
     return new KestrelProtocolError(payload.message, {

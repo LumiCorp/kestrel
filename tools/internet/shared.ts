@@ -30,6 +30,7 @@ export function getInternetProvider(context: SharedToolContext): TavilyInternetP
   }
 
   return createTavilyInternetProvider({
+    ...(context.internetEnv !== undefined ? { env: context.internetEnv } : {}),
   });
 }
 

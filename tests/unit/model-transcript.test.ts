@@ -359,6 +359,66 @@ test("unknown tool result renders generic envelope fallback", () => {
   assert.doesNotMatch(rendered, /\nOutput:/u);
 });
 
+test("weather forecast transcript renders nested daily and hourly evidence", () => {
+  let transcript = appendAssistantToolCallsToTranscript({
+    transcript: undefined,
+    stepIndex: 1,
+    toolCalls: [
+      {
+        id: "call_weather",
+        name: "free.weather.forecast",
+        input: { city: "Cincinnati, OH", days: 4 },
+      },
+    ],
+  });
+  transcript = appendToolResultToTranscript({
+    transcript,
+    stepIndex: 2,
+    toolName: "free.weather.forecast",
+    toolInput: { city: "Cincinnati, OH", days: 4 },
+    toolOutput: {
+      source: "open-meteo",
+      timezone: "America/New_York",
+      requestedDays: 4,
+      granularity: "mixed",
+      target: { time: "2026-07-12T15:00", temperatureC: 27, windSpeedKph: 9 },
+      daily: [
+        {
+          date: "2026-07-15",
+          minTemperatureC: 21,
+          maxTemperatureC: 31,
+          precipitationProbabilityPct: 40,
+          precipitationMm: 2.1,
+          windSpeedKph: 12,
+          weatherCode: 61,
+        },
+      ],
+      nextHours: [
+        {
+          time: "2026-07-12T16:00",
+          temperatureC: 28,
+          apparentTemperatureC: 30,
+          precipitationProbabilityPct: 25,
+          precipitationMm: 0,
+          windSpeedKph: 10,
+        },
+      ],
+    },
+    toolCallId: "call_weather",
+  });
+
+  const rendered = String(renderModelTranscriptMessages({ transcript }).find((message) =>
+    message.role === "tool"
+  )?.content);
+
+  assert.match(rendered, /date=2026-07-15/u);
+  assert.match(rendered, /maxTemperatureC=31/u);
+  assert.match(rendered, /precipitationProbabilityPct=40/u);
+  assert.match(rendered, /condition=rain/u);
+  assert.match(rendered, /time=2026-07-12T16:00/u);
+  assert.match(rendered, /Raw output ref: tool-output:[a-f0-9]{16}/u);
+});
+
 test("re-appending same user task after tool results does not duplicate transcript user items", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,

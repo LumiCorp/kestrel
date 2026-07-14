@@ -42,6 +42,14 @@ export default async function ProjectPage({
     organizationDocuments: detail.organizationDocuments,
     members: detail.members,
     organizationMembers: detail.organizationMembers,
+    auditEvents: detail.auditEvents.map((event) => ({
+      id: event.id,
+      actorUserId: event.actorUserId,
+      action: event.action,
+      targetType: event.targetType,
+      targetId: event.targetId,
+      createdAt: event.createdAt.toISOString(),
+    })),
     threads: threads.map((thread) => ({
       id: thread.id,
       title: thread.title || "New thread",

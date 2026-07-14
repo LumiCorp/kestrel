@@ -217,6 +217,7 @@ test("applyReferenceReactExecPatch centralizes pending exec state merges", () =>
   assert.deepEqual(patched, {
     phase: "ACT",
     observations: [],
+    assistantText: null,
     exec: {
       substate: "dispatch",
       pendingEffectKey: undefined,

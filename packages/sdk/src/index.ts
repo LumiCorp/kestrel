@@ -9,13 +9,22 @@ export {
 export type * from "./agent.js";
 export type * from "./contracts.js";
 export {
+  EXECUTION_PROTOCOL_VERSION,
   RUNNER_CAPABILITIES,
+  RUNNER_COMMAND_TYPES,
   RUNNER_COMMAND_CONTRACT_VERSION,
+  RUNNER_EVENT_TYPES,
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
   RUNNER_SERVICE_NAME,
+  RUNNER_STREAMING_COMMAND_TYPES,
   RunnerProtocolContractError,
   createRunnerHealthV1,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
+  isRunnerStreamingCommandType,
+  parseRunnerCommandV2,
+  parseRunnerEventV2,
   parseRunnerHealthV1,
 } from "@kestrel-agents/protocol";
 export type {

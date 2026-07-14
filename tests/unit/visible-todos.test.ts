@@ -131,10 +131,11 @@ test("visible todo finalize readiness keeps actionable work blocking", () => {
 
 test("runtime state validation accepts visible todos", () => {
   const error = validateRuntimeSessionState({
-    runtime: { schemaVersion: 1 },
+    runtime: { schemaVersion: 2 },
     agent: {
       observations: [],
       exec: {},
+      assistantText: null,
       visibleTodos: {
         objective: "Build the app",
         items: [{ id: "build", text: "Run build", status: "pending" }],

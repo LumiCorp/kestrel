@@ -1,7 +1,9 @@
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import {
   LOCAL_CORE_SCHEMA_VERSION,
+  LOCAL_CORE_STATE_EPOCH,
   type EnsureLocalCoreReadyOptions,
+  type LocalCoreConfiguredDatabaseMode,
   type LocalCoreDatabaseStatus,
   type LocalCoreFailure,
   type LocalCoreStatus,
@@ -10,20 +12,23 @@ import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { acquireCoreLock } from "./lock.js";
 import { runLocalCoreMigrations } from "./migrations.js";
 import { createCoreManifest, readCoreManifest, writeCoreManifest } from "./manifest.js";
-import { ensureLocalCoreManagedPostgres } from "./postgres.js";
+import { ensureLocalCoreStore } from "./store.js";
 
 export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions): Promise<LocalCoreStatus> {
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
+  await mkdir(paths.stateRootPath, { recursive: true, mode: 0o700 });
+  await chmod(paths.stateRootPath, 0o700);
   const schemaVersion = options.schemaVersion ?? LOCAL_CORE_SCHEMA_VERSION;
   const isPidAlive = options.isPidAlive ?? isProcessAlive;
   const lock = await acquireCoreLock({
     homePath: home.homePath,
     coreVersion: options.coreVersion,
     ownerExecutable: options.ownerExecutable ?? process.execPath,
+    ownerPid: options.lockOwnerPid,
+    authorityId: options.lockAuthorityId,
     schemaVersion,
     socketPath: paths.apiSocketPath,
-    databaseSocketPath: paths.postgresSocketPath,
     now: options.now,
     isPidAlive,
   });
@@ -43,6 +48,35 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
       lastError: {
         code: lock.state === "incompatible" ? "LOCAL_CORE_VERSION_INCOMPATIBLE" : "LOCAL_CORE_LOCK_REPAIR_REQUIRED",
         message: lock.reason ?? "Kestrel Local Core lock requires attention.",
+      },
+    };
+  }
+
+  if (
+    options.lockOwnerPid !== undefined
+    && lock.state === "live"
+    && (
+      lock.lock.ownerPid !== options.lockOwnerPid
+      || (
+        options.lockAuthorityId !== undefined
+        && lock.lock.authorityId !== options.lockAuthorityId
+      )
+    )
+  ) {
+    return {
+      state: "blocked",
+      summary: "Another Kestrel Local Core authority already owns this state epoch.",
+      home,
+      lock,
+      dbMode: "unavailable",
+      database: unavailableDatabase("Another Kestrel Local Core authority already owns this state epoch."),
+      settingsReady: false,
+      workspaceRegistryReady: false,
+      diagnosticsPath: paths.diagnosticsPath,
+      logsPath: paths.logsPath,
+      lastError: {
+        code: "LOCAL_CORE_AUTHORITY_ALREADY_ACTIVE",
+        message: `Local Core authority belongs to another instance at pid ${lock.lock.ownerPid}.`,
       },
     };
   }
@@ -71,7 +105,11 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     });
   }
   if (existingManifest !== undefined) {
-    const manifestFailure = classifyManifestCompatibility(existingManifest.coreVersion, existingManifest.schemaVersion, options.coreVersion, schemaVersion);
+    const manifestFailure = classifyManifestCompatibility(
+      existingManifest.stateEpoch,
+      existingManifest.schemaVersion,
+      schemaVersion,
+    );
     if (manifestFailure !== undefined) {
       return blockedStatus({
         summary: manifestFailure.message,
@@ -85,19 +123,39 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
       });
     }
   }
-  const manifest = existingManifest ?? createCoreManifest({
-    homePath: home.homePath,
-    coreVersion: options.coreVersion,
-    schemaVersion,
-    dbMode: options.databaseMode ?? "managed",
-    capabilities: ["local-core.contract.v1"],
-    now: options.now,
-  });
-  if (existingManifest === undefined) {
+  const databaseMode = normalizeDatabaseMode(options.databaseMode);
+  const manifestCapabilities = [
+    "local-core.contract.v2",
+    "local-core.state-epoch.0.6",
+    ...(databaseMode === "pglite" ? ["local-core.store.pglite"] : ["local-core.store.external-postgres"]),
+  ].sort();
+  let manifest = existingManifest;
+  if (manifest === undefined) {
+    manifest = createCoreManifest({
+      homePath: home.homePath,
+      coreVersion: options.coreVersion,
+      schemaVersion,
+      dbMode: databaseMode,
+      capabilities: manifestCapabilities,
+      now: options.now,
+    });
+    await writeCoreManifest(home.homePath, manifest);
+  } else if (
+    manifest.coreVersion !== options.coreVersion
+    || manifest.dbMode !== databaseMode
+    || arraysEqual(manifest.capabilities, manifestCapabilities) === false
+  ) {
+    manifest = {
+      ...manifest,
+      coreVersion: options.coreVersion,
+      dbMode: databaseMode,
+      capabilities: manifestCapabilities,
+      updatedAt: (options.now ?? new Date()).toISOString(),
+    };
     await writeCoreManifest(home.homePath, manifest);
   }
 
-  const database = await resolveDatabaseStatus(options, paths);
+  const database = await resolveDatabaseStatus(options, paths, databaseMode);
   if (database.state === "blocked") {
     return blockedStatus({
       summary: database.summary,
@@ -114,7 +172,11 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     });
   }
 
-  if (options.runMigrations === true && normalizeString(options.repoRoot) === undefined) {
+  if (
+    databaseMode === "external"
+    && options.runMigrations === true
+    && normalizeString(options.repoRoot) === undefined
+  ) {
     return blockedStatus({
       summary: "Kestrel Local Core migrations require an explicit repo root.",
       home,
@@ -130,19 +192,27 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     });
   }
 
-  const migrations = options.runMigrations === true
-    ? await runLocalCoreMigrations({
-      homePath: home.homePath,
-      coreVersion: options.coreVersion,
-      schemaVersion,
-      ownerExecutable: options.ownerExecutable ?? process.execPath,
-      databaseUrl: database.databaseUrl ?? "",
-      repoRoot: options.repoRoot ?? "",
-      env: options.env,
-      now: options.now,
-      isPidAlive,
-    })
-    : undefined;
+  const migrations = options.runMigrations !== true
+    ? undefined
+    : databaseMode === "pglite"
+      ? {
+        state: "healthy" as const,
+        summary: "Core-owned PGlite schema ready.",
+        schemaVersion,
+        lock: { state: "missing" as const, lockPath: paths.migrationLockPath },
+        migrated: true,
+      }
+      : await runLocalCoreMigrations({
+        homePath: home.homePath,
+        coreVersion: options.coreVersion,
+        schemaVersion,
+        ownerExecutable: options.ownerExecutable ?? process.execPath,
+        databaseUrl: database.databaseUrl ?? "",
+        repoRoot: options.repoRoot ?? "",
+        env: options.env,
+        now: options.now,
+        isPidAlive,
+      });
   if (migrations?.state === "blocked") {
     return blockedStatus({
       summary: migrations.summary,
@@ -181,8 +251,8 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
 async function resolveDatabaseStatus(
   options: EnsureLocalCoreReadyOptions,
   paths: ReturnType<typeof resolveLocalCorePaths>,
+  mode: LocalCoreConfiguredDatabaseMode,
 ): Promise<LocalCoreDatabaseStatus> {
-  const mode = options.databaseMode ?? "managed";
   if (mode === "external") {
     const databaseUrl = options.externalDatabaseUrl
       ?? (options.allowInheritedDatabaseUrl === true ? normalizeString(options.env?.DATABASE_URL) : undefined);
@@ -201,60 +271,69 @@ async function resolveDatabaseStatus(
         },
       };
     }
-    return {
-      mode: "external",
-      state: "healthy",
-      summary: "Kestrel Local Core external database configured.",
-      managed: false,
-      initialized: true,
-      running: true,
-      identityVerified: true,
-      databaseUrl,
-    };
-  }
-
-  if (options.postgresBundleRootPath === undefined) {
-    return {
-      mode: "managed",
-      state: "blocked",
-      summary: "Kestrel Local Core managed database bundle root is not configured.",
-      managed: true,
-      initialized: false,
-      running: false,
-      identityVerified: false,
-      dataPath: paths.postgresDataPath,
-      socketPath: paths.postgresSocketPath,
-      metadataPath: paths.postgresMetadataPath,
-      logPath: paths.postgresLogPath,
-      lastError: {
-        code: "LOCAL_CORE_POSTGRES_BUNDLE_ROOT_REQUIRED",
-        message: "Managed database mode requires bundled Postgres resources.",
-      },
-    };
+    try {
+      await ensureLocalCoreStore({
+        homePath: paths.stateRootPath,
+        mode: "external",
+        externalDatabaseUrl: databaseUrl,
+      });
+      return {
+        mode: "external",
+        state: "healthy",
+        summary: "Kestrel Local Core external database ready.",
+        managed: false,
+        initialized: true,
+        running: true,
+        identityVerified: true,
+        databaseUrl,
+      };
+    } catch (error) {
+      return {
+        mode: "external",
+        state: "blocked",
+        summary: error instanceof Error ? error.message : String(error),
+        managed: false,
+        initialized: false,
+        running: false,
+        identityVerified: false,
+        databaseUrl,
+        lastError: {
+          code: "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   try {
-    return (await ensureLocalCoreManagedPostgres({
-      paths,
-      bundleRootPath: options.postgresBundleRootPath,
-      platform: options.platform,
-      isPidAlive: options.isPidAlive,
-    })).status;
+    const handle = await ensureLocalCoreStore({
+      homePath: paths.stateRootPath,
+      mode: "pglite",
+    });
+    return {
+      mode: "pglite",
+      state: "healthy",
+      summary: "Kestrel Local Core PGlite database ready.",
+      managed: true,
+      initialized: true,
+      running: true,
+      identityVerified: true,
+      pglitePath: handle.pglitePath,
+      dataPath: handle.pglitePath,
+    };
   } catch (error) {
     return {
-      mode: "managed",
+      mode: "pglite",
       state: "blocked",
       summary: error instanceof Error ? error.message : String(error),
       managed: true,
       initialized: false,
       running: false,
       identityVerified: false,
-      dataPath: paths.postgresDataPath,
-      socketPath: paths.postgresSocketPath,
-      metadataPath: paths.postgresMetadataPath,
-      logPath: paths.postgresLogPath,
+      pglitePath: paths.pgliteDataPath,
+      dataPath: paths.pgliteDataPath,
       lastError: {
-        code: "LOCAL_CORE_POSTGRES_UNEXPECTED_FAILURE",
+        code: "LOCAL_CORE_PGLITE_INIT_FAILED",
         message: error instanceof Error ? error.message : String(error),
       },
     };
@@ -262,15 +341,14 @@ async function resolveDatabaseStatus(
 }
 
 function classifyManifestCompatibility(
-  actualCoreVersion: string,
+  actualStateEpoch: string,
   actualSchemaVersion: number,
-  expectedCoreVersion: string,
   expectedSchemaVersion: number,
 ): LocalCoreFailure | undefined {
-  if (isManifestCoreVersionCompatible(actualCoreVersion, expectedCoreVersion) === false) {
+  if (actualStateEpoch !== LOCAL_CORE_STATE_EPOCH) {
     return {
-      code: "LOCAL_CORE_MANIFEST_VERSION_INCOMPATIBLE",
-      message: `Kestrel Local Core version ${actualCoreVersion} does not match shell version ${expectedCoreVersion}.`,
+      code: "LOCAL_CORE_STATE_EPOCH_INCOMPATIBLE",
+      message: `Kestrel Local Core state epoch ${actualStateEpoch} does not match requested epoch ${LOCAL_CORE_STATE_EPOCH}.`,
     };
   }
   if (actualSchemaVersion !== expectedSchemaVersion) {
@@ -282,12 +360,14 @@ function classifyManifestCompatibility(
   return undefined;
 }
 
-function isManifestCoreVersionCompatible(
-  actualCoreVersion: string,
-  expectedCoreVersion: string,
-): boolean {
-  return actualCoreVersion === expectedCoreVersion
-    || (actualCoreVersion === "0.5.0-beta.0" && expectedCoreVersion === "0.5.1");
+function normalizeDatabaseMode(
+  mode: EnsureLocalCoreReadyOptions["databaseMode"],
+): LocalCoreConfiguredDatabaseMode {
+  return mode === "external" ? "external" : "pglite";
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function blockedStatus(input: {

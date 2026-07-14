@@ -13,7 +13,7 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
     coreVersion: readRequiredEnv(env, "KESTREL_CORE_VERSION"),
     schemaVersion: parseInteger(env.KESTREL_CORE_SCHEMA_VERSION) ?? LOCAL_CORE_SCHEMA_VERSION,
     ownerExecutable: env.KESTREL_CORE_OWNER_EXECUTABLE ?? process.execPath,
-    databaseMode: env.KESTREL_CORE_DATABASE_MODE === "external" ? "external" : "managed",
+    databaseMode: env.KESTREL_CORE_DATABASE_MODE === "external" ? "external" : "pglite",
     externalDatabaseUrl: env.KESTREL_CORE_EXTERNAL_DATABASE_URL,
     allowInheritedDatabaseUrl: env.KESTREL_CORE_ALLOW_INHERITED_DATABASE_URL === "1",
     postgresBundleRootPath: env.KESTREL_LOCAL_CORE_POSTGRES_BUNDLE,

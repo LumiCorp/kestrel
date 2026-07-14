@@ -8,9 +8,6 @@ import type {
   RunnerTurnInput,
 } from "@kestrel-agents/sdk";
 import type { UIMessage } from "ai";
-import { extractFinalizedAssistantText } from "@/lib/agent/kestrel-stream-events";
-
-const EMPTY_FINAL_TEXT = "The run completed without a final assistant message.";
 
 export type KestrelOneExternalReplyUsage = {
   inputTokens?: number;
@@ -53,6 +50,8 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
   prompt: string;
   context: KestrelRequestContext;
   clientCapabilities: KestrelAgentTurnInput["clientCapabilities"];
+  mcpContext?: RunnerTurnInput["mcpContext"] | undefined;
+  mcpAuthorization?: RunnerTurnInput["mcpAuthorization"] | undefined;
 }): Promise<KestrelOneExternalReply> {
   const userMessage: UIMessage = {
     id: crypto.randomUUID(),
@@ -65,6 +64,10 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
       sessionId: input.sessionId,
       message: input.prompt,
       clientCapabilities: input.clientCapabilities,
+      ...(input.mcpContext ? { mcpContext: input.mcpContext } : {}),
+      ...(input.mcpAuthorization
+        ? { mcpAuthorization: input.mcpAuthorization }
+        : {}),
     },
     input.context
   );
@@ -89,10 +92,13 @@ function readTerminalText(terminal: RunnerRunTerminalEvent): string {
     });
   }
 
-  return (
-    extractFinalizedAssistantText(terminal.payload.result.finalizedPayload) ||
-    EMPTY_FINAL_TEXT
-  );
+  const assistantText = terminal.payload.result.assistantText;
+  if (assistantText === null) {
+    throw Object.assign(new Error("The Kestrel run completed without an assistant response."), {
+      code: "RUN_ASSISTANT_TEXT_MISSING",
+    });
+  }
+  return assistantText;
 }
 
 function readTokenUsage(

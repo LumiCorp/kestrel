@@ -1,24 +1,40 @@
 import assert from "node:assert/strict";
-import { before, test } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { after, before, test } from "node:test";
 
-import { prepareOpsFixtures } from "../helpers/database.js";
-import { OPS_FIXTURE_IDS } from "../helpers/fixtures.js";
+import { startLocalCoreApiServer, type LocalCoreApiServer } from "../../../src/localCore/api.js";
+import { ensureLocalCoreStore } from "../../../src/localCore/store.js";
+import { OPS_FIXTURE_IDS, seedOpsInspectionFixtures } from "../helpers/fixtures.js";
 import { runRuntimeCli } from "../helpers/runtimeCli.js";
 
-let databaseUrl = "";
+let coreHome = "";
+let core: LocalCoreApiServer | undefined;
 
 before(async () => {
-  const prepared = await prepareOpsFixtures();
-  databaseUrl = prepared.databaseUrl;
+  coreHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-ops-core-"));
+  core = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: coreHome },
+    platform: "darwin",
+    coreVersion: "0.5.1",
+    idleTimeoutMs: 0,
+  });
+  const store = await ensureLocalCoreStore({ homePath: coreHome });
+  await seedOpsInspectionFixtures(store.store);
+});
+
+after(async () => {
+  await core?.close();
+  if (coreHome.length > 0) {
+    await rm(coreHome, { recursive: true, force: true });
+  }
 });
 
 test("runtime replay renders focus header, approval chain, and delegation milestones", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--thread-id", OPS_FIXTURE_IDS.approvalChild.threadId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -33,10 +49,7 @@ test("runtime replay renders focus header, approval chain, and delegation milest
 test("runtime replay surfaces compaction summaries for compacted threads", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--run-id", OPS_FIXTURE_IDS.compaction.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -48,10 +61,7 @@ test("runtime replay surfaces compaction summaries for compacted threads", async
 test("runtime doctor reports blocked parent threads with child blocker details", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.root.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -67,10 +77,7 @@ test("runtime doctor reports blocked parent threads with child blocker details",
 test("runtime replay surfaces multi-child supervision outcomes for parent threads", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--run-id", OPS_FIXTURE_IDS.root.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -83,10 +90,7 @@ test("runtime replay surfaces multi-child supervision outcomes for parent thread
 test("runtime doctor reports delegation failure and stalled runs", async () => {
   const failed = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.failureRoot.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(failed.exitCode, 0);
@@ -94,10 +98,7 @@ test("runtime doctor reports delegation failure and stalled runs", async () => {
 
   const stalled = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.stalled.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(stalled.exitCode, 0);
@@ -107,10 +108,7 @@ test("runtime doctor reports delegation failure and stalled runs", async () => {
 test("runtime doctor reports user-input wait classification for explicit operator reply blockers", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.userInput.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -123,10 +121,7 @@ test("runtime doctor reports user-input wait classification for explicit operato
 test("runtime doctor reports mode-switch blockers with explicit wait classification", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.modeBlocked.runId],
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-    },
+    env: runtimeEnv(),
   });
 
   assert.equal(result.exitCode, 0);
@@ -136,3 +131,17 @@ test("runtime doctor reports mode-switch blockers with explicit wait classificat
   assert.match(result.stdout, /eventType=user\.mode_switch/);
   assert.match(result.stdout, /Run is blocked on user input\./);
 });
+
+function runtimeEnv(): NodeJS.ProcessEnv {
+  if (core === undefined) {
+    throw new Error("Runtime ops Local Core was not initialized.");
+  }
+  return {
+    ...process.env,
+    KESTREL_CORE_HOME: coreHome,
+    KESTREL_LOCAL_CORE_API_SOCKET: core.socketPath,
+    KESTREL_LOCAL_CORE_API_TOKEN: core.token,
+    DATABASE_URL: "",
+    KESTREL_DISABLE_DOTENV: "1",
+  };
+}

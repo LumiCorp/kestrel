@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
 import { stripe } from "@better-auth/stripe";
@@ -18,16 +19,16 @@ import { PostgresDialect } from "kysely";
 import { Stripe } from "stripe";
 import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
+import { deliverTransactionalEmail } from "@/lib/email/service";
 import { isDisallowedGithubSignIn } from "./auth-policy";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
-import { isEmailEnabled, resend } from "./email/resend";
 import { reactResetPasswordEmail } from "./email/reset-password";
 import { ensureSessionHasActiveOrganization } from "./personal-workspace";
 
-const from = process.env.BETTER_AUTH_EMAIL || "delivered@resend.dev";
-const to = process.env.TEST_EMAIL || "";
-const emailEnabled = isEmailEnabled();
+function deliveryKey(kind: string, value: string) {
+  return `${kind}-${createHash("sha256").update(value).digest("hex")}`;
+}
 
 // Create Postgres dialect for the shared auth pool
 const dialect = new PostgresDialect({
@@ -94,25 +95,18 @@ export const auth = betterAuth({
     dialect,
     type: "postgres",
   },
-  emailVerification: emailEnabled
-    ? {
-        async sendVerificationEmail({ user, url }) {
-          if (!resend) {
-            console.warn(
-              "Email verification requested but Resend is not configured"
-            );
-            return;
-          }
-          const res = await resend.emails.send({
-            from,
-            to: to || user.email,
-            subject: "Verify your email address",
-            html: `<a href="${url}">Verify your email address</a>`,
-          });
-          console.log(res, user.email);
-        },
-      }
-    : undefined,
+  emailVerification: {
+    async sendVerificationEmail({ user, url }) {
+      await deliverTransactionalEmail({
+        kind: "verification",
+        to: user.email,
+        subject: "Verify your email address",
+        html: `<a href="${url}">Verify your email address</a>`,
+        developmentContent: url,
+        idempotencyKey: deliveryKey("verification", url),
+      });
+    },
+  },
   account: {
     encryptOAuthTokens: true,
     accountLinking: {
@@ -149,38 +143,25 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     async sendResetPassword({ user, url }) {
-      if (!resend) {
-        console.warn("Password reset requested but Resend is not configured");
-        console.warn(`Password reset link for ${user.email}: ${url}`);
-        return;
-      }
-      await resend.emails.send({
-        from,
+      await deliverTransactionalEmail({
+        kind: "password_reset",
         to: user.email,
         subject: "Reset your password",
         react: reactResetPasswordEmail({
           username: user.email,
           resetLink: url,
         }),
+        developmentContent: url,
+        idempotencyKey: deliveryKey("password-reset", url),
       });
     },
   },
   plugins: [
     organization({
       async sendInvitationEmail(data) {
-        if (!resend) {
-          console.warn(
-            "Organization invitation requested but Resend is not configured"
-          );
-          const inviteLink =
-            process.env.NODE_ENV === "development"
-              ? `${devBaseUrl}/accept-invitation/${data.id}`
-              : `${devBaseUrl}/accept-invitation/${data.id}`;
-          console.warn(`Invitation link for ${data.email}: ${inviteLink}`);
-          return;
-        }
-        await resend.emails.send({
-          from,
+        const inviteLink = `${devBaseUrl}/accept-invitation/${data.id}`;
+        await deliverTransactionalEmail({
+          kind: "organization_invitation",
           to: data.email,
           subject: "You've been invited to join an organization",
           react: reactInvitationEmail({
@@ -188,27 +169,23 @@ export const auth = betterAuth({
             invitedByUsername: data.inviter.user.name,
             invitedByEmail: data.inviter.user.email,
             teamName: data.organization.name,
-            inviteLink:
-              process.env.NODE_ENV === "development"
-                ? `${devBaseUrl}/accept-invitation/${data.id}`
-                : `${devBaseUrl}/accept-invitation/${data.id}`,
+            inviteLink,
           }),
+          developmentContent: inviteLink,
+          idempotencyKey: `organization-invitation-${data.id}`,
         });
       },
     }),
     twoFactor({
       otpOptions: {
         async sendOTP({ user, otp }) {
-          if (!resend) {
-            console.warn("2FA OTP requested but Resend is not configured");
-            console.warn(`OTP for ${user.email}: ${otp}`);
-            return;
-          }
-          await resend.emails.send({
-            from,
+          await deliverTransactionalEmail({
+            kind: "two_factor_otp",
             to: user.email,
             subject: "Your OTP",
             html: `Your OTP is ${otp}`,
+            developmentContent: otp,
+            idempotencyKey: deliveryKey("two-factor-otp", `${user.id}:${otp}`),
           });
         },
       },

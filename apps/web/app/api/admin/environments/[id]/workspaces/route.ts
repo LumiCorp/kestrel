@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -9,7 +9,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     const { id } = await context.params;
     if (
       !(await getOrganizationEnvironment({ organizationId, environmentId: id }))

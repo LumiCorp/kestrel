@@ -3,7 +3,7 @@ id: architecture-root
 domain: runtime
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-07-10
+last_verified_at: 2026-07-13
 depends_on:
   - docs/index.md
   - docs/references/architecture-rules.json
@@ -25,7 +25,8 @@ and public package contracts must not drift by surface.
   assembly policy.
 - `src/io/` owns model and tool gateway boundaries.
 - `src/store/` and `src/replay/` own persistence and replay material.
-- `src/localCore/` owns the local service and managed database lifecycle.
+- `src/localCore/` owns the local execution service, 0.6 state epoch, and
+  PGlite or explicit external-Postgres persistence boundary.
 - `cli/` owns the CLI/TUI and runner-service entry points.
 - `apps/desktop/` owns the independent local GUI and bundled data runtime.
 - `apps/web/` owns canonical Kestrel One hosted behavior.
@@ -37,8 +38,11 @@ and public package contracts must not drift by surface.
 
 ### Inbound requests
 
-Requests enter through the runner service or a local runner process. External
-payloads are parsed and validated before runtime mutation or tool execution.
+Requests enter through the shared runner-service host. Hosted deployments mount
+that host directly; Local Core mounts it under its authenticated Unix-socket
+API. External payloads are parsed and validated before runtime mutation or tool
+execution. CLI and Desktop migration from their legacy runner subprocesses is a
+required follow-up before the local execution-authority milestone is complete.
 
 ### Execution core
 
@@ -60,8 +64,12 @@ operator-visible actions.
 
 ## Product Boundaries
 
-- Desktop uses Local Core and bundled PostgreSQL. It contains no Kestrel One
-  source, Next.js runtime, hosted credentials, or hosted configuration.
+- Local Core is the target sole authority for local execution and durable
+  protocol events. PGlite is the default 0.6 local store; external Postgres is
+  an explicit advanced mode.
+- Desktop is a client of Local Core. It contains no Kestrel One source, Next.js
+  runtime, hosted credentials, or hosted configuration. Bundled-Postgres removal
+  belongs to the platform-lifecycle milestone.
 - Kestrel One consumes public Kestrel package boundaries and owns hosted auth,
   data, streaming, artifacts, knowledge, bots, administration, and billing.
 - Studio is a separate private repository and consumes exact released public
@@ -81,6 +89,7 @@ operator-visible actions.
 ## References
 
 - [Architecture rules](docs/references/architecture-rules.json)
+- [Local platform architecture](docs/plans/2026-07-13-kestrel-local-platform-architecture.md)
 - [Published architecture overview](apps/docs/content/docs/architecture-overview.mdx)
 - [Runtime docs](apps/docs/content/runtime/index.mdx)
 - [Reliability](RELIABILITY.md)

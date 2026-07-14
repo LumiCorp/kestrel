@@ -14,6 +14,7 @@ import type {
 } from "./contracts.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
+import { extractWaitPrompt } from "../runtime/waitForPrompt.js";
 
 export class TurnOrchestrator {
   private readonly executor: TurnExecutor;
@@ -85,9 +86,10 @@ export class TurnOrchestrator {
     const updatedAt = new Date().toISOString();
     const metadata = appendAssistantHistory({
       metadata: mergeSubmittedHistoryMetadata((latestThread ?? runningThread).metadata, submittedMetadata),
-      finalizedPayload: execution.finalizedPayload,
+      assistantText: execution.assistantText ?? null,
       status: execution.output.status,
       waitFor: execution.output.waitFor,
+      runId: execution.output.runId,
       timestamp: updatedAt,
     });
     const updatedThread: ThreadRecord = {
@@ -105,6 +107,7 @@ export class TurnOrchestrator {
     const result: SubmitTurnResult = {
       thread: updatedThread,
       output: execution.output,
+      assistantText: execution.assistantText ?? null,
       ...(execution.session !== undefined ? { session: execution.session } : {}),
       ...(request !== undefined && execution.output.waitFor !== undefined
         ? {
@@ -242,9 +245,37 @@ export function mergeSubmittedHistoryMetadata(
   }
   const currentHistory = normalizeSubmittedHistory(current?.history) ?? [];
   const submittedHistory = normalizeSubmittedHistory(submitted.history) ?? [];
+  const currentWaitingPrompts = new Map(
+    currentHistory.flatMap((line) => {
+      const runId = readWaitingPromptRunId(line);
+      return runId === undefined ? [] : [[runId, line] as const];
+    }),
+  );
+  const submittedWaitingPromptRunIds = new Set(
+    submittedHistory.flatMap((line) => {
+      const runId = readWaitingPromptRunId(line);
+      return runId === undefined ? [] : [runId];
+    }),
+  );
+  const reconciledCurrentHistory = currentHistory.filter((line) => {
+    const runId = readWaitingPromptRunId(line);
+    return runId === undefined || submittedWaitingPromptRunIds.has(runId) === false;
+  });
+  const reconciledSubmittedHistory = submittedHistory.map((line) => {
+    const runId = readWaitingPromptRunId(line);
+    return runId === undefined ? line : currentWaitingPrompts.get(runId) ?? line;
+  });
   const seen = new Set<string>();
+  const seenWaitingPromptRunIds = new Set<string>();
   const history = normalizeSubmittedHistory(
-    [...currentHistory, ...submittedHistory].filter((line) => {
+    [...reconciledCurrentHistory, ...reconciledSubmittedHistory].filter((line) => {
+      const waitingPromptRunId = readWaitingPromptRunId(line);
+      if (waitingPromptRunId !== undefined) {
+        if (seenWaitingPromptRunIds.has(waitingPromptRunId)) {
+          return false;
+        }
+        seenWaitingPromptRunIds.add(waitingPromptRunId);
+      }
       const key = `${line.role}\u0000${line.timestamp}\u0000${line.text}`;
       if (seen.has(key)) {
         return false;
@@ -266,25 +297,29 @@ function mapOutputStatus(status: SubmitTurnResult["output"]["status"]): ThreadRe
 
 function appendAssistantHistory(input: {
   metadata?: Record<string, unknown> | undefined;
-  finalizedPayload?: unknown | undefined;
+  assistantText: string | null;
   status: SubmitTurnResult["output"]["status"];
   waitFor?: SubmitTurnResult["output"]["waitFor"] | undefined;
+  runId: string;
   timestamp: string;
 }): Record<string, unknown> | undefined {
-  const text =
-    input.status === "COMPLETED"
-      ? extractFinalizedAssistantText(input.finalizedPayload)
-      : input.status === "WAITING"
-        ? extractWaitPromptText(input.waitFor)
-        : undefined;
-  if (text === undefined) {
+  const entry = input.status === "COMPLETED" && input.assistantText !== null
+    ? { role: "assistant" as const, text: input.assistantText }
+    : input.status === "WAITING"
+      ? readWaitingPrompt(input.waitFor)
+      : undefined;
+  if (entry === undefined) {
     return input.metadata;
   }
 
   const metadata = input.metadata ?? {};
   const history = Array.isArray(metadata.history) ? metadata.history : [];
   const last = history[history.length - 1];
-  if (isRecord(last) && last.role === "assistant" && last.text === text) {
+  const duplicateLastEntry = isRecord(last)
+    && last.role === entry.role
+    && last.text === entry.text
+    && (entry.role !== "system" || readWaitingPromptRunId(last) === input.runId);
+  if (duplicateLastEntry) {
     return metadata;
   }
 
@@ -293,58 +328,34 @@ function appendAssistantHistory(input: {
     history: [
       ...history,
       {
-        role: "assistant",
-        text,
+        role: entry.role,
+        text: entry.text,
         timestamp: input.timestamp,
+        ...(entry.role === "system"
+          ? { data: { kind: "runtime.waiting_prompt", runId: input.runId } }
+          : {}),
       },
     ],
   };
 }
 
-function extractWaitPromptText(waitFor: SubmitTurnResult["output"]["waitFor"] | undefined): string | undefined {
-  if (isRecord(waitFor) === false) {
+function readWaitingPrompt(
+  waitFor: SubmitTurnResult["output"]["waitFor"] | undefined,
+): { role: "system"; text: string } | undefined {
+  const prompt = extractWaitPrompt(waitFor);
+  return prompt !== undefined ? { role: "system", text: prompt } : undefined;
+}
+
+function readWaitingPromptRunId(value: unknown): string | undefined {
+  if (isRecord(value) === false || value.role !== "system") {
     return undefined;
   }
-  const metadata = isRecord(waitFor.metadata) ? waitFor.metadata : undefined;
-  return (
-    (metadata !== undefined ? extractStringField(metadata, "prompt") : undefined) ??
-    extractStringField(waitFor, "prompt")
-  );
-}
-
-function extractFinalizedAssistantText(payload: unknown): string | undefined {
-  if (typeof payload === "string") {
-    return normalizeAssistantText(payload);
+  const data = isRecord(value.data) ? value.data : undefined;
+  if (data?.kind !== "runtime.waiting_prompt" || typeof data.runId !== "string") {
+    return undefined;
   }
-  if (isRecord(payload)) {
-    const direct = extractStringField(payload, "message") ?? extractStringField(payload, "text");
-    if (direct !== undefined) {
-      return direct;
-    }
-
-    const data = payload.data;
-    if (isRecord(data)) {
-      const nested = extractStringField(data, "message") ?? extractStringField(data, "text");
-      if (nested !== undefined) {
-        return nested;
-      }
-      const finalizeInput = data.finalizeInput;
-      if (isRecord(finalizeInput)) {
-        return extractStringField(finalizeInput, "message") ?? extractStringField(finalizeInput, "text");
-      }
-    }
-  }
-  return undefined;
-}
-
-function extractStringField(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" ? normalizeAssistantText(value) : undefined;
-}
-
-function normalizeAssistantText(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  const runId = data.runId.trim();
+  return runId.length > 0 ? runId : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

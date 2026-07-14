@@ -14,8 +14,9 @@ test("getKestrelStreamTerminalText maps completed payloads", () => {
       type: "run.completed",
       payload: {
         result: {
+          assistantText: "Runtime answer",
           finalizedPayload: {
-            message: "Runtime answer",
+            message: "Structured data is not display text",
           },
         },
       },
@@ -28,7 +29,7 @@ test("getKestrelStreamUiUpdate maps empty completed output to empty terminal sta
   assert.deepEqual(
     getKestrelStreamUiUpdate({
       type: "run.completed",
-      payload: { result: { finalizedPayload: null } },
+      payload: { result: { assistantText: null, finalizedPayload: { message: "ignored" } } },
     }),
     {
       kind: "terminal",
@@ -81,7 +82,7 @@ test("getKestrelUserReplyWaitingText uses a stable fallback only for user reply 
   );
 });
 
-test("getKestrelStreamTerminalText maps failed and cancelled events", () => {
+test("getKestrelStreamTerminalText keeps failed and cancelled events non-responsive", () => {
   assert.equal(
     getKestrelStreamTerminalText({
       type: "run.failed",
@@ -91,11 +92,11 @@ test("getKestrelStreamTerminalText maps failed and cancelled events", () => {
         },
       },
     }),
-    "Runner failed"
+    ""
   );
   assert.equal(
     getKestrelStreamTerminalText({ type: "run.cancelled" }),
-    "The run was cancelled before it finished."
+    ""
   );
 });
 
@@ -199,7 +200,7 @@ test("getKestrelStreamUiUpdate separates progress from terminal text with severi
       kind: "terminal",
       severity: "error",
       terminalStatus: "failed",
-      text: "Run failed.",
+      text: "",
       errorMessage: "Run failed.",
     }
   );
@@ -209,7 +210,7 @@ test("getKestrelStreamUiUpdate separates progress from terminal text with severi
       kind: "terminal",
       severity: "cancelled",
       terminalStatus: "cancelled",
-      text: "The run was cancelled before it finished.",
+      text: "",
       errorMessage: "The run was cancelled before it finished.",
     }
   );
@@ -247,7 +248,7 @@ test("createKestrelStreamUiUpdateFilter suppresses only consecutive duplicate pr
   assert.deepEqual(
     filter.read({
       type: "run.completed",
-      payload: { result: { finalizedPayload: { message: "Checking sources." } } },
+      payload: { result: { assistantText: "Checking sources.", finalizedPayload: { message: "ignored" } } },
     }),
     {
       kind: "terminal",

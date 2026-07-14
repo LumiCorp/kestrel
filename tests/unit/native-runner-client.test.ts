@@ -53,6 +53,7 @@ class MockTransport implements ProtocolTransport {
           runId: "run-sdk-1",
           payload: {
             result: {
+              assistantText: "sdk hello",
               output: {
                 status: "COMPLETED",
                 sessionId: (command.payload.turn as { sessionId: string }).sessionId,
@@ -83,6 +84,7 @@ class MockTransport implements ProtocolTransport {
           commandId: command.id,
           payload: {
             sessionId: command.payload.sessionId,
+            version: 1,
             threadId: "thread-sdk-1",
           },
         }),

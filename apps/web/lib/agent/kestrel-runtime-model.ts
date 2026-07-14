@@ -10,6 +10,7 @@ type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
 export type KestrelOneRuntimeModelSelection = {
   id: string;
   gatewayId: string;
+  organizationId: string;
   model: string;
   provider: RunnerModelProvider;
 };
@@ -20,6 +21,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
   rawModelId: string;
   gatewayProvider: GatewayProtocolProvider;
   metadata?: unknown;
+  organizationId: string;
 }): KestrelOneRuntimeModelSelection {
   if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) {
     throw new Error(
@@ -32,7 +34,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     );
   }
   const provider =
-    input.gatewayProvider === "lumi"
+    input.gatewayProvider === "lumi" || input.gatewayProvider === "runpod"
       ? getGatewayLanguageProtocol({
           gatewayProvider: input.gatewayProvider,
           modality: "language",
@@ -43,6 +45,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
   return {
     id: input.id,
     gatewayId: input.gatewayId,
+    organizationId: input.organizationId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
   };
@@ -52,6 +55,9 @@ export function applyKestrelOneModelToProfile(
   profile: RunnerProfile,
   selection: KestrelOneRuntimeModelSelection
 ): RunnerProfile {
+  const agentStageConfig = asRecord(profile.agentStageConfig);
+  const modelByStage = asRecord(agentStageConfig.modelByStage);
+
   return {
     ...profile,
     id: `${profile.id}:model:${encodeURIComponent(selection.id)}`,
@@ -59,22 +65,24 @@ export function applyKestrelOneModelToProfile(
     modelProvider: selection.provider,
     model: selection.model,
     agentStageConfig: {
-      ...((profile.agentStageConfig as Record<string, unknown> | undefined) ??
-        {}),
+      ...agentStageConfig,
       modelByStage: {
-        ...((
-          profile.agentStageConfig as
-            | { modelByStage?: Record<string, string> }
-            | undefined
-        )?.modelByStage ?? {}),
+        ...modelByStage,
         "agent.loop": selection.model,
       },
     },
     modelCredential: {
       source: "kestrel-one",
       gatewayId: selection.gatewayId,
+      organizationId: selection.organizationId,
       rawModelId: selection.model,
     },
     default: false,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

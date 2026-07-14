@@ -5,7 +5,7 @@ import {
   updateAdminEnvironmentRuntime,
 } from "@/lib/admin/environments";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -20,7 +20,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     const { id } = paramsSchema.parse(await context.params);
     const environment = await getOrganizationEnvironment({
       organizationId,
@@ -43,7 +43,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const { id } = paramsSchema.parse(await context.params);
     const patch = patchSchema.parse(await request.json());
     const environment =

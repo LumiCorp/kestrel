@@ -175,12 +175,12 @@ export function buildContinuationNextActions(
 }
 
 export function buildContinuationPartialAnswer(
-  finalOutput: Record<string, unknown> | undefined,
+  assistantText: string | undefined,
   lastObservation: string,
   completedSoFar: string[],
 ): string | undefined {
-  if (typeof finalOutput?.message === "string" && finalOutput.message.trim().length > 0) {
-    return finalOutput.message.trim();
+  if (assistantText !== undefined && assistantText.trim().length > 0) {
+    return assistantText.trim();
   }
   if (lastObservation.trim().length > 0) {
     return lastObservation.trim();

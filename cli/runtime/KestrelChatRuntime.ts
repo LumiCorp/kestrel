@@ -67,6 +67,7 @@ import type {
   ModelGateway,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
+import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 
 import type { SharedToolContext } from "../../tools/index.js";
@@ -127,6 +128,9 @@ interface RuntimeBootstrap {
   close: () => Promise<void>;
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
+  prepareHostedMcpRuntime?:
+    | ((input: Pick<RunTurnInput, "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
+    | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -147,9 +151,12 @@ const DEFAULT_REASONING_MODEL_BY_PROVIDER: Record<NonNullable<TuiProfile["modelP
   lmstudio: "local-model",
 };
 
-export function resolveReasoningModelForProfile(profile: TuiProfile): string | undefined {
+export function resolveReasoningModelForProfile(
+  profile: TuiProfile,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const provider = profile.modelProvider ?? "openrouter";
-  return parseEnvString("KCHAT_REASONING_MODEL") ??
+  return parseEnvString("KCHAT_REASONING_MODEL", env) ??
     profile.model ??
     DEFAULT_REASONING_MODEL_BY_PROVIDER[provider];
 }
@@ -165,6 +172,17 @@ export interface RuntimeFactory {
     onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
     onRunEvent?: ((event: RunEvent) => void) | undefined,
   ): RuntimeBootstrap;
+}
+
+export interface KestrelRuntimeEnvironment {
+  runtimeEnv: NodeJS.ProcessEnv;
+  modelEnv: NodeJS.ProcessEnv;
+  internetEnv: NodeJS.ProcessEnv;
+  mcpEnv: NodeJS.ProcessEnv;
+}
+
+export interface RuntimeFactoryWithStoreOptions {
+  resolveEnvironment?: ((profile: TuiProfile) => KestrelRuntimeEnvironment) | undefined;
 }
 
 export interface KestrelChatRuntimeOptions {
@@ -196,6 +214,7 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<unknown | undefined>)
     | undefined;
   private readonly turnCoordinator: RuntimeTurnCoordinatorService;
+  private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
 
   private finalizedPayload: unknown;
 
@@ -242,6 +261,7 @@ export class KestrelChatRuntime {
     this.entryStepAgent = bootstrap.entryStepAgent;
     this.closePool = bootstrap.close;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
+    this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
     this.forceModeSystemV2 = profile.agent === "reference-react";
     this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
     this.defaultExecutionPolicy = buildExecutionPolicyFromPack(profile.approvalPolicyPackId);
@@ -309,7 +329,20 @@ export class KestrelChatRuntime {
           }
         : {}),
     };
-    const result = await this.turnCoordinator.runTurn(authorizedInput, options);
+    const { mcpAuthorization, ...persistableInput } = authorizedInput;
+    if (mcpAuthorization !== undefined) {
+      if (persistableInput.mcpContext === undefined) {
+        throw new Error("mcpAuthorization requires mcpContext");
+      }
+      if (this.prepareHostedMcpRuntime === undefined) {
+        throw new Error("Hosted MCP runtime preparation is unavailable");
+      }
+      await this.prepareHostedMcpRuntime({
+        mcpContext: persistableInput.mcpContext,
+        mcpAuthorization,
+      });
+    }
+    const result = await this.turnCoordinator.runTurn(persistableInput, options);
     if (result.finalizedPayload !== undefined) {
       this.finalizedPayload = result.finalizedPayload;
     }
@@ -913,24 +946,94 @@ function createDefaultRuntime(
   const storeHandle = createSessionStoreFromEnv({
     ...(profile.storeDriver !== undefined ? { driver: profile.storeDriver } : {}),
   });
-  const store = storeHandle.store;
+  return createRuntimeWithStore(
+    profile,
+    onFinalize,
+    onRunLog,
+    onProgress,
+    onConsole,
+    onReasoning,
+    onTaskUpdate,
+    onRunEvent,
+    storeHandle.store,
+    storeHandle.close,
+  );
+}
+
+/**
+ * Creates runtimes that share a host-owned persistence boundary.
+ *
+ * Local Core owns and closes this store once for the lifetime of the host;
+ * individual profile runtimes only release their profile-specific resources.
+ */
+export function createRuntimeFactoryWithStore(
+  store: SessionStore,
+  options: RuntimeFactoryWithStoreOptions = {},
+): RuntimeFactory {
+  return {
+    create(
+      profile,
+      onFinalize,
+      onRunLog,
+      onProgress,
+      onConsole,
+      onReasoning,
+      onTaskUpdate,
+      onRunEvent,
+    ) {
+      const environment = options.resolveEnvironment?.(profile);
+      return createRuntimeWithStore(
+        profile,
+        onFinalize,
+        onRunLog,
+        onProgress,
+        onConsole,
+        onReasoning,
+        onTaskUpdate,
+        onRunEvent,
+        store,
+        async () => {},
+        environment,
+      );
+    },
+  };
+}
+
+function createRuntimeWithStore(
+  profile: TuiProfile,
+  onFinalize: (payload: unknown) => unknown,
+  onRunLog: ((entry: RunLogEntry) => void) | undefined,
+  onProgress: ((update: ProgressUpdateV1) => void) | undefined,
+  onConsole: ((update: RunConsoleUpdateV1) => void) | undefined,
+  onReasoning: ((update: ReasoningUpdateV1) => void) | undefined,
+  onTaskUpdate: ((update: DelegationTaskUpdate) => void) | undefined,
+  onRunEvent: ((event: RunEvent) => void) | undefined,
+  store: SessionStore,
+  closeStore: () => Promise<void>,
+  environment?: KestrelRuntimeEnvironment | undefined,
+): RuntimeBootstrap {
+  const runtimeEnv = environment?.runtimeEnv ?? process.env;
+  const modelEnv = environment?.modelEnv ?? process.env;
+  const internetEnv = environment?.internetEnv;
+  const mcpEnv = environment?.mcpEnv ?? process.env;
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const managedTaskWorktreeService =
-    resolveManagedWorktreesEnabledForRuntime()
+    resolveManagedWorktreesEnabledForRuntime(runtimeEnv)
       ? new ManagedTaskWorktreeService()
       : undefined;
-  const devShellService = resolveDevShellServiceForProfile(profile);
+  const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
   const toolContext: SharedToolContext = {
     store,
     onFinalize,
     codeMode: profile.codeMode,
     devShell: profile.devShell,
     kestrelOne: {
-      appUrl: parseEnvString("KESTREL_ONE_APP_URL"),
-      toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN"),
+      appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
+      toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
     },
+    ...(internetEnv !== undefined ? { internetEnv } : {}),
     ...(devShellService !== undefined ? { devShellService } : {}),
     ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
     projectActions: createProductProjectActionToolAdapter({ taskGraphStore, projectStore }),
@@ -941,13 +1044,14 @@ function createDefaultRuntime(
     allowlist: profile.toolAllowlist ?? [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
     context: toolContext,
     mcpServers: profile.mcpServers ?? [],
+    env: mcpEnv,
   });
 
-  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED");
-  const reasoningModel = resolveReasoningModelForProfile(profile);
-  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS");
-  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS");
-  const modelGateway = createModelGatewayForProfile(profile);
+  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED", runtimeEnv);
+  const reasoningModel = resolveReasoningModelForProfile(profile, runtimeEnv);
+  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS", runtimeEnv);
+  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS", runtimeEnv);
+  const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
 
   const kestrel = new Kestrel({
     store,
@@ -979,10 +1083,11 @@ function createDefaultRuntime(
     ...(onConsole !== undefined ? { consoleListener: onConsole } : {}),
     ...(onReasoning !== undefined ? { reasoningListener: onReasoning } : {}),
     ...(onRunEvent !== undefined ? { runEventListener: onRunEvent } : {}),
-    heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(process.env, {
-      processRole: process.env.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
+    heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(runtimeEnv, {
+      processRole: runtimeEnv.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
     }),
     reasoningSidecar: {
+      ...(environment !== undefined ? { inheritProcessEnv: false } : {}),
       ...(reasoningEnabled !== undefined ? { enabled: reasoningEnabled } : {}),
       ...(reasoningModel !== undefined ? { model: reasoningModel } : {}),
       ...(reasoningTimeoutMs !== undefined ? { timeoutMs: reasoningTimeoutMs } : {}),
@@ -1032,8 +1137,21 @@ function createDefaultRuntime(
     },
     getSession: (sessionId) => kestrel.getSession(sessionId),
     runKernel: (event, runOptions) => kestrel.run(event, runOptions),
-    refreshToolRuntime: () => toolRegistry.refreshRuntime(),
-    resolveAvailableToolAllowlist: (allowlist) => toolRegistry.resolveAvailableAllowlist(allowlist),
+    refreshToolRuntime: (input) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.refreshForRuntimeTurn(input)
+        : toolRegistry.refreshRuntime(),
+    resolveAvailableToolAllowlist: (allowlist, input, options) =>
+      input?.mcpContext !== undefined
+        ? toolRegistry.resolveAvailableAllowlistForRuntimeTurn(
+            allowlist,
+            input,
+            {
+              includeGrantedMcpTools:
+                options?.includeGrantedMcpTools === true,
+            }
+          )
+        : toolRegistry.resolveAvailableAllowlist(allowlist),
     resolveSkillPackById: (skillPackId) => getSkillPackById(skillPackId),
     handleCapabilityLoss: (input) => {
       if (threadRuntime === undefined) {
@@ -1073,10 +1191,12 @@ function createDefaultRuntime(
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;
     },
+    prepareHostedMcpRuntime: (input) =>
+      toolRegistry.refreshForRuntimeTurn(input),
     close: async () =>
       closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
-        storeHandle.close,
+        closeStore,
         devShellService instanceof LocalDevShellService ? devShellService.close.bind(devShellService) : undefined,
       ),
   };
@@ -1086,6 +1206,7 @@ export function createModelGatewayForProfile(
   profile: TuiProfile,
   options: {
     createGatewayManaged?: ((profile: TuiProfile) => ModelGateway) | undefined;
+    env?: NodeJS.ProcessEnv | undefined;
   } = {},
 ) {
   if (profile.modelCredential) {
@@ -1093,10 +1214,12 @@ export function createModelGatewayForProfile(
       profile,
     );
   }
-  const timeoutMs = resolveModelTimeoutMs(profile);
-  const retryCount = resolveModelRetryCount(profile);
+  const env = options.env ?? process.env;
+  const timeoutMs = resolveModelTimeoutMs(profile, env);
+  const retryCount = resolveModelRetryCount(profile, env);
   const provider = profile.modelProvider ?? "openrouter";
   const gatewayOptions = {
+    env,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(retryCount !== undefined ? { retryCount } : {}),
     ...(profile.model !== undefined
@@ -1197,14 +1320,14 @@ export function applyRequiredManagedWorkspacePolicy(
   if (parseEnvBoolean("KESTREL_REQUIRE_MANAGED_WORKTREE", env) !== true) {
     return workspace;
   }
-  const workspaceId = parseEnvStringFrom("KESTREL_WORKSPACE_ID", env);
-  const workspaceRoot = parseEnvStringFrom("KESTREL_WORKSPACE_ROOT", env);
+  const workspaceId = parseEnvString("KESTREL_WORKSPACE_ID", env);
+  const workspaceRoot = parseEnvString("KESTREL_WORKSPACE_ROOT", env);
   if (workspaceId === undefined || workspaceRoot === undefined) {
     throw new Error(
       "KESTREL_REQUIRE_MANAGED_WORKTREE requires KESTREL_WORKSPACE_ID and KESTREL_WORKSPACE_ROOT.",
     );
   }
-  const isolation = parseEnvStringFrom("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
+  const isolation = parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
   if (isolation !== undefined && isolation !== "scoped" && isolation !== "session") {
     throw new Error(
       "KESTREL_MANAGED_WORKTREE_ISOLATION must be 'scoped' or 'session'.",
@@ -1250,11 +1373,10 @@ function parseEnvBoolean(
   return undefined;
 }
 
-function parseEnvString(name: string): string | undefined {
-  return parseEnvStringFrom(name, process.env);
-}
-
-function parseEnvStringFrom(name: string, env: NodeJS.ProcessEnv): string | undefined {
+function parseEnvString(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const raw = env[name];
   if (raw === undefined) {
     return undefined;

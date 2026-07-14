@@ -56,6 +56,7 @@ export interface ModelReasoningSidecarOptions {
   model?: string | undefined;
   timeoutMs?: number | undefined;
   maxTokens?: number | undefined;
+  inheritProcessEnv?: boolean | undefined;
 }
 
 export interface ReasoningDropDiagnostic {
@@ -243,14 +244,15 @@ export class ModelReasoningSidecar {
 
   constructor(modelGateway: ModelGateway, options: ModelReasoningSidecarOptions = {}) {
     this.modelGateway = modelGateway;
-    const enabledFromEnv = parseEnvBoolean("KCHAT_REASONING_ENABLED");
+    const env = options.inheritProcessEnv === false ? {} : process.env;
+    const enabledFromEnv = parseEnvBoolean("KCHAT_REASONING_ENABLED", env);
     this.enabled = options.enabled ?? enabledFromEnv ?? true;
     this.model =
       typeof options.model === "string" && options.model.trim().length > 0
         ? options.model.trim()
-        : process.env.KCHAT_REASONING_MODEL;
-    const timeoutFromEnv = parseEnvPositiveInt("KCHAT_REASONING_TIMEOUT_MS");
-    const maxTokensFromEnv = parseEnvPositiveInt("KCHAT_REASONING_MAX_TOKENS");
+        : env.KCHAT_REASONING_MODEL;
+    const timeoutFromEnv = parseEnvPositiveInt("KCHAT_REASONING_TIMEOUT_MS", env);
+    const maxTokensFromEnv = parseEnvPositiveInt("KCHAT_REASONING_MAX_TOKENS", env);
     this.timeoutMs =
       typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
         ? Math.floor(options.timeoutMs)
@@ -389,6 +391,7 @@ export class ModelReasoningSidecar {
             "If progress is blocked, use beat.wait to say exactly what I am waiting on.",
             "When beat.wait.prompt is present, restate that exact ask instead of using generic waiting language.",
             "When beat.wait.resumeBehavior is present, mention the concrete next action and that the run resumes automatically.",
+            "For nonterminal work, describe only the observed result and selected next action; do not call an attempt last or final, count remaining attempts, or promise imminent completion unless beat explicitly establishes that bound.",
             "When recent reasoning lines are repetitive or procedural, combine the newest action, result, and next step into one more substantive task-level update instead of echoing another operation-by-operation status line.",
             "Avoid repeating wording or sentence structure from the recent reasoning lines.",
           ].join(" "),
@@ -438,6 +441,7 @@ function renderReasoningSidecarUserPrompt(serializedContext: string): string {
     "- If recent messages are repetitive or operation-level, compress the next update into a single task-level beat that names the newest result and next useful move.",
     "- `beat.wait.prompt` is the exact user-facing ask when the runtime is waiting for input.",
     "- `beat.wait.resumeBehavior` describes the concrete automatic resume behavior when present.",
+    "- For nonterminal work, do not claim an attempt is last or final, count remaining attempts, or promise imminent completion unless `beat` explicitly establishes that bound.",
     "- Step metadata, elapsed time, raw payloads, and tool arguments are control data. Do not expose them directly.",
     "</context_guide>",
     "",
@@ -933,8 +937,8 @@ function readNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function parseEnvBoolean(name: string): boolean | undefined {
-  const raw = process.env[name];
+function parseEnvBoolean(name: string, env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const raw = env[name];
   if (raw === undefined) {
     return undefined;
   }
@@ -948,8 +952,8 @@ function parseEnvBoolean(name: string): boolean | undefined {
   return undefined;
 }
 
-function parseEnvPositiveInt(name: string): number | undefined {
-  const raw = process.env[name];
+function parseEnvPositiveInt(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env[name];
   if (raw === undefined) {
     return undefined;
   }

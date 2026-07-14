@@ -52,7 +52,7 @@
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp-pack', { recursive: true, force: true });\"",
     "build": "pnpm --filter @kestrel-agents/protocol build && pnpm run clean && tsc -p tsconfig.json",
     "test": "pnpm --filter @kestrel-agents/protocol build && node --import tsx --test tests/**/*.test.ts",
-    "smoke:import": "node --input-type=module -e \"Promise.all([import('./dist/index.js'), import('./dist/runner.js')]).then(([sdk, runner]) => { sdk.createAgent({ id: 'smoke-agent', profileId: 'reference', baseUrl: 'http://127.0.0.1:1' }); new runner.KestrelClient({ baseUrl: 'http://127.0.0.1:1' }); })\"",
+    "smoke:import": "node --input-type=module -e \"Promise.all([import('./dist/index.js'), import('./dist/runner.js')]).then(([sdk, runner]) => { sdk.createAgent({ id: 'smoke-agent', profileId: 'reference', target: { kind: 'remote', baseUrl: 'http://127.0.0.1:1' } }); new runner.KestrelClient({ target: { kind: 'remote', baseUrl: 'http://127.0.0.1:1' } }); })\"",
     "release:check": "pnpm run build && node --import tsx ./scripts/release-check.ts"
   }
 }

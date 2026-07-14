@@ -41,6 +41,7 @@ import { normalizeSubAgentResultEnvelope } from "./subAgentResult.js";
 export interface DelegationTaskUpdate {
   task: DelegationTaskSnapshot;
   kind: "spawned" | "waiting" | "completed" | "failed";
+  assistantText: string | null;
   finalizedPayload?: unknown | undefined;
 }
 
@@ -221,6 +222,7 @@ export class DelegationSupervisor implements DelegationServicePort {
     this.emit({
       task: toTaskSnapshot(record, this.profile),
       kind: "spawned",
+      assistantText: null,
     });
     await this.onDelegationUpdated?.({ record });
 
@@ -267,6 +269,7 @@ export class DelegationSupervisor implements DelegationServicePort {
         this.emit({
           task: toTaskSnapshot(waiting, this.profile),
           kind: "waiting",
+          assistantText: null,
         });
         this.results.set(waiting.delegationId, {
           record: waiting,
@@ -280,7 +283,7 @@ export class DelegationSupervisor implements DelegationServicePort {
       }
 
       const resultEnvelope = normalizeSubAgentResultEnvelope(
-        result.finalizedPayload ?? result.output,
+        result.finalizedPayload !== undefined ? result.finalizedPayload : result.output,
         result.output.status === "COMPLETED" ? "completed" : "failed",
         readFirstOutputError(result.output),
       );
@@ -289,7 +292,7 @@ export class DelegationSupervisor implements DelegationServicePort {
         status: resultEnvelope.status === "completed" ? "COMPLETED" : "FAILED",
         childRunId: result.output.runId,
         result: resultEnvelope,
-        resultSummary: summarizeResultText(resultEnvelope.result),
+        resultSummary: result.assistantText ?? summarizeResultText(resultEnvelope.result),
         updatedAt: new Date().toISOString(),
       };
       const completed = updateDelegationOutcomePolicy({
@@ -317,6 +320,7 @@ export class DelegationSupervisor implements DelegationServicePort {
       this.emit({
         task: toTaskSnapshot(completed, this.profile),
         kind: completed.status === "COMPLETED" ? "completed" : "failed",
+        assistantText: completed.status === "COMPLETED" ? result.assistantText : null,
         ...(result.finalizedPayload !== undefined ? { finalizedPayload: result.finalizedPayload } : {}),
       });
       await this.onDelegationUpdated?.({
@@ -352,6 +356,7 @@ export class DelegationSupervisor implements DelegationServicePort {
       this.emit({
         task: toTaskSnapshot(failed, this.profile),
         kind: "failed",
+        assistantText: null,
       });
       this.results.set(failed.delegationId, { record: failed });
       await this.onDelegationUpdated?.({ record: failed });

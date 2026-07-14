@@ -3,18 +3,24 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 
 import {
+  isRunnerEventType,
+  isRunnerStreamingCommandType,
+  parseRunnerCommandV2,
+  parseRunnerEventV2,
+  type RunnerHealthV1,
+} from "@kestrel-agents/protocol";
+
+import {
   type RunnerActorMetadata,
   type RunnerCommand,
   type RunnerEvent,
+  type RunnerEventPayloadByType,
   type RunnerEventSubscriptionFilter,
   type RunnerEventSubscriptionRequest,
-  type RunnerEventPayloadByType,
   type RunnerEventType,
-  isRunnerCommandEnvelope,
 } from "../protocol/contracts.js";
 import { RunnerHost, type RunnerProfileProvider } from "./RunnerHost.js";
 import { CommandRouter } from "./CommandRouter.js";
-import type { RunnerEventSink } from "./EventWriter.js";
 import {
   buildCompatibilityHeaders,
   buildOpenAiErrorResponse,
@@ -25,9 +31,11 @@ import {
   parseOpenAiCompatibilityRequest,
 } from "./OpenAiCompatibility.js";
 import {
-  createRunnerHealthV1,
-  type RunnerHealthV1,
-} from "@kestrel-agents/protocol";
+  RunnerServiceHost,
+  type RunnerServiceEventBus,
+  type RunnerServiceHostCloseOptions,
+} from "./RunnerServiceHost.js";
+import type { RunnerServiceEventJournal } from "./RunnerServiceEventJournal.js";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream; charset=utf-8",
@@ -43,7 +51,6 @@ const JSON_HEADERS = {
 
 const DEFAULT_RUNNER_SERVICE_VERSION = "0.5.1";
 
-const STREAMING_COMMAND_TYPES = new Set<RunnerCommand["type"]>(["run.start", "job.run"]);
 const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "profile.listed",
   "profile.loaded",
@@ -69,14 +76,30 @@ const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "mcp.refreshed",
 ]);
 
-export interface RunnerServiceOptions {
+interface RunnerServiceRuntimeOptions {
   authToken?: string | undefined;
-  host?: string | undefined;
-  port?: number | undefined;
-  socketPath?: string | undefined;
   runtimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
   profileProvider?: RunnerProfileProvider | undefined;
   serviceVersion?: string | undefined;
+  eventJournal?: RunnerServiceEventJournal | undefined;
+}
+
+export interface RunnerServiceOptions extends RunnerServiceRuntimeOptions {
+  host?: string | undefined;
+  port?: number | undefined;
+  socketPath?: string | undefined;
+}
+
+export interface RunnerServiceHttpHandlerOptions extends RunnerServiceRuntimeOptions {
+  pathPrefix?: string | undefined;
+}
+
+export interface RunnerServiceHttpHandler {
+  readonly handle: http.RequestListener;
+  readonly health: RunnerHealthV1;
+  ready(): Promise<void>;
+  hasActiveExecutions(): boolean;
+  close(options?: RunnerServiceHostCloseOptions): Promise<void>;
 }
 
 export interface RunnerServiceServer {
@@ -102,123 +125,60 @@ export interface InMemoryRunnerService {
     headers: Record<string, string>;
     body: string;
   }>;
+  hasActiveExecutions(): boolean;
   close(): Promise<void>;
 }
 
-type RunnerEventListener = (event: RunnerEvent) => void;
+export function createRunnerServiceHttpHandler(
+  options: RunnerServiceHttpHandlerOptions = {},
+): RunnerServiceHttpHandler {
+  const pathPrefix = normalizePathPrefix(options.pathPrefix);
+  const serviceHost = new RunnerServiceHost({
+    runtimeFactory: options.runtimeFactory,
+    profileProvider: options.profileProvider,
+    serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
+    eventJournal: options.eventJournal,
+  });
 
-class RunnerServiceEventBus implements RunnerEventSink {
-  private readonly listenersByCommandId = new Map<string, Set<RunnerEventListener>>();
-  private readonly subscriptionListeners = new Set<{
-    filter: RunnerEventSubscriptionFilter;
-    listener: RunnerEventListener;
-  }>();
-  private readonly history: RunnerEvent[] = [];
-
-  emit<TType extends RunnerEventType>(
-    type: TType,
-    payload: RunnerEventPayloadByType[TType],
-    options: {
-      runId?: string | undefined;
-      sessionId?: string | undefined;
-      threadId?: string | undefined;
-      commandId?: string | undefined;
-    } = {},
-  ): void {
-    const event = {
-      id: randomUUID(),
-      type,
-      ts: new Date().toISOString(),
-      ...(options.runId !== undefined ? { runId: options.runId } : {}),
-      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-      ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
-      ...(options.commandId !== undefined ? { commandId: options.commandId } : {}),
-      payload,
-    } as RunnerEvent;
-    this.history.push(event);
-    if (this.history.length > 1000) {
-      this.history.splice(0, this.history.length - 1000);
-    }
-
-    const commandId = event.commandId;
-    if (commandId !== undefined) {
-      const listeners = this.listenersByCommandId.get(commandId);
-      if (listeners !== undefined) {
-        for (const listener of listeners) {
-          listener(event);
-        }
-      }
-    }
-
-    for (const subscription of this.subscriptionListeners) {
-      if (matchesSubscriptionFilter(event, subscription.filter)) {
-        subscription.listener(event);
-      }
-    }
-  }
-
-  subscribe(commandId: string, listener: RunnerEventListener): () => void {
-    const listeners = this.listenersByCommandId.get(commandId) ?? new Set<RunnerEventListener>();
-    listeners.add(listener);
-    this.listenersByCommandId.set(commandId, listeners);
-    return () => {
-      listeners.delete(listener);
-      if (listeners.size === 0) {
-        this.listenersByCommandId.delete(commandId);
-      }
-    };
-  }
-
-  subscribeFiltered(filter: RunnerEventSubscriptionFilter, listener: RunnerEventListener): () => void {
-    const entry = { filter, listener };
-    this.subscriptionListeners.add(entry);
-    const replayStartIndex =
-      filter.sinceEventId === undefined
-        ? this.history.length
-        : this.history.findIndex((event) => event.id === filter.sinceEventId) + 1;
-    const boundedReplayStartIndex = replayStartIndex <= 0 ? 0 : replayStartIndex;
-    for (const event of this.history.slice(boundedReplayStartIndex)) {
-      if (matchesSubscriptionFilter(event, filter)) {
-        listener(event);
-      }
-    }
-    return () => {
-      this.subscriptionListeners.delete(entry);
-    };
-  }
-}
-
-function matchesSubscriptionFilter(
-  event: RunnerEvent,
-  filter: RunnerEventSubscriptionFilter,
-): boolean {
-  if (filter.eventTypes !== undefined && filter.eventTypes.includes(event.type) === false) {
-    return false;
-  }
-  if (filter.runId !== undefined && event.runId !== filter.runId) {
-    return false;
-  }
-  if (filter.sessionId !== undefined && event.sessionId !== filter.sessionId) {
-    return false;
-  }
-  if (filter.threadId !== undefined && event.threadId !== filter.threadId) {
-    return false;
-  }
-  return true;
+  return {
+    handle(request, response) {
+      void serviceHost.ready()
+        .then(() => handleRunnerServiceRequest(
+          request,
+          response,
+          serviceHost.router,
+          options.authToken,
+          serviceHost.events,
+          serviceHost.health,
+          pathPrefix,
+        ))
+        .catch((error) => {
+          writeUnhandledServiceError(response, error);
+        });
+    },
+    health: serviceHost.health,
+    ready() {
+      return serviceHost.ready();
+    },
+    hasActiveExecutions() {
+      return serviceHost.hasActiveExecutions();
+    },
+    close(closeOptions = { abortActiveRuns: true }) {
+      return serviceHost.close(closeOptions);
+    },
+  };
 }
 
 export async function createRunnerServiceServer(options: RunnerServiceOptions = {}): Promise<RunnerServiceServer> {
-  const eventBus = new RunnerServiceEventBus();
-  const host = new RunnerHost(eventBus, options.runtimeFactory, options.profileProvider);
-  const router = new CommandRouter(host, eventBus);
-  const health = createRunnerHealthV1({
-    serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
+  const handler = createRunnerServiceHttpHandler({
+    authToken: options.authToken,
+    runtimeFactory: options.runtimeFactory,
+    profileProvider: options.profileProvider,
+    serviceVersion: options.serviceVersion,
+    eventJournal: options.eventJournal,
   });
-  const server = http.createServer((request, response) => {
-    void handleRunnerServiceRequest(request, response, router, options.authToken, eventBus, health).catch((error) => {
-      writeUnhandledServiceError(response, error);
-    });
-  });
+  await handler.ready();
+  const server = http.createServer(handler.handle);
   const listenHost = options.host ?? "127.0.0.1";
   const socketPath = options.socketPath;
 
@@ -280,7 +240,7 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
         });
         server.closeIdleConnections?.();
       });
-      closeHostPromise = host.close({ abortActiveRuns: true });
+      closeHostPromise = handler.close({ abortActiveRuns: true });
     };
 
     const applyForce = () => {
@@ -337,7 +297,7 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
       });
       server.closeIdleConnections?.();
     });
-    closeHostPromise = host.close({ abortActiveRuns: true });
+    closeHostPromise = handler.close({ abortActiveRuns: true });
   };
 
   const applyForce = () => {
@@ -371,16 +331,17 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
 }
 
 export function createInMemoryRunnerService(options: RunnerServiceOptions = {}): InMemoryRunnerService {
-  const eventBus = new RunnerServiceEventBus();
-  const host = new RunnerHost(eventBus, options.runtimeFactory, options.profileProvider);
-  const router = new CommandRouter(host, eventBus);
-  const health = createRunnerHealthV1({
+  const serviceHost = new RunnerServiceHost({
+    runtimeFactory: options.runtimeFactory,
+    profileProvider: options.profileProvider,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
+    eventJournal: options.eventJournal,
   });
 
   return {
-    dispatch(request) {
-      return executeRunnerServiceRequest(
+    async dispatch(request) {
+      await serviceHost.ready();
+      return await executeRunnerServiceRequest(
         {
           method: request.method,
           url: request.url,
@@ -388,14 +349,17 @@ export function createInMemoryRunnerService(options: RunnerServiceOptions = {}):
           body: request.body ?? "",
           signal: request.signal,
         },
-        router,
+        serviceHost.router,
         options.authToken,
-        eventBus,
-        health,
+        serviceHost.events,
+        serviceHost.health,
       );
     },
+    hasActiveExecutions() {
+      return serviceHost.hasActiveExecutions();
+    },
     close() {
-      return host.close();
+      return serviceHost.close();
     },
   };
 }
@@ -407,8 +371,14 @@ async function handleRunnerServiceRequest(
   authToken: string | undefined,
   eventBus: RunnerServiceEventBus,
   health: RunnerHealthV1,
+  pathPrefix: string,
 ): Promise<void> {
-  const path = normalizeRequestPath(request.url);
+  const path = resolveRunnerServiceRequestPath(request.url, pathPrefix);
+  if (path === undefined) {
+    response.writeHead(404, JSON_HEADERS);
+    response.end(JSON.stringify({ ok: false, error: "Not found" }));
+    return;
+  }
   if (request.method === "GET" && path === "/health") {
     writeJson(response, 200, health);
     return;
@@ -466,11 +436,16 @@ async function handleRunnerServiceRequest(
     return;
   }
 
-  const command = await readCommandEnvelope(request);
-  if (command === undefined) {
-    writeEventResponse(response, 400, makeRunnerErrorEvent(undefined, "INVALID_COMMAND", "Command envelope must include id, type, payload"));
+  const parsedCommand = await readCommandEnvelope(request);
+  if (parsedCommand.ok === false) {
+    writeEventResponse(response, 400, makeRunnerErrorEvent(
+      parsedCommand.commandId,
+      "INVALID_COMMAND",
+      parsedCommand.message,
+    ));
     return;
   }
+  const command = parsedCommand.command;
 
   const authFailure = validateServiceAuth(request, authToken);
   if (authFailure !== undefined) {
@@ -485,7 +460,7 @@ async function handleRunnerServiceRequest(
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = STREAMING_COMMAND_TYPES.has(command.type);
+  const isStreamable = isRunnerStreamingCommandType(command.type);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -578,23 +553,28 @@ async function executeRunnerServiceRequest(
     };
   }
 
-  const command = parseCommandEnvelope(request.body);
-  if (command === undefined) {
+  const parsedCommand = parseCommandEnvelope(request.body);
+  if (parsedCommand.ok === false) {
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(
-        makeRunnerErrorEvent(undefined, "INVALID_COMMAND", "Command envelope must include id, type, payload"),
+      body: serializeRunnerEvent(
+        makeRunnerErrorEvent(
+          parsedCommand.commandId,
+          "INVALID_COMMAND",
+          parsedCommand.message,
+        ),
       ),
     };
   }
+  const command = parsedCommand.command;
 
   const authFailure = validateServiceAuthHeader(request.headers.authorization, authToken);
   if (authFailure !== undefined) {
     return {
       statusCode: 401,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", authFailure)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", authFailure)),
     };
   }
 
@@ -603,12 +583,12 @@ async function executeRunnerServiceRequest(
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", actorFailure)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", actorFailure)),
     };
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = STREAMING_COMMAND_TYPES.has(command.type);
+  const isStreamable = isRunnerStreamingCommandType(command.type);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -616,7 +596,7 @@ async function executeRunnerServiceRequest(
     return {
       statusCode: 400,
       headers: { ...JSON_HEADERS },
-      body: JSON.stringify(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", message)),
+      body: serializeRunnerEvent(makeRunnerErrorEvent(command.id, "RUNNER_RUNTIME_ERROR", message)),
     };
   }
 
@@ -633,7 +613,7 @@ async function executeRunnerServiceRequest(
   return {
     statusCode: terminal.type === "runner.error" ? 400 : 200,
     headers: { ...JSON_HEADERS },
-    body: JSON.stringify(terminal),
+    body: serializeRunnerEvent(terminal),
   };
 }
 
@@ -710,22 +690,86 @@ async function handleEventSubscriptionRequest(
   eventBus: RunnerServiceEventBus,
   filter: RunnerEventSubscriptionFilter,
 ): Promise<void> {
-  response.writeHead(200, SSE_HEADERS);
-  response.flushHeaders?.();
-  const unsubscribe = eventBus.subscribeFiltered(filter, (event) => {
-    response.write(encodeSseChunk(event));
-  });
-
+  const replayAbortController = new AbortController();
+  let unsubscribe: (() => void) | undefined;
   const onClose = () => {
-    unsubscribe();
-    if (response.writableEnded === false) {
+    replayAbortController.abort();
+    unsubscribe?.();
+    if (response.writableEnded === false && response.destroyed === false) {
       response.end();
     }
   };
-
-  request.once("close", onClose);
+  const removeCloseListeners = () => {
+    request.off("aborted", onClose);
+    response.off("close", onClose);
+  };
   request.once("aborted", onClose);
   response.once("close", onClose);
+
+  const ensureStreamHeaders = () => {
+    if (response.headersSent === false) {
+      response.writeHead(200, SSE_HEADERS);
+      response.flushHeaders?.();
+    }
+  };
+  let subscription: Awaited<ReturnType<RunnerServiceEventBus["subscribeFiltered"]>>;
+  try {
+    subscription = await eventBus.subscribeFiltered(filter, (event) => {
+      if (replayAbortController.signal.aborted || response.destroyed) {
+        return;
+      }
+      ensureStreamHeaders();
+      response.write(encodeSseChunk(event));
+    }, {
+      signal: replayAbortController.signal,
+      onServiceClose: onClose,
+    });
+  } catch (error) {
+    removeCloseListeners();
+    throw error;
+  }
+  if (subscription.status === "cancelled") {
+    removeCloseListeners();
+    if (replayAbortController.signal.aborted === false && response.destroyed === false) {
+      writeEventResponse(
+        response,
+        503,
+        makeRunnerErrorEvent(
+          undefined,
+          "RUNNER_RUNTIME_ERROR",
+          "Runner service is closing and cannot accept event subscriptions.",
+        ),
+      );
+    }
+    return;
+  }
+  if (subscription.status !== "ok") {
+    removeCloseListeners();
+    const expired = subscription.status === "cursor_expired";
+    writeEventResponse(
+      response,
+      expired ? 410 : 409,
+      makeRunnerErrorEvent(
+        undefined,
+        expired ? "RUNNER_EVENT_CURSOR_EXPIRED" : "RUNNER_EVENT_CURSOR_UNKNOWN",
+        expired
+          ? "The requested runner event cursor is outside the retained replay window."
+          : "The requested runner event cursor is unknown.",
+        {
+          sinceEventId: filter.sinceEventId,
+          cursorStatus: subscription.status,
+        },
+      ),
+    );
+    return;
+  }
+  if (replayAbortController.signal.aborted || response.destroyed) {
+    subscription.unsubscribe();
+    removeCloseListeners();
+    return;
+  }
+  ensureStreamHeaders();
+  unsubscribe = subscription.unsubscribe;
 }
 
 async function handleOpenAiCompatibilityHttpRequest(
@@ -942,7 +986,11 @@ async function waitForTerminalEvent(
   });
 }
 
-async function readCommandEnvelope(request: IncomingMessage): Promise<RunnerCommand | undefined> {
+type RunnerCommandParseResult =
+  | { ok: true; command: RunnerCommand }
+  | { ok: false; commandId?: string | undefined; message: string };
+
+async function readCommandEnvelope(request: IncomingMessage): Promise<RunnerCommandParseResult> {
   const body = await readRequestBody(request);
   return parseCommandEnvelope(body);
 }
@@ -952,17 +1000,47 @@ async function readSubscriptionRequest(request: IncomingMessage): Promise<Runner
   return parseSubscriptionRequest(body);
 }
 
-function parseCommandEnvelope(body: string): RunnerCommand | undefined {
+function parseCommandEnvelope(body: string): RunnerCommandParseResult {
   if (body.length === 0) {
-    return undefined;
+    return {
+      ok: false,
+      message: "Command body must contain an Execution Protocol v2 command envelope.",
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
+    return {
+      ok: false,
+      message: "Command body is not valid JSON.",
+    };
+  }
+  try {
+    return {
+      ok: true,
+      command: parseRunnerCommandV2(parsed) as RunnerCommand,
+    };
+  } catch (error) {
+    const commandId = readCandidateCommandId(parsed);
+    return {
+      ok: false,
+      ...(commandId !== undefined
+        ? { commandId }
+        : {}),
+      message: error instanceof Error
+        ? error.message
+        : "Command envelope is not valid Execution Protocol v2.",
+    };
+  }
+}
+
+function readCandidateCommandId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
   }
-  return isRunnerCommandEnvelope(parsed) ? parsed : undefined;
+  const id = (value as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
 }
 
 function parseSubscriptionRequest(body: string): RunnerEventSubscriptionRequest | undefined {
@@ -1075,6 +1153,37 @@ function normalizeRequestPath(url: string | undefined): string {
   return queryIndex >= 0 ? url.slice(0, queryIndex) : url;
 }
 
+function normalizePathPrefix(value: string | undefined): string {
+  if (value === undefined || value === "" || value === "/") {
+    return "";
+  }
+  if (value.startsWith("/") === false || value.includes("?") || value.includes("#")) {
+    throw new Error("Runner service pathPrefix must be an absolute URL path.");
+  }
+  const normalized = value.replace(/\/+$/, "");
+  if (normalized.length === 0) {
+    return "";
+  }
+  return normalized;
+}
+
+function resolveRunnerServiceRequestPath(
+  url: string | undefined,
+  pathPrefix: string,
+): string | undefined {
+  const path = normalizeRequestPath(url);
+  if (pathPrefix.length === 0) {
+    return path;
+  }
+  if (path === pathPrefix) {
+    return "/";
+  }
+  if (path.startsWith(`${pathPrefix}/`) === false) {
+    return undefined;
+  }
+  return path.slice(pathPrefix.length);
+}
+
 function toHeaderRecord(headers: IncomingMessage["headers"]): Record<string, string | undefined> {
   const output: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(headers)) {
@@ -1162,19 +1271,13 @@ function makeRunnerErrorEvent(
   };
 }
 
-function isRunnerEventType(value: string): value is RunnerEventType {
-  return TERMINAL_EVENT_TYPES.has(value as RunnerEvent["type"]) || value === "run.started" ||
-    value === "job.started" ||
-    value === "job.progress" ||
-    value === "run.log" ||
-    value === "run.console" ||
-    value === "run.progress" ||
-    value === "run.reasoning" ||
-    value === "task.updated";
+function encodeSseChunk(event: RunnerEvent): string {
+  const parsed = parseRunnerEventV2(event);
+  return `event: ${parsed.type}\ndata: ${JSON.stringify(parsed)}\n\n`;
 }
 
-function encodeSseChunk(event: RunnerEvent): string {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+function serializeRunnerEvent(event: RunnerEvent): string {
+  return JSON.stringify(parseRunnerEventV2(event));
 }
 
 async function collectStreamingCommand(
@@ -1192,7 +1295,7 @@ async function collectStreamingCommand(
 
 function writeEventResponse(response: ServerResponse, status: number, event: RunnerEvent): void {
   response.writeHead(status, JSON_HEADERS);
-  response.end(JSON.stringify(event));
+  response.end(serializeRunnerEvent(event));
 }
 
 function writeJson(response: ServerResponse, status: number, payload: unknown): void {

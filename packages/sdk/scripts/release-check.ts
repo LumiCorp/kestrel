@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, "..");
 const protocolPackageDir = path.resolve(packageDir, "..", "protocol");
+const repoRoot = path.resolve(packageDir, "..", "..");
 const packageJsonPath = path.join(packageDir, "package.json");
 
 const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
@@ -58,6 +59,10 @@ try {
   assert.ok(tarEntries.includes("package/dist/runner.js"), "packed SDK tarball is missing dist/runner.js.");
   assert.ok(tarEntries.includes("package/dist/runner.d.ts"), "packed SDK tarball is missing dist/runner.d.ts.");
   assert.ok(
+    tarEntries.includes("package/dist/internal/LocalRunnerTransport.js"),
+    "packed SDK tarball is missing the Local Core transport.",
+  );
+  assert.ok(
     tarEntries.every((entry) => entry.includes("NativeRunnerClient") === false),
     "packed SDK tarball still includes removed NativeRunnerClient artifacts.",
   );
@@ -104,13 +109,259 @@ try {
     stdio: "pipe",
   });
 
+  writeFileSync(path.join(fixtureDir, "contract-check.ts"), `
+import {
+  KestrelClient,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
+} from "@kestrel-agents/sdk/runner";
+import { createAgent } from "@kestrel-agents/sdk";
+import type {
+  JobRunCommandPayload,
+  KestrelRequestContext,
+  McpStatusCommandPayload,
+  ProjectActionCommandPayload,
+  RunStartCommandPayload,
+  RunnerAutoCompaction,
+  RunnerJobRunResultV1,
+  RunnerProfile,
+  RunnerResponseByCommandType,
+  RunnerRunStreamEvent,
+  RunnerRunTerminalEvent,
+  RunnerStream,
+  RunnerTurnInput,
+  WorkspaceCheckpointEventPayload,
+} from "@kestrel-agents/sdk/runner";
+
+const profile: RunnerProfile = {
+  id: "reference",
+  label: "Reference",
+  agent: "reference-react",
+  sessionPrefix: "reference",
+};
+const validRun: RunStartCommandPayload = {
+  profileId: "reference",
+  turn: {
+    sessionId: "session-1",
+    message: "run",
+    eventType: "user.message",
+    autoCompaction: { enabled: true, state: "armed", suppressOnce: false },
+  },
+};
+const validNestedJob: JobRunCommandPayload = {
+  input: {
+    version: "job_input_v1",
+    profileId: "reference",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+const validMcp: McpStatusCommandPayload = { profileId: "reference" };
+const validAction: ProjectActionCommandPayload = {
+  type: "branch.create",
+  sessionId: "session-1",
+  branchName: "feature/contracts",
+};
+void [validRun, validNestedJob, validMcp, validAction];
+
+const explicitRemoteClient = new KestrelClient({
+  target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+});
+const explicitLocalClient = new KestrelClient({
+  target: { kind: "local", socketPath: "/tmp/kestrel-core.sock", authToken: "token" },
+});
+const explicitRemoteAgent = createAgent({
+  id: "contract-check",
+  profileId: "reference",
+  target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+});
+// @ts-expect-error KestrelClient requires an explicit target
+const missingClientTarget = new KestrelClient({});
+// @ts-expect-error createAgent requires an explicit target
+const missingAgentTarget = createAgent({ id: "missing-target", profileId: "reference" });
+const legacyClientTarget = new KestrelClient({
+  // @ts-expect-error top-level connection fields are not part of the public SDK contract
+  baseUrl: "http://127.0.0.1:1",
+});
+void [
+  explicitRemoteClient,
+  explicitLocalClient,
+  explicitRemoteAgent,
+  missingClientTarget,
+  missingAgentTarget,
+  legacyClientTarget,
+];
+
+class CustomRunClient extends KestrelClient {
+  streamWithProfile(
+    input: { profile: RunnerProfile; turn: RunnerTurnInput },
+    context: KestrelRequestContext,
+  ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
+    return this.createStream(
+      "run.start",
+      { profile: input.profile, turn: input.turn },
+      context,
+      {
+        isStreamEvent: isRunnerRunStreamEvent,
+        isTerminalEvent: isRunnerRunTerminalEvent,
+      },
+    );
+  }
+}
+void CustomRunClient;
+
+function assertWorkspacePayloadTypes(payload: WorkspaceCheckpointEventPayload): void {
+  const checkpointId: string | undefined = payload.checkpoint?.checkpoint.checkpointId;
+  const diffFiles: Array<Record<string, unknown>> | undefined = payload.diff?.files;
+  const promotionStatus: string | undefined = payload.promotion?.status;
+  void [checkpointId, diffFiles, promotionStatus];
+}
+function assertWorkspaceResponseTypes(
+  response: RunnerResponseByCommandType["workspace.checkpoint.diff"],
+): void {
+  const diffId: string | undefined = response.payload.diff?.diffId;
+  const files: Array<Record<string, unknown>> | undefined = response.payload.diff?.files;
+  void [diffId, files];
+}
+void [assertWorkspacePayloadTypes, assertWorkspaceResponseTypes];
+type UndoWorkspacePromotionResult = Awaited<
+  ReturnType<KestrelClient["undoLatestWorkspacePromotion"]>
+>;
+function assertUndoWorkspacePromotionType(result: UndoWorkspacePromotionResult): void {
+  const restoreStatus: string | undefined = result.restore?.status;
+  void restoreStatus;
+}
+void assertUndoWorkspacePromotionType;
+
+// @ts-expect-error run.start requires profile or profileId
+const invalidRun: RunStartCommandPayload = {
+  turn: { sessionId: "session-1", message: "run", eventType: "user.message" },
+};
+// @ts-expect-error job.run requires an outer or nested profile reference
+const invalidJob: JobRunCommandPayload = {
+  input: {
+    version: "job_input_v1",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+// @ts-expect-error mcp.status requires profile or profileId
+const invalidMcp: McpStatusCommandPayload = {};
+// @ts-expect-error run.start profile and profileId are mutually exclusive
+const ambiguousRun: RunStartCommandPayload = {
+  profile,
+  profileId: "reference",
+  turn: { sessionId: "session-1", message: "run", eventType: "user.message" },
+};
+// @ts-expect-error mcp profile and profileId are mutually exclusive
+const ambiguousMcp: McpStatusCommandPayload = { profile, profileId: "reference" };
+// @ts-expect-error job.run cannot combine outer and nested profile references
+const ambiguousJob: JobRunCommandPayload = {
+  profileId: "reference",
+  input: {
+    version: "job_input_v1",
+    profileId: "nested-reference",
+    turn: { sessionId: "session-1", message: "run" },
+  },
+};
+// @ts-expect-error autoCompaction.enabled must be boolean
+const invalidAutoCompaction: RunnerAutoCompaction = { enabled: "yes" };
+// @ts-expect-error autoCompaction.state must be a supported state
+const invalidAutoCompactionState: RunnerAutoCompaction = { state: "arrmed" };
+// @ts-expect-error branch.create requires branchName
+const invalidAction: ProjectActionCommandPayload = {
+  type: "branch.create",
+  sessionId: "session-1",
+};
+// @ts-expect-error job terminals require the runtime result contract
+const invalidJobResult: RunnerJobRunResultV1 = {
+  version: "job_run_result_v1",
+  sessionId: "session-1",
+  threadId: "thread-1",
+  runId: "run-1",
+  status: "COMPLETED",
+  replay: {
+    version: "job_replay_pointer_v1",
+    sessionId: "session-1",
+    threadId: "thread-1",
+    runId: "run-1",
+    replayQuery: { sessionId: "session-1", threadId: "thread-1", runId: "run-1" },
+    commands: { replay: "replay", doctor: "doctor", bundle: "bundle" },
+  },
+};
+void [
+  invalidRun,
+  invalidJob,
+  invalidMcp,
+  ambiguousRun,
+  ambiguousMcp,
+  ambiguousJob,
+  invalidAutoCompaction,
+  invalidAutoCompactionState,
+  invalidAction,
+  invalidJobResult,
+];
+`);
+  writeFileSync(path.join(fixtureDir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      strict: true,
+      noEmit: true,
+      exactOptionalPropertyTypes: true,
+      skipLibCheck: true,
+      lib: ["ES2022", "DOM"],
+    },
+    include: ["contract-check.ts"],
+  }, null, 2));
+  execFileSync(path.join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], {
+    cwd: fixtureDir,
+    stdio: "pipe",
+  });
+
   const installedPackageDir = path.join(fixtureDir, "node_modules", "@kestrel-agents", "sdk");
   const entryModule = await import(pathToFileURL(path.join(installedPackageDir, "dist", "index.js")).href);
   const runnerModule = await import(pathToFileURL(path.join(installedPackageDir, "dist", "runner.js")).href);
   assert.equal(typeof entryModule.createAgent, "function", "packed SDK root does not export createAgent.");
   assert.equal(typeof runnerModule.KestrelClient, "function", "packed SDK runner subpath does not export KestrelClient.");
-  void entryModule.createAgent({ id: "release-check", profileId: "reference", baseUrl: "http://127.0.0.1:1" });
-  void new runnerModule.KestrelClient({ baseUrl: "http://127.0.0.1:1" });
+  const originalRunnerUrl = process.env.KESTREL_RUNNER_SERVICE_URL;
+  process.env.KESTREL_RUNNER_SERVICE_URL = "http://environment-must-not-be-used.internal";
+  try {
+    assert.throws(
+      () => new runnerModule.KestrelClient({}),
+      /requires an explicit local or remote target/u,
+      "packed SDK must not infer its target from process environment",
+    );
+    assert.throws(
+      () => new runnerModule.KestrelClient({
+        target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+        authToken: "legacy-token",
+      }),
+      /no longer accepts top-level baseUrl, authToken, or fetchImpl options/u,
+      "packed SDK must reject legacy top-level connection options",
+    );
+  } finally {
+    if (originalRunnerUrl === undefined) {
+      delete process.env.KESTREL_RUNNER_SERVICE_URL;
+    } else {
+      process.env.KESTREL_RUNNER_SERVICE_URL = originalRunnerUrl;
+    }
+  }
+  void entryModule.createAgent({
+    id: "release-check",
+    profileId: "reference",
+    target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+  });
+  const remoteClient = new runnerModule.KestrelClient({
+    target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
+  });
+  const localClient = new runnerModule.KestrelClient({
+    target: {
+      kind: "local",
+      socketPath: path.join(fixtureDir, "core.sock"),
+      authToken: "release-check-token",
+    },
+  });
+  await Promise.all([remoteClient.close(), localClient.close()]);
 
   console.log("sdk release-check passed");
 } finally {

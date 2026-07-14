@@ -12,11 +12,11 @@ depends_on:
 
 # CLI Runner Protocol
 
-The CLI and related thin-client surfaces communicate with a runner process or runner service using JSON envelopes. This document covers the command and event protocol, not the store-level `run_events` stream.
+The CLI and related thin-client surfaces communicate with Local Core or an explicit remote runner service using JSON envelopes. This document covers the command and event protocol, not the store-level `run_events` stream.
 
 ## Transport Model
 
-- Local CLI transport uses newline-delimited JSON over stdio.
+- Local CLI transport uses authenticated HTTP and SSE over Local Core's user-only Unix-domain socket.
 - Runner-service and web adapters use the same logical command and event shapes over HTTP and streaming wrappers.
 - Streaming commands are `run.start` and `job.run`; other commands expect a single terminal response event.
 

@@ -9,7 +9,17 @@ import {
   type DesktopProjectLauncherDescriptor,
 } from "../desktopShell/contracts.js";
 import type { ResolvedModelPolicy } from "../profile/modelPolicy.js";
-import type { LocalCoreStatus } from "./contracts.js";
+import type {
+  ReplayDoctorReport,
+  ReplayQuery,
+  ReplayResult,
+} from "../replay/RunReplayService.js";
+import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
+import {
+  parseLocalCoreDesktopExecutionConfig,
+  type LocalCoreDesktopExecutionConfig,
+  type LocalCoreStatus,
+} from "./contracts.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -46,6 +56,17 @@ export class LocalCoreClient {
 
   async patchSettings(patch: Record<string, unknown>): Promise<unknown> {
     return await this.patch("/v1/settings", patch);
+  }
+
+  async desktopExecutionConfig(): Promise<LocalCoreDesktopExecutionConfig> {
+    const response = await this.get("/v1/desktop/execution-config");
+    return parseLocalCoreDesktopExecutionConfig(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "executionConfig",
+        "Desktop execution config",
+      ),
+    );
   }
 
   async desktopSettings<TSettings = Record<string, unknown>>(): Promise<{
@@ -231,6 +252,21 @@ export class LocalCoreClient {
 
   async runs(): Promise<unknown> {
     return await this.get("/v1/runs");
+  }
+
+  async runtimeReplay(query: ReplayQuery): Promise<ReplayResult> {
+    const response = await this.post("/v1/runtime/replay", { query });
+    return readObjectField<ReplayResult>(response, "replay", "runtime replay");
+  }
+
+  async runtimeDoctor(query: ReplayQuery): Promise<ReplayDoctorReport> {
+    const response = await this.post("/v1/runtime/doctor", { query });
+    return readObjectField<ReplayDoctorReport>(response, "doctor", "runtime doctor");
+  }
+
+  async runtimeBundle(query: ReplayQuery): Promise<RuntimeReplayBundleV1> {
+    const response = await this.post("/v1/runtime/bundle", { query });
+    return readObjectField<RuntimeReplayBundleV1>(response, "bundle", "runtime bundle");
   }
 
   async diagnostics(): Promise<unknown> {

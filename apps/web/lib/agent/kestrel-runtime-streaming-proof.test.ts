@@ -21,7 +21,7 @@ const session = {
 } as Session;
 
 test("Kestrel-One runtime stream proof aligns primary stream reconnect and persistence for completed runs", async () => {
-  const terminal = completedTerminal({ message: "Final runtime answer." });
+  const terminal = completedTerminal("Final runtime answer.", { message: "Structured runtime data." });
   const transcript: KestrelOneRunnerStreamEvent[] = [
     { type: "run.started" },
     {
@@ -87,12 +87,14 @@ test("Kestrel-One runtime stream proof keeps failed and cancelled terminal text 
   for (const scenario of [
     {
       terminal: failedTerminal("Runner failed for smoke proof."),
-      expectedText: "Runner failed for smoke proof.",
+      expectedText: "",
+      expectedError: "Runner failed for smoke proof.",
       expectedStatus: "failed" as const,
     },
     {
       terminal: { type: "run.cancelled" as const },
-      expectedText: "The run was cancelled before it finished.",
+      expectedText: "",
+      expectedError: "The run was cancelled before it finished.",
       expectedStatus: "cancelled" as const,
     },
   ]) {
@@ -112,7 +114,7 @@ test("Kestrel-One runtime stream proof keeps failed and cancelled terminal text 
     assert.equal(primary.persistedMeta?.failureVisible, true);
     assert.equal(reconnect.result.finalText, scenario.expectedText);
     assert.equal(reconnect.result.terminalStatus, scenario.expectedStatus);
-    assert.equal(reconnect.result.errorMessage, scenario.expectedText);
+    assert.equal(reconnect.result.errorMessage, scenario.expectedError);
   }
 });
 
@@ -206,12 +208,14 @@ function createChunkWriter() {
 }
 
 function completedTerminal(
+  assistantText: string | null,
   finalizedPayload: unknown
 ): KestrelOneRunnerTerminalEvent {
   return {
     type: "run.completed",
     payload: {
       result: {
+        assistantText,
         finalizedPayload,
       },
     },

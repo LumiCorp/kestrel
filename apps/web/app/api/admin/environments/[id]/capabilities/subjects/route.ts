@@ -4,7 +4,7 @@ import {
   listAdminEnvironmentAccess,
   saveAdminEnvironmentSubjectRestriction,
 } from "@/lib/admin/environment-access";
-import { requireAdminOrganization } from "@/lib/knowledge/auth";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
 export async function GET(
@@ -12,7 +12,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireAdminOrganization();
+    const { organizationId } = await requireOrganizationAdmin();
     const { id } = await context.params;
     const access = await listAdminEnvironmentAccess({
       organizationId,
@@ -31,7 +31,7 @@ export async function PUT(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId, session } = await requireAdminOrganization();
+    const { organizationId, session } = await requireOrganizationAdmin();
     const { id } = await context.params;
     return NextResponse.json({
       restriction: await saveAdminEnvironmentSubjectRestriction({

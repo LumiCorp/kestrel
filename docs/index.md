@@ -3,7 +3,7 @@ id: docs-index
 domain: docs
 status: active
 owner: kestrel-quality
-last_verified_at: 2026-06-30
+last_verified_at: 2026-07-13
 depends_on:
   - ../AGENTS.md
   - ../ARCHITECTURE.md
@@ -39,6 +39,7 @@ This index maps the repo-level source-of-truth docs. Use it to find the canonica
 - [Kestrel One Environment cutover](docs/runbooks/2026-07-13-kestrel-one-environment-cutover.md)
 - [Packaged desktop first-run capability audit](docs/analysis/2026-06-03-packaged-desktop-first-run-capability-audit.md)
 - [Kestrel Local Core shell model](docs/plans/2026-06-17-kestrel-local-core-shell-model.md)
+- [Kestrel local platform architecture](docs/plans/2026-07-13-kestrel-local-platform-architecture.md)
 - [Kestrel Local Core beta migration evidence](docs/runbooks/2026-06-17-local-core-beta-migration-evidence.md)
 - [CLI terminal client](docs/cli/kchat.md)
 - [Kestrel Workspaces](docs/cli/workspaces.md)
@@ -56,6 +57,7 @@ This index maps the repo-level source-of-truth docs. Use it to find the canonica
 ## Reference Contracts
 
 - [Runtime simplification boundaries ADR](docs/adr/0004-runtime-simplification-boundaries.md)
+- [Managed RunPod Serverless control plane ADR](adr/0005-managed-runpod-serverless-control-plane.md)
 - [Architecture rules](docs/references/architecture-rules.json)
 - [Artifact evidence recovery contract](docs/references/artifact-evidence-recovery-contract.md)
 - [Heuristic hotspots](docs/references/heuristic-hotspots.md)

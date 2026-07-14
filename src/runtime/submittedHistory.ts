@@ -1,14 +1,25 @@
+import type { RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import { normalizeTimestampString } from "./timestamps.js";
 
 const SUBMITTED_HISTORY_WINDOW_LIMIT = 64;
 
-export interface SubmittedHistoryLine {
-  role: "user" | "assistant";
+interface SubmittedHistoryLineBase {
   text: string;
   timestamp: string;
   attachments?: RunTurnAttachment[] | undefined;
 }
+
+export type SubmittedHistoryLine = SubmittedHistoryLineBase & (
+  | {
+      role: "user" | "assistant";
+      data?: undefined;
+    }
+  | {
+      role: "system";
+      data: RunnerWaitingPromptHistoryDataV2;
+    }
+);
 
 export function normalizeSubmittedHistory(history: unknown): SubmittedHistoryLine[] | undefined {
   if (history === undefined) {
@@ -47,7 +58,9 @@ function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | un
   if (isRecord(line) === false) {
     return undefined;
   }
-  if (line.role !== "user" && line.role !== "assistant") {
+  const data = isRecord(line.data) ? line.data : undefined;
+  const isRuntimeWaitingPrompt = line.role === "system" && data?.kind === "runtime.waiting_prompt";
+  if (line.role !== "user" && line.role !== "assistant" && isRuntimeWaitingPrompt === false) {
     return undefined;
   }
   if (typeof line.text !== "string" || typeof line.timestamp !== "string") {
@@ -57,11 +70,27 @@ function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | un
     return undefined;
   }
 
-  return {
-    role: line.role,
+  const normalized = {
     text: line.text,
     timestamp: normalizeTimestampString(line.timestamp),
     ...(Array.isArray(line.attachments) ? { attachments: line.attachments as RunTurnAttachment[] } : {}),
+  };
+  if (isRuntimeWaitingPrompt) {
+    const runId = typeof data?.runId === "string" && data.runId.trim().length > 0
+      ? data.runId.trim()
+      : undefined;
+    return {
+      ...normalized,
+      role: "system",
+      data: {
+        kind: "runtime.waiting_prompt",
+        ...(runId !== undefined ? { runId } : {}),
+      },
+    };
+  }
+  return {
+    ...normalized,
+    role: line.role as "user" | "assistant",
   };
 }
 

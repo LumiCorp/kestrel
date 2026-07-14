@@ -2,8 +2,37 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
-import { createWebRunnerAdapter } from "../../src/web/index.js";
+import { createWebDemoProfile, createWebRunnerAdapter } from "../../src/web/index.js";
 import type { ProtocolTransport } from "../../cli/client/ProtocolClient.js";
+
+function createTerminalResult(input: {
+  sessionId: string;
+  runId: string;
+  status: "COMPLETED" | "FAILED";
+  assistantText: string | null;
+}) {
+  return {
+    assistantText: input.assistantText,
+    output: {
+      status: input.status,
+      sessionId: input.sessionId,
+      runId: input.runId,
+      quality: {
+        citationCoverage: 0,
+        unresolvedClaims: 0,
+        reworkRate: 0,
+        thrashIndex: 0,
+      },
+      errors: [],
+      telemetry: {
+        stepsExecuted: input.status === "COMPLETED" ? 1 : 0,
+        toolCalls: 0,
+        modelCalls: input.status === "COMPLETED" ? 1 : 0,
+        durationMs: 2,
+      },
+    },
+  };
+}
 
 class MockTransport implements ProtocolTransport {
   private handlers:
@@ -104,18 +133,12 @@ class MockTransport implements ProtocolTransport {
           runId: "run-1",
           payload: {
             result: {
-              output: {
-                status: "COMPLETED",
+              ...createTerminalResult({
                 sessionId: command.payload.turn?.sessionId ?? "unknown",
                 runId: "run-1",
-                errors: [],
-                telemetry: {
-                  stepsExecuted: 1,
-                  toolCalls: 0,
-                  modelCalls: 1,
-                  durationMs: 2,
-                },
-              },
+                status: "COMPLETED",
+                assistantText: "done",
+              }),
               finalizedPayload: {
                 message: "done",
               },
@@ -150,6 +173,13 @@ class MockTransport implements ProtocolTransport {
           commandId: command.id,
           payload: {
             sessionId: "session-web",
+            runId: "run-1",
+            result: createTerminalResult({
+              sessionId: "session-web",
+              runId: "run-1",
+              status: "FAILED",
+              assistantText: null,
+            }),
           },
         }),
       );
@@ -443,6 +473,12 @@ class SlowRunTransport implements ProtocolTransport {
             payload: {
               sessionId: active.sessionId,
               runId: active.runId,
+              result: createTerminalResult({
+                sessionId: active.sessionId,
+                runId: active.runId,
+                status: "FAILED",
+                assistantText: null,
+              }),
             },
           }),
         );
@@ -459,6 +495,12 @@ class SlowRunTransport implements ProtocolTransport {
           payload: {
             sessionId: payload.sessionId ?? "session-durable",
             ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+            result: createTerminalResult({
+              sessionId: payload.sessionId ?? "session-durable",
+              runId: payload.runId ?? "run-durable",
+              status: "FAILED",
+              assistantText: null,
+            }),
           },
         }),
       );
@@ -501,20 +543,12 @@ class SlowRunTransport implements ProtocolTransport {
         runId,
         sessionId,
         payload: {
-          result: {
-            output: {
-              status: "COMPLETED",
-              sessionId,
-              runId,
-              errors: [],
-              telemetry: {
-                stepsExecuted: 1,
-                toolCalls: 0,
-                modelCalls: 1,
-                durationMs: 2,
-              },
-            },
-          },
+          result: createTerminalResult({
+            sessionId,
+            runId,
+            status: "COMPLETED",
+            assistantText: "done",
+          }),
         },
       }),
     );
@@ -628,8 +662,206 @@ test("web adapter normalizes history and emits only correlated run events", asyn
   assert.deepEqual(payload.profile.capabilityPacks, ["balanced"]);
   assert.equal(payload.profile.toolAllowlist.includes("code.execute"), false);
   assert.equal(payload.profile.codeMode?.enabled, false);
+  assert.equal((command?.payload as { profileId?: string }).profileId, undefined);
+  assert.equal(
+    (command?.metadata as { profile?: { id?: string } } | undefined)?.profile?.id,
+    "reference-web",
+  );
 
   await adapter.close();
+});
+
+test("web adapter sends only registered profile identity while preserving actor and client durability", async () => {
+  const transport = new MockTransport();
+  const resolvedProfile = {
+    ...createWebDemoProfile("desktop"),
+    id: "desktop-registered",
+    defaultInteractionMode: "plan" as const,
+  };
+  const adapter = createWebRunnerAdapter({
+    profileId: "desktop-registered",
+    resolvedProfile,
+    protocolClientOptions: {
+      defaultExecutionDurability: "continue_on_disconnect",
+      defaultMetadata: {
+        actor: {
+          actorId: "desktop-user-1",
+          actorType: "end_user",
+          displayName: "Desktop User",
+        },
+        tenantId: "local-desktop",
+      },
+    },
+    transportFactory: () => transport,
+  });
+
+  await adapter.runTurnStream(
+    {
+      sessionId: "session-registered",
+      message: "inspect the project",
+      eventType: "user.message",
+    },
+    {
+      onEvent: () => {
+        // no-op
+      },
+    },
+  );
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  const payload = command.payload as {
+    profile?: unknown;
+    profileId?: string | undefined;
+    turn?: {
+      interactionMode?: string | undefined;
+      actor?: {
+        actorId?: string | undefined;
+        tenantId?: string | undefined;
+      } | undefined;
+    } | undefined;
+  };
+  const metadata = command.metadata as {
+    actor?: { actorId?: string | undefined } | undefined;
+    durability?: string | undefined;
+    profile?: unknown;
+    tenantId?: string | undefined;
+  } | undefined;
+
+  assert.equal(payload.profileId, "desktop-registered");
+  assert.equal(payload.profile, undefined);
+  assert.equal(payload.turn?.interactionMode, "plan");
+  assert.equal(payload.turn?.actor?.actorId, "desktop-user-1");
+  assert.equal(payload.turn?.actor?.tenantId, "local-desktop");
+  assert.equal(metadata?.actor?.actorId, "desktop-user-1");
+  assert.equal(metadata?.tenantId, "local-desktop");
+  assert.equal(metadata?.durability, "continue_on_disconnect");
+  assert.equal(metadata?.profile, undefined);
+
+  await adapter.close();
+});
+
+test("web adapter uses registered profile identity for MCP commands without inline metadata", async () => {
+  const transport = new MockTransport();
+  const protocolClientOptions = {
+    defaultMetadata: {
+      actor: {
+        actorId: "desktop-default-operator",
+        actorType: "operator" as const,
+      },
+    },
+  };
+  const adapter = createWebRunnerAdapter({
+    profileId: "desktop-registered",
+    resolvedProfile: {
+      ...createWebDemoProfile("desktop"),
+      id: "desktop-registered",
+    },
+    protocolClientOptions,
+    transportFactory: () => transport,
+  });
+  (protocolClientOptions.defaultMetadata as typeof protocolClientOptions.defaultMetadata & {
+    profile?: ReturnType<typeof createWebDemoProfile>;
+  }).profile = createWebDemoProfile();
+
+  await adapter.sendControl(
+    { type: "mcp.status" },
+    {
+      actor: {
+        actorId: "desktop-operator-1",
+        actorType: "operator",
+      },
+      tenantId: "local-desktop",
+    },
+  );
+  await adapter.sendControl({ type: "mcp.refresh" });
+
+  const commands = transport.sent.filter(
+    (item) => item.type === "mcp.status" || item.type === "mcp.refresh",
+  );
+  assert.equal(commands.length, 2);
+  for (const command of commands) {
+    assert.deepEqual(command.payload, { profileId: "desktop-registered" });
+    assert.equal((command.metadata as { profile?: unknown } | undefined)?.profile, undefined);
+  }
+  assert.equal(
+    (commands[0]?.metadata as { actor?: { actorId?: string } } | undefined)?.actor?.actorId,
+    "desktop-operator-1",
+  );
+  assert.equal(
+    (commands[0]?.metadata as { tenantId?: string } | undefined)?.tenantId,
+    "local-desktop",
+  );
+
+  await adapter.close();
+});
+
+test("web adapter durable start keeps continue-on-disconnect for registered profiles", async () => {
+  const transport = new SlowRunTransport();
+  const adapter = createWebRunnerAdapter({
+    profileId: "desktop-registered",
+    resolvedProfile: {
+      ...createWebDemoProfile("desktop"),
+      id: "desktop-registered",
+    },
+    protocolClientOptions: {
+      defaultExecutionDurability: "cancel_on_disconnect",
+    },
+    transportFactory: () => transport,
+  });
+
+  const accepted = await adapter.startRun({
+    sessionId: "session-registered-durable",
+    runId: "run-registered-durable",
+    message: "keep going",
+    eventType: "user.message",
+  });
+
+  const command = transport.sent.find((item) => item.type === "run.start");
+  assert.ok(command);
+  assert.equal(
+    (command.payload as { profileId?: string | undefined }).profileId,
+    "desktop-registered",
+  );
+  assert.equal((command.payload as { profile?: unknown }).profile, undefined);
+  assert.equal(
+    (command.metadata as { durability?: string } | undefined)?.durability,
+    "continue_on_disconnect",
+  );
+  assert.equal((command.metadata as { profile?: unknown } | undefined)?.profile, undefined);
+
+  transport.emitCompleted(accepted.commandId, accepted.sessionId, accepted.runId);
+  await adapter.close();
+});
+
+test("web adapter rejects invalid registered profile configurations", () => {
+  const profile = {
+    ...createWebDemoProfile("desktop"),
+    id: "desktop-registered",
+  };
+
+  assert.throws(
+    () => createWebRunnerAdapter({ profile, profileId: profile.id, resolvedProfile: profile } as never),
+    /either an inline profile or a registered profile, not both/u,
+  );
+  assert.throws(
+    () => createWebRunnerAdapter({ profileId: "   ", resolvedProfile: profile } as never),
+    /profileId must be a non-empty string/u,
+  );
+  assert.throws(
+    () => createWebRunnerAdapter({ profileId: "other-profile", resolvedProfile: profile } as never),
+    /resolvedProfile\.id 'desktop-registered' must match profileId 'other-profile'/u,
+  );
+  assert.throws(
+    () => createWebRunnerAdapter({
+      profileId: profile.id,
+      resolvedProfile: profile,
+      protocolClientOptions: {
+        defaultMetadata: { profile },
+      },
+    } as never),
+    /cannot include an inline profile in protocol client metadata/u,
+  );
 });
 
 test("web adapter durable start and subscribe do not cancel on subscriber abort", async () => {

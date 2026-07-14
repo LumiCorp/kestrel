@@ -1,7 +1,7 @@
 ---
 id: kestrel-local-core-shell-model
 domain: architecture
-status: draft
+status: historical
 owner: kestrel-suite
 last_verified_at: 2026-06-17
 depends_on:
@@ -12,6 +12,8 @@ depends_on:
 ---
 
 # Kestrel Local Core And Shell Model
+
+> Superseded for Kestrel 0.6 by the [Kestrel local platform architecture](2026-07-13-kestrel-local-platform-architecture.md). This record preserves the 0.5 child-daemon and managed-Postgres decisions for release history.
 
 See also: [Local Core state inventory](../analysis/2026-06-17-kestrel-local-core-state-inventory.md), [v0.5 release roadmap](2026-06-16-kestrel-suite-v0.5-release-roadmap.md), and [suite inventory](../analysis/2026-06-16-kestrel-suite-v0.5-codebase-inventory.md).
 

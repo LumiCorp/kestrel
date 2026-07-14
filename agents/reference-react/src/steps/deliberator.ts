@@ -55,6 +55,7 @@ import {
   resolveDeliberatorPromptVariant,
 } from "../prompt/deliberatorPrompt.js";
 import { readActiveSkillPackContext } from "../prompt/skillPack.js";
+import { readActiveProjectContext } from "../prompt/projectContext.js";
 import {
   buildWorkspaceModelContext,
   readActiveWorkspaceContext,
@@ -350,6 +351,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const projectSnapshot = readProjectSnapshotContext(ctx.session.state);
 
     const activeWorkspaceModelContext = buildWorkspaceModelContext(activeWorkspace);
+    const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
     const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
     const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
       tools: deliberatorTools,
@@ -390,9 +392,11 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         kind: "reference-react-deliberator",
         interactionMode: modeResolution.interactionMode,
         promptVariant: resolvedPromptVariant,
+        ...readSystemInstructions(eventPayload),
       },
       retryContext: asRecord(reactState.retryContext),
       activeWorkspace: activeWorkspaceModelContext,
+      activeProjectContext,
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
@@ -410,6 +414,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       projectSnapshot,
       promptVariant: resolvedPromptVariant,
       activeWorkspace: activeWorkspaceModelContext,
+      activeProjectContext,
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
@@ -530,9 +535,11 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           kind: "reference-react-deliberator",
           interactionMode: modeResolution.interactionMode,
           promptVariant: resolvedPromptVariant,
+          ...readSystemInstructions(eventPayload),
         },
         retryContext,
         activeWorkspace: activeWorkspaceModelContext,
+        activeProjectContext,
         activeSkillPack: activeSkillPackContext,
         stepIndex: ctx.stepIndex,
       });
@@ -678,6 +685,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     decisionTrace: undefined,
     loopGuard: undefined,
     terminal: undefined,
+    assistantText: null,
     finalOutput: undefined,
     activeTurnIntent: undefined,
     phase: undefined,
@@ -977,6 +985,7 @@ async function compactContextRequestIfNeeded(input: {
   projectSnapshot?: unknown;
   promptVariant?: string | undefined;
   activeWorkspace?: unknown;
+  activeProjectContext?: unknown;
   activeSkillPack?: unknown;
   stepIndex: number;
 }): Promise<ReturnType<typeof buildContextRequest>> {
@@ -1029,8 +1038,10 @@ async function compactContextRequestIfNeeded(input: {
       kind: "reference-react-deliberator",
       interactionMode: input.interactionMode,
       promptVariant: input.promptVariant,
+      ...readSystemInstructions(input.eventPayload),
     },
     activeWorkspace: input.activeWorkspace,
+    activeProjectContext: input.activeProjectContext,
     activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
   });
@@ -1053,6 +1064,23 @@ function readDeliberatorPromptInput(input: Record<string, unknown>): {
     ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
     ...(promptVariant !== undefined ? { promptVariant } : {}),
   };
+}
+
+function readSystemInstructions(
+  eventPayload: Record<string, unknown>,
+): { systemInstructions?: string[] | undefined } {
+  if (Array.isArray(eventPayload.systemInstructions) === false) {
+    return {};
+  }
+  const systemInstructions = eventPayload.systemInstructions.flatMap(
+    (entry) => {
+      const instruction = asString(entry)?.trim();
+      return instruction === undefined || instruction.length === 0
+        ? []
+        : [instruction];
+    },
+  );
+  return systemInstructions.length > 0 ? { systemInstructions } : {};
 }
 
 function readRuntimeAssemblyPromptVariant(eventPayload: Record<string, unknown>): string | undefined {

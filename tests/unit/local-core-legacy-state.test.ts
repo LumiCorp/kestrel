@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { detectLocalCoreMigrationState } from "../../src/localCore/index.js";
+import { detectLocalCoreMigrationState, resolveLocalCorePaths } from "../../src/localCore/index.js";
 
 test("Local Core migration readiness reports legacy Desktop and CLI state without moving it", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-legacy-home-"));
@@ -13,8 +13,9 @@ test("Local Core migration readiness reports legacy Desktop and CLI state withou
   const cliHome = path.join(home, ".kestrel");
 
   try {
-    await mkdir(path.join(coreHome, "core"), { recursive: true });
-    await writeFile(path.join(coreHome, "core", "manifest.json"), "{}\n", "utf8");
+    const corePaths = resolveLocalCorePaths(coreHome);
+    await mkdir(path.dirname(corePaths.manifestPath), { recursive: true });
+    await writeFile(corePaths.manifestPath, "{}\n", "utf8");
     await mkdir(path.join(desktopHome, "runtime-home"), { recursive: true });
     await writeFile(path.join(desktopHome, "desktop-settings.json"), "{}\n", "utf8");
     await mkdir(cliHome, { recursive: true });
@@ -27,7 +28,7 @@ test("Local Core migration readiness reports legacy Desktop and CLI state withou
       now: new Date("2026-06-17T12:00:00.000Z"),
     });
 
-    assert.equal(report.coreHome, coreHome);
+    assert.equal(report.coreHome, corePaths.stateRootPath);
     assert.equal(report.coreHomeSource, "explicit_core_home");
     assert.equal(report.isolatedDevMode, false);
     assert.equal(report.entries.find((entry) => entry.name === "local_core")?.status, "present");

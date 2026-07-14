@@ -11,8 +11,10 @@ import {
   FolderKanban,
   FolderOpen,
   HardDrive,
+  HardDriveDownload,
   KeyRound,
   Logs,
+  Mail,
   PlugZap,
   User,
   Users,
@@ -45,6 +47,11 @@ const workspaceItems = [
     url: "/knowledge",
     icon: FolderKanban,
   },
+  {
+    title: "Model Deployments",
+    url: "/model-deployments",
+    icon: HardDriveDownload,
+  },
 ];
 
 const accountItems = [
@@ -70,6 +77,14 @@ const accountItems = [
   },
 ];
 
+const organizationItems = [
+  {
+    title: "Environments",
+    url: "/settings/environments",
+    icon: HardDrive,
+  },
+];
+
 const adminItems = [
   {
     title: "Agent",
@@ -82,14 +97,19 @@ const adminItems = [
     icon: Cpu,
   },
   {
-    title: "Environments",
-    url: "/admin/environments",
-    icon: HardDrive,
+    title: "Deployments",
+    url: "/admin/deployments",
+    icon: HardDriveDownload,
   },
   {
     title: "Tools",
     url: "/admin/tools",
     icon: PlugZap,
+  },
+  {
+    title: "Integrations",
+    url: "/admin/integrations",
+    icon: Mail,
   },
   {
     title: "Users",
@@ -176,7 +196,13 @@ function NavSection({
   );
 }
 
-export function NavMain({ isAdmin }: { isAdmin: boolean }) {
+export function NavMain({
+  isAdmin,
+  canManageOrganization,
+}: {
+  isAdmin: boolean;
+  canManageOrganization: boolean;
+}) {
   const pathname = usePathname();
 
   return (
@@ -187,6 +213,13 @@ export function NavMain({ isAdmin }: { isAdmin: boolean }) {
         pathname={pathname}
       />
       <NavSection items={accountItems} label="Account" pathname={pathname} />
+      {canManageOrganization ? (
+        <NavSection
+          items={organizationItems}
+          label="Organization"
+          pathname={pathname}
+        />
+      ) : null}
       {isAdmin ? (
         <>
           <NavSection items={adminItems} label="Admin" pathname={pathname} />

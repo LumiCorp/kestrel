@@ -4,7 +4,13 @@ import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { runCliCommand, resolveCommandModeRunnerModeForTests, shouldRunCommandMode } from "../../cli/commandMode.js";
+import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
+
+import {
+  buildResolvedJobRunCommandPayload,
+  runCliCommand,
+  shouldRunCommandMode,
+} from "../../cli/commandMode.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { resolveDefaultDevShellBaseDir } from "../../src/devshell/paths.js";
 
@@ -60,10 +66,55 @@ test("command mode status reports Local Core home and lock state", async () => {
   }
 });
 
-test("command mode honors the in-process runner environment switch", () => {
-  assert.equal(resolveCommandModeRunnerModeForTests({}), "child");
-  assert.equal(resolveCommandModeRunnerModeForTests({ KESTREL_RUNNER_PROCESS_MODE: "inprocess" }), "inprocess");
-  assert.equal(resolveCommandModeRunnerModeForTests({ KCHAT_RUNNER_MODE: "in_process" }), "inprocess");
+test("command mode emits one resolved profile for profile-bearing jobs", () => {
+  const profile = {
+    id: "reference",
+    label: "Reference",
+    agent: "reference-react" as const,
+    sessionPrefix: "reference",
+    storeDriver: "sqlite" as const,
+  };
+  const turn = {
+    sessionId: "session-job-profile",
+    message: "Run the job",
+    eventType: "job.run",
+  };
+
+  for (const input of [
+    { version: "job_input_v1" as const, profileId: profile.id, turn },
+    { version: "job_input_v1" as const, profile, turn },
+  ]) {
+    const payload = buildResolvedJobRunCommandPayload(input, profile);
+    assert.equal(payload.input.profile, undefined);
+    assert.equal(payload.input.profileId, undefined);
+    assert.equal(payload.profile?.storeDriver, undefined);
+    assert.equal(payload.input.turn.eventType, "job.run");
+    assert.doesNotThrow(() => parseRunnerCommandV2({
+      id: "command-job-profile",
+      type: "job.run",
+      payload,
+    }));
+  }
+});
+
+test("command mode rejects job-owned persistence selection", () => {
+  assert.throws(
+    () => buildResolvedJobRunCommandPayload({
+      version: "job_input_v1",
+      storeDriver: "sqlite",
+      turn: {
+        sessionId: "session-job-store",
+        message: "Run against a client-selected store",
+        eventType: "job.run",
+      },
+    }, {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+    }),
+    /Local Core owns persistence/u,
+  );
 });
 
 test("command mode model show and set operate on shared model policy", async () => {
@@ -234,7 +285,9 @@ test("command mode model set-provider accepts ollama", async () => {
   }) as typeof fetch;
   try {
     await assert.rejects(
-      () => runCliCommand(["model", "set-provider", "ollama"], cwd),
+      () => captureStdout(async () => {
+        await runCliCommand(["model", "set-provider", "ollama"], cwd);
+      }),
       /Selecting provider 'ollama' requires an explicit model\./u,
     );
 
@@ -251,7 +304,9 @@ test("command mode model set-provider accepts ollama", async () => {
     assert.equal(policy.model, "llama3.2:3b");
 
     await assert.rejects(
-      () => runCliCommand(["model", "set", "gpt-5.2"], cwd),
+      () => captureStdout(async () => {
+        await runCliCommand(["model", "set", "gpt-5.2"], cwd);
+      }),
       /Model 'gpt-5\.2' is not allowed for provider 'ollama'\./u,
     );
   } finally {
@@ -425,14 +480,28 @@ test("command mode setup writes stable runtime defaults", async () => {
   const originalHome = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = home;
   try {
+    await assert.rejects(
+      () => silenceStdout(async () => {
+        await runCliCommand(["setup", "--store", "sqlite"], cwd);
+      }),
+      /Local Core owns database configuration/u,
+    );
+    await assert.rejects(
+      () => silenceStdout(async () => {
+        await runCliCommand(["setup", "--store=sqlite"], cwd);
+      }),
+      /Local Core owns database configuration/u,
+    );
+    await assert.rejects(
+      () => silenceStdout(async () => {
+        await runCliCommand(["setup", "--sqlite-path=runtime.db"], cwd);
+      }),
+      /Local Core owns database configuration/u,
+    );
     await silenceStdout(async () => {
       await runCliCommand(
         [
           "setup",
-          "--store",
-          "sqlite",
-          "--sqlite-path",
-          "./.kestrel/runtime.db",
           "--approval-pack",
           "production",
           "--full",
@@ -445,15 +514,15 @@ test("command mode setup writes stable runtime defaults", async () => {
     const settings = JSON.parse(settingsRaw) as {
       version: number;
       defaults: {
-        storeDriver: string;
-        sqlitePath: string;
+        storeDriver?: string | undefined;
+        sqlitePath?: string | undefined;
         approvalPolicyPackId: string;
         minimalMode: boolean;
       };
     };
     assert.equal(settings.version, 1);
-    assert.equal(settings.defaults.storeDriver, "sqlite");
-    assert.equal(settings.defaults.sqlitePath, "./.kestrel/runtime.db");
+    assert.equal(settings.defaults.storeDriver, undefined);
+    assert.equal(settings.defaults.sqlitePath, undefined);
     assert.equal(settings.defaults.approvalPolicyPackId, "production");
     assert.equal(settings.defaults.minimalMode, false);
   } finally {
@@ -467,11 +536,18 @@ test("command mode setup writes stable runtime defaults", async () => {
 
 async function silenceStdout(operation: () => Promise<void>): Promise<void> {
   const original = process.stdout.write.bind(process.stdout);
+  const originalLocalCoreDirect = process.env.KESTREL_LOCAL_CORE_DIRECT;
   process.stdout.write = (() => true) as typeof process.stdout.write;
+  process.env.KESTREL_LOCAL_CORE_DIRECT = "1";
   try {
     await operation();
   } finally {
     process.stdout.write = original;
+    if (originalLocalCoreDirect === undefined) {
+      delete process.env.KESTREL_LOCAL_CORE_DIRECT;
+    } else {
+      process.env.KESTREL_LOCAL_CORE_DIRECT = originalLocalCoreDirect;
+    }
   }
 }
 

@@ -23,7 +23,12 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "UNAUTHORIZED"
   ) {
     status = 401;
-  } else if (code === "PROJECT_NOT_FOUND") {
+  } else if (
+    code === "PROJECT_NOT_FOUND" ||
+    code === "MCP_SERVER_NOT_FOUND" ||
+    code === "MCP_SNAPSHOT_NOT_FOUND" ||
+    code === "MCP_CREDENTIAL_NOT_FOUND"
+  ) {
     status = 404;
   } else if (code === "PROJECT_FORBIDDEN") {
     status = 403;
@@ -45,7 +50,11 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "GITHUB_APPROVAL_NOT_PENDING" ||
     code === "ENVIRONMENT_INVALID_TRANSITION" ||
     code === "WORKSPACE_INVALID_TRANSITION" ||
-    code === "ENVIRONMENT_UNAVAILABLE"
+    code === "ENVIRONMENT_UNAVAILABLE" ||
+    code === "ENVIRONMENT_IS_DEFAULT" ||
+    code === "ENVIRONMENT_HAS_PROJECTS" ||
+    code === "MCP_INTERACTION_CONFLICT" ||
+    message === "MCP capability snapshot has already been reviewed."
   ) {
     status = 409;
   } else if (message === "Forbidden") {

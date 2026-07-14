@@ -56,6 +56,7 @@ test("persistDelegationTaskUpdateToGraph maps runtime delegation snapshots into 
   let persisted: unknown;
   const update: DelegationTaskUpdate = {
     kind: "completed",
+    assistantText: "Child task complete.",
     task: {
       taskId: "task-child",
       parentSessionId: "session-parent",

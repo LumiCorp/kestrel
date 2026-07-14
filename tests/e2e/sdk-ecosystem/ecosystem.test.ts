@@ -44,7 +44,7 @@ test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory"
   const agent = createAgent({
     id: "support-agent",
     profileId: sdkE2eProfile.id,
-    baseUrl: server.url,
+    target: { kind: "remote", baseUrl: server.url },
   });
   t.after(async () => {
     await agent.close();
@@ -158,7 +158,7 @@ test("core SDK e2e isolates concurrent subscriptions and rejects stale concurren
   const agent = createAgent({
     id: "support-agent",
     profileId: sdkE2eProfile.id,
-    baseUrl: server.url,
+    target: { kind: "remote", baseUrl: server.url },
   });
   t.after(async () => {
     await agent.close();
@@ -264,7 +264,7 @@ test("core SDK e2e stream lifecycle and subscription delivery stay consistent fo
   const agent = createAgent({
     id: "support-agent",
     profileId: sdkE2eProfile.id,
-    baseUrl: server.url,
+    target: { kind: "remote", baseUrl: server.url },
   });
   t.after(async () => {
     await agent.close();
@@ -329,7 +329,7 @@ test("observability e2e exports native traces and real OTEL spans", async (t) =>
     createAgent({
       id: "support-agent",
       profileId: sdkE2eProfile.id,
-      baseUrl: server.url,
+      target: { kind: "remote", baseUrl: server.url },
     }) as unknown as Parameters<typeof tracer.wrapAgent>[0],
   );
   t.after(async () => {
@@ -371,7 +371,7 @@ test("next route helpers e2e preserve correlation and propagate abort cancellati
   const agent = createAgent({
     id: "support-agent",
     profileId: sdkE2eProfile.id,
-    baseUrl: server.url,
+    target: { kind: "remote", baseUrl: server.url },
   });
   t.after(async () => {
     await agent.close();
@@ -497,7 +497,7 @@ const context = {
 const agent = createAgent({
   id: "fixture-agent",
   profileId: "reference",
-  baseUrl: process.env.RUNNER_URL,
+  target: { kind: "remote", baseUrl: process.env.RUNNER_URL },
 });
 
 const terminal = await agent.run({

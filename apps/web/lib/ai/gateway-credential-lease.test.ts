@@ -61,6 +61,7 @@ test("credential lease eligibility rejects disabled and unapproved gateway model
 test("gateway leases expire after exactly five minutes", () => {
   const now = new Date("2026-07-11T12:00:00.000Z");
   const lease = buildGatewayCredentialLease({
+    organizationId: "org-1",
     gateway: {
       id: "gateway-openrouter",
       provider: "openrouter",
@@ -81,6 +82,7 @@ test("gateway leases expire after exactly five minutes", () => {
 
 test("Lumi leases preserve their configured language protocol", () => {
   const lease = buildGatewayCredentialLease({
+    organizationId: "org-1",
     gateway: {
       id: "gateway-lumi",
       provider: "lumi",
@@ -102,6 +104,7 @@ test("credential leases fail closed when a provider key is missing", () => {
   assert.throws(
     () =>
       buildGatewayCredentialLease({
+        organizationId: "org-1",
         gateway: {
           id: "gateway-openai",
           provider: "openai",
@@ -115,4 +118,89 @@ test("credential leases fail closed when a provider key is missing", () => {
       error instanceof GatewayCredentialLeaseError &&
       error.code === "GATEWAY_CREDENTIAL_MISSING"
   );
+});
+
+test("validated RunPod models lease the OpenAI protocol and canonical endpoint", () => {
+  const lease = buildGatewayCredentialLease({
+    organizationId: "org-1",
+    gateway: {
+      id: "gateway-runpod",
+      provider: "runpod",
+      baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai/v1",
+    },
+    model: {
+      rawModelId: "Qwen/Qwen3-32B",
+      metadata: {
+        kestrelRunPodValidation: {
+          version: "runpod-tool-round-trip-v2",
+          streaming: true,
+          toolRoundTrip: true,
+          rawModelId: "Qwen/Qwen3-32B",
+          baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai/v1",
+          validatedAt: "2026-07-12T12:00:00.000Z",
+        },
+      },
+    },
+    apiKey: "runpod-secret",
+    now: new Date("2026-07-12T12:00:00.000Z"),
+  });
+  assert.equal(lease.provider, "runpod");
+  assert.equal(lease.protocol, "openai");
+  assert.equal(lease.baseUrl, "https://api.runpod.ai/v2/endpoint_123/openai");
+});
+
+test("RunPod lease eligibility requires server-owned validation evidence", () => {
+  assert.throws(
+    () =>
+      assertGatewayCredentialLeaseEligible({
+        gateway: { enabled: true, provider: "runpod" },
+        model: { approved: true, modality: "language", metadata: null },
+      }),
+    (error: unknown) =>
+      error instanceof GatewayCredentialLeaseError &&
+      error.code === "GATEWAY_MODEL_NOT_VALIDATED"
+  );
+});
+
+test("RunPod lease eligibility binds validation to model and endpoint", () => {
+  const input = {
+    gateway: {
+      enabled: true,
+      provider: "runpod" as const,
+      baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai/v1",
+    },
+    model: {
+      approved: true,
+      modality: "language",
+      rawModelId: "Qwen/Qwen3-32B",
+      metadata: {
+        kestrelRunPodValidation: {
+          version: "runpod-tool-round-trip-v2",
+          streaming: true,
+          toolRoundTrip: true,
+          rawModelId: "Qwen/Qwen3-32B",
+          baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai/v1",
+          validatedAt: "2026-07-12T12:00:00.000Z",
+        },
+      },
+    },
+  };
+  assert.doesNotThrow(() => assertGatewayCredentialLeaseEligible(input));
+  for (const changed of [
+    { ...input, model: { ...input.model, rawModelId: "other-model" } },
+    {
+      ...input,
+      gateway: {
+        ...input.gateway,
+        baseUrl: "https://api.runpod.ai/v2/other-endpoint/openai/v1",
+      },
+    },
+  ]) {
+    assert.throws(
+      () => assertGatewayCredentialLeaseEligible(changed),
+      (error: unknown) =>
+        error instanceof GatewayCredentialLeaseError &&
+        error.code === "GATEWAY_MODEL_NOT_VALIDATED"
+    );
+  }
 });

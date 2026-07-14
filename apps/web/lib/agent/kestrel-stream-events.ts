@@ -88,24 +88,26 @@ export function getKestrelStreamUiUpdate(
   }
 
   if (parsed.type === "run.failed") {
-    const terminalText = getKestrelStreamTerminalText(parsed);
+    const payload = parsed.payload as { error?: { message?: unknown } };
+    const errorMessage = typeof payload.error?.message === "string"
+      ? payload.error.message
+      : "The run failed before it produced a final assistant message.";
     return {
       kind: "terminal",
       severity: "error",
       terminalStatus: "failed",
-      text: terminalText,
-      errorMessage: terminalText,
+      text: "",
+      errorMessage,
     };
   }
 
   if (parsed.type === "run.cancelled") {
-    const terminalText = getKestrelStreamTerminalText(parsed);
     return {
       kind: "terminal",
       severity: "cancelled",
       terminalStatus: "cancelled",
-      text: terminalText,
-      errorMessage: terminalText,
+      text: "",
+      errorMessage: "The run was cancelled before it finished.",
     };
   }
 
@@ -177,22 +179,9 @@ export function getKestrelToolApprovalRequest(
 export function getKestrelStreamTerminalText(event: KestrelStreamEventForUi) {
   if (event.type === "run.completed") {
     const payload = event.payload as {
-      result?: { finalizedPayload?: unknown };
+      result?: { assistantText?: unknown };
     };
-    return extractFinalizedAssistantText(payload.result?.finalizedPayload);
-  }
-
-  if (event.type === "run.failed") {
-    const payload = event.payload as {
-      error?: { message?: unknown };
-    };
-    return typeof payload.error?.message === "string"
-      ? payload.error.message
-      : "The run failed before it produced a final assistant message.";
-  }
-
-  if (event.type === "run.cancelled") {
-    return "The run was cancelled before it finished.";
+    return asNonEmptyString(payload.result?.assistantText) ?? "";
   }
 
   return "";
@@ -227,39 +216,6 @@ export function getKestrelStreamProgressText(event: KestrelStreamEventForUi) {
   }
 
   return "";
-}
-
-export function extractFinalizedAssistantText(
-  finalizedPayload: unknown
-): string {
-  if (typeof finalizedPayload === "string") {
-    return finalizedPayload.trim();
-  }
-
-  const record = asRecord(finalizedPayload);
-  if (!record) {
-    return "";
-  }
-
-  const direct =
-    asNonEmptyString(record.message) ??
-    asNonEmptyString(record.content) ??
-    asNonEmptyString(record.text);
-  if (direct) {
-    return direct;
-  }
-
-  const data = asRecord(record.data);
-  if (data) {
-    return (
-      asNonEmptyString(data.message) ??
-      asNonEmptyString(data.content) ??
-      asNonEmptyString(data.text) ??
-      ""
-    );
-  }
-
-  return JSON.stringify(finalizedPayload);
 }
 
 function readProgressMessage(

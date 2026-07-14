@@ -3,7 +3,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDesktopPostgresBundle } from "./prepare-desktop-postgres-bundle.js";
-import { resolveRuntimeDependencyInstallArgs } from "./runtime-package-dependencies.js";
+import {
+  resolveRuntimeDependencyInstallArgs,
+  resolveRuntimePackageDependencies,
+} from "./runtime-package-dependencies.js";
 
 export const DESKTOP_RESOURCE_DIRECTORIES = [
   "cli",
@@ -16,7 +19,7 @@ export const DESKTOP_RESOURCE_DIRECTORIES = [
   "scripts",
 ];
 
-export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = ["agents", "src", "cli"] as const;
+export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = ["agents", "src", "cli", "db"] as const;
 const EXCLUDED_BASENAMES = new Set([
   "test-results",
   "tsconfig.tsbuildinfo",
@@ -195,6 +198,7 @@ function collectResourceFiles(root: string): string[] {
 
 function writeDesktopRuntimeManifest(repoRoot: string, outputDir: string): void {
   const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
+    version: string;
     packageManager?: string | undefined;
     engines?: Record<string, string> | undefined;
     dependencies?: Record<string, string> | undefined;
@@ -204,10 +208,12 @@ function writeDesktopRuntimeManifest(repoRoot: string, outputDir: string): void 
     overrides?: Record<string, string> | undefined;
   };
 
-  const dependencies = {
-    ...(rootPackage.dependencies ?? {}),
-    ...(rootPackage.devDependencies?.tsx !== undefined ? { tsx: rootPackage.devDependencies.tsx } : {}),
-  };
+  const dependencies = resolveRuntimePackageDependencies({
+    repoRoot,
+    runtimeVersion: rootPackage.version,
+    dependencies: rootPackage.dependencies,
+    tsxVersion: rootPackage.devDependencies?.tsx,
+  });
 
   writeFileSync(
     path.join(outputDir, "package.json"),

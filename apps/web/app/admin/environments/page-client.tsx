@@ -28,6 +28,7 @@ import type {
 import type { HostedEnvironmentsRollout } from "@/lib/environments/config";
 import { describeEnvironmentOperation } from "@/lib/environments/operation-presentation";
 import { DEFAULT_FLY_REGION, FLY_REGIONS } from "@/lib/environments/regions";
+import { McpEnvironmentPanel } from "./mcp-environment-panel";
 
 type CreateEnvironmentResponse = {
   environment?: Environment;
@@ -747,6 +748,7 @@ export function EnvironmentsAdminClient({
                         })}
                     </div>
                   ) : null}
+                  <McpEnvironmentPanel environmentId={environment.id} />
                 </CardContent>
               </Card>
             );

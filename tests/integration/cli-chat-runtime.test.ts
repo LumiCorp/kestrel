@@ -121,6 +121,52 @@ test("KestrelChatRuntime rejects non-string turn messages at the runtime boundar
   );
 });
 
+test("KestrelChatRuntime consumes hosted MCP authorization before compiling the turn", async () => {
+  const events: RuntimeEvent[] = [];
+  const prepared: unknown[] = [];
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {
+        run: async (event: RuntimeEvent) => {
+          events.push(event);
+          return completedOutput(event.sessionId, "run-hosted-mcp");
+        },
+        getSession: async () => null,
+      } as unknown as Kestrel,
+      entryStepAgent: "example.step",
+      prepareHostedMcpRuntime: async (input) => {
+        prepared.push(input);
+      },
+      close: async () => {},
+    }),
+  });
+  const mcpContext = {
+    gatewayUrl: "https://mcp.kestrel.example/v1",
+    grantId: "018f1f73-4ce2-7b0f-8e14-3b977e1577a5",
+    protocolVersion: "2025-11-25" as const,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    threadId: "thread-1",
+  };
+
+  await runtime.runTurn({
+    sessionId: "session-hosted-mcp",
+    message: "use the environment tools",
+    eventType: "user.message",
+    mcpContext,
+    mcpAuthorization: { executionTicket: "signed-run-ticket" },
+  });
+
+  assert.deepEqual(prepared, [
+    { mcpContext, mcpAuthorization: { executionTicket: "signed-run-ticket" } },
+  ]);
+  assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
+  assert.equal(
+    JSON.stringify(events[0]?.payload).includes("signed-run-ticket"),
+    false,
+  );
+});
+
 test("project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {
   const sessionStore = new InMemorySessionStore();
   const taskGraphStore = new ProductTaskGraphStore(sessionStore);

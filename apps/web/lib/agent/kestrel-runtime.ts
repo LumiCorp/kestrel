@@ -4,6 +4,8 @@ import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
   KestrelClient,
+  isRunnerRunStreamEvent,
+  isRunnerRunTerminalEvent,
   type KestrelRequestContext,
   type RunnerProfile,
   type RunnerRunStreamEvent,
@@ -68,6 +70,8 @@ class KestrelOneRunnerClient extends KestrelClient {
       context,
       {
         signal: input.signal,
+        isStreamEvent: isRunnerRunStreamEvent,
+        isTerminalEvent: isRunnerRunTerminalEvent,
         onCancel: async (runId, commandId) => {
           await this.cancelRun(
             {
@@ -153,8 +157,11 @@ function createModelAwareKestrelOneAgent(input: {
             status: "running",
           });
           client = new KestrelOneRunnerClient({
-            baseUrl: route.baseUrl,
-            authToken: route.authToken,
+            target: {
+              kind: "remote",
+              baseUrl: route.baseUrl,
+              authToken: route.authToken,
+            },
           });
           clients.add(client);
           const { signal, ...turn } = turnInput;
@@ -169,15 +176,8 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType,
-            clientCapabilities: {
-              ...(turn.clientCapabilities ?? {}),
-              kestrelOne: {
-                ...((turn.clientCapabilities?.kestrelOne as
-                  | Record<string, unknown>
-                  | undefined) ?? {}),
-                executionTicket: route.authToken,
-              },
-            },
+            ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
+            mcpAuthorization: { executionTicket: route.authToken },
           };
           const downstream = runtimeModel
             ? client.streamRunWithProfile(
@@ -369,8 +369,11 @@ export async function generateKestrelOneExternalReply(input: {
     recordExecution: {},
   });
   const client = new KestrelOneRunnerClient({
-    baseUrl: route.baseUrl,
-    authToken: route.authToken,
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    },
   });
   const context: KestrelRequestContext = {
     actor: input.actor,
@@ -383,7 +386,9 @@ export async function generateKestrelOneExternalReply(input: {
       executionId: route.runId,
       status: "running",
     });
-    const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({});
+    const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
+      organizationId: input.organizationId,
+    });
     if (!resolvedModel) {
       throw new Error(
         getGatewayResolutionFailureMessage({
@@ -397,7 +402,10 @@ export async function generateKestrelOneExternalReply(input: {
     );
     const profile = applyKestrelOneModelToProfile(
       baseProfile,
-      toKestrelOneRuntimeModelSelection(resolvedModel.model)
+      toKestrelOneRuntimeModelSelection({
+        ...resolvedModel.model,
+        organizationId: input.organizationId,
+      })
     );
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: createProfileBoundExternalReplyAgent({
@@ -411,12 +419,13 @@ export async function generateKestrelOneExternalReply(input: {
       clientCapabilities: {
         kestrelOne: {
           tenantId: input.organizationId,
-          executionTicket: route.authToken,
           capabilities: buildKestrelOneCapabilityDescriptors({
             request: new Request(new URL("/", input.apiUrl)),
           }),
         },
       },
+      mcpAuthorization: { executionTicket: route.authToken },
+      mcpContext: route.mcpContext,
     });
     await updateEnvironmentExecutionStatus({
       organizationId: input.organizationId,
@@ -441,6 +450,7 @@ export async function createKestrelOneAgentResponse(
 ) {
   const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
     selection: input.modelId,
+    organizationId: input.organizationId,
   });
   if (!resolvedModel) {
     throw new Error(
@@ -451,7 +461,10 @@ export async function createKestrelOneAgentResponse(
     );
   }
 
-  const runtimeModel = toKestrelOneRuntimeModelSelection(resolvedModel.model);
+  const runtimeModel = toKestrelOneRuntimeModelSelection({
+    ...resolvedModel.model,
+    organizationId: input.organizationId,
+  });
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)

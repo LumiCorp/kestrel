@@ -86,8 +86,9 @@ import {
 } from "./TuiPresentationModel.js";
 import { TuiRunController, resolveRunFailureSummary as resolveRunFailureSummaryFromController } from "./TuiRunController.js";
 import { WorkspaceController, type WorkspaceSelection } from "./WorkspaceController.js";
-import { ProtocolClient } from "../client/ProtocolClient.js";
-import { InProcessRunnerTransport } from "../client/InProcessRunnerTransport.js";
+import type { ProtocolClient } from "../client/ProtocolClient.js";
+import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
+import { toCoreExecutionProfile } from "../client/coreExecutionProfile.js";
 import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
@@ -292,6 +293,7 @@ export class App {
       uiStore: this.uiStore,
       selectors: this.selectors,
       getRuntimeSettings: () => this.runtimeSettings,
+      getLocalCoreClient: () => this.localCoreStatus?.client,
       getSessionsFile: () => this.sessionsFile,
       setSessionsFile: (sessionsFile) => {
         this.sessionsFile = sessionsFile;
@@ -323,7 +325,7 @@ export class App {
 
   private getActiveRunnerMetadata(): RunnerCommandMetadata {
     return {
-      profile: this.uiStore.getState().activeProfile,
+      profile: toCoreExecutionProfile(this.uiStore.getState().activeProfile),
     };
   }
 
@@ -358,8 +360,7 @@ export class App {
       await this.appendHistoryLine("system", notice);
     }
 
-    const mode = this.options.runnerMode ?? resolveRunnerModeFromEnv(process.env);
-    this.client = mode === "inprocess" ? new ProtocolClient(new InProcessRunnerTransport()) : new ProtocolClient();
+    this.client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv);
     this.client.onEvent((event) => {
       this.onRunnerEvent(event);
     });
@@ -398,7 +399,7 @@ export class App {
       this.client.start();
       this.updateSplashPreflightCheck("runner", {
         state: "ok",
-        detail: this.options.runnerMode ?? resolveRunnerModeFromEnv(process.env),
+        detail: "local-core",
       });
 
       const state = this.uiStore.getState();
@@ -585,7 +586,7 @@ export class App {
       },
       truncateDetail: (value) => truncatePreflightDetail(value),
       localCoreStatus: this.localCoreStatus,
-      requireDatabaseUrl: this.runtimeSettings.defaults.storeDriver === "postgres",
+      requireDatabaseUrl: false,
     });
   }
 
@@ -1593,11 +1594,11 @@ export class App {
           this.shouldApplyCompactionOnContinuationResume(session),
         buildSessionOperatorState: (input) => this.buildSessionOperatorState(input),
         appendDiagnosticsLog: (input) => this.appendDiagnosticsLog(input),
-        handleTaskUpdatedEvent: (task, kind, finalizedPayload) =>
-          this.handleTaskUpdatedEvent(task, kind, finalizedPayload),
+        handleTaskUpdatedEvent: (task, kind, assistantText, finalizedPayload) =>
+          this.handleTaskUpdatedEvent(task, kind, assistantText, finalizedPayload),
         syncBackgroundSessionProgress: (sessionId) => this.syncBackgroundSessionProgress(sessionId),
-        syncBackgroundSessionResult: (output, finalizedPayload, operatorState) =>
-          this.syncBackgroundSessionResult(output, finalizedPayload, operatorState),
+        syncBackgroundSessionResult: (output, assistantText, finalizedPayload, operatorState) =>
+          this.syncBackgroundSessionResult(output, assistantText, finalizedPayload, operatorState),
         syncBackgroundSessionFailure: (sessionId, message) =>
           this.syncBackgroundSessionFailure(sessionId, message),
         clearProgressForRun: (runId) => {
@@ -3064,7 +3065,9 @@ export class App {
       await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
 
       const skillPack = getSkillPackById(state.activeSession.activeSkillPackId);
-      const effectiveProfile = applySkillPackToProfile(profile, skillPack);
+      const effectiveProfile = toCoreExecutionProfile(
+        applySkillPackToProfile(profile, skillPack),
+      );
       void this.client.sendCommand("run.start", {
         profile: effectiveProfile,
         turn: {
@@ -4361,6 +4364,7 @@ export class App {
   private async handleTaskUpdatedEvent(
     task: DelegationTaskMeta,
     kind: "spawned" | "waiting" | "completed" | "failed",
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
   ): Promise<void> {
     await this.updateTaskSessionFromMeta(task);
@@ -4384,14 +4388,17 @@ export class App {
     }
     if (kind === "completed") {
       const parsed = parseFinalizePayload(finalizedPayload);
-      if (parsed.ok === true && parsed.payload !== undefined) {
+      if (assistantText !== null) {
+        const structuredData = parsed.ok === true ? parsed.payload?.data : undefined;
         await this.appendSessionHistoryLine(
           session,
           "assistant",
-          parsed.payload.message,
-          parsed.payload.data,
+          assistantText,
+          structuredData,
         );
-        const reportingGroundingNotice = buildFinalizeReportingGroundingNotice(parsed.payload.data);
+        const reportingGroundingNotice = structuredData === undefined
+          ? undefined
+          : buildFinalizeReportingGroundingNotice(structuredData);
         if (reportingGroundingNotice !== undefined) {
           await this.appendSessionHistoryLine(session, "system", reportingGroundingNotice);
         }
@@ -4425,6 +4432,7 @@ export class App {
 
   private async syncBackgroundSessionResult(
     output: import("../../src/index.js").NormalizedOutput,
+    assistantText: string | null,
     finalizedPayload: unknown | undefined,
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void> {
@@ -4432,7 +4440,6 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    const parsed = parseFinalizePayload(finalizedPayload);
     await this.updateTaskSessionFromMeta({
       ...session.delegation,
       status: output.status === "WAITING" ? "WAITING" : "COMPLETED",
@@ -4440,9 +4447,7 @@ export class App {
       resultSummary:
         output.status === "WAITING"
           ? session.delegation.resultSummary
-          : parsed.ok === true
-            ? parsed.payload?.message
-            : session.delegation.resultSummary,
+          : assistantText ?? session.delegation.resultSummary,
       updatedAt: new Date().toISOString(),
     });
     if (operatorState !== undefined) {
@@ -4866,7 +4871,6 @@ export class App {
     const defaults = this.runtimeSettings.defaults;
     return {
       ...profile,
-      ...(defaults.storeDriver !== undefined ? { storeDriver: defaults.storeDriver } : {}),
       ...(defaults.approvalPolicyPackId !== undefined
         ? { approvalPolicyPackId: defaults.approvalPolicyPackId }
         : {}),
@@ -5552,13 +5556,6 @@ function formatSessionMode(session: Pick<TuiSessionMeta, "interactionMode" | "ac
     actSubmode: session.actSubmode ?? DEFAULT_ACT_SUBMODE,
   });
 }
-
-function resolveRunnerModeFromEnv(env: NodeJS.ProcessEnv): "child" | "inprocess" {
-  const raw = env.KESTREL_RUNNER_PROCESS_MODE ?? env.KCHAT_RUNNER_MODE;
-  const normalized = raw?.trim().toLowerCase();
-  return normalized === "inprocess" || normalized === "in_process" ? "inprocess" : "child";
-}
-
 
 function readErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) {

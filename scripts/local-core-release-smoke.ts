@@ -54,8 +54,6 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
     },
     platform: "darwin",
     coreVersion: VERSION,
-    databaseMode: "external",
-    externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
     idleTimeoutMs: 0,
   });
   const previousCoreHome = process.env.KESTREL_CORE_HOME;
@@ -68,10 +66,14 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
 
     const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
     const status = await client.status();
-    assert.equal(status.home.homePath, home);
+    const stateHome = path.join(home, "state", "0.6");
+    assert.equal(status.state, "healthy");
+    assert.equal(status.home.productRootPath, home);
+    assert.equal(status.home.homePath, stateHome);
+    process.env.KESTREL_CORE_HOME = stateHome;
     assert.equal(status.lock.state, "live");
 
-    await new WorkspaceStore(home).save({
+    await new WorkspaceStore(stateHome).save({
       version: 3,
       workspaces: [{
         workspaceId: `${label}-workspace`,
@@ -81,9 +83,9 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
         updatedAt: "2026-06-17T00:00:00.000Z",
       }],
     });
-    assert.equal((await new WorkspaceStore(home).load()).workspaces[0]?.workspaceId, `${label}-workspace`);
+    assert.equal((await new WorkspaceStore(stateHome).load()).workspaces[0]?.workspaceId, `${label}-workspace`);
 
-    await new SessionStore(home).save({
+    await new SessionStore(stateHome).save({
       version: 5,
       activeSessionName: `${label}-session`,
       sessions: [{
@@ -96,7 +98,7 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
         interactionMode: "build",
       }],
     });
-    assert.equal((await new SessionStore(home).load()).activeSessionName, `${label}-session`);
+    assert.equal((await new SessionStore(stateHome).load()).activeSessionName, `${label}-session`);
 
     const lease = await client.postJson("/v1/kcron/lease/acquire", { ownerPid: process.pid }) as { acquired?: boolean };
     assert.equal(lease.acquired, true);
@@ -119,16 +121,12 @@ async function smokeConcurrentOwnership(home: string): Promise<void> {
       env: { KESTREL_CORE_HOME: home },
       platform: "darwin",
       coreVersion: VERSION,
-      databaseMode: "external",
-      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
       ownerExecutable: "/Applications/Kestrel.app",
     }),
     ensureLocalCoreReady({
       env: { KESTREL_CORE_HOME: home },
       platform: "darwin",
       coreVersion: VERSION,
-      databaseMode: "external",
-      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
       ownerExecutable: "/usr/local/bin/kestrel",
     }),
   ]);
@@ -142,8 +140,6 @@ async function smokeStaleLockClassification(home: string): Promise<void> {
     env: { KESTREL_CORE_HOME: home },
     platform: "darwin",
     coreVersion: VERSION,
-    databaseMode: "external",
-    externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
     ownerExecutable: "/Applications/Kestrel.app",
     now: new Date("2026-06-17T00:00:00.000Z"),
   });

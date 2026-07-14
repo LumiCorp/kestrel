@@ -58,7 +58,14 @@ test("Kestrel-One route ownership manifest assigns one owner per route", () => {
 test("Kestrel-One primary navigation routes require an authenticated shell", () => {
   assert.deepEqual(
     PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
-    ["/admin", "/dashboard", "/knowledge", "/projects", "/threads"]
+    [
+      "/admin",
+      "/dashboard",
+      "/knowledge",
+      "/model-deployments",
+      "/projects",
+      "/threads",
+    ]
   );
 
   for (const entry of PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES) {
@@ -94,7 +101,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
     if (entry.access === "admin") {
       assert.match(
         source,
-        /\brequireAdmin(?:Organization)?\b/,
+        /\brequire(?:Admin(?:Organization)?|OrganizationAdmin)\b/,
         `${entry.file} must reject non-admin users`
       );
       continue;

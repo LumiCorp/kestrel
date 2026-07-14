@@ -18,7 +18,9 @@ export default async function ChatIndexPage() {
   const modelIdFromCookie = cookieStore.get("chat-model");
   const id = generateUUID();
   const initialChatModel = await resolvePreferredLanguageModelId(
-    modelIdFromCookie?.value
+    modelIdFromCookie?.value,
+    null,
+    organizationId
   );
 
   return (

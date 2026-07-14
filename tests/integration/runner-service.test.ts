@@ -4,7 +4,13 @@ import test from "node:test";
 import type { TuiProfile } from "../../cli/contracts.js";
 import type { DelegationTaskUpdate } from "../../cli/runtime/KestrelChatRuntime.js";
 import { createInMemoryRunnerService, createRunnerServiceServer } from "../../cli/runner/RunnerService.js";
+import type { RunnerServiceEventJournal } from "../../cli/runner/RunnerServiceEventJournal.js";
+import { RunnerServiceEventBus } from "../../cli/runner/RunnerServiceHost.js";
 import type { RunnerRuntime } from "../../cli/runner/RunnerHost.js";
+import type {
+  RunnerEvent,
+  RunnerEventSubscriptionFilter,
+} from "../../cli/protocol/contracts.js";
 import type { ProgressUpdateV1, ReasoningUpdateV1, RunLogEntry } from "../../src/index.js";
 
 const profile: TuiProfile = {
@@ -26,6 +32,503 @@ async function readStreamBodyChunk(
     }),
   ]);
   return new TextDecoder().decode(chunk.value);
+}
+
+async function withTestTimeout<T>(
+  promise: Promise<T>,
+  timeoutMessage: string,
+  timeoutMs = 5_000,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+class MemoryRunnerServiceEventJournal implements RunnerServiceEventJournal {
+  readonly events: RunnerEvent[] = [];
+
+  ready(): void {}
+
+  async replayAfter(
+    sinceEventId: string,
+    filter: RunnerEventSubscriptionFilter,
+    onEvent: (event: RunnerEvent) => void | Promise<void>,
+    options: {
+      signal?: AbortSignal | undefined;
+      onReplayBoundary?: (() => void) | undefined;
+    } = {},
+  ) {
+    if (isAbortSignalSet(options.signal)) {
+      return { status: "cancelled" as const };
+    }
+    const cursorIndex = this.events.findIndex((event) => event.id === sinceEventId);
+    if (cursorIndex < 0) {
+      options.onReplayBoundary?.();
+      return { status: "cursor_unknown" as const };
+    }
+    options.onReplayBoundary?.();
+    for (const event of this.events.slice(cursorIndex + 1)) {
+      if (isAbortSignalSet(options.signal)) {
+        return { status: "cancelled" as const };
+      }
+      if (matchesTestSubscriptionFilter(event, filter)) {
+        await onEvent(event);
+      }
+    }
+    return { status: "ok" as const };
+  }
+
+  async append(event: RunnerEvent): Promise<void> {
+    await Promise.resolve();
+    this.events.push(event);
+  }
+}
+
+test("journal-backed replay queries durable history beyond the in-memory history cap", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  for (let index = 0; index < 1002; index += 1) {
+    journal.events.push({
+      id: `seed-event-${index}`,
+      type: "runner.pong",
+      ts: new Date(index).toISOString(),
+      runId: "run-seeded-journal",
+      payload: {
+        nonce: `nonce-${index}`,
+      },
+    });
+  }
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const replayed: RunnerEvent[] = [];
+  const subscription = await eventBus.subscribeFiltered({
+    runId: "run-seeded-journal",
+    sinceEventId: "seed-event-0",
+  }, (event) => {
+    replayed.push(event);
+  });
+
+  try {
+    assert.equal(subscription.status, "ok");
+    assert.equal(replayed.length, 1001);
+    assert.equal(replayed[0]?.id, "seed-event-1");
+    assert.equal(replayed.at(-1)?.id, "seed-event-1001");
+  } finally {
+    if (subscription.status === "ok") {
+      subscription.unsubscribe();
+    }
+    await eventBus.flush();
+  }
+});
+
+test("journal replay and live publication share one ordered subscription boundary", async () => {
+  const seedCursor: RunnerEvent = {
+    id: "seed-race-cursor",
+    type: "runner.pong",
+    ts: new Date(0).toISOString(),
+    runId: "run-replay-race",
+    payload: { nonce: "cursor" },
+  };
+  const seedReplay: RunnerEvent = {
+    id: "seed-race-replay",
+    type: "runner.pong",
+    ts: new Date(1).toISOString(),
+    runId: "run-replay-race",
+    payload: { nonce: "replay" },
+  };
+  let allowReplay: (() => void) | undefined;
+  const replayGate = new Promise<void>((resolve) => {
+    allowReplay = resolve;
+  });
+  let markReplayStarted: (() => void) | undefined;
+  const replayStarted = new Promise<void>((resolve) => {
+    markReplayStarted = resolve;
+  });
+  const journal = new MemoryRunnerServiceEventJournal();
+  journal.events.push(seedCursor, seedReplay);
+  journal.replayAfter = async (sinceEventId, filter, onEvent, options) => {
+    assert.equal(sinceEventId, seedCursor.id);
+    assert.equal(filter.runId, "run-replay-race");
+    markReplayStarted?.();
+    options?.onReplayBoundary?.();
+    await replayGate;
+    await onEvent(seedReplay);
+    return { status: "ok" };
+  };
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const received: RunnerEvent[] = [];
+  const subscriptionPromise = eventBus.subscribeFiltered({
+    runId: "run-replay-race",
+    sinceEventId: seedCursor.id,
+  }, (event) => {
+    received.push(event);
+  });
+
+  await replayStarted;
+  let markLivePublished: (() => void) | undefined;
+  const livePublished = new Promise<void>((resolve) => {
+    markLivePublished = resolve;
+  });
+  const unsubscribeLive = eventBus.subscribe("cmd-replay-race-live", () => {
+    markLivePublished?.();
+  });
+  eventBus.emit("runner.pong", { nonce: "live" }, {
+    runId: "run-replay-race",
+    commandId: "cmd-replay-race-live",
+  });
+  await livePublished;
+  allowReplay?.();
+  const subscription = await subscriptionPromise;
+  assert.equal(subscription.status, "ok");
+  await eventBus.flush();
+
+  assert.deepEqual(received.map((event) => event.payload), [
+    { nonce: "replay" },
+    { nonce: "live" },
+  ]);
+  if (subscription.status === "ok") {
+    subscription.unsubscribe();
+  }
+  unsubscribeLive();
+});
+
+test("durable replay cancellation removes its provisional listener", async () => {
+  const seedCursor: RunnerEvent = {
+    id: "seed-cancel-cursor",
+    type: "runner.pong",
+    ts: new Date(0).toISOString(),
+    runId: "run-replay-cancel",
+    payload: { nonce: "cursor" },
+  };
+  let markReplayStarted: (() => void) | undefined;
+  const replayStarted = new Promise<void>((resolve) => {
+    markReplayStarted = resolve;
+  });
+  let allowReplay: (() => void) | undefined;
+  const replayGate = new Promise<void>((resolve) => {
+    allowReplay = resolve;
+  });
+  const journal = new MemoryRunnerServiceEventJournal();
+  journal.events.push(seedCursor);
+  journal.replayAfter = async (_sinceEventId, _filter, _onEvent, options) => {
+    markReplayStarted?.();
+    options?.onReplayBoundary?.();
+    await replayGate;
+    return isAbortSignalSet(options?.signal)
+      ? { status: "cancelled" }
+      : { status: "ok" };
+  };
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const controller = new AbortController();
+  const received: RunnerEvent[] = [];
+  const subscriptionPromise = eventBus.subscribeFiltered({
+    runId: "run-replay-cancel",
+    sinceEventId: seedCursor.id,
+  }, (event) => {
+    received.push(event);
+  }, { signal: controller.signal });
+
+  await replayStarted;
+  controller.abort();
+  eventBus.emit("runner.pong", { nonce: "after-cancel" }, {
+    runId: "run-replay-cancel",
+  });
+  allowReplay?.();
+
+  assert.deepEqual(await subscriptionPromise, { status: "cancelled" });
+  await eventBus.flush();
+  assert.deepEqual(received, []);
+});
+
+test("runner event bus close aborts and drains active durable replay", async () => {
+  const seedCursor: RunnerEvent = {
+    id: "seed-close-cursor",
+    type: "runner.pong",
+    ts: new Date(0).toISOString(),
+    runId: "run-replay-close",
+    payload: { nonce: "cursor" },
+  };
+  let markReplayStarted: (() => void) | undefined;
+  const replayStarted = new Promise<void>((resolve) => {
+    markReplayStarted = resolve;
+  });
+  let markAbortObserved: (() => void) | undefined;
+  const abortObserved = new Promise<void>((resolve) => {
+    markAbortObserved = resolve;
+  });
+  let releaseReplayCleanup: (() => void) | undefined;
+  const replayCleanup = new Promise<void>((resolve) => {
+    releaseReplayCleanup = resolve;
+  });
+  const journal = new MemoryRunnerServiceEventJournal();
+  journal.events.push(seedCursor);
+  journal.replayAfter = async (_sinceEventId, _filter, _onEvent, options) => {
+    markReplayStarted?.();
+    options?.onReplayBoundary?.();
+    if (options?.signal?.aborted !== true) {
+      await new Promise<void>((resolve) => {
+        options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+    }
+    markAbortObserved?.();
+    await replayCleanup;
+    return { status: "cancelled" };
+  };
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const subscriptionPromise = eventBus.subscribeFiltered({
+    runId: "run-replay-close",
+    sinceEventId: seedCursor.id,
+  }, () => {
+    assert.fail("closing replay must not publish an event");
+  });
+
+  await replayStarted;
+  let closeSettled = false;
+  const closePromise = eventBus.close().then(() => {
+    closeSettled = true;
+  });
+  await abortObserved;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(closeSettled, false);
+
+  releaseReplayCleanup?.();
+  assert.deepEqual(await subscriptionPromise, { status: "cancelled" });
+  await closePromise;
+  assert.equal(closeSettled, true);
+});
+
+test("bounded in-memory replay reports an expired cursor after eviction", async () => {
+  const eventBus = new RunnerServiceEventBus();
+  let firstEventId: string | undefined;
+  const unsubscribe = eventBus.subscribe("cmd-retention", (event) => {
+    firstEventId ??= event.id;
+  });
+  for (let index = 0; index < 1001; index += 1) {
+    eventBus.emit("runner.pong", { nonce: `retention-${index}` }, {
+      commandId: "cmd-retention",
+    });
+  }
+  unsubscribe();
+  assert.ok(firstEventId);
+
+  const subscription = await eventBus.subscribeFiltered({
+    runId: "run-retention",
+    sinceEventId: firstEventId,
+  }, () => {
+    assert.fail("an expired cursor must not replay retained events");
+  });
+
+  assert.deepEqual(subscription, { status: "cursor_expired" });
+});
+
+test("runner events are appended to an injected journal before subscribers receive them", async () => {
+  let appendCompleted = false;
+  const eventBus = new RunnerServiceEventBus({
+    ready() {},
+    async append() {
+      await Promise.resolve();
+      appendCompleted = true;
+    },
+    replayAfter() {
+      return { status: "cursor_unknown" };
+    },
+  });
+  await eventBus.ready();
+  let received = false;
+  const unsubscribe = eventBus.subscribe("cmd-journal-order", () => {
+    assert.equal(appendCompleted, true);
+    received = true;
+  });
+
+  try {
+    eventBus.emit("runner.pong", { nonce: "journal-order" }, {
+      commandId: "cmd-journal-order",
+    });
+    assert.equal(received, false);
+    await eventBus.flush();
+    assert.equal(received, true);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscriber failures do not poison durable event publication", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const received: RunnerEvent[] = [];
+  eventBus.subscribe("cmd-listener-isolation", () => {
+    throw new Error("subscriber failed");
+  });
+  const unsubscribe = eventBus.subscribe("cmd-listener-isolation", (event) => {
+    received.push(event);
+  });
+
+  try {
+    eventBus.emit("runner.pong", { nonce: "first" }, {
+      commandId: "cmd-listener-isolation",
+    });
+    await eventBus.flush();
+    eventBus.emit("runner.pong", { nonce: "second" }, {
+      commandId: "cmd-listener-isolation",
+    });
+    await eventBus.flush();
+
+    assert.deepEqual(received.map((event) => event.payload), [
+      { nonce: "first" },
+      { nonce: "second" },
+    ]);
+    assert.deepEqual(journal.events.map((event) => event.payload), [
+      { nonce: "first" },
+      { nonce: "second" },
+    ]);
+  } finally {
+    unsubscribe();
+    await eventBus.close();
+  }
+});
+
+test("filtered subscriber failure terminates and removes the subscription", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  let listenerCalls = 0;
+  let closeCalls = 0;
+  const subscription = await eventBus.subscribeFiltered({
+    runId: "run-filtered-listener-failure",
+  }, () => {
+    listenerCalls += 1;
+    throw new Error("filtered subscriber failed");
+  }, {
+    onServiceClose() {
+      closeCalls += 1;
+    },
+  });
+  assert.equal(subscription.status, "ok");
+
+  eventBus.emit("runner.pong", { nonce: "first" }, {
+    runId: "run-filtered-listener-failure",
+  });
+  await eventBus.flush();
+  eventBus.emit("runner.pong", { nonce: "after-removal" }, {
+    runId: "run-filtered-listener-failure",
+  });
+  await eventBus.flush();
+
+  assert.equal(listenerCalls, 1);
+  assert.equal(closeCalls, 1);
+  await eventBus.close();
+  assert.equal(closeCalls, 1);
+});
+
+test("filtered replay failure terminates the subscription owner", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  journal.events.push(
+    {
+      id: "filtered-replay-cursor",
+      type: "runner.pong",
+      ts: new Date(0).toISOString(),
+      runId: "run-filtered-replay-failure",
+      payload: { nonce: "cursor" },
+    },
+    {
+      id: "filtered-replay-event",
+      type: "runner.pong",
+      ts: new Date(1).toISOString(),
+      runId: "run-filtered-replay-failure",
+      payload: { nonce: "replayed" },
+    },
+  );
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  let closeCalls = 0;
+
+  await assert.rejects(
+    () => eventBus.subscribeFiltered({
+      runId: "run-filtered-replay-failure",
+      sinceEventId: "filtered-replay-cursor",
+    }, () => {
+      throw new Error("replay subscriber failed");
+    }, {
+      onServiceClose() {
+        closeCalls += 1;
+      },
+    }),
+    /replay subscriber failed/u,
+  );
+  assert.equal(closeCalls, 1);
+  await eventBus.close();
+  assert.equal(closeCalls, 1);
+});
+
+test("journal append failures do not poison later event publication", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  let rejectNextAppend = true;
+  journal.append = async (event) => {
+    if (rejectNextAppend) {
+      rejectNextAppend = false;
+      throw new Error("journal unavailable");
+    }
+    journal.events.push(event);
+  };
+  const eventBus = new RunnerServiceEventBus(journal);
+  await eventBus.ready();
+  const received: RunnerEvent[] = [];
+  const unsubscribe = eventBus.subscribe("cmd-journal-recovery", (event) => {
+    received.push(event);
+  });
+
+  try {
+    eventBus.emit("runner.pong", { nonce: "not-durable" }, {
+      commandId: "cmd-journal-recovery",
+    });
+    await eventBus.flush();
+    eventBus.emit("runner.pong", { nonce: "durable" }, {
+      commandId: "cmd-journal-recovery",
+    });
+    await eventBus.flush();
+
+    assert.equal(received[0]?.type, "runner.error");
+    assert.match(
+      received[0]?.type === "runner.error" ? received[0].payload.message : "",
+      /journal append failed/u,
+    );
+    assert.deepEqual(received[1]?.payload, { nonce: "durable" });
+    assert.deepEqual(journal.events.map((event) => event.payload), [
+      { nonce: "durable" },
+    ]);
+  } finally {
+    unsubscribe();
+    await eventBus.close();
+  }
+});
+
+function matchesTestSubscriptionFilter(
+  event: RunnerEvent,
+  filter: RunnerEventSubscriptionFilter,
+): boolean {
+  return (
+    (filter.runId === undefined || event.runId === filter.runId)
+    && (filter.sessionId === undefined || event.sessionId === filter.sessionId)
+    && (filter.threadId === undefined || event.threadId === filter.threadId)
+    && (filter.eventTypes === undefined || filter.eventTypes.includes(event.type))
+  );
+}
+
+function isAbortSignalSet(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 test("runner service requires actor metadata", async () => {
@@ -58,6 +561,155 @@ test("runner service requires actor metadata", async () => {
     assert.equal(response.statusCode, 400);
     assert.equal(event.type, "runner.error");
     assert.match(event.payload.message, /actor metadata is required/i);
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service rejects unknown command discriminants at the protocol boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("unknown commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await service.dispatch({
+      method: "POST",
+      url: "/commands",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        id: "cmd-unknown-discriminant",
+        type: "runner.unsupported",
+        metadata: {
+          actor: {
+            actorId: "test-operator",
+            actorType: "operator",
+          },
+        },
+        payload: {},
+      }),
+    });
+
+    const event = JSON.parse(response.body) as {
+      type: string;
+      payload: { code: string; message: string };
+    };
+    assert.equal(response.statusCode, 400);
+    assert.equal(event.type, "runner.error");
+    assert.equal(event.payload.code, "INVALID_COMMAND");
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service rejects malformed command envelopes at the protocol boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("malformed commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    for (const body of [
+      JSON.stringify({ id: "cmd-missing-payload", type: "runner.ping" }),
+      JSON.stringify({ id: " ", type: "runner.ping", payload: {} }),
+    ]) {
+      const response = await service.dispatch({
+        method: "POST",
+        url: "/commands",
+        headers: {
+          "content-type": "application/json",
+        },
+        body,
+      });
+      const event = JSON.parse(response.body) as {
+        type: string;
+        payload: { code: string };
+      };
+      assert.equal(response.statusCode, 400);
+      assert.equal(event.type, "runner.error");
+      assert.equal(event.payload.code, "INVALID_COMMAND");
+    }
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service routes run.start and job.run through the canonical streaming boundary", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("wrong-route commands must not reach the runtime");
+      },
+      close: async () => {},
+    }),
+  });
+  const metadata = {
+    actor: {
+      actorId: "test-operator",
+      actorType: "operator",
+    },
+  };
+
+  try {
+    const commands = [
+      {
+        id: "cmd-run-start-wrong-route",
+        type: "run.start",
+        metadata,
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-run-start-wrong-route",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      },
+      {
+        id: "cmd-job-run-wrong-route",
+        type: "job.run",
+        metadata,
+        payload: {
+          profile,
+          input: {
+            version: "job_input_v1",
+            turn: {
+              sessionId: "session-job-run-wrong-route",
+              message: "run unattended",
+              eventType: "job.run",
+            },
+          },
+        },
+      },
+    ];
+
+    for (const command of commands) {
+      const response = await service.dispatch({
+        method: "POST",
+        url: "/commands",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(command),
+      });
+      const event = JSON.parse(response.body) as {
+        type: string;
+        payload: { message: string };
+      };
+      assert.equal(response.statusCode, 400);
+      assert.equal(event.type, "runner.error");
+      assert.match(event.payload.message, /must use \/commands\/stream/i);
+    }
   } finally {
     await service.close();
   }
@@ -142,7 +794,7 @@ test("runner service rejects malformed actor metadata with a structured error", 
     const event = JSON.parse(response.body) as { type: string; payload: { message: string } };
     assert.equal(response.statusCode, 400);
     assert.equal(event.type, "runner.error");
-    assert.match(event.payload.message, /requires actorId/i);
+    assert.match(event.payload.message, /actorId.*non-empty string/i);
   } finally {
     await service.close();
   }
@@ -163,6 +815,7 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
       runTurn: async () => {
         capturedProfileId = resolvedProfile.id;
         return {
+          assistantText: "  profile response  ",
           output: {
             status: "COMPLETED",
             sessionId: "session-profile-id",
@@ -238,7 +891,154 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
     });
     assert.equal(runResponse.statusCode, 200);
     assert.match(runResponse.body, /event: run\.completed/);
+    assert.match(runResponse.body, /"assistantText":"profile response"/u);
+    assert.doesNotMatch(runResponse.body, /  profile response  /u);
     assert.equal(capturedProfileId, "reference");
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service settles an invalid job terminal without a journal", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => ({
+        assistantText: "   ",
+        finalizedPayload: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-invalid-job-terminal",
+          runId: "run-invalid-job-terminal",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      }),
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await withTestTimeout(
+      service.dispatch({
+        method: "POST",
+        url: "/commands/stream",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "cmd-invalid-job-terminal",
+          type: "job.run",
+          metadata: {
+            actor: {
+              actorId: "test-operator",
+              actorType: "operator",
+            },
+          },
+          payload: {
+            profile,
+            input: {
+              version: "job_input_v1",
+              turn: {
+                sessionId: "session-invalid-job-terminal",
+                message: "return an invalid job terminal",
+                eventType: "job.run",
+              },
+            },
+          },
+        }),
+      }),
+      "invalid job terminal stream did not settle",
+      1_000,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /event: runner\.error/u);
+    assert.match(response.body, /"commandId":"cmd-invalid-job-terminal"/u);
+    assert.match(response.body, /"code":"RUNNER_PROTOCOL_INVALID"/u);
+    assert.match(response.body, /assistantText/u);
+    assert.doesNotMatch(response.body, /event: job\.completed/u);
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service settles an invalid runtime scope without a journal", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => ({
+        assistantText: "Finished.",
+        finalizedPayload: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-invalid-runtime-scope",
+          runId: "   ",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      }),
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await withTestTimeout(
+      service.dispatch({
+        method: "POST",
+        url: "/commands/stream",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "cmd-invalid-runtime-scope",
+          type: "run.start",
+          metadata: {
+            actor: {
+              actorId: "test-operator",
+              actorType: "operator",
+            },
+          },
+          payload: {
+            profile,
+            turn: {
+              sessionId: "session-invalid-runtime-scope",
+              message: "return an invalid runtime scope",
+              eventType: "user.message",
+            },
+          },
+        }),
+      }),
+      "invalid runtime scope stream did not settle",
+      1_000,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /event: runner\.error/u);
+    assert.match(response.body, /"commandId":"cmd-invalid-runtime-scope"/u);
+    assert.match(response.body, /"code":"RUNNER_PROTOCOL_INVALID"/u);
+    assert.doesNotMatch(response.body, /"runId":"\s*"/u);
+    assert.doesNotMatch(response.body, /event: run\.completed/u);
   } finally {
     await service.close();
   }
@@ -255,6 +1055,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
     runTurn: async () => {
       taskUpdateListener?.({
         kind: "waiting",
+        assistantText: null,
         task: {
           taskId: "task-1",
           parentSessionId: "session-1",
@@ -297,6 +1098,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
         message: "Reasoning in progress.",
       });
       return {
+        assistantText: null,
         output: {
           status: "COMPLETED",
           sessionId: "session-1",
@@ -553,6 +1355,7 @@ test("runner service streams filtered subscription events over /events/stream", 
       runTurn: async () => {
         onTaskUpdate({
           kind: "waiting",
+          assistantText: null,
           task: {
             taskId: "task-subscribe-1",
             parentSessionId: "session-subscribe",
@@ -568,6 +1371,7 @@ test("runner service streams filtered subscription events over /events/stream", 
           },
         });
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-subscribe",
@@ -665,6 +1469,52 @@ test("runner service streams filtered subscription events over /events/stream", 
   }
 });
 
+test("runner service graceful close ends open event subscriptions", async () => {
+  const server = await createRunnerServiceServer();
+  let gracefullyClosed = false;
+
+  try {
+    const subscription = await fetch(`${server.url}/events/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        filter: {
+          runId: "run-graceful-close-subscription",
+        },
+        metadata: {
+          actor: {
+            actorId: "graceful-close-test",
+            actorType: "service",
+          },
+        },
+      }),
+    });
+    assert.equal(subscription.status, 200);
+    const reader = subscription.body?.getReader();
+    assert.ok(reader);
+
+    const closePromise = server.gracefulClose().then(() => {
+      gracefullyClosed = true;
+    });
+    const finalRead = await withTestTimeout(
+      reader.read(),
+      "timed out waiting for graceful close to end the event subscription",
+    );
+    assert.equal(finalRead.done, true);
+    await withTestTimeout(
+      closePromise,
+      "timed out waiting for runner service graceful close",
+    );
+  } finally {
+    if (gracefullyClosed === false) {
+      await server.forceClose();
+    }
+  }
+});
+
 test("runner service cancels active runs when a stream disconnects", async () => {
   let aborted = false;
   let resolveRunTurnEntered: (() => void) | undefined;
@@ -689,6 +1539,7 @@ test("runner service cancels active runs when a stream disconnects", async () =>
           options?.signal?.addEventListener("abort", onAbort, { once: true });
         });
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-disconnect",
@@ -786,6 +1637,7 @@ test("runner service keeps durable runs active when a stream disconnects", async
         }, { once: true });
         await finishRunTurn;
         return {
+          assistantText: null,
           output: {
             status: "COMPLETED",
             sessionId: "session-durable-disconnect",
@@ -855,12 +1707,14 @@ test("runner service keeps durable runs active when a stream disconnects", async
     ]);
     const firstBody = new TextDecoder().decode(firstChunk?.value);
     assert.match(firstBody, /"runId":"run-durable-disconnect"/);
+    const startedEventId = /"id":"([^"]+)"/u.exec(firstBody)?.[1];
+    assert.ok(startedEventId);
     await reader?.cancel();
     controller.abort();
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(aborted, false);
 
-    const replay = await fetch(`${server.url}/events/stream`, {
+    const unknownCursor = await fetch(`${server.url}/events/stream`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -881,14 +1735,35 @@ test("runner service keeps durable runs active when a stream disconnects", async
         },
       }),
     });
+    assert.equal(unknownCursor.status, 409);
+    const unknownCursorBody = await unknownCursor.text();
+    assert.match(unknownCursorBody, /"type":"runner\.error"/);
+    assert.match(unknownCursorBody, /"code":"RUNNER_EVENT_CURSOR_UNKNOWN"/);
+    assert.doesNotMatch(unknownCursorBody, /"type":"run\.started"/);
+
+    const replay = await fetch(`${server.url}/events/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        filter: {
+          runId: "run-durable-disconnect",
+          sinceEventId: startedEventId,
+        },
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+        },
+      }),
+    });
     assert.equal(replay.status, 200);
     const replayReader = replay.body?.getReader();
-    const replayStartedBody = await readStreamBodyChunk(
-      replayReader,
-      "timed out waiting for replayed durable start event",
-    );
-    assert.match(replayStartedBody, /"type":"run\.started"/);
-    assert.match(replayStartedBody, /"runId":"run-durable-disconnect"/);
 
     resolveRunTurn?.();
     const replayCompletedBody = await readStreamBodyChunk(
@@ -900,6 +1775,123 @@ test("runner service keeps durable runs active when a stream disconnects", async
     await replayReader?.cancel();
   } finally {
     await server.close();
+  }
+});
+
+test("runner service replays journaled events from sinceEventId after host recreation", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  const runtimeFactory = () => ({
+    runTurn: async () => ({
+      assistantText: "durable replay complete",
+      output: {
+        status: "COMPLETED" as const,
+        sessionId: "session-journal-replay",
+        runId: "run-journal-replay",
+        errors: [],
+        quality: {
+          citationCoverage: 1,
+          unresolvedClaims: 0,
+          reworkRate: 0,
+          thrashIndex: 0,
+        },
+        telemetry: {
+          stepsExecuted: 1,
+          toolCalls: 0,
+          modelCalls: 0,
+          durationMs: 1,
+        },
+      },
+    }),
+    close: async () => {},
+  });
+  const firstServer = await createRunnerServiceServer({
+    eventJournal: journal,
+    runtimeFactory,
+  });
+
+  try {
+    const response = await fetch(`${firstServer.url}/commands/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        id: "cmd-journal-replay",
+        type: "run.start",
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+          durability: "continue_on_disconnect",
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-journal-replay",
+            runId: "run-journal-replay",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /"type":"run\.started"/);
+    assert.match(body, /"type":"run\.completed"/);
+  } finally {
+    await firstServer.close();
+  }
+
+  const started = journal.events.find((event) => event.type === "run.started");
+  const completed = journal.events.find((event) => event.type === "run.completed");
+  assert.ok(started);
+  assert.ok(completed);
+  assert.ok(journal.events.indexOf(started) < journal.events.indexOf(completed));
+
+  const recreatedServer = await createRunnerServiceServer({
+    eventJournal: journal,
+    runtimeFactory,
+  });
+  try {
+    const replay = await fetch(`${recreatedServer.url}/events/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        filter: {
+          runId: "run-journal-replay",
+          sinceEventId: started.id,
+        },
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+        },
+      }),
+    });
+    assert.equal(replay.status, 200);
+    const replayReader = replay.body?.getReader();
+    const replayBody = await readStreamBodyChunk(
+      replayReader,
+      "timed out waiting for journal replay after host recreation",
+    );
+    assert.match(replayBody, new RegExp(completed.id));
+    assert.doesNotMatch(replayBody, new RegExp(started.id));
+    assert.match(replayBody, /"type":"run\.completed"/);
+    await replayReader?.cancel();
+  } finally {
+    await recreatedServer.close();
   }
 });
 

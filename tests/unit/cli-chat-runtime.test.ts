@@ -66,6 +66,27 @@ test("resolveReasoningModelForProfile honors explicit reasoning model overrides"
   }
 });
 
+test("resolveReasoningModelForProfile treats an explicit environment as authoritative", () => {
+  const original = process.env.KCHAT_REASONING_MODEL;
+  process.env.KCHAT_REASONING_MODEL = "ambient-model";
+  try {
+    assert.equal(
+      resolveReasoningModelForProfile({
+        ...BASE_PROFILE,
+        modelProvider: "openrouter",
+        model: "profile-model",
+      }, {}),
+      "profile-model",
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env.KCHAT_REASONING_MODEL;
+    } else {
+      process.env.KCHAT_REASONING_MODEL = original;
+    }
+  }
+});
+
 test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "true" }), true);
@@ -143,6 +164,7 @@ test("gateway-managed profiles use the credential broker path instead of provide
       model: "openai/gpt-5.4",
       modelCredential: {
         source: "kestrel-one",
+        organizationId: "org-acme",
         gatewayId: "gateway-openrouter",
         rawModelId: "openai/gpt-5.4",
       },
@@ -192,6 +214,28 @@ test("non-model runtime surfaces initialize before environment provider credenti
     await assert.rejects(
       gateway.call({ input: "model admission should resolve credentials now" }),
       /OPENROUTER_API_KEY is required/u
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = original;
+    }
+  }
+});
+
+test("model gateway treats an explicit environment as authoritative", async () => {
+  const original = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "ambient-key-must-not-leak";
+  try {
+    const gateway = createModelGatewayForProfile({
+      ...BASE_PROFILE,
+      modelProvider: "openrouter",
+      model: "openai/gpt-5.4",
+    }, { env: {} });
+    await assert.rejects(
+      gateway.call({ input: "explicit runtime environment only" }),
+      /OPENROUTER_API_KEY is required/u,
     );
   } finally {
     if (original === undefined) {

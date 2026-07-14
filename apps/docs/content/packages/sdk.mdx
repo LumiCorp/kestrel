@@ -37,8 +37,11 @@ pnpm add @kestrel-agents/sdk
 const workspaceCopilotAgent = createAgent({
   id: "workspace-copilot",
   profileId: "workspace-copilot",
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
 });
 ```
 
@@ -46,7 +49,7 @@ const workspaceCopilotAgent = createAgent({
 
 | Surface | Required input | Returns / behavior | Common failure case |
 | --- | --- | --- | --- |
-| `createAgent()` | `id`, `profileId`, runner URL, token | reusable server-side agent | missing env values |
+| `createAgent()` | `id`, `profileId`, explicit local or remote target | reusable server-side agent | missing or invalid target |
 | `run()` | `sessionId`, `message`, request context | terminal run event | runner unavailable |
 | `stream()` | same as `run()` plus optional `signal` | async event stream plus `result` | caller disconnect cancels upstream |
 | `resume()` | same as `run()` | terminal event for resumed blocked run | invalid resume context |
@@ -62,8 +65,11 @@ When the root agent API stops being enough, the runner subpath exposes the fulle
 import { KestrelClient } from "@kestrel-agents/sdk/runner";
 
 const client = new KestrelClient({
-  baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-  authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
 });
 ```
 

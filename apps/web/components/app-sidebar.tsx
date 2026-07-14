@@ -17,11 +17,13 @@ export function AppSidebar({
   activeOrganization,
   session,
   isAdmin,
+  canManageOrganization = false,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   activeOrganization: OrganizationSnapshot | null;
   session: Session | null;
   isAdmin: boolean;
+  canManageOrganization?: boolean;
 }) {
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -29,7 +31,10 @@ export function AppSidebar({
         <TeamSwitcher initialActiveOrganization={activeOrganization} />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain isAdmin={isAdmin} />
+        <NavMain
+          canManageOrganization={canManageOrganization}
+          isAdmin={isAdmin}
+        />
       </SidebarContent>
       <SidebarFooter>
         <NavUser session={session} />

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
+  ensureLocalCoreDaemonReady,
   isLocalCoreDaemonElectronAppLaunch,
   resolveLocalCoreDaemonNodeMode,
 } from "../../src/localCore/daemon.js";
+import { startLocalCoreApiServer } from "../../src/localCore/api.js";
 
 test("Local Core daemon runs Electron executables in Node mode", () => {
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "37.10.3" }), "1");
@@ -32,4 +37,32 @@ test("Local Core daemon launch is rejected when Electron was not put in Node mod
     env: { KESTREL_LOCAL_CORE_DAEMON: "1" },
     versions: {},
   }), false);
+});
+
+test("Local Core daemon readiness returns a redaction-aware in-memory connection", async () => {
+  const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const home = await mkdtemp(path.join(tempRoot, "kc-daemon-"));
+  const env = { KESTREL_CORE_HOME: home };
+  const server = await startLocalCoreApiServer({
+    env,
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+  });
+  try {
+    const ready = await ensureLocalCoreDaemonReady({
+      env,
+      platform: "darwin",
+      coreVersion: "0.6.0",
+    });
+    assert.equal(ready.daemonStarted, false);
+    assert.equal(ready.connection?.socketPath, server.socketPath);
+    assert.equal(ready.connection?.authToken, server.token);
+    assert.deepEqual(JSON.parse(JSON.stringify(ready.connection)), {
+      socketPath: server.socketPath,
+    });
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
 });

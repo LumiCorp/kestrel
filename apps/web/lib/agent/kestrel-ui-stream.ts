@@ -52,7 +52,6 @@ export async function writeKestrelRunnerEventsToUi(input: {
   assistantMessageId: string;
   textPartId: string;
   reasoningPartId: string;
-  emptyFinalText?: string;
 }): Promise<KestrelUiStreamResult> {
   const updateFilter = createKestrelStreamUiUpdateFilter();
   let reasoningStarted = false;
@@ -198,16 +197,7 @@ export async function writeKestrelRunnerEventsToUi(input: {
   }
 
   if (!finalText) {
-    if (runnerErrorFallback) {
-      finalText = runnerErrorFallback;
-      terminalStatus = "runner_error";
-      errorMessage = runnerErrorFallback;
-    } else if (input.emptyFinalText && approvalRequests.size === 0) {
-      finalText = input.emptyFinalText;
-      terminalStatus = terminalStatus ?? "empty";
-    } else {
-      terminalStatus = terminalStatus ?? "empty";
-    }
+    terminalStatus = terminalStatus ?? (runnerErrorFallback ? "runner_error" : "empty");
   }
 
   terminalStatus = terminalStatus ?? "empty";
