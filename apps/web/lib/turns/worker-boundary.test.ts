@@ -32,10 +32,13 @@ test("the durable turn image builds workspace runtime dependencies", async () =>
   assert.match(dockerignore, /^runs$/mu);
   assert.match(dockerignore, /^tmp$/mu);
   assert.match(dockerignore, /^\.pnpm-store$/mu);
+  assert.match(dockerignore, /^apps\/web\/\.next$/mu);
+  assert.match(dockerignore, /^apps\/web\/node_modules$/mu);
   assert.equal(
     packageJson.scripts?.["worker:turns"],
     "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts"
   );
+  assert.equal((packageJson as { type?: string }).type, "module");
 });
 
 test("an exhausted queue job fails its durable turn visibly", async () => {
@@ -44,9 +47,21 @@ test("an exhausted queue job fails its durable turn visibly", async () => {
     "utf8"
   );
 
-  assert.match(queueSource, /job\.retryCount >= job\.retryLimit/u);
+  assert.match(queueSource, /input\.retryCount < input\.retryLimit/u);
   assert.match(queueSource, /failureCode: "TURN_DISPATCH_FAILED"/u);
-  assert.match(queueSource, /await completeDurableThreadTurn\(/u);
+  assert.match(queueSource, /await finalizeExhaustedDurableTurnJob\(/u);
+});
+
+test("the running worker reconciles missing jobs and interrupted turns", async () => {
+  const queueSource = await readFile(
+    new URL("./queue.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(queueSource, /await reconcileDurableThreadTurnQueueWithBoss/u);
+  assert.match(queueSource, /NONTERMINAL_JOB_STATES/u);
+  assert.match(queueSource, /await dispatchTurnOrFail\(/u);
+  assert.match(queueSource, /failureCode: "TURN_WORKER_INTERRUPTED"/u);
 });
 
 test("terminal pg-boss jobs cannot block durable turn recovery", async () => {

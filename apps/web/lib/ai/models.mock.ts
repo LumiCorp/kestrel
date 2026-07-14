@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 
 const mockResponses: Record<string, string> = {
   default: "This is a mock response for testing.",
@@ -28,7 +28,7 @@ function getResponseForPrompt(prompt: unknown): string {
   return mockResponses.default;
 }
 
-const createMockModel = (): LanguageModel =>
+const createMockModel = (): LanguageModelV3 =>
   ({
     specificationVersion: "v3",
     provider: "mock",
@@ -70,9 +70,9 @@ const createMockModel = (): LanguageModel =>
         }),
       };
     },
-  }) as unknown as LanguageModel;
+  }) as unknown as LanguageModelV3;
 
-const createMockReasoningModel = (): LanguageModel =>
+const createMockReasoningModel = (): LanguageModelV3 =>
   ({
     specificationVersion: "v3",
     provider: "mock",
@@ -117,9 +117,9 @@ const createMockReasoningModel = (): LanguageModel =>
         },
       }),
     }),
-  }) as unknown as LanguageModel;
+  }) as unknown as LanguageModelV3;
 
-const createMockTitleModel = (): LanguageModel =>
+const createMockTitleModel = (): LanguageModelV3 =>
   ({
     specificationVersion: "v3",
     provider: "mock",
@@ -162,7 +162,7 @@ const createMockTitleModel = (): LanguageModel =>
         },
       }),
     }),
-  }) as unknown as LanguageModel;
+  }) as unknown as LanguageModelV3;
 
 export const chatModel = createMockModel();
 export const reasoningModel = createMockReasoningModel();
