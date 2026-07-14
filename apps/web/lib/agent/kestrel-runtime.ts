@@ -3,9 +3,9 @@ import "server-only";
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
-  KestrelClient,
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
+  KestrelClient,
   type KestrelRequestContext,
   type RunnerProfile,
   type RunnerRunStreamEvent,
@@ -187,7 +187,13 @@ function createModelAwareKestrelOneAgent(input: {
             ...turn,
             eventType,
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
-            mcpAuthorization: { executionTicket: route.authToken },
+            ...(route.mcpContext && route.executionTicket
+              ? {
+                  mcpAuthorization: {
+                    executionTicket: route.executionTicket,
+                  },
+                }
+              : {}),
           };
           const baseProfile = await client.getProfile(
             getKestrelOneProfileId(),
@@ -437,8 +443,14 @@ export async function generateKestrelOneExternalReply(input: {
           }),
         },
       },
-      mcpAuthorization: { executionTicket: route.authToken },
-      mcpContext: route.mcpContext,
+      ...(route.mcpContext && route.executionTicket
+        ? {
+            mcpAuthorization: {
+              executionTicket: route.executionTicket,
+            },
+            mcpContext: route.mcpContext,
+          }
+        : {}),
     });
     await updateEnvironmentExecutionStatus({
       organizationId: input.organizationId,

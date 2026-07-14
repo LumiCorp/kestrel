@@ -122,9 +122,12 @@ export async function inspectHostedEnvironmentCutoverReadiness(input: {
   try {
     const [snapshot] = await sql<SnapshotRow[]>`
       WITH enabled_organizations AS (
-        SELECT "organization_id"
-        FROM "organization_feature_flags"
-        WHERE "key" = 'hosted_environments' AND "enabled" = true
+        SELECT organization."id" AS "organization_id"
+        FROM "organization" organization
+        LEFT JOIN "organization_feature_flags" flag
+          ON flag."organization_id" = organization."id"
+          AND flag."key" = 'hosted_environments'
+        WHERE flag."enabled" IS DISTINCT FROM false
       )
       SELECT
         (

@@ -43,11 +43,18 @@ pnpm run web:dev
 - starts Docker Compose infra (`pgvector` Postgres, Redis, MinIO)
 - verifies service health and pgvector availability
 - applies migrations
+- applies the local Environment runtime schema migrations
 - ensures the dev admin exists
 - generates the checked-in RAG fixtures
+- starts a local Environment runtime on `127.0.0.1:43106`
 - starts the app on `127.0.0.1:43103` using webpack-backed, polling watch mode for local stability
+- starts and supervises the durable turn worker so queued thread turns run locally
 
-It now uses `.env.example` as a baseline for local defaults, then overlays `.env` and `.env.local` when present. Keep a real `BETTER_AUTH_SECRET` in `.env.local` before committing or deploying.
+It now uses `.env.example` as a baseline for local defaults, then overlays `.env` and `.env.local` when present. When no override is provided, `REDIS_URL` points at the bundled Compose Redis instance. Keep a real `BETTER_AUTH_SECRET` in `.env.local` before committing or deploying.
+
+Hosted Environments are enabled by default for the deployment and for organizations without an explicit rollout override. `pnpm dev:all` selects the local Environment runtime, which needs no Fly credentials, signing keys, image references, or backup keys. Deployed instances use the Fly runtime by default and fail closed unless its immutable image, ticket-key, backup-key, and service-token values are complete. Set `KESTREL_ENVIRONMENTS_ENABLED=false` only as an emergency or staged-rollout off switch.
+
+The local Environment runtime uses a separate `kestrel_runtime` database in the bundled Postgres service so its runtime schema cannot collide with Kestrel One's application schema. Set `KESTREL_RUNNER_DATABASE_URL` only when you intentionally want a different local runtime database.
 
 For local browser flows, `DEV_AUTH_BYPASS=true` only works on `localhost`/`127.0.0.1`. API routes still require a real session or API key, so smoke tests and direct HTTP clients continue to receive `401`/`403` when appropriate.
 

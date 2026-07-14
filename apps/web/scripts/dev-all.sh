@@ -7,6 +7,11 @@ cd "$ROOT_DIR"
 HOST="${DEV_ALL_HOST:-127.0.0.1}"
 PORT="${DEV_ALL_PORT:-43103}"
 HEALTH_URL="http://${HOST}:${PORT}/api/health"
+RUNNER_HOST="${KESTREL_RUNNER_SERVICE_HOST:-127.0.0.1}"
+RUNNER_PORT="${KESTREL_RUNNER_SERVICE_PORT:-43106}"
+RUNNER_HEALTH_URL="http://${RUNNER_HOST}:${RUNNER_PORT}/health"
+RUNNER_DATABASE_NAME="kestrel_runtime"
+RUNNER_DATABASE_MANAGED="false"
 
 log() {
   printf '[dev:all] %s\n' "$*"
@@ -41,6 +46,8 @@ load_env_file ".env.example"
 load_env_file ".env"
 load_env_file ".env.local"
 
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kestrel-one}"
+
 if [[ -d "/Applications/Docker.app/Contents/Resources/bin" ]]; then
   export PATH="/Applications/Docker.app/Contents/Resources/bin:${PATH}"
 fi
@@ -49,6 +56,13 @@ export NEXT_PUBLIC_APP_URL="${NEXT_PUBLIC_APP_URL:-http://${HOST}:${PORT}}"
 export BETTER_AUTH_URL="${BETTER_AUTH_URL:-http://${HOST}:${PORT}}"
 export DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-true}"
 export STORAGE_PROVIDER="${STORAGE_PROVIDER:-local-s3}"
+export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${LOCAL_REDIS_PORT:-56379}}"
+export KESTREL_ENVIRONMENT_RUNTIME="${KESTREL_ENVIRONMENT_RUNTIME:-local}"
+export KESTREL_RUNNER_SERVICE_HOST="$RUNNER_HOST"
+export KESTREL_RUNNER_SERVICE_PORT="$RUNNER_PORT"
+export KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL:-http://${RUNNER_HOST}:${RUNNER_PORT}}"
+export KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN:-kestrel-one-local-dev-runner}"
+export KESTREL_RUNNER_SERVICE_TOKEN="$KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN"
 
 if [[ "${AI_AGENT_API_KEY:-}" == "sk_your_provider_key" ]]; then
   log "Ignoring placeholder AI_AGENT_API_KEY from env defaults"
@@ -66,6 +80,12 @@ DATABASE_URL="${POSTGRES_URL:-${DATABASE_URL:-}}"
 if [[ -z "$DATABASE_URL" ]]; then
   log "DATABASE_URL or POSTGRES_URL is required"
   exit 1
+fi
+
+if [[ -z "${KESTREL_RUNNER_DATABASE_URL:-}" ]]; then
+  KESTREL_RUNNER_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:${LOCAL_POSTGRES_PORT:-58432}/${RUNNER_DATABASE_NAME}"
+  export KESTREL_RUNNER_DATABASE_URL
+  RUNNER_DATABASE_MANAGED="true"
 fi
 
 require_command() {
@@ -110,9 +130,36 @@ require_pgvector() {
 }
 
 cleanup() {
-  if [[ -n "${APP_PID:-}" ]] && kill -0 "$APP_PID" >/dev/null 2>&1; then
-    kill "$APP_PID" >/dev/null 2>&1 || true
-  fi
+  local pid
+  for pid in "${TURN_WORKER_PID:-}" "${APP_PID:-}" "${RUNNER_PID:-}"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+monitor_app_processes() {
+  while true; do
+    if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+      log "Next.js exited; stopping the local stack"
+      wait "$APP_PID"
+      return $?
+    fi
+
+    if ! kill -0 "$TURN_WORKER_PID" >/dev/null 2>&1; then
+      log "Durable turn worker exited; stopping the local stack"
+      wait "$TURN_WORKER_PID"
+      return $?
+    fi
+
+    if ! kill -0 "$RUNNER_PID" >/dev/null 2>&1; then
+      log "Local Environment runtime exited; stopping the local stack"
+      wait "$RUNNER_PID"
+      return $?
+    fi
+
+    sleep 1
+  done
 }
 
 trap cleanup EXIT INT TERM
@@ -143,11 +190,39 @@ wait_for_command "MinIO" 60 curl -fsS "$MINIO_HEALTH_URL"
 log "Applying database migrations"
 pnpm db:migrate
 
+log "Applying local Environment runtime migrations"
+if [[ "$RUNNER_DATABASE_MANAGED" == "true" ]] && \
+  [[ "$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM pg_database WHERE datname = '${RUNNER_DATABASE_NAME}'")" != "1" ]]; then
+  psql "$DATABASE_URL" -c "CREATE DATABASE ${RUNNER_DATABASE_NAME}"
+fi
+KESTREL_DISABLE_DOTENV=1 DATABASE_URL="$KESTREL_RUNNER_DATABASE_URL" \
+  pnpm --dir "$ROOT_DIR/../.." run db:migrate
+
 log "Ensuring local admin account exists"
 pnpm create-dev-admin
 
 log "Generating checked-in RAG fixtures"
 pnpm fixtures:rag
+
+log "Starting local Environment runtime on ${RUNNER_HOST}:${RUNNER_PORT}"
+DATABASE_URL="$KESTREL_RUNNER_DATABASE_URL" \
+  pnpm --dir "$ROOT_DIR/../.." run runner:service &
+RUNNER_PID=$!
+
+attempts=0
+until curl -fsS "$RUNNER_HEALTH_URL" >/dev/null 2>&1; do
+  attempts=$((attempts + 1))
+  if ! kill -0 "$RUNNER_PID" >/dev/null 2>&1; then
+    log "Local Environment runtime exited before becoming healthy"
+    wait "$RUNNER_PID"
+    exit 1
+  fi
+  if [[ "$attempts" -ge 60 ]]; then
+    log "Local Environment runtime did not become healthy at ${RUNNER_HEALTH_URL}"
+    exit 1
+  fi
+  sleep 1
+done
 
 log "Starting Next.js on ${HOST}:${PORT} with webpack + polling dev mode"
 WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true \
@@ -169,5 +244,9 @@ until curl -fsS "$HEALTH_URL" >/dev/null 2>&1; do
   sleep 1
 done
 
+log "Starting durable turn worker"
+pnpm worker:turns &
+TURN_WORKER_PID=$!
+
 log "Ready at http://${HOST}:${PORT}"
-wait "$APP_PID"
+monitor_app_processes

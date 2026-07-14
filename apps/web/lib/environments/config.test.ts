@@ -1,13 +1,66 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   assertHostedEnvironmentConfiguration,
   assertHostedEnvironmentRuntimeConfiguration,
+  assertLocalEnvironmentRuntimeConfiguration,
   getHostedEnvironmentBuildPreflightPhase,
+  getHostedEnvironmentRuntimeMode,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
+  hostedEnvironmentsOrganizationEnabled,
 } from "./config";
+
+test("Environment runtime mode defaults to Fly and selects local explicitly", () => {
+  assert.equal(getHostedEnvironmentRuntimeMode({}), "fly");
+  assert.equal(
+    getHostedEnvironmentRuntimeMode({
+      KESTREL_ENVIRONMENT_RUNTIME: "local",
+    }),
+    "local"
+  );
+  assert.throws(
+    () =>
+      getHostedEnvironmentRuntimeMode({
+        KESTREL_ENVIRONMENT_RUNTIME: "local",
+        VERCEL_ENV: "preview",
+      }),
+    /cannot be used in a Vercel deployment/u
+  );
+  assert.throws(
+    () =>
+      getHostedEnvironmentRuntimeMode({
+        KESTREL_ENVIRONMENT_RUNTIME: "docker",
+      }),
+    /must be fly or local/u
+  );
+});
+
+test("local Environment mode needs only the loopback runner service", () => {
+  const local = {
+    KESTREL_ENVIRONMENT_RUNTIME: "local",
+    KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "http://127.0.0.1:43106",
+  };
+  assert.doesNotThrow(() => assertHostedEnvironmentConfiguration(local));
+  assert.doesNotThrow(() => assertLocalEnvironmentRuntimeConfiguration(local));
+  assert.throws(
+    () =>
+      assertHostedEnvironmentConfiguration({
+        KESTREL_ENVIRONMENT_RUNTIME: "local",
+      }),
+    /requires KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL/u
+  );
+  assert.throws(
+    () =>
+      assertHostedEnvironmentConfiguration({
+        KESTREL_ENVIRONMENT_RUNTIME: "local",
+        KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "https://runner.example",
+      }),
+    /must target localhost/u
+  );
+});
 
 test("production builds select a fail-closed hosted Environment preflight phase", () => {
   assert.equal(getHostedEnvironmentBuildPreflightPhase({}), null);
@@ -32,12 +85,11 @@ test("production builds select a fail-closed hosted Environment preflight phase"
     }),
     "cutover"
   );
-  assert.throws(
-    () =>
-      getHostedEnvironmentBuildPreflightPhase({
-        VERCEL_ENV: "production",
-      }),
-    /explicitly set to true or false/u
+  assert.equal(
+    getHostedEnvironmentBuildPreflightPhase({
+      VERCEL_ENV: "production",
+    }),
+    "cutover"
   );
   assert.throws(
     () =>
@@ -45,8 +97,16 @@ test("production builds select a fail-closed hosted Environment preflight phase"
         VERCEL_ENV: "production",
         KESTREL_ENVIRONMENTS_ENABLED: "enabled",
       }),
-    /explicitly set to true or false/u
+    /must be true or false when configured/u
   );
+});
+
+test("the checked-in local environment enables hosted Environments", async () => {
+  const envExample = await readFile(
+    new URL("../../.env.example", import.meta.url),
+    "utf8"
+  );
+  assert.match(envExample, /^KESTREL_ENVIRONMENTS_ENABLED=true$/mu);
 });
 
 function validEnvironment() {
@@ -77,13 +137,19 @@ function validEnvironment() {
   };
 }
 
-test("Environment rollout requires both deployment and organization flags", () => {
-  assert.equal(hostedEnvironmentsDeploymentEnabled({}), false);
+test("Environment rollout defaults on with explicit off switches", () => {
+  assert.equal(hostedEnvironmentsDeploymentEnabled({}), true);
   assert.equal(
     hostedEnvironmentsDeploymentEnabled({
       KESTREL_ENVIRONMENTS_ENABLED: "true",
     }),
     true
+  );
+  assert.equal(
+    hostedEnvironmentsDeploymentEnabled({
+      KESTREL_ENVIRONMENTS_ENABLED: "false",
+    }),
+    false
   );
   assert.equal(
     hostedEnvironmentsEnabled({
@@ -101,8 +167,12 @@ test("Environment rollout requires both deployment and organization flags", () =
   );
   assert.equal(
     hostedEnvironmentsEnabled({ organizationEnabled: true, env: {} }),
-    false
+    true
   );
+  assert.equal(hostedEnvironmentsOrganizationEnabled(undefined), true);
+  assert.equal(hostedEnvironmentsOrganizationEnabled(null), true);
+  assert.equal(hostedEnvironmentsOrganizationEnabled(true), true);
+  assert.equal(hostedEnvironmentsOrganizationEnabled(false), false);
 });
 
 test("hosted cutover accepts complete immutable Environment configuration", () => {
