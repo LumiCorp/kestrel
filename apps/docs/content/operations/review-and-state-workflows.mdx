@@ -1,15 +1,15 @@
 ---
 title: Review and state workflows
 summary: Inspect and update task graph, project snapshot, project action, and project review state from the browser or the SDK when a run becomes larger than a transcript.
-section: operations
-audience: maintainers
+section: operate
+audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Operator manual">
-Use this page when Workspace Copilot has moved beyond a simple report prompt and now needs durable task, project, and review state that operators can inspect and change.
+Use these APIs when Workspace Copilot needs tasks, project status, and review decisions that people can inspect and update.
 </WorkspaceCopilotDemo>
 
 This is the missing middle layer between “an agent replied” and “an operator can actually manage ongoing work.” Kestrel exposes several stateful control-plane surfaces for that job:
@@ -22,11 +22,11 @@ This is the missing middle layer between “an agent replied” and “an operat
 - `project.review.get`
 - `project.review.action`
 
-Use them when transcript and memory are no longer enough to explain or steer the workflow. If a team can describe the current run but cannot describe the current task tree, project record, or review state, this is the page they need.
+Use them when a conversation and memory record are no longer enough to show the current plan, project status, or review decision.
 
-## When to use which surface
+## Choose the right state record
 
-| Surface | Use it for | Do not use it for |
+| Record | Use it for | Do not use it for |
 | --- | --- | --- |
 | task graph | durable structured task state tied to threads and sessions | general project metadata |
 | project snapshot | higher-level project state that should outlive one thread | thread-local operator actions |
@@ -35,7 +35,7 @@ Use them when transcript and memory are no longer enough to explain or steer the
 
 ## Browser workflow through `/api/kchat/control`
 
-The web app can use the control route to move through the full inspection path.
+The Kestrel One can use the control route to move through the full inspection path.
 
 ```ts
 const inbox = await sendRunnerControl({
@@ -95,7 +95,7 @@ When an operator wants to leave or apply a review action, the control route acce
 }
 ```
 
-The web route tests already exercise this shape and confirm it returns a `project.review` event. That matters because the browser surface is not inventing review state on its own. It is driving the runtime control plane.
+The response includes a `project.review` event so other clients and subscribers can observe the same saved review decision.
 
 ## SDK workflow with `KestrelClient`
 
@@ -193,7 +193,7 @@ await client.runProjectAction(
 );
 ```
 
-## Representative control responses
+## Example control responses
 
 Task graph response:
 
@@ -224,9 +224,9 @@ Project snapshot response:
 }
 ```
 
-## Workflow: choosing the right state surface
+## Choose where to store the state
 
-Use the surfaces in this order:
+Use these records in this order:
 
 1. read `operator.thread` if the operator needs thread context first
 2. read `task.graph` when the question is "what work items exist and what state are they in?"
@@ -236,16 +236,16 @@ Use the surfaces in this order:
 
 That keeps the state model legible. It stops teams from forcing every state question into one oversized snapshot object or a transcript-only workflow.
 
-## What changes in this step
+## What these records enable
 
-This is the point where Kestrel stops looking like “a runtime with memory” and starts looking like a runtime with durable operator state. Task graph, project snapshot, and project review let a product or operator surface manage more than messages.
+Task graphs, project snapshots, and project reviews let your application manage plans, project status, and review decisions without burying them in conversation text.
 
-## Why this exists
+## Keep state out of transcripts and side stores
 
-Without these surfaces, teams end up hiding task and review state in transcripts, prompts, or ad hoc side stores. Kestrel keeps them in the runtime control plane so the browser, CLI, and server-owned integrations can reason about the same state model.
+Store task and review state in these shared records instead of burying it in transcripts or prompts. The browser, CLI, and server integrations can then read and update the same information.
 
-## What To Read Next
+## Continue with operator control
 
-- [Operator control workflows](/operations/operator-control-workflows)
-- [Web workbench](/apps/web)
-- [@kestrel-agents/sdk](/packages/sdk)
+- [Operator control workflows](/operate/operator-control)
+- [Kestrel One](/kestrel-one)
+- [@kestrel-agents/sdk](/reference/sdk)

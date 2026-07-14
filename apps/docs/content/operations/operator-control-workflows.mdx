@@ -1,20 +1,20 @@
 ---
 title: Operator control workflows
-summary: Use operator inbox, thread views, and control actions to steer, stop, retry, or focus active work from the CLI, the web app, or the SDK.
-section: operations
-audience: maintainers
+summary: Use operator inbox, thread views, and control actions to steer, stop, retry, or focus active work from the CLI, the Kestrel One, or the SDK.
+section: operate
+audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-06-16
 ---
 
-Kestrel is not only a request runner. It also exposes a control surface for work that is already in flight or waiting for human input. That surface is built around three protocol calls:
+Use Kestrel's operator controls when work is already running or waiting for human input. Three API calls support that workflow:
 
 - `operator.inbox`
 - `operator.thread`
 - `operator.control`
 
-Those are the primitives behind the richer workflows in the CLI and the web workbench. This page is the thread-level operator manual: use it when a run has already started and the right move is to inspect or steer the existing thread rather than start over.
+The CLI and Kestrel One build their run controls on these calls. Use them when you need to inspect or steer an existing thread instead of starting the task again.
 
 ## The control loop
 
@@ -22,7 +22,7 @@ Those are the primitives behind the richer workflows in the CLI and the web work
 read inbox -> open thread -> apply control action -> inspect operator.controlled event
 ```
 
-Use that loop when a run is blocked, a child thread needs attention, or an operator needs to steer the next execution boundary instead of starting a fresh run.
+Use that loop when a run is blocked, a child thread needs attention, or the next step needs human direction.
 
 ## SDK example
 
@@ -62,9 +62,9 @@ const controlled = await client.controlOperator(
 
 ## Common actions
 
-The repo tests and CLI surface show operator actions such as:
+Available operator actions include:
 
-| Action | Use when | Result shape |
+| Action | Use when | Result |
 | --- | --- | --- |
 | `retry` | the thread should try again with the same general goal | `operator.controlled` |
 | `steer` | the operator wants to inject new direction | `operator.controlled` |
@@ -89,7 +89,7 @@ That sequence is what keeps operator work attached to the same durable thread in
 
 ## CLI workflow
 
-In the CLI, the operator surface is mostly command-driven:
+In the CLI, use these commands:
 
 ```text
 /stop [message]
@@ -103,9 +103,9 @@ In the CLI, the operator surface is mostly command-driven:
 
 That CLI flow maps onto the same protocol. The CLI is not inventing local state here. It is a thin operator cockpit over the runner.
 
-## Web workbench workflow
+## Kestrel One workflow
 
-The browser surface follows the same model through `/api/kchat/control`. The web app can:
+Kestrel One provides the same controls through `/api/kchat/control`. It can:
 
 - read `operator.inbox`
 - load `operator.thread`
@@ -114,9 +114,9 @@ The browser surface follows the same model through `/api/kchat/control`. The web
 - read or update `project.snapshot`
 - request `project.review`
 
-That makes it viable for operators who need the same control-plane features as the CLI, but with browser-native run views and artifact inspection.
+This gives browser users the same run controls as the CLI alongside run details and artifacts.
 
-The detailed task graph, project snapshot, and project review flows are covered separately in [Review and state workflows](/operations/review-and-state-workflows). This page stays focused on thread-level control and the decision to act on an existing run.
+For task graphs, project snapshots, and reviews, continue to [Review and state workflows](/operate/review-and-state).
 
 ## What to inspect before you control a thread
 
@@ -129,9 +129,9 @@ The detailed task graph, project snapshot, and project review flows are covered 
 
 Workspace Copilot is usually shown as a clean build tutorial, but the useful production lesson is this: if the nightly report blocks on evidence, operator control should steer the existing thread instead of creating a brand-new disconnected run.
 
-## What To Read Next
+## Continue with operator state
 
-- [CLI](/cli)
-- [Web workbench](/apps/web)
-- [Review and state workflows](/operations/review-and-state-workflows)
-- [@kestrel-agents/sdk](/packages/sdk)
+- [CLI](/reference/cli)
+- [Kestrel One](/kestrel-one)
+- [Review and state workflows](/operate/review-and-state)
+- [@kestrel-agents/sdk](/reference/sdk)

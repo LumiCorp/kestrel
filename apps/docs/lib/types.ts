@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 
 export const DOCS_SECTIONS = [
   "home",
+  "start",
+  "desktop",
+  "kestrel-one",
   "docs",
   "build",
   "deploy",
@@ -10,12 +13,13 @@ export const DOCS_SECTIONS = [
   "cli",
   "runtime",
   "operations",
+  "operate",
   "reference",
   "archive",
 ] as const;
 
 export type DocsSection = (typeof DOCS_SECTIONS)[number];
-export const DOCS_NAV_SECTIONS = ["desktop", "build", "deploy", "reference"] as const;
+export const DOCS_NAV_SECTIONS = ["start", "desktop", "kestrel-one", "build", "operate", "reference"] as const;
 export type DocsNavSection = (typeof DOCS_NAV_SECTIONS)[number];
 
 export const DOCS_AUDIENCES = ["everyone", "evaluators", "integrators", "maintainers"] as const;
@@ -26,7 +30,43 @@ export type DocsAudience = (typeof DOCS_AUDIENCES)[number];
 export type DocsStatus = (typeof DOCS_STATUSES)[number];
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 export type ArchiveGroup = "plans" | "runbooks";
-export type SearchPageKind = "home" | "landing" | "narrative" | "tutorial" | "reference" | "archive";
+export const CONTENT_ARCHETYPES = [
+  "gateway",
+  "product-journey",
+  "build-tutorial",
+  "task-recipe",
+  "explainer",
+  "operational-playbook",
+  "troubleshooting",
+  "reference",
+  "migration",
+] as const;
+export type ContentArchetype = (typeof CONTENT_ARCHETYPES)[number];
+
+export const PRODUCT_SURFACES = [
+  "suite",
+  "desktop",
+  "kestrel-one",
+  "sdk",
+  "nextjs",
+  "runtime",
+  "operations",
+  "protocol",
+  "cli",
+] as const;
+export type ProductSurface = (typeof PRODUCT_SURFACES)[number];
+export type ExperienceLevel = "beginner" | "intermediate" | "advanced";
+export type TocMode = "none" | "auto" | "full";
+export type DocsJourneyId = "desktop-first-success" | "kestrel-one-collaboration" | "workspace-copilot-build";
+
+export interface JourneyMeta {
+  id: DocsJourneyId;
+  label: string;
+  step: number;
+  total: number;
+  previous?: { title: string; url: string };
+  next?: { title: string; url: string };
+}
 export type SearchCapability =
   | "openai-compatible http"
   | "operator control"
@@ -41,7 +81,15 @@ export type SearchCapability =
   | "nextjs"
   | "artifact inspection"
   | "evaluation"
-  | "runtime";
+  | "runtime"
+  | "threads"
+  | "projects"
+  | "knowledge"
+  | "managed models"
+  | "gateways"
+  | "protocol"
+  | "terminal results"
+  | "access control";
 
 export interface TocItem {
   id: string;
@@ -60,7 +108,9 @@ export interface SearchDocument {
   fullText: string;
   internal: boolean;
   sourceKind: SourceKind;
-  pageKind: SearchPageKind;
+  archetype: ContentArchetype;
+  surface: ProductSurface;
+  experienceLevel: ExperienceLevel;
   priority: number;
   capabilities: SearchCapability[];
 }
@@ -72,10 +122,6 @@ export interface SearchResultEntry {
   summary: string;
   section: DocsSection;
   navSection: DocsNavSection;
-  internal: boolean;
-  sourceKind: SourceKind;
-  pageKind: SearchPageKind;
-  priority: number;
   capabilities: SearchCapability[];
 }
 
@@ -93,6 +139,12 @@ export interface DocsPageMeta {
   updatedAt: string;
   sourceUrl: string;
   toc: TocItem[];
+  tocMode: TocMode;
+  archetype: ContentArchetype;
+  surface: ProductSurface;
+  experienceLevel: ExperienceLevel;
+  estimatedTime?: string;
+  journey?: JourneyMeta;
   related: string[];
   archiveGroup?: ArchiveGroup;
 }
@@ -113,7 +165,12 @@ export interface RegisteredPageSpec {
   internal?: boolean;
   archive?: boolean;
   archiveGroup?: ArchiveGroup;
-  pageKind?: SearchPageKind;
+  archetype: ContentArchetype;
+  surface: ProductSurface;
+  experienceLevel?: ExperienceLevel;
+  estimatedTime?: string;
+  tocMode?: TocMode;
+  journeyId?: DocsJourneyId;
   priority?: number;
   capabilities?: SearchCapability[];
 }

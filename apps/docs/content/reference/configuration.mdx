@@ -1,0 +1,31 @@
+---
+title: Configuration reference
+summary: Identify which Kestrel setting belongs to the application server, runner service, provider, Desktop, or Kestrel One.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+## Application-to-runner settings
+
+| Variable | Set it in | Purpose |
+| --- | --- | --- |
+| `KESTREL_RUNNER_SERVICE_URL` | Trusted application server or local client | Address of the runner service |
+| `KESTREL_RUNNER_SERVICE_TOKEN` | Trusted application server only | Authenticates calls to the runner |
+
+Never expose the runner token through a public environment variable or browser bundle.
+
+## Provider and tool settings
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Authenticates an OpenRouter provider configuration |
+| `TAVILY_API_KEY` | Authenticates internet-backed search tools when enabled |
+
+Desktop stores provider choices through its settings interface. Kestrel One administrators configure organization-approved gateways through trusted administrative controls.
+
+## Kestrel One services
+
+Kestrel One production operation also requires application authentication, PostgreSQL, Redis, object storage, queue workers, email, and any enabled billing or managed-deployment services. Those deployment settings belong to authorized operators, not end-user onboarding.

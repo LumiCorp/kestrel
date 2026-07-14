@@ -1,7 +1,7 @@
 ---
 title: Environment and auth
-summary: Keep Workspace Copilot runner credentials, actor context, and correlation headers on the application server side of the boundary.
-section: deploy
+summary: Keep runner credentials private, identify each caller, and preserve request identifiers across your application.
+section: operate
 audience: integrators
 status: stable
 sourceKind: curated
@@ -9,10 +9,10 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Deploy step 2">
-This step gives the Workspace Copilot routes a stable environment and auth model. The demo keeps `tenantId: acme`, `actorId: user-123`, and the `/api/copilot/*` route set.
+Move the runner connection and authenticated user context into server-owned configuration before exposing Workspace Copilot to users.
 </WorkspaceCopilotDemo>
 
-Environment and auth are where many integrations accidentally turn a sound local demo into an unsafe production shape. The Kestrel rule is simple: the application server owns trust, and the runner service receives structured actor context plus service authentication.
+Your application server should authenticate the user, determine their organization, and attach the runner credential. The browser should supply only the task-specific request data.
 
 ## Core environment values
 
@@ -25,7 +25,7 @@ export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
 
 Do not expose the token through browser-readable environment variables.
 
-## Resolve the demo context in one place
+## Resolve user context in one place
 
 ```ts
 export async function resolveWorkspaceCopilotContext() {
@@ -40,7 +40,7 @@ export async function resolveWorkspaceCopilotContext() {
 }
 ```
 
-Keeping this logic in one server module makes the product contract auditable.
+Keeping this logic in one server module makes authentication behavior easier to review and change safely.
 
 ## Correlation headers
 
@@ -51,29 +51,29 @@ The Next.js route helpers read these headers from the inbound request:
 - `user-agent`
 - `x-forwarded-for`
 
-If ids are missing, the helper generates them and returns Kestrel correlation ids in the response headers. That matters when operators later need to line up a browser request with a runner trace or failure.
+If either id is missing, the helper generates it and returns Kestrel correlation ids in the response headers. Preserve them so a support report can be matched to the corresponding runner activity.
 
-## Environment and request ownership
+## Where each value comes from
 
-| Concern | Owned by |
+| Value | Supplied by |
 | --- | --- |
 | user authentication | application server |
 | runner bearer token | application server |
 | actor id / actor type / tenant id | application server |
 | run lifecycle and persistence | runner service + runtime |
 
-## What changes in this step
+## Check the server-side setup
 
-- the demo now has a stable server-side auth and environment contract
-- actor and tenant context no longer live as ad hoc inline examples
+- Workspace Copilot now reads credentials and caller identity in one server module
+- actor and tenant values come from authenticated application data
 - `/api/copilot/run` and `/api/copilot/stream` preserve request correlation end to end
 
-## Failure mode: context drift
+## If identity is missing or incorrect
 
-If requests fail because actor or tenant context is missing, debug the server route, not the browser payload. The browser should not be trusted to define `actorId` or `tenantId` for the canonical example.
+Check the server route that reads the authenticated session and creates the Kestrel context. Do not accept `actorId` or `tenantId` directly from browser input.
 
-## What To Read Next
+## Prepare for production
 
-- [Running the runner service](/deploy/running-the-runner-service)
+- [Running the runner service](/operate/runner-service)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
-- [FAQ](/docs/faq)
+- [FAQ](/start/faq)

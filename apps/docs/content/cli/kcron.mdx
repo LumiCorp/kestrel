@@ -1,6 +1,6 @@
 ---
 title: kcron
-summary: The per-user scheduler daemon surface for workspace automation.
+summary: Run and schedule repeatable Kestrel tasks for registered workspaces.
 section: cli
 audience: everyone
 status: active
@@ -9,12 +9,12 @@ updatedAt: 2026-06-16
 ---
 
 <WorkspaceCopilotDemo step="CLI mechanics">
-In the canonical demo, `kcron` is what turns `workspace-copilot` from an interactive assistant into a nightly review loop that writes to `./reports`.
+Use `kcron` to run the Workspace Copilot review on a schedule and write the result to `./reports`.
 </WorkspaceCopilotDemo>
 
-`kcron` is a beta local-automation surface for Kestrel v0.5. Use `run-once` as the first validation path and do not treat daemon scheduling as a stable product promise until the install, uninstall, and failure-mode behavior has been validated on the target machine.
+`kcron` is a Beta local automation tool. Run the task once manually before installing a schedule, and confirm installation and failure behavior on the target machine before depending on it.
 
-`kcron` is intentionally narrow. The current workspace catalog records identity and the `automationEnabled` flag, but recurring execution is deferred until the central scheduler is rebuilt on that catalog shape.
+Recurring execution is available only where the workspace and packaged scheduler support it. The workspace catalog may show `automationEnabled` before scheduled execution is enabled for that installation.
 
 ## Core commands
 
@@ -58,8 +58,8 @@ kcron run-once
 - [ ] the central scheduler implementation is available for recurring runs
 - [ ] run output and replay evidence are inspectable after execution
 
-## What To Read Next
+## Continue with scheduled work
 
 - [Workspace workflows](/cli/workspace-workflows)
 - [Automating common tasks](/build/automating-common-tasks)
-- [Production operating model](/deploy/production-operating-model)
+- [Production operating model](/operate/deployment)

@@ -10,9 +10,6 @@ export const SEARCH_STORE_FIELDS = [
   "summary",
   "section",
   "navSection",
-  "internal",
-  "sourceKind",
-  "pageKind",
   "priority",
   "capabilities",
   "headings",
@@ -22,6 +19,7 @@ const DEFAULT_RESULT_COUNT = 8;
 
 type SearchResultCandidate = SearchResultEntry & {
   headings: string[];
+  priority: number;
   score?: number;
 };
 
@@ -52,31 +50,35 @@ function toEntry(document: SearchDocument): SearchResultEntry {
     summary: document.summary,
     section: document.section,
     navSection: document.navSection,
-    internal: document.internal,
-    sourceKind: document.sourceKind,
-    pageKind: document.pageKind,
-    priority: document.priority,
     capabilities: document.capabilities,
   };
 }
 
 export function getDefaultSearchResults(documents: SearchDocument[]) {
-  return documents
+  const ranked = documents
     .filter(
       (document) =>
         document.sourceKind !== "archived" &&
         document.internal === false &&
-        document.pageKind !== "landing" &&
-        document.pageKind !== "home",
+        document.archetype !== "gateway",
     )
     .sort((left, right) => {
       if (right.priority !== left.priority) {
         return right.priority - left.priority;
       }
       return left.url.localeCompare(right.url);
-    })
-    .slice(0, DEFAULT_RESULT_COUNT)
-    .map(toEntry);
+    });
+
+  const selected: SearchDocument[] = [];
+  for (const section of ["start", "desktop", "kestrel-one", "build", "operate", "reference"] as const) {
+    const representative = ranked.find((document) => document.navSection === section);
+    if (representative) selected.push(representative);
+  }
+  for (const document of ranked) {
+    if (selected.length >= DEFAULT_RESULT_COUNT) break;
+    if (!selected.includes(document)) selected.push(document);
+  }
+  return selected.map(toEntry);
 }
 
 function rerankSearchCandidate(candidate: SearchResultCandidate, query: string) {
@@ -88,28 +90,6 @@ function rerankSearchCandidate(candidate: SearchResultCandidate, query: string) 
 
   let score = (candidate.score ?? 0) * 100;
   score += candidate.priority * 10;
-
-  if (candidate.sourceKind === "curated") {
-    score += 200;
-  } else if (candidate.sourceKind === "repo-inferred") {
-    score += 100;
-  } else {
-    score -= 400;
-  }
-
-  if (candidate.pageKind === "home") {
-    score += 40;
-  } else if (candidate.pageKind === "tutorial") {
-    score += 90;
-  } else if (candidate.pageKind === "narrative") {
-    score += 70;
-  } else if (candidate.pageKind === "reference") {
-    score += 60;
-  } else if (candidate.pageKind === "landing") {
-    score -= 20;
-  } else {
-    score -= 150;
-  }
 
   if (haystackIncludes(title, normalizedQuery)) {
     score += 600;
@@ -146,9 +126,6 @@ export function searchWithIndex(engine: Pick<MiniSearch<SearchDocument>, "search
       summary: String(match.summary),
       section: match.section as SearchDocument["section"],
       navSection: match.navSection as SearchDocument["navSection"],
-      internal: Boolean(match.internal),
-      sourceKind: match.sourceKind as SearchDocument["sourceKind"],
-      pageKind: match.pageKind as SearchDocument["pageKind"],
       priority: Number(match.priority),
       capabilities: Array.isArray(match.capabilities) ? (match.capabilities as SearchDocument["capabilities"]) : [],
       headings: Array.isArray(match.headings) ? (match.headings as string[]) : [],
@@ -157,5 +134,5 @@ export function searchWithIndex(engine: Pick<MiniSearch<SearchDocument>, "search
     .sort((left, right) => rerankSearchCandidate(right, query) - rerankSearchCandidate(left, query))
     .slice(0, MAX_SEARCH_RESULTS);
 
-  return reranked.map<SearchResultEntry>(({ headings: _headings, score: _score, ...result }) => result);
+  return reranked.map<SearchResultEntry>(({ headings: _headings, priority: _priority, score: _score, ...result }) => result);
 }

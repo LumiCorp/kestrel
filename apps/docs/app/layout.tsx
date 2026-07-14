@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Fraunces, Instrument_Sans } from "next/font/google";
 
-import { SITE_DESCRIPTION, SITE_TITLE } from "@/lib/site";
+import { SkipLink } from "@/components/SkipLink";
+import { siteMetadata } from "@/lib/metadata";
 
 import "./globals.css";
 
@@ -15,21 +16,13 @@ const bodyFont = Instrument_Sans({
   variable: "--font-body",
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: SITE_TITLE,
-    template: `%s · ${SITE_TITLE}`,
-  },
-  description: SITE_DESCRIPTION,
-};
+export const metadata: Metadata = siteMetadata;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${displayFont.variable} ${bodyFont.variable}`}>
       <body>
-        <a href="#app-main" className="skip-link">
-          Skip to main content
-        </a>
+        <SkipLink />
         {children}
       </body>
     </html>

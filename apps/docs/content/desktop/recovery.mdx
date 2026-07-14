@@ -1,0 +1,33 @@
+---
+title: Recover Desktop safely
+summary: Restore provider, runtime, database, workspace, or session health without erasing useful history.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Start with the first visible problem rather than deleting application data. Keep the affected session and diagnostics until you know which part failed.
+
+<ProductFigure
+  src="/product/desktop/operator-recovery.png"
+  alt="Kestrel Desktop diagnostics showing runtime health and operator recovery controls"
+  caption="Diagnostics separates provider, Local Core, database, workspace, and session state so recovery can target the actual failure."
+/>
+
+## Find the unhealthy component
+
+1. Read the status shown in Desktop and note the affected session.
+2. Check provider access, Local Core, managed database, workspace access, and session persistence in that order.
+3. Restart only the component identified as unhealthy.
+4. Reopen the original workspace and session.
+5. Confirm that the transcript and last terminal state are still present before retrying.
+
+<Callout tone="warning" title="Do not erase state first">
+  <p>Clearing Desktop data can remove the history and diagnostics needed to understand the failure. Use it only when a documented recovery step identifies unrecoverable local state.</p>
+</Callout>
+
+<Outcome>
+  <p>The unhealthy status clears, the original session remains available, and a small test run completes without creating disconnected replacement work.</p>
+</Outcome>

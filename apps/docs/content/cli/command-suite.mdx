@@ -34,9 +34,9 @@ The command set mirrors the product model:
 - interactive work
 - workspace-local behavior
 - recurring scheduled work
-- application-facing runtime boundary
+- an HTTP runner for application integrations
 
-That separation keeps workflows explicit instead of overloading one giant command surface.
+Separate commands make it clear whether you are working interactively, managing a workspace, scheduling a task, or starting a service.
 
 ## Common sequences
 
@@ -90,9 +90,9 @@ The command suite is interesting because it exposes more than chat:
 - codeMode policy inspection and toggling
 - released Ruhroh evaluation and migration-evidence checks
 
-That is the same reason the repo ships multiple apps and protocol surfaces. Kestrel is trying to cover a full runtime lifecycle, not only a prompt loop.
+Together, these commands cover interactive work, workspace setup, automation, services, and evaluation rather than only sending prompts.
 
-## What To Read Next
+## Use the commands in a workflow
 
 - [Workspace workflows](/cli/workspace-workflows)
 - [CLI terminal client](/cli/kchat)

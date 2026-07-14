@@ -1,0 +1,38 @@
+---
+title: Reuse trusted material with Knowledge
+summary: Add organization documents once, track their processing state, and make them available to the Projects that need them.
+section: kestrel-one
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+**Knowledge** is reusable source material owned by your organization. A Project can select relevant Knowledge without copying the same document into every Thread.
+
+<ProductFigure
+  src="/product/kestrel-one/knowledge.png"
+  alt="Kestrel One Knowledge library showing organization documents and processing status"
+  caption="Knowledge makes document readiness visible before a Project depends on the material."
+/>
+
+## Add a document
+
+1. Open **Knowledge** at `/knowledge`.
+2. Upload a supported document or promote an attachment from a Thread.
+3. Wait for processing to reach `ready` before relying on it in new work.
+4. Open a Project and select the material its Threads should be able to retrieve.
+
+## Read the processing state
+
+| State | Meaning | What to do |
+| --- | --- | --- |
+| `uploaded` | The original file is stored | Wait for processing to begin |
+| `processing` | Text and searchable sections are being prepared | Return later to check progress |
+| `ready` | The document is searchable | Add it to the intended Project |
+| `partial` | Some material is usable, with warnings | Review the warning before relying on it |
+| `failed` | Processing did not complete | Correct the source problem or request a reindex |
+
+<Outcome>
+  <p>The document is ready, selected by the intended Project, and appears as a cited source when an authorized Thread retrieves it.</p>
+</Outcome>

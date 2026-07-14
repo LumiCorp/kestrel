@@ -1,6 +1,6 @@
 ---
 title: Next.js route cookbook
-summary: The mechanical reference for `workspace-copilot` route bodies, response headers, SSE cancellation, and webhook payload mapping in a Next.js app.
+summary: Copy the request bodies, response headers, cancellation behavior, and webhook mapping for a Workspace Copilot Next.js app.
 section: build
 audience: integrators
 status: stable
@@ -8,17 +8,15 @@ sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Mechanical companion">
-Use this page after the main Next.js integration guide when you need the exact route mechanics for `workspace-copilot`.
+<WorkspaceCopilotDemo step="Route reference">
+Copy the exact request and response details for your Workspace Copilot routes.
 </WorkspaceCopilotDemo>
 
-This page is intentionally narrow. The main integration guide explains the architecture. This one captures the route contract you keep reopening while implementing or debugging.
-
-For **Workspace Copilot**, these route details are the mechanical contract behind the three canonical `/api/copilot/*` entrypoints.
+Keep this reference nearby while implementing or debugging the three `/api/copilot/*` routes.
 
 ## Route files
 
-The canonical route pack is:
+Create these route files:
 
 ```text
 app/api/copilot/run/route.ts
@@ -55,7 +53,7 @@ The stream route uses the same request body:
 }
 ```
 
-The difference is the response type, not the input contract.
+Only the response changes: the stream route returns incremental events instead of waiting for one terminal result.
 
 ## Response headers
 
@@ -86,11 +84,11 @@ client disconnect
         -> terminal result becomes run.cancelled
 ```
 
-That behavior is deliberate. The helper should not swallow the disconnect and pretend the run completed cleanly.
+This leaves the run with an accurate cancelled outcome when a user closes the connection.
 
 ## Webhook payload mapping
 
-The webhook route exists because external payloads rarely already match the Kestrel turn shape.
+Use the webhook route to translate an external service's payload into the fields Kestrel expects.
 
 Example payload mapping:
 
@@ -125,8 +123,8 @@ Use the webhook helper when:
 - [ ] response includes `x-kestrel-request-id`
 - [ ] stream route surfaces `run.cancelled` when the client disconnects
 
-## What To Read Next
+## Use these routes in an application
 
 - [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Environment and auth](/deploy/environment-and-auth)
-- [Next.js package reference](/packages/next)
+- [Environment and auth](/operate/environment-and-auth)
+- [Next.js package reference](/reference/nextjs)

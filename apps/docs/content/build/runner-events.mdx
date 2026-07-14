@@ -1,0 +1,26 @@
+---
+title: Runner events
+summary: Handle progress, task, waiting, completion, cancellation, and failure events from a streamed run.
+section: build
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Request streams report activity before delivering one terminal result.
+
+## Public stream events
+
+- `run.started` marks the accepted run.
+- `run.progress`, `run.reasoning`, `run.log`, and `run.console` describe active work.
+- `run.tool.started`, `run.tool.completed`, and `run.tool.failed` describe tool activity.
+- `task.updated` reports delegated task lifecycle.
+- `run.completed`, `run.failed`, and `run.cancelled` are terminal events.
+- `runner.error` reports a runner-level protocol or service problem.
+
+Treat events as protocol data: validate the envelope before updating application state and correlate every event to its command, session, and run.
+
+## Finish from the terminal event
+
+Progress and reasoning events may be useful to display, but they do not own the final answer. Read `assistantText`, structured `output`, and any operator state from the terminal result.

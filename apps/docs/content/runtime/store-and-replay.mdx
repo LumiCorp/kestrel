@@ -1,20 +1,20 @@
 ---
 title: Store and replay
-summary: The persistence layer that gives Workspace Copilot durable session state, replayable evidence, and enough history to inspect interactive and scheduled runs after the fact.
-section: runtime
-audience: maintainers
+summary: Inspect the saved state and history behind interactive and scheduled Workspace Copilot runs.
+section: operate
+audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Runtime consequence">
-This page is the reason the canonical demo is more than a tutorial. The same workspace can support interactive requests and nightly review jobs because the runtime leaves behind durable state and inspectable history.
+<WorkspaceCopilotDemo step="Saved history">
+Interactive requests and nightly reviews can share one workspace because Kestrel saves the state and history of each run.
 </WorkspaceCopilotDemo>
 
 Kestrel's store layer persists state, logs, events, and replay material. That is what lets operators reason about a run after it finishes instead of reconstructing it from loose logs or conflicting prompt memories.
 
-## What persists for the demo
+## What Kestrel saves
 
 - session continuity for `workspace-copilot-session-*`
 - explicit memory updates and revisions
@@ -51,14 +51,14 @@ pnpm run test
 pnpm run prompt-suite
 ```
 
-Those commands are not the replay system itself, but they defend the quality of the evidence the runtime stores by reducing drift before it ships.
+These checks help catch changes in prompts or behavior before they make saved runs harder to compare.
 
 ## Failure mode: memory and replay mismatch
 
 If the daytime route and the nightly run disagree, replay and store data should let you separate:
 
-- route contract drift
-- workspace prompt drift
+- a route returning different data than expected
+- a workspace prompt changing between runs
 - memory revision conflict
 - runtime behavior regression
 
@@ -75,8 +75,8 @@ When an operator is trying to explain a bad outcome, the order should usually be
 
 That order keeps the investigation attached to durable evidence instead of drifting into guesswork.
 
-## What To Read Next
+## Continue from replay evidence
 
-- [Reliability](/operations/reliability)
-- [Evaluations with Ruhroh](/operations/evaluations)
+- [Reliability](/operate/reliability)
+- [Evaluations with Ruhroh](/operate/evaluations)
 - [Workspace Copilot demo](/build/workspace-copilot-demo)

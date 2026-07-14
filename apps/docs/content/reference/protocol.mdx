@@ -1,0 +1,48 @@
+---
+title: "@kestrel-agents/protocol"
+summary: Parse runner health, stream events, capabilities, and terminal result data with the public protocol package.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+```bash
+pnpm add @kestrel-agents/protocol@0.6.0-beta.0
+```
+
+## Exported constants
+
+| Export | Purpose |
+| --- | --- |
+| `RUNNER_HEALTH_VERSION` | Version of the runner health response |
+| `RUNNER_COMMAND_CONTRACT_VERSION` | Command contract reported by health checks |
+| `RUNNER_EVENT_CONTRACT_VERSION` | Event contract reported by health checks |
+| `RUNNER_RUN_STREAM_EVENT_TYPES` | Allowed public request-stream event names |
+| `RUNNER_CAPABILITIES` | Capabilities a compatible runner may advertise |
+
+## Parse a terminal result
+
+`assistantText` is required and must be `null` or a non-empty string. `output` is also required. Validate unknown data before your application uses it.
+
+```ts
+import { parseRunnerResultV2 } from "@kestrel-agents/protocol";
+
+const result = parseRunnerResultV2(input);
+console.log(result.output, result.assistantText);
+```
+
+## Parse a terminal event payload
+
+```ts
+import { parseRunnerTerminalPayloadV2 } from "@kestrel-agents/protocol";
+
+const payload = parseRunnerTerminalPayloadV2(event.type, event.payload);
+```
+
+The payload parser validates the nested result for `run.completed`, `run.failed`, and `run.cancelled`. It also validates a result attached to an operator-controlled outcome.
+
+## Validate runner health
+
+Use `parseRunnerHealthV1()` on an unknown health response. It verifies the service name, contract versions, capability list, and non-empty service version before returning typed data.

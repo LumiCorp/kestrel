@@ -1,0 +1,31 @@
+---
+title: Managed model deployments
+summary: Launch an organization-owned model from a qualified profile and wait for it to become safely selectable.
+section: kestrel-one
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Managed deployments let an entitled organization member launch a RunPod Serverless endpoint without entering provider credentials or arbitrary infrastructure settings. The feature must be enabled and configured by a platform administrator.
+
+<ProductFigure
+  src="/product/kestrel-one/model-deployment.png"
+  alt="Kestrel One managed model deployment page with qualified profiles and lifecycle status"
+  caption="Members choose from qualified profiles; Kestrel One owns provisioning, validation, and readiness."
+/>
+
+## Launch a deployment
+
+1. Open `/model-deployments` and choose a qualified profile.
+2. Review the organization quota and estimated provider configuration.
+3. Launch the deployment and follow its provisioning status.
+4. Wait for the endpoint and expected model to pass readiness and qualification.
+5. Select the model in a Thread only after the deployment reports ready.
+
+The deployment remains unavailable while provisioning, validation, or model qualification is incomplete. Members cannot supply arbitrary images, credentials, or raw provider fields through this flow.
+
+<Outcome>
+  <p>The deployment reports ready, its model appears as approved for the organization, and a short Thread request completes through it.</p>
+</Outcome>

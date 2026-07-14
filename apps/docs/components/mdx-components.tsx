@@ -3,6 +3,7 @@ import React from "react";
 import type { ComponentPropsWithoutRef } from "react";
 
 import { CodeBlock } from "@/components/CodeBlock";
+import { DOCS_RELEASE } from "@/lib/release";
 
 function Paragraph(props: ComponentPropsWithoutRef<"p">) {
   return <p {...props} className={`doc-paragraph ${props.className ?? ""}`.trim()} />;
@@ -21,7 +22,7 @@ function Blockquote(props: ComponentPropsWithoutRef<"blockquote">) {
 }
 
 function Pre(props: ComponentPropsWithoutRef<"pre">) {
-  return <CodeBlock>{props.children}</CodeBlock>;
+  return <CodeBlock {...props} />;
 }
 
 function InlineCode(props: ComponentPropsWithoutRef<"code">) {
@@ -43,6 +44,97 @@ function Anchor(props: ComponentPropsWithoutRef<"a">) {
   return <a {...props} className={className} />;
 }
 
+function DocsImage(props: ComponentPropsWithoutRef<"img">) {
+  return <img {...props} className={`doc-product-image ${props.className ?? ""}`.trim()} />;
+}
+
+interface CalloutProps {
+  tone?: "note" | "warning" | "checkpoint";
+  title?: string;
+  children: React.ReactNode;
+}
+
+function Callout({ tone = "note", title, children }: CalloutProps) {
+  return (
+    <aside className={`doc-callout doc-callout-${tone}`}>
+      {title ? <strong className="doc-callout-title">{title}</strong> : null}
+      <div className="doc-callout-body">{children}</div>
+    </aside>
+  );
+}
+
+function Outcome({ children }: { children: React.ReactNode }) {
+  return (
+    <aside className="doc-outcome">
+      <strong>What success looks like</strong>
+      <div>{children}</div>
+    </aside>
+  );
+}
+
+interface ProductFigureProps {
+  src: string;
+  alt: string;
+  caption: string;
+}
+
+function ProductFigure({ src, alt, caption }: ProductFigureProps) {
+  return (
+    <figure className="product-figure">
+      <img className="doc-product-image" src={src} alt={alt} />
+      <figcaption>{caption}</figcaption>
+    </figure>
+  );
+}
+
+function ReleaseCompatibilityTable() {
+  return (
+    <table>
+      <thead><tr><th>Surface</th><th>Compatible line</th><th>Contract note</th></tr></thead>
+      <tbody>
+        {DOCS_RELEASE.compatibility.map(([surface, note]) => (
+          <tr key={surface}><td>{surface}</td><td><code>{DOCS_RELEASE.version}</code></td><td>{note}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ReleaseStatusTable() {
+  return (
+    <table>
+      <thead><tr><th>Surface</th><th>Documented line</th><th>Channel</th></tr></thead>
+      <tbody>
+        {DOCS_RELEASE.compatibility.map(([surface]) => (
+          <tr key={surface}><td>{surface}</td><td><code>{DOCS_RELEASE.version}</code></td><td>{DOCS_RELEASE.channel}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function DesktopDownload() {
+  const access = DOCS_RELEASE.productAccess.desktop;
+  return (
+    <aside className="download-panel">
+      <div>
+        <span className="download-panel-kicker">Kestrel Desktop {DOCS_RELEASE.channel}</span>
+        <strong>{DOCS_RELEASE.version} for {access.supportedPlatforms.join(", ")} is coming soon</strong>
+        <p>{access.trustNote}</p>
+      </div>
+      <a href={access.releasesUrl}>View current releases</a>
+    </aside>
+  );
+}
+
+function KestrelOneAccess() {
+  return (
+    <Callout title="Invitation required">
+      <p>{DOCS_RELEASE.productAccess.kestrelOne.accessNote}</p>
+    </Callout>
+  );
+}
+
 interface WorkspaceCopilotDemoProps {
   step?: string;
   title?: string;
@@ -50,7 +142,7 @@ interface WorkspaceCopilotDemoProps {
 }
 
 function WorkspaceCopilotDemo(props: WorkspaceCopilotDemoProps) {
-  const { step, title = "Used in the Workspace Copilot demo", children } = props;
+  const { step, title = "Workspace Copilot guide", children } = props;
   return (
     <aside className="workspace-demo-callout">
       <div className="workspace-demo-kicker">{step ?? "Canonical example"}</div>
@@ -68,5 +160,13 @@ export const mdxComponents = {
   pre: Pre,
   code: InlineCode,
   a: Anchor,
+  img: DocsImage,
+  Callout,
+  Outcome,
+  ProductFigure,
   WorkspaceCopilotDemo,
+  ReleaseCompatibilityTable,
+  ReleaseStatusTable,
+  DesktopDownload,
+  KestrelOneAccess,
 };

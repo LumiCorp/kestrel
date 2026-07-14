@@ -9,12 +9,12 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 8">
-This step turns the workspace-bound demo into recurring automation. The same `workspace-copilot` contract now powers scheduled work instead of only interactive requests.
+Turn a Workspace Copilot task that already works on demand into a scheduled job.
 </WorkspaceCopilotDemo>
 
-Kestrel automation works best when the workspace catalog is the product surface and the scheduler is built on that central structure.
+Scheduled work stays attached to the workspace that owns its prompt, settings, and output.
 
-## Why this exists
+## Make the task repeatable
 
 Good recurring automation is:
 
@@ -60,31 +60,31 @@ Use `run-once` before you trust a real schedule. It is the cleanest way to verif
 | Pattern | Prompt focus | Durable output |
 | --- | --- | --- |
 | nightly repo review | risk, missing tests, next actions | `./reports/nightly-review.md` |
-| deployment summary | deploy state, incidents, follow-ups | `./reports/deploy-summary.md` |
+| deployment summary | deploy state, incidents, follow-ups | `./reports/operate-summary.md` |
 | research digest | new findings, sources, open questions | `./reports/research-digest.md` |
-| maintenance loop | docs drift, lint issues, owner handoff | `./reports/maintenance-pass.md` |
+| maintenance loop | outdated guidance, lint issues, follow-up work | `./reports/maintenance-pass.md` |
 
-## What changes in this step
+## Review the scheduled workflow
 
-- the demo now has a recurring nightly task
+- Workspace Copilot now has a recurring nightly task
 - the workspace produces predictable report artifacts in `./reports`
-- the example covers the full loop from interactive run to scheduled automation
-- operators can reason about failure by inspecting prompts, memory, reports, and traces together
+- interactive and scheduled runs now use the same workspace settings
+- you can investigate a failure by inspecting the prompt, memory, report, and trace together
 
-## Failure modes to watch
+## Troubleshoot a scheduled run
 
 - the workspace is not registered, so `kcron` never picks it up
 - `cron.enabled` is `false`
 - the launch prompt path is wrong
 - the prompt writes outside `./reports`
-- continuity is expected from a long-lived session instead of workspace files and explicit memory
+- the task depends on an old session instead of workspace files and saved memory
 
-## Why this matters
+## Make the automation understandable
 
-This is where Workspaces stop being configuration and become product behavior. A strong automation story is not “you can schedule something.” It is “you can review the workspace, understand the prompt, inspect the output, and trust the operator trail later.”
+The schedule is only one part of useful automation. You should also be able to review the prompt before it runs, find the output afterward, and understand what happened when the task does not complete.
 
-## What To Read Next
+## Operate the scheduled task
 
 - [kcron](/cli/kcron)
-- [Production operating model](/deploy/production-operating-model)
-- [Reliability](/operations/reliability)
+- [Production operating model](/operate/deployment)
+- [Reliability](/operate/reliability)

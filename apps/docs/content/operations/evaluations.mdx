@@ -1,17 +1,16 @@
 ---
 title: Evaluations with Ruhroh
-summary: Validate Kestrel behavior with released Ruhroh scenarios, suites, target metadata, and immutable migration evidence.
-section: operations
-audience: maintainers
+summary: Run repeatable Ruhroh scenarios to compare Kestrel behavior before and after a change.
+section: operate
+audience: integrators
 status: active
 sourceKind: repo-inferred
 updatedAt: 2026-07-10
 ---
 
-Kestrel owns the evaluation definitions in `evals/`. Ruhroh owns execution,
-reporting, comparison, and the maintained `kestrel-cli` adapter. Keeping that
-boundary explicit lets Kestrel validate runtime behavior without carrying a
-second evaluator inside the product repository.
+Ruhroh runs Kestrel evaluation scenarios, records the results, and compares one
+run with another. Use these checks before releasing runtime, prompt, or model
+changes that could alter user-visible behavior.
 
 ## Core commands
 
@@ -21,45 +20,40 @@ pnpm run evals:release-check
 pnpm run check:evals
 ```
 
-All three commands execute the exact Ruhroh version pinned by the root
-workspace. Local checkouts, binary overrides, and copied adapters are rejected.
+All three commands use the Ruhroh version recorded by this Kestrel release so
+results stay comparable between machines.
 
 ## What the gate validates
 
-The release gate verifies:
+The release check confirms that:
 
-- every declared behavior has an owner in `evals/migration/ownership-ledger.json`
-- every Ruhroh-owned behavior resolves to a maintained scenario and suite
-- every runtime-owned behavior cites a concrete replacement test
-- scenario, instruction, and released package hashes match recorded evidence
+- each declared behavior maps to a maintained scenario, suite, or Kestrel test
+- scenario, instruction, and released package versions match the recorded evaluation
 - Ruhroh accepts the scenarios, suite, benchmark targets, and adapter dry run
 
-The gate is credential-free. Live provider benchmarks remain explicit release
-work and are not silently substituted for deterministic validation.
+These checks do not call a live model provider. Run live benchmarks separately
+when a release changes model-dependent behavior.
 
-## Migration evidence
+## Historical comparison records
 
-The files under `evals/migration/parity/` are immutable records from the
-evaluator cutover. Each record identifies the behavior, released Ruhroh
-artifact, scenario hash, instruction hash, outcome, evidence, cancellation,
-and failure classification that were checked before the old in-repo evaluator
-was removed.
+The files under `evals/migration/parity/` preserve earlier comparison results.
+They record the scenario and instruction versions, outcome, cancellation state,
+and failure classification used during the evaluation transition.
 
-These records are evidence, not an executable fallback. New validation work
-must be added to Ruhroh or to a named Kestrel runtime test according to the
-ownership ledger.
+Use these files for historical comparison. Add new behavior checks as current
+Ruhroh scenarios or Kestrel tests rather than editing old results.
 
 ## Workflow
 
 1. change the Kestrel runtime or an evaluation definition
 2. run `pnpm run evals:release-check`
 3. inspect any failing Ruhroh validation output
-4. update a scenario, suite, or concrete runtime test in the owning repository
-5. keep migration records unchanged unless performing an explicitly reviewed evaluator migration
+4. update the scenario, suite, or Kestrel test that describes the intended behavior
+5. rerun the check and review the comparison before release
 
-## What To Read Next
+## Continue from evaluation evidence
 
-- [Quality gates](/operations/quality-gates)
-- [Artifact inspection](/operations/artifact-inspection)
-- [Store and replay](/runtime/store-and-replay)
+- [Quality gates](/operate/quality-gates)
+- [Artifact inspection](/operate/observability)
+- [Store and replay](/operate/replay)
 - [Ruhroh evaluation sources](https://github.com/LumiCorp/ruhroh)

@@ -1,0 +1,22 @@
+---
+title: Model access decisions
+summary: Resolve an organization-approved model on the server instead of trusting a browser-supplied provider or credential.
+section: operate
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+The browser may request a model identifier. The server decides which organization, gateway, provider endpoint, credential, and deployment are allowed to satisfy that request.
+
+## Decision order
+
+1. Resolve the active organization and authenticated person.
+2. Find a gateway visible to that organization.
+3. Confirm that the requested model belongs to the gateway and is approved.
+4. For a managed gateway, confirm that its deployment is still ready.
+5. Issue a scoped credential lease.
+6. Build the runner request from that validated server result.
+
+Reject a mismatched gateway/model pair. Falling back to another provider or credential makes the user-visible selection misleading and can cross organization access boundaries.

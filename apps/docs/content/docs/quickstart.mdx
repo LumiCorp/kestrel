@@ -1,79 +1,33 @@
 ---
-title: Quickstart
-summary: The shortest path from checkout to Kestrel Desktop first, then into the broader Kestrel Suite and extension paths.
-section: docs
+title: Choose your first Kestrel journey
+summary: Start with the Kestrel product that matches the work you want to do today.
+section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-07-13
 ---
 
-Use this page when you want a real starting point, not a marketing overview. It gets Kestrel Desktop running first, then points you toward the companion surfaces and extension paths based on what you are trying to accomplish.
+You do not need to understand the whole Kestrel Suite before you begin. Choose the path that matches your immediate goal; each one reaches a useful result before introducing the deeper runtime concepts.
 
-## Start With Kestrel Desktop
+## Run agents on your computer
 
-For the packaged application, use the current macOS release artifact. That path does not require a repository checkout.
+Choose **Kestrel Desktop** when the work begins with files or repositories on your machine. The application keeps your workspace, conversation, run history, and operator decisions together so you can close it and continue later.
 
-For contributor development from this repository:
+[Download and install Kestrel Desktop](/desktop/install)
 
-```bash
-cp .env.example .env
-pnpm install
-pnpm run desktop:dev
-```
+## Continue work with a team
 
-Desktop is the recommended first-run path for local evaluation.
+Choose **Kestrel One** when several people need to continue the same agent work with shared context and clear access controls. You will need an invitation from your Kestrel One organization administrator.
 
-Model-backed and internet-backed workflows still require provider credentials in `.env`. For the default repo wiring, plan on configuring `OPENROUTER_API_KEY` for model access and `TAVILY_API_KEY` for internet-backed tooling.
+[Start with your Kestrel One invitation](/kestrel-one/getting-started)
 
-In packaged Desktop, first run starts with an explicit provider choice. Hosted providers need a key during setup. Local providers (`ollama`, `lmstudio`) do not need one by default.
+## Add Kestrel to your product
 
-## Start Other Suite Surfaces As Needed
+Choose **Build** when you are adding durable agent execution to an application you already own. The first tutorial creates a typed agent, runs it through the SDK, and shows the human-facing response and structured result separately.
 
-If you want the broader suite or a specific companion surface, the repo also supports:
+[Build your first agent](/build/building-your-first-agent)
 
-```bash
-pnpm run web:dev
-pnpm run tui
-```
-
-## Check That The Runtime Is Healthy
-
-```bash
-pnpm run governance:check
-pnpm run test
-pnpm run prompt-suite
-pnpm run evals:release-check
-```
-
-Those commands are not optional polish. They reflect how the repo defends runtime contracts, replay behavior, and prompt quality before a change lands.
-
-## Open The Main Surfaces
-
-- Desktop: primary local product surface
-- Kestrel One: `http://localhost:43103`
-- CLI companion flow: `kestrel`
-
-## Try The Runner Service Boundary
-
-If you want to understand how Kestrel expects product apps to integrate, start the local runner service:
-
-```bash
-kestrel web
-```
-
-That command prints the `KESTREL_RUNNER_SERVICE_URL` and `KESTREL_RUNNER_SERVICE_TOKEN` values that an app server should use. The browser should not talk to that service directly. Your application server owns that boundary.
-
-## Choose Your Next Path
-
-- If you want the main product story, read [Desktop app](/apps/desktop), [Why Kestrel](/docs/why-kestrel), and [Core concepts](/docs/core-concepts).
-- If you want to build an extension or integration, read [Building your first agent](/build/building-your-first-agent).
-- If you want workspace-local automation, read [Workspaces and automation](/build/workspaces-and-automation).
-- If you want deployment mechanics, read [Running the runner service](/deploy/running-the-runner-service).
-
-## What To Read Next
-
-- [Desktop app](/apps/desktop)
-- [Why Kestrel](/docs/why-kestrel)
-- [Building your first agent](/build/building-your-first-agent)
-- [Running the runner service](/deploy/running-the-runner-service)
+<Callout title="Not sure which path fits?">
+  <p>Start with Desktop if you want to experience Kestrel before writing integration code. Start with Build if your immediate goal is an API or application integration.</p>
+</Callout>

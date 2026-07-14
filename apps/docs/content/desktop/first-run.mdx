@@ -1,0 +1,37 @@
+---
+title: Complete your first run
+summary: Choose a model provider, open a local project, and finish a session you can return to later.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Before sending the first request, choose the model Desktop will use and the local project you want it to work in. Desktop will keep the conversation and results in a session you can reopen later.
+
+<ProductFigure
+  src="/product/desktop/provider-setup.png"
+  alt="Kestrel Desktop provider panel requesting a model provider and credential"
+  caption="Desktop keeps provider setup visible before it asks the runtime to begin agent work."
+/>
+
+## Choose a provider
+
+Select OpenRouter, OpenAI, Anthropic, Ollama, or LM Studio. Hosted providers require an API key. Local providers normally require a running local endpoint instead. If you are unsure, follow [Providers and models](/desktop/providers) before continuing.
+
+## Open a project
+
+Choose a folder you recognize and have permission to edit. Desktop adds it to your project library; it does not upload the folder to Kestrel One or silently move it elsewhere.
+
+## Start the first task
+
+Create a session, ask Kestrel to explain a small part of the project, and wait for the run to finish. Close the application, reopen it, select the same project, and resume the session with a follow-up question.
+
+<Outcome>
+  <p>The earlier conversation is still present, the session points to the same workspace, and your follow-up continues the existing work instead of starting from an empty prompt.</p>
+</Outcome>
+
+<Callout tone="warning" title="If setup stops">
+  <p>Read the visible provider or runtime state before restarting. A missing provider key, unavailable local model, and unhealthy Local Core require different fixes.</p>
+</Callout>

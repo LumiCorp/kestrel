@@ -4,11 +4,13 @@ import { cache } from "react";
 
 import matter from "gray-matter";
 import { compileMDX } from "next-mdx-remote/rsc";
+import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
 
 import { mdxComponents } from "@/components/mdx-components";
 import { findPageSpec, pageRegistry } from "@/lib/content-registry";
+import { buildJourneyMeta } from "@/lib/journeys";
 import { buildRouteMap, extractToc, normalizeMarkdownLinks, stripMarkdown } from "@/lib/markdown";
 import { createPageUrl, REPO_BLOB_BASE_URL, resolveDocsAppRoot, resolveRepoRoot } from "@/lib/site";
 import {
@@ -154,6 +156,12 @@ function parseFrontmatter(spec: RegisteredPageSpec, frontmatter: Frontmatter, ra
 
 function buildMeta(spec: RegisteredPageSpec, frontmatter: Frontmatter, rawContent: string): DocsPageMeta {
   const parsed = parseFrontmatter(spec, frontmatter, rawContent);
+  const extractedToc = extractToc(rawContent);
+  const toc = spec.tocMode === "none"
+    ? []
+    : spec.tocMode === "full"
+      ? extractedToc
+      : extractedToc.filter((item) => item.level === 2);
   return {
     slug: spec.slug,
     url: createPageUrl(spec.slug),
@@ -167,59 +175,39 @@ function buildMeta(spec: RegisteredPageSpec, frontmatter: Frontmatter, rawConten
     archive: spec.archive ?? false,
     updatedAt: parsed.updatedAt,
     sourceUrl: `${REPO_BLOB_BASE_URL}/${spec.sourcePath ?? `apps/docs/content/${spec.filePath}`}`,
-    toc: extractToc(rawContent),
+    toc: toc.length >= 2 || spec.tocMode === "full" ? toc : [],
+    tocMode: spec.tocMode ?? "auto",
+    archetype: spec.archetype,
+    surface: spec.surface,
+    experienceLevel: spec.experienceLevel ?? "beginner",
+    ...(spec.estimatedTime ? { estimatedTime: spec.estimatedTime } : {}),
     related: spec.related ?? [],
     archiveGroup: spec.archiveGroup,
   };
 }
 
-function deriveSearchPageKind(spec: RegisteredPageSpec, section: DocsSection) {
-  if (spec.pageKind) {
-    return spec.pageKind;
-  }
-  if (spec.archive) {
-    return "archive" as const;
-  }
-  if (spec.slug.length === 0) {
-    return "home" as const;
-  }
-  if (spec.slug.length <= 1) {
-    return "landing" as const;
-  }
-  if (section === "build" || section === "deploy") {
-    return "tutorial" as const;
-  }
-  if (section === "docs") {
-    return "narrative" as const;
-  }
-  return "reference" as const;
-}
-
-function deriveSearchPriority(spec: RegisteredPageSpec, pageKind: ReturnType<typeof deriveSearchPageKind>) {
+function deriveSearchPriority(spec: RegisteredPageSpec) {
   if (typeof spec.priority === "number") {
     return spec.priority;
   }
-  if (pageKind === "home") {
-    return 80;
-  }
-  if (pageKind === "tutorial") {
+  if (spec.archetype === "product-journey" || spec.archetype === "build-tutorial") {
     return 70;
   }
-  if (pageKind === "narrative") {
+  if (spec.archetype === "task-recipe" || spec.archetype === "troubleshooting") {
     return 65;
   }
-  if (pageKind === "reference") {
+  if (spec.archetype === "reference" || spec.archetype === "explainer") {
     return 60;
   }
-  if (pageKind === "landing") {
+  if (spec.archetype === "gateway") {
     return 50;
   }
-  return 0;
+  return 55;
 }
 
-export const getAllPages = cache(async () => {
+async function loadPages(specs: RegisteredPageSpec[]) {
   const pages = await Promise.all(
-    pageRegistry.map(async (spec) => {
+    specs.map(async (spec) => {
       const rawSource = await readPageSource(spec);
       const parsed = matter(rawSource);
       const normalizedContent = normalizeMarkdownLinks(parsed.content, spec.sourcePath, routeMap);
@@ -232,15 +220,30 @@ export const getAllPages = cache(async () => {
     }),
   );
 
-  return pages.sort((left, right) => left.meta.url.localeCompare(right.meta.url));
-});
+  const pagesByUrl = new Map(pages.map((page) => [page.meta.url, page.meta]));
+  return pages
+    .map((page) => {
+      const journey = buildJourneyMeta(page.spec.journeyId, page.meta.url, pagesByUrl);
+      return {
+        ...page,
+        meta: {
+          ...page.meta,
+          ...(journey ? { journey } : {}),
+        },
+      };
+    })
+    .sort((left, right) => left.meta.url.localeCompare(right.meta.url));
+}
+
+export const getAllPages = cache(async () => loadPages(pageRegistry));
 
 export function isPublicDocsPage(meta: DocsPageMeta) {
   return !meta.internal && !meta.archive && meta.section !== "archive" && meta.audience !== "maintainers";
 }
 
 export const getPublicPages = cache(async () => {
-  const pages = await getAllPages();
+  const publicSpecs = pageRegistry.filter((spec) => !spec.internal && !spec.archive);
+  const pages = await loadPages(publicSpecs);
   return pages.filter((page) => isPublicDocsPage(page.meta));
 });
 
@@ -258,18 +261,27 @@ export const getRenderedPageBySlug = cache(async (slug: string[]): Promise<Rende
   if (!spec) {
     return null;
   }
-
-  const rawSource = await readPageSource(spec);
-  const parsed = matter(rawSource);
-  const normalizedContent = normalizeMarkdownLinks(parsed.content, spec.sourcePath, routeMap);
-  const meta = buildMeta(spec, parsed.data as Frontmatter, normalizedContent);
+  const page = (await getPublicPages()).find((candidate) => candidate.meta.url === createPageUrl(slug));
+  if (!page) return null;
+  const { meta, rawContent: normalizedContent } = page;
+  if (!isPublicDocsPage(meta)) {
+    return null;
+  }
   const compiled = await compileMDX({
     source: normalizedContent,
     components: mdxComponents,
     options: {
       mdxOptions: {
         remarkPlugins: [remarkGfm],
-        rehypePlugins: [rehypeSlug],
+        rehypePlugins: [
+          [rehypePrettyCode, {
+            theme: "github-dark-default",
+            keepBackground: false,
+            bypassInlineCode: true,
+            defaultLang: "text",
+          }],
+          rehypeSlug,
+        ],
       },
     },
   });
@@ -297,32 +309,45 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
   });
 
   return [
-    group("desktop", "Desktop", "/apps/desktop", [
-      ["Start here", ["/apps/desktop", "/docs/quickstart", "/docs/why-kestrel", "/docs/core-concepts", "/docs/faq"]],
-      ["Work locally", ["/cli/workspace-workflows", "/cli/kchat", "/cli/kcron"]],
-      ["Companion surfaces", ["/apps/web"]],
+    group("start", "Start", "/start", [
+      ["Choose your path", ["/start", "/start/quickstart", "/start/why-kestrel"]],
+      ["Understand Kestrel", ["/start/concepts", "/start/architecture", "/start/faq", "/start/release-status"]],
+    ]),
+    group("desktop", "Desktop", "/desktop", [
+      ["Get Desktop", ["/desktop", "/desktop/install", "/desktop/first-run", "/desktop/providers"]],
+      ["Work and recover", ["/desktop/workspaces-and-sessions", "/desktop/operator-control", "/desktop/automation", "/desktop/recovery", "/desktop/troubleshooting"]],
+    ]),
+    group("kestrel-one", "Kestrel One", "/kestrel-one", [
+      ["Start collaborating", ["/kestrel-one", "/kestrel-one/getting-started", "/kestrel-one/threads", "/kestrel-one/projects"]],
+      ["Context and Knowledge", ["/kestrel-one/context-revisions", "/kestrel-one/knowledge", "/kestrel-one/artifacts-and-sharing"]],
+      ["Models and administration", ["/kestrel-one/organizations-and-access", "/kestrel-one/models-and-gateways", "/kestrel-one/managed-model-deployments", "/kestrel-one/administration", "/kestrel-one/production-operations"]],
     ]),
     group("build", "Build", "/build", [
-      ["Start building", ["/build", "/build/workspace-copilot-demo", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
-      ["Integrate", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability"]],
-      ["Automate", ["/build/workspaces-and-automation", "/build/automating-common-tasks"]],
+      ["First working agent", ["/build", "/build/workspace-copilot-demo", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
+      ["Add to your app", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability", "/build/workspaces-and-automation", "/build/automating-common-tasks"]],
+      ["Runtime behavior", ["/build/protocol-and-results", "/build/runner-events", "/build/waiting-resume-and-cancellation", "/build/upgrading-to-0-6"]],
     ]),
-    group("deploy", "Deploy", "/deploy", [
-      ["Deploy Kestrel", ["/deploy", "/deploy/running-the-runner-service", "/deploy/environment-and-auth", "/deploy/deployment-troubleshooting", "/cli/runner-service"]],
+    group("operate", "Operate", "/operate", [
+      ["Prepare and deploy", ["/operate", "/operate/runner-service", "/operate/environment-and-auth", "/operate/deployment"]],
+      ["Inspect and recover", ["/operate/operator-control", "/operate/review-and-state", "/operate/observability", "/operate/reliability", "/operate/replay", "/operate/troubleshooting"]],
+      ["Security and quality", ["/operate/credential-leases", "/operate/model-authority", "/operate/evaluations", "/operate/quality-gates", "/operate/security"]],
     ]),
     group("reference", "Reference", "/reference", [
-      ["Concepts", ["/reference", "/reference/terminology", "/docs/architecture-overview", "/docs/runtime-model"]],
-      ["CLI", ["/cli", "/cli/command-suite", "/cli/profiles-code-mode-and-mcp"]],
-      ["Packages", ["/packages", "/packages/sdk", "/packages/next", "/packages/observability"]],
+      ["Contracts", ["/reference", "/reference/protocol", "/reference/terminal-results", "/reference/events", "/reference/compatibility"]],
+      ["Packages", ["/reference/sdk", "/reference/nextjs", "/reference/observability", "/reference/http"]],
+      ["CLI and configuration", ["/reference/cli", "/cli/command-suite", "/cli/profiles-code-mode-and-mcp", "/reference/configuration"]],
+      ["Releases", ["/reference/terminology", "/reference/releases"]],
     ]),
   ];
 });
 
 export function getNavSectionForUrl(url: string): DocsNavSection {
+  if (url === "/" || url.startsWith("/start")) return "start";
+  if (url.startsWith("/desktop")) return "desktop";
+  if (url.startsWith("/kestrel-one")) return "kestrel-one";
   if (url.startsWith("/build")) return "build";
-  if (url.startsWith("/deploy") || url === "/cli/runner-service") return "deploy";
-  if (url.startsWith("/packages") || url === "/reference" || url.startsWith("/reference/") || url === "/cli" || url === "/cli/command-suite" || url === "/cli/profiles-code-mode-and-mcp" || url === "/docs/architecture-overview" || url === "/docs/runtime-model") return "reference";
-  return "desktop";
+  if (url.startsWith("/operate") || url === "/cli/runner-service") return "operate";
+  return "reference";
 }
 
 export const getSectionPages = cache(async (section: DocsSection) => {
@@ -339,11 +364,7 @@ export const getRelatedPages = cache(async (meta: DocsPageMeta) => {
   if (relatedByExplicitSlug.length > 0) {
     return relatedByExplicitSlug;
   }
-
-  return pages
-    .filter((page) => page.meta.section === meta.section && page.meta.url !== meta.url && !page.meta.archive)
-    .slice(0, 3)
-    .map((page) => page.meta);
+  return [];
 });
 
 export const getSearchDocuments = cache(async (): Promise<SearchDocument[]> => {
@@ -359,8 +380,10 @@ export const getSearchDocuments = cache(async (): Promise<SearchDocument[]> => {
     fullText: stripMarkdown(page.rawContent),
     internal: page.meta.internal,
     sourceKind: page.meta.sourceKind,
-    pageKind: deriveSearchPageKind(page.spec, page.meta.section),
-    priority: deriveSearchPriority(page.spec, deriveSearchPageKind(page.spec, page.meta.section)),
+    archetype: page.meta.archetype,
+    surface: page.meta.surface,
+    experienceLevel: page.meta.experienceLevel,
+    priority: deriveSearchPriority(page.spec),
     capabilities: page.spec.capabilities ?? [],
   }));
 });

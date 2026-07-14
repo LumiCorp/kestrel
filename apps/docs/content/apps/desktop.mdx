@@ -1,66 +1,52 @@
 ---
-title: Desktop app
-summary: The flagship Kestrel app for local workspace-centric agent operation, persistent sessions, operator control, and recovery.
-section: apps
+title: Kestrel Desktop
+summary: Turn agent work in a local project into a durable, controllable process you can leave and return to.
+section: desktop
 audience: everyone
 status: active
-sourceKind: repo-inferred
-updatedAt: 2026-06-16
+sourceKind: curated
+updatedAt: 2026-07-13
 ---
 
-Kestrel Desktop is the flagship app in the Kestrel Suite. If you want the clearest product view of what Kestrel is for, start here.
+Kestrel Desktop helps you hand off meaningful work in a local project without losing sight of it. Use it to understand an unfamiliar repository, investigate a problem, plan a change, produce files, or review work that is already underway.
 
-Use Desktop when the workflow is rooted in local workspace state and operator control, and you want the primary packaged Kestrel experience instead of assembling the suite through the browser and terminal separately.
+Useful work rarely fits into one prompt. It develops as the agent discovers information, makes decisions, changes files, asks for input, and sometimes encounters a problem. Desktop keeps the conversation, results, and current state together so you can leave and return without reconstructing the task.
 
-## Workflow
+## Give the work somewhere to live
 
-Desktop is the right surface when the user needs to:
+Open a project, choose the model you want to use, and describe the outcome you need. Desktop keeps the project, conversation, active work, results, and recovery controls in one place.
 
-- use the main Kestrel product surface for local work
-- stay close to local workspace state
-- run agent workflows without living in the terminal
-- keep workspace catalog state and session continuity visible
-- inspect runtime health, recovery, and operator actions in one place
-- make Desktop the default evaluation and demo path for the suite
+### Start from a real project
 
-## Why start here
+Each session is attached to the local workspace where the work belongs. Files, requests, and results do not become a disconnected conversation you must later match back to the project.
 
-Desktop is the fastest way to understand the product story behind Kestrel:
+### Leave and come back
 
-- local workspace identity is visible
-- persistent sessions and runtime health stay close at hand
-- operator-friendly control does not require a browser-only workflow
-- the broader suite stays available without competing for first-run attention
+Close the application, return tomorrow, and continue the same session. The earlier conversation, completed runs, and current project remain available, so you do not have to reconstruct the task before moving forward.
 
-## How the rest of the suite supports it
+### Know where things stand
 
-- Kestrel One is the canonical hosted web product
-- the CLI is the terminal companion for power users and operator flows
-- Ruhroh owns evaluation execution outside this repository
-- the SDK and package layer exist for teams extending or embedding the suite
+See whether work is active, completed, waiting for you, cancelled, or failed. Review the answer, generated artifacts, recent activity, and recorded outcome instead of relying on the last visible message to explain everything that happened.
 
-## Supporting architecture
+### Step in when the work needs you
 
-Desktop is implemented over the shared Kestrel runtime and Local Core. It remains independent from Kestrel One source and hosted configuration.
+Inspect, steer, stop, resume, retry, or recover work from the same session. Your intervention becomes part of its history rather than forcing you to discard the run and begin again with a new prompt.
 
-## First-run setup
+## What people use Desktop for
 
-Packaged Desktop starts with a guided setup flow that is meant to get a new install to a usable workspace without dropping into recovery first.
+Desktop is most useful when the outcome matters beyond the current conversation. Common examples include:
 
-- The first step is an explicit provider choice: `openrouter`, `openai`, `anthropic`, `ollama`, or `lmstudio`.
-- Hosted providers require an API key stored in Desktop settings.
-- Local providers use local OpenAI-compatible endpoints and do not require an API key by default; `ollama` and `lmstudio` are beta paths for v0.5.
-- Setup resumes at the first unfinished step if the user stops midway.
-- Recovery screens are reserved for non-onboarding failures such as missing resources, database errors, or runtime boot failures.
+- investigating a bug and keeping the findings with the project
+- planning and carrying out a change that touches several files
+- returning to unfinished work without explaining the project again
+- reviewing what changed, what was produced, and what still needs attention
+- correcting course when a task waits, fails, or heads in the wrong direction
+- turning a successful manual task into repeatable scheduled work
 
-## v0.5 beta install status
+The goal is simple: help you delegate substantial work while preserving the context and control needed to trust the result.
 
-Kestrel Desktop `0.5.0-beta.0` is a macOS-first unsigned beta artifact. The beta proof path covers OpenRouter as the hosted-provider setup flow and Ollama as the local-provider setup flow. Auto-update, signed/notarized distribution, and polished Windows/Linux installer support are outside this beta.
+## Start with one real project
 
-Managed packaged Postgres, local providers, code/dev-shell workflows, and `kcron` automation should be treated as beta surfaces until their clean-machine behavior is proven.
+[Check Desktop Beta availability](/desktop/install), connect a model, and open a project you know. The first-run guide will help you complete a small task, close the application, and return to the same session so you can experience the continuity directly.
 
-## What To Read Next
-
-- [Quickstart](/docs/quickstart)
-- [Web app](/apps/web)
-- [Workspaces and automation](/build/workspaces-and-automation)
+From there, learn how [workspaces and sessions](/desktop/workspaces-and-sessions) stay organized or see the [operator controls](/desktop/operator-control) available when a run needs you.

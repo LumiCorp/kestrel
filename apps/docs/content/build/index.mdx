@@ -1,53 +1,26 @@
 ---
-title: Build
-summary: Capability-led and tutorial-backed docs for creating the Workspace Copilot agent, proxying OpenAI-compatible HTTP, integrating with Next.js, and automating a workspace.
+title: Build with Kestrel
+summary: Add durable agent work to an application you already own, then deepen it one capability at a time.
 section: build
 audience: integrators
-status: stable
+status: active
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
 
-Build is the practical path through Kestrel. This section is organized around one shared example, **Workspace Copilot**, so the tutorial sequence feels like one system instead of disconnected snippets.
+The Build journey follows one Workspace Copilot from a first server-side request to streaming, memory, waiting, Next.js routes, and observability. You keep the same agent and session model throughout, so every step extends something already working.
 
-This section is for integrators who want to go from “what is Kestrel?” to “I can build a real feature with it.”
+## Start building
 
-## Start here if you are...
+1. [Build your first agent](/build/building-your-first-agent) and inspect its terminal result.
+2. [Stream the next request](/build/running-your-first-streamed-request) without changing session continuity.
+3. Add [explicit session memory](/build/adding-session-memory).
+4. Expose the agent through [Next.js routes](/build/integrating-with-nextjs).
+5. Handle [waiting, resume, and cancellation](/build/waiting-resume-and-cancellation).
+6. Add [observability](/build/adding-observability) before production operation.
 
-- trying to understand the full demo before coding: read [Workspace Copilot demo](/build/workspace-copilot-demo)
-- wiring the first SDK surface: read [Building your first agent](/build/building-your-first-agent)
-- migrating an existing chat app with minimal HTTP changes: read [OpenAI-compatible HTTP](/build/openai-compatible-http)
-- exposing the feature through Next.js routes: read [Integrating with Next.js](/build/integrating-with-nextjs)
-- binding the app to a real workspace and scheduler: read [Workspaces and automation](/build/workspaces-and-automation)
+The [Workspace Copilot demo](/build/workspace-copilot-demo) shows the completed example and its extension points.
 
-## Read this in order
+## Handle results correctly
 
-1. [Workspace Copilot demo](/build/workspace-copilot-demo)
-2. [OpenAI-compatible HTTP](/build/openai-compatible-http)
-3. [Building your first agent](/build/building-your-first-agent)
-4. [Running your first streamed request](/build/running-your-first-streamed-request)
-5. [Adding session memory](/build/adding-session-memory)
-6. [Integrating with Next.js](/build/integrating-with-nextjs)
-7. [Next.js route cookbook](/build/nextjs-route-cookbook)
-8. [Adding observability](/build/adding-observability)
-9. [Workspaces and automation](/build/workspaces-and-automation)
-10. [Automating common tasks](/build/automating-common-tasks)
-
-## The fixed demo contract
-
-Every page in this section uses the same example identifiers:
-
-- agent id: `workspace-copilot`
-- profile id: `workspace-copilot`
-- tenant: `acme`
-- actor id: `user-123`
-- routes: `/api/copilot/run`, `/api/copilot/stream`, `/api/copilot/webhook`
-- workspace output root: `./reports`
-- workspace session prefix: `workspace-copilot`
-
-## What To Read Next
-
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
-- [OpenAI-compatible HTTP](/build/openai-compatible-http)
-- [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Running the runner service](/deploy/running-the-runner-service)
+Before shipping, read [Protocol and results](/build/protocol-and-results). A terminal result always contains `assistantText: string | null`; human-facing text is not inferred from structured finalized data. Use [Runner events](/build/runner-events) for the exact streaming vocabulary and [Upgrading to 0.6](/build/upgrading-to-0-6) for compatibility changes.

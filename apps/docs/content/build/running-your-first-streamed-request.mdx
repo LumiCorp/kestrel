@@ -1,6 +1,6 @@
 ---
 title: Running your first streamed request
-summary: Stream `workspace-copilot` events, consume the terminal result, and prepare the same example for a browser-facing SSE route.
+summary: Show progress while Workspace Copilot works, then read the final result from the same run.
 section: build
 audience: integrators
 status: stable
@@ -9,22 +9,14 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 2">
-This step changes only the request path. `workspace-copilot` still uses the same agent id, profile id, actor, tenant, and session prefix. The difference is that the response now arrives as a stream.
+Turn the first Workspace Copilot request into a stream so your application can show activity before the complete answer is ready.
 </WorkspaceCopilotDemo>
 
-Streaming is the first place many integrations blur request and session semantics. Kestrel keeps them separate. A stream belongs to one run. Session continuity still belongs to the session id.
+Some tasks take long enough that a silent loading state leaves users wondering whether anything is happening. Streaming lets your application display progress as Kestrel works, while still providing one final result when the run ends.
 
-For **Workspace Copilot**, this is the first live-response path in the tutorial.
+## When to stream
 
-## Why this exists
-
-Use `stream()` when the application needs live progress or incremental output. Do not use it as a substitute for background monitoring or session history.
-
-That distinction matters later because the same example will also add:
-
-- background subscriptions for non-request-bound observation
-- explicit session memory for continuity
-- scheduled workspace automation through `kcron`
+Use `stream()` when someone is waiting for the current request and benefits from seeing progress or incremental output. For work that continues after the original request ends, use a [background subscription](/build/adding-background-subscriptions) instead.
 
 ## Start the stream
 
@@ -38,9 +30,9 @@ const stream = workspaceCopilotAgent.stream(
 );
 ```
 
-The call returns a `RunnerStream`. It is both an async iterable of events and a promise-like result holder for the terminal event.
+The call returns a `RunnerStream`. Read it in two ways: iterate over live events as they arrive, then await `stream.result` for the final outcome.
 
-## Consume request-scoped events
+## Read progress and the final result
 
 ```ts
 for await (const event of stream) {
@@ -51,13 +43,13 @@ const terminal = await stream.result;
 console.log(terminal.type);
 ```
 
-That shape is important:
+Each part has one job:
 
 | Part | Meaning |
 | --- | --- |
 | `for await ... of stream` | live events for one run |
 | `await stream.result` | terminal outcome for that same run |
-| `stream.cancel()` | explicit cancellation of that same run |
+| `stream.cancel()` | cancel that run when the caller no longer wants it |
 
 ## Request lifecycle
 
@@ -70,7 +62,7 @@ app code
           -> terminal event resolves stream.result
 ```
 
-## Handle cancellation intentionally
+## Cancel work when the caller leaves
 
 If the caller disconnects or explicitly cancels:
 
@@ -85,28 +77,26 @@ const stream = workspaceCopilotAgent.stream(
 );
 ```
 
-The SDK cancels that exact upstream run and `stream.result` resolves with `run.cancelled`. That becomes important once this stream is exposed through `/api/copilot/stream`.
+When the signal is aborted, the SDK cancels the run and `stream.result` resolves with `run.cancelled`. Your application can now distinguish a deliberate cancellation from a failure or a completed response.
 
-## What changes in this step
+<Outcome>
+  <p>Your application receives live events for one run, then `stream.result` resolves to that run's terminal outcome.</p>
+</Outcome>
 
-- the example now supports request-scoped live output
-- the app can later map this stream to an SSE route without changing the agent contract
-- session continuity still belongs to `workspace-copilot-session-001`
-- no workspace scheduler or background watcher has been introduced yet
+## What works now
 
-## What this does not solve
+- your application can show progress while Workspace Copilot works
+- the final result still provides a clear completed, waiting, failed, or cancelled outcome
+- reusing `workspace-copilot-session-001` keeps the next request connected to this one
+- the same stream can be exposed through a Next.js SSE route when you add a browser UI
 
-Streaming does not replace:
+## Choose the next capability
 
-- session memory
-- replayable run history
-- background subscriptions
-- recurring automation
+Add only what your application needs next:
 
-Those are separate concerns. Kestrel keeps them separate so failures stay explainable.
+- [Background subscriptions](/build/adding-background-subscriptions) for activity that outlives the request.
+- [Session memory](/build/adding-session-memory) for findings and decisions that should carry forward.
+- [Next.js routes](/build/integrating-with-nextjs) to make the stream available to a browser.
+- [Runner events](/build/runner-events) when you need to handle individual event types.
 
-## What To Read Next
-
-- [Adding background subscriptions](/build/adding-background-subscriptions)
-- [Integrating with Next.js](/build/integrating-with-nextjs)
-- [SDK reference](/packages/sdk)
+For exact method signatures and return types, see the [SDK reference](/reference/sdk).

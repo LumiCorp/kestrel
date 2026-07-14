@@ -1,71 +1,33 @@
 ---
 title: Production operating model
-summary: The practical production posture for Workspace Copilot with server-owned runner access, durable evidence, explicit workspace automation, and repo-visible quality gates.
-section: deploy
-audience: maintainers
+summary: Prepare authentication, execution, storage, model access, observability, and recovery for production use.
+section: operate
+audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
 
-<WorkspaceCopilotDemo step="Deploy step 3">
-This page explains what changes when the Workspace Copilot example is treated like a real maintained system instead of a local tutorial.
-</WorkspaceCopilotDemo>
+Before serving users, make sure each part of the request path has a responsible team and a practical health check.
 
-Production Kestrel is not “the service is reachable.” The operating model assumes that runs are worth inspecting, recurring work should stay explicit, and quality gates belong next to the code that changes runtime behavior.
+## Assign operational responsibility
 
-## Core production shape
+| Layer | Responsibility | Readiness evidence |
+| --- | --- | --- |
+| Application server | User authentication, trusted context, public routes | Allowed and denied request tests |
+| Runner service | Authenticated execution and public contracts | Health, capabilities, command, and model checks |
+| Runtime and store | Durable sessions, events, terminal outcomes, replay | Known-session completion and later inspection |
+| Model access | Approved provider, model, credential, and deployment | Qualification and short test run |
+| Observability | Correlation across application and runner | Searchable request, session, and run identifiers |
+| Operations | Incident action, recovery, and escalation | Repeated user-path verification |
 
-| Layer | Responsibility |
-| --- | --- |
-| application server | user auth, actor context, route exposure |
-| runner service | execution boundary and service auth |
-| runtime/store | durable state, event history, replay evidence |
-| workspace | prompts, automation contract, output artifacts |
-| operations | evaluations, quality gates, incident handling |
+## Release a change
 
-## Validate the operating model
+1. Record the versions and intended behavior.
+2. Verify authentication and denial paths.
+3. Run one terminal and one streaming request through the production route.
+4. Confirm that the result, artifacts, and traces are inspectable after completion.
+5. Exercise cancellation or waiting behavior if the application supports it.
+6. Run the relevant Ruhroh evaluation and product quality gates.
 
-```bash
-pnpm run governance:check
-pnpm run test
-pnpm run prompt-suite
-```
-
-If you changed runtime or determinism behavior:
-
-```bash
-pnpm run evals:release-check
-```
-
-## What changes in this step
-
-- Workspace Copilot is now treated like a real operated product
-- nightly `kcron` work becomes an explicit operational surface
-- replay, traces, reports, and released evaluations become part of supportability
-
-## What this means for Workspace Copilot
-
-When the nightly review starts drifting, the failure is not only “a cron job failed.” It can mean:
-
-- the workspace prompt no longer matches the intended output
-- memory continuity is stale or conflicting
-- the stream route and scheduler path no longer produce comparable results
-- a runtime or tool contract changed under the example
-
-That is why Kestrel ties deployment directly to reliability, evaluations, and replay.
-
-## Operator checklist
-
-- [ ] application routes still use server-owned context resolution
-- [ ] runner credentials stay out of client bundles
-- [ ] workspace catalog and automation eligibility are explicit
-- [ ] report artifacts are written into `./reports`
-- [ ] traces and replay evidence are inspectable after failures
-- [ ] repo validation gates run before shipping behavioral changes
-
-## What To Read Next
-
-- [Reliability](/operations/reliability)
-- [Evaluations with Ruhroh](/operations/evaluations)
-- [Store and replay](/runtime/store-and-replay)
+Do not declare readiness from a health endpoint alone. A healthy process can still have broken user context, model access, persistence, or terminal handling.

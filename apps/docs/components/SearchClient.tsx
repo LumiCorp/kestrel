@@ -51,7 +51,7 @@ export function SearchClient({ initialResults, serializedIndex, initialQuery = "
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         className="search-input"
-        placeholder="Search Kestrel runtime, apps, CLI, packages, and archive"
+        placeholder="Search Kestrel products, guides, CLI, and APIs"
       />
       <div className="search-results" aria-live="polite">
         {results.map((result) => (

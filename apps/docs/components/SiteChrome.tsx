@@ -72,6 +72,10 @@ function MobileMenu({ navigation, currentUrl }: Omit<SiteChromeProps, "activeSec
                 ))}
               </section>
             ))}
+            <section className="mobile-nav-section mobile-nav-external" aria-label="Kestrel links">
+              <a href="https://lumicorp.ai">lumicorp.ai</a>
+              <a href="https://github.com/LumiCorp/kestrel">GitHub</a>
+            </section>
           </nav>
         </div>
       </dialog>
@@ -241,8 +245,9 @@ export function SiteChrome({ navigation, currentUrl, activeSection }: SiteChrome
           ))}
         </nav>
         <div className="header-actions">
-          <a className="github-link" href="https://github.com/LumiCorp/kestrel">GitHub</a>
+          <a className="lumicorp-link" href="https://lumicorp.ai">lumicorp.ai</a>
           <SearchDialog />
+          <a className="github-link" href="https://github.com/LumiCorp/kestrel">GitHub</a>
           <MobileMenu navigation={navigation} currentUrl={currentUrl} />
         </div>
       </div>

@@ -1,0 +1,25 @@
+---
+title: Desktop troubleshooting
+summary: Find the cause of first-run, provider, runtime, workspace, and session problems from the symptom you can see.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Start with the message or status visible in Desktop. Each symptom points to a different check, while restarting everything at once can hide the original problem.
+
+| Symptom | Check first | Safe next action |
+| --- | --- | --- |
+| Provider required or credential required | Selected provider, API key, or local endpoint | Complete [provider setup](/desktop/providers) and run a short test |
+| Runtime never becomes ready | Desktop diagnostics and Local Core status | Preserve logs, then restart Local Core from the supported control |
+| Managed database is unhealthy | Database status in diagnostics | Use the documented database recovery action; do not delete application data |
+| Workspace is missing | Folder exists and Desktop still has permission | Re-add the folder through the project picker |
+| Session will not continue | Last terminal status and waiting reason | Use [operator control](/desktop/operator-control) or [recovery](/desktop/recovery) on the same session |
+
+## Confirm the fix
+
+Return to the original workspace and session, then run a small request. A recovery is complete only when the affected status clears and the existing history remains usable.
+
+If the symptom persists, capture the visible status, Desktop version, platform, and the smallest repeatable sequence before reporting an issue.

@@ -1,41 +1,23 @@
 ---
-title: Operations
-summary: The operator and maintainer playbook for reliability, control actions, review/state workflows, evaluations, migrations, prompt suite runs, quality gates, security posture, and artifact inspection.
-section: operations
-audience: maintainers
+title: Operate Kestrel
+summary: Prepare a safe deployment, understand live behavior, and confirm that recovery restored the user experience.
+section: operate
+audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-03-24
+updatedAt: 2026-07-13
 ---
 
-Operations is where the runtime's promises become maintainable practice. These pages cover the things a team needs once Kestrel matters in production or in a serious evaluation loop.
+Operating Kestrel means more than keeping a process online. You should be able to identify the affected session and run, see what happened, choose a safe action, and verify that the same user path works afterward.
 
-This section is for maintainers and operators who need incident guidance and release discipline, not only product tutorials.
+## Prepare and deploy
 
-## Current vs Historical
+Start with [the runner service](/operate/runner-service), then configure [environment and authentication](/operate/environment-and-auth) and review the [production operating model](/operate/deployment). These guides keep runner and provider credentials on trusted servers and establish the health checks required before serving users.
 
-Operations pages describe the current operator posture. Use [Archive](/archive) for older migration, shutdown, and parity-program rationale when you need historical context rather than the current runbook.
+## Investigate and recover
 
-## Start here if you are...
+Use [Observability](/operate/observability) to locate the request, [Reliability](/operate/reliability) to structure the incident, [Replay](/operate/replay) to inspect persisted evidence, and [Troubleshooting](/operate/troubleshooting) to start from a visible symptom.
 
-- debugging a production-shaped failure: read [Reliability](/operations/reliability)
-- steering or stopping live work: read [Operator control workflows](/operations/operator-control-workflows)
-- inspecting task graph, project snapshot, or project review state: read [Review and state workflows](/operations/review-and-state-workflows)
-- inspecting reports, memory-linked artifacts, and replay evidence: read [Artifact inspection](/operations/artifact-inspection)
-- validating declared behavior ownership: read [Evaluations with Ruhroh](/operations/evaluations)
-- checking release discipline before shipping: read [Quality gates](/operations/quality-gates)
+## Control and quality
 
-## Reading order
-
-1. [Operator control workflows](/operations/operator-control-workflows)
-2. [Review and state workflows](/operations/review-and-state-workflows)
-3. [Reliability](/operations/reliability)
-4. [Artifact inspection](/operations/artifact-inspection)
-5. [Evaluations with Ruhroh](/operations/evaluations)
-6. [Quality gates](/operations/quality-gates)
-
-## What To Read Next
-
-- [Runtime](/runtime)
-- [Archive](/archive)
-- [Production operating model](/deploy/production-operating-model)
+[Operator control](/operate/operator-control) acts on work already in flight. [Ruhroh evaluations](/operate/evaluations) and [quality gates](/operate/quality-gates) help compare behavior before and after a change. Kestrel One model operators should also understand [credential leases](/operate/credential-leases) and [model access decisions](/operate/model-authority).

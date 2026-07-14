@@ -1,135 +1,27 @@
 ---
-title: Web app
-summary: A browser-first Kestrel surface with chat, workspace management, ops inspection, and runtime control behind the same server-owned routing model used by the Workspace Copilot demo.
-section: apps
+title: Kestrel One
+summary: Give a team one place to continue agent work with shared context, clear history, and controlled access.
+section: kestrel-one
 audience: everyone
 status: active
-sourceKind: repo-inferred
-updatedAt: 2026-03-20
+sourceKind: curated
+updatedAt: 2026-07-13
 ---
 
-<WorkspaceCopilotDemo step="Selected app surface">
-The web app is not the canonical demo app, but it demonstrates the same core boundary: browser to app server, then app server to the runner service.
-</WorkspaceCopilotDemo>
+Kestrel One gives agent work a shared team workspace. A teammate can open the same Thread, see which Project context shaped it, inspect its artifacts, and move it forward without asking the original author to reconstruct everything.
 
-The web app in `apps/web` is the broadest browser UI in the repo. It combines chat, workspace management, project state, ops inspection, control, and review state.
+<ProductFigure
+  src="/product/kestrel-one/threads.png"
+  alt="Kestrel One Threads workspace with project navigation and a new Thread action"
+  caption="Threads preserve the work; Projects, Knowledge, and access controls make that work safe to continue as a team."
+/>
 
-## Workflow
+## How team work stays coherent
 
-Users come here to:
+- **Threads** keep the conversation, runtime session, authorship, files, and artifacts.
+- **Projects** group related Threads with members, instructions, and files.
+- **Context revisions** record exactly which Project information shaped each new turn.
+- **Knowledge** gives authorized work access to reusable organization material.
+- **Sharing** publishes an approved read-only view without exposing the surrounding organization.
 
-- start or continue runs
-- watch live streaming output
-- manage registered Kestrel workspaces and workspace launch settings
-- inspect sessions and runs
-- review artifacts and generated UI
-- inspect task and thread state
-- use operator control actions in a browser surface
-- review project snapshot and review state
-
-What matters is the order. The browser surface can move from live output into workspace, operator, and project state without forcing the user to switch tools or lose the current run context.
-
-## How it fits the runner-service model
-
-The web app keeps the same trust boundary as Workspace Copilot:
-
-- browser traffic goes to application routes
-- the app server speaks to the runner service
-- the runner service owns execution
-
-That alignment is why the web app is the closest browser-shaped reference for a richer Workspace Copilot product.
-
-## Workflow: run, inspect, control
-
-The interesting part of the web app is not just that it streams. It also pulls on the control plane.
-
-From the repo tests and client state code, the browser surface can request:
-
-- `operator.inbox`
-- `operator.thread`
-- `operator.control`
-- `task.graph.get`
-- `task.graph.update`
-- `project.snapshot.get`
-- `project.snapshot.update`
-- `project.review.get`
-- `project.review.action`
-
-That means the browser can move from “show me the answer” to “show me the state of the work, the task tree, the project snapshot, and the operator actions that are available.”
-
-## Workflow: browser review and state loop
-
-One realistic browser loop looks like this:
-
-1. read `operator.inbox` for the active session
-2. load `operator.thread` for the focused thread
-3. fetch `task.graph.get` to understand the current task structure
-4. fetch `project.snapshot.get` to inspect the higher-level project record
-5. request `project.review.get` for the file or task you want to inspect
-6. submit `project.review.action` through `/api/kchat/control`
-
-That sequence is already present in the app-side control and state-sync paths. The important point is that the browser is not improvising its own state model. It is reading and mutating the runtime control plane.
-
-```json
-{
-  "command": "project.review.action",
-  "sessionId": "workspace-copilot-nightly",
-  "reviewAction": {
-    "type": "review.comment.create",
-    "sessionId": "workspace-copilot-nightly",
-    "target": {
-      "taskId": "task:thread:thread-main",
-      "pullRequestNumber": 42,
-      "filePath": "src/project/workspace.ts"
-    },
-    "body": "Please tighten this parser.",
-    "path": "src/project/workspace.ts",
-    "line": 12,
-    "side": "RIGHT"
-  }
-}
-```
-
-The practical payoff is that review work stays attached to the run and session that produced it. The browser is not dropping comments into a side channel and hoping they line up later.
-
-## Workflow: artifacts and generated UI
-
-The web app also has a stronger artifact story than the tutorial routes:
-
-- artifact parsing and rendering for HTML and console outputs
-- browser-native viewing of generated UI fragments
-- session and run detail routes for later inspection
-
-This is where Kestrel starts looking like an operator workstation instead of a tutorial app. It is the browser surface that best demonstrates why durable runs, operator state, and artifacts belong in the same system.
-
-## Where it overlaps with Workspace Copilot
-
-| Capability | Workspace Copilot | Web app |
-| --- | --- | --- |
-| server-owned routing | yes | yes |
-| streaming runs | yes | yes |
-| workspace-local automation narrative | primary | secondary |
-| operator inbox/thread/control | only as docs-level concept | active browser surface |
-| task/session inspection | limited tutorial coverage | first-class operator workflow |
-| artifact viewing | one report path | broader UI and console artifact inspection |
-
-## Where it differs from the canonical demo
-
-| Surface | Workspace Copilot | Web app |
-| --- | --- | --- |
-| route set | `/api/copilot/*` | chat, workspace, ops, and streaming routes |
-| goal | one focused workspace assistant | broader browser operator console |
-| scope | tutorial and automation spine | richer browser experience, control flows, and inspection |
-
-## Why teams reach for this surface
-
-Use the web app when a browser needs to do more than start and stream runs. It is the right reference when the product needs workspace management, operator inbox views, thread steering, task and review state, or artifact-heavy run inspection in one place.
-
-## What To Read Next
-
-- [Operator control workflows](/operations/operator-control-workflows)
-- [Review and state workflows](/operations/review-and-state-workflows)
-- [Artifact inspection](/operations/artifact-inspection)
-- [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Running the runner service](/deploy/running-the-runner-service)
-- [Desktop app](/apps/desktop)
+Kestrel One is available to invited Beta teams. Start with [your invitation and first Thread](/kestrel-one/getting-started).

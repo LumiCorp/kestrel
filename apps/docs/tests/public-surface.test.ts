@@ -1,56 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  getNavigation,
-  getPageMetaBySlug,
-  getPublicPages,
-  getRenderedPageBySlug,
-  getSearchDocuments,
-} from "@/lib/content";
+import nextConfig from "../next.config";
+import { getNavigation, getPageMetaBySlug, getPublicPages, getSearchDocuments } from "@/lib/content";
 
-test("public docs surfaces exclude internal, maintainer, archive, and removed app pages", async () => {
-  const [pages, navigation, searchDocuments] = await Promise.all([
-    getPublicPages(),
-    getNavigation(),
-    getSearchDocuments(),
-  ]);
-  const publicUrls = new Set(pages.map((page) => page.meta.url));
-
-  assert.ok(pages.length > 0);
-  assert.ok(
-    pages.every(
-      (page) =>
-        !page.meta.internal &&
-        !page.meta.archive &&
-        page.meta.section !== "archive" &&
-        page.meta.audience !== "maintainers"
-    )
-  );
-  for (const section of navigation) {
-    assert.ok(section.landing);
-    assert.ok(publicUrls.has(section.landing.url));
-    for (const group of section.groups) {
-      for (const entry of group.entries) {
-        assert.ok(publicUrls.has(entry.url), entry.url);
-      }
-    }
-  }
-
-  assert.ok(
-    searchDocuments.every((document) => publicUrls.has(document.url))
-  );
+test("public surfaces never expose excluded content or Studio", async () => {
+  const [pages, navigation, search] = await Promise.all([getPublicPages(), getNavigation(), getSearchDocuments()]);
+  const corpus = JSON.stringify({ pages, navigation, search });
+  assert.doesNotMatch(corpus, /Kestrel Studio|\/studio(?:["/]|$)/iu);
+  assert.ok(!corpus.includes(["Scene", "Runner"].join("")));
+  assert.doesNotMatch(corpus, /0\.5\.0-beta\.0/iu);
+  assert.doesNotMatch(corpus, /\/chat(?:["')\s]|$)/iu);
+  assert.ok(pages.every(({ meta }) => !meta.internal && !meta.archive && meta.audience !== "maintainers"));
+  assert.ok(search.every((document) => pages.some(({ meta }) => meta.url === document.url)));
+  assert.equal(await getPageMetaBySlug(["archive"]), null);
+  assert.equal(await getPageMetaBySlug(["runtime", "governance-and-invariants"]), null);
 });
 
-test("public article rendering includes source metadata without exposing archive pages", async () => {
-  const page = await getRenderedPageBySlug(["docs", "core-concepts"]);
-  const archived = await getPageMetaBySlug([
-    "archive",
-    "plans",
-    "2026-02-21-kestrel-v3-architecture",
+test("superseded product and operations URLs are permanent redirects", async () => {
+  assert.equal(typeof nextConfig.redirects, "function");
+  const redirects = await nextConfig.redirects!();
+  assert.deepEqual(redirects, [
+    { source: "/apps/desktop", destination: "/desktop", permanent: true },
+    { source: "/apps/web", destination: "/kestrel-one", permanent: true },
+    { source: "/docs", destination: "/start", permanent: true },
+    { source: "/docs/quickstart", destination: "/start/quickstart", permanent: true },
+    { source: "/docs/core-concepts", destination: "/start/concepts", permanent: true },
+    { source: "/docs/architecture-overview", destination: "/start/architecture", permanent: true },
+    { source: "/docs/faq", destination: "/start/faq", permanent: true },
+    { source: "/deploy", destination: "/operate", permanent: true },
+    { source: "/deploy/running-the-runner-service", destination: "/operate/runner-service", permanent: true },
+    { source: "/deploy/environment-and-auth", destination: "/operate/environment-and-auth", permanent: true },
+    { source: "/deploy/deployment-troubleshooting", destination: "/operate/troubleshooting", permanent: true },
+    { source: "/operations/:path*", destination: "/operate/:path*", permanent: true },
   ]);
-
-  assert.ok(page);
-  assert.match(page.meta.sourceUrl, /github\.com\/LumiCorp\/kestrel\/blob\/main/u);
-  assert.equal(archived, null);
 });

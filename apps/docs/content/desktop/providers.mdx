@@ -1,0 +1,27 @@
+---
+title: Choose a provider and model
+summary: Connect Desktop to a hosted or local model and verify that the selected model is available.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+A **provider** is the service that runs the model. Desktop stores the provider choice separately from your workspaces and sessions, so changing projects does not require entering the same credential again.
+
+## Hosted providers
+
+OpenRouter, OpenAI, and Anthropic require an API key. Paste the key into Desktop settings, save it, and select a model returned by that provider. Desktop does not write the key into project files, prompts, or transcripts.
+
+## Local providers
+
+Ollama and LM Studio expose models from your computer through a local OpenAI-compatible endpoint. Start the provider first, load the model you want, and then select that model in Desktop. A key is normally unnecessary.
+
+## Verify the connection
+
+Create a short test session and ask for a one-sentence response. If Local Core is healthy but the request fails, check the provider status, endpoint, credential, and model name before restarting Desktop.
+
+<Outcome>
+  <p>The provider panel shows no credential warning, the model is selectable, and a short test request completes successfully.</p>
+</Outcome>

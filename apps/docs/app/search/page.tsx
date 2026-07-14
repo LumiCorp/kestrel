@@ -1,7 +1,21 @@
+import type { Metadata } from "next";
+
 import { DocsShell } from "@/components/DocsShell";
 import { SearchClient } from "@/components/SearchClient";
 import { getNavigation } from "@/lib/content";
 import { buildSerializedSearchIndex } from "@/lib/search";
+
+export const metadata: Metadata = {
+  title: "Search",
+  description: "Search Kestrel product guides, tutorials, operations help, and API reference.",
+  alternates: {
+    canonical: "/search",
+  },
+  robots: {
+    index: false,
+    follow: true,
+  },
+};
 
 export default async function SearchPage(props: { searchParams: Promise<{ q?: string }> }) {
   const searchParams = await props.searchParams;

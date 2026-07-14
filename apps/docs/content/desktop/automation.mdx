@@ -1,0 +1,26 @@
+---
+title: Automate repeatable workspace work
+summary: Schedule a workspace task after testing its prompt and expected output manually.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Schedule a task only after it works interactively. Kestrel keeps the workspace, prompt, profile, schedule, output, and run history together so you can review what will happen and inspect the result afterward.
+
+## Prepare the task
+
+1. Run the prompt manually in the intended workspace.
+2. Make the expected output concrete, such as `reports/nightly-review.md`.
+3. Confirm the selected profile has only the tools the task needs.
+4. Decide how you will recognize success and where failures should be inspected.
+
+## Schedule and verify it
+
+Use the [`kcron` command reference](/cli/kcron) to create the schedule. After the first scheduled time, inspect its run history and output rather than assuming that a saved schedule executed successfully.
+
+<Outcome>
+  <p>The scheduled run appears in history, writes the expected file, and includes enough information to understand what happened.</p>
+</Outcome>

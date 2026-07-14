@@ -1,49 +1,50 @@
 ---
-title: Building your first agent
-summary: Create the `workspace-copilot` agent, define actor context, send the first run, and establish the server-side contract that the rest of the tutorial reuses.
+title: Build your first agent
+summary: Send a real request to Kestrel, read the answer, and keep the session ready for a follow-up.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
 
 <WorkspaceCopilotDemo step="Step 1">
-This page creates the `workspace-copilot` agent and nothing else. No stream route exists yet, no workspace is registered yet, and no scheduler is involved yet.
+Build a small Workspace Copilot that reviews a project and returns a useful answer you can show in your application.
 </WorkspaceCopilotDemo>
 
-Start here if you want the smallest Kestrel integration that is still real. The goal is not to produce a generic snippet. The goal is to define one server-side agent that every later page can reuse unchanged.
+By the end of this tutorial, you will have a TypeScript script that asks Kestrel to review a workspace. The response includes readable text for your user and the identifiers your application needs to continue the same session later.
 
-## Why this exists
+You do not need a web framework for this first step. Starting with a script makes it easier to see the request, the response, and the few values that connect them.
 
-Kestrel is easiest to understand when the application boundary is explicit:
+## Before you start
 
-- product code owns the application route and authenticated user
-- the SDK owns the runner-service protocol
-- the runtime owns durable execution
+You need Node.js 20 or newer and a running Kestrel runner service. Start your local runner with `kestrel web`; the command prints the URL and token you will use below.
 
-If you skip this step and start with framework helpers immediately, the important contract gets buried under route code. Building the agent first keeps the responsibilities clear.
+You also need a runner profile named `workspace-copilot`. A profile tells Kestrel which model, tools, and working environment this agent may use.
 
 ## 1. Install the SDK
 
+Install the Kestrel SDK and a TypeScript runner for the script:
+
 ```bash
-pnpm add @kestrel-agents/sdk
+pnpm add @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add -D tsx
 ```
 
-The root SDK is server-side only. Do not put it in browser bundles or edge-only code.
+## 2. Add your local connection settings
 
-## 2. Configure the runner-service connection
-
-Use the local runner service as the first target:
+Copy the values printed by `kestrel web` into your terminal. A typical local setup looks like this:
 
 ```bash
 export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
 export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
 ```
 
-When you start the local service with `kestrel web`, it prints equivalent `export` lines. The token is server-only. Treat it like application infrastructure configuration, not user input.
+Keep the token on your server. It allows code to submit work to your runner, so it should never be included in browser JavaScript or accepted from an end user.
 
-## 3. Create `lib/workspace-copilot.ts`
+## 3. Create the agent
+
+Create `lib/workspace-copilot.ts`:
 
 ```ts
 import { createAgent } from "@kestrel-agents/sdk";
@@ -68,22 +69,20 @@ export const workspaceCopilotContext = {
 };
 ```
 
-This fixes the first four pieces of the canonical contract:
+The agent definition gives this assistant a name inside your application and connects it to the `workspace-copilot` runner profile. The context identifies who is asking and which organization they belong to. Kestrel records that information with the run so later activity can be attributed to the right person and tenant.
 
-| Contract field | Value |
-| --- | --- |
-| Agent id | `workspace-copilot` |
-| Profile id | `workspace-copilot` |
-| Actor id | `user-123` |
-| Tenant | `acme` |
+You can use these values for the first request. In an application, replace `user-123` and `acme` with the identity and organization from your authenticated server session.
 
-Keep these values stable. The point of the tutorial is to show one system being deepened, not a new sample on every page.
+## 4. Ask Kestrel to review the workspace
 
-## 4. Send the first run
-
-With the agent and context defined, make the first request:
+Create `scripts/workspace-copilot-smoke.ts`. This script sends a concrete task and prints the complete response so you can see what Kestrel gives your application:
 
 ```ts
+import {
+  workspaceCopilotAgent,
+  workspaceCopilotContext,
+} from "../lib/workspace-copilot.js";
+
 const terminal = await workspaceCopilotAgent.run(
   {
     sessionId: "workspace-copilot-session-001",
@@ -132,21 +131,24 @@ const terminal = await workspaceCopilotAgent.run(
   },
   context,
 );
-
 console.log(JSON.stringify(terminal, null, 2));
 ```
 
-Run it with the same server-side environment the app will use later:
+Run it from the root of your project:
 
 ```bash
-KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010 \
-KESTREL_RUNNER_SERVICE_TOKEN=dev-secret \
-pnpm tsx scripts/workspace-copilot-smoke.ts
+pnpm exec tsx scripts/workspace-copilot-smoke.ts
 ```
 
-## 4b. Representative terminal response
+Kestrel uses `workspace-copilot-session-001` to keep this request connected to future requests. Reuse that session id when you want the agent to continue the same piece of work; choose a new one when you want to start a separate conversation.
 
-The exact assistant text will vary with workspace state, but the terminal envelope should look like this:
+<Callout title="Why there is no server-only import">
+  <p><code>server-only</code> is an optional Next.js guard that catches accidental imports into Client Components. This standalone script does not need it, and the Kestrel SDK does not add that build-time warning for you. Keep the SDK and runner token in scripts, server routes, or other server-owned modules.</p>
+</Callout>
+
+## 5. Read the result
+
+A successful response has this general shape. The assistant's wording will change with the contents of your workspace.
 
 ```json
 {
@@ -155,6 +157,7 @@ The exact assistant text will vary with workspace state, but the terminal envelo
   "sessionId": "workspace-copilot-session-001",
   "payload": {
     "result": {
+      "assistantText": "The highest-risk changes are in the runner route and session persistence. Review those files first.",
       "output": {
         "status": "COMPLETED",
         "sessionId": "workspace-copilot-session-001",
@@ -166,50 +169,27 @@ The exact assistant text will vary with workspace state, but the terminal envelo
 }
 ```
 
-If you do not get a `run.completed` envelope, stop here. Do not keep layering framework routes or workspaces on top of a broken base agent call.
+The fields serve different parts of your application:
 
-## 5. Understand the minimum runtime contract
+| Field | What it gives you |
+| --- | --- |
+| `payload.result.assistantText` | The answer you can present to the user |
+| `type` | Whether the run completed, paused, failed, or was cancelled |
+| `sessionId` | The conversation to reuse for a follow-up request |
+| `runId` | The individual run to find in logs and observability tools |
+| `payload.result.output` | Structured result data for application logic |
 
-The SDK turns the high-level agent call into a runner turn with:
+If the response is not `run.completed`, keep the output: it usually contains the information you need to find the problem. First confirm that the runner is still running, the URL and token match the values it printed, and the `workspace-copilot` profile exists. Then use [Troubleshooting](/operate/troubleshooting) to work from the response you received. A `run.waiting` response is different from a failure—it means the agent needs input or approval before it can continue.
 
-- the selected `profileId`
-- the `sessionId` you chose
-- the message payload
-- a default `eventType` of `user.message` unless you override it
-- explicit actor and tenant metadata
+<Outcome>
+  <p>You can now send a task to Kestrel, read the answer intended for your user, and retain the session id for the next turn.</p>
+</Outcome>
 
-That is the core Kestrel integration contract for product code. Everything else in the tutorial builds on top of that.
+## Where to go next
 
-## What changes in this step
+Choose the next step that matches the experience you are building:
 
-- the app can now call the runner service with one stable agent definition
-- the demo has one stable tenant and actor context
-- the session continuity line is now `workspace-copilot-session-001`
-- no framework route, workspace profile, or scheduler exists yet
-
-## What the SDK gives you next
-
-The same agent instance also exposes the rest of the product-facing surface:
-
-| Surface | Use it for | Why it matters next |
-| --- | --- | --- |
-| `run()` | request-response turns | the smallest integration shape |
-| `stream()` | request-scoped streaming | browser SSE and live progress |
-| `resume()` | blocked-run continuation | explicit continuation flows |
-| `session().memory.get()` | read continuity state | operator-visible context |
-| `session().memory.update()` | versioned memory writes | safe cross-run continuity |
-| `subscribe()` | filtered background events | non-request-bound observation |
-
-## Common mistakes
-
-- Creating the agent inside every request handler instead of in a shared server module.
-- Letting the browser call the runner service directly.
-- Treating `sessionId` as optional even though it is the continuity key for memory, replay, and automation.
-- Hiding actor identity in prompt text instead of sending it as structured context.
-- Using an edge-only runtime or browser bundle for this script even though the SDK requires server-owned credentials.
-
-## What To Read Next
-
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
-- [Running your first streamed request](/build/running-your-first-streamed-request)
-- [Adding session memory](/build/adding-session-memory)
+- [Stream the next request](/build/running-your-first-streamed-request) when users should see progress while the agent works.
+- [Add session memory](/build/adding-session-memory) when the agent should carry useful context across runs.
+- [Integrate with Next.js](/build/integrating-with-nextjs) when you are ready to call the agent from an application route.
+- [Review terminal results](/reference/terminal-results) when your application needs to handle completed, waiting, failed, and cancelled runs.
