@@ -175,7 +175,8 @@ test("Local Core connection manager coalesces concurrent recovery onto one conne
 test("Local Core project run subscriptions report daemon shutdown as a stale connection", {
   skip: process.platform === "win32",
 }, async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-stream-close-"));
+  const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const home = await mkdtemp(path.join(tempRoot, "kestrel-core-stream-close-"));
   const server = await startServer(home);
   const client = createClient(server);
   let resolveDisconnect: ((error: Error) => void) | undefined;
