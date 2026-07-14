@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, asc, eq, gt, inArray, max, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  max,
+  or,
+  sql,
+} from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
 import {
@@ -576,13 +587,13 @@ export async function listMessagesForDurableTurn(turnId: string) {
     .where(
       and(
         eq(schema.threadMessages.threadId, turn.threadId),
-        sql`(
-          ${schema.threadMessages.turnId} IN (${priorTurnIds})
-          OR (
-            ${schema.threadMessages.turnId} IS NULL
-            AND ${schema.threadMessages.createdAt} <= ${turn.createdAt}
+        or(
+          inArray(schema.threadMessages.turnId, priorTurnIds),
+          and(
+            isNull(schema.threadMessages.turnId),
+            lte(schema.threadMessages.createdAt, turn.createdAt)
           )
-        )`
+        )
       )
     )
     .orderBy(

@@ -46,6 +46,13 @@ const workerRuntime = fs.readFileSync(
   ),
   "utf8"
 );
+const turnStore = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../turns/store.ts"
+  ),
+  "utf8"
+);
 const workerServerOnlyLoader = fs.readFileSync(
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -135,4 +142,15 @@ test("the durable worker uses pinned organization context without request auth",
   assert.doesNotMatch(workerRuntime, /@\/lib\/chat\/actions/u);
   assert.match(workerRuntime, /generateTitleForOrganization/u);
   assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
+});
+
+test("durable replay binds the cutoff through the timestamp column encoder", () => {
+  assert.match(
+    turnStore,
+    /lte\(schema\.threadMessages\.createdAt, turn\.createdAt\)/u
+  );
+  assert.doesNotMatch(
+    turnStore,
+    /threadMessages\.createdAt\} <= \$\{turn\.createdAt/u
+  );
 });
