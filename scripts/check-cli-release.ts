@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
 
-const TARGET_VERSION = "0.5.1";
+const TARGET_VERSION = "0.6.0";
 const TARGET_PLATFORM = "darwin";
 const TARGET_ARCH = "arm64";
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
@@ -200,11 +200,11 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
   const kcron = path.join(extractRoot, "bin", "kcron");
 
   try {
-    expectOutput(kestrel, ["--version"], cwd, env, /0\.5\.1/u, "kestrel --version");
+    expectOutput(kestrel, ["--version"], cwd, env, /0\.6\.0/u, "kestrel --version");
     expectOutput(kestrel, ["--help"], cwd, env, /Usage: kestrel/u, "kestrel --help");
     expectOutput(kestrel, ["workspace", "status"], cwd, env, /Workspace:/u, "kestrel workspace status");
     expectOutput(kestrel, ["status"], cwd, env, /Kestrel Local Core|Local Core/u, "kestrel status");
-    expectOutput(kcron, ["--version"], cwd, env, /0\.5\.1/u, "kcron --version");
+    expectOutput(kcron, ["--version"], cwd, env, /0\.6\.0/u, "kcron --version");
     expectOutput(kcron, ["status"], cwd, env, /kcron:/u, "kcron status");
     smokePackagedProtocolClient(extractRoot, cwd, env);
     await smokeWebRunner(kestrel, cwd, env);
