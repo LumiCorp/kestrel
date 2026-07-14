@@ -1092,6 +1092,7 @@ export async function validateRunPodGatewayModel(input: {
 export async function validateRunPodGatewayModelByRawId(input: {
   gatewayId: string;
   rawModelId: string;
+  isDefault?: boolean;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }) {
@@ -1134,7 +1135,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     alias: existing?.alias ?? null,
     modality: "language",
     approved: true,
-    isDefault: existing?.isDefault ?? false,
+    isDefault: input.isDefault ?? existing?.isDefault ?? false,
     description: existing?.description ?? null,
     metadata: mergeRunPodValidationEvidence({
       metadata: existing?.metadata,

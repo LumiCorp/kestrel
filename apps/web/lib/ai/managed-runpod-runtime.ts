@@ -3,13 +3,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, ne, notInArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { buildRunPodServerlessBaseUrl } from "./gateway-utils";
-import {
-  createGateway,
-  listModelsForGateway,
-  saveGatewayModel,
-  syncGatewayModels,
-  validateRunPodGatewayModel,
-} from "./gateways";
+import { createGateway, validateRunPodGatewayModelByRawId } from "./gateways";
 import {
   createRunPodControlPlaneClient,
   getRunPodProviderConnection,
@@ -26,7 +20,10 @@ import {
   ensureManagedRunPodResource,
   isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
-import { validateRunPodToolRoundTrip } from "./runpod-connection-test";
+import {
+  RunPodConnectionTestError,
+  validateRunPodToolRoundTrip,
+} from "./runpod-connection-test";
 import { RunPodControlPlaneError } from "./runpod-control-plane";
 
 class ManagedRunPodRuntimeError extends Error {
@@ -64,6 +61,13 @@ function safeFailure(error: unknown) {
     };
   }
   if (error instanceof ManagedRunPodRuntimeError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    };
+  }
+  if (error instanceof RunPodConnectionTestError) {
     return {
       code: error.code,
       message: error.message,
@@ -161,45 +165,6 @@ async function ensureEndpoint(input: {
   return { client, endpointId };
 }
 
-async function assertExpectedModelAvailable(input: {
-  endpointId: string;
-  expectedModelId: string;
-  apiKey: string;
-}) {
-  const baseUrl = buildRunPodServerlessBaseUrl(input.endpointId);
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}/models`, {
-      headers: { authorization: `Bearer ${input.apiKey}` },
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch {
-    throw new ManagedRunPodRuntimeError({
-      code: "RUNPOD_MODEL_DISCOVERY_UNAVAILABLE",
-      message: "RunPod model discovery is not reachable yet.",
-      retryable: true,
-    });
-  }
-  if (!response.ok) {
-    throw new ManagedRunPodRuntimeError({
-      code: "RUNPOD_MODEL_DISCOVERY_FAILED",
-      message: `RunPod model discovery failed (${response.status}).`,
-      retryable:
-        response.status === 408 ||
-        response.status === 429 ||
-        response.status >= 500,
-    });
-  }
-  const body = (await response.json()) as { data?: Array<{ id?: string }> };
-  if (!body.data?.some((model) => model.id === input.expectedModelId)) {
-    throw new ManagedRunPodRuntimeError({
-      code: "RUNPOD_EXPECTED_MODEL_MISSING",
-      message: "RunPod endpoint did not expose the deployment profile model.",
-    });
-  }
-  return baseUrl;
-}
-
 async function cleanupProviderResources(input: {
   endpointId?: string | null;
   templateId?: string | null;
@@ -242,14 +207,9 @@ async function processQualification(
     const { connection, client } = await createRunPodControlPlaneClient();
     await client.getEndpoint(endpointId);
     const apiKey = resolveRunPodProviderApiKey(connection);
-    const baseUrl = await assertExpectedModelAvailable({
-      endpointId,
-      expectedModelId: profile.expectedModelId,
-      apiKey,
-    });
     const validation = await validateRunPodToolRoundTrip({
       apiKey,
-      baseUrl,
+      baseUrl: buildRunPodServerlessBaseUrl(endpointId),
       model: profile.expectedModelId,
     });
     await cleanupProviderResources({ endpointId, templateId });
@@ -440,42 +400,14 @@ async function processProvision(
     endpointId: endpoint.endpointId,
     apiKey,
   });
-  try {
-    await syncGatewayModels(gatewayId);
-  } catch {
-    throw new ManagedRunPodRuntimeError({
-      code: "RUNPOD_MODEL_SYNC_FAILED",
-      message: "RunPod gateway model synchronization failed.",
-      retryable: true,
-    });
-  }
-  const models = await listModelsForGateway(gatewayId);
-  const expected = models.find(
-    (model) => model.rawModelId === snapshot.expectedModelId
-  );
-  if (!expected) {
-    throw new ManagedRunPodRuntimeError({
-      code: "RUNPOD_EXPECTED_MODEL_MISSING",
-      message: "RunPod endpoint did not expose the deployment profile model.",
-    });
-  }
   await updateProvisioningDeployment(deployment.id, {
     status: "validating",
     gatewayId,
   });
-  await validateRunPodGatewayModel({ gatewayId, modelId: expected.id });
-  await saveGatewayModel({
-    id: expected.id,
+  const validation = await validateRunPodGatewayModelByRawId({
     gatewayId,
-    gatewayProvider: "runpod",
-    gatewayBaseUrl: buildRunPodServerlessBaseUrl(endpoint.endpointId),
-    rawModelId: expected.rawModelId,
-    alias: expected.alias,
-    modality: "language",
-    approved: true,
+    rawModelId: snapshot.expectedModelId,
     isDefault: true,
-    description: expected.description,
-    metadata: expected.metadata as Record<string, unknown> | null,
   });
   await knowledgeDb.transaction(async (tx) => {
     const [updatedDeployment] = await tx
@@ -512,7 +444,7 @@ async function processProvision(
         organizationId: deployment.organizationId,
         environmentId: deployment.environmentId,
         modality: "language",
-        modelId: expected.id,
+        modelId: validation.model.id,
         updatedByUserId: deployment.createdByUserId,
         updatedAt: new Date(),
       })

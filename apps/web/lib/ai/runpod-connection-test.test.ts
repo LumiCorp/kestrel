@@ -137,6 +137,37 @@ test("RunPod validation identifies queue-only handlers precisely", async () => {
   );
 });
 
+test("RunPod validation classifies cold starts and provider throttling as retryable", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => {
+        throw new Error("cold start");
+      },
+    }),
+    (error: unknown) => {
+      assert.equal((error as { retryable?: boolean }).retryable, true);
+      assert.equal((error as { status?: number | null }).status, null);
+      return true;
+    }
+  );
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => new Response(null, { status: 429 }),
+    }),
+    (error: unknown) => {
+      assert.equal((error as { retryable?: boolean }).retryable, true);
+      assert.equal((error as { status?: number | null }).status, 429);
+      return true;
+    }
+  );
+});
+
 test("client metadata cannot forge RunPod validation evidence", () => {
   const forged = {
     [RUNPOD_VALIDATION_METADATA_KEY]: {

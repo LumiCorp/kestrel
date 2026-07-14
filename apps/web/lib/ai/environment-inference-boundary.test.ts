@@ -69,13 +69,17 @@ test("Qwen bootstrap preserves the administrator-selected credential source", ()
   assert.doesNotMatch(bootstrap, /useEnvironment/u);
 });
 
-test("managed qualification retries cold-start model discovery failures", () => {
+test("managed inference validates the declared model without discovery", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
-  assert.match(runtime, /RUNPOD_MODEL_DISCOVERY_UNAVAILABLE/u);
   assert.match(
     runtime,
-    /RUNPOD_MODEL_DISCOVERY_UNAVAILABLE[\s\S]{0,180}retryable: true/u
+    /validateRunPodToolRoundTrip\([\s\S]{0,240}model: profile\.expectedModelId/u
   );
+  assert.match(
+    runtime,
+    /validateRunPodGatewayModelByRawId\([\s\S]{0,180}rawModelId: snapshot\.expectedModelId/u
+  );
+  assert.doesNotMatch(runtime, /\/models/u);
 });
 
 test("connected inference supports explicit model validation when discovery fails", () => {

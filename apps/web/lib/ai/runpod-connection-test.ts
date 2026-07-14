@@ -20,11 +20,19 @@ export type RunPodValidationEvidence = {
 
 export class RunPodConnectionTestError extends Error {
   readonly code: string;
+  readonly retryable: boolean;
+  readonly status: number | null;
 
-  constructor(code: string, message: string) {
+  constructor(
+    code: string,
+    message: string,
+    options?: { retryable?: boolean; status?: number }
+  ) {
     super(message);
     this.name = "RunPodConnectionTestError";
     this.code = code;
+    this.retryable = options?.retryable ?? false;
+    this.status = options?.status ?? null;
   }
 }
 
@@ -241,19 +249,28 @@ async function postStreamingCompletion(input: {
   } catch {
     throw new RunPodConnectionTestError(
       "RUNPOD_CONNECTION_FAILED",
-      `RunPod ${input.phase} validation request failed.`
+      `RunPod ${input.phase} validation request failed.`,
+      { retryable: true }
     );
   }
   if (!response.ok) {
     if (response.status === 404) {
       throw new RunPodConnectionTestError(
         "RUNPOD_OPENAI_CHAT_UNAVAILABLE",
-        "This RunPod endpoint does not expose OpenAI-compatible /chat/completions. Queue-only /run and /runsync handlers are not supported yet."
+        "This RunPod endpoint does not expose OpenAI-compatible /chat/completions. Queue-only /run and /runsync handlers are not supported yet.",
+        { status: response.status }
       );
     }
     throw new RunPodConnectionTestError(
       "RUNPOD_CONNECTION_REJECTED",
-      `RunPod ${input.phase} validation was rejected (${response.status}).`
+      `RunPod ${input.phase} validation was rejected (${response.status}).`,
+      {
+        retryable:
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status >= 500,
+        status: response.status,
+      }
     );
   }
   const isEventStream = response.headers
