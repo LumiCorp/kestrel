@@ -15,7 +15,7 @@ test("promotes the Expo origin on native auth requests", async () => {
     }),
   });
 
-  const normalized = withExpoOrigin(request);
+  const normalized = await withExpoOrigin(request);
 
   assert.notEqual(normalized, request);
   assert.equal(normalized.headers.get("origin"), "kestrelone://");
@@ -26,7 +26,7 @@ test("promotes the Expo origin on native auth requests", async () => {
   });
 });
 
-test("preserves an existing browser origin", () => {
+test("preserves an existing browser origin", async () => {
   const request = new Request("https://kestrel.one/api/auth/sign-in/email", {
     method: "POST",
     headers: {
@@ -35,13 +35,13 @@ test("preserves an existing browser origin", () => {
     },
   });
 
-  assert.equal(withExpoOrigin(request), request);
+  assert.equal(await withExpoOrigin(request), request);
   assert.equal(request.headers.get("origin"), "https://kestrel.one");
 });
 
-test("leaves requests without origin metadata unchanged", () => {
+test("leaves requests without origin metadata unchanged", async () => {
   const request = new Request("https://kestrel.one/api/auth/get-session");
 
-  assert.equal(withExpoOrigin(request), request);
+  assert.equal(await withExpoOrigin(request), request);
   assert.equal(request.headers.get("origin"), null);
 });
