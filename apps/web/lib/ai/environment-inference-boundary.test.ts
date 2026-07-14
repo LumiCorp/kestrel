@@ -35,10 +35,22 @@ test("managed jobs are produced by Vercel and consumed by the persistent worker"
   const queue = read("lib/knowledge/queue.ts");
   const worker = read("scripts/managed-runpod-worker.ts");
   const packageJson = read("package.json");
+  const workerDockerfile = read(
+    "../../deploy/fly/kestrel-one-runpod-worker/Dockerfile"
+  );
+  const workerFlyConfig = read(
+    "../../deploy/fly/kestrel-one-runpod-worker/fly.toml"
+  );
   assert.match(queue, /getKnowledgeBossProducer\(\)/u);
   assert.match(queue, /startManagedRunPodWorker/u);
   assert.match(worker, /await startManagedRunPodWorker\(\)/u);
-  assert.match(packageJson, /"worker:runpod"/u);
+  for (const launchContract of [
+    packageJson,
+    workerDockerfile,
+    workerFlyConfig,
+  ]) {
+    assert.match(launchContract, /--conditions=react-server/u);
+  }
 });
 
 test("connected inference exposes recovery after model discovery fails", () => {

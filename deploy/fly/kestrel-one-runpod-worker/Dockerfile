@@ -12,4 +12,4 @@ RUN pnpm install --frozen-lockfile
 
 WORKDIR /workspace/apps/web
 
-CMD ["node", "--import", "tsx", "scripts/managed-runpod-worker.ts"]
+CMD ["node", "--conditions=react-server", "--import", "tsx", "scripts/managed-runpod-worker.ts"]

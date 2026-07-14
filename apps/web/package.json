@@ -12,7 +12,7 @@
     "build": "tsx lib/db/migrate.ts && tsx scripts/hosted-environment-build-preflight.ts && next build --webpack",
     "start": "next start --port 43103",
     "worker:turns": "node --conditions=react-server --import tsx scripts/turn-worker.ts",
-    "worker:runpod": "tsx scripts/managed-runpod-worker.ts",
+    "worker:runpod": "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts",
     "runpod:bootstrap:qwen3": "node --conditions=react-server --import tsx scripts/bootstrap-qwen3-runpod-profile.ts",
     "format": "ultracite fix",
     "lint": "ultracite check",

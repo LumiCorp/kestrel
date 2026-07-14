@@ -7,7 +7,7 @@ kill_timeout = 35
   dockerfile = "Dockerfile"
 
 [processes]
-  worker = "node --import tsx scripts/managed-runpod-worker.ts"
+  worker = "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts"
 
 [[vm]]
   processes = ["worker"]
