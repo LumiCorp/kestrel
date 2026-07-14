@@ -1,0 +1,16 @@
+app = "kestrel-one-turn-worker"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 35
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  worker = "pnpm --filter @kestrel/kestrel-one worker:turns"
+
+[[vm]]
+  processes = ["worker"]
+  cpu_kind = "shared"
+  cpus = 2
+  memory = "2gb"

@@ -54,9 +54,15 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "ENVIRONMENT_IS_DEFAULT" ||
     code === "ENVIRONMENT_HAS_PROJECTS" ||
     code === "MCP_INTERACTION_CONFLICT" ||
+    code === "TURN_CONFLICT" ||
+    code === "QUEUE_PAUSED" ||
     message === "MCP capability snapshot has already been reviewed."
   ) {
     status = 409;
+  } else if (code === "TURN_NOT_FOUND") {
+    status = 404;
+  } else if (code === "TURN_FORBIDDEN") {
+    status = 403;
   } else if (message === "Forbidden") {
     status = 403;
   } else if (message === "Active organization required") {

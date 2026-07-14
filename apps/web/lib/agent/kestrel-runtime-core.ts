@@ -14,7 +14,10 @@ import {
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
 import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
-import { writeKestrelRunnerEventsToUi } from "@/lib/agent/kestrel-ui-stream";
+import {
+  type KestrelUiStreamChunk,
+  writeKestrelRunnerEventsToUi,
+} from "@/lib/agent/kestrel-ui-stream";
 import type { Session } from "@/lib/auth-types";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
@@ -145,6 +148,8 @@ export type KestrelOneAgentResponseInput = {
     systemContext: string;
   };
   transientTitle?: Promise<string | null> | null;
+  signal?: AbortSignal;
+  onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta
@@ -205,6 +210,14 @@ export function createKestrelOneAgentResponseFromAgent(
   const stream = createUIMessageStream({
     originalMessages: input.messages,
     execute: async ({ writer }) => {
+      const mirroredWriter = input.onUiChunk
+        ? {
+            write(chunk: KestrelUiStreamChunk) {
+              input.onUiChunk?.(chunk);
+              writer.write(chunk);
+            },
+          }
+        : writer;
       let streamResult = {
         finalText: "",
         errorMessage: null as string | null,
@@ -255,14 +268,14 @@ export function createKestrelOneAgentResponseFromAgent(
                 }),
               },
             },
-            signal: input.request.signal,
+            signal: input.signal ?? input.request.signal,
           },
           context,
           input.runtimeModel
         );
 
         streamResult = await writeKestrelRunnerEventsToUi({
-          writer,
+          writer: mirroredWriter,
           events: runStream,
           terminalEvent: runStream.result,
           assistantMessageId,
@@ -279,14 +292,14 @@ export function createKestrelOneAgentResponseFromAgent(
 
       const title = await transientTitle;
       if (title) {
-        writer.write({
+        mirroredWriter.write({
           type: "data-chat-title",
           data: { title },
           transient: true,
         });
       }
 
-      writer.write({ type: "finish", finishReason: "stop" });
+      mirroredWriter.write({ type: "finish", finishReason: "stop" });
 
       await input.onFinishPersist?.(
         [

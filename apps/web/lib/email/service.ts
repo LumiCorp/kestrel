@@ -7,6 +7,7 @@ export type TransactionalEmailKind =
   | "password_reset"
   | "organization_invitation"
   | "two_factor_otp"
+  | "account_deletion_confirmation"
   | "admin_test";
 
 export class EmailDeliveryError extends Error {

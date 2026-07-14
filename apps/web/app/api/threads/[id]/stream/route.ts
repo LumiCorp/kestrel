@@ -1,22 +1,14 @@
-import { readRequestCorrelation } from "@kestrel-agents/next";
-import { KestrelClient } from "@kestrel-agents/sdk/runner";
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
-import {
-  createKestrelOneRequestContext,
-  type KestrelOneRequestContext,
-} from "@/lib/agent/kestrel-runtime-core";
-import { resolveEnvironmentExecutionRoute } from "@/lib/environments/execution-route";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
+import { decodeTurnEventCursor } from "@/lib/turns/contracts";
+import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
+import { getActiveDurableTurnForThread } from "@/lib/turns/store";
 
-const paramsSchema = z.object({
-  id: routeIdSchema,
-});
+const paramsSchema = z.object({ id: routeIdSchema });
 
 export async function GET(
   request: NextRequest,
@@ -31,71 +23,33 @@ export async function GET(
       user.id,
       organizationId
     );
-
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-
     if (thread.mode === "admin" && user.role !== "admin") {
       return NextResponse.json(
         { error: "Admin access required" },
         { status: 403 }
       );
     }
-
-    const environmentRoute = await resolveEnvironmentExecutionRoute({
-      organizationId,
-      threadId: params.id,
-      actorUserId: user.id,
+    const turn = await getActiveDurableTurnForThread(thread.id);
+    if (!turn) {
+      return new Response(null, { status: 204 });
+    }
+    const cursor = decodeTurnEventCursor(
+      request.headers.get("last-event-id") ??
+        request.nextUrl.searchParams.get("cursor")
+    );
+    const afterSequence = cursor?.turnId === turn.id ? cursor.sequence : 0;
+    return createDurableTurnReplayResponse({
+      turnId: turn.id,
+      signal: request.signal,
+      afterSequence,
     });
-    const client = new KestrelClient({
-      target: {
-        kind: "remote",
-        baseUrl: environmentRoute.baseUrl,
-        authToken: environmentRoute.authToken,
-      },
-    });
-    const runnerContext = createKestrelOneRequestContext({
-      session,
-      organizationId,
-      correlation: readRequestCorrelation(request),
-    }) as unknown as KestrelOneRequestContext;
-    const assistantMessageId = crypto.randomUUID();
-    const textPartId = crypto.randomUUID();
-    const reasoningPartId = crypto.randomUUID();
-
-    const stream = createUIMessageStream({
-      execute: async ({ writer }) => {
-        try {
-          const runnerStream = client.subscribe(
-            { sessionId: params.id },
-            runnerContext,
-            { signal: request.signal }
-          );
-
-          await writeKestrelReconnectStreamToUi({
-            writer,
-            events: runnerStream,
-            assistantMessageId,
-            textPartId,
-            reasoningPartId,
-          });
-        } finally {
-          await client.close();
-        }
-      },
-      onError: (error) =>
-        error instanceof Error
-          ? error.message
-          : "The Kestrel runtime stream failed.",
-    });
-
-    return createUIMessageStreamResponse({ stream });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-
     return errorResponse(error, 400);
   }
 }

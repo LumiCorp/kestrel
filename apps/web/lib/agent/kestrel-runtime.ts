@@ -30,6 +30,7 @@ import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
+import type { KestrelUiStreamChunk } from "@/lib/agent/kestrel-ui-stream";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
@@ -114,6 +115,9 @@ export type KestrelOneAgentResponseInput = {
     systemContext: string;
   };
   transientTitle?: Promise<string | null> | null;
+  signal?: AbortSignal;
+  onExecutionRouted?: (executionId: string) => Promise<void> | void;
+  onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta
@@ -125,6 +129,7 @@ function createModelAwareKestrelOneAgent(input: {
   threadId: string;
   actorUserId: string;
   projectContextRevisionId?: string | undefined;
+  onExecutionRouted?: (executionId: string) => Promise<void> | void;
 }): KestrelOneAgent {
   const clients = new Set<KestrelOneRunnerClient>();
   return {
@@ -151,6 +156,7 @@ function createModelAwareKestrelOneAgent(input: {
               }),
           });
           executionId = route.runId;
+          await input.onExecutionRouted?.(executionId);
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
@@ -473,6 +479,7 @@ export async function createKestrelOneAgentResponse(
         threadId: input.threadId,
         actorUserId: input.session.user.id,
         projectContextRevisionId: input.projectContext?.contextRevisionId,
+        onExecutionRouted: input.onExecutionRouted,
       });
 
   return createKestrelOneAgentResponseFromAgent({
@@ -489,6 +496,8 @@ export async function createKestrelOneAgentResponse(
     runtimeModel,
     projectContext: input.projectContext,
     transientTitle: input.transientTitle,
+    signal: input.signal,
+    onUiChunk: input.onUiChunk,
     onFinishPersist: input.onFinishPersist,
   });
 }

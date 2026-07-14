@@ -176,6 +176,20 @@
       "when": 1783972800000,
       "tag": "0017_github_action_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783985435000,
+      "tag": "0023_durable_thread_turns",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783987200000,
+      "tag": "0024_account_deletion_requests",
+      "breakpoints": true
     }
   ]
 }

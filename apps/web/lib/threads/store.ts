@@ -286,14 +286,16 @@ export async function createThreadForUser(input: {
   organizationId: string;
   projectId?: string | null;
   mode?: "chat" | "admin";
-  origin?: "web" | "github" | "discord" | "api";
+  origin?: "web" | "mobile" | "github" | "discord" | "api";
   externalThreadId?: string | null;
   title?: string | null;
 }) {
   const mode = input.mode ?? "chat";
   const origin = input.origin ?? "web";
   const projectId =
-    mode === "admin" || origin !== "web" ? null : input.projectId;
+    mode === "admin" || !["web", "mobile"].includes(origin)
+      ? null
+      : input.projectId;
   if (projectId) {
     await requireProjectRole({
       projectId,
@@ -373,6 +375,7 @@ export async function saveThreadMessages(
       dedupedMessages.map((message) => ({
         id: message.id ?? crypto.randomUUID(),
         threadId: message.threadId!,
+        turnId: message.turnId ?? null,
         role: message.role as "user" | "assistant" | "system",
         authorUserId: message.authorUserId ?? null,
         projectContextRevisionId: message.projectContextRevisionId ?? null,
@@ -385,7 +388,12 @@ export async function saveThreadMessages(
         durationMs: message.durationMs ?? null,
         externalMessageId: message.externalMessageId ?? null,
         source:
-          (message.source as "web" | "api" | "github" | "discord") ?? "web",
+          (message.source as
+            | "web"
+            | "mobile"
+            | "api"
+            | "github"
+            | "discord") ?? "web",
         createdAt: message.createdAt ?? new Date(),
       }))
     )
@@ -402,6 +410,7 @@ export async function saveThreadMessages(
         externalMessageId: sql`excluded.external_message_id`,
         source: sql`excluded.source`,
         projectContextRevisionId: sql`excluded.project_context_revision_id`,
+        turnId: sql`excluded.turn_id`,
       },
     })
     .returning();

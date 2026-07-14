@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { apiKey } from "@better-auth/api-key";
+import { expo } from "@better-auth/expo";
 import { passkey } from "@better-auth/passkey";
 import { stripe } from "@better-auth/stripe";
 import { betterAuth } from "better-auth";
@@ -65,10 +66,18 @@ const devBaseUrl =
   process.env.NEXT_PUBLIC_APP_URL ||
   "http://localhost:43103";
 
+const mobileTrustedOrigins = (
+  process.env.KESTREL_ONE_MOBILE_TRUSTED_ORIGINS ?? "kestrelone://"
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const trustedOrigins = Array.from(
   new Set(
     [
-      "exp://",
+      ...(process.env.NODE_ENV === "production" ? [] : ["exp://"]),
+      ...mobileTrustedOrigins,
       "https://appleid.apple.com",
       process.env.BETTER_AUTH_URL,
       process.env.NEXT_PUBLIC_APP_URL,
@@ -157,6 +166,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    expo(),
     organization({
       async sendInvitationEmail(data) {
         const inviteLink = `${devBaseUrl}/accept-invitation/${data.id}`;

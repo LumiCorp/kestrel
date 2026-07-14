@@ -15,6 +15,7 @@ export type KestrelOneRouteOwner =
   | "knowledge"
   | "media"
   | "messages"
+  | "mobile"
   | "models"
   | "public"
   | "runtime-tools"
@@ -114,6 +115,13 @@ const AUTHENTICATED_API = {
 
 export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page("app/page.tsx", "/", "public", "public", "public"),
+  api(
+    "app/account/deletion/confirm/route.ts",
+    "/account/deletion/confirm",
+    "mobile",
+    "public",
+    "public"
+  ),
   page(
     "app/(auth)/forget-password/page.tsx",
     "/forget-password",
@@ -904,6 +912,104 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/artifacts/[id]/suggestions/route.ts",
     "/api/artifacts/:id/suggestions",
     "artifacts",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/account/deletion-request/route.ts",
+    "/api/mobile/v1/account/deletion-request",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/bootstrap/route.ts",
+    "/api/mobile/v1/bootstrap",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/devices/route.ts",
+    "/api/mobile/v1/devices",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/projects/route.ts",
+    "/api/mobile/v1/projects",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/projects/[id]/route.ts",
+    "/api/mobile/v1/projects/:id",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/route.ts",
+    "/api/mobile/v1/threads",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/[id]/route.ts",
+    "/api/mobile/v1/threads/:id",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/[id]/turns/route.ts",
+    "/api/mobile/v1/threads/:id/turns",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/[id]/queue/resume/route.ts",
+    "/api/mobile/v1/threads/:id/queue/resume",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/[id]/interactions/route.ts",
+    "/api/mobile/v1/threads/:id/interactions",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts",
+    "/api/mobile/v1/threads/:id/interactions/:checkpointId",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/turns/[turnId]/route.ts",
+    "/api/mobile/v1/turns/:turnId",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/turns/[turnId]/events/route.ts",
+    "/api/mobile/v1/turns/:turnId/events",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/mobile/v1/turns/[turnId]/stop/route.ts",
+    "/api/mobile/v1/turns/:turnId/stop",
+    "mobile",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),

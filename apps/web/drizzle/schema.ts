@@ -483,7 +483,7 @@ export const threads = pgTable(
       onDelete: "cascade",
     }),
     origin: text("origin", {
-      enum: ["web", "github", "discord", "api"],
+      enum: ["web", "mobile", "github", "discord", "api"],
     })
       .notNull()
       .default("web"),
@@ -523,6 +523,7 @@ export const threadMessages = pgTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => threads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id"),
     role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
     authorUserId: text("author_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -539,13 +540,16 @@ export const threadMessages = pgTable(
     outputTokens: integer("output_tokens"),
     durationMs: integer("duration_ms"),
     externalMessageId: text("external_message_id"),
-    source: text("source", { enum: ["web", "api", "github", "discord"] })
+    source: text("source", {
+      enum: ["web", "mobile", "api", "github", "discord"],
+    })
       .notNull()
       .default("web"),
     ...knowledgeTimestamps,
   },
   (table) => [
     index("thread_messages_thread_id_idx").on(table.threadId),
+    index("thread_messages_turn_id_idx").on(table.turnId),
     index("thread_messages_author_user_id_idx").on(table.authorUserId),
     index("thread_messages_context_revision_idx").on(
       table.projectContextRevisionId
@@ -555,6 +559,282 @@ export const threadMessages = pgTable(
       table.threadId,
       table.externalMessageId
     ),
+  ]
+);
+
+/** =========================
+ *  Durable Thread Turns
+ *  ========================= */
+
+export const threadTurns = pgTable(
+  "thread_turns",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    inputMessageId: text("input_message_id").references(
+      () => threadMessages.id,
+      { onDelete: "restrict" }
+    ),
+    approvalId: text("approval_id"),
+    approvalApproved: boolean("approval_approved"),
+    approvalReason: text("approval_reason"),
+    projectContextRevisionId: text("project_context_revision_id").references(
+      () => projectContextRevisions.id,
+      { onDelete: "restrict" }
+    ),
+    environmentExecutionId: text("environment_execution_id").references(
+      () => environmentRunExecutions.id,
+      { onDelete: "set null" }
+    ),
+    idempotencyKey: text("idempotency_key").notNull(),
+    sequence: integer("sequence").notNull(),
+    source: text("source", { enum: ["web", "mobile", "api"] })
+      .notNull()
+      .default("web"),
+    requestedModelId: text("requested_model_id"),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    cancelRequestedAt: timestamp("cancel_requested_at", {
+      withTimezone: true,
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("thread_turns_thread_sequence_idx").on(
+      table.threadId,
+      table.sequence
+    ),
+    uniqueIndex("thread_turns_thread_idempotency_idx").on(
+      table.threadId,
+      table.idempotencyKey
+    ),
+    uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
+    index("thread_turns_org_status_idx").on(table.organizationId, table.status),
+    index("thread_turns_thread_status_idx").on(table.threadId, table.status),
+    index("thread_turns_author_idx").on(table.authorUserId),
+    index("thread_turns_context_revision_idx").on(
+      table.projectContextRevisionId
+    ),
+    index("thread_turns_execution_idx").on(table.environmentExecutionId),
+    check(
+      "thread_turns_input_contract_check",
+      sql`(
+        (${table.inputMessageId} IS NOT NULL AND ${table.approvalId} IS NULL AND ${table.approvalApproved} IS NULL AND ${table.approvalReason} IS NULL)
+        OR
+        (${table.inputMessageId} IS NULL AND ${table.approvalId} IS NOT NULL AND ${table.approvalApproved} IS NOT NULL)
+      )`
+    ),
+  ]
+);
+
+export const threadTurnEvents = pgTable(
+  "thread_turn_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    turnId: text("turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    type: text("type").notNull(),
+    data: jsonb("data"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now() + interval '7 days'`),
+  },
+  (table) => [
+    uniqueIndex("thread_turn_events_turn_sequence_idx").on(
+      table.turnId,
+      table.sequence
+    ),
+    index("thread_turn_events_expiry_idx").on(table.expiresAt),
+  ]
+);
+
+export const threadTurnQueueState = pgTable("thread_turn_queue_state", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => threads.id, { onDelete: "cascade" }),
+  activeTurnId: text("active_turn_id").references(() => threadTurns.id, {
+    onDelete: "set null",
+  }),
+  nextSequence: integer("next_sequence").notNull().default(1),
+  state: text("state", { enum: ["running", "paused"] })
+    .notNull()
+    .default("running"),
+  pauseReason: text("pause_reason"),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const mobileDeviceRegistrations = pgTable(
+  "mobile_device_registrations",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
+    platform: text("platform", { enum: ["ios", "android"] }).notNull(),
+    expoPushToken: text("expo_push_token").notNull(),
+    appVersion: text("app_version"),
+    locale: text("locale"),
+    timezone: text("timezone"),
+    enabled: boolean("enabled").notNull().default(true),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mobile_device_registrations_push_token_idx").on(
+      table.expoPushToken
+    ),
+    index("mobile_device_registrations_user_idx").on(table.userId),
+    index("mobile_device_registrations_org_idx").on(table.organizationId),
+  ]
+);
+
+export const accountDeletionRequests = pgTable(
+  "account_deletion_requests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    status: text("status", {
+      enum: [
+        "requested",
+        "confirmed",
+        "processing",
+        "completed",
+        "rejected",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("requested"),
+    confirmationTokenHash: text("confirmation_token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("account_deletion_requests_token_idx").on(
+      table.confirmationTokenHash
+    ),
+    index("account_deletion_requests_user_status_idx").on(
+      table.userId,
+      table.status
+    ),
+    index("account_deletion_requests_status_created_idx").on(
+      table.status,
+      table.createdAt
+    ),
+  ]
+);
+
+export const mobilePushDeliveries = pgTable(
+  "mobile_push_deliveries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    deviceRegistrationId: text("device_registration_id")
+      .notNull()
+      .references(() => mobileDeviceRegistrations.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: ["completed", "failed", "attention"],
+    }).notNull(),
+    status: text("status", {
+      enum: [
+        "pending",
+        "accepted",
+        "delivered",
+        "failed",
+        "device_unregistered",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    expoTicketId: text("expo_ticket_id"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mobile_push_deliveries_turn_device_kind_idx").on(
+      table.turnId,
+      table.deviceRegistrationId,
+      table.kind
+    ),
+    index("mobile_push_deliveries_status_idx").on(table.status),
+    index("mobile_push_deliveries_ticket_idx").on(table.expoTicketId),
   ]
 );
 
@@ -3274,6 +3554,15 @@ export type ProjectContextRevision = InferSelectModel<
 >;
 export type Thread = InferSelectModel<typeof threads>;
 export type ThreadMessage = InferSelectModel<typeof threadMessages>;
+export type ThreadTurn = InferSelectModel<typeof threadTurns>;
+export type ThreadTurnEvent = InferSelectModel<typeof threadTurnEvents>;
+export type ThreadTurnQueueState = InferSelectModel<
+  typeof threadTurnQueueState
+>;
+export type MobileDeviceRegistration = InferSelectModel<
+  typeof mobileDeviceRegistrations
+>;
+export type MobilePushDelivery = InferSelectModel<typeof mobilePushDeliveries>;
 export type Source = InferSelectModel<typeof sources>;
 export type ToolProvider = InferSelectModel<typeof toolProviders>;
 export type ToolCapability = InferSelectModel<typeof toolCapabilities>;

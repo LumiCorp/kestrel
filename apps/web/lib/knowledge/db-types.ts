@@ -22,6 +22,9 @@ import type {
   projects,
   sources,
   threadMessages,
+  threadTurnEvents,
+  threadTurnQueueState,
+  threadTurns,
   threads,
   toolCapabilities,
   toolProviders,
@@ -33,6 +36,14 @@ export type NewDbThread = InferInsertModel<typeof threads>;
 
 export type DbThreadMessage = InferSelectModel<typeof threadMessages>;
 export type NewDbThreadMessage = InferInsertModel<typeof threadMessages>;
+
+export type DbThreadTurn = InferSelectModel<typeof threadTurns>;
+export type NewDbThreadTurn = InferInsertModel<typeof threadTurns>;
+export type DbThreadTurnEvent = InferSelectModel<typeof threadTurnEvents>;
+export type NewDbThreadTurnEvent = InferInsertModel<typeof threadTurnEvents>;
+export type DbThreadTurnQueueState = InferSelectModel<
+  typeof threadTurnQueueState
+>;
 
 export type DbProject = InferSelectModel<typeof projects>;
 export type NewDbProject = InferInsertModel<typeof projects>;

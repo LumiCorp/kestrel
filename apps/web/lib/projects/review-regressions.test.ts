@@ -49,7 +49,38 @@ test("Project collaborators use canonical Thread access for message actions", ()
   }
 });
 
-test("Thread response setup is awaited inside the Project grant cleanup scope", () => {
+test("Thread responses bind Project context before dispatching durable work", () => {
   const source = readAppSource("app/api/threads/[id]/route.ts");
-  assert.match(source, /return await createKestrelOneAgentResponse\(/);
+  assert.match(source, /await resolveProjectRuntimeContext\(/);
+  assert.match(source, /await createDurableThreadTurn\(/);
+  assert.match(source, /projectContextRevisionId:[\s\S]*contextRevision\.id/u);
+  assert.match(source, /await enqueueDurableThreadTurn\(/);
+  assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
+});
+
+test("web approval responses preserve the approval contract across durable dispatch", () => {
+  const route = readAppSource("app/api/threads/[id]/route.ts");
+  const worker = readAppSource("lib/turns/process-runtime.ts");
+
+  assert.match(route, /findNewToolApprovalResponse\(/);
+  assert.match(route, /await decideGitHubActionApproval\(/);
+  assert.match(route, /messageId: null,[\s\S]*approvalDecision:/u);
+  assert.match(worker, /approvalDecision:[\s\S]*turn\.approvalId/u);
+});
+
+test("durable turn creation never rebinds an existing message ID", () => {
+  const source = readAppSource("lib/turns/store.ts");
+
+  assert.match(
+    source,
+    /\.onConflictDoNothing\(\{ target: schema\.threadMessages\.id \}\)[\s\S]*\.returning\(\{ id: schema\.threadMessages\.id \}\)/u
+  );
+  assert.match(
+    source,
+    /if \(!insertedMessage\) \{[\s\S]*"TURN_CONFLICT"[\s\S]*"The input message ID is already in use\."/u
+  );
+  assert.match(
+    source,
+    /\.update\(schema\.threadMessages\)[\s\S]*eq\(schema\.threadMessages\.id, input\.messageId\)[\s\S]*eq\(schema\.threadMessages\.threadId, input\.threadId\)/u
+  );
 });
