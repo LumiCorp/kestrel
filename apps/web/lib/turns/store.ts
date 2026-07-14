@@ -146,6 +146,7 @@ type DurableThreadTurnInput = {
   organizationId: string;
   authorUserId: string;
   idempotencyKey: string;
+  requestedEnvironmentId: string;
   projectContextRevisionId?: string | null;
   requestedModelId?: string | null;
   source: ThreadTurnSource;
@@ -278,6 +279,7 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
         approvalApproved: input.approvalDecision?.approved ?? null,
         approvalReason: input.approvalDecision?.reason ?? null,
         projectContextRevisionId: input.projectContextRevisionId ?? null,
+        requestedEnvironmentId: input.requestedEnvironmentId,
         idempotencyKey: input.idempotencyKey,
         sequence,
         source: input.source,

@@ -596,6 +596,7 @@ export const threadTurns = pgTable(
       () => environmentRunExecutions.id,
       { onDelete: "set null" }
     ),
+    requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sequence: integer("sequence").notNull(),
     source: text("source", { enum: ["web", "mobile", "api"] })
@@ -645,6 +646,12 @@ export const threadTurns = pgTable(
       table.projectContextRevisionId
     ),
     index("thread_turns_execution_idx").on(table.environmentExecutionId),
+    index("thread_turns_environment_idx").on(table.requestedEnvironmentId),
+    foreignKey({
+      columns: [table.organizationId, table.requestedEnvironmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "thread_turns_organization_environment_fk",
+    }).onDelete("restrict"),
     check(
       "thread_turns_input_contract_check",
       sql`(

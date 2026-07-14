@@ -166,11 +166,15 @@ export async function processDurableThreadTurn(turnId: string) {
     const submittedUserMessage = [...messages]
       .reverse()
       .find((message) => message.role === "user");
+    if (!turn.requestedEnvironmentId) {
+      throw new Error("Durable turn is missing its requested Environment.");
+    }
     projectContext = await loadBoundProjectContext(turn);
     const response = await createKestrelOneAgentResponse({
       request: workerRequest(turn.id),
       session,
       organizationId: turn.organizationId,
+      environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
       messages,
       modelId: turn.requestedModelId ?? undefined,
