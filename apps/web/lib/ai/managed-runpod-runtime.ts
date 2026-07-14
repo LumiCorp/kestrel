@@ -167,10 +167,19 @@ async function assertExpectedModelAvailable(input: {
   apiKey: string;
 }) {
   const baseUrl = buildRunPodServerlessBaseUrl(input.endpointId);
-  const response = await fetch(`${baseUrl}/models`, {
-    headers: { authorization: `Bearer ${input.apiKey}` },
-    signal: AbortSignal.timeout(30_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/models`, {
+      headers: { authorization: `Bearer ${input.apiKey}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new ManagedRunPodRuntimeError({
+      code: "RUNPOD_MODEL_DISCOVERY_UNAVAILABLE",
+      message: "RunPod model discovery is not reachable yet.",
+      retryable: true,
+    });
+  }
   if (!response.ok) {
     throw new ManagedRunPodRuntimeError({
       code: "RUNPOD_MODEL_DISCOVERY_FAILED",
