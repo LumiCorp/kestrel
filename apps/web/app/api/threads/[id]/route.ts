@@ -5,8 +5,8 @@ import {
   findNewToolApprovalResponse,
   hasToolApprovalResponse,
 } from "@/lib/chat/tool-approval-response";
-import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
+import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
@@ -237,7 +237,7 @@ export async function POST(
       });
     }
     if (durable.shouldDispatch) {
-      await enqueueDurableThreadTurn(durable.turn.id);
+      await enqueueDurableThreadTurn(durable.dispatchTurnId ?? durable.turn.id);
     }
     return createDurableTurnReplayResponse({
       turnId: durable.turn.id,

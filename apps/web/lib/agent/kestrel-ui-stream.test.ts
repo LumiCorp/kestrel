@@ -18,7 +18,12 @@ test("writeKestrelRunnerEventsToUi keeps runner error in reasoning but completed
       },
       {
         type: "run.completed",
-        payload: { result: { assistantText: "Final answer", finalizedPayload: { message: "ignored" } } },
+        payload: {
+          result: {
+            assistantText: "Final answer",
+            finalizedPayload: { message: "ignored" },
+          },
+        },
       },
     ]),
   });
@@ -49,6 +54,28 @@ test("writeKestrelRunnerEventsToUi keeps thrown runner errors out of assistant t
   assert.equal(result.finalText, "");
   assert.equal(result.errorMessage, "Subscription denied.");
   assert.equal(countOccurrences(output, "Subscription denied."), 1);
+});
+
+test("writeKestrelRunnerEventsToUi de-duplicates a stream error repeated by the terminal event", async () => {
+  const writer = createChunkWriter();
+
+  const result = await writeKestrelRunnerEventsToUi({
+    writer,
+    assistantMessageId: "msg_assistant",
+    textPartId: "text_part",
+    reasoningPartId: "reasoning_part",
+    events: throwingStream(new Error("Environment setup failed.")),
+    terminalEvent: Promise.reject(new Error("Environment setup failed.")),
+  });
+
+  assert.equal(result.terminalStatus, "runner_error");
+  assert.equal(
+    countOccurrences(
+      JSON.stringify(writer.chunks),
+      "Environment setup failed."
+    ),
+    1
+  );
 });
 
 test("writeKestrelRunnerEventsToUi maps failed and cancelled terminal statuses", async () => {
@@ -112,7 +139,12 @@ test("writeKestrelRunnerEventsToUi suppresses duplicate and blank progress but p
       { type: "run.progress", payload: { update: { message: "   " } } },
       {
         type: "run.completed",
-        payload: { result: { assistantText: "Working.", finalizedPayload: { message: "ignored" } } },
+        payload: {
+          result: {
+            assistantText: "Working.",
+            finalizedPayload: { message: "ignored" },
+          },
+        },
       },
     ]),
   });

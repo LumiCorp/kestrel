@@ -52,7 +52,7 @@ import {
 } from "@/lib/ai/models";
 import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
 import type { Attachment, ChatMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
 import {
   PromptInput,
@@ -295,6 +295,7 @@ function PureMultimodalInput({
   messages,
   setMessages,
   sendMessage,
+  queueMessage,
   className,
   selectedVisibilityType,
   selectedModelId,
@@ -312,6 +313,7 @@ function PureMultimodalInput({
   messages: UIMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
+  queueMessage?: (message: ChatMessage) => void;
   className?: string;
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
@@ -561,16 +563,13 @@ function PureMultimodalInput({
       return;
     }
 
-    if (status !== "ready") {
-      if (status === "error") {
-        clearError();
-      } else {
-        toast.error("Please wait for the model to finish its response!");
-      }
+    if (status === "error") {
+      clearError();
       return;
     }
 
-    sendMessage({
+    const message: ChatMessage = {
+      id: generateUUID(),
       role: "user",
       parts: [
         ...attachments.map((attachment) => ({
@@ -584,7 +583,16 @@ function PureMultimodalInput({
           text: liveInputValue,
         },
       ],
-    });
+    };
+
+    if (status === "submitted" || status === "streaming") {
+      if (!queueMessage) {
+        return;
+      }
+      queueMessage(message);
+    } else {
+      sendMessage(message);
+    }
 
     setAttachments([]);
     setLocalStorageInput("");
@@ -599,6 +607,7 @@ function PureMultimodalInput({
     setInput,
     attachments,
     sendMessage,
+    queueMessage,
     setAttachments,
     setLocalStorageInput,
     status,
@@ -966,7 +975,7 @@ function PureMultimodalInput({
             </Button>
           </PromptInputTools>
 
-          {status !== "ready" ? (
+          {status === "error" ? (
             <ComposerActionButton
               clearError={clearError}
               setMessages={setMessages}
@@ -978,7 +987,9 @@ function PureMultimodalInput({
               data-testid="send-button"
               disabled={
                 (!input.trim() && attachments.length === 0) ||
-                uploadQueue.length > 0
+                uploadQueue.length > 0 ||
+                ((status === "submitted" || status === "streaming") &&
+                  !queueMessage)
               }
               onClick={submitForm}
               status={status}

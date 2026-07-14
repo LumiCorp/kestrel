@@ -1,5 +1,6 @@
 "use client";
 
+import { ActivityIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { shouldAutoCloseReasoning } from "@/lib/agent/kestrel-reasoning-display";
 import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
@@ -37,8 +38,17 @@ export function MessageReasoning({
       isStreaming={isLoading}
       terminalStatus={terminalStatus}
     >
-      <ReasoningTrigger />
-      <ReasoningContent>{reasoning}</ReasoningContent>
+      <ReasoningTrigger className="px-2 py-1 text-xs">
+        <ActivityIcon className="size-3.5" />
+        <span>{isLoading ? "Agent progress — live" : "Agent progress"}</span>
+        {isLoading ? (
+          <span
+            aria-label="Agent is working"
+            className="ml-1 size-1.5 animate-pulse rounded-full bg-primary"
+          />
+        ) : null}
+      </ReasoningTrigger>
+      <ReasoningContent className="text-xs">{reasoning}</ReasoningContent>
     </Reasoning>
   );
 }

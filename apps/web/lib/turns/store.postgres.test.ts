@@ -44,6 +44,7 @@ test(
     const dispatchFailureThreadId = `turn-dispatch-failure-${suffix}`;
     const orphanedThreadId = `turn-orphaned-${suffix}`;
     const recoveryThreadId = `turn-recovery-${suffix}`;
+    const resumedThreadId = `turn-resumed-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -98,6 +99,10 @@ test(
           (
             ${recoveryThreadId}, 'Recovery Turn', ${userId},
             ${organizationId}, 'mobile'
+          ),
+          (
+            ${resumedThreadId}, 'Resumed Turn', ${userId},
+            ${organizationId}, 'mobile'
           )
       `;
     });
@@ -117,6 +122,7 @@ test(
     const successful = await createTurn(successfulThreadId, "success");
     assert.equal(successful.created, true);
     assert.equal(successful.shouldDispatch, true);
+    assert.equal(successful.dispatchTurnId, successful.turn.id);
     const duplicate = await createTurn(successfulThreadId, "success");
     assert.equal(duplicate.created, false);
     assert.equal(duplicate.turn.id, successful.turn.id);
@@ -192,6 +198,46 @@ test(
       state: "paused",
     });
 
+    const failedBeforeResume = await createTurn(
+      resumedThreadId,
+      "failure-before-resume"
+    );
+    assert.ok(await store.claimDurableThreadTurn(failedBeforeResume.turn.id));
+    await store.completeDurableThreadTurn({
+      turnId: failedBeforeResume.turn.id,
+      status: "failed",
+      failureCode: "RUNTIME_FAILED",
+      failureMessage: "Synthetic failure before an explicit user retry.",
+    });
+    const resumedByUserMessage = await createTurn(
+      resumedThreadId,
+      "explicit-user-retry"
+    );
+    assert.equal(resumedByUserMessage.shouldDispatch, true);
+    assert.equal(
+      resumedByUserMessage.dispatchTurnId,
+      resumedByUserMessage.turn.id
+    );
+    const [resumedQueue] = await sql<
+      Array<{
+        activeTurnId: string | null;
+        pauseReason: string | null;
+        state: string;
+      }>
+    >`
+      SELECT
+        "active_turn_id" AS "activeTurnId",
+        "pause_reason" AS "pauseReason",
+        "state"
+      FROM "thread_turn_queue_state"
+      WHERE "thread_id" = ${resumedThreadId}
+    `;
+    assert.deepEqual(resumedQueue, {
+      activeTurnId: resumedByUserMessage.turn.id,
+      pauseReason: null,
+      state: "running",
+    });
+
     const orphaned = await createTurn(orphanedThreadId, "orphaned");
     assert.ok(await store.claimDurableThreadTurn(orphaned.turn.id));
     await queue.reconcileDurableThreadTurnQueue();
@@ -221,18 +267,21 @@ test(
         )
     );
     assert.equal(recovered?.status, "failed");
-    assert.equal(recovered?.failureCode, "TURN_WORKER_FAILED");
+    assert.equal(recovered?.failureCode, "RUNTIME_FAILED");
     assert.match(
       recovered?.failureMessage ?? "",
-      /No approved gateway model is configured/u
+      /Hosted Environment configuration is incomplete/u
     );
     const recoveryEvents = await store.listDurableTurnEvents({
       turnId: recovery.turn.id,
     });
     assert.deepEqual(
-      recoveryEvents.map((event) => event.type),
+      recoveryEvents
+        .map((event) => event.type)
+        .filter((type) => type !== "ui.message"),
       ["turn.queued", "turn.running", "turn.failed"]
     );
+    assert.ok(recoveryEvents.some((event) => event.type === "ui.message"));
 
     await Promise.all([
       queue.enqueueDurableThreadTurn(recovery.turn.id),
