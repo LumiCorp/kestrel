@@ -64,6 +64,7 @@ export const messageMetadataSchema = z.object({
   authorName: z.string().optional(),
   authorEmail: z.string().optional(),
   kestrelTerminalStatus: kestrelTerminalStatusSchema.optional(),
+  deliveryState: z.enum(["sending", "queued"]).optional(),
 });
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;

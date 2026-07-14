@@ -46,6 +46,7 @@ Adopt a single local development model for Kestrel One:
 8. Generate RAG fixtures
 9. Start Next
 10. Wait for `/api/health`
+11. Start and supervise the durable turn worker
 
 `pnpm smoke:local` should:
 

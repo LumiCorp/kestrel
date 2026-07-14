@@ -202,13 +202,15 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
       const queueState = await tx.query.threadTurnQueueState.findFirst({
         where: eq(schema.threadTurnQueueState.threadId, input.threadId),
       });
+      const shouldDispatch =
+        existing.status === "queued" &&
+        queueState?.state === "running" &&
+        queueState.activeTurnId === existing.id;
       return {
         turn: existing,
         created: false,
-        shouldDispatch:
-          existing.status === "queued" &&
-          queueState?.state === "running" &&
-          queueState.activeTurnId === existing.id,
+        shouldDispatch,
+        dispatchTurnId: shouldDispatch ? existing.id : null,
       };
     }
     if (input.projectContextRevisionId) {
@@ -319,29 +321,45 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
       type: "turn.queued",
       data: { status: "queued", sequence },
     });
-    const shouldDispatch =
+    const resumesTerminallyPausedQueue = Boolean(
+      input.messageId &&
+        queueState?.state === "paused" &&
+        (queueState.pauseReason === "turn_failed" ||
+          queueState.pauseReason === "turn_cancelled") &&
+        !queueState.activeTurnId
+    );
+    const dispatchTurnId =
       (!queueState || queueState.state === "running") &&
-      !queueState?.activeTurnId;
+      !queueState?.activeTurnId
+        ? turnId
+        : resumesTerminallyPausedQueue
+          ? ((await findNextQueuedTurn(tx, input.threadId))?.id ?? null)
+          : null;
+    const shouldDispatch = dispatchTurnId !== null;
+    const nextQueueState = resumesTerminallyPausedQueue
+      ? "running"
+      : (queueState?.state ?? "running");
+    const nextPauseReason = resumesTerminallyPausedQueue
+      ? null
+      : (queueState?.pauseReason ?? null);
     await tx
       .insert(schema.threadTurnQueueState)
       .values({
         threadId: input.threadId,
-        activeTurnId: shouldDispatch
-          ? turnId
-          : (queueState?.activeTurnId ?? null),
+        activeTurnId: dispatchTurnId ?? queueState?.activeTurnId ?? null,
         nextSequence: sequence + 1,
-        state: queueState?.state ?? "running",
-        pauseReason: queueState?.pauseReason ?? null,
+        state: nextQueueState,
+        pauseReason: nextPauseReason,
         version: (queueState?.version ?? 0) + 1,
         updatedAt: now,
       })
       .onConflictDoUpdate({
         target: schema.threadTurnQueueState.threadId,
         set: {
-          activeTurnId: shouldDispatch
-            ? turnId
-            : (queueState?.activeTurnId ?? null),
+          activeTurnId: dispatchTurnId ?? queueState?.activeTurnId ?? null,
           nextSequence: sequence + 1,
+          state: nextQueueState,
+          pauseReason: nextPauseReason,
           version: (queueState?.version ?? 0) + 1,
           updatedAt: now,
         },
@@ -350,7 +368,7 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
       .update(schema.threads)
       .set({ updatedAt: now })
       .where(eq(schema.threads.id, input.threadId));
-    return { turn, created: true, shouldDispatch };
+    return { turn, created: true, shouldDispatch, dispatchTurnId };
   });
 }
 

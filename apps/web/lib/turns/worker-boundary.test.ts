@@ -83,3 +83,34 @@ test("the worker entrypoint starts without top-level await", async () => {
   assert.doesNotMatch(workerSource, /^await startDurableThreadTurnWorker/mu);
   assert.match(workerSource, /void main\(\)\.catch/u);
 });
+
+test("dev:all supervises the durable turn worker with the app", async () => {
+  const devAllSource = await readFile(
+    new URL("../../scripts/dev-all.sh", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(devAllSource, /pnpm worker:turns &/u);
+  assert.match(devAllSource, /run runner:service &/u);
+  assert.match(
+    devAllSource,
+    /KESTREL_DISABLE_DOTENV=1 DATABASE_URL="\$KESTREL_RUNNER_DATABASE_URL"[\s\\]*pnpm --dir "\$ROOT_DIR\/\.\.\/\.\." run db:migrate/u
+  );
+  assert.match(devAllSource, /RUNNER_PID=\$!/u);
+  assert.match(
+    devAllSource,
+    /export KESTREL_ENVIRONMENT_RUNTIME="\$\{KESTREL_ENVIRONMENT_RUNTIME:-local\}"/u
+  );
+  assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
+  assert.match(
+    devAllSource,
+    /export REDIS_URL="\$\{REDIS_URL:-redis:\/\/127\.0\.0\.1:\$\{LOCAL_REDIS_PORT:-56379\}\}"/u
+  );
+  assert.match(devAllSource, /monitor_app_processes/u);
+  assert.match(devAllSource, /kill -0 "\$TURN_WORKER_PID"/u);
+  assert.match(devAllSource, /kill -0 "\$RUNNER_PID"/u);
+  assert.ok(
+    devAllSource.indexOf('log "Starting durable turn worker"') <
+      devAllSource.indexOf('log "Ready at http://')
+  );
+});

@@ -43,8 +43,8 @@ Environment provisioning, GitHub OAuth proof, and execution cutover.
 - `apps/web` runs database migrations as the first part of `pnpm build`.
   Therefore, authorizing a production deployment also authorizes every pending
   migration unless migrations are applied explicitly first.
-- Current production builds fail unless `KESTREL_ENVIRONMENTS_ENABLED` is
-  explicitly `false` for preparation or `true` for cutover.
+- Hosted Environments now default on when `KESTREL_ENVIRONMENTS_ENABLED` is
+  omitted. Set it explicitly to `false` only for preparation or rollback.
 
 ## Invariants
 

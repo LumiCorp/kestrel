@@ -6,7 +6,10 @@ import { routeIdSchema } from "@/lib/knowledge/validation";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
 import { decodeTurnEventCursor } from "@/lib/turns/contracts";
 import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
-import { getActiveDurableTurnForThread } from "@/lib/turns/store";
+import {
+  getActiveDurableTurnForThread,
+  getDurableTurnForUser,
+} from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 
@@ -32,7 +35,22 @@ export async function GET(
         { status: 403 }
       );
     }
-    const turn = await getActiveDurableTurnForThread(thread.id);
+    const requestedTurnId = request.nextUrl.searchParams.get("turnId");
+    const requestedTurn = requestedTurnId
+      ? await getDurableTurnForUser({
+          turnId: routeIdSchema.parse(requestedTurnId),
+          organizationId,
+          userId: user.id,
+        })
+      : null;
+    if (
+      requestedTurnId &&
+      (!requestedTurn || requestedTurn.threadId !== thread.id)
+    ) {
+      return NextResponse.json({ error: "Turn not found" }, { status: 404 });
+    }
+    const turn =
+      requestedTurn ?? (await getActiveDurableTurnForThread(thread.id));
     if (!turn) {
       return new Response(null, { status: 204 });
     }

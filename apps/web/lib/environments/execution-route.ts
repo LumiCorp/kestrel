@@ -8,7 +8,10 @@ import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
-import { requireHostedEnvironmentsEnabled } from "./config";
+import {
+  getHostedEnvironmentRuntimeMode,
+  requireHostedEnvironmentsEnabled,
+} from "./config";
 import {
   requestWorkspaceStart,
   resolveOrCreateThreadExecutionBinding,
@@ -65,6 +68,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
     detail: "Preparing the Environment…",
     status: "pending",
   });
+  if (getHostedEnvironmentRuntimeMode() === "local") {
+    return resolveLocalEnvironmentExecutionRoute(input);
+  }
   const resolved = await resolveOrCreateThreadExecutionBinding({
     organizationId: input.organizationId,
     threadId: input.threadId,
@@ -163,9 +169,86 @@ export async function resolveEnvironmentExecutionRoute(input: {
   return {
     baseUrl: environment.routerUrl,
     authToken: token,
+    executionTicket: token,
     runId,
     environmentId: environment.id,
     workspaceId: workspace.id,
+    effectiveCapabilities,
+    ...(mcpContext ? { mcpContext } : {}),
+  };
+}
+
+async function resolveLocalEnvironmentExecutionRoute(input: {
+  organizationId: string;
+  expectedEnvironmentId?: string;
+  threadId: string;
+  actorUserId: string;
+  agentId?: string | undefined;
+  recordExecution?: {
+    projectContextRevisionId?: string | undefined;
+  };
+  onProgress?: (progress: EnvironmentActivationProgress) => void;
+}) {
+  input.onProgress?.({
+    stage: "environment.runtime.connecting",
+    detail: "Connecting to the local Environment runtime…",
+    status: "pending",
+  });
+  const resolved = await resolveOrCreateThreadExecutionBinding({
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    userId: input.actorUserId,
+  });
+  if (
+    input.expectedEnvironmentId &&
+    resolved.binding.environmentId !== input.expectedEnvironmentId
+  ) {
+    throw new Error(
+      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment."
+    );
+  }
+  const runId = crypto.randomUUID();
+  const effectiveCapabilities = await snapshotEffectiveCapabilities({
+    organizationId: input.organizationId,
+    environmentId: resolved.binding.environmentId,
+    threadId: input.threadId,
+    actorId: input.actorUserId,
+    agentId: input.agentId ?? "kestrel-one-ui",
+  });
+  let mcpContext;
+  if (input.recordExecution) {
+    const projectId = await recordEnvironmentExecution({
+      id: runId,
+      organizationId: input.organizationId,
+      environmentId: resolved.binding.environmentId,
+      workspaceId: resolved.binding.workspaceId,
+      threadId: input.threadId,
+      actorId: input.actorUserId,
+      runtimeImage: "local-runner",
+      routeCapabilities: [...ROUTE_CAPABILITIES],
+      effectiveCapabilities,
+      projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+    });
+    mcpContext = await issueHostedMcpRunContext({
+      runExecutionId: runId,
+      organizationId: input.organizationId,
+      environmentId: resolved.binding.environmentId,
+      projectId,
+      threadId: input.threadId,
+    });
+  }
+  input.onProgress?.({
+    stage: "environment.activation.ready",
+    detail: "Local Environment ready.",
+    status: "ready",
+  });
+  return {
+    baseUrl: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL ?? "",
+    authToken: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN ?? "",
+    executionTicket: undefined,
+    runId,
+    environmentId: resolved.binding.environmentId,
+    workspaceId: resolved.binding.workspaceId,
     effectiveCapabilities,
     ...(mcpContext ? { mcpContext } : {}),
   };

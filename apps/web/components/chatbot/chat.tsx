@@ -11,6 +11,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   type Dispatch,
   type SetStateAction,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -66,7 +67,10 @@ type ChatController = {
   status: UseChatHelpers<ChatMessage>["status"];
 };
 
-function createChatTransport(currentModelIdRef: { current: string }) {
+function createChatTransport(
+  currentModelIdRef: { current: string },
+  resumeTurnIdRef: { current: string | null }
+) {
   return new CompatibleChatTransport<ChatMessage>({
     api: "/api/threads",
     fetch: fetchWithErrorHandlers as typeof fetch,
@@ -81,12 +85,20 @@ function createChatTransport(currentModelIdRef: { current: string }) {
       };
     },
     prepareReconnectToStreamRequest({ id }) {
+      const turnId = resumeTurnIdRef.current;
       return {
-        api: `/api/threads/${id}/stream`,
+        api: `/api/threads/${id}/stream${
+          turnId ? `?turnId=${encodeURIComponent(turnId)}` : ""
+        }`,
       };
     },
   });
 }
+
+type QueuedUserMessage = {
+  message: ChatMessage;
+  turnId: string | null;
+};
 
 function buildFeedbackByMessageId(input: {
   threadId: string;
@@ -302,6 +314,7 @@ function ChatShell({
   regenerate,
   selectedVisibilityType,
   sendMessage,
+  queueMessage,
   setAttachments,
   setInput,
   setMessages,
@@ -330,6 +343,7 @@ function ChatShell({
   regenerate: ChatController["regenerate"];
   selectedVisibilityType: VisibilityType;
   sendMessage: ChatController["sendMessage"];
+  queueMessage?: (message: ChatMessage) => void;
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
   setInput: Dispatch<SetStateAction<string>>;
   setMessages: ChatController["setMessages"];
@@ -385,6 +399,7 @@ function ChatShell({
               messages={messages}
               modelScopeQuery={modelScopeQuery}
               onModelChange={onModelChange}
+              queueMessage={queueMessage}
               selectedModelId={currentModelId}
               selectedVisibilityType={selectedVisibilityType}
               sendMessage={sendMessage}
@@ -608,6 +623,8 @@ export function Chat({
   const hasShownStreamWarningRef = useRef(false);
   const hasStartedHandoffRequestRef = useRef(false);
   const [chatExists, setChatExists] = useState(initialChatExists);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
+  const resumeTurnIdRef = useRef<string | null>(null);
   const [handoff, setHandoff] = useState<
     ChatFirstTurnHandoff | null | undefined
   >(undefined);
@@ -652,9 +669,102 @@ export function Chat({
     resume: initialChatExists,
     generateId: generateUUID,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    transport: createChatTransport(shared.currentModelIdRef),
+    transport: createChatTransport(shared.currentModelIdRef, resumeTurnIdRef),
     ...callbacks,
   });
+
+  const queueMessage = useCallback(
+    (message: ChatMessage) => {
+      const queuedMessage: ChatMessage = {
+        ...message,
+        metadata: { ...message.metadata, deliveryState: "sending" },
+      };
+      setQueuedMessages((current) => [
+        ...current,
+        { message: queuedMessage, turnId: null },
+      ]);
+
+      void fetch(`/api/threads/${id}/turns`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": message.id,
+        },
+        body: JSON.stringify({
+          message: { id: message.id, parts: message.parts },
+          model: shared.currentModelIdRef.current,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || typeof payload.turn?.id !== "string") {
+            throw new Error(
+              payload.error || "The message could not be queued."
+            );
+          }
+          setQueuedMessages((current) =>
+            current.map((item) =>
+              item.message.id === message.id
+                ? {
+                    message: {
+                      ...item.message,
+                      metadata: {
+                        ...item.message.metadata,
+                        deliveryState: "queued",
+                      },
+                    },
+                    turnId: payload.turn.id,
+                  }
+                : item
+            )
+          );
+        })
+        .catch((error) => {
+          setQueuedMessages((current) =>
+            current.filter((item) => item.message.id !== message.id)
+          );
+          toast({
+            type: "error",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The message could not be queued.",
+          });
+        });
+    },
+    [id, shared.currentModelIdRef]
+  );
+
+  useEffect(() => {
+    const nextQueued = queuedMessages[0];
+    if (
+      resumeTurnIdRef.current ||
+      controller.status !== "ready" ||
+      !nextQueued?.turnId ||
+      nextQueued.message.metadata?.deliveryState !== "queued"
+    ) {
+      return;
+    }
+
+    const { deliveryState: _deliveryState, ...metadata } =
+      nextQueued.message.metadata ?? {};
+    resumeTurnIdRef.current = nextQueued.turnId;
+    controller.setMessages((current) => [
+      ...current,
+      { ...nextQueued.message, metadata },
+    ]);
+    setQueuedMessages((current) => current.slice(1));
+    void controller.resumeStream().finally(() => {
+      if (resumeTurnIdRef.current === nextQueued.turnId) {
+        resumeTurnIdRef.current = null;
+      }
+    });
+  }, [
+    controller.resumeStream,
+    controller.setMessages,
+    controller.status,
+    queuedMessages,
+  ]);
 
   const handoffMessage = useMemo(
     () => createHandoffMessage(handoff),
@@ -770,8 +880,11 @@ export function Chat({
   );
 
   const displayMessages = useMemo(
-    () => mergeMessagesWithHandoff(controller.messages, handoff),
-    [controller.messages, handoff]
+    () => [
+      ...mergeMessagesWithHandoff(controller.messages, handoff),
+      ...queuedMessages.map((item) => item.message),
+    ],
+    [controller.messages, handoff, queuedMessages]
   );
   const showPendingAssistant =
     Boolean(handoff?.pendingAssistant) &&
@@ -811,6 +924,7 @@ export function Chat({
         }}
         onModelChange={shared.setCurrentModelId}
         project={project}
+        queueMessage={queueMessage}
         regenerate={controller.regenerate}
         selectedVisibilityType={visibilityType}
         sendMessage={controller.sendMessage}

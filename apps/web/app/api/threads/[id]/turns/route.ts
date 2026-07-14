@@ -4,14 +4,10 @@ import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
-import { mobileTurnDto } from "@/lib/mobile/dto";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import {
-  createDurableThreadTurn,
-  listDurableThreadQueueForUser,
-} from "@/lib/turns/store";
+import { createDurableThreadTurn } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const bodySchema = z.object({
@@ -21,27 +17,6 @@ const bodySchema = z.object({
   }),
   model: z.string().min(1).max(200).optional(),
 });
-
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { session, organizationId } = await requireActiveOrganization();
-    const { id } = paramsSchema.parse(await context.params);
-    const state = await listDurableThreadQueueForUser({
-      threadId: id,
-      organizationId,
-      userId: session.user.id,
-    });
-    return NextResponse.json({
-      turns: state.turns.map(mobileTurnDto),
-      queue: state.queue,
-    });
-  } catch (error) {
-    return errorResponse(error, 404);
-  }
-}
 
 export async function POST(
   request: NextRequest,
@@ -55,18 +30,22 @@ export async function POST(
     if (!thread || thread.mode !== "chat") {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const projectContext = await resolveProjectRuntimeContext({
-      projectId: thread.projectId,
-      organizationId,
-      userId: session.user.id,
-    });
-    const environment = await resolveThreadEnvironment({
-      organizationId,
-      threadId: thread.id,
-    });
+
+    const [projectContext, environment] = await Promise.all([
+      resolveProjectRuntimeContext({
+        projectId: thread.projectId,
+        organizationId,
+        userId: session.user.id,
+      }),
+      resolveThreadEnvironment({
+        organizationId,
+        threadId: thread.id,
+      }),
+    ]);
     if (!environment) {
       throw new Error("No Environment is available for this Thread.");
     }
+
     const durable = await createDurableThreadTurn({
       threadId: thread.id,
       organizationId,
@@ -78,17 +57,21 @@ export async function POST(
         request.headers.get("idempotency-key")?.trim() || body.message.id,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
       requestedModelId: body.model ?? null,
-      source: "mobile",
+      source: "web",
     });
     if (durable.shouldDispatch) {
       await enqueueDurableThreadTurn(durable.dispatchTurnId ?? durable.turn.id);
     }
+
     return NextResponse.json(
-      { turn: mobileTurnDto(durable.turn) },
       {
-        status: durable.created ? 202 : 200,
-        headers: { location: `/api/mobile/v1/turns/${durable.turn.id}` },
-      }
+        turn: {
+          id: durable.turn.id,
+          sequence: durable.turn.sequence,
+          status: durable.turn.status,
+        },
+      },
+      { status: durable.created ? 202 : 200 }
     );
   } catch (error) {
     return errorResponse(error, 400);

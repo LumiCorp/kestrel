@@ -249,6 +249,16 @@ const PurePreviewMessage = ({
               {message.metadata.authorName}
             </p>
           )}
+          {message.role === "user" && message.metadata?.deliveryState && (
+            <p
+              className="px-1 text-right text-muted-foreground text-xs"
+              data-testid="message-delivery-state"
+            >
+              {message.metadata.deliveryState === "sending"
+                ? "Adding to queue…"
+                : "Queued — runs next"}
+            </p>
+          )}
           {attachmentsFromMessage.length > 0 && (
             <div
               className="flex flex-row justify-end gap-2"

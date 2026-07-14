@@ -35,6 +35,8 @@ load_env_file ".env.example"
 load_env_file ".env"
 load_env_file ".env.local"
 
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kestrel-one}"
+
 if [[ -d "/Applications/Docker.app/Contents/Resources/bin" ]]; then
   export PATH="/Applications/Docker.app/Contents/Resources/bin:${PATH}"
 fi

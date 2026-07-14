@@ -60,6 +60,7 @@ export async function writeKestrelRunnerEventsToUi(input: {
 }): Promise<KestrelUiStreamResult> {
   const updateFilter = createKestrelStreamUiUpdateFilter();
   let reasoningStarted = false;
+  let lastReasoningLine = "";
   let finalText = "";
   let errorMessage: string | null = null;
   let terminalStatus: KestrelTerminalStatus | null = null;
@@ -80,6 +81,10 @@ export async function writeKestrelRunnerEventsToUi(input: {
     if (!trimmed) {
       return;
     }
+    if (trimmed === lastReasoningLine) {
+      return;
+    }
+    lastReasoningLine = trimmed;
 
     if (!reasoningStarted) {
       input.writer.write({
@@ -92,7 +97,7 @@ export async function writeKestrelRunnerEventsToUi(input: {
     input.writer.write({
       type: "reasoning-delta",
       id: input.reasoningPartId,
-      delta: `${trimmed}\n`,
+      delta: `${trimmed}\n\n`,
     });
   };
 
@@ -202,7 +207,8 @@ export async function writeKestrelRunnerEventsToUi(input: {
   }
 
   if (!finalText) {
-    terminalStatus = terminalStatus ?? (runnerErrorFallback ? "runner_error" : "empty");
+    terminalStatus =
+      terminalStatus ?? (runnerErrorFallback ? "runner_error" : "empty");
   }
 
   terminalStatus = terminalStatus ?? "empty";

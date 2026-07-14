@@ -30,8 +30,25 @@ test("production migrations serialize and repair known skipped schema", () => {
   const migrate = read("lib/db/migrate.ts");
   const reconciliation = read("lib/db/schema-reconciliation.ts");
   assert.match(migrate, /pg_advisory_lock/u);
+  assert.match(migrate, /reconcilePublishedMigrationLedgerTimestamps/u);
+  assert.ok(
+    migrate.indexOf("reconcilePublishedMigrationLedgerTimestamps(connection)") <
+      migrate.indexOf("await migrate(db")
+  );
   assert.match(migrate, /hasKnownMigrationLedgerDrift/u);
+  assert.ok(
+    migrate.indexOf("hasKnownMigrationLedgerDrift(connection)") <
+      migrate.indexOf("await migrate(db")
+  );
   assert.match(reconciliation, /transactionBreakBefore/u);
+  assert.match(
+    reconciliation,
+    /ccd8f19f3733f4e36ec75cbf619a4958b77f2d602adb9cd54ef2db68e17ff581/u
+  );
+  assert.match(reconciliation, /timestamp: 1783922400000/u);
+  assert.match(reconciliation, /recordReconciledMigration/u);
+  assert.match(reconciliation, /public\.environment_workspaces/u);
+  assert.match(reconciliation, /public\.mcp_credentials/u);
   assert.match(
     reconciliation,
     /ALTER TABLE "projects" ALTER COLUMN "environment_id" SET NOT NULL/u

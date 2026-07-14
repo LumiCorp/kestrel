@@ -12,15 +12,18 @@ export type HostedEnvironmentsRollout = {
 
 export type HostedEnvironmentBuildPreflightPhase = "prepare" | "cutover";
 
+export type HostedEnvironmentRuntimeMode = "fly" | "local";
+
 export function getHostedEnvironmentBuildPreflightPhase(
   env: Record<string, string | undefined> = process.env
 ): HostedEnvironmentBuildPreflightPhase | null {
   if (env.VERCEL_ENV !== "production") return null;
   const value = env.KESTREL_ENVIRONMENTS_ENABLED?.trim().toLowerCase();
+  if (!value) return "cutover";
   if (value === "false") return "prepare";
   if (value === "true") return "cutover";
   throw new Error(
-    "KESTREL_ENVIRONMENTS_ENABLED must be explicitly set to true or false for a production build."
+    "KESTREL_ENVIRONMENTS_ENABLED must be true or false when configured."
   );
 }
 
@@ -46,10 +49,35 @@ const LEGACY_GLOBAL_RUNNER_VALUES = [
   "KESTREL_RUNNER_SERVICE_TOKEN",
 ] as const;
 
+export function getHostedEnvironmentRuntimeMode(
+  env: Record<string, string | undefined> = process.env
+): HostedEnvironmentRuntimeMode {
+  const value = env.KESTREL_ENVIRONMENT_RUNTIME?.trim().toLowerCase();
+  if (!value) return "fly";
+  if (value === "fly") return value;
+  if (value === "local") {
+    if (env.VERCEL_ENV) {
+      throw new Error(
+        "The local Environment runtime cannot be used in a Vercel deployment."
+      );
+    }
+    return value;
+  }
+  throw new Error("KESTREL_ENVIRONMENT_RUNTIME must be fly or local.");
+}
+
 export function hostedEnvironmentsDeploymentEnabled(
   env: Record<string, string | undefined> = process.env
 ) {
-  return env.KESTREL_ENVIRONMENTS_ENABLED?.trim().toLowerCase() === "true";
+  const value = env.KESTREL_ENVIRONMENTS_ENABLED?.trim().toLowerCase();
+  if (!value) return true;
+  return value === "true";
+}
+
+export function hostedEnvironmentsOrganizationEnabled(
+  enabled: boolean | null | undefined
+) {
+  return enabled !== false;
 }
 
 export function hostedEnvironmentsEnabled(input: {
@@ -64,6 +92,10 @@ export function hostedEnvironmentsEnabled(input: {
 export function assertHostedEnvironmentConfiguration(
   env: Record<string, string | undefined> = process.env
 ) {
+  if (getHostedEnvironmentRuntimeMode(env) === "local") {
+    assertLocalEnvironmentRuntimeConfiguration(env);
+    return;
+  }
   assertHostedEnvironmentRuntimeConfiguration(env);
   const legacy = LEGACY_GLOBAL_RUNNER_VALUES.filter((name) =>
     env[name]?.trim()
@@ -71,6 +103,28 @@ export function assertHostedEnvironmentConfiguration(
   if (legacy.length > 0) {
     throw new Error(
       `Hosted Environment cutover requires removing legacy global runner configuration: ${legacy.join(", ")}.`
+    );
+  }
+}
+
+export function assertLocalEnvironmentRuntimeConfiguration(
+  env: Record<string, string | undefined> = process.env
+) {
+  const runnerUrl = env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL?.trim();
+  if (!runnerUrl) {
+    throw new Error(
+      "Local Environment runtime requires KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL. Start Kestrel One with pnpm dev:all."
+    );
+  }
+  const url = new URL(runnerUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      "KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL must use HTTP or HTTPS."
+    );
+  }
+  if (!(url.hostname === "127.0.0.1" || url.hostname === "localhost")) {
+    throw new Error(
+      "KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL must target localhost."
     );
   }
 }
@@ -155,7 +209,9 @@ export async function getHostedEnvironmentsRollout(input: {
       ),
   });
   const deploymentEnabled = hostedEnvironmentsDeploymentEnabled(input.env);
-  const organizationEnabled = flag?.enabled === true;
+  const organizationEnabled = hostedEnvironmentsOrganizationEnabled(
+    flag?.enabled
+  );
   return {
     deploymentEnabled,
     organizationEnabled,
