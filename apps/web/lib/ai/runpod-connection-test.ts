@@ -283,7 +283,19 @@ async function postStreamingCompletion(input: {
       "RunPod model did not return an OpenAI-compatible event stream."
     );
   }
-  const text = await readBoundedStream(response.body);
+  let text: string;
+  try {
+    text = await readBoundedStream(response.body);
+  } catch (error) {
+    if (error instanceof RunPodConnectionTestError) {
+      throw error;
+    }
+    throw new RunPodConnectionTestError(
+      "RUNPOD_STREAM_INTERRUPTED",
+      "RunPod validation stream was interrupted before completion.",
+      { retryable: true }
+    );
+  }
   const events = text
     .split(/\r?\n\r?\n/u)
     .flatMap((block) =>

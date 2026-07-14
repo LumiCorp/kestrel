@@ -168,6 +168,33 @@ test("RunPod validation classifies cold starts and provider throttling as retrya
   );
 });
 
+test("RunPod validation retries an interrupted event stream", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("stream interrupted"));
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } }
+        ),
+    }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "RUNPOD_STREAM_INTERRUPTED"
+      );
+      assert.equal((error as { retryable?: boolean }).retryable, true);
+      return true;
+    }
+  );
+});
+
 test("client metadata cannot forge RunPod validation evidence", () => {
   const forged = {
     [RUNPOD_VALIDATION_METADATA_KEY]: {
