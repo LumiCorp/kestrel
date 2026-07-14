@@ -46,9 +46,15 @@ import {
 import { DesktopUiStateStore } from "./desktopUiState.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
+import {
+  readLocalCoreCredentialStoreStatus,
+  type LocalCoreCredentialStore,
+  type LocalCoreCredentialStoreStatus,
+} from "./credentialStore.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
+import { createLocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import {
   assertNoLocalCoreReservedProfileCollision,
   createLocalCoreProfileProvider,
@@ -78,6 +84,12 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
   idleTimeoutMs?: number | undefined;
   heartbeatMs?: number | undefined;
   executionRuntimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
+  /**
+   * Dormant credential/runtime-environment substrate. Supplying a store makes
+   * its captured values authoritative for newly created Core runtimes. The
+   * production Keychain backend is activated with the Desktop migration.
+   */
+  credentialStore?: LocalCoreCredentialStore | undefined;
 }
 
 interface LocalCoreExecutionBundle {
@@ -90,6 +102,14 @@ const activeLocalCoreAuthorities = new Set<string>();
 export async function startLocalCoreApiServer(
   options: StartLocalCoreApiServerOptions,
 ): Promise<LocalCoreApiServer> {
+  if (
+    options.credentialStore !== undefined
+    && options.executionRuntimeFactory !== undefined
+  ) {
+    throw new Error(
+      "Local Core credentialStore cannot be combined with executionRuntimeFactory because the custom runtime boundary cannot accept the authoritative credential environment.",
+    );
+  }
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
   await mkdir(paths.stateRootPath, { recursive: true, mode: 0o700 });
@@ -339,12 +359,25 @@ async function createExecutionBundle(input: {
       ? { externalDatabaseUrl: input.status.databaseUrl }
       : {}),
   });
+  let runtimeFactory = input.options.executionRuntimeFactory;
+  if (runtimeFactory === undefined) {
+    const runtimeEnvironmentResolver = input.options.credentialStore === undefined
+      ? undefined
+      : await createLocalCoreRuntimeEnvironmentResolver({
+          baseEnv: input.options.env ?? process.env,
+          credentialStore: input.options.credentialStore,
+        });
+    runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
+      ...(runtimeEnvironmentResolver !== undefined
+        ? { runtimeEnvironmentResolver }
+        : {}),
+    });
+  }
   const handler = createRunnerServiceHttpHandler({
     pathPrefix: "/runtime/v2",
     authToken: input.token,
     serviceVersion: input.options.coreVersion,
-    runtimeFactory: input.options.executionRuntimeFactory
-      ?? createLocalCoreRunnerRuntimeFactory(storeHandle.store),
+    runtimeFactory,
     profileProvider: createLocalCoreProfileProvider(input.status.home.homePath),
     eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
   });
@@ -552,7 +585,13 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/provider-readiness") {
-      writeJson(input.response, 200, { ok: true, providerReadiness: providerReadiness(input.ensureOptions.env ?? process.env) });
+      writeJson(input.response, 200, {
+        ok: true,
+        providerReadiness: await providerReadiness(
+          input.ensureOptions.env ?? process.env,
+          input.ensureOptions.credentialStore,
+        ),
+      });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/runtime-settings") {
@@ -1221,12 +1260,32 @@ async function writeLocalSettings(homePath: string, value: Record<string, unknow
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function providerReadiness(env: NodeJS.ProcessEnv): Record<string, unknown> {
+async function providerReadiness(
+  env: NodeJS.ProcessEnv,
+  credentialStore?: LocalCoreCredentialStore | undefined,
+): Promise<Record<string, unknown>> {
+  const credentialStatus = credentialStore === undefined
+    ? undefined
+    : await readLocalCoreCredentialStoreStatus(credentialStore);
   return {
-    openrouter: {
-      ready: normalizeString(env.OPENROUTER_API_KEY) !== undefined,
-      credential: normalizeString(env.OPENROUTER_API_KEY) !== undefined ? "configured" : "missing",
-    },
+    openrouter: providerCredentialReadiness({
+      configured: credentialStatus === undefined
+        ? normalizeString(env.OPENROUTER_API_KEY) !== undefined
+        : isCredentialConfigured(credentialStatus, "provider.openrouter.default"),
+      available: credentialStatus?.available ?? true,
+    }),
+    openai: providerCredentialReadiness({
+      configured: credentialStatus === undefined
+        ? normalizeString(env.OPENAI_API_KEY) !== undefined
+        : isCredentialConfigured(credentialStatus, "provider.openai.default"),
+      available: credentialStatus?.available ?? true,
+    }),
+    anthropic: providerCredentialReadiness({
+      configured: credentialStatus === undefined
+        ? normalizeString(env.ANTHROPIC_API_KEY) !== undefined
+        : isCredentialConfigured(credentialStatus, "provider.anthropic.default"),
+      available: credentialStatus?.available ?? true,
+    }),
     ollama: {
       ready: true,
       credential: "not_required",
@@ -1238,6 +1297,27 @@ function providerReadiness(env: NodeJS.ProcessEnv): Record<string, unknown> {
       beta: true,
     },
   };
+}
+
+function providerCredentialReadiness(input: {
+  configured: boolean;
+  available: boolean;
+}): { ready: boolean; credential: "configured" | "missing" | "unavailable" } {
+  return {
+    ready: input.configured,
+    credential: input.configured
+      ? "configured"
+      : input.available
+        ? "missing"
+        : "unavailable",
+  };
+}
+
+function isCredentialConfigured(
+  status: LocalCoreCredentialStoreStatus,
+  id: LocalCoreCredentialStoreStatus["credentials"][number]["id"],
+): boolean {
+  return status.credentials.find((credential) => credential.id === id)?.configured ?? false;
 }
 
 function normalizeWorkspaceBody(value: unknown): {

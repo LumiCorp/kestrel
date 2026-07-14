@@ -10,13 +10,15 @@ interface CreateTavilyClientOptions {
   projectId?: string | undefined;
   httpProxy?: string | undefined;
   httpsProxy?: string | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
   tavilyFactory?: ((options?: TavilyClientOptions) => TavilySdkClient) | undefined;
 }
 
 export function createTavilyClient(
   options: CreateTavilyClientOptions = {},
 ): TavilySdkClient {
-  const apiKey = coalesceNonEmpty(options.apiKey, process.env.TAVILY_API_KEY);
+  const env = options.env ?? process.env;
+  const apiKey = coalesceNonEmpty(options.apiKey, env.TAVILY_API_KEY);
   if (apiKey === undefined) {
     throw createRuntimeFailure(
       "TOOL_PROVIDER_FAILED",
@@ -31,10 +33,10 @@ export function createTavilyClient(
     );
   }
 
-  const baseUrl = coalesceNonEmpty(options.baseUrl, process.env.TAVILY_BASE_URL);
-  const projectId = coalesceNonEmpty(options.projectId, process.env.TAVILY_PROJECT);
-  const httpProxy = coalesceNonEmpty(options.httpProxy, process.env.TAVILY_HTTP_PROXY);
-  const httpsProxy = coalesceNonEmpty(options.httpsProxy, process.env.TAVILY_HTTPS_PROXY);
+  const baseUrl = coalesceNonEmpty(options.baseUrl, env.TAVILY_BASE_URL);
+  const projectId = coalesceNonEmpty(options.projectId, env.TAVILY_PROJECT);
+  const httpProxy = coalesceNonEmpty(options.httpProxy, env.TAVILY_HTTP_PROXY);
+  const httpsProxy = coalesceNonEmpty(options.httpsProxy, env.TAVILY_HTTPS_PROXY);
   const factory = options.tavilyFactory ?? tavily;
 
   return factory({

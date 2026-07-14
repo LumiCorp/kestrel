@@ -151,9 +151,12 @@ const DEFAULT_REASONING_MODEL_BY_PROVIDER: Record<NonNullable<TuiProfile["modelP
   lmstudio: "local-model",
 };
 
-export function resolveReasoningModelForProfile(profile: TuiProfile): string | undefined {
+export function resolveReasoningModelForProfile(
+  profile: TuiProfile,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const provider = profile.modelProvider ?? "openrouter";
-  return parseEnvString("KCHAT_REASONING_MODEL") ??
+  return parseEnvString("KCHAT_REASONING_MODEL", env) ??
     profile.model ??
     DEFAULT_REASONING_MODEL_BY_PROVIDER[provider];
 }
@@ -169,6 +172,17 @@ export interface RuntimeFactory {
     onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
     onRunEvent?: ((event: RunEvent) => void) | undefined,
   ): RuntimeBootstrap;
+}
+
+export interface KestrelRuntimeEnvironment {
+  runtimeEnv: NodeJS.ProcessEnv;
+  modelEnv: NodeJS.ProcessEnv;
+  internetEnv: NodeJS.ProcessEnv;
+  mcpEnv: NodeJS.ProcessEnv;
+}
+
+export interface RuntimeFactoryWithStoreOptions {
+  resolveEnvironment?: ((profile: TuiProfile) => KestrelRuntimeEnvironment) | undefined;
 }
 
 export interface KestrelChatRuntimeOptions {
@@ -951,7 +965,10 @@ function createDefaultRuntime(
  * Local Core owns and closes this store once for the lifetime of the host;
  * individual profile runtimes only release their profile-specific resources.
  */
-export function createRuntimeFactoryWithStore(store: SessionStore): RuntimeFactory {
+export function createRuntimeFactoryWithStore(
+  store: SessionStore,
+  options: RuntimeFactoryWithStoreOptions = {},
+): RuntimeFactory {
   return {
     create(
       profile,
@@ -963,6 +980,7 @@ export function createRuntimeFactoryWithStore(store: SessionStore): RuntimeFacto
       onTaskUpdate,
       onRunEvent,
     ) {
+      const environment = options.resolveEnvironment?.(profile);
       return createRuntimeWithStore(
         profile,
         onFinalize,
@@ -974,6 +992,7 @@ export function createRuntimeFactoryWithStore(store: SessionStore): RuntimeFacto
         onRunEvent,
         store,
         async () => {},
+        environment,
       );
     },
   };
@@ -990,24 +1009,30 @@ function createRuntimeWithStore(
   onRunEvent: ((event: RunEvent) => void) | undefined,
   store: SessionStore,
   closeStore: () => Promise<void>,
+  environment?: KestrelRuntimeEnvironment | undefined,
 ): RuntimeBootstrap {
+  const runtimeEnv = environment?.runtimeEnv ?? process.env;
+  const modelEnv = environment?.modelEnv ?? process.env;
+  const internetEnv = environment?.internetEnv;
+  const mcpEnv = environment?.mcpEnv ?? process.env;
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const managedTaskWorktreeService =
-    resolveManagedWorktreesEnabledForRuntime()
+    resolveManagedWorktreesEnabledForRuntime(runtimeEnv)
       ? new ManagedTaskWorktreeService()
       : undefined;
-  const devShellService = resolveDevShellServiceForProfile(profile);
+  const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
   const toolContext: SharedToolContext = {
     store,
     onFinalize,
     codeMode: profile.codeMode,
     devShell: profile.devShell,
     kestrelOne: {
-      appUrl: parseEnvString("KESTREL_ONE_APP_URL"),
-      toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN"),
+      appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
+      toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
     },
+    ...(internetEnv !== undefined ? { internetEnv } : {}),
     ...(devShellService !== undefined ? { devShellService } : {}),
     ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
     projectActions: createProductProjectActionToolAdapter({ taskGraphStore, projectStore }),
@@ -1018,13 +1043,14 @@ function createRuntimeWithStore(
     allowlist: profile.toolAllowlist ?? [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
     context: toolContext,
     mcpServers: profile.mcpServers ?? [],
+    env: mcpEnv,
   });
 
-  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED");
-  const reasoningModel = resolveReasoningModelForProfile(profile);
-  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS");
-  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS");
-  const modelGateway = createModelGatewayForProfile(profile);
+  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED", runtimeEnv);
+  const reasoningModel = resolveReasoningModelForProfile(profile, runtimeEnv);
+  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS", runtimeEnv);
+  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS", runtimeEnv);
+  const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
 
   const kestrel = new Kestrel({
     store,
@@ -1056,10 +1082,11 @@ function createRuntimeWithStore(
     ...(onConsole !== undefined ? { consoleListener: onConsole } : {}),
     ...(onReasoning !== undefined ? { reasoningListener: onReasoning } : {}),
     ...(onRunEvent !== undefined ? { runEventListener: onRunEvent } : {}),
-    heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(process.env, {
-      processRole: process.env.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
+    heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(runtimeEnv, {
+      processRole: runtimeEnv.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
     }),
     reasoningSidecar: {
+      ...(environment !== undefined ? { inheritProcessEnv: false } : {}),
       ...(reasoningEnabled !== undefined ? { enabled: reasoningEnabled } : {}),
       ...(reasoningModel !== undefined ? { model: reasoningModel } : {}),
       ...(reasoningTimeoutMs !== undefined ? { timeoutMs: reasoningTimeoutMs } : {}),
@@ -1178,6 +1205,7 @@ export function createModelGatewayForProfile(
   profile: TuiProfile,
   options: {
     createGatewayManaged?: ((profile: TuiProfile) => ModelGateway) | undefined;
+    env?: NodeJS.ProcessEnv | undefined;
   } = {},
 ) {
   if (profile.modelCredential) {
@@ -1185,10 +1213,12 @@ export function createModelGatewayForProfile(
       profile,
     );
   }
-  const timeoutMs = resolveModelTimeoutMs(profile);
-  const retryCount = resolveModelRetryCount(profile);
+  const env = options.env ?? process.env;
+  const timeoutMs = resolveModelTimeoutMs(profile, env);
+  const retryCount = resolveModelRetryCount(profile, env);
   const provider = profile.modelProvider ?? "openrouter";
   const gatewayOptions = {
+    env,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(retryCount !== undefined ? { retryCount } : {}),
     ...(profile.model !== undefined
@@ -1310,8 +1340,11 @@ function parseEnvBoolean(
   return undefined;
 }
 
-function parseEnvString(name: string): string | undefined {
-  const raw = process.env[name];
+function parseEnvString(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const raw = env[name];
   if (raw === undefined) {
     return undefined;
   }
