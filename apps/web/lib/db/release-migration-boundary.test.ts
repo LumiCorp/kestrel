@@ -34,7 +34,7 @@ test("production migrations serialize and repair known skipped schema", () => {
   assert.match(reconciliation, /transactionBreakBefore/u);
   assert.match(
     reconciliation,
-    /ALTER TABLE \"projects\" ALTER COLUMN \"environment_id\" SET NOT NULL/u
+    /ALTER TABLE "projects" ALTER COLUMN "environment_id" SET NOT NULL/u
   );
   for (const tag of [
     "0014_platform_email_config",
