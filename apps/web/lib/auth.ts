@@ -243,7 +243,6 @@ export const auth = betterAuth({
       adminUserIds,
     }),
     multiSession(),
-    nextCookies(),
     customSession(async (session) =>
       session ? await ensureSessionHasActiveOrganization(session) : session
     ),
@@ -288,6 +287,7 @@ export const auth = betterAuth({
         ]
       : []),
     lastLoginMethod(),
+    nextCookies(),
   ],
   trustedOrigins,
   advanced: {

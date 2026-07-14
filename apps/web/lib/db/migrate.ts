@@ -4,6 +4,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres, { type Sql } from "postgres";
 import {
   hasKnownMigrationLedgerDrift,
+  reconcilePublishedMigrationLedgerTimestamps,
   reconcileSkippedMigrations,
 } from "./schema-reconciliation";
 
@@ -26,6 +27,10 @@ const runMigrate = async () => {
     await connection`
       SELECT pg_advisory_lock(hashtext('kestrel-one-schema-migrate'))
     `;
+    await reconcilePublishedMigrationLedgerTimestamps(connection);
+    if (await hasKnownMigrationLedgerDrift(connection)) {
+      await reconcileSkippedMigrations(connection);
+    }
     const db = drizzle(connection);
 
     console.log("⏳ Running migrations...");
@@ -38,9 +43,6 @@ const runMigrate = async () => {
     // Bootstrap the legacy knowledge/threads tables before applying follow-up
     // migrations that add foreign keys against them.
     await ensureKnowledgeSchema(connection);
-    if (await hasKnownMigrationLedgerDrift(connection)) {
-      await reconcileSkippedMigrations(connection);
-    }
     await migrate(db, {
       migrationsFolder: "./lib/db/migrations",
     });
