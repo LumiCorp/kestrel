@@ -1,15 +1,15 @@
 ---
 title: "@kestrel-agents/observability"
 summary: Kestrel-native tracing and OTEL export helpers for instrumenting `workspace-copilot` runs, streams, resumptions, and subscriptions.
-section: packages
+section: reference
 audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Package surface">
-The observability package wraps the same `workspace-copilot` agent used across the tutorial and makes the demo inspectable as a real operated system.
+<WorkspaceCopilotDemo step="Observability reference">
+Wrap the Workspace Copilot agent so completed, waiting, cancelled, and failed work can be found later.
 </WorkspaceCopilotDemo>
 
 The package starts with a Kestrel-native trace model and offers OTEL export as a bridge.
@@ -17,19 +17,19 @@ The package starts with a Kestrel-native trace model and offers OTEL export as a
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability @kestrel-agents/sdk
+pnpm add @kestrel-agents/observability@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
-## Core surfaces
+## Core APIs
 
-| Surface | Purpose | Common use |
+| API | Purpose | Common use |
 | --- | --- | --- |
 | `createTracer()` | construct the tracer | attach processors and exporters |
 | `InMemoryTraceProcessor` | keep traces in process | local debugging and tests |
 | `wrapAgent()` | instrument one agent | add trace coverage without changing route logic |
 | `toOpenTelemetrySpans()` | bridge to OTEL-compatible records | vendor-neutral export |
 
-## Canonical wrapper
+## Wrap an agent
 
 ```ts
 const tracer = createTracer({
@@ -48,9 +48,9 @@ const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
 | `resume()` | `resume` |
 | `subscribe()` | `subscription` |
 
-## Why this matters
+## Use the trace data
 
-The package is useful because it preserves Kestrel semantics first. Product code can reason in terms of runs, sessions, and subscriptions instead of remapping everything into a generic tracing vocabulary too early.
+Your application continues to work with runs, sessions, and subscriptions while exporters translate trace records for external observability tools.
 
 ## Common failure cases
 
@@ -58,10 +58,10 @@ The package is useful because it preserves Kestrel semantics first. Product code
 | --- | --- |
 | no traces appear | wrapped agent is not the one used by routes |
 | traces lack actor or tenant metadata | request context is incomplete |
-| export succeeds but operator story is still weak | traces exist, but routes or reports are not correlated clearly |
+| export succeeds but related activity is hard to follow | routes, runs, or reports do not share correlation identifiers |
 
-## What To Read Next
+## Use traces in operation
 
 - [Adding observability](/build/adding-observability)
-- [Production operating model](/deploy/production-operating-model)
-- [Reliability](/operations/reliability)
+- [Production operating model](/operate/deployment)
+- [Reliability](/operate/reliability)

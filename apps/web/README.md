@@ -13,12 +13,13 @@
 
 Kestrel One is Lumi Corp's application platform: one Next.js application that combines:
 - account, organization, org billing, passkey, 2FA, and personal API-key flows
-- Chatbot-style conversation UX with canonical chat APIs
+- durable Threads and Projects with canonical thread and project APIs
 - Knowledge-agent source management, sync, snapshot, document upload/RAG, and admin operations
+- organization-scoped model gateways and feature-gated managed model deployments
 
 Built with **Next.js 16**, **PostgreSQL**, **Redis**, and **shadcn/ui**.
 
-In the Kestrel monorepo, this app lives at `apps/web` and uses the Kestrel runner service as the canonical chat execution boundary. The imported local AI SDK loop remains only as legacy migration scaffolding for non-chat surfaces that still depend on it.
+In the Kestrel monorepo, this app lives at `apps/web` and uses the Kestrel runner service as the canonical agent execution boundary. `app/route-ownership.manifest.ts` is the source of truth for route ownership, access, and unauthorized behavior.
 
 ## Features
 
@@ -27,7 +28,7 @@ In the Kestrel monorepo, this app lives at `apps/web` and uses the Kestrel runne
 - Passkeys, 2FA, password reset, and email verification
 - Personal API keys
 - Organization-owned Stripe billing controls in the Organizations surface
-- Chat, sharing, uploads/files, and artifacts
+- Threads, Projects, context revisions, sharing, uploads/files, and artifacts
 - Knowledge source management, OCR/import, sync, snapshot state, and org-shared document upload
 - Admin users, Stripe ops diagnostics, logs, stats, sandbox, API keys, docs, and agent configuration
 
@@ -172,8 +173,14 @@ Operational statuses:
 - `/two-factor`
 - `/two-factor/otp`
 - `/accept-invitation/[id]`
-- `/chat`
-- `/chat/[id]`
+- `/threads`
+- `/threads/new`
+- `/threads/[id]`
+- `/projects`
+- `/projects/[id]`
+- `/projects/[id]/threads/new`
+- `/search`
+- `/model-deployments`
 - `/knowledge`
 - `/knowledge/import`
 - `/dashboard/*`
@@ -182,17 +189,26 @@ Operational statuses:
 - `/shared/[token]`
 
 Removed from the supported core product surface:
+- legacy chat-shaped page routes
 - `/device/*`
 - `/oauth/authorize`
 - legacy `(chat)/api/*` compatibility routes
 
 ## Canonical APIs
 
-- `/api/chats`
-- `/api/chats/[id]`
-- `/api/chats/[id]/share`
-- `/api/chats/[id]/stream`
-- `/api/upload/[chatId]`
+- `/api/threads`
+- `/api/threads/[id]`
+- `/api/threads/[id]/share`
+- `/api/threads/[id]/stream`
+- `/api/threads/[id]/uploads`
+- `/api/projects`
+- `/api/projects/[id]`
+- `/api/projects/[id]/context`
+- `/api/projects/[id]/files`
+- `/api/projects/[id]/members`
+- `/api/model-deployments`
+- `/api/model-deployments/[id]`
+- `/api/model-deployments/access`
 - `/api/files/[...pathname]`
 - `/api/messages/[id]/feedback`
 - `/api/messages/[id]/speech`
@@ -226,16 +242,16 @@ Removed from the supported core product surface:
 ```text
 app/
   (auth)/              authentication pages
-  (chat)/              authenticated chat pages
+  (workspace)/         authenticated Threads, Projects, search, and model deployments
   dashboard/           account, orgs, org billing, personal API keys
   knowledge/           Kestrel One knowledge dashboard
   admin/               operational admin pages
-  shared/              public shared chats
+  shared/              public shared threads
   api/                 canonical API surface
 
 components/
   admin/               shared admin and operational UI
-  chatbot/             main chat UI
+  chatbot/             thread conversation UI
   ui/                  shared design system primitives
 
 content/
@@ -245,11 +261,11 @@ drizzle/
   schema.ts            auth + Kestrel One schema
 
 lib/
-  agent/               Kestrel One chat and agent runtime
+  agent/               Kestrel One thread and agent runtime
   artifacts/           artifact persistence and helpers
   auth.ts              authentication server config
   auth-client.ts       authentication client config
-  files/               transient chat upload storage helpers
+  files/               thread and project upload storage helpers
   storage/             shared object-storage adapter and provider selection
   knowledge/           knowledge APIs, auth guards, sync, document ingestion, sandbox, snapshot helpers
 
@@ -285,7 +301,7 @@ pnpm --filter @kestrel/kestrel-one test:knowledge-rag:unit
 pnpm --filter @kestrel/kestrel-one smoke:local
 ```
 
-The Playwright suite covers authenticated chat, admin, knowledge, sharing, API-key flows, and the checked-in knowledge RAG fixture corpus.
+The Playwright suite covers authenticated Threads and Projects, admin, knowledge, sharing, API-key flows, and the checked-in knowledge RAG fixture corpus.
 
 ## Docs
 

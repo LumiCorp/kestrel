@@ -1,0 +1,30 @@
+---
+title: Operate Kestrel One in production
+summary: Verify application, data, storage, queues, runner access, models, and communications before inviting a team.
+section: kestrel-one
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Use this playbook before enabling a new organization or after a change to application code, data services, model access, or managed deployment infrastructure.
+
+## Establish a healthy baseline
+
+Record the deployed version and confirm that the Next.js application, PostgreSQL, Redis, object storage, background jobs, runner service, approved model gateways, and configured email services are healthy.
+
+## Verify the user path
+
+1. Sign in with a non-administrator test account.
+2. Open the intended organization and Project.
+3. Create a Thread with an approved model.
+4. Upload or retrieve a permitted Knowledge source.
+5. Inspect the completed result and artifact access.
+6. Test an administrative action separately with an administrator account.
+
+## Prove recovery after a change
+
+If any check fails, preserve the relevant application, queue, runner, deployment, and provider evidence. Change only the owning service, repeat the same user path, and record the successful result before declaring recovery.
+
+Escalate when authorization results differ between equivalent users, persisted data disappears, a provider credential reaches browser state, or a deployment becomes selectable before qualification.

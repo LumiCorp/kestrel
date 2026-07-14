@@ -1,0 +1,23 @@
+---
+title: Models and provider gateways
+summary: Make approved models available to an organization without exposing provider credentials to members’ browsers.
+section: kestrel-one
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+A **gateway** connects Kestrel One to a model provider. An **approved model** is one that an administrator has tested and allowed members to select.
+
+## Make a model available
+
+1. Register the provider gateway from the administrative model settings.
+2. Discover the models exposed by that gateway.
+3. Test the intended model with streaming and a complete tool-call/tool-result round trip.
+4. Approve the model only after those checks succeed.
+5. Confirm that an authorized member can select it in a Thread.
+
+Provider credentials remain on trusted Kestrel One services. A member’s browser requests an approved model by identifier; it never receives the provider URL, raw credential, or runner token.
+
+Managed deployments add an infrastructure readiness check to the same approval flow.

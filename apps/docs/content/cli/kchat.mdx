@@ -8,9 +8,9 @@ sourceKind: curated
 updatedAt: 2026-06-16
 ---
 
-The CLI terminal client is the fastest way to feel the local Kestrel product outside Desktop. It is not only a terminal chat shell. It is the lightest operator cockpit in the repo: one surface for local sessions, workspace catalog binding, control commands, MCP visibility, and durable append-only history.
+The CLI is the quickest way to work with local Kestrel sessions from a terminal. Use it to open a workspace, continue a session, inspect current work, steer or stop a run, and review durable history without opening Desktop.
 
-For `0.5.0-beta.0`, the release CLI path is a separate macOS ARM64 tarball shaped for future Homebrew installation. It includes `kestrel`, `ks`, and beta `kcron` launchers plus a bundled `libexec` runtime. It uses the system Node runtime. Native single binaries, bundled Node, Homebrew formula installation, and non-macOS CLI artifacts are outside this first beta.
+For `0.6.0-beta.0`, the release CLI path is a separate macOS ARM64 tarball shaped for future Homebrew installation. It includes `kestrel`, `ks`, and beta `kcron` launchers plus a bundled `libexec` runtime. It uses the system Node runtime. Native single binaries, bundled Node, Homebrew formula installation, and non-macOS CLI artifacts are outside this first beta.
 
 ## What it gives you
 
@@ -64,7 +64,7 @@ Contributor checkout shims installed with `pnpm run install:cli` remain availabl
 
 ## Workspace-first startup sequence
 
-For the canonical docs example, this is the shortest end-to-end local operator path:
+For Workspace Copilot, this is the shortest end-to-end local workflow:
 
 ```bash
 kestrel workspace status
@@ -91,11 +91,11 @@ The most important commands are not only chat commands:
 | `/status` | inspect profile, workspace, wait state, runner, and MCP state |
 | `/stop [message]` | cancel an active run and queue a stop-and-wait steer |
 | `/steer <message>` | inject durable follow-up guidance for the focused thread |
-| `/retry [reason]` | retry the current thread through the operator control surface |
+| `/retry [reason]` | retry the current thread through operator control |
 | `/mcp ...` | inspect or change MCP servers and allowlists |
 | `/code ...` | inspect or toggle codeMode policy |
 
-These commands matter because they map onto the same control-plane surface the SDK and web app use. The CLI is not faking local control. It is speaking to the runtime.
+These commands act on the same saved runs and threads that other Kestrel clients can inspect.
 
 ## Workflow: from blocked thread to controlled resolution
 
@@ -116,9 +116,9 @@ Profile=workspace-copilot Session=nightly-review Workspace=acme Mode=chat WaitFo
 /code policy
 ```
 
-The important detail is the order. The operator inspects state first, resumes the durable session, steers the active thread, optionally stops it at the next boundary, and then checks tool or code policy if the run needs a capability change.
+Inspect the current state first, resume the existing session, add guidance to the active thread, and stop it only if the work should not continue. Check tool or code permissions when the run needs a capability it does not currently have.
 
-Representative resolution output:
+Example resolution output:
 
 ```text
 operator.control accepted
@@ -150,23 +150,23 @@ That means a terminal session can move between narrative work, code-capable work
 
 ## Why it matters
 
-The CLI is where the local history and workspace model become obvious. It is not a disposable terminal toy. It is part of the same durable, inspectable system as the SDK, the web workbench, and workspace automation. If a team wants to understand how operator control feels in practice before building a browser UI, this is the fastest serious surface in the repo.
+The CLI is useful when you prefer terminal work but still need sessions, workspaces, operator controls, and history that survive beyond one process. It is also a direct way to learn the control workflow before adding it to an application.
 
 ## Key distinctions
 
 | Decision | Use this |
 | --- | --- |
 | interactive terminal work | `kestrel` or `ks` |
-| browser-native operator surface | web workbench |
+| browser-based operator experience | Kestrel One |
 | app-integrated runtime behavior | SDK or Next.js route helpers |
 | request streaming | active chat session |
 | filtered background subscriptions | SDK or service-side observers |
 | replay-style inspection | runtime replay and operator evidence pages |
 
-## What To Read Next
+## Continue with local operation
 
 - [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
-- [Operator control workflows](/operations/operator-control-workflows)
+- [Operator control workflows](/operate/operator-control)
 - [Workspace workflows](/cli/workspace-workflows)
 - [Workspaces and automation](/build/workspaces-and-automation)
-- [Desktop app](/apps/desktop)
+- [Desktop app](/desktop)

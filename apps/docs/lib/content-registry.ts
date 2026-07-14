@@ -1,458 +1,150 @@
-import type { RegisteredPageSpec } from "@/lib/types";
+import type {
+  ContentArchetype,
+  DocsJourneyId,
+  ExperienceLevel,
+  ProductSurface,
+  RegisteredPageSpec,
+  SearchCapability,
+  TocMode,
+} from "@/lib/types";
+
+interface PageOptions {
+  sourceRefs?: string[];
+  related?: string[];
+  archetype?: ContentArchetype;
+  surface?: ProductSurface;
+  experienceLevel?: ExperienceLevel;
+  estimatedTime?: string;
+  tocMode?: TocMode;
+  journeyId?: DocsJourneyId;
+  priority?: number;
+  capabilities?: SearchCapability[];
+  internal?: boolean;
+}
+
+function defaultArchetype(slug: string): ContentArchetype {
+  if (slug === "" || ["start", "desktop", "kestrel-one", "build", "operate", "reference"].includes(slug)) return "gateway";
+  if (slug.includes("troubleshooting")) return "troubleshooting";
+  if (slug.includes("upgrading") || slug.endsWith("/releases")) return "migration";
+  if (slug.startsWith("reference/") || slug.startsWith("cli/")) return "reference";
+  if (slug.startsWith("operate/")) return "operational-playbook";
+  if (slug.startsWith("build/")) return "build-tutorial";
+  if (slug.startsWith("desktop/") || slug.startsWith("kestrel-one/")) return "product-journey";
+  return "explainer";
+}
+
+function defaultSurface(slug: string): ProductSurface {
+  if (slug.startsWith("desktop")) return "desktop";
+  if (slug.startsWith("kestrel-one")) return "kestrel-one";
+  if (slug.startsWith("cli")) return "cli";
+  if (slug.startsWith("operate")) return "operations";
+  if (slug.startsWith("reference/protocol") || slug.startsWith("reference/events") || slug.startsWith("reference/terminal")) return "protocol";
+  if (slug.startsWith("reference/next") || slug.includes("nextjs")) return "nextjs";
+  if (slug.startsWith("reference")) return "runtime";
+  if (slug.startsWith("build")) return "sdk";
+  return "suite";
+}
+
+function page(slug: string, filePath: string, options: PageOptions = {}): RegisteredPageSpec {
+  return {
+    slug: slug === "" ? [] : slug.split("/"),
+    filePath,
+    archetype: options.archetype ?? defaultArchetype(slug),
+    surface: options.surface ?? defaultSurface(slug),
+    experienceLevel: options.experienceLevel ?? "beginner",
+    tocMode: options.tocMode ?? (options.archetype === "gateway" || defaultArchetype(slug) === "gateway" ? "none" : "auto"),
+    ...options,
+  };
+}
 
 const curatedPages: RegisteredPageSpec[] = [
-  {
-    slug: [],
-    filePath: "docs/home.mdx",
-    sourceRefs: ["README.md"],
-    includeInSidebar: true,
-    pageKind: "home",
-    priority: 100,
-    capabilities: ["openai-compatible http", "operator control", "project review", "evaluation", "workspace automation", "cli"],
-  },
-  { slug: ["docs"], filePath: "docs/index.mdx", sourceRefs: ["docs/index.md"], includeInSidebar: true, pageKind: "landing", priority: 70 },
-  {
-    slug: ["docs", "quickstart"],
-    filePath: "docs/quickstart.mdx",
-    sourceRefs: ["README.md"],
-    related: ["docs/core-concepts", "apps/web", "cli/command-suite"],
-  },
-  {
-    slug: ["docs", "core-concepts"],
-    filePath: "docs/core-concepts.mdx",
-    sourceRefs: ["DESIGN.md", "ARCHITECTURE.md"],
-    related: ["docs/runtime-model", "runtime", "reference/terminology"],
-  },
-  {
-    slug: ["docs", "why-kestrel"],
-    filePath: "docs/why-kestrel.mdx",
-    sourceRefs: ["README.md", "DESIGN.md", "docs/cli/workspaces.md"],
-    related: ["docs/core-concepts", "build/building-your-first-agent", "build/workspaces-and-automation"],
-    pageKind: "narrative",
-    priority: 98,
-    capabilities: ["workspace automation", "operator control", "evaluation"],
-  },
-  {
-    slug: ["docs", "architecture-overview"],
-    filePath: "docs/architecture-overview.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "README.md"],
-    related: ["docs/runtime-model", "runtime", "runtime/store-and-replay"],
-  },
-  {
-    slug: ["docs", "runtime-model"],
-    filePath: "docs/runtime-model.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md", "docs/integrations/nextjs-runner-service.md"],
-    related: ["runtime/engine", "runtime/store-and-replay", "deploy/running-the-runner-service"],
-    pageKind: "narrative",
-    priority: 84,
-    capabilities: ["runtime", "runner service", "operator control", "evaluation"],
-  },
-  {
-    slug: ["docs", "faq"],
-    filePath: "docs/faq.mdx",
-    sourceRefs: ["README.md", "docs/cli/workspaces.md", "docs/integrations/sdk-installation.md"],
-    related: ["build/workspaces-and-automation", "deploy", "packages/sdk"],
-    pageKind: "reference",
-    priority: 78,
-    capabilities: ["openai-compatible http", "workspace automation", "operator control", "project review", "evaluation"],
-  },
-  { slug: ["build"], filePath: "build/index.mdx", sourceRefs: ["packages/sdk/README.md", "docs/integrations/sdk-installation.md"], includeInSidebar: true, pageKind: "landing", priority: 76 },
-  {
-    slug: ["build", "workspace-copilot-demo"],
-    filePath: "build/workspace-copilot-demo.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/next/README.md", "docs/cli/workspaces.md", "docs/integrations/nextjs-runner-service.md"],
-    related: ["build/building-your-first-agent", "build/integrating-with-nextjs", "build/workspaces-and-automation"],
-    pageKind: "tutorial",
-    priority: 94,
-    capabilities: ["workspace automation", "runner service"],
-  },
-  {
-    slug: ["build", "building-your-first-agent"],
-    filePath: "build/building-your-first-agent.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts", "docs/integrations/sdk-installation.md"],
-    related: ["build/workspace-copilot-demo", "build/running-your-first-streamed-request", "packages/sdk"],
-    pageKind: "tutorial",
-    priority: 96,
-  },
-  {
-    slug: ["build", "running-your-first-streamed-request"],
-    filePath: "build/running-your-first-streamed-request.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts"],
-    related: ["build/building-your-first-agent", "build/adding-background-subscriptions", "packages/sdk"],
-    pageKind: "tutorial",
-    priority: 89,
-  },
-  {
-    slug: ["build", "adding-session-memory"],
-    filePath: "build/adding-session-memory.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts"],
-    related: ["build/building-your-first-agent", "build/automating-common-tasks", "packages/sdk"],
-    pageKind: "tutorial",
-    priority: 87,
-    capabilities: ["workspace automation"],
-  },
-  {
-    slug: ["build", "adding-background-subscriptions"],
-    filePath: "build/adding-background-subscriptions.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts"],
-    related: ["build/running-your-first-streamed-request", "packages/sdk", "packages/observability"],
-    pageKind: "tutorial",
-    priority: 83,
-  },
-  {
-    slug: ["build", "integrating-with-nextjs"],
-    filePath: "build/integrating-with-nextjs.mdx",
-    sourceRefs: ["packages/next/README.md", "packages/next/src/routes.ts", "docs/integrations/nextjs-runner-service.md"],
-    related: ["build/workspace-copilot-demo", "build/nextjs-route-cookbook", "deploy/running-the-runner-service", "packages/next"],
-    pageKind: "tutorial",
-    priority: 95,
-    capabilities: ["nextjs", "runner service"],
-  },
-  {
-    slug: ["build", "nextjs-route-cookbook"],
-    filePath: "build/nextjs-route-cookbook.mdx",
-    sourceRefs: ["packages/next/src/routes.ts", "docs/integrations/nextjs-runner-service.md"],
-    related: ["build/integrating-with-nextjs", "packages/next", "deploy/environment-and-auth"],
-    pageKind: "reference",
-    priority: 86,
-    capabilities: ["nextjs", "runner service"],
-  },
-  {
-    slug: ["build", "openai-compatible-http"],
-    filePath: "build/openai-compatible-http.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "tests/integration/runner-service-openai-compat.test.ts"],
-    related: ["build/integrating-with-nextjs", "packages/next", "packages/sdk"],
-    pageKind: "tutorial",
-    priority: 97,
-    capabilities: ["openai-compatible http", "runner service"],
-  },
-  {
-    slug: ["build", "adding-observability"],
-    filePath: "build/adding-observability.mdx",
-    sourceRefs: ["packages/observability/README.md", "packages/observability/src/tracer.ts", "packages/observability/src/otel.ts"],
-    related: ["packages/observability", "build/building-your-first-agent", "operations/reliability"],
-    pageKind: "tutorial",
-    priority: 80,
-  },
-  {
-    slug: ["build", "workspaces-and-automation"],
-    filePath: "build/workspaces-and-automation.mdx",
-    sourceRefs: ["docs/cli/workspaces.md", "cli/workspace/WorkspaceResolver.ts", "cli/workspace/WorkspaceStore.ts"],
-    related: ["build/workspace-copilot-demo", "build/automating-common-tasks", "cli/workspace-workflows"],
-    pageKind: "tutorial",
-    priority: 92,
-    capabilities: ["workspace automation"],
-  },
-  {
-    slug: ["build", "automating-common-tasks"],
-    filePath: "build/automating-common-tasks.mdx",
-    sourceRefs: ["docs/cli/workspaces.md", "cli/kcron.ts"],
-    related: ["build/workspaces-and-automation", "cli/kcron", "deploy/production-operating-model"],
-    pageKind: "tutorial",
-    priority: 90,
-    capabilities: ["workspace automation"],
-  },
-  { slug: ["deploy"], filePath: "deploy/index.mdx", sourceRefs: ["docs/integrations/nextjs-runner-service.md", "cli/webCommand.ts"], includeInSidebar: true, pageKind: "landing", priority: 74 },
-  {
-    slug: ["deploy", "running-the-runner-service"],
-    filePath: "deploy/running-the-runner-service.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "cli/webCommand.ts"],
-    related: ["build/workspace-copilot-demo", "deploy/environment-and-auth", "build/integrating-with-nextjs"],
-    pageKind: "tutorial",
-    priority: 88,
-    capabilities: ["runner service"],
-  },
-  {
-    slug: ["deploy", "environment-and-auth"],
-    filePath: "deploy/environment-and-auth.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "README.md"],
-    related: ["deploy/running-the-runner-service", "build/building-your-first-agent", "packages/next"],
-    pageKind: "tutorial",
-    priority: 82,
-    capabilities: ["runner service"],
-  },
-  {
-    slug: ["deploy", "production-operating-model"],
-    filePath: "deploy/production-operating-model.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md", "docs/cli/workspaces.md"],
-    related: ["operations/reliability", "runtime/store-and-replay", "build/automating-common-tasks"],
-    pageKind: "reference",
-    priority: 77,
-    capabilities: ["runner service", "workspace automation"],
-  },
-  {
-    slug: ["deploy", "deployment-troubleshooting"],
-    filePath: "deploy/deployment-troubleshooting.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "docs/cli/workspaces.md", "README.md"],
-    related: ["deploy/running-the-runner-service", "deploy/environment-and-auth", "operations/reliability"],
-    pageKind: "reference",
-    priority: 79,
-    capabilities: ["runner service"],
-  },
-  { slug: ["apps"], filePath: "apps/index.mdx", includeInSidebar: true, pageKind: "landing", priority: 72 },
-  {
-    slug: ["apps", "web"],
-    filePath: "apps/web.mdx",
-    sourceRefs: ["README.md", "apps/web/package.json"],
-    related: ["build/integrating-with-nextjs", "deploy/running-the-runner-service", "packages/next"],
-    pageKind: "reference",
-    priority: 82,
-    capabilities: ["operator control", "project review", "task graph", "project snapshot"],
-  },
-  {
-    slug: ["apps", "desktop"],
-    filePath: "apps/desktop.mdx",
-    sourceRefs: ["apps/desktop/package.json", "apps/desktop/src/main.ts"],
-    related: ["build/workspaces-and-automation", "cli/kchat", "cli/workspace-workflows"],
-    pageKind: "reference",
-    priority: 76,
-    capabilities: ["cli", "workspace automation"],
-  },
-  { slug: ["packages"], filePath: "packages/index.mdx", includeInSidebar: true, pageKind: "landing", priority: 73 },
-  {
-    slug: ["packages", "sdk"],
-    filePath: "packages/sdk.mdx",
-    sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts"],
-    related: ["build/building-your-first-agent", "packages/next", "operations/review-and-state-workflows", "packages/observability"],
-    pageKind: "reference",
-    priority: 95,
-    capabilities: ["operator control", "project review", "task graph", "project snapshot", "workspace automation"],
-  },
-  {
-    slug: ["packages", "next"],
-    filePath: "packages/next.mdx",
-    sourceRefs: ["packages/next/README.md", "docs/integrations/nextjs-runner-service.md"],
-    related: ["build/integrating-with-nextjs", "deploy/running-the-runner-service", "packages/sdk"],
-    pageKind: "reference",
-    priority: 85,
-    capabilities: ["nextjs", "openai-compatible http", "runner service"],
-  },
-  {
-    slug: ["packages", "observability"],
-    filePath: "packages/observability.mdx",
-    sourceRefs: ["packages/observability/README.md", "packages/observability/src/tracer.ts", "packages/observability/src/otel.ts"],
-    related: ["build/adding-observability", "operations/reliability", "runtime/store-and-replay"],
-    pageKind: "reference",
-    priority: 72,
-  },
-  { slug: ["cli"], filePath: "cli/index.mdx", includeInSidebar: true, pageKind: "landing", priority: 75 },
-  {
-    slug: ["cli", "command-suite"],
-    filePath: "cli/command-suite.mdx",
-    sourceRefs: ["README.md", "docs/cli/kchat.md"],
-    related: ["cli", "cli/workspace-workflows", "cli/runner-service"],
-    pageKind: "reference",
-    priority: 78,
-    capabilities: ["cli", "workspace automation"],
-  },
-  {
-    slug: ["cli", "kchat"],
-    filePath: "cli/kchat.mdx",
-    sourceRefs: ["docs/cli/kchat.md", "docs/cli/kchat-protocol.md"],
-    related: ["cli/command-suite", "cli/profiles-code-mode-and-mcp", "operations/operator-control-workflows", "apps/desktop"],
-    pageKind: "reference",
-    priority: 96,
-    capabilities: ["cli", "operator control"],
-  },
-  {
-    slug: ["cli", "kcron"],
-    filePath: "cli/kcron.mdx",
-    sourceRefs: ["docs/cli/workspaces.md", "cli/kcron.ts"],
-    related: ["cli/workspace-workflows", "apps/desktop", "operations/reliability"],
-    pageKind: "reference",
-    priority: 84,
-    capabilities: ["workspace automation"],
-  },
-  {
-    slug: ["cli", "workspace-workflows"],
-    filePath: "cli/workspace-workflows.mdx",
-    sourceRefs: ["docs/cli/workspaces.md"],
-    related: ["build/workspaces-and-automation", "build/automating-common-tasks", "cli/kcron"],
-    pageKind: "reference",
-    priority: 88,
-    capabilities: ["workspace automation"],
-  },
-  {
-    slug: ["cli", "runner-service"],
-    filePath: "cli/runner-service.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "cli/webCommand.ts"],
-    related: ["deploy/running-the-runner-service", "build/integrating-with-nextjs", "apps/web"],
-    pageKind: "reference",
-    priority: 87,
-    capabilities: ["runner service"],
-  },
-  {
-    slug: ["cli", "profiles-code-mode-and-mcp"],
-    filePath: "cli/profiles-code-mode-and-mcp.mdx",
-    sourceRefs: ["docs/cli/kchat.md", "cli/config/ProfileStore.ts", "cli/app/App.ts"],
-    related: ["cli/kchat", "build/workspaces-and-automation", "packages/sdk"],
-    pageKind: "reference",
-    priority: 90,
-    capabilities: ["profiles, code mode, and mcp", "workspace automation"],
-  },
-  {
-    slug: ["runtime"],
-    filePath: "runtime/index.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "DESIGN.md"],
-    includeInSidebar: true,
-    pageKind: "landing",
-    priority: 71,
-    capabilities: ["runtime"],
-  },
-  {
-    slug: ["runtime", "engine"],
-    filePath: "runtime/engine.mdx",
-    sourceRefs: ["ARCHITECTURE.md"],
-    related: ["runtime/io-and-tools", "runtime/store-and-replay", "reference/terminology"],
-    pageKind: "reference",
-    priority: 69,
-    capabilities: ["runtime", "runner service"],
-  },
-  {
-    slug: ["runtime", "io-and-tools"],
-    filePath: "runtime/io-and-tools.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "docs/references/heuristic-hotspots.md"],
-    related: ["runtime/engine", "cli/runner-service", "reference/heuristic-hotspots"],
-    pageKind: "reference",
-    priority: 67,
-    capabilities: ["runtime"],
-  },
-  {
-    slug: ["runtime", "store-and-replay"],
-    filePath: "runtime/store-and-replay.mdx",
-    sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md"],
-    related: ["operations/evaluations", "operations/reliability", "reference/quality-score"],
-    pageKind: "reference",
-    priority: 93,
-    capabilities: ["runtime", "evaluation"],
-  },
-  {
-    slug: ["runtime", "governance-and-invariants"],
-    filePath: "runtime/governance-and-invariants.mdx",
-    sourceRefs: ["AGENTS.md", "docs/references/lint-invariants.md", "docs/references/heuristic-hotspots.md"],
-    related: ["reference/lint-invariants", "reference/heuristic-hotspots", "operations/quality-gates"],
-    internal: true,
-  },
-  { slug: ["operations"], filePath: "operations/index.mdx", sourceRefs: ["RELIABILITY.md", "SECURITY.md", "QUALITY_SCORE.md"], includeInSidebar: true, pageKind: "landing", priority: 79 },
-  {
-    slug: ["operations", "reliability"],
-    filePath: "operations/reliability.mdx",
-    sourceRefs: ["RELIABILITY.md"],
-    related: ["operations/evaluations", "operations/quality-gates", "archive"],
-    pageKind: "reference",
-    priority: 74,
-  },
-  {
-    slug: ["operations", "security"],
-    filePath: "operations/security.mdx",
-    sourceRefs: ["SECURITY.md"],
-    related: ["runtime/governance-and-invariants", "reference/architecture-rules", "reference/lint-invariants"],
-    pageKind: "reference",
-    priority: 64,
-  },
-  {
-    slug: ["operations", "migration"],
-    filePath: "operations/migration.mdx",
-    sourceRefs: ["README.md", "docs/runbooks/2026-02-26-v3-migration-runbook.md"],
-    related: ["operations/reliability", "archive", "runtime/store-and-replay"],
-    pageKind: "reference",
-    priority: 58,
-  },
-  {
-    slug: ["operations", "prompt-suite"],
-    filePath: "operations/prompt-suite.mdx",
-    sourceRefs: ["README.md"],
-    related: ["operations/quality-gates", "runtime/governance-and-invariants", "reference/quality-score"],
-    pageKind: "reference",
-    priority: 62,
-  },
-  {
-    slug: ["operations", "evaluations"],
-    filePath: "operations/evaluations.mdx",
-    sourceRefs: ["evals/README.md", "evals/migration/ownership-ledger.json"],
-    related: ["operations/quality-gates", "runtime/store-and-replay", "archive"],
-    pageKind: "reference",
-    priority: 91,
-    capabilities: ["evaluation"],
-  },
-  {
-    slug: ["operations", "quality-gates"],
-    filePath: "operations/quality-gates.mdx",
-    sourceRefs: ["QUALITY_SCORE.md", "docs/references/lint-invariants.md"],
-    related: ["operations/prompt-suite", "operations/artifact-inspection", "reference/quality-score", "runtime/governance-and-invariants"],
-    pageKind: "reference",
-    priority: 66,
-  },
-  {
-    slug: ["operations", "artifact-inspection"],
-    filePath: "operations/artifact-inspection.mdx",
-    sourceRefs: ["docs/cli/workspaces.md", "README.md", "RELIABILITY.md"],
-    related: ["operations/reliability", "runtime/store-and-replay", "build/workspace-copilot-demo"],
-    pageKind: "reference",
-    priority: 89,
-    capabilities: ["artifact inspection", "evaluation", "workspace automation"],
-  },
-  {
-    slug: ["operations", "operator-control-workflows"],
-    filePath: "operations/operator-control-workflows.mdx",
-    sourceRefs: ["docs/integrations/nextjs-runner-service.md", "docs/cli/kchat.md", "packages/sdk/src/KestrelClient.ts"],
-    related: ["cli/kchat", "apps/web", "operations/review-and-state-workflows", "packages/sdk"],
-    pageKind: "reference",
-    priority: 93,
-    capabilities: ["operator control"],
-  },
-  {
-    slug: ["operations", "review-and-state-workflows"],
-    filePath: "operations/review-and-state-workflows.mdx",
-    sourceRefs: ["apps/web/lib/client/stateSync.ts", "apps/web/tests/routes.test.ts", "packages/sdk/src/KestrelClient.ts"],
-    related: ["operations/operator-control-workflows", "apps/web", "packages/sdk"],
-    pageKind: "reference",
-    priority: 99,
-    capabilities: ["project review", "task graph", "project snapshot"],
-  },
-  { slug: ["reference"], filePath: "reference/index.mdx", sourceRefs: ["docs/index.md"], includeInSidebar: true, pageKind: "landing", priority: 68 },
-  {
-    slug: ["reference", "terminology"],
-    filePath: "reference/terminology.mdx",
-    sourceRefs: ["README.md", "ARCHITECTURE.md"],
-    related: ["docs/core-concepts", "runtime/engine", "apps/web"],
-  },
-  {
-    slug: ["reference", "architecture-rules"],
-    filePath: "reference/architecture-rules.mdx",
-    sourceRefs: ["docs/references/architecture-rules.json"],
-    related: ["runtime/governance-and-invariants", "operations/security", "reference/lint-invariants"],
-    internal: true,
-  },
-  {
-    slug: ["reference", "release-tracks"],
-    filePath: "reference/release-tracks.mdx",
-    sourceRefs: ["docs/references/release-tracks.json"],
-    related: ["reference/quality-score", "operations/quality-gates", "archive"],
-    internal: true,
-  },
-  {
-    slug: ["reference", "quality-score"],
-    filePath: "reference/quality-score.mdx",
-    sourceRefs: ["QUALITY_SCORE.md", "docs/generated/quality-scorecard.json"],
-    related: ["operations/quality-gates", "operations/reliability", "reference/release-tracks"],
-    internal: true,
-  },
-  {
-    slug: ["reference", "heuristic-hotspots"],
-    filePath: "reference/heuristic-hotspots.mdx",
-    sourceRefs: ["docs/references/heuristic-hotspots.md"],
-    related: ["runtime/governance-and-invariants", "reference/lint-invariants", "operations/security"],
-    internal: true,
-  },
-  {
-    slug: ["reference", "lint-invariants"],
-    filePath: "reference/lint-invariants.mdx",
-    sourceRefs: ["docs/references/lint-invariants.md"],
-    related: ["runtime/governance-and-invariants", "reference/architecture-rules", "operations/quality-gates"],
-    internal: true,
-  },
-  { slug: ["archive"], filePath: "archive/index.mdx", sourceRefs: ["docs/PLANS.md"], includeInSidebar: true, pageKind: "landing", priority: 20 },
+  page("", "docs/home.mdx", { sourceRefs: ["README.md"], archetype: "gateway", priority: 100 }),
+
+  page("start", "docs/index.mdx", { sourceRefs: ["README.md", "ARCHITECTURE.md"], archetype: "gateway", priority: 98 }),
+  page("start/quickstart", "docs/quickstart.mdx", { sourceRefs: ["README.md"], archetype: "gateway", related: ["desktop/install", "kestrel-one/getting-started", "build/building-your-first-agent"], priority: 99 }),
+  page("start/concepts", "docs/core-concepts.mdx", { sourceRefs: ["DESIGN.md", "ARCHITECTURE.md"], related: ["start/architecture", "reference/terminology", "reference/terminal-results"] }),
+  page("start/why-kestrel", "docs/why-kestrel.mdx", { sourceRefs: ["README.md", "DESIGN.md"], related: ["start/concepts", "desktop", "build"] }),
+  page("start/architecture", "docs/architecture-overview.mdx", { sourceRefs: ["ARCHITECTURE.md", "README.md"], related: ["start/concepts", "reference/protocol", "operate/reliability"] }),
+  page("start/faq", "docs/faq.mdx", { sourceRefs: ["README.md"], related: ["start/quickstart", "desktop/troubleshooting", "operate/troubleshooting"] }),
+  page("start/release-status", "start/release-status.mdx", { sourceRefs: ["package.json", "apps/docs/package.json"], related: ["reference/compatibility", "reference/releases"], priority: 94 }),
+
+  page("desktop", "apps/desktop.mdx", { sourceRefs: ["apps/desktop/package.json", "apps/desktop/README.md"], archetype: "gateway", priority: 97, capabilities: ["workspace automation", "operator control"] }),
+  page("desktop/install", "desktop/install.mdx", { sourceRefs: ["apps/desktop/README.md", "README.md"], archetype: "task-recipe", estimatedTime: "5 minutes", journeyId: "desktop-first-success", related: ["desktop/first-run", "desktop/providers"] }),
+  page("desktop/first-run", "desktop/first-run.mdx", { sourceRefs: ["apps/desktop/renderer/src/DesktopApp.tsx"], estimatedTime: "10 minutes", journeyId: "desktop-first-success", related: ["desktop/install", "desktop/providers", "desktop/workspaces-and-sessions"] }),
+  page("desktop/providers", "desktop/providers.mdx", { sourceRefs: ["apps/desktop/renderer/src/DesktopApp.tsx", ".env.example"], archetype: "task-recipe", related: ["desktop/first-run", "desktop/troubleshooting"] }),
+  page("desktop/workspaces-and-sessions", "desktop/workspaces-and-sessions.mdx", { sourceRefs: ["docs/cli/workspaces.md", "apps/desktop/renderer/src/DesktopApp.tsx"], journeyId: "desktop-first-success", related: ["desktop/operator-control", "desktop/automation"], capabilities: ["workspace automation"] }),
+  page("desktop/operator-control", "desktop/operator-control.mdx", { sourceRefs: ["cli/app/App.ts", "apps/desktop/renderer/src/DesktopApp.tsx"], journeyId: "desktop-first-success", related: ["desktop/workspaces-and-sessions", "desktop/recovery"], capabilities: ["operator control"] }),
+  page("desktop/automation", "desktop/automation.mdx", { sourceRefs: ["cli/kcron.ts", "docs/cli/workspaces.md"], archetype: "task-recipe", experienceLevel: "intermediate", related: ["desktop/workspaces-and-sessions", "cli/kcron"], capabilities: ["workspace automation"] }),
+  page("desktop/recovery", "desktop/recovery.mdx", { sourceRefs: ["apps/desktop/README.md", "RELIABILITY.md"], archetype: "operational-playbook", experienceLevel: "intermediate", journeyId: "desktop-first-success", related: ["desktop/operator-control", "desktop/troubleshooting"] }),
+  page("desktop/troubleshooting", "desktop/troubleshooting.mdx", { sourceRefs: ["apps/desktop/README.md", "docs/runbooks/2026-07-10-desktop-v0.5.1-state-bridge.md"], related: ["desktop/providers", "desktop/recovery"] }),
+
+  page("kestrel-one", "apps/web.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/README.md"], archetype: "gateway", priority: 99, capabilities: ["threads", "projects", "knowledge", "managed models", "access control"] }),
+  page("kestrel-one/getting-started", "kestrel-one/getting-started.mdx", { sourceRefs: ["apps/web/README.md"], estimatedTime: "10 minutes", journeyId: "kestrel-one-collaboration", related: ["kestrel-one/threads", "kestrel-one/projects"] }),
+  page("kestrel-one/threads", "kestrel-one/threads.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "docs/plans/2026-07-12-kestrel-one-threads-projects.md"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/projects", "kestrel-one/artifacts-and-sharing"], priority: 98, capabilities: ["threads"] }),
+  page("kestrel-one/projects", "kestrel-one/projects.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "docs/plans/2026-07-12-kestrel-one-threads-projects.md"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/threads", "kestrel-one/context-revisions", "kestrel-one/organizations-and-access"], priority: 97, capabilities: ["projects", "access control"] }),
+  page("kestrel-one/context-revisions", "kestrel-one/context-revisions.mdx", { sourceRefs: ["docs/plans/2026-07-12-kestrel-one-threads-projects.md"], archetype: "explainer", journeyId: "kestrel-one-collaboration", related: ["kestrel-one/projects", "kestrel-one/knowledge"], capabilities: ["projects", "knowledge"] }),
+  page("kestrel-one/knowledge", "kestrel-one/knowledge.mdx", { sourceRefs: ["apps/web/README.md", "apps/web/app/route-ownership.manifest.ts"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/context-revisions", "kestrel-one/artifacts-and-sharing"], capabilities: ["knowledge"] }),
+  page("kestrel-one/artifacts-and-sharing", "kestrel-one/artifacts-and-sharing.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/threads", "kestrel-one/knowledge"], capabilities: ["threads"] }),
+  page("kestrel-one/organizations-and-access", "kestrel-one/organizations-and-access.mdx", { sourceRefs: ["docs/plans/2026-07-12-kestrel-one-threads-projects.md", "apps/web/app/route-ownership.manifest.ts"], archetype: "explainer", experienceLevel: "intermediate", related: ["kestrel-one/projects", "kestrel-one/administration"], capabilities: ["access control", "projects"] }),
+  page("kestrel-one/models-and-gateways", "kestrel-one/models-and-gateways.mdx", { sourceRefs: ["apps/web/README.md", "docs/runbooks/2026-07-12-kestrel-one-gateway-authority-rollout.md"], archetype: "explainer", experienceLevel: "advanced", related: ["kestrel-one/managed-model-deployments", "operate/model-authority"], capabilities: ["gateways", "managed models"] }),
+  page("kestrel-one/managed-model-deployments", "kestrel-one/managed-model-deployments.mdx", { sourceRefs: ["docs/adr/0005-managed-runpod-serverless-control-plane.md", "apps/web/app/route-ownership.manifest.ts"], experienceLevel: "advanced", related: ["kestrel-one/models-and-gateways", "kestrel-one/production-operations"], priority: 95, capabilities: ["managed models", "gateways", "access control"] }),
+  page("kestrel-one/administration", "kestrel-one/administration.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/README.md"], archetype: "gateway", experienceLevel: "advanced", related: ["kestrel-one/organizations-and-access", "kestrel-one/production-operations"], capabilities: ["access control", "gateways"] }),
+  page("kestrel-one/production-operations", "kestrel-one/production-operations.mdx", { sourceRefs: ["apps/web/README.md", "docs/adr/0005-managed-runpod-serverless-control-plane.md"], archetype: "operational-playbook", experienceLevel: "advanced", related: ["kestrel-one/administration", "operate/reliability"], capabilities: ["managed models", "gateways"] }),
+
+  page("build", "build/index.mdx", { sourceRefs: ["packages/sdk/README.md"], archetype: "gateway", priority: 96 }),
+  page("build/workspace-copilot-demo", "build/workspace-copilot-demo.mdx", { sourceRefs: ["packages/sdk/README.md", "packages/next/README.md"], archetype: "gateway", experienceLevel: "intermediate", related: ["build/building-your-first-agent", "build/integrating-with-nextjs"], priority: 94, capabilities: ["workspace automation"] }),
+  page("build/building-your-first-agent", "build/building-your-first-agent.mdx", { sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/agent.ts"], estimatedTime: "15 minutes", journeyId: "workspace-copilot-build", related: ["build/protocol-and-results", "build/running-your-first-streamed-request"], priority: 99 }),
+  page("build/running-your-first-streamed-request", "build/running-your-first-streamed-request.mdx", { sourceRefs: ["packages/sdk/README.md"], journeyId: "workspace-copilot-build", related: ["build/runner-events", "build/waiting-resume-and-cancellation"], priority: 93, capabilities: ["terminal results"] }),
+  page("build/adding-session-memory", "build/adding-session-memory.mdx", { sourceRefs: ["packages/sdk/README.md"], journeyId: "workspace-copilot-build", related: ["build/workspaces-and-automation"], capabilities: ["workspace automation"] }),
+  page("build/adding-background-subscriptions", "build/adding-background-subscriptions.mdx", { sourceRefs: ["packages/sdk/README.md"], archetype: "task-recipe", experienceLevel: "intermediate" }),
+  page("build/integrating-with-nextjs", "build/integrating-with-nextjs.mdx", { sourceRefs: ["packages/next/README.md"], surface: "nextjs", journeyId: "workspace-copilot-build", related: ["build/nextjs-route-cookbook", "operate/environment-and-auth"], priority: 95, capabilities: ["nextjs"] }),
+  page("build/nextjs-route-cookbook", "build/nextjs-route-cookbook.mdx", { sourceRefs: ["packages/next/src/routes.ts"], archetype: "task-recipe", surface: "nextjs", experienceLevel: "intermediate", tocMode: "full", capabilities: ["nextjs", "terminal results"] }),
+  page("build/openai-compatible-http", "build/openai-compatible-http.mdx", { sourceRefs: ["tests/integration/runner-service-openai-compat.test.ts"], experienceLevel: "intermediate", priority: 97, capabilities: ["openai-compatible http"] }),
+  page("build/adding-observability", "build/adding-observability.mdx", { sourceRefs: ["packages/observability/README.md"], experienceLevel: "intermediate", journeyId: "workspace-copilot-build" }),
+  page("build/workspaces-and-automation", "build/workspaces-and-automation.mdx", { sourceRefs: ["docs/cli/workspaces.md"], archetype: "task-recipe", experienceLevel: "intermediate", capabilities: ["workspace automation"] }),
+  page("build/automating-common-tasks", "build/automating-common-tasks.mdx", { sourceRefs: ["cli/kcron.ts"], archetype: "task-recipe", experienceLevel: "intermediate", capabilities: ["workspace automation"] }),
+  page("build/protocol-and-results", "build/protocol-and-results.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/contracts.ts"], archetype: "explainer", surface: "protocol", related: ["reference/protocol", "reference/terminal-results"], priority: 98, capabilities: ["protocol", "terminal results"] }),
+  page("build/runner-events", "build/runner-events.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "cli/protocol/contracts.ts"], archetype: "explainer", surface: "protocol", experienceLevel: "intermediate", related: ["reference/events", "build/waiting-resume-and-cancellation"], capabilities: ["protocol", "terminal results"] }),
+  page("build/waiting-resume-and-cancellation", "build/waiting-resume-and-cancellation.mdx", { sourceRefs: ["packages/sdk/src/contracts.ts", "src/runtime/waitForPrompt.ts"], archetype: "explainer", experienceLevel: "intermediate", journeyId: "workspace-copilot-build", related: ["build/runner-events", "reference/terminal-results"], capabilities: ["terminal results", "operator control"] }),
+  page("build/upgrading-to-0-6", "build/upgrading-to-0-6.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/contracts.ts"], related: ["reference/compatibility", "reference/releases"], priority: 96, capabilities: ["protocol", "terminal results"] }),
+
+  page("operate", "operations/index.mdx", { sourceRefs: ["RELIABILITY.md", "SECURITY.md"], archetype: "gateway", priority: 95 }),
+  page("operate/runner-service", "deploy/running-the-runner-service.mdx", { sourceRefs: ["docs/integrations/nextjs-runner-service.md", "cli/webCommand.ts"], archetype: "task-recipe", experienceLevel: "intermediate", priority: 94, capabilities: ["runner service"] }),
+  page("operate/environment-and-auth", "deploy/environment-and-auth.mdx", { sourceRefs: ["docs/integrations/nextjs-runner-service.md"], related: ["operate/runner-service", "operate/credential-leases"], capabilities: ["runner service", "access control"] }),
+  page("operate/deployment", "deploy/production-operating-model.mdx", { sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md"], related: ["operate/reliability", "kestrel-one/production-operations"] }),
+  page("operate/credential-leases", "operate/credential-leases.mdx", { sourceRefs: ["apps/web/lib/ai/gateway-credential-lease.ts", "docs/runbooks/2026-07-12-kestrel-one-gateway-authority-rollout.md"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/model-authority", "kestrel-one/models-and-gateways"], capabilities: ["gateways", "access control"] }),
+  page("operate/model-authority", "operate/model-authority.mdx", { sourceRefs: ["docs/runbooks/2026-07-12-kestrel-one-gateway-authority-rollout.md"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/credential-leases", "kestrel-one/managed-model-deployments"], capabilities: ["gateways", "managed models", "access control"] }),
+  page("operate/observability", "operations/artifact-inspection.mdx", { sourceRefs: ["RELIABILITY.md", "packages/observability/README.md"], related: ["operate/reliability", "reference/observability"], capabilities: ["artifact inspection"] }),
+  page("operate/operator-control", "operations/operator-control-workflows.mdx", { sourceRefs: ["docs/cli/kchat.md", "packages/sdk/src/KestrelClient.ts"], related: ["desktop/operator-control", "operate/review-and-state"], capabilities: ["operator control"] }),
+  page("operate/review-and-state", "operations/review-and-state-workflows.mdx", { sourceRefs: ["packages/sdk/src/KestrelClient.ts"], related: ["operate/operator-control", "reference/sdk"], capabilities: ["project review", "task graph", "project snapshot"] }),
+  page("operate/security", "operations/security.mdx", { sourceRefs: ["SECURITY.md"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/environment-and-auth", "kestrel-one/organizations-and-access"], capabilities: ["access control"] }),
+  page("operate/reliability", "operations/reliability.mdx", { sourceRefs: ["RELIABILITY.md"], related: ["operate/replay", "operate/evaluations"] }),
+  page("operate/replay", "runtime/store-and-replay.mdx", { sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md"], related: ["operate/reliability", "operate/evaluations"], capabilities: ["runtime", "evaluation"] }),
+  page("operate/evaluations", "operations/evaluations.mdx", { sourceRefs: ["evals/README.md"], related: ["operate/quality-gates", "operate/replay"], priority: 92, capabilities: ["evaluation"] }),
+  page("operate/quality-gates", "operations/quality-gates.mdx", { sourceRefs: ["QUALITY_SCORE.md"], related: ["operate/evaluations", "operate/reliability"] }),
+  page("operate/troubleshooting", "deploy/deployment-troubleshooting.mdx", { sourceRefs: ["README.md", "RELIABILITY.md"], related: ["operate/runner-service", "operate/reliability"] }),
+
+  page("reference", "reference/index.mdx", { sourceRefs: ["docs/index.md"], archetype: "gateway", priority: 91 }),
+  page("reference/protocol", "reference/protocol.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/protocol/package.json"], related: ["reference/terminal-results", "reference/events", "reference/compatibility"], priority: 99, capabilities: ["protocol", "terminal results"] }),
+  page("reference/sdk", "packages/sdk.mdx", { sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/contracts.ts"], surface: "sdk", experienceLevel: "intermediate", tocMode: "full", related: ["reference/protocol", "reference/terminal-results"], priority: 98, capabilities: ["protocol", "operator control"] }),
+  page("reference/nextjs", "packages/next.mdx", { sourceRefs: ["packages/next/README.md"], surface: "nextjs", experienceLevel: "intermediate", tocMode: "full", related: ["build/integrating-with-nextjs", "reference/sdk"], capabilities: ["nextjs"] }),
+  page("reference/observability", "packages/observability.mdx", { sourceRefs: ["packages/observability/README.md"], surface: "sdk", experienceLevel: "intermediate", related: ["build/adding-observability", "operate/observability"] }),
+  page("reference/http", "reference/http.mdx", { sourceRefs: ["tests/integration/runner-service-openai-compat.test.ts"], experienceLevel: "intermediate", tocMode: "full", capabilities: ["openai-compatible http"] }),
+  page("reference/terminal-results", "reference/terminal-results.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/contracts.ts"], related: ["reference/protocol", "reference/events"], priority: 97, capabilities: ["protocol", "terminal results"] }),
+  page("reference/events", "reference/events.mdx", { sourceRefs: ["cli/protocol/contracts.ts", "packages/protocol/src/index.ts"], related: ["reference/protocol", "reference/terminal-results"], capabilities: ["protocol", "terminal results"] }),
+  page("reference/configuration", "reference/configuration.mdx", { sourceRefs: [".env.example", "apps/web/.env.example"], related: ["operate/environment-and-auth", "cli/profiles-code-mode-and-mcp"] }),
+  page("reference/compatibility", "reference/compatibility.mdx", { sourceRefs: ["package.json", "packages/protocol/package.json", "packages/sdk/package.json", "packages/next/package.json", "packages/observability/package.json"], related: ["reference/releases", "build/upgrading-to-0-6"], priority: 96 }),
+  page("reference/releases", "reference/releases.mdx", { sourceRefs: ["package.json"], related: ["start/release-status", "reference/compatibility"] }),
+  page("reference/terminology", "reference/terminology.mdx", { sourceRefs: ["README.md", "ARCHITECTURE.md"], related: ["start/concepts", "reference/protocol"] }),
+  page("reference/cli", "cli/index.mdx", { sourceRefs: ["README.md", "docs/cli/kchat.md"], related: ["cli/kchat", "cli/command-suite"] }),
+  page("cli/command-suite", "cli/command-suite.mdx", { sourceRefs: ["README.md", "docs/cli/kchat.md"], capabilities: ["cli"] }),
+  page("cli/kchat", "cli/kchat.mdx", { sourceRefs: ["docs/cli/kchat.md", "docs/cli/kchat-protocol.md"], capabilities: ["cli", "operator control"] }),
+  page("cli/kcron", "cli/kcron.mdx", { sourceRefs: ["cli/kcron.ts"], capabilities: ["cli", "workspace automation"] }),
+  page("cli/workspace-workflows", "cli/workspace-workflows.mdx", { sourceRefs: ["docs/cli/workspaces.md"], capabilities: ["cli", "workspace automation"] }),
+  page("cli/runner-service", "cli/runner-service.mdx", { sourceRefs: ["cli/webCommand.ts"], capabilities: ["cli", "runner service"] }),
+  page("cli/profiles-code-mode-and-mcp", "cli/profiles-code-mode-and-mcp.mdx", { sourceRefs: ["docs/cli/kchat.md", "cli/config/ProfileStore.ts"], capabilities: ["cli", "profiles, code mode, and mcp"] }),
+
+  page("archive", "archive/index.mdx", { sourceRefs: ["docs/PLANS.md"], archetype: "gateway", priority: 20, internal: true }),
 ];
 
 const archivedPlans: RegisteredPageSpec[] = [
@@ -467,6 +159,10 @@ const archivedPlans: RegisteredPageSpec[] = [
 ].map((slug) => ({
   slug: ["archive", "plans", slug],
   sourcePath: `docs/plans/${slug}.md`,
+  archetype: "reference" as const,
+  surface: "suite" as const,
+  experienceLevel: "advanced" as const,
+  tocMode: "auto" as const,
   archive: true,
   archiveGroup: "plans" as const,
 }));
@@ -477,6 +173,10 @@ const archivedRunbooks: RegisteredPageSpec[] = [
 ].map((slug) => ({
   slug: ["archive", "runbooks", slug],
   sourcePath: `docs/runbooks/${slug}.md`,
+  archetype: "operational-playbook" as const,
+  surface: "operations" as const,
+  experienceLevel: "advanced" as const,
+  tocMode: "auto" as const,
   archive: true,
   archiveGroup: "runbooks" as const,
 }));
@@ -486,9 +186,7 @@ export const pageRegistry = [...curatedPages, ...archivedPlans, ...archivedRunbo
 const slugSet = new Set<string>();
 for (const spec of pageRegistry) {
   const key = spec.slug.join("/");
-  if (slugSet.has(key)) {
-    throw new Error(`Duplicate docs slug registered: '${key || "/"}'.`);
-  }
+  if (slugSet.has(key)) throw new Error(`Duplicate docs slug registered: '${key || "/"}'.`);
   slugSet.add(key);
 }
 

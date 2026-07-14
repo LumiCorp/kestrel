@@ -1,0 +1,38 @@
+---
+title: OpenAI-compatible HTTP reference
+summary: Request paths, authentication, streaming behavior, and Kestrel metadata for compatible chat and responses clients.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Use this reference when your server already speaks an OpenAI-style HTTP contract. For an adoption walkthrough, use [the integration tutorial](/build/openai-compatible-http).
+
+## Endpoints
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /v1/models` | List models available through the configured runner profile |
+| `POST /v1/chat/completions` | Submit chat-completion shaped input |
+| `POST /v1/responses` | Submit responses-shaped input |
+
+## Authentication
+
+Send the runner service token from trusted server code:
+
+```http
+Authorization: Bearer <runner-service-token>
+Content-Type: application/json
+```
+
+Do not expose this token to browser code. Resolve the authenticated user, tenant, and session in your application server before forwarding the request.
+
+## Streaming
+
+Streaming responses use server-sent events. A client disconnect must cancel the exact upstream run rather than leaving anonymous work active. The terminal event remains the source for the final result.
+
+## Kestrel metadata
+
+Compatible responses may include Kestrel metadata such as session, run, request, and correlation identifiers. Preserve that nested metadata if your application needs replay, support, or observability later.

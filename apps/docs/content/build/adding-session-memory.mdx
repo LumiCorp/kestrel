@@ -1,6 +1,6 @@
 ---
 title: Adding session memory
-summary: Persist explicit memory for `workspace-copilot` so the demo carries forward findings, decisions, next actions, and report links between interactive and scheduled runs.
+summary: Carry findings, decisions, next actions, and report links from one Workspace Copilot run to the next.
 section: build
 audience: integrators
 status: stable
@@ -9,21 +9,21 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 3">
-This step adds durable continuity to `workspace-copilot`. The agent id, profile id, actor, tenant, and route names stay fixed. Only the continuity model gets richer.
+Give Workspace Copilot a memory record that later interactive and scheduled runs can read and update.
 </WorkspaceCopilotDemo>
 
-Kestrel does not ask you to hide continuity in prompt text or trust ambient model state. Session memory is explicit, versioned, and inspectable.
+Session memory gives your application a readable record of what should carry forward. Each update has a revision number, so concurrent changes cannot silently overwrite one another.
 
 For **Workspace Copilot**, memory is the bridge between a daytime review and a nightly automated report.
 
-## Why this exists
+## Connect interactive and scheduled work
 
-The canonical example has two modes:
+Workspace Copilot does work in two ways:
 
 - an interactive daytime request from `/api/copilot/run` or `/api/copilot/stream`
 - a nightly review launched by `kcron`
 
-If those two modes cannot share continuity safely, the example becomes two unrelated integrations. Session memory is what keeps them connected without faking one long-lived browser request.
+Session memory lets both kinds of work share useful context without keeping one browser request open indefinitely.
 
 ## Read the current memory snapshot
 
@@ -43,7 +43,7 @@ await session.memory.update(
     patch: {
       findings: "Docs and runtime pages changed in the last review cycle.",
       decisions: "Nightly review should focus on operator impact first.",
-      openQuestions: "Do the stream and webhook routes still share the same correlation contract?",
+      openQuestions: "Do the stream and webhook routes still return the same correlation headers?",
       nextAction: "Write the nightly report to ./reports/nightly-review.md.",
       linkedArtifacts: ["reports/nightly-review.md"],
     },
@@ -54,47 +54,51 @@ await session.memory.update(
 
 ## Memory fields that matter
 
-| Field | Why it exists in the demo |
+| Field | What it remembers |
 | --- | --- |
 | `findings` | captures the current state of the workspace |
-| `decisions` | records explicit reviewer choices |
-| `openQuestions` | carries unresolved operator or product questions |
+| `decisions` | records choices a later run should respect |
+| `openQuestions` | carries unresolved questions into later work |
 | `nextAction` | keeps the next run anchored in real work |
-| `linkedArtifacts` | points to concrete repo outputs like `reports/nightly-review.md` |
+| `linkedArtifacts` | points to project outputs like `reports/nightly-review.md` |
 
 ## How the memory path works
 
 ```text
 session()
-  -> read current graph-backed memory snapshot
+  -> read the current memory snapshot
     -> apply versioned patch
       -> persist next revision
-        -> later run or operator can inspect it
+        -> a later run or person can inspect it
 ```
 
-## Failure mode to expect
+## Resolve a revision conflict
 
-If two writers update the same session concurrently, the revision check should fail instead of silently merging conflicting stories. That is the correct failure mode. Operators can recover from a visible conflict; they cannot recover from hidden continuity corruption.
+If two processes update the same session at once, the revision check rejects the later write instead of silently overwriting newer information. Read the latest revision, review the competing change, and apply the intended update again.
 
-## What changes in this step
+<Outcome>
+  <p>A later run can read the new memory revision and its linked report without reconstructing continuity from prompt text.</p>
+</Outcome>
 
-- the demo now has explicit, versioned memory
-- later nightly runs can reuse durable context instead of only prompt text
-- operators can inspect continuity without reverse-engineering hidden model state
-- `reports/nightly-review.md` becomes part of the memory contract through `linkedArtifacts`
+## Use the saved memory
 
-## Why this matters for the product
+- Workspace Copilot now has readable, versioned memory
+- later nightly runs can reuse saved context instead of relying only on prompt text
+- people can inspect and correct what the next run will remember
+- `linkedArtifacts` connects the memory record to `reports/nightly-review.md`
 
-Memory is not there to make the assistant sound smoother. It is there to make the system supportable. If the nightly report is wrong, the operator should be able to inspect:
+## Investigate an incorrect result
+
+If a nightly report is wrong, inspect:
 
 - what memory existed before the run
 - which revision was current
-- which artifact path the prior reviewer intended to update
+- which file the previous run intended to update
 
-That is the difference between a durable runtime and a convenient demo.
+The memory record gives you a concrete place to understand and correct continuity when a later result is wrong.
 
-## What To Read Next
+## Add the next capability
 
 - [Workspaces and automation](/build/workspaces-and-automation)
 - [Automating common tasks](/build/automating-common-tasks)
-- [SDK reference](/packages/sdk)
+- [SDK reference](/reference/sdk)

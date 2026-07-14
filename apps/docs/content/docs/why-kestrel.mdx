@@ -1,130 +1,31 @@
 ---
 title: Why Kestrel
-summary: Why Kestrel is built around a durable runner, explicit boundaries, replay, operator control, and workspace-local automation instead of a thin chat wrapper.
-section: docs
+summary: Understand what changes when an agent must finish real work, survive interruptions, and remain accountable to people.
+section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
 
-Kestrel exists because “call the model and append some state” stops being enough as soon as the agent feature matters to the business. The moment a team needs continuity, streaming, replay, operator tooling, review state, behavior validation, or scheduled recurring work, the stack becomes more than a request handler. It becomes a runtime with a control plane.
+A direct model call is often enough for a disposable answer. It becomes less convincing when the work must continue tomorrow, wait for a person, produce files, recover from failure, or be explained after the fact. At that point, the application needs more than a chat transcript.
 
-Kestrel takes that seriously. The repo is shaped around a few blunt claims:
+Kestrel supplies the durable layer around that work. A run has an identity and a terminal outcome. A session keeps continuity. Waiting is visible instead of looking like a hang. Human intervention is recorded. Events and artifacts remain available for inspection, recovery, replay, and evaluation.
 
-- agent execution should leave a durable record
-- trust boundaries should stay explicit
-- applications should integrate through stable contracts, not ad hoc proxies
-- recurring work should live with the workspace it acts on
-- operators should be able to inspect, steer, and replay what happened after the fact
+## The practical difference
 
-## The problem Kestrel actually solves
+Applications often add memory, background jobs, streaming, retries, human approval, and logs one feature at a time. That can leave related state scattered across several systems. Kestrel keeps those behaviors connected to the same runs and sessions.
 
-Most agent systems grow in a predictable order:
+That model is useful when:
 
-1. start with request-response
-2. add streaming
-3. add memory or continuity
-4. add background work
-5. add operator intervention
-6. try to explain a failure
-7. realize there is no durable evidence
+- work must survive a browser request, application restart, or team handoff
+- an operator needs to steer, stop, resume, or retry an existing run
+- interactive and scheduled work should share the same project context
+- an application needs structured results as well as human-facing text
+- failures must be explained with evidence rather than guessed from the last message
 
-At that point, the team is no longer maintaining “a chat endpoint.” It is maintaining a runtime, whether it admits that or not. Kestrel is opinionated because it would rather name that complexity early than let it leak into ad hoc routes, hidden memory stores, and unreviewable background jobs.
+## What Kestrel does not require
 
-Kestrel gives that runtime a shape:
+You do not need every part of the suite at once. Desktop provides the local experience. Kestrel One supports shared team work. The SDK and HTTP interfaces let an existing application add Kestrel gradually.
 
-- the runner service is the application-facing execution boundary
-- the SDK is the typed application control surface
-- the OpenAI-compatible HTTP layer gives chat-first apps a migration path
-- session memory is explicit and revisioned
-- filtered background subscriptions exist beside request streaming
-- operator inbox, thread, and control flows let people steer work already in flight
-- task graph and project snapshot APIs expose richer state than “latest message”
-- workspaces let recurring local work live with the project instead of a machine-global profile
-- replay, evaluation evidence, and operator artifacts keep the system inspectable over time
-
-## Why the runner-service model is worth the extra complexity
-
-The repo is opinionated about where trust should live. Browsers should call your app. Your app should call the runner service. The runner service should own bearer auth, actor attribution, correlation, and execution.
-
-That is why the Next.js integration docs center on server-side route handlers and why the SDK is server-only. This is not ceremony. It prevents a common failure mode where runtime credentials, execution policy, and request correlation leak into browser code or random proxy routes.
-
-The runner-service model is usually worth it when:
-
-- multiple UI surfaces need the same execution boundary
-- operators need to inspect or control work later
-- recurring jobs and interactive requests should share state
-- project or review state should live next to the run instead of in side stores
-- you expect to care about replay or evaluator-backed validation
-
-It is usually not worth it for a tiny stateless chat widget with no operator workflow.
-
-## What makes Kestrel more powerful than a chat wrapper
-
-### Durable execution
-
-Runs do not disappear when the HTTP request ends. Kestrel leaves behind session ids, run ids, thread ids, memory revisions, artifacts, and replayable evidence. That is what makes later operator work possible.
-
-### More than one realtime model
-
-Kestrel distinguishes between:
-
-| Mode | What it is for |
-| --- | --- |
-| request-response | simple terminal answers |
-| request streaming | live progress for the run you just started |
-| filtered background subscriptions | observing task or operator events outside a single request |
-| replay inspection | understanding what already happened |
-
-That separation is important. A stream is not a global event bus, subscriptions are not a replay substitute, and replay is not just a bigger log tail.
-
-### Operator-visible control
-
-Kestrel includes `operator.inbox`, `operator.thread`, and `operator.control`. That means an operator can read the state of work already underway and issue actions such as retry, steer, stop, or focus-thread instead of creating disconnected new runs.
-
-### Capability-rich state surfaces
-
-The repo already exposes:
-
-- `task.graph.get` and `task.graph.update`
-- `project.snapshot.get` and `project.snapshot.update`
-- `project.action`
-- declarative evaluation specifications validated by released Ruhroh
-
-Those are not thin chat concepts. They are runtime control and inspection surfaces. They let a product move from "show me the latest answer" to "show me the current project state, review state, and operator choices."
-
-## Why workspaces matter
-
-Workspaces are one of the strongest product ideas in the repo. The machine-local catalog gives a folder:
-
-- stable workspace identity
-- a root path Kestrel can resolve from cwd
-- optional automation eligibility
-- continuity with sessions and operator workflows
-
-That means recurring work can stay close to the repository, notes collection, or reporting surface it actually acts on. A nightly research loop or deployment-summary task does not have to hide in a machine-global scheduler profile. It can live with the project, be reviewed with the project, and be replayed with the project.
-
-## The practical payoff
-
-The best reason to adopt Kestrel is not that it is conceptually elegant. It is that the system gives teams more room to grow before they have to rebuild their own runtime:
-
-- chat-first products can start with compat HTTP
-- server products can move into typed SDK routes
-- operators can inspect and control active work
-- recurring work can live in a workspace instead of a hidden cron host
-- replay, Ruhroh evaluations, and operator artifacts give maintainers something concrete to compare later
-
-## Why the repo includes gates, evaluations, and runbooks
-
-Replay, prompt suite runs, Ruhroh validation, migration runbooks, and governance checks can look heavy until the first time you need to explain a regression. Kestrel keeps those materials in the repo because a durable runtime without operational evidence is only half-built.
-
-That is the real point of the system: not only “did it answer,” but “can we understand, compare, steer, and validate the behavior later?”
-
-## What To Read Next
-
-- [OpenAI-compatible HTTP](/build/openai-compatible-http)
-- [Runtime model](/docs/runtime-model)
-- [@kestrel-agents/sdk](/packages/sdk)
-- [Building your first agent](/build/building-your-first-agent)
-- [Workspaces and automation](/build/workspaces-and-automation)
+Kestrel may be unnecessary for a small stateless feature where the only requirement is “send text and show the answer.” It becomes valuable when continuity, control, recovery, or accountability are part of the product promise.

@@ -4,8 +4,9 @@ import { notFound } from "next/navigation";
 import { DocsShell } from "@/components/DocsShell";
 import { getNavigation, getPageMetaBySlug, getRelatedPages, getRenderedPageBySlug, getSectionPages } from "@/lib/content";
 import { SITE_TITLE } from "@/lib/site";
+import type { ContentArchetype } from "@/lib/types";
 
-function RelatedPages({ pages }: { pages: Awaited<ReturnType<typeof getRelatedPages>> }) {
+function RelatedPages({ pages, archetype }: { pages: Awaited<ReturnType<typeof getRelatedPages>>; archetype: ContentArchetype }) {
   if (pages.length === 0) {
     return null;
   }
@@ -13,7 +14,7 @@ function RelatedPages({ pages }: { pages: Awaited<ReturnType<typeof getRelatedPa
   return (
     <section className="related-pages">
       <div className="section-listing-header">
-        <h2>Related pages</h2>
+        <h2>{archetype === "reference" ? "Related reference" : "Next steps"}</h2>
       </div>
       <div className="related-grid">
         {pages.map((page) => (
@@ -108,7 +109,7 @@ export default async function DocsPageRoute(props: {
       pageMeta={page.meta}
       toc={page.meta.toc}
       sectionListing={<SectionListing pages={sectionPages} currentUrl={page.meta.url} />}
-      relatedListing={page.meta.slug[0] === "archive" ? null : <RelatedPages pages={relatedPages} />}
+      relatedListing={page.meta.slug[0] === "archive" ? null : <RelatedPages pages={relatedPages} archetype={page.meta.archetype} />}
     >
       {page.content}
     </DocsShell>

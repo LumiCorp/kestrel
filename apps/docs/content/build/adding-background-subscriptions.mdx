@@ -1,6 +1,6 @@
 ---
 title: Adding background subscriptions
-summary: Watch filtered `workspace-copilot` activity outside a single request stream and separate live request UX from longer-running session observation.
+summary: Watch selected Workspace Copilot activity after the original request has ended.
 section: build
 audience: integrators
 status: stable
@@ -9,19 +9,19 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 4">
-This step keeps the same `workspace-copilot` session and actor context, but adds a second observation path for session activity that is not tied to a browser request.
+Add a subscription for activity that should remain observable after a browser request ends.
 </WorkspaceCopilotDemo>
 
-Streaming and subscribing are different tools. `stream()` is for one in-flight request. `subscribe()` is for filtered background observation over a session, run, or thread.
+Use `stream()` while someone is waiting for one request. Use `subscribe()` when another part of your application needs selected updates from a session, run, or thread.
 
-## Why this exists
+## Observe work outside one request
 
-The canonical example eventually has two kinds of interest:
+Workspace Copilot eventually needs two kinds of updates:
 
 - the end user wants live output while an interactive request is running
-- an operator or background surface wants to watch important session updates after the original request is gone
+- a background process needs important session updates after the original request has ended
 
-If you overload `stream()` to handle both jobs, the route layer becomes hard to reason about. Subscriptions keep those responsibilities separate.
+Use a subscription for the second case so background monitoring does not depend on the original browser connection.
 
 ## Open a filtered subscription
 
@@ -39,7 +39,7 @@ for await (const event of events) {
 }
 ```
 
-The filter matters. The root SDK does not expose a global event firehose.
+Every subscription needs a session, run, thread, or event filter. The root SDK does not provide an unfiltered global event stream.
 
 ## When to scope the filter
 
@@ -52,23 +52,23 @@ The filter matters. The root SDK does not expose a global event firehose.
 
 ## Request stream vs background subscription
 
-| Surface | Best for | Wrong use |
+| Method | Best for | Avoid using it for |
 | --- | --- | --- |
 | `stream()` | one active request | long-lived session monitoring |
 | `subscribe()` | filtered background observation | replacing user-facing request streaming |
 
-## What changes in this step
+## Use streams and subscriptions together
 
-- the demo now has a request-scoped stream and a separate background observation path
+- Workspace Copilot now has a request stream and a separate background subscription
 - an app can watch session-level changes without binding everything to one browser request
-- later operator surfaces can monitor `workspace-copilot` without pretending they own the original interactive request
+- monitoring tools can watch `workspace-copilot` without holding the original request open
 
-## Why this matters
+## Why the separation helps
 
-This is the step that keeps the example honest as it grows. A system with automation, reports, and replay needs more than one way to observe work. It just should not collapse those modes into one ambiguous transport.
+Once you add automation and scheduled reports, important work can continue after a user leaves the page. Subscriptions let your application observe that work without misusing a request stream.
 
-## What To Read Next
+## Build on the subscription
 
 - [Adding observability](/build/adding-observability)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Observability package](/packages/observability)
+- [Observability package](/reference/observability)

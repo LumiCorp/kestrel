@@ -1,0 +1,41 @@
+---
+title: Waiting, resume, and cancellation
+summary: Continue blocked work with expected response context and cancel the exact upstream run when a caller disconnects.
+section: build
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+A run may pause because it needs a decision, approval, credential, or other input. Kestrel records that state as **waiting** instead of pretending the run failed or leaving the application to infer why output stopped.
+
+## Resume the same work
+
+Resume the same session and blocked run with the event name and payload requested by the waiting result. Start a new turn only when someone intentionally abandons the blocked work.
+
+```ts
+const terminal = await workspaceCopilotAgent.resume(
+  {
+    sessionId: "workspace-copilot-session-001",
+    runId: waitingRunId,
+    event: {
+      type: expectedEventType,
+      payload: { approved: true },
+    },
+  },
+  workspaceCopilotContext,
+);
+```
+
+Use the expected event name and payload shown by the waiting result. Do not accept an arbitrary browser payload as trusted approval context.
+
+## Cancellation
+
+Pass an `AbortSignal` to request-scoped streaming. When the caller disconnects, the SDK cancels that exact upstream run and the terminal promise resolves with `run.cancelled`.
+
+Cancellation is a final run outcome. Keep it in history and show it as cancelled rather than as a generic network error.
+
+<Outcome>
+  <p>A resumed run continues where it paused, while a cancelled run ends as `run.cancelled` and remains visible in history.</p>
+</Outcome>

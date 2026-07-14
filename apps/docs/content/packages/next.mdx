@@ -1,23 +1,23 @@
 ---
 title: "@kestrel-agents/next"
 summary: Next.js route helpers and integration patterns for exposing `workspace-copilot` through typed routes or an OpenAI-compatible proxy while keeping context and correlation on the server.
-section: packages
+section: reference
 audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Package surface">
-This package is how the canonical demo turns into app routes. The fixed demo routes are `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook`.
+<WorkspaceCopilotDemo step="Next.js reference">
+Use this package to expose Workspace Copilot through JSON, streaming, and webhook routes.
 </WorkspaceCopilotDemo>
 
-`@kestrel-agents/next` keeps route parsing, context resolution, correlation handling, and SSE framing on the server side. It is the package you reach for when the Next.js app should stay thin but the runtime boundary should stay explicit.
+`@kestrel-agents/next` handles request parsing, authenticated context, correlation headers, and SSE formatting inside Next.js route handlers.
 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next @kestrel-agents/sdk
+pnpm add @kestrel-agents/next@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
 ## Route helpers
@@ -35,11 +35,11 @@ You usually choose between two patterns:
 | Pattern | Best fit | Why choose it |
 | --- | --- | --- |
 | route-helper integration | Next.js app wants typed Kestrel turns | clean server-only route code, built-in correlation handling, easy transition into SDK features |
-| OpenAI-compatible proxying | app already speaks OpenAI chat or responses | preserves existing client contract while still routing through the runner service |
+| OpenAI-compatible proxying | app already speaks OpenAI chat or responses | preserves the existing client request format while routing through Kestrel |
 
-The package itself is strongest in the first mode, but most teams use both styles during migration. Compat HTTP is the adoption ramp. Route helpers are the long-term shape once the product needs typed session, memory, and control behavior.
+Use compatibility mode to preserve an existing client. Move to route helpers when the application needs typed sessions, memory, and operator behavior.
 
-## Canonical route example
+## Route example
 
 ```ts
 export const POST = createStreamRunRouteHandler({
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 }
 ```
 
-## Correlation contract
+## Correlation headers
 
 The route helpers read:
 
@@ -97,10 +97,10 @@ That matters because the response headers become the bridge between a web reques
 
 | Failure | Usually means |
 | --- | --- |
-| route body missing `sessionId` | caller contract is wrong |
+| route body missing `sessionId` | the caller sent an incomplete request |
 | stream closes immediately | upstream cancellation or runner outage |
 | actor context missing | server route did not resolve context correctly |
-| webhook payload maps badly | `mapPayload()` contract is wrong |
+| webhook payload maps badly | `mapPayload()` does not match the incoming payload |
 | OpenAI-compatible request works but control-plane routes do not exist | you stayed on compat mode too long for the product needs |
 
 ## When to choose this package
@@ -114,10 +114,10 @@ Use it when your product is already in Next.js and you want to keep:
 
 Move deeper into the SDK and custom protocol when the app needs operator inbox/thread/control, task graph, project snapshot, or filtered `/events/stream` subscriptions. That is the line between "proxying Kestrel" and "building directly on Kestrel."
 
-## What To Read Next
+## Put the helpers to work
 
 - [OpenAI-compatible HTTP](/build/openai-compatible-http)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
 - [Next.js route cookbook](/build/nextjs-route-cookbook)
-- [Running the runner service](/deploy/running-the-runner-service)
-- [Web workbench](/apps/web)
+- [Running the runner service](/operate/runner-service)
+- [Kestrel One](/kestrel-one)

@@ -109,7 +109,7 @@ The Workspace Copilot flow is stronger when the profile lives with the project:
 
 ## Tool allowlists
 
-`toolAllowlist` is the first hard boundary. Keep it narrow and explicit.
+`toolAllowlist` limits which tools the profile may use. Include only what the workflow needs.
 
 - add only the tools the workflow needs
 - expect `code.execute` to be present when `codeMode.enabled` is `true`
@@ -130,7 +130,7 @@ Code mode is beta for Kestrel v0.5. It is useful when a workflow genuinely needs
 /code disable
 ```
 
-Use code mode when the workflow genuinely needs execution. Keep it off for review-only or narrative work. The profile store validates that code mode uses the expected sandbox contract and auto-adds `code.execute` when enabled.
+Use code mode when the workflow needs to execute code. Keep it off for review-only or writing tasks. When enabled, Kestrel validates the sandbox settings and adds `code.execute` to the allowed tools.
 
 ## MCP servers
 
@@ -150,17 +150,17 @@ Use code mode when the workflow genuinely needs execution. Keep it off for revie
 /mcp refresh
 ```
 
-Use MCP when you need a named, profile-owned tool surface that should travel with the operator profile or workspace.
+Use MCP when a profile or workspace needs a named external tool connection.
 
-## What changes in this step
+## Review the resulting profile
 
 This is the point where Kestrel stops being “a terminal chat that happens to run tools” and becomes a configurable local runtime. Profiles let the same binary behave differently for narrative chat, code tasks, workspace automation, and MCP-backed operator flows.
 
-## Why this exists
+## Keep capabilities explicit
 
-Teams usually end up with hidden machine state when tool policy and sandboxing are not modeled explicitly. Profiles make that behavior reviewable. Workspace-local profiles go one step further and let the project own the behavior contract instead of the operator's home directory.
+Profiles keep model, tool, MCP, and sandbox choices visible. A workspace-local profile stores those choices with the project instead of relying on settings from one person's home directory.
 
-## What To Read Next
+## Continue with profiles and tools
 
 - [CLI terminal client](/cli/kchat)
 - [Workspaces and automation](/build/workspaces-and-automation)

@@ -1,6 +1,6 @@
 ---
 title: Adding observability
-summary: Wrap `workspace-copilot` with Kestrel-native tracing so the canonical demo exposes run, stream, resume, and subscription spans before you depend on nightly automation in production.
+summary: Trace Workspace Copilot runs, streams, resumes, and subscriptions before depending on them in production.
 section: build
 audience: integrators
 status: stable
@@ -9,26 +9,26 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 6">
-This step adds a tracing wrapper around the same `workspace-copilot` agent. The request, route, and workspace contracts do not change. Only the visibility changes.
+Add tracing to the existing `workspace-copilot` agent without changing how callers use it.
 </WorkspaceCopilotDemo>
 
-Observability is not an afterthought in Kestrel. The whole point of a durable runtime is that runs are worth inspecting after they finish.
+Tracing helps you answer what happened after a request has finished, especially when the result is missing, late, or unexpected.
 
-## Why this exists
+## Decide what your traces should answer
 
-By the time the example reaches streaming, memory, and scheduled automation, operators need to answer practical questions:
+Once Workspace Copilot streams, remembers context, and runs on a schedule, you need to answer practical questions:
 
 - did the run fail, cancel, or complete?
 - which session and thread did it touch?
-- which route or integration surface started it?
+- which route or integration started it?
 - which actor and tenant were attached?
 
-The observability package exists to make those answers available without forcing product code to invent its own tracing layer.
+The observability package records those details consistently across runs, streams, resumes, and subscriptions.
 
 ## Install the package
 
 ```bash
-pnpm add @kestrel-agents/observability @kestrel-agents/sdk
+pnpm add @kestrel-agents/observability@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
 ## Create a tracer
@@ -51,14 +51,14 @@ export const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgen
 
 That wrapper instruments:
 
-| Surface | Span kind |
+| Method | Span kind |
 | --- | --- |
 | `run()` | `run` |
 | `stream()` | `stream` |
 | `resume()` | `resume` |
 | `subscribe()` | `subscription` |
 
-## Example trace-friendly route usage
+## Use the traced agent in a route
 
 ```ts
 export const POST = createStreamRunRouteHandler({
@@ -67,7 +67,7 @@ export const POST = createStreamRunRouteHandler({
 });
 ```
 
-The route code does not need to know how traces are assembled. It only needs to use the wrapped agent consistently.
+The route uses the wrapped agent exactly as it used the original one.
 
 ## OTEL export bridge
 
@@ -79,15 +79,19 @@ import { OpenTelemetryTraceExporter } from "@kestrel-agents/observability";
 const exporter = new OpenTelemetryTraceExporter();
 ```
 
-That ordering matters. The application contract stays grounded in Kestrel concepts such as run, stream, and subscription instead of forcing OTEL naming back into product code.
+Your application continues to work with Kestrel runs, streams, and subscriptions while the exporter translates those traces for OpenTelemetry tools.
 
-## What changes in this step
+<Outcome>
+  <p>A completed, failed, cancelled, or waiting run can be located by session and run identity without reconstructing the story from unrelated console messages.</p>
+</Outcome>
+
+## What tracing now covers
 
 - `workspace-copilot` now emits traces for `run`, `stream`, `resume`, and `subscribe`
 - the same trace model can cover daytime requests and nightly `kcron` runs
-- routes and operators can inspect failures without inventing ad hoc logs
+- you can investigate failures without assembling the story from unrelated logs
 
-## Why this matters for Workspace Copilot
+## Investigate a missing report
 
 When a nightly report is missing, a trace should help you answer whether the failure lived in:
 
@@ -97,10 +101,10 @@ When a nightly report is missing, a trace should help you answer whether the fai
 - cancellation
 - downstream export or processing
 
-That is the difference between observability as decoration and observability as operator support.
+That information tells you where to investigate instead of searching unrelated logs.
 
-## What To Read Next
+## Put the traces to work
 
-- [Observability package](/packages/observability)
-- [Production operating model](/deploy/production-operating-model)
-- [Reliability](/operations/reliability)
+- [Observability package](/reference/observability)
+- [Production operating model](/operate/deployment)
+- [Reliability](/operate/reliability)

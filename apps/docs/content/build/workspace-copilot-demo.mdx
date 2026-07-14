@@ -1,6 +1,6 @@
 ---
-title: Workspace Copilot demo
-summary: The canonical end-to-end example used across the docs, following one workspace-centric assistant from SDK integration through Next.js routes, observability, and recurring workspace automation.
+title: Build a Workspace Copilot
+summary: Follow one workspace assistant from its first request through application routes, memory, observability, and scheduled reviews.
 section: build
 audience: integrators
 status: stable
@@ -8,20 +8,20 @@ sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-`Workspace Copilot` is the canonical example used across the Kestrel docs. It is a workspace-local assistant that answers interactive questions during the day, keeps explicit session memory, and runs a nightly review against the same folder through `kcron`.
+Workspace Copilot is a practical example of an assistant that stays connected to one project. It answers questions while you work, remembers useful findings and decisions, and can produce a scheduled review of the same workspace each night.
 
-<WorkspaceCopilotDemo step="Canonical example">
-This page defines the fixed contract for the rest of the docs. The example always uses the same agent id, profile id, tenant, actor id, route names, workspace output root, and session prefix.
+<WorkspaceCopilotDemo step="Complete example">
+Review the complete setup below, or start with the first tutorial and add each capability as you need it.
 </WorkspaceCopilotDemo>
 
-The point of the example is continuity. Kestrel is most useful when the same product surface can support:
+The result is one assistant that can support:
 
 - interactive requests from an application route
-- session continuity through explicit memory
-- server-owned observability
-- recurring workspace automation without hidden machine-global behavior
+- remembered findings and decisions between runs
+- traces you can inspect after work finishes
+- recurring reviews tied to visible workspace settings
 
-## Demo contract
+## Values used in this guide
 
 | Field | Value |
 | --- | --- |
@@ -46,11 +46,11 @@ Browser
           -> workspace reports and traces
 ```
 
-That topology is intentional. The browser never speaks directly to the runner service, and the runner token never leaves the application server.
+The browser calls your application routes, while the runner token remains on the application server.
 
 ## File layout
 
-The example is written as a small app plus a workspace-local contract:
+The complete setup combines a small application with settings stored alongside the workspace:
 
 | Path | Purpose |
 | --- | --- |
@@ -58,7 +58,7 @@ The example is written as a small app plus a workspace-local contract:
 | `app/api/copilot/run/route.ts` | synchronous JSON route |
 | `app/api/copilot/stream/route.ts` | SSE streaming route |
 | `app/api/copilot/webhook/route.ts` | webhook/background entrypoint |
-| `global profile selection` | workspace-local runtime contract |
+| `global profile selection` | workspace-specific model, prompt, output, and schedule settings |
 | `selected global profile` | baseline system guidance |
 | `interactive prompt` | interactive run prompt |
 | `central scheduler prompt` | nightly automation prompt |
@@ -100,7 +100,7 @@ The workspace id should be stable and machine-local. That is what lets the catal
 
 ## `lib/workspace-copilot.ts`
 
-This is the shared server-side definition reused by the Build, Deploy, and Package pages.
+This shared server-side module gives every route the same agent and user context.
 
 ```ts
 import { createAgent } from "@kestrel-agents/sdk";
@@ -132,7 +132,7 @@ const tracer = createTracer({
 export const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
 ```
 
-The important point is that the route handlers do not define their own agent ids or actor defaults. They all reuse this module so the product contract stays stable.
+Reusing the module prevents different routes from accidentally identifying the same agent or user in different ways.
 
 ## `app/api/copilot/run/route.ts`
 
@@ -187,7 +187,7 @@ export const POST = createWebhookRunRouteHandler<{ sessionId?: string; prompt: s
 
 ## `global profile selection`
 
-This file is the workspace-local product contract. It does not merge with machine-global profiles. That is what makes the workspace portable and reviewable.
+This file keeps the model, prompts, output folder, and schedule with the workspace. Those settings do not silently merge with machine-wide profiles, so another person can review what the workspace expects before running it.
 
 ```json
 {
@@ -236,7 +236,7 @@ Review the workspace changes since the previous run. Write a report to ./reports
 
 ## Memory bootstrap files
 
-The example workspace can start with small plain-text bootstrap files instead of hiding context in prompt text:
+The workspace can start with small plain-text files that make its initial context easy to review:
 
 ```md
 # workspace catalog entry
@@ -259,7 +259,7 @@ If the nightly run cannot finish, leave the next operator a clear summary of blo
 
 ## Session memory
 
-The example relies on explicit session memory, not hidden model state:
+Session memory carries findings and decisions from one run to the next:
 
 ```ts
 const session = workspaceCopilotAgent.session("workspace-copilot-session-001");
@@ -283,7 +283,7 @@ This is what lets an interactive daytime session and a nightly run share continu
 
 ## Example output artifact
 
-The nightly automation should leave behind a report that an operator can inspect directly in the repo:
+The nightly automation writes a report that anyone with project access can inspect:
 
 ```md
 # Nightly Review
@@ -343,7 +343,7 @@ curl -sS \
   }'
 ```
 
-## Running the demo end to end
+## Run Workspace Copilot end to end
 
 Use this sequence locally:
 
@@ -358,19 +358,17 @@ kcron install
 kcron run-once
 ```
 
-## Why this example matters
+## What this gives you
 
-The `Workspace Copilot` story is intentionally modest. It is not a flashy chatbot demo. It is a realistic example of how teams actually use Kestrel:
+Workspace Copilot shows how to turn a useful interactive assistant into something your team can return to and operate over time:
 
-- expose a server-owned route surface
-- keep actor and tenant context explicit
+- expose safe application routes
+- identify the person and organization behind each request
 - persist continuity through versioned memory
 - bind recurring work to the workspace instead of a hidden global schedule
 - leave behind enough traces, reports, and replay evidence to support operators later
 
-If a docs page cannot explain how its advice affects this example, it probably is not saying enough about the product.
-
-## What To Read Next
+## Build from this example
 
 - [Building your first agent](/build/building-your-first-agent)
 - [Integrating with Next.js](/build/integrating-with-nextjs)

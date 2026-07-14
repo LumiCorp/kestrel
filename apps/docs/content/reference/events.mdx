@@ -1,0 +1,35 @@
+---
+title: Runner event reference
+summary: Exact public event names for request-scoped run, tool, log, reasoning, task, and terminal activity.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+## Public event names
+
+| Event | Meaning |
+| --- | --- |
+| `run.started` | The runner accepted the run |
+| `run.progress` | Progress information for active work |
+| `run.reasoning` | Reasoning information allowed by the active policy |
+| `run.log` | Structured run log activity |
+| `run.console` | Console activity produced during the run |
+| `run.tool.started` | A tool call began |
+| `run.tool.completed` | A tool call completed |
+| `run.tool.failed` | A tool call failed |
+| `task.updated` | A delegated task changed state |
+| `run.completed` | The run completed and carries a terminal result |
+| `run.failed` | The run failed and carries a terminal result |
+| `run.cancelled` | The exact run was cancelled and carries a terminal result |
+| `runner.error` | The runner could not satisfy the request contract |
+
+## Consumer rules
+
+- Validate the event envelope before updating application state.
+- Correlate events with their session and run.
+- Treat progress, log, and reasoning events as activity, not the final answer.
+- Read human-facing `assistantText` and structured data from the terminal result.
+- Waiting is a normalized run status, not a fabricated `run.waiting` event.

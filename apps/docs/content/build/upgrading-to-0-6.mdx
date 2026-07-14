@@ -1,0 +1,39 @@
+---
+title: Upgrading to 0.6
+summary: Update terminal-result handling, package versions, and application links for 0.6 Beta.
+section: build
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+## Required integration change
+
+Read assistant output from `result.assistantText`. Do not parse a display message from `finalizedPayload`.
+
+```ts
+const terminal = await agent.run(input, context);
+if (terminal.payload.result.assistantText !== null) {
+  renderAssistant(terminal.payload.result.assistantText);
+}
+```
+
+## Compatibility
+
+Upgrade the runtime, protocol, SDK, Next.js, and observability packages as one compatible `0.6.0-beta.0` line. Rebuild consumers that depend on exported protocol types.
+
+```bash
+pnpm add @kestrel-agents/protocol@0.6.0-beta.0 \
+  @kestrel-agents/sdk@0.6.0-beta.0 \
+  @kestrel-agents/next@0.6.0-beta.0 \
+  @kestrel-agents/observability@0.6.0-beta.0
+```
+
+## Documentation links
+
+Update saved documentation links to `/desktop`, `/kestrel-one`, and `/operate`. Previous addresses redirect automatically.
+
+<Outcome>
+  <p>Terminal handling reads `assistantText` directly, all Kestrel packages use the same 0.6 Beta line, and application links use the current public routes.</p>
+</Outcome>

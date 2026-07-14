@@ -1,37 +1,37 @@
 ---
 title: "@kestrel-agents/sdk"
-summary: The primary server-side TypeScript package for creating `workspace-copilot`, running and streaming work, reading control-plane state, and subscribing to scoped events.
-section: packages
+summary: Create server-side agents, run and stream work, manage session memory, and subscribe to selected events.
+section: reference
 audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Package surface">
-The SDK page maps directly onto the canonical demo. The agent id is `workspace-copilot`, the profile id is `workspace-copilot`, and the session prefix stays `workspace-copilot`.
+<WorkspaceCopilotDemo step="SDK reference">
+The examples use the same Workspace Copilot agent and session introduced in the Build guide.
 </WorkspaceCopilotDemo>
 
-The SDK is the package most teams should start with. It gives product code an agent-first interface over the runner service without forcing a framework-specific integration, and it is the clearest path when the product needs more than compat HTTP but less than a custom control-plane app.
+Start with the SDK when your server needs to run, stream, resume, or remember agent work without depending on a particular web framework.
 
-## Two layers in one package family
+## Choose the agent API or runner client
 
-There are really two SDK stories here:
+The package provides a high-level agent API and a lower-level runner client:
 
-| Surface | Use it for | Import path |
+| API | Use it for | Import path |
 | --- | --- | --- |
-| root agent API | app-owned run, stream, resume, memory, and filtered subscriptions | `@kestrel-agents/sdk` |
-| runner client | operator and product control-plane access | `@kestrel-agents/sdk/runner` |
+| root agent API | run, stream, resume, memory, and filtered subscriptions | `@kestrel-agents/sdk` |
+| runner client | thread, task, project, review, and operator APIs | `@kestrel-agents/sdk/runner` |
 
-Start with the root API unless you explicitly need thread control, task graph, project snapshot, or project review. The important choice is not "simple versus advanced." It is "request-oriented product code versus runtime control-plane work."
+Start with the root API for application requests. Use the runner client only when you need to control threads, task graphs, project snapshots, or reviews directly.
 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/sdk
+pnpm add @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
-## Canonical demo definition
+## Create the Workspace Copilot agent
 
 ```ts
 const workspaceCopilotAgent = createAgent({
@@ -45,9 +45,9 @@ const workspaceCopilotAgent = createAgent({
 });
 ```
 
-## Core surfaces
+## Core methods
 
-| Surface | Required input | Returns / behavior | Common failure case |
+| Method | Required input | Returns / behavior | Common failure case |
 | --- | --- | --- | --- |
 | `createAgent()` | `id`, `profileId`, explicit local or remote target | reusable server-side agent | missing or invalid target |
 | `run()` | `sessionId`, `message`, request context | terminal run event | runner unavailable |
@@ -57,9 +57,9 @@ const workspaceCopilotAgent = createAgent({
 | `session().memory.update()` | `expectedRevision`, `patch`, request context | persisted next snapshot | revision conflict |
 | `subscribe()` | explicit filter plus request context | filtered background event stream | unscoped or wrong filter |
 
-## Advanced control surface
+## Advanced operator APIs
 
-When the root agent API stops being enough, the runner subpath exposes the fuller runtime surface through `KestrelClient`.
+Use `KestrelClient` when your application needs to inspect or change operational state beyond a single agent request.
 
 ```ts
 import { KestrelClient } from "@kestrel-agents/sdk/runner";
@@ -208,7 +208,7 @@ for await (const event of events) {
 
 ## Why teams choose this package
 
-- server-side product code stays close to application concepts
+- server-side code works with agents, sessions, and runs
 - actor and tenant context remain explicit
 - streaming, memory, and subscriptions share one agent definition
 - low-level protocol access remains available only when needed
@@ -222,11 +222,11 @@ In practice, that makes the SDK the right middle path for teams that have outgro
 - no browser or edge-runtime support in this release
 - use the `runner` subpath when you need lower-level command or event control
 
-## What To Read Next
+## Put the SDK to work
 
 - [OpenAI-compatible HTTP](/build/openai-compatible-http)
-- [Operator control workflows](/operations/operator-control-workflows)
-- [Review and state workflows](/operations/review-and-state-workflows)
+- [Operator control workflows](/operate/operator-control)
+- [Review and state workflows](/operate/review-and-state)
 - [Workspace Copilot demo](/build/workspace-copilot-demo)
 - [Building your first agent](/build/building-your-first-agent)
-- [Next.js package](/packages/next)
+- [Next.js package](/reference/nextjs)

@@ -9,32 +9,32 @@ updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Step 5">
-This step turns the SDK example into application routes. The demo now has three fixed server routes: `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook`.
+Expose Workspace Copilot through three server routes: `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook`.
 </WorkspaceCopilotDemo>
 
 `@kestrel-agents/next` removes the repetitive route-handler work around Kestrel integrations. It is the right tool when your app server should speak to the runner service and your browser should speak only to your app.
 
-For **Workspace Copilot**, this is the step where the server-owned route contract becomes concrete.
+For Workspace Copilot, these routes make the agent available to your browser and to other services without exposing runner credentials.
 
-## Why this exists
+## Keep trusted context on the server
 
-The Next.js layer should do four jobs and no more:
+Your Next.js routes need to:
 
 - parse the inbound request
 - resolve authenticated actor and tenant context
 - call the runner service through the shared agent
-- return a response shape the browser or webhook caller can consume
+- return a response the browser or webhook caller can consume
 
 It should not:
 
 - expose the runner token to the browser
-- let the browser choose the canonical tenant or actor id
+- let the browser choose the tenant or actor id
 - duplicate route-to-runner glue in every file
 
 ## Install the package pair
 
 ```bash
-pnpm add @kestrel-agents/next @kestrel-agents/sdk
+pnpm add @kestrel-agents/next@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
 ## Shared server module: `lib/workspace-copilot.ts`
@@ -135,7 +135,7 @@ export const POST = createWebhookRunRouteHandler<{ sessionId?: string; prompt: s
 });
 ```
 
-## Response and correlation contract
+## Response and correlation headers
 
 The helpers return Kestrel correlation headers on the response:
 
@@ -179,7 +179,7 @@ curl -sS \
   }'
 ```
 
-Representative JSON route response:
+Example JSON response:
 
 ```json
 {
@@ -188,6 +188,7 @@ Representative JSON route response:
   "sessionId": "workspace-copilot-session-001",
   "payload": {
     "result": {
+      "assistantText": "Review the route and session files first.",
       "output": {
         "status": "COMPLETED",
         "sessionId": "workspace-copilot-session-001",
@@ -199,7 +200,7 @@ Representative JSON route response:
 }
 ```
 
-Representative webhook response:
+Example webhook response:
 
 ```json
 {
@@ -208,6 +209,7 @@ Representative webhook response:
   "sessionId": "workspace-copilot-nightly-001",
   "payload": {
     "result": {
+      "assistantText": "The nightly review was written to reports/nightly-review.md.",
       "output": {
         "status": "COMPLETED",
         "sessionId": "workspace-copilot-nightly-001",
@@ -221,7 +223,7 @@ Representative webhook response:
 
 ## Correlation logging example
 
-If the app needs to line browser reports up with the runner, log the correlation headers at the route boundary:
+If you need to match a browser report to runner activity, log the correlation headers in the route:
 
 ```ts
 const upstream = await fetch("/api/copilot/run", {
@@ -250,22 +252,26 @@ browser or webhook caller
           -> runtime
 ```
 
-## What changes in this step
+<Outcome>
+  <p>The browser calls your Next.js route, the route resolves trusted user context, and the response includes correlation headers and a valid Kestrel terminal result.</p>
+</Outcome>
 
-- the demo is now reachable from a real app server
+## Check the complete request path
+
+- the agent is now reachable from your application
 - the browser still never talks directly to the runner service
 - `/api/copilot/run`, `/api/copilot/stream`, and `/api/copilot/webhook` become the stable entrypoints
-- request correlation and actor context are now handled consistently instead of ad hoc
+- all three routes now handle request correlation and actor context consistently
 
-## Failure modes to expect
+## Troubleshoot the routes
 
-- `sessionId` missing: route body contract is wrong
+- `sessionId` missing: the request body is incomplete
 - stream closes immediately: client disconnected, signal propagated, or runner became unavailable
-- wrong actor or tenant: context resolver drifted
-- webhook payload maps badly: `mapPayload()` contract is wrong
+- wrong actor or tenant: check the authenticated values returned by the context resolver
+- webhook payload maps badly: check how `mapPayload()` translates the incoming payload
 
-## What To Read Next
+## Build on the routes
 
 - [Next.js route cookbook](/build/nextjs-route-cookbook)
-- [Running the runner service](/deploy/running-the-runner-service)
-- [Next.js package reference](/packages/next)
+- [Running the runner service](/operate/runner-service)
+- [Next.js package reference](/reference/nextjs)

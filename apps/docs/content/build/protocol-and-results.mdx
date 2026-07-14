@@ -1,0 +1,52 @@
+---
+title: Protocol and results
+summary: Read the user-facing answer, structured output, and run status from a 0.6 terminal result.
+section: build
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+Every terminal result separates the answer intended for a person from status and structured application data. In Kestrel 0.6, the readable answer is always available as `assistantText: string | null`.
+
+```ts
+type RunnerTerminalResult = {
+  output: NormalizedOutput;
+  assistantText: string | null;
+  finalizedPayload?: unknown;
+  operatorAffordance?: unknown;
+};
+```
+
+## Read each field
+
+| Field | Meaning |
+| --- | --- |
+| `output` | Runtime status, run identity, final step, checkpoint, quality, and wait state |
+| `assistantText` | Non-empty human-facing assistant text, or `null` when no assistant message exists |
+| `finalizedPayload` | Optional structured data; it does not own display text |
+| `operatorAffordance` | Optional control state for a waiting or completed run |
+
+Add an assistant message to the interface only when `assistantText` is non-null. Handle `finalizedPayload` separately so invalid structured data cannot erase or replace a valid answer.
+
+## Keep four concerns separate
+
+- `assistantText` is what a person may read as the assistant response.
+- `output` describes runtime status and normalized execution data.
+- `finalizedPayload` carries optional application-specific structured data.
+- The terminal event type distinguishes completed, failed, and cancelled outcomes; waiting information explains how paused work may continue.
+
+```ts
+const result = terminal.payload.result;
+
+if (result.assistantText !== null) {
+  appendAssistantMessage(result.assistantText);
+}
+
+persistRunOutcome({
+  type: terminal.type,
+  output: result.output,
+  finalizedPayload: result.finalizedPayload,
+});
+```

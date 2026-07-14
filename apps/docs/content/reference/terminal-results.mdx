@@ -1,0 +1,48 @@
+---
+title: Terminal results
+summary: Field-by-field reference for the result data carried by completed, failed, and cancelled Kestrel runs.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-13
+---
+
+## Result shape
+
+```ts
+interface RunnerResultV2<TOutput = unknown> {
+  output: TOutput;
+  assistantText: string | null;
+  finalizedPayload?: unknown;
+  operatorAffordance?: unknown;
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `output` | Yes | Normalized runtime and application result data |
+| `assistantText` | Yes | Human-facing assistant response, or `null` when none exists |
+| `finalizedPayload` | No | Structured finalized data owned by the application contract |
+| `operatorAffordance` | No | Control information for waiting or operator-managed work |
+
+An empty string is not valid `assistantText`. Structured data must never be converted into an invented assistant message.
+
+## Outcome handling
+
+| Outcome | Event or status | Consumer behavior |
+| --- | --- | --- |
+| Completed | `run.completed` | Store the result and render non-null `assistantText` |
+| Failed | `run.failed` | Preserve safe failure details and any validated result data |
+| Cancelled | `run.cancelled` | Record cancellation for the exact run |
+| Waiting | Normalized waiting status | Show the expected continuation and resume or cancel the same run |
+
+```ts
+const result = terminal.payload.result;
+
+if (result.assistantText !== null) {
+  renderAssistant(result.assistantText);
+}
+
+storeStructuredResult(result.output, result.finalizedPayload);
+```

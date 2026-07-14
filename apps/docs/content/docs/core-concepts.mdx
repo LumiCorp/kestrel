@@ -1,14 +1,18 @@
 ---
 title: Core concepts
-summary: The vocabulary that ties together the runner service, SDK, workspaces, replay, and operator surfaces across the Kestrel system.
-section: docs
+summary: Learn the small set of ideas that connect Desktop, Kestrel One, the SDK, and the runner service.
+section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
 
-Kestrel becomes much easier to read once you stop treating it as "the chat app" or "the SDK." The same concepts appear in the runtime, packages, CLI, Kestrel One, Desktop, and workspace automation flows. This page names those concepts so the rest of the docs can stay specific without repeating the same definitions.
+The same concepts appear throughout Kestrel even though each product tells a different story. Learn them here when a guide uses an unfamiliar term.
+
+## Run and terminal outcome
+
+A **run** is one execution attempt. It ends as completed, failed, cancelled, or waiting for a person or external condition. The terminal result keeps human-facing `assistantText` separate from structured application data.
 
 ## Runner service
 
@@ -20,39 +24,24 @@ An agent is the application-facing definition created with `createAgent()`. It b
 
 ## Session
 
-A session is the durable continuity boundary for a conversation, task stream, or recurring workflow. When you pass `sessionId` into the SDK or the Next.js route helpers, you are telling Kestrel which history, memory, and replay line should receive the next turn.
+A **session** is a durable line of continuity. It connects related turns, memory, events, and evidence so later work can continue instead of starting from an empty request.
 
-## Memory
+## Thread and Project
 
-Kestrel exposes explicit session memory instead of hidden state. The SDK reads memory with `session().memory.get()` and updates it with `session().memory.update({ expectedRevision, patch })`. That versioned update model gives applications a stable way to record task context without bypassing the runtime's evidence trail or silently overwriting parallel work.
-
-## Stream versus subscription
-
-A request stream is scoped to one run request. A subscription is a separate background event stream scoped by `sessionId`, `threadId`, or `runId`. Replay is different again: it is the durable historical record after the run is over. The root SDK does not expose a global unfiltered event firehose because those three jobs should not collapse into one mechanism.
-
-## Replay
-
-Replay means the system keeps enough durable evidence to inspect what happened after the run completes. That shows up in run events, append-only CLI history, memory revisions, and the operator workflows around migrations, runbooks, and scorecards.
-
-## Operator control
-
-Operator control is the part of the system that lets a human work with a run that already exists. `operator.inbox`, `operator.thread`, and `operator.control` are the primitives behind the CLI, the web workbench, and the SDK runner client. They matter because Kestrel is meant to support steering and inspection after a run begins, not only request initiation.
+A **Thread** is the product-facing conversation and work history. In Kestrel One, a **Project** groups related Threads with members, instructions, files, and Knowledge. Desktop uses a local workspace rather than a hosted Project.
 
 ## Workspace
 
-A workspace is a machine-local catalog entry for a project root. Kestrel resolves the nearest Git root when it can, otherwise it uses the current directory, and records that identity in `~/.kestrel/workspaces.json`.
+A **workspace** is a local project folder known to Desktop or the CLI. It tells Kestrel where the work belongs; it does not automatically enable recurring automation.
 
-## Automation
+## Runner service
 
-Workspace discovery does not imply recurring execution. The catalog has an `automationEnabled` flag for the future central scheduler, while runtime behavior continues to come from the selected global profile and active session.
+The **runner service** is the authenticated server that accepts application requests and executes them through the runtime. Your application server calls it. Browser code should call your application, not hold runner credentials directly.
 
-## Quality gates
+## Stream, subscription, and replay
 
-The repo treats governance checks, tests, prompt suite runs, and released Ruhroh validation as part of the product, not just internal hygiene. The runtime model is only useful if changes remain inspectable and reproducible.
+A **stream** shows live events for the request that just started. A **subscription** follows selected background events. **Replay** uses persisted evidence to inspect work after it ends. They solve different jobs and should not be treated as one global event feed.
 
-## What To Read Next
+## Operator control
 
-- [Runtime model](/docs/runtime-model)
-- [Building your first agent](/build/building-your-first-agent)
-- [Operator control workflows](/operations/operator-control-workflows)
-- [Workspaces and automation](/build/workspaces-and-automation)
+**Operator control** lets a person inspect and act on work that already exists. Steering, stopping, resuming, and retrying remain attached to the original session instead of creating an unrelated conversation.

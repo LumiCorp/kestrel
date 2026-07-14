@@ -1,31 +1,31 @@
 ---
 title: Artifact inspection
-summary: Inspect reports, memory-linked artifacts, traces, and replay evidence when Workspace Copilot outputs drift, disappear, or disagree with the operator view.
-section: operations
-audience: maintainers
+summary: Find a missing or incorrect report by following its run, memory record, trace, and saved history.
+section: operate
+audience: integrators
 status: stable
 sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
 <WorkspaceCopilotDemo step="Operator manual">
-Use this page when Workspace Copilot produced the wrong artifact, failed to update `reports/nightly-review.md`, or left behind evidence that needs interpretation.
+Use these checks when Workspace Copilot produced the wrong file, failed to update `reports/nightly-review.md`, or reported completion without the expected output.
 </WorkspaceCopilotDemo>
 
-Artifacts are part of the product contract in Kestrel. They are not incidental files. They are durable evidence that help operators understand what happened.
+Reports and other generated files are part of the result users depend on. Inspect them together with the run that created them so you can tell what was requested, what completed, and where the output was written.
 
 ## What to inspect first
 
-For the canonical demo, start with:
+For Workspace Copilot, start with:
 
 - `reports/nightly-review.md`
 - session memory fields such as `linkedArtifacts`
 - route or scheduler path that launched the run
 - traces or replay evidence tied to the same request or session
 
-## Core artifact surfaces
+## Places to inspect
 
-| Surface | Why inspect it |
+| Place | Why inspect it |
 | --- | --- |
 | `reports/nightly-review.md` | confirms whether the expected report was written and what it contained |
 | session memory `linkedArtifacts` | confirms what the run intended to update |
@@ -87,9 +87,9 @@ Do not rewrite historical evidence to make the current output look consistent.
 
 The product promise is not only “it writes a report.” It is “operators can explain why the report was written, why it was wrong, or why it never appeared.”
 
-## What To Read Next
+## Continue the investigation
 
-- [Reliability](/operations/reliability)
-- [Evaluations with Ruhroh](/operations/evaluations)
-- [Store and replay](/runtime/store-and-replay)
+- [Reliability](/operate/reliability)
+- [Evaluations with Ruhroh](/operate/evaluations)
+- [Store and replay](/operate/replay)
 - [Workspace Copilot demo](/build/workspace-copilot-demo)

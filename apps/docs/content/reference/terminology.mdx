@@ -1,33 +1,49 @@
 ---
 title: Terminology
-summary: "A compact vocabulary for the words the repo repeats: runtime, runner service, evaluations, replay, artifacts, profiles, and workspaces."
+summary: Compact definitions for the product, runtime, and operational terms used throughout the Kestrel documentation.
 section: reference
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-19
+updatedAt: 2026-07-13
 ---
 
-## Runtime kernel
+## Agent
 
-The durable core in `src/` that owns execution stages, persistence behavior, and replayable event history.
-
-## Runner service
-
-The HTTP or process boundary that receives application-facing requests and executes work against the runtime.
-
-## Scene
-
-A deterministic scenario used for evaluation, replay, or baseline comparison.
-
-## Replay
-
-The ability to inspect or re-run a durable execution history and compare sequence or terminal behavior against expected outcomes.
-
-## Workspace
-
-A local project context that can carry Kestrel configuration and be registered for scheduler eligibility.
+A server-side definition that connects an application identity and profile to Kestrel run, stream, resume, session, and subscription methods.
 
 ## Artifact
 
-A persisted output or claim-associated record produced during execution that can be reviewed later.
+A persisted file, dataset, code result, sheet, rendered interface, or other output associated with durable work.
+
+## Context revision
+
+The immutable version of Project instructions, files, and selected Knowledge attached to a Kestrel One turn.
+
+## Operator
+
+A person or authorized service responsible for inspecting, steering, stopping, resuming, retrying, or recovering agent work.
+
+## Replay
+
+Inspection of persisted run evidence after execution ends, used to explain, compare, recover, or evaluate behavior.
+
+## Run
+
+One execution attempt with an identity, events, and a completed, failed, cancelled, or waiting outcome.
+
+## Runner service
+
+The authenticated service that receives application requests and executes them through the durable runtime.
+
+## Session
+
+A durable line of continuity connecting related turns, memory, events, and evidence.
+
+## Thread
+
+The product-facing history of a durable piece of work. Kestrel One Threads also retain authorship, files, artifacts, sharing, and Project context.
+
+## Workspace
+
+A local project folder known to Desktop or the CLI and used to keep sessions and automation attached to the correct project.

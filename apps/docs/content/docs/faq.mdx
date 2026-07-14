@@ -1,90 +1,45 @@
 ---
-title: FAQ
-summary: Direct answers to the questions that come up when teams first evaluate the runner service, workspaces, streaming, replay, operator control, and product boundaries.
-section: docs
+title: Frequently asked questions
+summary: Get direct answers about choosing a Kestrel product, durable work, model access, deployment, and when Kestrel is unnecessary.
+section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-13
 ---
+
+## Which Kestrel product should I start with?
+
+Use Desktop for work in local folders and repositories. Use Kestrel One when an invited team needs shared Threads, Projects, and Knowledge. Use the SDK or HTTP interfaces when Kestrel should run behind an application you already own. The [journey chooser](/start/quickstart) compares the first steps.
+
+## Do I need to run a database for Desktop?
+
+No. The packaged Desktop Beta includes Local Core and manages its own persistence. You choose a model provider and a project folder during first run.
+
+## Can anyone sign up for Kestrel One?
+
+Kestrel One is currently available to invited Beta teams. Use the invitation from your organization administrator. Public signup and self-hosted consumer onboarding are not documented as part of this Beta.
+
+## Why not call a model directly?
+
+A direct call is simpler for a stateless answer. Kestrel becomes useful when work must continue across requests, wait for a person, produce artifacts, support operator intervention, or leave enough evidence to explain and replay later.
 
 ## What is the runner service?
 
-The runner service is the HTTP boundary that executes Kestrel work on behalf of applications. Your application server calls it with authenticated requests. The browser should not call it directly. In local development you can start it with `kestrel web`, which prints the service URL and bearer token for your app server to use.
-
-## Why not call the model directly from my app?
-
-You can, but then you are building a different system. Kestrel exists for teams that need durable execution, streaming, replay, explicit memory, background subscriptions, workspace automation, operator-visible evidence, or project/review state. Calling the model directly is simpler until you need those behaviors.
-
-## When is Kestrel overkill?
-
-Kestrel is probably overkill when your app only needs a thin chat or responses surface, does not need durable state or replay, and has no operator workflow beyond “show the answer.” In that case, a direct model integration can be simpler and easier to own. The key test is whether you expect to care later about steering, inspection, scheduled work, or evidence.
-
-## What is a workspace?
-
-A workspace is a machine-local catalog entry for a project or folder root. It carries identity, root path, launch cwd, label, and future automation eligibility without writing Kestrel scaffold files into the project.
-
-## Where does workspace state live?
-
-At minimum:
-
-- `~/.kestrel/workspaces.json` for workspace catalog entries
-- `~/.kestrel/profiles.json` for global runtime profiles
-- `~/.kestrel/sessions.json` and transcript history for session continuity
-
-## When should I not use workspaces?
-
-Do not reach for workspaces when the task is purely stateless or when the behavior is owned centrally by one server-side product with no local project identity. Workspaces are strongest when a folder should appear in the machine-local Kestrel catalog.
-
-## Why does workspace automation use a separate flag?
-
-Because "I opened this folder" is not the same as "run this folder every night." Kestrel can catalog the current project automatically, but recurring automation should require an explicit `automationEnabled` signal and a central scheduler.
-
-## When should I use the CLI, the web app, or the SDK?
-
-Use the CLI or Desktop when the workflow is terminal-first and workspace-local. Use the web workbench when operators need browser-native streaming, artifact inspection, project review, and run/session views. Use the SDK when you are embedding Kestrel into your own application or API.
-
-## When should I use the OpenAI-compatible layer instead of the SDK?
-
-Use the OpenAI-compatible layer when your app already speaks OpenAI chat or responses APIs and you mainly need a server-owned proxy into Kestrel. Use the SDK when the app needs explicit agent construction, session memory updates, typed streaming, or later access to richer product behavior. Use the custom runner protocol or runner client when the app needs control surfaces such as `operator.control`, `task.graph`, `project.snapshot`, or `project.review`.
+It is the authenticated server that executes Kestrel work for an application. Your application server calls it with trusted user and session context. A browser should not receive its bearer token or provider credentials.
 
 ## What is the difference between streaming and subscriptions?
 
-Streaming is tied to one request. Subscriptions are separate background event feeds scoped by `sessionId`, `threadId`, or `runId`. The SDK intentionally avoids a global unfiltered stream. Replay is different again: it is the persisted historical record after the run is over.
+Streaming follows the request you just started. A subscription follows selected background events for a session, Thread, or run. Replay examines persisted evidence after execution ends.
 
-## Why is replay different from just reading logs?
+## When should I use OpenAI-compatible HTTP instead of the SDK?
 
-Replay is the durable runtime view of what happened, not only a console trace. It feeds scorecards, evaluation evidence, and operator inspection flows. The point is not simply “read old output.” The point is to compare, validate, and explain historical behavior with enough structure to act on it.
+Use compatible HTTP when an existing server already speaks OpenAI-style chat or responses APIs. Use the SDK when you want typed agents, sessions, memory, streaming, waiting, resume, cancellation, and richer Kestrel controls.
 
-## What do operator control surfaces buy me?
+## When is Kestrel too much?
 
-They let a human work with a run that already exists. `operator.inbox` shows actionable work, `operator.thread` shows the thread state, and `operator.control` lets an operator stop, steer, retry, focus a thread, or resolve coordination checkpoints. That is meaningfully different from starting a new request and hoping it lines up with the old state. It is the difference between runtime control and chat retries.
+Kestrel may be unnecessary when a feature only sends a prompt and shows an answer, with no durable state, recovery, scheduled work, operator workflow, or later audit requirement.
 
-## When should I use task graph or project snapshot surfaces?
+## How do I deploy it?
 
-Use task graph APIs when you need durable structured task state tied to a session and thread. Use project snapshot APIs when the product needs a higher-level project record rather than only transcript or memory data. Use project review when the runtime should carry file- or task-scoped review work. If your product only needs message-in, answer-out, those surfaces are unnecessary.
-
-## What is replay for operationally?
-
-Replay is how operators and maintainers inspect what happened after the run is over. Runtime tests, Ruhroh evaluations, append-only history, memory revisions, and quality scorecards all rely on durable evidence instead of ephemeral console output.
-
-## When is the runner-service model worth the extra complexity?
-
-It is worth it when multiple product surfaces need one execution boundary, when operator control matters, when interactive and scheduled runs should share continuity, when project/review state should be runtime-visible, or when replay and evidence matter operationally. It is less compelling for a small stateless chat feature with no operator story.
-
-## What are the current boundaries and non-goals?
-
-Kestrel is intentionally narrow. It is a durable runtime kernel plus integration surfaces, not a general product orchestration platform. The repo docs currently emphasize durable runs, explicit memory, workspaces, replay, and operator-visible evidence. They do not promise a browser-direct runtime, broad heuristic routing, or hidden ambient automation policy.
-
-## How do I deploy Kestrel?
-
-Start by deploying the runner service behind your application, not inside the browser. Then configure service URL, bearer token, app-level context resolution, and persistence infrastructure. The [Deploy](/deploy) section covers the runtime deployment path in detail.
-
-## What To Read Next
-
-- [Why Kestrel](/docs/why-kestrel)
-- [OpenAI-compatible HTTP](/build/openai-compatible-http)
-- [Operator control workflows](/operations/operator-control-workflows)
-- [Building your first agent](/build/building-your-first-agent)
-- [Workspaces and automation](/build/workspaces-and-automation)
-- [Deployment overview](/deploy)
+Deploy the runner service behind your application server, configure authenticated server-to-server access, then verify the complete request and recovery path. Start with [Operate](/operate).
