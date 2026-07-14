@@ -1,4 +1,4 @@
-import { configureRunPodProviderConnection } from "@/lib/ai/managed-runpod-connection";
+import { testRunPodProviderConnection } from "@/lib/ai/managed-runpod-connection";
 import { hashManagedRunPodProfile } from "@/lib/ai/managed-runpod-contracts";
 import {
   createManagedRunPodProfile,
@@ -20,10 +20,7 @@ async function run() {
   if (!actorUserId) {
     throw new Error("KESTREL_BOOTSTRAP_ACTOR_USER_ID is required");
   }
-  await configureRunPodProviderConnection({
-    useEnvironment: true,
-    enabled: true,
-  });
+  await testRunPodProviderConnection();
 
   const profileInput = buildQwen3RunPodProfile(imageRef);
   const specHash = hashManagedRunPodProfile(profileInput);

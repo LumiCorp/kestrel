@@ -59,6 +59,13 @@ test("managed maintenance idles until its provider connection is enabled", () =>
   assert.equal(runtime.match(/if \(!connection\?\.enabled\) return/g)?.length, 2);
 });
 
+test("Qwen bootstrap preserves the administrator-selected credential source", () => {
+  const bootstrap = read("scripts/bootstrap-qwen3-runpod-profile.ts");
+  assert.match(bootstrap, /await testRunPodProviderConnection\(\)/u);
+  assert.doesNotMatch(bootstrap, /configureRunPodProviderConnection/u);
+  assert.doesNotMatch(bootstrap, /useEnvironment/u);
+});
+
 test("connected inference exposes recovery after model discovery fails", () => {
   const route = read(
     "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"
