@@ -11,6 +11,7 @@ import type {
   ReasoningUpdateV1,
   ToolExecutionClass,
 } from "../src/index.js";
+import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
 import type {
   OperatorAffordancePayload,
   OperatorBlockReason,
@@ -21,6 +22,7 @@ import type {
   OperatorWaitSummary,
 } from "../src/orchestration/OperatorAffordanceProjection.js";
 import type {
+  OperatorAdaptationSummary,
   OperatorAssemblySummary,
   OperatorCheckpointSummary,
   OperatorChildBlockerChainSummary,
@@ -33,7 +35,6 @@ import type {
   OperatorSteeringSummary,
   OperatorSupervisedChildSummary,
   OperatorSupervisionSummary,
-  OperatorAdaptationSummary,
 } from "../src/orchestration/OperatorSessionProjection.js";
 import type {
   CapabilityPackId,
@@ -41,10 +42,11 @@ import type {
   ShellKind,
   ShellPresetId,
 } from "../src/profile/runtimeProfile.js";
-import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
-
-import type { OperatorChildResultSummary } from "../src/orchestration/contracts.js";
-import type { ThemeMode, ThemeOverrides, ThemePresetId } from "./ink/theme/tokens.js";
+import type {
+  ThemeMode,
+  ThemeOverrides,
+  ThemePresetId,
+} from "./ink/theme/tokens.js";
 
 export type { ProgressUpdateV1 };
 export type { ReasoningUpdateV1 };
@@ -73,7 +75,12 @@ export type {
 };
 
 export type SupportedAgent = "reference-react";
-export type ModelProviderId = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
+export type ModelProviderId =
+  | "openrouter"
+  | "openai"
+  | "anthropic"
+  | "ollama"
+  | "lmstudio";
 export type StoreDriverId = "auto" | "postgres" | "sqlite";
 export type ApprovalPolicyPackId = "dev" | "ci_bot" | "production";
 export interface AgentStageConfig {
@@ -188,6 +195,7 @@ export interface ModelCredentialReference {
   source: "kestrel-one";
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   rawModelId: string;
 }
 
@@ -242,6 +250,7 @@ export interface TuiProfile {
     | undefined;
   guardrails?: Partial<GuardrailConfig> | undefined;
   toolAllowlist?: string[] | undefined;
+  kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
   mcpServers?: McpServerConfig[] | undefined;
   toolQueue?: ToolQueueProfileConfig | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
@@ -263,13 +272,29 @@ export interface TuiSessionMeta {
   profileLabel?: string | undefined;
   agentProfileId?: string | undefined;
   agentProfileLabel?: string | undefined;
-  environmentShellKind?: RuntimeIdentityMetadata["environmentShellKind"] | undefined;
-  environmentPresetId?: RuntimeIdentityMetadata["environmentPresetId"] | undefined;
-  environmentCapabilityPackIds?: RuntimeIdentityMetadata["environmentCapabilityPackIds"] | undefined;
+  environmentShellKind?:
+    | RuntimeIdentityMetadata["environmentShellKind"]
+    | undefined;
+  environmentPresetId?:
+    | RuntimeIdentityMetadata["environmentPresetId"]
+    | undefined;
+  environmentCapabilityPackIds?:
+    | RuntimeIdentityMetadata["environmentCapabilityPackIds"]
+    | undefined;
   effectiveAssemblyId?: string | undefined;
   effectiveAssemblyLabel?: string | undefined;
-  launchPresetId?: "coding" | "investigation" | "review" | "orchestration" | undefined;
-  launchTemplateId?: "coding-task" | "investigation-task" | "review-task" | "orchestration-task" | undefined;
+  launchPresetId?:
+    | "coding"
+    | "investigation"
+    | "review"
+    | "orchestration"
+    | undefined;
+  launchTemplateId?:
+    | "coding-task"
+    | "investigation-task"
+    | "review-task"
+    | "orchestration-task"
+    | undefined;
   workspaceBinding?: "active" | "detached" | undefined;
   workspaceId?: string | undefined;
   workspaceRoot?: string | undefined;
@@ -360,7 +385,13 @@ export interface UiPaneSizes {
   logs: number;
 }
 
-export type SplashPreflightCheckState = "pending" | "running" | "ok" | "warn" | "fail" | "skip";
+export type SplashPreflightCheckState =
+  | "pending"
+  | "running"
+  | "ok"
+  | "warn"
+  | "fail"
+  | "skip";
 
 export interface SplashPreflightCheck {
   id: string;
@@ -429,7 +460,9 @@ export interface UiState {
   chatUnreadCount?: number | undefined;
   lastSelectedSession?: string | undefined;
   paletteRecentCommands: string[];
-  recentModelsByProvider?: Partial<Record<ModelProviderId, string[]>> | undefined;
+  recentModelsByProvider?:
+    | Partial<Record<ModelProviderId, string[]>>
+    | undefined;
 }
 
 export interface UiStateFile {

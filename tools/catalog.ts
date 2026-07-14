@@ -66,6 +66,14 @@ import {
   kestrelOneGitHubWorkflowDispatchTool,
 } from "./kestrelOne/githubActions.js";
 import { kestrelOneGitHubPushAgentBranchTool } from "./kestrelOne/githubPushAgentBranch.js";
+import {
+  kestrelOneGoogleCalendarCheckAvailabilityTool,
+  kestrelOneGoogleCalendarCreateEventTool,
+  kestrelOneGoogleCalendarDeleteEventTool,
+  kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
+  kestrelOneGoogleCalendarListEventsTool,
+  kestrelOneGoogleCalendarUpdateEventTool,
+} from "./kestrelOne/google-calendar.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -120,6 +128,12 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGitHubPullRequestMergeTool,
   kestrelOneGitHubReleaseCreateTool,
   kestrelOneGitHubWorkflowDispatchTool,
+  kestrelOneGoogleCalendarListEventsTool,
+  kestrelOneGoogleCalendarCreateEventTool,
+  kestrelOneGoogleCalendarUpdateEventTool,
+  kestrelOneGoogleCalendarDeleteEventTool,
+  kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
+  kestrelOneGoogleCalendarCheckAvailabilityTool,
 ];
 
 export const BALANCED_STARTER_TOOL_NAMES = [

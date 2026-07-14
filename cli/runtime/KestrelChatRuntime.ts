@@ -1032,6 +1032,7 @@ function createRuntimeWithStore(
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
+      appApprovalModes: profile.kestrelOneAppApprovalModes,
     },
     ...(internetEnv !== undefined ? { internetEnv } : {}),
     ...(devShellService !== undefined ? { devShellService } : {}),

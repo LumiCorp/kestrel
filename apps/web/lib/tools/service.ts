@@ -279,6 +279,67 @@ const githubAdapter: ToolProviderAdapter = {
   },
 };
 
+const googleWorkspaceAdapter: ToolProviderAdapter = {
+  async getConnectionStatus({ organizationId }) {
+    const connections = await knowledgeDb.query.userToolConnections.findMany({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.organizationId, organizationId),
+          eq(table.providerKey, "google_workspace"),
+          inArray(table.status, ["connected", "degraded"])
+        ),
+      columns: { status: true },
+    });
+    const connectedCount = connections.filter(
+      (connection) => connection.status === "connected"
+    ).length;
+    const degradedCount = connections.length - connectedCount;
+    const configured = Boolean(
+      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+    );
+    return {
+      authSource: "oauth",
+      status: connectedCount > 0 ? "connected" : degradedCount > 0 ? "degraded" : "not_configured",
+      isReady: configured && connectedCount > 0,
+      label:
+        connectedCount > 0
+          ? `${connectedCount} connected account${connectedCount === 1 ? "" : "s"}`
+          : degradedCount > 0
+            ? "Reconnect required"
+            : configured
+              ? "Connect from a Project"
+              : "Missing credentials",
+      lastError:
+        degradedCount > 0
+          ? `${degradedCount} Google account${degradedCount === 1 ? "" : "s"} require reconnection.`
+          : configured
+            ? null
+            : "Google OAuth credentials are not configured.",
+      metadata: { configured, connectedCount, degradedCount },
+    };
+  },
+};
+
+const tavilyAdapter: ToolProviderAdapter = {
+  async getConnectionStatus() {
+    const configured = Boolean(process.env.TAVILY_API_KEY?.trim());
+    return {
+      authSource: "env",
+      status: configured ? "env_backed" : "not_configured",
+      isReady: configured,
+      label: configured ? "Deployment managed" : "API key required",
+      lastError: configured ? null : "No Tavily API key is configured.",
+      metadata: {
+        configured,
+        connectionModel: "environment",
+        deploymentManaged: configured,
+        envVar: "TAVILY_API_KEY",
+        projectId: process.env.TAVILY_PROJECT?.trim() || null,
+      },
+    };
+  },
+};
+
 const discordAdapter: ToolProviderAdapter = {
   async getConnectionStatus({ organizationId, origin }) {
     const status = await getDiscordIntegrationStatus(
@@ -402,6 +463,8 @@ const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
   ["built_in.sandbox", sandboxAdapter],
   ["built_in.artifacts", artifactsAdapter],
   ["github", githubAdapter],
+  ["google_workspace", googleWorkspaceAdapter],
+  ["tavily", tavilyAdapter],
   ["discord", discordAdapter],
   ["source.github", githubSourceAdapter],
   ["source.youtube", youtubeSourceAdapter],

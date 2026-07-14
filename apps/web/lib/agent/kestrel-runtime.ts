@@ -30,6 +30,7 @@ import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
+import { restrictKestrelOneProfileTools } from "@/lib/agent/kestrel-tool-profile";
 import type { KestrelUiStreamChunk } from "@/lib/agent/kestrel-ui-stream";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
@@ -188,26 +189,24 @@ function createModelAwareKestrelOneAgent(input: {
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
             mcpAuthorization: { executionTicket: route.authToken },
           };
-          const downstream = runtimeModel
-            ? client.streamRunWithProfile(
-                {
-                  profile: applyKestrelOneModelToProfile(
-                    await client.getProfile(getKestrelOneProfileId(), context),
-                    runtimeModel
-                  ),
-                  turn: normalizedTurn,
-                  ...(signal ? { signal } : {}),
-                },
-                context
-              )
-            : client.streamRun(
-                {
-                  profileId: getKestrelOneProfileId(),
-                  turn: normalizedTurn,
-                  ...(signal ? { signal } : {}),
-                },
-                context
-              );
+          const baseProfile = await client.getProfile(
+            getKestrelOneProfileId(),
+            context
+          );
+          const selectedProfile = runtimeModel
+            ? applyKestrelOneModelToProfile(baseProfile, runtimeModel)
+            : baseProfile;
+          const downstream = client.streamRunWithProfile(
+            {
+              profile: restrictKestrelOneProfileTools({
+                profile: selectedProfile,
+                effectiveCapabilities: route.effectiveCapabilities,
+              }),
+              turn: normalizedTurn,
+              ...(signal ? { signal } : {}),
+            },
+            context
+          );
           routed.attachCancel(() => downstream.cancel());
           for await (const event of downstream) {
             await recordGitHubActionApprovalRequest({
@@ -410,14 +409,17 @@ export async function generateKestrelOneExternalReply(input: {
       getKestrelOneProfileId(),
       context
     );
-    const profile = applyKestrelOneModelToProfile(
-      baseProfile,
-      toKestrelOneRuntimeModelSelection({
-        ...resolvedModel.model,
-        organizationId: input.organizationId,
-        environmentId: route.environmentId,
-      })
-    );
+    const profile = restrictKestrelOneProfileTools({
+      profile: applyKestrelOneModelToProfile(
+        baseProfile,
+        toKestrelOneRuntimeModelSelection({
+          ...resolvedModel.model,
+          organizationId: input.organizationId,
+          environmentId: route.environmentId,
+        })
+      ),
+      effectiveCapabilities: route.effectiveCapabilities,
+    });
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: createProfileBoundExternalReplyAgent({
         profile,

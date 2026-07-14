@@ -35,7 +35,7 @@ Kestrel One standardizes on a canonical chat, knowledge, and runtime API family.
 
 - `/api/agent-config`
 - `/api/agent-config/public`
-- `/api/tools/runtime`
+- `/api/runtime/apps`
 - `/api/sandbox/shell`
 - `/api/sandbox/snapshot`
 - `/api/stats`

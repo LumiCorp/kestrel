@@ -204,6 +204,41 @@
       "when": 1783994400000,
       "tag": "0026_environment_private_inference_expand",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1784001600000,
+      "tag": "0027_google_calendar_project_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1784005200000,
+      "tag": "0028_apps_capability_platform_expand",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784008800000,
+      "tag": "0029_apps_custom_mcp_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784012400000,
+      "tag": "0030_apps_github_resource_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784016000000,
+      "tag": "0031_apps_google_project_access_cutover",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,9 @@
 import "server-only";
 
 import { and, eq, isNotNull } from "drizzle-orm";
-import { PgBoss } from "pg-boss";
+import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { completeDurableThreadTurn } from "@/lib/turns/store";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 
@@ -44,16 +45,18 @@ async function getTurnBoss() {
 }
 
 async function sendTurn(boss: PgBoss, turnId: string) {
-  await boss.send(
+  const jobId = await boss.send(
     DURABLE_THREAD_TURN_QUEUE,
     { turnId },
     {
       retryLimit: 3,
       retryDelay: 5,
       retryBackoff: true,
-      singletonKey: turnId,
     }
   );
+  if (!jobId) {
+    throw new Error("The durable turn queue rejected the job.");
+  }
 }
 
 export async function enqueueDurableThreadTurn(turnId: string) {
@@ -89,20 +92,33 @@ export async function startDurableThreadTurnWorker() {
     await boss.work(
       DURABLE_THREAD_TURN_QUEUE,
       { batchSize: 1, includeMetadata: true },
-      async (jobs: Array<{ data?: unknown }>) => {
-        const { processDurableThreadTurn } = await import(
-          "@/lib/turns/process-runtime"
-        );
+      async (jobs: Array<JobWithMetadata<{ turnId?: unknown }>>) => {
         for (const job of jobs) {
-          const turnId = (job.data as { turnId?: unknown } | null)?.turnId;
+          const turnId = job.data?.turnId;
           if (typeof turnId !== "string") {
             continue;
           }
-          const result = await processDurableThreadTurn(turnId);
-          if (result.nextTurnId) {
-            await sendTurn(boss, result.nextTurnId);
+          try {
+            const { processDurableThreadTurn } = await import(
+              "@/lib/turns/process-runtime"
+            );
+            const result = await processDurableThreadTurn(turnId);
+            if (result.nextTurnId) {
+              await sendTurn(boss, result.nextTurnId);
+            }
+            await drainMobilePushOutbox().catch(reportPushFailure);
+          } catch (error) {
+            if (job.retryCount >= job.retryLimit) {
+              await completeDurableThreadTurn({
+                turnId,
+                status: "failed",
+                failureCode: "TURN_DISPATCH_FAILED",
+                failureMessage:
+                  "The Kestrel agent could not start this turn. Please try again.",
+              });
+            }
+            throw error;
           }
-          await drainMobilePushOutbox().catch(reportPushFailure);
         }
       }
     );

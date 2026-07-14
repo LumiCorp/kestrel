@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "@/drizzle/schema";
+import { ensureCoreAppCatalog } from "@/lib/apps/service";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
 export type GithubRepositoryAccess = {
@@ -64,6 +65,7 @@ export async function syncGithubUserConnection(input: {
   accessToken: string;
   scopes: string[];
 }) {
+  await ensureCoreAppCatalog();
   const octokit = new Octokit({ auth: input.accessToken });
   const [viewer, repositories] = await Promise.all([
     octokit.rest.users.getAuthenticated(),
@@ -78,122 +80,86 @@ export async function syncGithubUserConnection(input: {
   const now = new Date();
 
   return knowledgeDb.transaction(async (transaction) => {
-    const [connection] = await transaction
-      .insert(schema.userToolConnections)
+    const existingConnection = await transaction.query.appConnections.findFirst(
+      {
+        where: (table, operators) =>
+          operators.and(
+            operators.eq(table.organizationId, input.organizationId),
+            operators.eq(table.appKey, "github"),
+            operators.eq(table.ownerType, "personal"),
+            operators.eq(table.userId, input.userId)
+          ),
+      }
+    );
+    const connectionId = existingConnection?.id ?? crypto.randomUUID();
+    const [appConnection] = await transaction
+      .insert(schema.appConnections)
       .values({
+        id: connectionId,
         organizationId: input.organizationId,
-        providerKey: "github",
+        appKey: "github",
+        ownerType: "personal",
         userId: input.userId,
         authAccountId: input.authAccountId,
+        name: viewer.data.login,
         status: "connected",
-        providerAccountId: input.providerAccountId,
-        providerLogin: viewer.data.login,
+        externalAccountId: input.providerAccountId,
+        externalAccountLabel: viewer.data.login,
         scopes: input.scopes,
-        lastSyncedAt: now,
+        deliveryConfig: {},
+        lastHealthAt: now,
+        createdAt: now,
+        updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: [
-          schema.userToolConnections.organizationId,
-          schema.userToolConnections.providerKey,
-          schema.userToolConnections.userId,
-        ],
+        target: schema.appConnections.id,
         set: {
           authAccountId: input.authAccountId,
+          name: viewer.data.login,
           status: "connected",
-          providerAccountId: input.providerAccountId,
-          providerLogin: viewer.data.login,
+          externalAccountId: input.providerAccountId,
+          externalAccountLabel: viewer.data.login,
           scopes: input.scopes,
           failureCode: null,
+          failureMessage: null,
           disconnectedAt: null,
-          lastSyncedAt: now,
+          lastHealthAt: now,
           updatedAt: now,
         },
       })
       .returning();
-
-    if (!connection) {
-      throw new Error("GitHub connection could not be recorded.");
+    if (!appConnection) {
+      throw new Error("GitHub App connection could not be recorded.");
     }
 
     await transaction
-      .insert(schema.organizationToolConnections)
-      .values({
-        organizationId: input.organizationId,
-        providerKey: "github",
-        authSource: "oauth",
-        status: "connected",
-        metadata: { connectionModel: "user_oauth" },
-      })
-      .onConflictDoUpdate({
-        target: [
-          schema.organizationToolConnections.organizationId,
-          schema.organizationToolConnections.providerKey,
-        ],
-        set: {
-          authSource: "oauth",
-          status: "connected",
-          accountId: null,
-          credentialRef: null,
-          metadata: { connectionModel: "user_oauth" },
-          updatedAt: now,
-        },
-      });
-
-    await transaction
-      .delete(schema.userToolConnectionResources)
-      .where(
-        eq(schema.userToolConnectionResources.connectionId, connection.id)
-      );
+      .delete(schema.appConnectionResources)
+      .where(eq(schema.appConnectionResources.connectionId, connectionId));
 
     for (const repository of mappedRepositories) {
-      const [resource] = await transaction
-        .insert(schema.toolConnectionResources)
-        .values({
-          organizationId: input.organizationId,
-          providerKey: "github",
-          externalId: repository.externalId,
-          resourceType: "repository",
-          label: repository.fullName,
-          enabled: true,
-          metadata: {
-            defaultBranch: repository.defaultBranch,
-            private: repository.isPrivate,
-            htmlUrl: repository.htmlUrl,
-          },
-        })
-        .onConflictDoUpdate({
-          target: [
-            schema.toolConnectionResources.organizationId,
-            schema.toolConnectionResources.providerKey,
-            schema.toolConnectionResources.externalId,
-          ],
-          set: {
-            label: repository.fullName,
-            enabled: true,
-            metadata: {
-              defaultBranch: repository.defaultBranch,
-              private: repository.isPrivate,
-              htmlUrl: repository.htmlUrl,
-            },
-            updatedAt: now,
-          },
-        })
-        .returning({ id: schema.toolConnectionResources.id });
-      if (!resource) {
-        throw new Error("GitHub repository could not be recorded.");
-      }
-      await transaction.insert(schema.userToolConnectionResources).values({
-        connectionId: connection.id,
-        resourceId: resource.id,
-        canPull: repository.canPull,
-        canPush: repository.canPush,
-        canAdmin: repository.canAdmin,
-        lastSeenAt: now,
+      await transaction.insert(schema.appConnectionResources).values({
+        connectionId,
+        externalId: repository.externalId,
+        resourceType: "repository",
+        label: repository.fullName,
+        enabled: true,
+        permissions: {
+          pull: repository.canPull,
+          push: repository.canPush,
+          admin: repository.canAdmin,
+        },
+        metadata: {
+          defaultBranch: repository.defaultBranch,
+          private: repository.isPrivate,
+          htmlUrl: repository.htmlUrl,
+        },
+        createdAt: now,
+        updatedAt: now,
       });
     }
 
     return {
-      connection,
+      connection: appConnection,
       repositoryCount: mappedRepositories.length,
     };
   });
@@ -203,11 +169,12 @@ export async function disconnectGithubUserConnection(input: {
   organizationId: string;
   userId: string;
 }) {
-  const connection = await knowledgeDb.query.userToolConnections.findFirst({
+  const connection = await knowledgeDb.query.appConnections.findFirst({
     where: (table, operators) =>
       operators.and(
         operators.eq(table.organizationId, input.organizationId),
-        operators.eq(table.providerKey, "github"),
+        operators.eq(table.appKey, "github"),
+        operators.eq(table.ownerType, "personal"),
         operators.eq(table.userId, input.userId)
       ),
   });
@@ -217,54 +184,17 @@ export async function disconnectGithubUserConnection(input: {
   const now = new Date();
   return knowledgeDb.transaction(async (transaction) => {
     await transaction
-      .delete(schema.userToolConnectionResources)
-      .where(
-        eq(schema.userToolConnectionResources.connectionId, connection.id)
-      );
+      .delete(schema.appConnectionResources)
+      .where(eq(schema.appConnectionResources.connectionId, connection.id));
     const [updated] = await transaction
-      .update(schema.userToolConnections)
+      .update(schema.appConnections)
       .set({
         status: "disconnected",
         disconnectedAt: now,
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(schema.userToolConnections.id, connection.id),
-          eq(schema.userToolConnections.organizationId, input.organizationId),
-          eq(schema.userToolConnections.userId, input.userId)
-        )
-      )
+      .where(eq(schema.appConnections.id, connection.id))
       .returning();
-    const anotherConnectedUser =
-      await transaction.query.userToolConnections.findFirst({
-        where: (table, operators) =>
-          operators.and(
-            operators.eq(table.organizationId, input.organizationId),
-            operators.eq(table.providerKey, "github"),
-            operators.eq(table.status, "connected")
-          ),
-        columns: { id: true },
-      });
-    if (!anotherConnectedUser) {
-      await transaction
-        .update(schema.organizationToolConnections)
-        .set({
-          status: "not_configured",
-          accountId: null,
-          credentialRef: null,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(
-              schema.organizationToolConnections.organizationId,
-              input.organizationId
-            ),
-            eq(schema.organizationToolConnections.providerKey, "github")
-          )
-        );
-    }
     return updated ?? null;
   });
 }

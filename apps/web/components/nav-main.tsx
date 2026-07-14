@@ -1,25 +1,6 @@
 "use client";
 
-import {
-  Activity,
-  BookOpen,
-  Bot,
-  Bug,
-  Building2,
-  Cpu,
-  CreditCard,
-  FolderKanban,
-  FolderOpen,
-  HardDrive,
-  HardDriveDownload,
-  KeyRound,
-  Logs,
-  Mail,
-  PlugZap,
-  User,
-  Users,
-  Wrench,
-} from "lucide-react";
+import { BookOpen, Bot, PlugZap } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -31,196 +12,55 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-const workspaceItems = [
+const modeItems = [
   {
-    title: "Threads",
-    url: "/threads",
+    title: "Work",
+    url: "/",
     icon: Bot,
-  },
-  {
-    title: "Projects",
-    url: "/projects",
-    icon: FolderOpen,
+    isActive: (pathname: string) =>
+      pathname === "/" ||
+      pathname.startsWith("/threads") ||
+      pathname.startsWith("/projects") ||
+      pathname.startsWith("/search"),
   },
   {
     title: "Knowledge",
     url: "/knowledge",
-    icon: FolderKanban,
-  },
-];
-
-const accountItems = [
-  {
-    title: "User",
-    url: "/dashboard/user",
-    icon: User,
-  },
-  {
-    title: "Billing",
-    url: "/dashboard/billing",
-    icon: CreditCard,
-  },
-  {
-    title: "API Keys",
-    url: "/dashboard/api-keys",
-    icon: KeyRound,
-  },
-  {
-    title: "Organizations",
-    url: "/dashboard/organizations",
-    icon: Building2,
-  },
-];
-
-const organizationItems = [
-  {
-    title: "Environments",
-    url: "/settings/environments",
-    icon: HardDrive,
-  },
-];
-
-const adminItems = [
-  {
-    title: "Agent",
-    url: "/admin/agent",
-    icon: Bot,
-  },
-  {
-    title: "Gateways",
-    url: "/admin/gateways",
-    icon: Cpu,
-  },
-  {
-    title: "Inference Catalog",
-    url: "/admin/deployments",
-    icon: HardDriveDownload,
-  },
-  {
-    title: "Tools",
-    url: "/admin/tools",
-    icon: PlugZap,
-  },
-  {
-    title: "Integrations",
-    url: "/admin/integrations",
-    icon: Mail,
-  },
-  {
-    title: "Users",
-    url: "/admin/users",
-    icon: Users,
-  },
-  {
-    title: "Billing",
-    url: "/admin/billing",
-    icon: CreditCard,
-  },
-  {
-    title: "Logs",
-    url: "/admin/logs",
-    icon: Logs,
-  },
-  {
-    title: "Stats",
-    url: "/admin/stats",
-    icon: Activity,
-  },
-  {
-    title: "API Keys",
-    url: "/admin/api-keys",
-    icon: KeyRound,
-  },
-  {
-    title: "Docs",
-    url: "/admin/docs",
     icon: BookOpen,
+    isActive: (pathname: string) =>
+      pathname === "/knowledge" || pathname.startsWith("/knowledge/"),
+  },
+  {
+    title: "Apps",
+    url: "/apps",
+    icon: PlugZap,
+    isActive: (pathname: string) =>
+      pathname === "/apps" || pathname.startsWith("/apps/"),
   },
 ];
 
-const debugItems = [
-  {
-    title: "Overview",
-    url: "/debug",
-    icon: Bug,
-  },
-  {
-    title: "Sandbox",
-    url: "/debug/sandbox",
-    icon: Wrench,
-  },
-];
-
-function isActivePath(pathname: string, itemUrl: string) {
-  return pathname === itemUrl || pathname.startsWith(`${itemUrl}/`);
-}
-
-function NavSection({
-  label,
-  items,
-  pathname,
-}: {
-  label: string;
-  items: Array<{ title: string; url: string; icon: typeof User }>;
-  pathname: string;
-}) {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarMenu>
-        {items.map((item) => {
-          const isActive = isActivePath(pathname, item.url);
-
-          return (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton
-                asChild
-                isActive={isActive}
-                tooltip={item.title}
-              >
-                <Link href={item.url}>
-                  <item.icon />
-                  <span>{item.title}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          );
-        })}
-      </SidebarMenu>
-    </SidebarGroup>
-  );
-}
-
-export function NavMain({
-  isAdmin,
-  canManageOrganization,
-}: {
-  isAdmin: boolean;
-  canManageOrganization: boolean;
-}) {
+export function NavMain() {
   const pathname = usePathname();
 
   return (
-    <>
-      <NavSection
-        items={workspaceItems}
-        label="Workspace"
-        pathname={pathname}
-      />
-      <NavSection items={accountItems} label="Account" pathname={pathname} />
-      {canManageOrganization ? (
-        <NavSection
-          items={organizationItems}
-          label="Organization"
-          pathname={pathname}
-        />
-      ) : null}
-      {isAdmin ? (
-        <>
-          <NavSection items={adminItems} label="Admin" pathname={pathname} />
-          <NavSection items={debugItems} label="Debug" pathname={pathname} />
-        </>
-      ) : null}
-    </>
+    <SidebarGroup>
+      <SidebarGroupLabel>Navigate</SidebarGroupLabel>
+      <SidebarMenu>
+        {modeItems.map((item) => (
+          <SidebarMenuItem key={item.title}>
+            <SidebarMenuButton
+              asChild
+              isActive={item.isActive(pathname)}
+              tooltip={item.title}
+            >
+              <Link href={item.url}>
+                <item.icon />
+                <span>{item.title}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ))}
+      </SidebarMenu>
+    </SidebarGroup>
   );
 }

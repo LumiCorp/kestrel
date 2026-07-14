@@ -31,6 +31,7 @@ export type DocumentRecord = {
   chunkCount: number;
   error?: string | null;
   extractionMetadata?: unknown;
+  retrievalMode: "semantic" | "lexical";
   createdAt: string;
   updatedAt: string;
   uploaderName?: string | null;
@@ -60,6 +61,8 @@ export type DocumentsResponse = {
       configured: boolean;
     };
     embeddingMode: "live" | "fallback";
+    embeddingModel: string | null;
+    retrievalStrategy: "semantic-first" | "lexical";
     ocrMode: "live" | "fallback";
     queue: {
       configured: boolean;

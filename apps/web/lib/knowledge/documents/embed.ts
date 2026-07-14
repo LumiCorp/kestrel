@@ -4,21 +4,35 @@ import {
   warnIfPlaceholderRuntimeConfig,
 } from "@/lib/ai/surface-policy";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "./constants";
+import type { SemanticEmbeddingProvenance } from "./embedding-provenance";
 
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const TRAILING_SLASHES_REGEX = /\/+$/;
+
+type KnowledgeEmbeddingFetch = (
+  input: string | URL | Request,
+  init?: RequestInit
+) => Promise<Response>;
 
 export function getKnowledgeEmbeddingRuntime(
   env: NodeJS.ProcessEnv = process.env
 ) {
   const config = getDirectRuntimeConfig("embedding", env);
-  const supportsVectorSearch = config.provider !== "openrouter";
+  const retrievalStrategy =
+    config.mode === "live" ? ("semantic-first" as const) : ("lexical" as const);
+  const provenance: SemanticEmbeddingProvenance | null =
+    retrievalStrategy === "semantic-first"
+      ? {
+          mode: "semantic",
+          provider: config.provider,
+          model: config.model,
+          dimensions: KNOWLEDGE_EMBEDDING_DIMENSIONS,
+        }
+      : null;
 
   return {
     ...config,
-    retrievalStrategy:
-      config.mode === "live" && supportsVectorSearch ? "vector" : "lexical",
-    model: config.model || DEFAULT_EMBEDDING_MODEL,
+    provenance,
+    retrievalStrategy,
   };
 }
 
@@ -28,17 +42,32 @@ export function getKnowledgeEmbeddingMode(
   return getKnowledgeEmbeddingRuntime(env).mode;
 }
 
-function normalizeVectorDimensions(values: number[]) {
-  const next = values.slice(0, KNOWLEDGE_EMBEDDING_DIMENSIONS);
-  while (next.length < KNOWLEDGE_EMBEDDING_DIMENSIONS) {
-    next.push(0);
+function normalizeVector(values: number[]) {
+  const magnitude =
+    Math.hypot(
+      ...values.map((value) => (Number.isFinite(value) ? value : 0))
+    ) || 1;
+
+  return values.map((value) => value / magnitude);
+}
+
+function validateEmbeddingVector(value: unknown, index: number) {
+  if (
+    !Array.isArray(value) ||
+    value.length !== KNOWLEDGE_EMBEDDING_DIMENSIONS
+  ) {
+    throw new Error(
+      `Knowledge embedding ${index} must contain exactly ${KNOWLEDGE_EMBEDDING_DIMENSIONS} dimensions`
+    );
   }
 
-  const magnitude =
-    Math.hypot(...next.map((value) => (Number.isFinite(value) ? value : 0))) ||
-    1;
+  if (
+    !value.every((entry) => typeof entry === "number" && Number.isFinite(entry))
+  ) {
+    throw new Error(`Knowledge embedding ${index} contains a non-finite value`);
+  }
 
-  return next.map((value) => value / magnitude);
+  return normalizeVector(value);
 }
 
 function deterministicEmbedding(text: string) {
@@ -50,55 +79,74 @@ function deterministicEmbedding(text: string) {
     values.push(signed);
   }
 
-  return normalizeVectorDimensions(values);
+  return normalizeVector(values);
 }
 
-export async function embedKnowledgeTexts(texts: string[]) {
+export async function embedKnowledgeTexts(
+  texts: string[],
+  options: {
+    env?: NodeJS.ProcessEnv;
+    fetch?: KnowledgeEmbeddingFetch;
+  } = {}
+) {
   if (texts.length === 0) {
     return [];
   }
 
-  const config = getKnowledgeEmbeddingRuntime();
+  const config = getKnowledgeEmbeddingRuntime(options.env);
+  const fetchEmbedding = options.fetch ?? fetch;
   warnIfPlaceholderRuntimeConfig(config);
 
   if (config.mode === "fallback") {
     return texts.map(deterministicEmbedding);
   }
 
-  try {
-    const response = await fetch(
-      `${config.baseURL.replace(TRAILING_SLASHES_REGEX, "")}/embeddings`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          "content-type": "application/json",
-          ...config.headers,
-        },
-        body: JSON.stringify({
-          model: config.model || DEFAULT_EMBEDDING_MODEL,
-          input: texts,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(await response.text().catch(() => response.statusText));
+  const response = await fetchEmbedding(
+    `${config.baseURL.replace(TRAILING_SLASHES_REGEX, "")}/embeddings`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json",
+        ...config.headers,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        input: texts,
+        dimensions: KNOWLEDGE_EMBEDDING_DIMENSIONS,
+        encoding_format: "float",
+      }),
     }
+  );
 
-    const json = (await response.json()) as {
-      data?: Array<{ embedding?: number[] }>;
-    };
-
-    const data = json.data ?? [];
-    if (data.length !== texts.length) {
-      throw new Error("Knowledge embedding response size mismatch");
-    }
-
-    return data.map((entry) =>
-      normalizeVectorDimensions(entry.embedding ?? [])
+  if (!response.ok) {
+    throw new Error(
+      `Knowledge embedding request failed: ${await response
+        .text()
+        .catch(() => response.statusText)}`
     );
-  } catch {
-    return texts.map(deterministicEmbedding);
   }
+
+  const json = (await response.json()) as {
+    data?: Array<{ embedding?: unknown; index?: number }>;
+  };
+
+  const data = json.data ?? [];
+  if (data.length !== texts.length) {
+    throw new Error("Knowledge embedding response size mismatch");
+  }
+
+  const orderedData = data.every((entry) => Number.isInteger(entry.index))
+    ? [...data].sort((left, right) => (left.index ?? 0) - (right.index ?? 0))
+    : data;
+
+  for (const [index, entry] of orderedData.entries()) {
+    if (entry.index !== undefined && entry.index !== index) {
+      throw new Error("Knowledge embedding response indices are invalid");
+    }
+  }
+
+  return orderedData.map((entry, index) =>
+    validateEmbeddingVector(entry.embedding, index)
+  );
 }

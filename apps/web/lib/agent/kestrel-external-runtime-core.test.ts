@@ -152,6 +152,8 @@ test("external bot replies submit the gateway-managed inline profile", async () 
     modelCredential: {
       source: "kestrel-one" as const,
       gatewayId: "gateway-openrouter",
+      organizationId: "org-acme",
+      environmentId: "env-production",
       rawModelId: "openai/gpt-5.4",
     },
   };

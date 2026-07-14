@@ -7,6 +7,10 @@ import {
 } from "@/lib/ai/gateways";
 import { generateImageForModel } from "@/lib/ai/providers";
 import { saveArtifactDocument } from "@/lib/artifacts/store";
+import {
+  getDefaultOrganizationEnvironment,
+  resolveThreadEnvironment,
+} from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
 type CreateMediaJobInput = {
@@ -167,10 +171,20 @@ async function materializeCompletedJob(
 }
 
 export async function createMediaGenerationJob(input: CreateMediaJobInput) {
+  const environment = input.threadId
+    ? ((await resolveThreadEnvironment({
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+      })) ?? (await getDefaultOrganizationEnvironment(input.organizationId)))
+    : await getDefaultOrganizationEnvironment(input.organizationId);
+  if (!environment) {
+    throw new Error("No Environment is available for media generation.");
+  }
   const resolved = await getResolvedGatewayExecutionModel({
     selection: input.modelId,
     modality: input.kind,
     organizationId: input.organizationId,
+    environmentId: environment.id,
   });
 
   if (!resolved) {

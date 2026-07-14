@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { getKnowledgeEmbeddingMode } from "@/lib/knowledge/documents/embed";
+import { getKnowledgeEmbeddingRuntime } from "@/lib/knowledge/documents/embed";
+import { getKnowledgeDocumentRetrievalMode } from "@/lib/knowledge/documents/embedding-provenance";
 import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
 import {
   getKnowledgeDocumentsForOrganization,
@@ -60,12 +61,15 @@ export async function getKnowledgeDocumentsPayload(
   const latestRuns = await getLatestKnowledgeIngestionRunsForDocuments(
     documents.map((document) => document.id)
   );
+  const embeddingRuntime = getKnowledgeEmbeddingRuntime();
   const runtime = {
     storage: {
       provider: getStorageConfig().provider,
       configured: true,
     },
-    embeddingMode: getKnowledgeEmbeddingMode(),
+    embeddingMode: embeddingRuntime.mode,
+    embeddingModel: embeddingRuntime.provenance?.model ?? null,
+    retrievalStrategy: embeddingRuntime.retrievalStrategy,
     ocrMode: getKnowledgeOcrMode(),
     queue: await getKnowledgeQueueStatus(),
   };
@@ -94,6 +98,10 @@ export async function getKnowledgeDocumentsPayload(
 
       return {
         ...document,
+        retrievalMode: getKnowledgeDocumentRetrievalMode(
+          document.extractionMetadata,
+          embeddingRuntime.provenance
+        ),
         mediaType: normalizedMediaType,
         createdAt: document.createdAt.toISOString(),
         updatedAt: document.updatedAt.toISOString(),

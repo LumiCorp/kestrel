@@ -170,6 +170,7 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
           modelCredential: {
             source: "kestrel-one",
             organizationId: "org-acme",
+            environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "z-ai/glm-5.2",
           },
@@ -231,6 +232,7 @@ test("run.start rejects a stale gateway-managed agent loop model", async () => {
           modelCredential: {
             source: "kestrel-one",
             organizationId: "org-acme",
+            environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
           },
@@ -283,6 +285,7 @@ test("run.start binds a gateway-managed credential to command tenant context", a
           modelCredential: {
             source: "kestrel-one",
             organizationId: "org-acme",
+            environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
           },
@@ -320,6 +323,7 @@ test("run.start emits started/log/completed protocol events", async () => {
     modelCredential: {
       source: "kestrel-one",
       organizationId: "org-acme",
+      environmentId: "env-production",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
     },
