@@ -138,6 +138,7 @@ export interface SharedToolContext {
   onFinalize?: ((payload: unknown) => unknown | Promise<unknown>) | undefined;
   fetchImpl?: typeof fetch | undefined;
   internetProvider?: TavilyInternetProvider | undefined;
+  internetEnv?: NodeJS.ProcessEnv | undefined;
   strictFinalizeProvenance?: boolean | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
   codeExecutionService?: CodeExecutionServicePort | undefined;

@@ -56,6 +56,7 @@ export interface ModelReasoningSidecarOptions {
   model?: string | undefined;
   timeoutMs?: number | undefined;
   maxTokens?: number | undefined;
+  inheritProcessEnv?: boolean | undefined;
 }
 
 export interface ReasoningDropDiagnostic {
@@ -243,14 +244,15 @@ export class ModelReasoningSidecar {
 
   constructor(modelGateway: ModelGateway, options: ModelReasoningSidecarOptions = {}) {
     this.modelGateway = modelGateway;
-    const enabledFromEnv = parseEnvBoolean("KCHAT_REASONING_ENABLED");
+    const env = options.inheritProcessEnv === false ? {} : process.env;
+    const enabledFromEnv = parseEnvBoolean("KCHAT_REASONING_ENABLED", env);
     this.enabled = options.enabled ?? enabledFromEnv ?? true;
     this.model =
       typeof options.model === "string" && options.model.trim().length > 0
         ? options.model.trim()
-        : process.env.KCHAT_REASONING_MODEL;
-    const timeoutFromEnv = parseEnvPositiveInt("KCHAT_REASONING_TIMEOUT_MS");
-    const maxTokensFromEnv = parseEnvPositiveInt("KCHAT_REASONING_MAX_TOKENS");
+        : env.KCHAT_REASONING_MODEL;
+    const timeoutFromEnv = parseEnvPositiveInt("KCHAT_REASONING_TIMEOUT_MS", env);
+    const maxTokensFromEnv = parseEnvPositiveInt("KCHAT_REASONING_MAX_TOKENS", env);
     this.timeoutMs =
       typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
         ? Math.floor(options.timeoutMs)
@@ -935,8 +937,8 @@ function readNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function parseEnvBoolean(name: string): boolean | undefined {
-  const raw = process.env[name];
+function parseEnvBoolean(name: string, env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const raw = env[name];
   if (raw === undefined) {
     return undefined;
   }
@@ -950,8 +952,8 @@ function parseEnvBoolean(name: string): boolean | undefined {
   return undefined;
 }
 
-function parseEnvPositiveInt(name: string): number | undefined {
-  const raw = process.env[name];
+function parseEnvPositiveInt(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env[name];
   if (raw === undefined) {
     return undefined;
   }

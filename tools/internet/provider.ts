@@ -50,6 +50,7 @@ interface CreateTavilyInternetProviderOptions {
   projectId?: string | undefined;
   httpProxy?: string | undefined;
   httpsProxy?: string | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
   maxAttempts?: number | undefined;
   timeoutMs?: number | undefined;
   fetchImpl?: typeof fetch | undefined;
@@ -99,13 +100,14 @@ type QueryPlanResult =
 export function createTavilyInternetProvider(
   options: CreateTavilyInternetProviderOptions = {},
 ): TavilyInternetProvider {
+  const env = options.env ?? process.env;
   const timeoutSeconds = millisecondsToSeconds(
     clampInteger(options.timeoutMs, 1_000, 60_000, DEFAULT_TIMEOUT_MS),
   );
   const maxAttempts = clampInteger(options.maxAttempts, 1, 5, DEFAULT_MAX_ATTEMPTS);
-  const apiKey = coalesceNonEmpty(options.apiKey, process.env.TAVILY_API_KEY);
-  const baseUrl = coalesceNonEmpty(options.baseUrl, process.env.TAVILY_BASE_URL) ?? "https://api.tavily.com";
-  const projectId = coalesceNonEmpty(options.projectId, process.env.TAVILY_PROJECT);
+  const apiKey = coalesceNonEmpty(options.apiKey, env.TAVILY_API_KEY);
+  const baseUrl = coalesceNonEmpty(options.baseUrl, env.TAVILY_BASE_URL) ?? "https://api.tavily.com";
+  const projectId = coalesceNonEmpty(options.projectId, env.TAVILY_PROJECT);
   const fetchImpl = options.fetchImpl ?? fetch;
   const client =
     options.client ??
@@ -115,6 +117,7 @@ export function createTavilyInternetProvider(
       projectId,
       httpProxy: options.httpProxy,
       httpsProxy: options.httpsProxy,
+      env,
       tavilyFactory: options.tavilyFactory,
     });
 

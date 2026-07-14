@@ -25,6 +25,8 @@ The SDK now requires every client to select an explicit local or remote target; 
 
 Credential storage and Desktop cutover form one activation boundary even when their substrate is reviewed separately. Local Core may gain typed credential-store and explicit-environment abstractions ahead of the cutover, but plaintext migration, rejection of legacy secret fields, and secure credential activation must not strand the existing Desktop child runner. No control API will lease raw credentials back to a client merely to preserve that temporary execution path.
 
+The dormant credential substrate uses four stable provider/tool credential IDs, a macOS Keychain backend with no plaintext fallback, and frozen per-profile environment views that isolate model, Tavily, runtime, and MCP configuration. The existing daemon does not select that backend automatically yet: an injected store is required, so current CLI and Desktop behavior remains unchanged until migration and cutover activate the new authority together. This milestone covers provider and Tavily credentials only; an external `databaseUrl` may itself contain a password and requires a separate credential design before Kestrel can claim that every Local Core secret has left settings storage.
+
 ## Target Topology
 
 ```text

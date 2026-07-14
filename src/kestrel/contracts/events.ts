@@ -226,4 +226,5 @@ export interface ReasoningSidecarConfig {
   model?: string | undefined;
   timeoutMs?: number | undefined;
   maxTokens?: number | undefined;
+  inheritProcessEnv?: boolean | undefined;
 }

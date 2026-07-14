@@ -67,6 +67,39 @@ test("createTavilyClient throws structured error when api key is missing", async
   }
 });
 
+test("createTavilyClient treats an explicit environment as authoritative", () => {
+  const previous = process.env.TAVILY_API_KEY;
+  process.env.TAVILY_API_KEY = "global-key-must-not-leak";
+  let capturedApiKey: string | undefined;
+
+  try {
+    assert.throws(
+      () => createTavilyClient({
+        env: {},
+        tavilyFactory() {
+          throw new Error("factory should not be called without an explicit key");
+        },
+      }),
+      /Missing Tavily API key/u,
+    );
+
+    createTavilyClient({
+      env: { TAVILY_API_KEY: "core-owned-key" },
+      tavilyFactory(options) {
+        capturedApiKey = options?.apiKey;
+        return createNoopClient();
+      },
+    });
+    assert.equal(capturedApiKey, "core-owned-key");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TAVILY_API_KEY;
+    } else {
+      process.env.TAVILY_API_KEY = previous;
+    }
+  }
+});
+
 function createNoopClient(): TavilySdkClient {
   return {
     search: async () => {

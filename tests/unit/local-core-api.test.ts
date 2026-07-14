@@ -19,6 +19,12 @@ import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
 } from "../../src/localCore/store.js";
+import {
+  LOCAL_CORE_CREDENTIAL_IDS,
+  MemoryLocalCoreCredentialStore,
+  type LocalCoreCredentialId,
+  type LocalCoreCredentialStore,
+} from "../../src/localCore/credentialStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
@@ -314,6 +320,115 @@ test("Local Core API releases startup ownership when journal initialization fail
     await recovered.close();
   } finally {
     await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core captures injected credentials once per execution bundle", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kccreds-"));
+  const memory = new MemoryLocalCoreCredentialStore();
+  const reads: LocalCoreCredentialId[] = [];
+  await memory.set("provider.openrouter.default", "core-key-generation-one");
+  const credentialStore: LocalCoreCredentialStore = {
+    backend: memory.backend,
+    available: memory.available,
+    async get(id) {
+      reads.push(id);
+      return await memory.get(id);
+    },
+    set: memory.set.bind(memory),
+    delete: memory.delete.bind(memory),
+    has: memory.has.bind(memory),
+  };
+
+  const server = await startLocalCoreApiServer({
+    env: {
+      KESTREL_CORE_HOME: home,
+      OPENROUTER_API_KEY: "ambient-key-must-not-be-authoritative",
+    },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    credentialStore,
+  });
+  const client = new LocalCoreClient({
+    socketPath: server.socketPath,
+    token: server.token,
+  });
+
+  try {
+    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+    await memory.set("provider.openrouter.default", "core-key-generation-two");
+    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+
+    const restarted = await client.restart();
+    assert.equal(restarted.state, "healthy");
+    assert.deepEqual(reads, [
+      ...LOCAL_CORE_CREDENTIAL_IDS,
+      ...LOCAL_CORE_CREDENTIAL_IDS,
+    ]);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core provider readiness follows the authoritative credential store", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcready-"));
+  const credentialStore = new MemoryLocalCoreCredentialStore();
+  await credentialStore.set("provider.openrouter.default", "stored-openrouter-key");
+  const server = await startLocalCoreApiServer({
+    env: {
+      KESTREL_CORE_HOME: home,
+      OPENAI_API_KEY: "ambient-openai-key-must-not-count",
+      ANTHROPIC_API_KEY: "ambient-anthropic-key-must-not-count",
+    },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    credentialStore,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+
+  try {
+    const response = await client.providerReadiness() as {
+      providerReadiness?: Record<string, { ready?: boolean; credential?: string }>;
+    };
+    assert.deepEqual(response.providerReadiness?.openrouter, {
+      ready: true,
+      credential: "configured",
+    });
+    assert.deepEqual(response.providerReadiness?.openai, {
+      ready: false,
+      credential: "missing",
+    });
+    assert.deepEqual(response.providerReadiness?.anthropic, {
+      ready: false,
+      credential: "missing",
+    });
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core rejects an ambiguous credential store and custom runtime factory", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcambiguous-"));
+  try {
+    await assert.rejects(
+      () => startLocalCoreApiServer({
+        env: { KESTREL_CORE_HOME: home },
+        platform: "darwin",
+        coreVersion: "0.6.0",
+        idleTimeoutMs: 0,
+        credentialStore: new MemoryLocalCoreCredentialStore(),
+        executionRuntimeFactory: () => {
+          throw new Error("custom runtime must not be reached");
+        },
+      }),
+      /cannot be combined with executionRuntimeFactory/u,
+    );
+  } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
