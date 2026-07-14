@@ -200,7 +200,13 @@ async function processQualification(
       runId: run.id,
       name,
       templateId,
-      endpointSpec: profile.endpointSpec,
+      endpointSpec: {
+        ...runPodEndpointSpecSchema.parse(profile.endpointSpec),
+        // Qualification is short-lived and cleaned up immediately. Keeping one
+        // worker warm prevents timed-out probes from accumulating in RunPod's
+        // queue while the qualified deployment profile remains scale-to-zero.
+        workersMin: 1,
+      },
       providerEndpointId: endpointId,
     });
     endpointId = endpoint.endpointId;

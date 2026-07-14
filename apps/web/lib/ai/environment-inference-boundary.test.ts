@@ -82,6 +82,16 @@ test("managed inference validates the declared model without discovery", () => {
   assert.doesNotMatch(runtime, /\/models/u);
 });
 
+test("qualification warms one temporary worker without changing scale-to-zero deployments", () => {
+  const runtime = read("lib/ai/managed-runpod-runtime.ts");
+  const profile = read("lib/ai/qwen3-runpod-profile.ts");
+  assert.match(
+    runtime,
+    /processQualification[\s\S]*workersMin: 1[\s\S]*validateRunPodToolRoundTrip/u
+  );
+  assert.match(profile, /workersMin: 0/u);
+});
+
 test("connected inference supports explicit model validation when discovery fails", () => {
   const route = read(
     "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"
