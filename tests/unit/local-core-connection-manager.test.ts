@@ -102,12 +102,12 @@ test("Local Core connection manager reconnects before a non-idempotent operation
     async health(): Promise<never> {
       throw Object.assign(new Error("missing socket"), { code: "ENOENT" });
     },
-  } as LocalCoreClient;
+  } as unknown as LocalCoreClient;
   const recoveredClient = {
     async health(): Promise<{ ok: true }> {
       return { ok: true };
     },
-  } as LocalCoreClient;
+  } as unknown as LocalCoreClient;
   let reconnects = 0;
   let operationCalls = 0;
   const manager = new LocalCoreConnectionManager({
