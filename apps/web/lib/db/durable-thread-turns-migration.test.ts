@@ -39,6 +39,13 @@ const workerEntrypoint = fs.readFileSync(
   ),
   "utf8"
 );
+const workerServerOnlyLoader = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../scripts/server-only-loader.mjs"
+  ),
+  "utf8"
+);
 const webPackage = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -111,6 +118,8 @@ test("the production worker entrypoint starts without top-level await", () => {
   assert.match(workerEntrypoint, /void main\(\)\.catch/u);
   assert.equal(
     webPackage.scripts["worker:turns"],
-    "node --conditions=react-server --import tsx scripts/turn-worker.ts"
+    "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts"
   );
+  assert.doesNotMatch(webPackage.scripts["worker:turns"] ?? "", /react-server/u);
+  assert.match(workerServerOnlyLoader, /specifier === "server-only"/u);
 });
