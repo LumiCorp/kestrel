@@ -1,4 +1,11 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { auth } from "@/lib/auth";
+import { withExpoOrigin } from "@/lib/mobile/native-auth-origin";
 
-export const { GET, POST } = toNextJsHandler(auth);
+const handlers = toNextJsHandler(auth);
+
+export const GET = handlers.GET;
+
+export function POST(request: Request) {
+  return handlers.POST(withExpoOrigin(request));
+}
