@@ -6,6 +6,6 @@ const handlers = toNextJsHandler(auth);
 
 export const GET = handlers.GET;
 
-export function POST(request: Request) {
-  return handlers.POST(withExpoOrigin(request));
+export async function POST(request: Request) {
+  return handlers.POST(await withExpoOrigin(request));
 }

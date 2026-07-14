@@ -1,4 +1,4 @@
-export function withExpoOrigin(request: Request): Request {
+export async function withExpoOrigin(request: Request): Promise<Request> {
   if (request.headers.has("origin")) {
     return request;
   }
@@ -11,5 +11,11 @@ export function withExpoOrigin(request: Request): Request {
   const headers = new Headers(request.headers);
   headers.set("origin", expoOrigin);
 
-  return new Request(request, { headers });
+  const body = request.body === null ? undefined : await request.arrayBuffer();
+
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body,
+  });
 }
