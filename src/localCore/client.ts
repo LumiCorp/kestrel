@@ -23,6 +23,14 @@ import {
   type LocalCoreRuntimeStoreResetResult,
   type LocalCoreStatus,
 } from "./contracts.js";
+import {
+  parseLocalCoreCredentialStoreStatus,
+  type LocalCoreCredentialStoreStatus,
+} from "./credentialStore.js";
+import {
+  parseLocalCoreRuntimeConfiguration,
+  type LocalCoreRuntimeConfigurationV1,
+} from "./runtimeConfiguration.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -61,6 +69,43 @@ export class LocalCoreClient {
 
   async patchSettings(patch: Record<string, unknown>): Promise<unknown> {
     return await this.patch("/v1/settings", patch);
+  }
+
+  async runtimeConfiguration(): Promise<LocalCoreRuntimeConfigurationV1> {
+    const response = await this.get("/v1/runtime/configuration");
+    return parseLocalCoreRuntimeConfiguration(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "runtimeConfiguration",
+        "runtime configuration",
+      ),
+    );
+  }
+
+  async repairRuntimeConfiguration(
+    runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
+  ): Promise<LocalCoreRuntimeConfigurationV1> {
+    const response = await this.post("/v1/runtime/configuration/repair", {
+      runtimeConfiguration: parseLocalCoreRuntimeConfiguration(runtimeConfiguration),
+    });
+    return parseLocalCoreRuntimeConfiguration(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "runtimeConfiguration",
+        "runtime configuration repair",
+      ),
+    );
+  }
+
+  async credentialStatus(): Promise<LocalCoreCredentialStoreStatus> {
+    const response = await this.get("/v1/credentials");
+    return parseLocalCoreCredentialStoreStatus(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "credentials",
+        "credential status",
+      ),
+    );
   }
 
   async desktopExecutionConfig(): Promise<LocalCoreDesktopExecutionConfig> {

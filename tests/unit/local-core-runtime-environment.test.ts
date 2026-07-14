@@ -8,9 +8,14 @@ import {
 } from "../../src/localCore/credentialStore.js";
 import {
   LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS,
+  LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS,
   createLocalCoreRuntimeEnvironmentResolver,
   resolveLocalCoreRuntimeEnvironment,
 } from "../../src/localCore/runtimeEnvironment.js";
+import {
+  createDefaultLocalCoreRuntimeConfiguration,
+  type LocalCoreRuntimeConfigurationV1,
+} from "../../src/localCore/runtimeConfiguration.js";
 
 function credentialReader(
   values: Partial<Record<LocalCoreCredentialId, string>>,
@@ -24,6 +29,102 @@ function credentialReader(
   };
 }
 
+function configuredRuntime(): LocalCoreRuntimeConfigurationV1 {
+  const defaults = createDefaultLocalCoreRuntimeConfiguration();
+  return {
+    ...defaults,
+    generation: 1,
+    environmentOptionsMode: "replace",
+    providers: {
+      ...defaults.providers,
+      openrouter: {
+        baseUrl: "https://openrouter.core.example/v1",
+        siteUrl: "https://kestrel.example",
+        appName: "Kestrel Core",
+      },
+      openai: {
+        baseUrl: "https://openai.core.example/v1",
+        organizationId: "org-core",
+        projectId: "project-core",
+      },
+      anthropic: {
+        baseUrl: "https://anthropic.core.example/v1",
+        version: "2026-07-01",
+      },
+      ollama: {
+        baseUrl: "http://ollama.core.example:11434",
+      },
+      lmstudio: {
+        baseUrl: "http://lmstudio.core.example:1234/v1",
+      },
+    },
+    tools: {
+      ...defaults.tools,
+      tavily: {
+        baseUrl: "https://tavily.core.example",
+        projectId: "tavily-project-core",
+        httpProxyUrl: "http://proxy.core.example:8080",
+        httpsProxyUrl: "https://proxy.core.example:8443",
+      },
+    },
+  };
+}
+
+test("inherit mode preserves inherited non-secret options independent of generation", async () => {
+  const snapshot = await resolveLocalCoreRuntimeEnvironment({
+    baseEnv: {
+      OPENROUTER_BASE_URL: "http://127.0.0.1:4242/v1",
+      OPENROUTER_SITE_URL: "https://legacy.example",
+      OPENAI_BASE_URL: "https://legacy-openai.example/v1",
+      TAVILY_BASE_URL: "https://legacy-tavily.example",
+      TAVILY_HTTP_PROXY: "http://legacy-proxy.example:8080",
+    },
+    runtimeConfiguration: {
+      ...createDefaultLocalCoreRuntimeConfiguration(),
+      generation: 4,
+      environmentOptionsMode: "inherit",
+    },
+    resolvedProfile: {
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.2",
+    },
+  });
+
+  assert.equal(snapshot.modelEnv.OPENROUTER_BASE_URL, "http://127.0.0.1:4242/v1");
+  assert.equal(snapshot.modelEnv.OPENROUTER_SITE_URL, "https://legacy.example");
+  assert.equal(snapshot.modelEnv.OPENAI_BASE_URL, "https://legacy-openai.example/v1");
+  assert.equal(snapshot.internetEnv.TAVILY_BASE_URL, "https://legacy-tavily.example");
+  assert.equal(snapshot.internetEnv.TAVILY_HTTP_PROXY, "http://legacy-proxy.example:8080");
+  assert.equal(snapshot.runtimeEnv.OPENAI_BASE_URL, "https://legacy-openai.example/v1");
+  assert.equal(snapshot.mcpEnv.TAVILY_BASE_URL, "https://legacy-tavily.example");
+});
+
+test("replace mode removes omitted inherited non-secret options independent of generation", async () => {
+  const defaults = createDefaultLocalCoreRuntimeConfiguration();
+  const snapshot = await resolveLocalCoreRuntimeEnvironment({
+    baseEnv: {
+      OPENROUTER_BASE_URL: "https://legacy-openrouter.example/v1",
+      OPENAI_BASE_URL: "https://legacy-openai.example/v1",
+      TAVILY_BASE_URL: "https://legacy-tavily.example",
+    },
+    runtimeConfiguration: {
+      ...defaults,
+      generation: 0,
+      environmentOptionsMode: "replace",
+    },
+    resolvedProfile: {
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.2",
+    },
+  });
+
+  assert.equal(snapshot.modelEnv.OPENROUTER_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.OPENAI_BASE_URL, undefined);
+  assert.equal(snapshot.internetEnv.TAVILY_BASE_URL, undefined);
+  assert.equal(snapshot.runtimeEnv.OPENAI_BASE_URL, undefined);
+  assert.equal(snapshot.mcpEnv.TAVILY_BASE_URL, undefined);
+});
+
 test("Core credential values replace conflicting inherited provider and tool keys", async () => {
   const baseEnv: NodeJS.ProcessEnv = {
     HOME: "/tmp/kestrel-home",
@@ -35,6 +136,7 @@ test("Core credential values replace conflicting inherited provider and tool key
 
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv,
+    runtimeConfiguration: configuredRuntime(),
     resolvedProfile: {
       modelProvider: "openrouter",
       model: "z-ai/glm-5.2",
@@ -65,6 +167,209 @@ test("Core credential values replace conflicting inherited provider and tool key
   });
 });
 
+test("ambient credentials remain available while canonical options replace inherited values", async () => {
+  const inheritedOptions = Object.fromEntries(
+    LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS.map((key) => [
+      key,
+      `inherited-${key}`,
+    ]),
+  );
+  const baseEnv: NodeJS.ProcessEnv = {
+    HOME: "/tmp/ambient-home",
+    OPENROUTER_API_KEY: "ambient-openrouter",
+    OPENAI_API_KEY: "ambient-openai",
+    ANTHROPIC_API_KEY: "ambient-anthropic",
+    TAVILY_API_KEY: "ambient-tavily",
+    ...inheritedOptions,
+    OPENAI_BASE_URL_SUFFIX: "preserve-exact-non-match",
+  };
+
+  const snapshot = await resolveLocalCoreRuntimeEnvironment({
+    baseEnv,
+    runtimeConfiguration: configuredRuntime(),
+    resolvedProfile: {
+      modelProvider: "openai",
+      model: "  gpt-core  ",
+    },
+  });
+
+  for (const env of [
+    snapshot.modelEnv,
+    snapshot.internetEnv,
+    snapshot.runtimeEnv,
+    snapshot.mcpEnv,
+  ]) {
+    assert.equal(env.OPENROUTER_API_KEY, "ambient-openrouter");
+    assert.equal(env.OPENAI_API_KEY, "ambient-openai");
+    assert.equal(env.ANTHROPIC_API_KEY, "ambient-anthropic");
+    assert.equal(env.TAVILY_API_KEY, "ambient-tavily");
+    assert.equal(env.OPENAI_BASE_URL_SUFFIX, "preserve-exact-non-match");
+  }
+
+  assert.equal(snapshot.modelEnv.OPENAI_MODEL, "gpt-core");
+  assert.equal(
+    snapshot.modelEnv.OPENAI_BASE_URL,
+    "https://openai.core.example/v1",
+  );
+  assert.equal(snapshot.modelEnv.OPENAI_ORG_ID, "org-core");
+  assert.equal(snapshot.modelEnv.OPENAI_PROJECT_ID, "project-core");
+  assert.equal(snapshot.modelEnv.OPENROUTER_MODEL, undefined);
+  assert.equal(snapshot.modelEnv.OPENROUTER_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.OLLAMA_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.LMSTUDIO_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.TAVILY_BASE_URL, undefined);
+
+  assert.equal(
+    snapshot.internetEnv.TAVILY_BASE_URL,
+    "https://tavily.core.example",
+  );
+  assert.equal(snapshot.internetEnv.TAVILY_PROJECT, "tavily-project-core");
+  assert.equal(
+    snapshot.internetEnv.TAVILY_HTTP_PROXY,
+    "http://proxy.core.example:8080",
+  );
+  assert.equal(
+    snapshot.internetEnv.TAVILY_HTTPS_PROXY,
+    "https://proxy.core.example:8443",
+  );
+  assert.equal(snapshot.internetEnv.OPENAI_MODEL, undefined);
+  assert.equal(snapshot.internetEnv.OPENAI_BASE_URL, undefined);
+
+  for (const key of LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS) {
+    assert.equal(snapshot.runtimeEnv[key], undefined);
+    assert.equal(snapshot.mcpEnv[key], undefined);
+  }
+  assert.equal(
+    JSON.stringify(snapshot.runtimeEnv).includes("ambient-openai"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(snapshot.runtimeEnv).includes("[REDACTED]"),
+    true,
+  );
+  assert.equal(inspect(snapshot.mcpEnv).includes("ambient-tavily"), false);
+  assert.equal(inspect(snapshot.mcpEnv).includes("[REDACTED]"), true);
+});
+
+test("credential authority scrubs ambient secrets while retaining scoped canonical options", async () => {
+  const snapshot = await resolveLocalCoreRuntimeEnvironment({
+    baseEnv: {
+      OPENROUTER_API_KEY: "ambient-openrouter",
+      OPENAI_API_KEY: "ambient-openai",
+      ANTHROPIC_API_KEY: "ambient-anthropic",
+      TAVILY_API_KEY: "ambient-tavily",
+      OPENROUTER_BASE_URL: "https://inherited-openrouter.example",
+      OPENAI_BASE_URL: "https://inherited-openai.example",
+      TAVILY_BASE_URL: "https://inherited-tavily.example",
+    },
+    runtimeConfiguration: configuredRuntime(),
+    resolvedProfile: {
+      modelProvider: "openrouter",
+      model: "openrouter/core-model",
+    },
+    credentialStore: credentialReader({
+      "provider.openrouter.default": "core-openrouter",
+      "provider.openai.default": "core-openai",
+      "provider.anthropic.default": "core-anthropic",
+      "tool.tavily.default": "core-tavily",
+    }),
+  });
+
+  assert.equal(snapshot.modelEnv.OPENROUTER_API_KEY, "core-openrouter");
+  assert.equal(snapshot.modelEnv.OPENAI_API_KEY, undefined);
+  assert.equal(snapshot.modelEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(snapshot.modelEnv.TAVILY_API_KEY, undefined);
+  assert.equal(snapshot.modelEnv.OPENROUTER_MODEL, "openrouter/core-model");
+  assert.equal(
+    snapshot.modelEnv.OPENROUTER_BASE_URL,
+    "https://openrouter.core.example/v1",
+  );
+  assert.equal(snapshot.modelEnv.OPENAI_BASE_URL, undefined);
+  assert.equal(snapshot.modelEnv.TAVILY_BASE_URL, undefined);
+
+  assert.equal(snapshot.internetEnv.TAVILY_API_KEY, "core-tavily");
+  assert.equal(snapshot.internetEnv.OPENROUTER_API_KEY, undefined);
+  assert.equal(snapshot.internetEnv.OPENAI_API_KEY, undefined);
+  assert.equal(
+    snapshot.internetEnv.TAVILY_BASE_URL,
+    "https://tavily.core.example",
+  );
+  assert.equal(snapshot.internetEnv.OPENROUTER_BASE_URL, undefined);
+
+  for (const key of [
+    ...LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS,
+    ...LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS,
+  ]) {
+    assert.equal(snapshot.runtimeEnv[key], undefined);
+    assert.equal(snapshot.mcpEnv[key], undefined);
+  }
+});
+
+test("selected provider model and URL options map to their exact environment contracts", async () => {
+  const cases = [
+    {
+      provider: "openrouter",
+      modelKey: "OPENROUTER_MODEL",
+      baseUrlKey: "OPENROUTER_BASE_URL",
+      baseUrl: "https://openrouter.core.example/v1",
+      optionKey: "OPENROUTER_SITE_URL",
+      option: "https://kestrel.example",
+    },
+    {
+      provider: "openai",
+      modelKey: "OPENAI_MODEL",
+      baseUrlKey: "OPENAI_BASE_URL",
+      baseUrl: "https://openai.core.example/v1",
+      optionKey: "OPENAI_PROJECT_ID",
+      option: "project-core",
+    },
+    {
+      provider: "anthropic",
+      modelKey: "ANTHROPIC_MODEL",
+      baseUrlKey: "ANTHROPIC_BASE_URL",
+      baseUrl: "https://anthropic.core.example/v1",
+      optionKey: "ANTHROPIC_VERSION",
+      option: "2026-07-01",
+    },
+    {
+      provider: "ollama",
+      modelKey: "OLLAMA_MODEL",
+      baseUrlKey: "OLLAMA_BASE_URL",
+      baseUrl: "http://ollama.core.example:11434",
+    },
+    {
+      provider: "lmstudio",
+      modelKey: "LMSTUDIO_MODEL",
+      baseUrlKey: "LMSTUDIO_BASE_URL",
+      baseUrl: "http://lmstudio.core.example:1234/v1",
+    },
+  ] as const;
+
+  for (const entry of cases) {
+    const snapshot = await resolveLocalCoreRuntimeEnvironment({
+      baseEnv: {},
+      runtimeConfiguration: configuredRuntime(),
+      resolvedProfile: {
+        modelProvider: entry.provider,
+        model: `${entry.provider}-model`,
+      },
+    });
+
+    assert.equal(snapshot.modelEnv[entry.modelKey], `${entry.provider}-model`);
+    assert.equal(snapshot.modelEnv[entry.baseUrlKey], entry.baseUrl);
+    if ("optionKey" in entry) {
+      assert.equal(snapshot.modelEnv[entry.optionKey], entry.option);
+    }
+    for (const other of cases) {
+      if (other.provider !== entry.provider) {
+        assert.equal(snapshot.modelEnv[other.modelKey], undefined);
+        assert.equal(snapshot.modelEnv[other.baseUrlKey], undefined);
+      }
+    }
+  }
+});
+
 test("Core injects only the selected hosted provider credential", async () => {
   const credentials = {
     "provider.openrouter.default": "core-openrouter",
@@ -75,6 +380,7 @@ test("Core injects only the selected hosted provider credential", async () => {
 
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv: {},
+    runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
     resolvedProfile: {
       modelProvider: "openai",
       model: "gpt-5.4-2026-03-05",
@@ -99,16 +405,20 @@ test("Core does not request or inject hosted-provider credentials for local prov
         OPENAI_API_KEY: "inherited-openai",
         ANTHROPIC_API_KEY: "inherited-anthropic",
       },
+      runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
       resolvedProfile: {
         modelProvider,
         model: "local-model",
       },
-      credentialStore: credentialReader({
-        "provider.openrouter.default": "core-openrouter",
-        "provider.openai.default": "core-openai",
-        "provider.anthropic.default": "core-anthropic",
-        "tool.tavily.default": "core-tavily",
-      }, reads),
+      credentialStore: credentialReader(
+        {
+          "provider.openrouter.default": "core-openrouter",
+          "provider.openai.default": "core-openai",
+          "provider.anthropic.default": "core-anthropic",
+          "tool.tavily.default": "core-tavily",
+        },
+        reads,
+      ),
     });
 
     assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
@@ -133,6 +443,7 @@ test("Core captures base environment and credentials once for synchronous profil
   };
   const resolver = await createLocalCoreRuntimeEnvironmentResolver({
     baseEnv,
+    runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
     credentialStore: credentialReader(credentials, reads),
   });
 
@@ -168,6 +479,7 @@ test("Missing Core credentials remain absent after inherited keys are scrubbed",
       OPENROUTER_API_KEY: "inherited-openrouter",
       TAVILY_API_KEY: "inherited-tavily",
     },
+    runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
     resolvedProfile: {
       modelProvider: "openrouter",
       model: "z-ai/glm-5.2",
@@ -197,6 +509,7 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
   };
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv,
+    runtimeConfiguration: configuredRuntime(),
     resolvedProfile: {
       modelProvider: "openrouter",
       model: "  z-ai/glm-5.2  ",
@@ -218,11 +531,19 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
   assert.deepEqual(Object.keys(snapshot.modelEnv), [
     "ALPHA",
     "ZED",
+    "OPENROUTER_MODEL",
+    "OPENROUTER_BASE_URL",
+    "OPENROUTER_SITE_URL",
+    "OPENROUTER_APP_NAME",
     "OPENROUTER_API_KEY",
   ]);
   assert.deepEqual(Object.keys(snapshot.internetEnv), [
     "ALPHA",
     "ZED",
+    "TAVILY_BASE_URL",
+    "TAVILY_PROJECT",
+    "TAVILY_HTTP_PROXY",
+    "TAVILY_HTTPS_PROXY",
     "TAVILY_API_KEY",
   ]);
   assert.deepEqual(Object.keys(snapshot.runtimeEnv), ["ALPHA", "ZED"]);
@@ -236,30 +557,35 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
     false,
   );
   assert.equal(
-    Object.getOwnPropertyDescriptor(snapshot.modelEnv, "OPENROUTER_API_KEY")?.enumerable,
+    Object.getOwnPropertyDescriptor(snapshot.modelEnv, "OPENROUTER_API_KEY")
+      ?.enumerable,
     true,
   );
   assert.equal(
-    Object.getOwnPropertyDescriptor(snapshot.internetEnv, "TAVILY_API_KEY")?.enumerable,
+    Object.getOwnPropertyDescriptor(snapshot.internetEnv, "TAVILY_API_KEY")
+      ?.enumerable,
     true,
   );
-  assert.equal(
-    ({ ...snapshot.modelEnv }).OPENROUTER_API_KEY,
-    "core-openrouter",
-  );
-  assert.equal(
-    ({ ...snapshot.internetEnv }).TAVILY_API_KEY,
-    "core-tavily",
-  );
+  assert.equal({ ...snapshot.modelEnv }.OPENROUTER_API_KEY, "core-openrouter");
+  assert.equal({ ...snapshot.internetEnv }.TAVILY_API_KEY, "core-tavily");
   assert.equal(
     JSON.stringify(snapshot),
     '{"modelProvider":"openrouter","model":"z-ai/glm-5.2"}',
   );
   assert.equal(JSON.stringify(snapshot).includes("core-openrouter"), false);
-  assert.equal(JSON.stringify(snapshot.modelEnv).includes("core-openrouter"), false);
+  assert.equal(
+    JSON.stringify(snapshot.modelEnv).includes("core-openrouter"),
+    false,
+  );
   assert.equal(JSON.stringify(snapshot.modelEnv).includes("[REDACTED]"), true);
-  assert.equal(JSON.stringify(snapshot.internetEnv).includes("core-tavily"), false);
-  assert.equal(JSON.stringify(snapshot.internetEnv).includes("[REDACTED]"), true);
+  assert.equal(
+    JSON.stringify(snapshot.internetEnv).includes("core-tavily"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(snapshot.internetEnv).includes("[REDACTED]"),
+    true,
+  );
   assert.equal(inspect(snapshot.modelEnv).includes("core-openrouter"), false);
   assert.equal(inspect(snapshot.modelEnv).includes("[REDACTED]"), true);
   assert.equal(inspect(snapshot.internetEnv).includes("core-tavily"), false);
@@ -283,6 +609,7 @@ test("Core runtime snapshots reject unresolved provider and model values", async
   await assert.rejects(
     resolveLocalCoreRuntimeEnvironment({
       baseEnv: {},
+      runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
       resolvedProfile: {
         modelProvider: "unsupported" as "openrouter",
         model: "valid-model",
@@ -294,6 +621,7 @@ test("Core runtime snapshots reject unresolved provider and model values", async
   await assert.rejects(
     resolveLocalCoreRuntimeEnvironment({
       baseEnv: {},
+      runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
       resolvedProfile: {
         modelProvider: "openrouter",
         model: "   ",

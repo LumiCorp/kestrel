@@ -7,6 +7,7 @@ import {
   type LocalCoreCredentialId,
   type LocalCoreCredentialStore,
 } from "./credentialStore.js";
+import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
 
 export const LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS = Object.freeze([
   "OPENROUTER_API_KEY",
@@ -18,6 +19,35 @@ export const LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS = Object.freeze([
 export type LocalCoreManagedRuntimeEnvKey =
   (typeof LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS)[number];
 
+export const LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS = Object.freeze([
+  "OPENROUTER_MODEL",
+  "OPENROUTER_BASE_URL",
+  "OPENROUTER_SITE_URL",
+  "OPENROUTER_APP_NAME",
+  "OPENAI_MODEL",
+  "OPENAI_BASE_URL",
+  "OPENAI_ORG_ID",
+  "OPENAI_PROJECT_ID",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_VERSION",
+  "OLLAMA_MODEL",
+  "OLLAMA_BASE_URL",
+  "LMSTUDIO_MODEL",
+  "LMSTUDIO_BASE_URL",
+  "TAVILY_BASE_URL",
+  "TAVILY_PROJECT",
+  "TAVILY_HTTP_PROXY",
+  "TAVILY_HTTPS_PROXY",
+] as const);
+
+export type LocalCoreManagedRuntimeOptionEnvKey =
+  (typeof LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS)[number];
+
+type LocalCoreRuntimeEnvironmentOptions = Readonly<
+  Partial<Record<LocalCoreManagedRuntimeOptionEnvKey, string | undefined>>
+>;
+
 export interface LocalCoreResolvedModelProfile {
   readonly modelProvider: ModelProviderId;
   readonly model: string;
@@ -27,32 +57,36 @@ export interface LocalCoreResolvedModelProfile {
  * An immutable, in-memory runtime configuration owned by Local Core.
  *
  * Environment views are deliberately non-enumerable on the outer snapshot.
- * Credentials remain enumerable within their narrowly scoped view because the
- * existing model and internet factories spread their supplied environment.
- * Secret-bearing views install JSON and Node inspection redaction hooks.
+ * Credentials remain enumerable within each environment because the existing
+ * runtime factories spread their supplied environment. Credential-store-backed
+ * values are narrowly scoped; ambient values remain compatible until that
+ * authority is activated. Secret-bearing views install JSON and Node inspection
+ * redaction hooks.
  */
 export interface LocalCoreRuntimeEnvironmentSnapshot {
   readonly modelProvider: ModelProviderId;
   readonly model: string;
-  /** Selected model-provider credential; never includes Tavily. */
+  /** Canonical selected-provider configuration and its available credentials. */
   readonly modelEnv: Readonly<NodeJS.ProcessEnv>;
-  /** Tavily credential; never includes model-provider credentials. */
+  /** Canonical Tavily configuration and its available credentials. */
   readonly internetEnv: Readonly<NodeJS.ProcessEnv>;
-  /** General runtime environment with every Core-managed credential scrubbed. */
+  /** General runtime environment without managed non-secret configuration. */
   readonly runtimeEnv: Readonly<NodeJS.ProcessEnv>;
-  /** MCP/dev-shell environment with every Core-managed credential scrubbed. */
+  /** MCP/dev-shell environment without managed non-secret configuration. */
   readonly mcpEnv: Readonly<NodeJS.ProcessEnv>;
 }
 
 export interface ResolveLocalCoreRuntimeEnvironmentInput {
   readonly baseEnv: Readonly<NodeJS.ProcessEnv>;
   readonly resolvedProfile: LocalCoreResolvedModelProfile;
-  readonly credentialStore: Pick<LocalCoreCredentialStore, "get">;
+  readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+  readonly credentialStore?: Pick<LocalCoreCredentialStore, "get"> | undefined;
 }
 
 export interface CreateLocalCoreRuntimeEnvironmentResolverInput {
   readonly baseEnv: Readonly<NodeJS.ProcessEnv>;
-  readonly credentialStore: Pick<LocalCoreCredentialStore, "get">;
+  readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+  readonly credentialStore?: Pick<LocalCoreCredentialStore, "get"> | undefined;
 }
 
 export interface LocalCoreRuntimeEnvironmentResolver {
@@ -68,6 +102,10 @@ interface ProviderCredentialBinding {
 
 const MANAGED_RUNTIME_ENV_KEY_SET = new Set<string>(
   LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS,
+);
+
+const MANAGED_RUNTIME_OPTION_ENV_KEY_SET = new Set<string>(
+  LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS,
 );
 
 const PROVIDER_CREDENTIAL_BINDINGS: Readonly<
@@ -92,9 +130,13 @@ const TAVILY_CREDENTIAL_ID: LocalCoreCredentialId = "tool.tavily.default";
 /**
  * Resolve the exact model/tool environment for one Core-owned runtime.
  *
- * The credential store is authoritative. Managed values inherited through
- * `baseEnv` are always removed before the selected provider and Tavily values
- * are read from the store. Missing store values remain absent.
+ * When a credential store is supplied, it is authoritative: managed secrets
+ * inherited through `baseEnv` are removed before scoped credentials are read
+ * from the store. Without a store, inherited secrets remain ambient so merely
+ * adopting typed non-secret configuration does not activate new credential
+ * authority. The configuration's explicit environment option mode decides
+ * whether inherited non-secret options remain available or the canonical
+ * allowlist replaces them.
  */
 export async function resolveLocalCoreRuntimeEnvironment(
   input: ResolveLocalCoreRuntimeEnvironmentInput,
@@ -110,19 +152,35 @@ export async function resolveLocalCoreRuntimeEnvironment(
 export async function createLocalCoreRuntimeEnvironmentResolver(
   input: CreateLocalCoreRuntimeEnvironmentResolverInput,
 ): Promise<LocalCoreRuntimeEnvironmentResolver> {
-  const baseEnv = Object.freeze(copyUnmanagedEnvironment(input.baseEnv));
+  const credentialStoreIsAuthoritative = input.credentialStore !== undefined;
+  const runtimeOptionsAreAuthoritative =
+    input.runtimeConfiguration.environmentOptionsMode === "replace";
+  const baseEnv = Object.freeze(
+    copyBaseEnvironment(
+      input.baseEnv,
+      credentialStoreIsAuthoritative,
+      runtimeOptionsAreAuthoritative,
+    ),
+  );
+  const runtimeConfiguration = input.runtimeConfiguration;
   const credentials = Object.create(null) as Partial<
     Record<LocalCoreCredentialId, string>
   >;
-  const entries = await Promise.all(
-    LOCAL_CORE_CREDENTIAL_IDS.map(async (credentialId) => [
-      credentialId,
-      await readCredential(input.credentialStore, credentialId),
-    ] as const),
-  );
-  for (const [credentialId, value] of entries) {
-    if (value !== undefined) {
-      credentials[credentialId] = value;
+  const credentialStore = input.credentialStore;
+  if (credentialStore !== undefined) {
+    const entries = await Promise.all(
+      LOCAL_CORE_CREDENTIAL_IDS.map(
+        async (credentialId) =>
+          [
+            credentialId,
+            await readCredential(credentialStore, credentialId),
+          ] as const,
+      ),
+    );
+    for (const [credentialId, value] of entries) {
+      if (value !== undefined) {
+        credentials[credentialId] = value;
+      }
     }
   }
   Object.freeze(credentials);
@@ -133,6 +191,8 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
         baseEnv,
         resolvedProfile,
         credentials,
+        credentialStoreIsAuthoritative,
+        runtimeConfiguration,
       }),
   );
   return Object.freeze({ resolve });
@@ -141,30 +201,55 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
 function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
   readonly baseEnv: Readonly<NodeJS.ProcessEnv>;
   readonly resolvedProfile: LocalCoreResolvedModelProfile;
-  readonly credentials: Readonly<Partial<Record<LocalCoreCredentialId, string>>>;
+  readonly credentials: Readonly<
+    Partial<Record<LocalCoreCredentialId, string>>
+  >;
+  readonly credentialStoreIsAuthoritative: boolean;
+  readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
 }): LocalCoreRuntimeEnvironmentSnapshot {
   const modelProvider = parseModelProvider(input.resolvedProfile.modelProvider);
-  const model = requireNonEmpty(input.resolvedProfile.model, "Local Core runtime model");
+  const model = requireNonEmpty(
+    input.resolvedProfile.model,
+    "Local Core runtime model",
+  );
   const providerBinding = PROVIDER_CREDENTIAL_BINDINGS[modelProvider];
-  const providerCredential = providerBinding === undefined
-    ? undefined
-    : input.credentials[providerBinding.credentialId];
+  const providerCredential =
+    providerBinding === undefined
+      ? undefined
+      : input.credentials[providerBinding.credentialId];
   const tavilyCredential = input.credentials[TAVILY_CREDENTIAL_ID];
+
+  const modelOptions = createModelEnvironmentOptions({
+    modelProvider,
+    model,
+    runtimeConfiguration: input.runtimeConfiguration,
+  });
+  const internetOptions = createInternetEnvironmentOptions(
+    input.runtimeConfiguration,
+  );
 
   const modelEnv = createSecretBearingEnvironmentView(
     input.baseEnv,
+    modelOptions,
     providerBinding !== undefined && providerCredential !== undefined
       ? { key: providerBinding.envKey, value: providerCredential }
       : undefined,
   );
   const internetEnv = createSecretBearingEnvironmentView(
     input.baseEnv,
+    internetOptions,
     tavilyCredential !== undefined
       ? { key: "TAVILY_API_KEY", value: tavilyCredential }
       : undefined,
   );
-  const runtimeEnv = createScrubbedEnvironmentView(input.baseEnv);
-  const mcpEnv = createScrubbedEnvironmentView(input.baseEnv);
+  const runtimeEnv = createRuntimeEnvironmentView(
+    input.baseEnv,
+    !input.credentialStoreIsAuthoritative,
+  );
+  const mcpEnv = createRuntimeEnvironmentView(
+    input.baseEnv,
+    !input.credentialStoreIsAuthoritative,
+  );
 
   const snapshot = {
     modelProvider,
@@ -192,15 +277,125 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
 
 function createSecretBearingEnvironmentView(
   baseEnv: Readonly<NodeJS.ProcessEnv>,
-  credential: {
-    readonly key: LocalCoreManagedRuntimeEnvKey;
-    readonly value: string;
-  } | undefined,
+  options: LocalCoreRuntimeEnvironmentOptions,
+  credential:
+    | {
+        readonly key: LocalCoreManagedRuntimeEnvKey;
+        readonly value: string;
+      }
+    | undefined,
 ): Readonly<NodeJS.ProcessEnv> {
-  const env = copyUnmanagedEnvironment(baseEnv);
+  const env = copyEnvironment(baseEnv);
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
   if (credential !== undefined) {
     env[credential.key] = credential.value;
   }
+  installEnvironmentRedactionHooks(env);
+  return Object.freeze(env);
+}
+
+function createRuntimeEnvironmentView(
+  baseEnv: Readonly<NodeJS.ProcessEnv>,
+  mayContainManagedSecrets: boolean,
+): Readonly<NodeJS.ProcessEnv> {
+  const env = copyEnvironment(baseEnv);
+  if (mayContainManagedSecrets) {
+    installEnvironmentRedactionHooks(env);
+  }
+  return Object.freeze(env);
+}
+
+function copyBaseEnvironment(
+  baseEnv: Readonly<NodeJS.ProcessEnv>,
+  scrubManagedSecrets: boolean,
+  scrubManagedOptions: boolean,
+): NodeJS.ProcessEnv {
+  const env = Object.create(null) as NodeJS.ProcessEnv;
+  for (const key of Object.keys(baseEnv).sort()) {
+    if (
+      (scrubManagedOptions && MANAGED_RUNTIME_OPTION_ENV_KEY_SET.has(key)) ||
+      (scrubManagedSecrets && MANAGED_RUNTIME_ENV_KEY_SET.has(key))
+    ) {
+      continue;
+    }
+    const value = baseEnv[key];
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+function copyEnvironment(
+  baseEnv: Readonly<NodeJS.ProcessEnv>,
+): NodeJS.ProcessEnv {
+  const env = Object.create(null) as NodeJS.ProcessEnv;
+  for (const key of Object.keys(baseEnv)) {
+    const value = baseEnv[key];
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+function createModelEnvironmentOptions(input: {
+  readonly modelProvider: ModelProviderId;
+  readonly model: string;
+  readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+}): LocalCoreRuntimeEnvironmentOptions {
+  const providers = input.runtimeConfiguration.providers;
+  switch (input.modelProvider) {
+    case "openrouter":
+      return Object.freeze({
+        OPENROUTER_MODEL: input.model,
+        OPENROUTER_BASE_URL: providers.openrouter.baseUrl,
+        OPENROUTER_SITE_URL: providers.openrouter.siteUrl,
+        OPENROUTER_APP_NAME: providers.openrouter.appName,
+      });
+    case "openai":
+      return Object.freeze({
+        OPENAI_MODEL: input.model,
+        OPENAI_BASE_URL: providers.openai.baseUrl,
+        OPENAI_ORG_ID: providers.openai.organizationId,
+        OPENAI_PROJECT_ID: providers.openai.projectId,
+      });
+    case "anthropic":
+      return Object.freeze({
+        ANTHROPIC_MODEL: input.model,
+        ANTHROPIC_BASE_URL: providers.anthropic.baseUrl,
+        ANTHROPIC_VERSION: providers.anthropic.version,
+      });
+    case "ollama":
+      return Object.freeze({
+        OLLAMA_MODEL: input.model,
+        OLLAMA_BASE_URL: providers.ollama.baseUrl,
+      });
+    case "lmstudio":
+      return Object.freeze({
+        LMSTUDIO_MODEL: input.model,
+        LMSTUDIO_BASE_URL: providers.lmstudio.baseUrl,
+      });
+  }
+}
+
+function createInternetEnvironmentOptions(
+  runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
+): LocalCoreRuntimeEnvironmentOptions {
+  const tavily = runtimeConfiguration.tools.tavily;
+  return Object.freeze({
+    TAVILY_BASE_URL: tavily.baseUrl,
+    TAVILY_PROJECT: tavily.projectId,
+    TAVILY_HTTP_PROXY: tavily.httpProxyUrl,
+    TAVILY_HTTPS_PROXY: tavily.httpsProxyUrl,
+  });
+}
+
+function installEnvironmentRedactionHooks(env: NodeJS.ProcessEnv): void {
   Object.defineProperty(env, "toJSON", {
     value: () => redactEnvironmentForInspection(env),
     enumerable: false,
@@ -213,29 +408,6 @@ function createSecretBearingEnvironmentView(
     configurable: false,
     writable: false,
   });
-  return Object.freeze(env);
-}
-
-function createScrubbedEnvironmentView(
-  baseEnv: Readonly<NodeJS.ProcessEnv>,
-): Readonly<NodeJS.ProcessEnv> {
-  return Object.freeze(copyUnmanagedEnvironment(baseEnv));
-}
-
-function copyUnmanagedEnvironment(
-  baseEnv: Readonly<NodeJS.ProcessEnv>,
-): NodeJS.ProcessEnv {
-  const env = Object.create(null) as NodeJS.ProcessEnv;
-  for (const key of Object.keys(baseEnv).sort()) {
-    if (MANAGED_RUNTIME_ENV_KEY_SET.has(key)) {
-      continue;
-    }
-    const value = baseEnv[key];
-    if (value !== undefined) {
-      env[key] = value;
-    }
-  }
-  return env;
 }
 
 async function readCredential(
@@ -251,11 +423,7 @@ async function readCredential(
 function defineEnvironmentView<
   T extends object,
   K extends keyof LocalCoreRuntimeEnvironmentSnapshot,
->(
-  snapshot: T,
-  key: K,
-  env: Readonly<NodeJS.ProcessEnv>,
-): void {
+>(snapshot: T, key: K, env: Readonly<NodeJS.ProcessEnv>): void {
   Object.defineProperty(snapshot, key, {
     value: env,
     enumerable: false,
@@ -281,11 +449,11 @@ function redactEnvironmentForInspection(
 
 function parseModelProvider(value: unknown): ModelProviderId {
   if (
-    value === "openrouter"
-    || value === "openai"
-    || value === "anthropic"
-    || value === "ollama"
-    || value === "lmstudio"
+    value === "openrouter" ||
+    value === "openai" ||
+    value === "anthropic" ||
+    value === "ollama" ||
+    value === "lmstudio"
   ) {
     return value;
   }

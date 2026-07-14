@@ -52,6 +52,69 @@ test("LocalCoreClient keeps the generic timeout for ordinary requests", async ()
   }
 });
 
+test("LocalCoreClient strictly parses nested runtime configuration and credential status", async () => {
+  const fixture = await startStaticLocalCore((requestPath) => {
+    if (requestPath === "/v1/runtime/configuration") {
+      return {
+        ok: true,
+        runtimeConfiguration: {
+          version: 1,
+          generation: 0,
+          environmentOptionsMode: "inherit",
+          modelPolicy: {
+            version: 1,
+            provider: "openrouter",
+            model: "z-ai/glm-5.2",
+            modelByStage: {},
+            modelCapabilities: { visionInputEnabled: false },
+          },
+          providers: {
+            openrouter: {},
+            openai: {},
+            anthropic: {},
+            ollama: {},
+            lmstudio: {},
+          },
+          tools: {
+            tavily: {
+              apiKey: "must-not-cross-the-client-boundary",
+            },
+          },
+        },
+      };
+    }
+    return {
+      ok: true,
+      credentials: {
+        backend: "memory",
+        available: true,
+        credentials: [
+          { id: "provider.openrouter.default", configured: true, secret: "must-not-cross" },
+          { id: "provider.openai.default", configured: false },
+          { id: "provider.anthropic.default", configured: false },
+          { id: "tool.tavily.default", configured: false },
+        ],
+      },
+    };
+  });
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+    });
+    await assert.rejects(
+      () => client.runtimeConfiguration(),
+      /must not contain credential fields/u,
+    );
+    await assert.rejects(
+      () => client.credentialStatus(),
+      /unsupported field 'secret'/u,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 async function startDelayedLocalCore(responseDelayMs: number): Promise<{
   socketPath: string;
   close(): Promise<void>;
@@ -104,6 +167,28 @@ async function startDelayedLocalCore(responseDelayMs: number): Promise<{
       }
       response.end(JSON.stringify({ ok: true }));
     }, responseDelayMs);
+  });
+  await listen(server, socketPath);
+  return {
+    socketPath,
+    async close(): Promise<void> {
+      await close(server);
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+async function startStaticLocalCore(
+  responseForPath: (requestPath: string | undefined) => unknown,
+): Promise<{
+  socketPath: string;
+  close(): Promise<void>;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-client-static-"));
+  const socketPath = path.join(root, "api.sock");
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(responseForPath(request.url)));
   });
   await listen(server, socketPath);
   return {
