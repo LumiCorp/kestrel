@@ -11,13 +11,6 @@ const migration = fs.readFileSync(
   ),
   "utf8"
 );
-const approvalInputExpansion = fs.readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "migrations/0027_durable_turn_approval_input_expand.sql"
-  ),
-  "utf8"
-);
 const journal = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -93,9 +86,9 @@ test("durable turns pin context, authorship, and terminal state invariants", () 
   assert.match(migration, /thread_turns_input_message_id_fk/u);
   assert.match(migration, /thread_messages_turn_id_fk/u);
   assert.match(migration, /thread_turns_terminal_timestamp_check/u);
-  assert.match(approvalInputExpansion, /thread_turns_input_contract_check/u);
-  assert.match(approvalInputExpansion, /"approval_id" text/u);
-  assert.match(approvalInputExpansion, /"approval_approved" boolean/u);
+  assert.match(migration, /thread_turns_input_contract_check/u);
+  assert.match(migration, /"approval_id" text/u);
+  assert.match(migration, /"approval_approved" boolean/u);
   assert.match(migration, /thread_turn_queue_state_pause_reason_check/u);
 });
 

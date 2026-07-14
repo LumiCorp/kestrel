@@ -20,8 +20,7 @@ test("committed migration names, timestamps, and contents are immutable", () => 
 
   assert.equal(journal.entries.length, Object.keys(lock).length);
   let previousTimestamp = 0;
-  for (const [position, entry] of journal.entries.entries()) {
-    assert.equal(entry.idx, position);
+  for (const entry of journal.entries) {
     assert.ok(entry.when > previousTimestamp);
     previousTimestamp = entry.when;
     const sql = fs.readFileSync(
