@@ -217,6 +217,8 @@ async function processQualification(
       apiKey,
       baseUrl: buildRunPodServerlessBaseUrl(endpointId),
       model: profile.expectedModelId,
+      timeoutMs: runPodEndpointSpecSchema.parse(profile.endpointSpec)
+        .executionTimeoutMs,
     });
     await cleanupProviderResources({ endpointId, templateId });
     await knowledgeDb.transaction(async (tx) => {
@@ -414,6 +416,7 @@ async function processProvision(
     gatewayId,
     rawModelId: snapshot.expectedModelId,
     isDefault: true,
+    timeoutMs: snapshot.endpointSpec.executionTimeoutMs,
   });
   await knowledgeDb.transaction(async (tx) => {
     const [updatedDeployment] = await tx

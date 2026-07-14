@@ -79,6 +79,14 @@ test("managed inference validates the declared model without discovery", () => {
     runtime,
     /validateRunPodGatewayModelByRawId\([\s\S]{0,180}rawModelId: snapshot\.expectedModelId/u
   );
+  assert.match(
+    runtime,
+    /timeoutMs: runPodEndpointSpecSchema[\s\S]{0,100}executionTimeoutMs/u
+  );
+  assert.match(
+    runtime,
+    /timeoutMs: snapshot\.endpointSpec\.executionTimeoutMs/u
+  );
   assert.doesNotMatch(runtime, /\/models/u);
 });
 

@@ -112,6 +112,7 @@ export async function validateRunPodToolRoundTrip(input: {
   apiKey: string;
   baseUrl: string;
   model: string;
+  timeoutMs?: number;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }): Promise<RunPodValidationEvidence> {
@@ -144,6 +145,7 @@ export async function validateRunPodToolRoundTrip(input: {
     fetchImpl,
     headers,
     phase: "tool_call",
+    timeoutMs: input.timeoutMs ?? 30_000,
     body: {
       model: input.model,
       messages: [
@@ -175,6 +177,7 @@ export async function validateRunPodToolRoundTrip(input: {
     fetchImpl,
     headers,
     phase: "tool_result",
+    timeoutMs: input.timeoutMs ?? 30_000,
     body: {
       model: input.model,
       messages: [
@@ -236,6 +239,7 @@ async function postStreamingCompletion(input: {
   fetchImpl: RunPodFetch;
   headers: Record<string, string>;
   phase: string;
+  timeoutMs: number;
   body: Record<string, unknown>;
 }) {
   let response: Response;
@@ -244,7 +248,7 @@ async function postStreamingCompletion(input: {
       method: "POST",
       headers: input.headers,
       body: JSON.stringify(input.body),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(input.timeoutMs),
     });
   } catch {
     throw new RunPodConnectionTestError(

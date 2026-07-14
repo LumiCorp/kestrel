@@ -1093,6 +1093,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
   gatewayId: string;
   rawModelId: string;
   isDefault?: boolean;
+  timeoutMs?: number;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }) {
@@ -1123,6 +1124,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     apiKey,
     baseUrl,
     model: rawModelId,
+    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     ...(input.now ? { now: input.now } : {}),
   });
