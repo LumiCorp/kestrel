@@ -319,6 +319,61 @@ export class LocalCoreClient {
     return readObjectField<RuntimeReplayBundleV1>(response, "bundle", "runtime bundle");
   }
 
+  async sendRunnerCommand(
+    line: string,
+    input: {
+      onLine(line: string): void;
+      signal?: AbortSignal | undefined;
+    },
+  ): Promise<void> {
+    const command = parseRunnerCommandEnvelope(line);
+    const stream = command.type === "run.start" || command.type === "job.run";
+    await new Promise<void>((resolve, reject) => {
+      const req = request({
+        socketPath: this.socketPath,
+        path: `/runtime/v2/commands${stream ? "/stream" : ""}`,
+        method: "POST",
+        signal: input.signal,
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          accept: stream ? "text/event-stream, application/json" : "application/json",
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(line),
+        },
+      }, (response) => {
+        const contentType = response.headers["content-type"] ?? "";
+        let raw = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          raw += chunk;
+          if (contentType.includes("text/event-stream")) {
+            raw = consumeRunnerSseBuffer(raw, input.onLine);
+          }
+        });
+        response.on("end", () => {
+          const trailing = raw.trim();
+          if ((response.statusCode ?? 500) >= 400) {
+            reject(new LocalCoreApiError(
+              response.statusCode ?? 500,
+              parseJsonOrText(trailing),
+            ));
+            return;
+          }
+          if (contentType.includes("text/event-stream")) {
+            consumeRunnerSseBuffer(`${raw}\n\n`, input.onLine);
+          } else if (trailing.length > 0) {
+            input.onLine(trailing);
+          }
+          resolve();
+        });
+        response.on("error", reject);
+      });
+      req.on("error", reject);
+      req.write(line);
+      req.end();
+    });
+  }
+
   async diagnostics(): Promise<unknown> {
     return await this.get("/v1/diagnostics");
   }
@@ -450,6 +505,54 @@ export class LocalCoreClient {
       }
       req.end();
     });
+  }
+}
+
+function parseRunnerCommandEnvelope(line: string): { id: string; type: string } {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(line);
+  } catch {
+    throw new Error("Local Core runner command must be valid JSON.");
+  }
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    throw new Error("Local Core runner command must be an object.");
+  }
+  const id = (decoded as Record<string, unknown>).id;
+  const type = (decoded as Record<string, unknown>).type;
+  if (typeof id !== "string" || id.length === 0 || typeof type !== "string" || type.length === 0) {
+    throw new Error("Local Core runner command must include string id and type fields.");
+  }
+  return { id, type };
+}
+
+function consumeRunnerSseBuffer(buffer: string, onLine: (line: string) => void): string {
+  let remaining = buffer;
+  let boundary = remaining.indexOf("\n\n");
+  while (boundary !== -1) {
+    const event = remaining.slice(0, boundary);
+    remaining = remaining.slice(boundary + 2);
+    const data = event
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n");
+    if (data.length > 0) {
+      onLine(data);
+    }
+    boundary = remaining.indexOf("\n\n");
+  }
+  return remaining;
+}
+
+function parseJsonOrText(value: string): unknown {
+  if (value.length === 0) {
+    return {};
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return { message: value };
   }
 }
 
