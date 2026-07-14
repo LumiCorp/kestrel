@@ -15,6 +15,7 @@ export type KestrelToolApprovalRequest = {
 
 export type KestrelTerminalStatus =
   | "completed"
+  | "waiting"
   | "failed"
   | "cancelled"
   | "runner_error"
@@ -108,6 +109,19 @@ export function getKestrelStreamUiUpdate(
     };
   }
 
+  if (parsed.type === "run.waiting") {
+    const waitingText = getKestrelUserReplyWaitingText(parsed);
+    if (waitingText) {
+      return {
+        kind: "terminal",
+        severity: "info",
+        terminalStatus: "waiting",
+        text: waitingText,
+        errorMessage: null,
+      };
+    }
+  }
+
   const progressText = getKestrelStreamProgressText(parsed);
   if (progressText) {
     const isError = parsed.type === "runner.error";
@@ -120,6 +134,23 @@ export function getKestrelStreamUiUpdate(
   }
 
   return null;
+}
+
+export function getKestrelUserReplyWaitingText(
+  event: KestrelStreamEventForUi
+): string {
+  if (event.type !== "run.waiting") return "";
+  const payload = asRecord(event.payload);
+  const waitFor = asRecord(payload?.waitFor);
+  if (waitFor?.eventType !== "user.reply") return "";
+  const metadata = asRecord(waitFor.metadata);
+  return (
+    asNonEmptyString(metadata?.question) ??
+    asNonEmptyString(metadata?.prompt) ??
+    asNonEmptyString(metadata?.text) ??
+    asNonEmptyString(metadata?.message) ??
+    "I need your reply to continue."
+  );
 }
 
 export function getKestrelToolApprovalRequest(

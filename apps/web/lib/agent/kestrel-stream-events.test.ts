@@ -5,6 +5,7 @@ import {
   getKestrelStreamProgressText,
   getKestrelStreamTerminalText,
   getKestrelStreamUiUpdate,
+  getKestrelUserReplyWaitingText,
 } from "@/lib/agent/kestrel-stream-events";
 
 test("getKestrelStreamTerminalText maps completed payloads", () => {
@@ -36,6 +37,47 @@ test("getKestrelStreamUiUpdate maps empty completed output to empty terminal sta
       text: "",
       errorMessage: null,
     }
+  );
+});
+
+test("getKestrelStreamUiUpdate maps a user reply wait to a waiting terminal status", () => {
+  const event = {
+    type: "run.waiting",
+    payload: {
+      waitFor: {
+        eventType: "user.reply",
+        metadata: { prompt: "Which repository should I use?" },
+      },
+    },
+  };
+
+  assert.equal(
+    getKestrelUserReplyWaitingText(event),
+    "Which repository should I use?"
+  );
+  assert.deepEqual(getKestrelStreamUiUpdate(event), {
+    kind: "terminal",
+    severity: "info",
+    terminalStatus: "waiting",
+    text: "Which repository should I use?",
+    errorMessage: null,
+  });
+});
+
+test("getKestrelUserReplyWaitingText uses a stable fallback only for user reply waits", () => {
+  assert.equal(
+    getKestrelUserReplyWaitingText({
+      type: "run.waiting",
+      payload: { waitFor: { eventType: "user.reply", metadata: {} } },
+    }),
+    "I need your reply to continue."
+  );
+  assert.equal(
+    getKestrelUserReplyWaitingText({
+      type: "run.waiting",
+      payload: { waitFor: { eventType: "user.approval", metadata: {} } },
+    }),
+    ""
   );
 });
 

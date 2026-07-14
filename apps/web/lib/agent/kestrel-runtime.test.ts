@@ -12,6 +12,7 @@ import {
   createKestrelOneAgentResponseFromAgent,
   createKestrelOneRequestContext,
   extractFinalizedAssistantText,
+  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import type { Session } from "@/lib/auth-types";
 
@@ -50,6 +51,30 @@ test("extractFinalizedAssistantText reads common finalized payload shapes", () =
   assert.equal(
     extractFinalizedAssistantText({ data: { text: "nested" } }),
     "nested"
+  );
+});
+
+test("resolveKestrelOneTurnEventType resumes only an explicit user reply wait", () => {
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.message",
+      waitFor: { eventType: "user.reply" },
+    }),
+    "user.reply"
+  );
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.message",
+      waitFor: { eventType: "system.timer" },
+    }),
+    "user.message"
+  );
+  assert.equal(
+    resolveKestrelOneTurnEventType({
+      requestedEventType: "user.approval",
+      waitFor: { eventType: "user.reply" },
+    }),
+    "user.approval"
   );
 });
 

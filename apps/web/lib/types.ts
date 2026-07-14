@@ -50,6 +50,7 @@ export type DataPart = { type: "append-message"; message: string };
 
 const kestrelTerminalStatusSchema = z.enum([
   "completed",
+  "waiting",
   "failed",
   "cancelled",
   "runner_error",

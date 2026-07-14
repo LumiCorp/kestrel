@@ -174,6 +174,35 @@ test("writeKestrelRunnerEventsToUi emits a structured approval request without f
   assert.doesNotMatch(JSON.stringify(writer.chunks), /Unexpected fallback/u);
 });
 
+test("writeKestrelRunnerEventsToUi persists a user reply wait instead of empty final fallback", async () => {
+  const writer = createChunkWriter();
+  const result = await writeKestrelRunnerEventsToUi({
+    writer,
+    assistantMessageId: "msg_user_reply",
+    textPartId: "text_user_reply",
+    reasoningPartId: "reasoning_user_reply",
+    emptyFinalText: "Unexpected fallback",
+    events: streamFromEvents([
+      {
+        type: "run.waiting",
+        payload: {
+          waitFor: {
+            eventType: "user.reply",
+            metadata: { prompt: "What should I build first?" },
+          },
+        },
+      },
+    ]),
+  });
+
+  assert.equal(result.finalText, "What should I build first?");
+  assert.equal(result.terminalStatus, "waiting");
+  assert.equal(result.errorMessage, null);
+  assert.equal(result.failureVisible, false);
+  assert.match(JSON.stringify(writer.chunks), /What should I build first\?/u);
+  assert.doesNotMatch(JSON.stringify(writer.chunks), /Unexpected fallback/u);
+});
+
 function createChunkWriter() {
   const chunks: Array<{
     type: string;

@@ -22,6 +22,7 @@ import {
   createKestrelOneAgentResponseFromAgent,
   type KestrelOneAgent,
   type KestrelOneAgentResponsePersistMeta,
+  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   applyKestrelOneModelToProfile,
@@ -157,9 +158,17 @@ function createModelAwareKestrelOneAgent(input: {
           });
           clients.add(client);
           const { signal, ...turn } = turnInput;
+          const requestedEventType = turn.eventType || "user.message";
+          const eventType = await resolveEnvironmentTurnEventType({
+            client,
+            context,
+            sessionId: turn.sessionId,
+            requestedEventType,
+            hasHistory: (turn.history?.length ?? 0) > 0,
+          });
           const normalizedTurn = {
             ...turn,
-            eventType: turn.eventType || "user.message",
+            eventType,
             clientCapabilities: {
               ...(turn.clientCapabilities ?? {}),
               kestrelOne: {
@@ -236,6 +245,43 @@ function createModelAwareKestrelOneAgent(input: {
       clients.clear();
     },
   };
+}
+
+async function resolveEnvironmentTurnEventType(input: {
+  client: KestrelOneRunnerClient;
+  context: KestrelRequestContext;
+  sessionId: string;
+  requestedEventType: string;
+  hasHistory: boolean;
+}) {
+  if (input.requestedEventType !== "user.message" || !input.hasHistory) {
+    return input.requestedEventType;
+  }
+
+  try {
+    const session = await input.client.describeSession(
+      input.sessionId,
+      input.context
+    );
+    return resolveKestrelOneTurnEventType({
+      requestedEventType: input.requestedEventType,
+      waitFor: session.waitFor,
+    });
+  } catch (error) {
+    if (isMissingRunnerSession(error)) {
+      return input.requestedEventType;
+    }
+    throw error;
+  }
+}
+
+function isMissingRunnerSession(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "STORE_SESSION_NOT_FOUND"
+  );
 }
 
 class EnvironmentRoutedRunnerStream

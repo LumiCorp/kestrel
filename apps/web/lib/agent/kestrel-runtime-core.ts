@@ -96,6 +96,24 @@ export function adaptKestrelAgentForKestrelOne(
   };
 }
 
+export function resolveKestrelOneTurnEventType(input: {
+  requestedEventType: string;
+  waitFor: unknown;
+}) {
+  if (input.requestedEventType !== "user.message") {
+    return input.requestedEventType;
+  }
+  const waitFor =
+    typeof input.waitFor === "object" &&
+    input.waitFor !== null &&
+    !Array.isArray(input.waitFor)
+      ? (input.waitFor as Record<string, unknown>)
+      : undefined;
+  return waitFor?.eventType === "user.reply"
+    ? "user.reply"
+    : input.requestedEventType;
+}
+
 export type KestrelOneAgentResponsePersistMeta = {
   model: string;
   title: string | null;

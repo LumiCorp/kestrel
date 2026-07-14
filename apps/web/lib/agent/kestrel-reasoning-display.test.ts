@@ -51,6 +51,18 @@ test("getReasoningTriggerLabel keeps completed behavior unchanged", () => {
   );
 });
 
+test("getReasoningTriggerLabel identifies a run waiting for the user", () => {
+  assert.equal(
+    getReasoningTriggerLabel({
+      duration: 7,
+      isStreaming: false,
+      terminalStatus: "waiting",
+    }),
+    "Waiting"
+  );
+  assert.equal(shouldAutoCloseReasoning("waiting"), true);
+});
+
 test("shouldAutoCloseReasoning keeps terminal failures open", () => {
   assert.equal(shouldAutoCloseReasoning("completed"), true);
   assert.equal(shouldAutoCloseReasoning("empty"), true);
