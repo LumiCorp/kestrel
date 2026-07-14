@@ -53,6 +53,12 @@ test("managed jobs are produced by Vercel and consumed by the persistent worker"
   }
 });
 
+test("managed maintenance idles until its provider connection is enabled", () => {
+  const runtime = read("lib/ai/managed-runpod-runtime.ts");
+  assert.match(runtime, /await getRunPodProviderConnection\(\)/u);
+  assert.equal(runtime.match(/if \(!connection\?\.enabled\) return/g)?.length, 2);
+});
+
 test("connected inference exposes recovery after model discovery fails", () => {
   const route = read(
     "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"

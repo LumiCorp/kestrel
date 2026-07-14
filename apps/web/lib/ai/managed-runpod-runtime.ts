@@ -12,6 +12,7 @@ import {
 } from "./gateways";
 import {
   createRunPodControlPlaneClient,
+  getRunPodProviderConnection,
   resolveRunPodProviderApiKey,
 } from "./managed-runpod-connection";
 import {
@@ -656,6 +657,8 @@ export async function processManagedRunPodRun(runId: string) {
 }
 
 export async function reconcileManagedRunPodFleet() {
+  const connection = await getRunPodProviderConnection();
+  if (!connection?.enabled) return;
   const { client } = await createRunPodControlPlaneClient();
   const providerEndpoints = new Set(
     (await client.listEndpoints()).map((row) => row.id)
@@ -704,6 +707,8 @@ export async function reconcileManagedRunPodFleet() {
 }
 
 export async function ingestManagedRunPodUsage(now = new Date()) {
+  const connection = await getRunPodProviderConnection();
+  if (!connection?.enabled) return 0;
   const { client } = await createRunPodControlPlaneClient();
   const records = await client.listBilling({
     startTime: new Date(now.getTime() - 25 * 60 * 60 * 1000),
