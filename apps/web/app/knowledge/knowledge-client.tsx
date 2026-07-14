@@ -8,7 +8,13 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +80,24 @@ function formatFileSize(sizeBytes: number) {
 
 type InitialDocumentsPayload = Omit<DocumentsResponse, "runtime">;
 
+type KnowledgeAnswer = {
+  answer: string;
+  grounded: boolean;
+  model: string | null;
+  sources: Array<{
+    citationNumber: number;
+    documentId: string;
+    label: string;
+    url: string;
+    locations: string[];
+    excerpts: Array<{
+      text: string;
+      pageNumber: number | null;
+      sectionTitle: string | null;
+    }>;
+  }>;
+};
+
 export function KnowledgeClient({
   session,
   initialSources,
@@ -111,6 +135,10 @@ export function KnowledgeClient({
   >("info");
   const [explorerFilters, setExplorerFilters] =
     useState<KnowledgeExplorerFilters>(defaultExplorerFilters);
+  const [knowledgeQuestion, setKnowledgeQuestion] = useState("");
+  const [knowledgeAnswer, setKnowledgeAnswer] =
+    useState<KnowledgeAnswer | null>(null);
+  const [askingKnowledge, setAskingKnowledge] = useState(false);
   const uploadInputId = useId();
 
   const isAdmin =
@@ -468,6 +496,40 @@ export function KnowledgeClient({
     toast.success(`Added ${source.label}.`);
   }
 
+  async function askKnowledge() {
+    const question = knowledgeQuestion.trim();
+    if (question.length < 3) {
+      return;
+    }
+
+    setAskingKnowledge(true);
+    setKnowledgeAnswer(null);
+    try {
+      const response = await fetch("/api/knowledge/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const json = (await response.json().catch(() => ({}))) as Partial<
+        KnowledgeAnswer & { error: string }
+      >;
+
+      if (!response.ok) {
+        throw new Error(json.error || "Knowledge answer failed");
+      }
+
+      setKnowledgeAnswer(json as KnowledgeAnswer);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Knowledge answer failed";
+      setStatus(message);
+      setStatusVariant("error");
+      toast.error(message);
+    } finally {
+      setAskingKnowledge(false);
+    }
+  }
+
   function canManageDocument(document: DocumentRecord) {
     return (
       isAdmin || (currentUserId && document.uploaderUserId === currentUserId)
@@ -518,6 +580,125 @@ export function KnowledgeClient({
           variant={statusVariant}
         />
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <CardTitle>Ask your knowledge</CardTitle>
+              <CardDescription>
+                Get an answer grounded only in indexed organization documents.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">
+                {documentsData?.readyCount ?? 0} ready
+              </Badge>
+              <Badge variant="outline">
+                {documentsData?.runtime.retrievalStrategy === "semantic-first"
+                  ? "Semantic + lexical"
+                  : "Lexical"}
+              </Badge>
+              {documentsData?.runtime.embeddingModel ? (
+                <Badge className="font-mono" variant="outline">
+                  {documentsData.runtime.embeddingModel}
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAsync(askKnowledge());
+            }}
+          >
+            <Textarea
+              aria-label="Ask a question about organization knowledge"
+              disabled={askingKnowledge}
+              onChange={(event) => setKnowledgeQuestion(event.target.value)}
+              placeholder="What does our incident playbook require before escalation?"
+              rows={3}
+              value={knowledgeQuestion}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-muted-foreground text-xs">
+                Retrieved document text is treated as evidence, not as
+                instructions.
+              </p>
+              <Button
+                disabled={
+                  askingKnowledge ||
+                  knowledgeQuestion.trim().length < 3 ||
+                  (documentsData?.readyCount ?? 0) === 0
+                }
+                type="submit"
+              >
+                {askingKnowledge ? "Searching and answering..." : "Ask"}
+              </Button>
+            </div>
+          </form>
+
+          {(documentsData?.readyCount ?? 0) === 0 ? (
+            <AdminStatusBanner
+              description="Upload a document and wait for ingestion to finish before asking grounded questions."
+              title="No indexed documents are ready"
+              variant="info"
+            />
+          ) : null}
+
+          {knowledgeAnswer ? (
+            <div className="space-y-4 border-t pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant={knowledgeAnswer.grounded ? "default" : "outline"}
+                >
+                  {knowledgeAnswer.grounded
+                    ? "Grounded answer"
+                    : "Evidence insufficient"}
+                </Badge>
+                {knowledgeAnswer.model ? (
+                  <span className="font-mono text-muted-foreground text-xs">
+                    {knowledgeAnswer.model}
+                  </span>
+                ) : null}
+              </div>
+              <p className="whitespace-pre-wrap text-sm leading-6">
+                {knowledgeAnswer.answer}
+              </p>
+
+              {knowledgeAnswer.sources.length > 0 ? (
+                <div className="space-y-2">
+                  <h3 className="font-medium text-sm">Sources used</h3>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {knowledgeAnswer.sources.map((source) => (
+                      <a
+                        className="space-y-1 rounded-md border p-3 transition-colors hover:bg-muted/50"
+                        href={source.url}
+                        key={source.documentId}
+                      >
+                        <div className="font-medium text-sm">
+                          [{source.citationNumber}] {source.label}
+                        </div>
+                        <div className="line-clamp-2 text-muted-foreground text-xs">
+                          {source.excerpts[0]?.text}
+                        </div>
+                        {source.locations[0] ? (
+                          <div className="font-mono text-[11px] text-muted-foreground">
+                            {source.locations[0]}
+                          </div>
+                        ) : null}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="p-0">
@@ -686,6 +867,13 @@ export function KnowledgeClient({
                                 ? `${entry.item.type} source`
                                 : "document"}
                             </Badge>
+                            {entry.kind === "document" ? (
+                              <Badge variant="outline">
+                                {entry.item.retrievalMode === "semantic"
+                                  ? "Semantic"
+                                  : "Lexical"}
+                              </Badge>
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell>

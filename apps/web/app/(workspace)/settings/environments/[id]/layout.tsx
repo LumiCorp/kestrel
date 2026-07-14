@@ -11,7 +11,7 @@ import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 const baseTabs = [
   ["Overview", ""],
   ["Workspaces", "/workspaces"],
-  ["Tools & access", "/tools"],
+  ["Apps", "/apps"],
   ["Activity", "/activity"],
 ] as const;
 
@@ -40,7 +40,7 @@ export default async function EnvironmentDetailLayout({
     : baseTabs;
 
   return (
-    <AppPage>
+    <AppPage className="p-6 lg:p-8">
       <div className="space-y-2">
         <Link
           className="text-muted-foreground text-sm hover:text-foreground"

@@ -1,11 +1,9 @@
 import { and, eq } from "drizzle-orm";
+import { mcpAppCapabilityKey } from "@/lib/apps/mcp-app";
+import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { digestCanonicalJson } from "./capability-snapshot";
-import {
-  buildMcpRunGrant,
-  MCP_PROTOCOL_VERSION,
-  resolveEffectiveMcpCapabilities,
-} from "./contracts";
+import { buildMcpRunGrant, MCP_PROTOCOL_VERSION } from "./contracts";
 
 export async function issueHostedMcpRunContext(input: {
   runExecutionId: string;
@@ -19,13 +17,14 @@ export async function issueHostedMcpRunContext(input: {
   if (!gatewayUrl?.trim()) {
     return;
   }
+  if (!input.projectId) return;
   const normalizedGatewayUrl = assertMcpGatewayUrl(gatewayUrl);
   const rows = await knowledgeDb
     .select({
       id: schema.mcpCapabilities.id,
       kind: schema.mcpCapabilities.kind,
-      environmentEnabled: schema.mcpCapabilities.environmentEnabled,
-      approvalMode: schema.mcpCapabilities.approvalMode,
+      capabilityKey: schema.mcpCapabilities.capabilityKey,
+      providerKey: schema.mcpCapabilities.providerKey,
       serverId: schema.mcpServers.id,
       snapshotId: schema.mcpCapabilitySnapshots.id,
       snapshotDigest: schema.mcpCapabilitySnapshots.capabilityDigest,
@@ -47,19 +46,38 @@ export async function issueHostedMcpRunContext(input: {
         eq(schema.mcpCapabilitySnapshots.status, "approved")
       )
     );
-  const projectRestrictions = input.projectId
-    ? await knowledgeDb.query.mcpProjectCapabilityRestrictions.findMany({
-        where: (table, { eq }) => eq(table.projectId, input.projectId!),
+  const accessByProvider = new Map<
+    string,
+    Awaited<ReturnType<typeof resolveEffectiveProjectAppAccess>>
+  >();
+  for (const row of rows) {
+    if (accessByProvider.has(row.providerKey)) continue;
+    accessByProvider.set(
+      row.providerKey,
+      await resolveEffectiveProjectAppAccess({
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        appKey: row.providerKey,
+        userId: "runtime-shared-app",
       })
-    : undefined;
-  const effectiveCapabilities = resolveEffectiveMcpCapabilities({
-    environmentCapabilities: rows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      environmentEnabled: row.environmentEnabled,
-      approvalMode: row.approvalMode,
-    })),
-    projectRestrictions,
+    );
+  }
+  const effectiveCapabilities = rows.flatMap((row) => {
+    const access = accessByProvider.get(row.providerKey);
+    if (!access || access.connectionId !== row.serverId) return [];
+    const capability = access.capabilities.find(
+      (candidate) =>
+        candidate.key === mcpAppCapabilityKey(row.kind, row.capabilityKey)
+    );
+    return capability && capability.approvalMode !== "deny"
+      ? [
+          {
+            id: row.id,
+            kind: row.kind,
+            approvalMode: capability.approvalMode,
+          },
+        ]
+      : [];
   });
   if (effectiveCapabilities.length === 0) {
     return;

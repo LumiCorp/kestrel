@@ -248,6 +248,7 @@ export interface RunnerProfile {
   defaultInteractionMode?: RunnerInteractionMode | undefined;
   defaultActSubmode?: RunnerActSubmode | undefined;
   toolAllowlist?: string[] | undefined;
+  kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
   mcpServers?: RunnerMcpServerConfig[] | undefined;
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
@@ -2124,6 +2125,11 @@ function validateRunnerProfile(
     "full_auto",
   ]);
   validateOptionalStringArray(profile.toolAllowlist, `${label}.toolAllowlist`);
+  validateOptionalEnumRecord(
+    profile.kestrelOneAppApprovalModes,
+    `${label}.kestrelOneAppApprovalModes`,
+    ["auto", "ask"],
+  );
   validateOptionalRecordArray(profile.mcpServers, `${label}.mcpServers`);
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);
   validateOptionalRecord(profile.guardrails, `${label}.guardrails`);
@@ -2358,6 +2364,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateOptionalRecord(value: unknown, label: string): void {
   if (value !== undefined) {
     requireRecord(value, label);
+  }
+}
+
+function validateOptionalEnumRecord<const T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): void {
+  if (value === undefined) return;
+  const record = requireRecord(value, label);
+  for (const [key, entry] of Object.entries(record)) {
+    requireNonEmptyString(key, `${label} key`);
+    if (typeof entry !== "string" || !allowed.includes(entry as T)) {
+      throw new Error(`${label}.${key} must be one of: ${allowed.join(", ")}`);
+    }
   }
 }
 

@@ -98,7 +98,7 @@ export async function POST(request: Request) {
     const credential = await auth.api.getAccessToken({
       body: {
         providerId: "github",
-        accountId: policy.connection.providerAccountId,
+        accountId: policy.providerAccountId,
         userId: ticket.actorId,
       },
     });

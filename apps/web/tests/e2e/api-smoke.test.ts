@@ -21,9 +21,14 @@ test.describe("API smoke checks", () => {
     expect(response.status()).toBe(401);
   });
 
-  test("admin tools endpoint requires auth", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/admin/tools`);
+  test("Apps endpoint requires auth", async ({ request }) => {
+    const response = await request.get(`${baseUrl}/api/apps`);
     expect(response.status()).toBe(401);
+  });
+
+  test("legacy admin tools endpoint is removed", async ({ request }) => {
+    const response = await request.get(`${baseUrl}/api/admin/tools`);
+    expect(response.status()).toBe(404);
   });
 
   test("webhook platform route rejects invalid platforms", async ({

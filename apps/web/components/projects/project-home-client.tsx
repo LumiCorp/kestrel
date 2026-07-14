@@ -9,10 +9,11 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
+import { ProjectApps } from "@/components/projects/project-apps";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 type Role = "owner" | "editor" | "member";
+type ProjectTab = "overview" | "context" | "members" | "apps" | "activity";
 type DocumentItem = {
   id: string;
   filename: string;
@@ -90,6 +92,7 @@ export type ProjectHomeData = {
 
 export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { mutate } = useSWRConfig();
   const canEdit = initial.role === "owner" || initial.role === "editor";
   const [name, setName] = useState(initial.project.name);
@@ -111,6 +114,16 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const requestedTab = searchParams.get("tab");
+  const initialTab: ProjectTab = searchParams.has("google")
+    ? "apps"
+    : requestedTab === "context" ||
+        requestedTab === "members" ||
+        requestedTab === "apps" ||
+        requestedTab === "activity"
+      ? requestedTab
+      : "overview";
+  const [activeTab, setActiveTab] = useState<ProjectTab>(initialTab);
   const availableDocuments = useMemo(() => {
     const byId = new Map<string, DocumentItem>();
     for (const document of [
@@ -299,12 +312,16 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
 
   return (
     <>
-      <Tabs defaultValue="overview">
+      <Tabs
+        onValueChange={(value) => setActiveTab(value as ProjectTab)}
+        value={activeTab}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="apps">Apps</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
           <div className="flex gap-2">
@@ -572,6 +589,10 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="apps">
+          <ProjectApps canEdit={canEdit} projectId={initial.project.id} />
         </TabsContent>
 
         <TabsContent value="activity">

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const routeSource = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../app/api/admin/integrations/email/route.ts"
+    "../../app/api/admin/email/route.ts"
   ),
   "utf8"
 );

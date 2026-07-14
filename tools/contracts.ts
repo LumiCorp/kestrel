@@ -1,11 +1,3 @@
-import type { AgentToolResult, ModelToolContract, ModelToolSpec, ToolConsoleSink, ToolGateway, ToolGatewayCallOptions, ToolRunContext, ToolRuntimeStatus } from "../src/kestrel/contracts/model-io.js";
-import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
-import type { SessionStore } from "../src/kestrel/contracts/store.js";
-
-import type {
-  ProductProjectAction,
-  ProductProjectSnapshot,
-} from "../src/project/contracts.js";
 import type {
   CodeExecutionServicePort,
   CodeModeProfileConfig,
@@ -15,11 +7,27 @@ import type {
   DevShellServicePort,
 } from "../src/devshell/contracts.js";
 import type {
+  AgentToolResult,
+  ModelToolContract,
+  ModelToolSpec,
+  ToolConsoleSink,
+  ToolGateway,
+  ToolGatewayCallOptions,
+  ToolRunContext,
+  ToolRuntimeStatus,
+} from "../src/kestrel/contracts/model-io.js";
+import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
+import type { SessionStore } from "../src/kestrel/contracts/store.js";
+import type {
   ApprovalCapabilityClass,
   ToolExecutionClass,
 } from "../src/mode/contracts.js";
-import type { TavilyInternetProvider } from "./internet/contracts.js";
+import type {
+  ProductProjectAction,
+  ProductProjectSnapshot,
+} from "../src/project/contracts.js";
 import type { ManagedTaskWorktreeService } from "../src/workspace/ManagedTaskWorktreeService.js";
+import type { TavilyInternetProvider } from "./internet/contracts.js";
 
 export type ToolFreshnessClass = "live" | "volatile" | "static" | "runtime";
 export type ToolLatencyClass = "low" | "medium" | "high";
@@ -78,7 +86,13 @@ export interface DelegationTaskSpawnRequest {
   title: string;
   prompt: string;
   profileId?: string | undefined;
-  provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
+  provider?:
+    | "openrouter"
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio"
+    | undefined;
   model?: string | undefined;
   skillPackId?: string | undefined;
   resultContract?: string | undefined;
@@ -148,27 +162,34 @@ export interface SharedToolContext {
   interactionMode?: "chat" | "plan" | "build" | undefined;
   delegationService?: DelegationServicePort | undefined;
   runtime?: RuntimeToolRunContext | undefined;
-  workspace?: {
-    appRoot?: string | undefined;
-    packageManager?: string | undefined;
-    commands?: Record<string, string | undefined> | undefined;
-  } | undefined;
+  workspace?:
+    | {
+        appRoot?: string | undefined;
+        packageManager?: string | undefined;
+        commands?: Record<string, string | undefined> | undefined;
+      }
+    | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
-  projectActions?: {
-    apply(action: ProductProjectAction): Promise<{
-      sessionId: string;
-      snapshot: ProductProjectSnapshot;
-    }>;
-  } | undefined;
+  projectActions?:
+    | {
+        apply(action: ProductProjectAction): Promise<{
+          sessionId: string;
+          snapshot: ProductProjectSnapshot;
+        }>;
+      }
+    | undefined;
   toolConsole?: ToolConsoleSink | undefined;
   fileSystem?: FileSystemToolPolicyConfig | undefined;
-  kestrelOne?: {
-    appUrl?: string | undefined;
-    toolToken?: string | undefined;
-    tenantId?: string | undefined;
-    contextGrantId?: string | undefined;
-    executionTicket?: string | undefined;
-  } | undefined;
+  kestrelOne?:
+    | {
+        appUrl?: string | undefined;
+        toolToken?: string | undefined;
+        tenantId?: string | undefined;
+        contextGrantId?: string | undefined;
+        executionTicket?: string | undefined;
+        appApprovalModes?: Record<string, "auto" | "ask"> | undefined;
+      }
+    | undefined;
 }
 
 export type SharedToolRawHandler = (input: unknown) => Promise<unknown>;
@@ -193,7 +214,10 @@ export interface ToolCatalog {
       toolFamily: string;
     }
   >;
-  createHandlers(names: string[], context: SharedToolContext): Record<string, SharedToolHandler>;
+  createHandlers(
+    names: string[],
+    context: SharedToolContext
+  ): Record<string, SharedToolHandler>;
 }
 
 export interface ToolRegistryListOptions {
@@ -213,7 +237,11 @@ export interface ToolRegistry extends ToolGateway {
       toolFamily: string;
     }
   >;
-  validateInput?(name: string, input: unknown, options?: ToolGatewayCallOptions): Promise<unknown>;
+  validateInput?(
+    name: string,
+    input: unknown,
+    options?: ToolGatewayCallOptions
+  ): Promise<unknown>;
   getRuntimeStatus?(): Promise<ToolRuntimeStatus>;
   refreshRuntime?(): Promise<ToolRuntimeStatus>;
   ensureReadyForRun(): Promise<void>;

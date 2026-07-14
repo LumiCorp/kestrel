@@ -1,0 +1,163 @@
+import { listToolProviders } from "@/lib/tools/registry";
+import type {
+  ToolCapabilityDefinition,
+  ToolProviderDefinition,
+} from "@/lib/tools/types";
+import type {
+  AppCategory,
+  AppConnectionModel,
+  AppDelivery,
+  AppInstallMode,
+  AppKind,
+} from "./types";
+
+export type AppCatalogDefinition = {
+  key: string;
+  slug: string;
+  displayName: string;
+  description: string;
+  category: AppCategory;
+  kind: AppKind;
+  connectionModel: AppConnectionModel;
+  delivery: AppDelivery;
+  installMode: AppInstallMode;
+  icon: string | null;
+  metadata: Record<string, unknown>;
+  capabilities: Array<{
+    key: string;
+    runtimeName: string | null;
+    displayName: string;
+    description: string;
+    groupKey: string;
+    accessMode: ToolCapabilityDefinition["accessMode"];
+    audience: "self" | "project" | "both";
+    defaultEnabled: boolean;
+    defaultApprovalMode: ToolCapabilityDefinition["defaultPolicy"]["approvalMode"];
+    defaultLoggingMode: ToolCapabilityDefinition["defaultPolicy"]["loggingMode"];
+    defaultRateLimitMode: ToolCapabilityDefinition["defaultPolicy"]["rateLimitMode"];
+    defaultSettings: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+  }>;
+};
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function categoryFor(provider: ToolProviderDefinition): AppCategory {
+  if (provider.key === "tavily") return "search_research";
+  if (provider.type === "built_in") return "kestrel";
+  if (provider.type === "source_connector") return "knowledge_sources";
+  if (provider.key === "github") return "engineering";
+  if (provider.key === "google_workspace") return "productivity";
+  if (provider.key === "discord") return "communication";
+  if (provider.type === "custom_imported") return "custom";
+  return "productivity";
+}
+
+function kindFor(provider: ToolProviderDefinition): AppKind {
+  if (provider.type === "built_in") return "built_in";
+  if (provider.type === "custom_imported") return "custom";
+  return "external";
+}
+
+function connectionModelFor(
+  provider: ToolProviderDefinition
+): AppConnectionModel {
+  if (provider.type === "built_in") return "none";
+  if (provider.key === "google_workspace" || provider.key === "github") {
+    return "personal";
+  }
+  return "environment";
+}
+
+function deliveryFor(provider: ToolProviderDefinition): AppDelivery {
+  if (provider.type === "built_in") return "native";
+  if (provider.type === "custom_imported") return "mcp";
+  if (provider.type === "source_connector") return "source";
+  if (provider.type === "inbound_adapter") return "webhook";
+  if (provider.authType === "oauth") return "oauth";
+  if (provider.authType === "api_key" || provider.authType === "env") {
+    return "api_key";
+  }
+  return "native";
+}
+
+function groupFor(capability: ToolCapabilityDefinition) {
+  const metadata = metadataRecord(capability.metadata);
+  if (typeof metadata.group === "string" && metadata.group.trim()) {
+    return metadata.group;
+  }
+  if (capability.key.startsWith("calendar.")) return "calendar";
+  if (
+    /^(repository|pull_request|issue|merge|release|workflow)\./u.test(
+      capability.key
+    )
+  ) {
+    return "repositories";
+  }
+  return "general";
+}
+
+function audienceFor(capability: ToolCapabilityDefinition) {
+  const audience = metadataRecord(capability.metadata).audience;
+  if (audience === "self") return "self" as const;
+  if (audience === "self_or_project") return "both" as const;
+  return "project" as const;
+}
+
+function iconFor(provider: ToolProviderDefinition): string | null {
+  const icon = metadataRecord(provider.metadata).icon;
+  if (typeof icon === "string" && icon.startsWith("/")) return icon;
+  if (provider.key === "google_workspace") return "/integrations/google.svg";
+  if (provider.key === "tavily") return "/integrations/tavily.png";
+  return typeof icon === "string" ? icon : null;
+}
+
+function slugFor(key: string) {
+  return key.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
+}
+
+function toAppDefinition(
+  provider: ToolProviderDefinition
+): AppCatalogDefinition {
+  const metadata = metadataRecord(provider.metadata);
+  return {
+    key: provider.key,
+    slug: slugFor(provider.key),
+    displayName: provider.displayName,
+    description: provider.description,
+    category: categoryFor(provider),
+    kind: kindFor(provider),
+    connectionModel: connectionModelFor(provider),
+    delivery: deliveryFor(provider),
+    installMode: provider.type === "built_in" ? "inherited" : "explicit",
+    icon: iconFor(provider),
+    metadata,
+    capabilities: provider.capabilities.map((capability) => ({
+      key: capability.key,
+      runtimeName: capability.runtimeName,
+      displayName: capability.displayName,
+      description: capability.description,
+      groupKey: groupFor(capability),
+      accessMode: capability.accessMode,
+      audience: audienceFor(capability),
+      defaultEnabled: capability.defaultPolicy.enabled,
+      defaultApprovalMode: capability.defaultPolicy.approvalMode,
+      defaultLoggingMode: capability.defaultPolicy.loggingMode,
+      defaultRateLimitMode: capability.defaultPolicy.rateLimitMode,
+      defaultSettings: capability.defaultPolicy.settings,
+      metadata: metadataRecord(capability.metadata),
+    })),
+  };
+}
+
+export function listCoreAppDefinitions(): AppCatalogDefinition[] {
+  return listToolProviders().map(toAppDefinition);
+}
+
+export function getCoreAppDefinition(appKey: string) {
+  return listCoreAppDefinitions().find((app) => app.key === appKey) ?? null;
+}

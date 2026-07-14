@@ -58,14 +58,7 @@ test("Kestrel-One route ownership manifest assigns one owner per route", () => {
 test("Kestrel-One primary navigation routes require an authenticated shell", () => {
   assert.deepEqual(
     PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
-    [
-      "/admin",
-      "/dashboard",
-      "/knowledge",
-      "/model-deployments",
-      "/projects",
-      "/threads",
-    ]
+    ["/", "/admin", "/apps", "/dashboard", "/knowledge"]
   );
 
   for (const entry of PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES) {

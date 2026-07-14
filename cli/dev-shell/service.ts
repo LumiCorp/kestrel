@@ -2,7 +2,7 @@
 
 import http from "node:http";
 import { appendFileSync, chmodSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,35 +45,20 @@ async function main(): Promise<void> {
   rmSync(socketPath, { force: true });
 
   const repoRoot = resolveRepoRoot();
+  const sqlitePath = path.join(path.dirname(socketPath), "store.db");
   let storeHandle: SqlExecutorStoreHandle;
+  let supervisor: DevShellSupervisor;
   try {
-    storeHandle = createSqlExecutorFromEnv({
-      sqlitePath: path.join(path.dirname(socketPath), "store.db"),
-    });
-    if (storeHandle.driver === "postgres") {
-      if (storeHandle.databaseUrl === undefined) {
-        throw new Error("DATABASE_URL is required for dev shell service.");
-      }
-      await runDevShellDatabaseMigrations({
-        repoRoot,
-        databaseUrl: storeHandle.databaseUrl,
-      });
-    }
+    ({ storeHandle, supervisor } = await createInitializedDevShellRuntime({
+      repoRoot,
+      sqlitePath,
+    }));
   } catch (error) {
     await writeBootstrapFailure(
       statusPath,
       resolveStoreBootstrapFailureReason(error),
       formatDevShellBootstrapFailureMessage(error),
     );
-    throw error;
-  }
-
-  const store = new PostgresDevShellStore(storeHandle.executor);
-  const supervisor = new DevShellSupervisor(store);
-  try {
-    await supervisor.initialize();
-  } catch (error) {
-    await writeBootstrapFailure(statusPath, "initialization_failed", toErrorMessage(error));
     throw error;
   }
 
@@ -124,6 +109,67 @@ async function main(): Promise<void> {
     clearInterval(ownerWatch);
     void shutdown().finally(() => process.exit(0));
   });
+}
+
+async function createInitializedDevShellRuntime(input: {
+  repoRoot: string;
+  sqlitePath: string;
+}): Promise<{
+  storeHandle: SqlExecutorStoreHandle;
+  supervisor: DevShellSupervisor;
+}> {
+  let storeHandle = await createDevShellStoreHandle(input);
+  let supervisor = new DevShellSupervisor(new PostgresDevShellStore(storeHandle.executor));
+  try {
+    await supervisor.initialize();
+    return { storeHandle, supervisor };
+  } catch (error) {
+    if (storeHandle.driver !== "sqlite" || asRuntimeError(error).code !== "STORE_SQLITE_INIT_FAILED") {
+      await storeHandle.close().catch(() => {});
+      throw error;
+    }
+
+    await storeHandle.close().catch(() => {});
+    const recoveryPath = `${input.sqlitePath}.recovery-${Date.now()}-${process.pid}`;
+    await rename(input.sqlitePath, recoveryPath);
+    writeBootstrapLog(
+      `warning: quarantined failed developer shell store at '${recoveryPath}' and retrying once`,
+    );
+
+    storeHandle = await createDevShellStoreHandle(input);
+    supervisor = new DevShellSupervisor(new PostgresDevShellStore(storeHandle.executor));
+    try {
+      await supervisor.initialize();
+      return { storeHandle, supervisor };
+    } catch (recoveryError) {
+      await storeHandle.close().catch(() => {});
+      throw recoveryError;
+    }
+  }
+}
+
+async function createDevShellStoreHandle(input: {
+  repoRoot: string;
+  sqlitePath: string;
+}): Promise<SqlExecutorStoreHandle> {
+  const storeHandle = createSqlExecutorFromEnv({ sqlitePath: input.sqlitePath });
+  if (storeHandle.driver !== "postgres") {
+    return storeHandle;
+  }
+  if (storeHandle.databaseUrl === undefined) {
+    await storeHandle.close().catch(() => {});
+    throw new Error("DATABASE_URL is required for dev shell service.");
+  }
+  try {
+    await runDevShellDatabaseMigrations({
+      repoRoot: input.repoRoot,
+      databaseUrl: storeHandle.databaseUrl,
+    });
+    return storeHandle;
+  } catch (error) {
+    await storeHandle.close().catch(() => {});
+    throw error;
+  }
 }
 
 async function handleRequest(

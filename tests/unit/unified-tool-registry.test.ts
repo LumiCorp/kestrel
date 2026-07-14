@@ -1,8 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir as fsMkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import test from "node:test";
 
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -13,7 +13,10 @@ import type {
   InternetSearchResultItem,
   TavilyInternetProvider,
 } from "../../tools/internet/contracts.js";
-import { UnifiedToolRegistry, type McpToolProvider } from "../../tools/runtime/UnifiedToolRegistry.js";
+import {
+  type McpToolProvider,
+  UnifiedToolRegistry,
+} from "../../tools/runtime/UnifiedToolRegistry.js";
 import { isAgentToolResult } from "../../tools/toolResult.js";
 
 class MockMcpProvider implements McpToolProvider {
@@ -57,7 +60,14 @@ class MockInternetProvider implements TavilyInternetProvider {
   crawlCalls: unknown[] = [];
   mapCalls: unknown[] = [];
 
-  async search(input: Parameters<TavilyInternetProvider["search"]>[0]): Promise<InternetProviderCallResult<{ query: string; results: InternetSearchResultItem[] }>> {
+  async search(
+    input: Parameters<TavilyInternetProvider["search"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{
+      query: string;
+      results: InternetSearchResultItem[];
+    }>
+  > {
     this.searchCalls.push(input);
     return {
       status: "ok",
@@ -67,7 +77,14 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async searchAdvanced(input: Parameters<TavilyInternetProvider["searchAdvanced"]>[0]): Promise<InternetProviderCallResult<{ query: string; results: InternetSearchResultItem[] }>> {
+  async searchAdvanced(
+    input: Parameters<TavilyInternetProvider["searchAdvanced"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{
+      query: string;
+      results: InternetSearchResultItem[];
+    }>
+  > {
     this.searchAdvancedCalls.push(input);
     return {
       status: "ok",
@@ -77,7 +94,14 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async news(input: Parameters<TavilyInternetProvider["news"]>[0]): Promise<InternetProviderCallResult<{ query: string; results: InternetSearchResultItem[] }>> {
+  async news(
+    input: Parameters<TavilyInternetProvider["news"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{
+      query: string;
+      results: InternetSearchResultItem[];
+    }>
+  > {
     this.newsCalls.push(input);
     return {
       status: "ok",
@@ -87,7 +111,9 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async images(input: Parameters<TavilyInternetProvider["images"]>[0]): Promise<InternetProviderCallResult<{ query: string; results: [] }>> {
+  async images(
+    input: Parameters<TavilyInternetProvider["images"]>[0]
+  ): Promise<InternetProviderCallResult<{ query: string; results: [] }>> {
     return {
       status: "ok",
       provider: "tavily",
@@ -96,7 +122,9 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async extract(input: Parameters<TavilyInternetProvider["extract"]>[0]): Promise<InternetProviderCallResult<InternetExtractOutput>> {
+  async extract(
+    input: Parameters<TavilyInternetProvider["extract"]>[0]
+  ): Promise<InternetProviderCallResult<InternetExtractOutput>> {
     this.extractCalls.push(input);
     const url = input.urls[0] ?? "https://example.com";
     return {
@@ -117,22 +145,65 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async crawl(input: Parameters<TavilyInternetProvider["crawl"]>[0]): Promise<InternetProviderCallResult<{ baseUrl: string; results: InternetFetchResult[] }>> {
+  async crawl(
+    input: Parameters<TavilyInternetProvider["crawl"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{
+      baseUrl: string;
+      results: InternetFetchResult[];
+    }>
+  > {
     this.crawlCalls.push(input);
-    return { status: "ok", provider: "tavily", attempts: 1, data: { baseUrl: input.url, results: [] } };
+    return {
+      status: "ok",
+      provider: "tavily",
+      attempts: 1,
+      data: { baseUrl: input.url, results: [] },
+    };
   }
 
-  async map(input: Parameters<TavilyInternetProvider["map"]>[0]): Promise<InternetProviderCallResult<{ baseUrl: string; results: string[] }>> {
+  async map(
+    input: Parameters<TavilyInternetProvider["map"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{ baseUrl: string; results: string[] }>
+  > {
     this.mapCalls.push(input);
-    return { status: "ok", provider: "tavily", attempts: 1, data: { baseUrl: input.url, results: [] } };
+    return {
+      status: "ok",
+      provider: "tavily",
+      attempts: 1,
+      data: { baseUrl: input.url, results: [] },
+    };
   }
 
-  async research(input: Parameters<TavilyInternetProvider["research"]>[0]): Promise<InternetProviderCallResult<{ requestId: string; status: string; input?: string }>> {
-    return { status: "ok", provider: "tavily", attempts: 1, data: { requestId: "req", status: "completed", input: input.input } };
+  async research(
+    input: Parameters<TavilyInternetProvider["research"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{
+      requestId: string;
+      status: string;
+      input?: string;
+    }>
+  > {
+    return {
+      status: "ok",
+      provider: "tavily",
+      attempts: 1,
+      data: { requestId: "req", status: "completed", input: input.input },
+    };
   }
 
-  async researchStatus(input: Parameters<TavilyInternetProvider["researchStatus"]>[0]): Promise<InternetProviderCallResult<{ requestId: string; status: string }>> {
-    return { status: "ok", provider: "tavily", attempts: 1, data: { requestId: input.requestId, status: "completed" } };
+  async researchStatus(
+    input: Parameters<TavilyInternetProvider["researchStatus"]>[0]
+  ): Promise<
+    InternetProviderCallResult<{ requestId: string; status: string }>
+  > {
+    return {
+      status: "ok",
+      provider: "tavily",
+      attempts: 1,
+      data: { requestId: input.requestId, status: "completed" },
+    };
   }
 
   async usage(): Promise<InternetProviderCallResult<Record<string, never>>> {
@@ -160,19 +231,29 @@ async function assertToolInputInvalid(
     field: string;
     expected?: string;
     invalidValues: unknown[];
-  },
+  }
 ): Promise<void> {
-  let failure: RuntimeFailure | { code?: unknown; details?: unknown } | undefined;
+  let failure:
+    | RuntimeFailure
+    | { code?: unknown; details?: unknown }
+    | undefined;
   try {
     const result = await action();
     if (isAgentToolResult(result) && result.status === "FAILED") {
-      failure = result.auditRecord.error as { code?: unknown; details?: unknown };
+      failure = result.auditRecord.error as {
+        code?: unknown;
+        details?: unknown;
+      };
     }
   } catch (error) {
     assert.equal(error instanceof RuntimeFailure, true);
     failure = error as RuntimeFailure;
   }
-  assert.notEqual(failure, undefined, "expected invalid tool input to throw or return a FAILED tool result");
+  assert.notEqual(
+    failure,
+    undefined,
+    "expected invalid tool input to throw or return a FAILED tool result"
+  );
   const details = failure?.details as Record<string, unknown> | undefined;
   assert.equal(failure?.code, "TOOL_INPUT_INVALID");
   assert.equal(details?.classification, "schema");
@@ -284,7 +365,7 @@ test("UnifiedToolRegistry blocks non-allowlisted MCP tools", async () => {
 
   await assert.rejects(
     () => registry.call("mcp.remote.lookup", {}),
-    /not allowlisted/,
+    /not allowlisted/
   );
 });
 
@@ -312,8 +393,14 @@ test("UnifiedToolRegistry hides MCP tools without explicit presentation metadata
 
   assert.deepEqual(registry.getModelTools(), []);
   assert.deepEqual(registry.getCapabilityManifest(), []);
-  assert.deepEqual(registry.resolveAvailableAllowlist(["mcp.remote.lookup"]), []);
-  await assert.rejects(() => registry.call("mcp.remote.lookup", {}), /not available/);
+  assert.deepEqual(
+    registry.resolveAvailableAllowlist(["mcp.remote.lookup"]),
+    []
+  );
+  await assert.rejects(
+    () => registry.call("mcp.remote.lookup", {}),
+    /not available/
+  );
 });
 
 test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit metadata", async () => {
@@ -358,7 +445,7 @@ test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit met
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["mcp.playwright.browser_snapshot"],
+    ["mcp.playwright.browser_snapshot"]
   );
   assert.deepEqual(
     registry.getCapabilityManifest().map((tool) => ({
@@ -374,12 +461,15 @@ test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit met
         provider: "playwright",
         toolFamily: "browser_automation",
       },
-    ],
+    ]
   );
-  assert.deepEqual(registry.resolveAvailableAllowlist([
-    "mcp.playwright.browser_snapshot",
-    "mcp.playwright.browser_magic_unlisted",
-  ]), ["mcp.playwright.browser_snapshot"]);
+  assert.deepEqual(
+    registry.resolveAvailableAllowlist([
+      "mcp.playwright.browser_snapshot",
+      "mcp.playwright.browser_magic_unlisted",
+    ]),
+    ["mcp.playwright.browser_snapshot"]
+  );
 });
 
 test("UnifiedToolRegistry exposes tool-runtime lifecycle hooks", async () => {
@@ -434,15 +524,45 @@ test("UnifiedToolRegistry does not advertise internet domain filters to the mode
   await registry.refresh();
 
   for (const toolName of ["internet.news", "internet.search"]) {
-    const tool = registry.getModelTools().find((candidate) => candidate.name === toolName);
+    const tool = registry
+      .getModelTools()
+      .find((candidate) => candidate.name === toolName);
     assert.notEqual(tool, undefined);
-    const properties = (tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
-    assert.equal(Object.prototype.hasOwnProperty.call(properties, "domainAllow"), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(properties, "domainDeny"), false);
+    const properties =
+      (tool?.inputSchema as { properties?: Record<string, unknown> })
+        .properties ?? {};
+    assert.equal(Object.hasOwn(properties, "domainAllow"), false);
+    assert.equal(Object.hasOwn(properties, "domainDeny"), false);
     if (toolName === "internet.news") {
-      assert.equal(Object.prototype.hasOwnProperty.call(properties, "region"), false);
+      assert.equal(Object.hasOwn(properties, "region"), false);
     }
   }
+});
+
+test("UnifiedToolRegistry turns Project App ask policy into a runtime approval gate", () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["internet.search", "internet.crawl"],
+    context: {
+      kestrelOne: {
+        appApprovalModes: {
+          "internet.search": "auto",
+          "internet.crawl": "ask",
+        },
+      },
+    },
+  });
+  const manifest = new Map(
+    registry
+      .getCapabilityManifest()
+      .map((capability) => [capability.name, capability])
+  );
+  assert.deepEqual(
+    manifest.get("internet.search")?.approvalCapabilities,
+    undefined
+  );
+  assert.deepEqual(manifest.get("internet.crawl")?.approvalCapabilities, [
+    "external.confirm",
+  ]);
 });
 
 test("UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls", async () => {
@@ -460,12 +580,14 @@ test("UnifiedToolRegistry strips unadvertised internet.news domain filters befor
   await registry.refresh();
 
   await registry.call("internet.news", {
-    query: "Georgia Florida wildfires current updates homes evacuations damage May 2026",
+    query:
+      "Georgia Florida wildfires current updates homes evacuations damage May 2026",
     domainDeny: ["opinion", "video"],
   });
   assert.deepEqual(internetProvider.newsCalls, [
     {
-      query: "Georgia Florida wildfires current updates homes evacuations damage May 2026",
+      query:
+        "Georgia Florida wildfires current updates homes evacuations damage May 2026",
       limit: 8,
     },
   ]);
@@ -513,15 +635,16 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced domains befor
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.search_advanced", {
-      query: "Georgia Florida wildfires current updates",
-      domainDeny: ["opinion", "video"],
-    }),
+    () =>
+      registry.call("internet.search_advanced", {
+        query: "Georgia Florida wildfires current updates",
+        domainDeny: ["opinion", "video"],
+      }),
     {
       field: "domainDeny",
       expected: "hostnames only, without schemes, paths, or content categories",
       invalidValues: ["opinion", "video"],
-    },
+    }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -541,15 +664,17 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced country befor
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.search_advanced", {
-      query: "Procter & Gamble latest earnings performance news 2026 investor relations",
-      country: "United States",
-    }),
+    () =>
+      registry.call("internet.search_advanced", {
+        query:
+          "Procter & Gamble latest earnings performance news 2026 investor relations",
+        country: "United States",
+      }),
     {
       field: "country",
       expected: "one of Tavily's supported lowercase country names",
       invalidValues: ["United States"],
-    },
+    }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -569,13 +694,15 @@ test("UnifiedToolRegistry strips internet.search_advanced country outside genera
   await registry.refresh();
 
   await registry.call("internet.search_advanced", {
-    query: "Procter & Gamble latest earnings performance news 2026 investor relations",
+    query:
+      "Procter & Gamble latest earnings performance news 2026 investor relations",
     topic: "news",
     country: "india",
   });
   assert.deepEqual(internetProvider.searchAdvancedCalls, [
     {
-      query: "Procter & Gamble latest earnings performance news 2026 investor relations",
+      query:
+        "Procter & Gamble latest earnings performance news 2026 investor relations",
       limit: 8,
       topic: "news",
     },
@@ -628,15 +755,16 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced explicit date
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.search_advanced", {
-      query: "TCS latest revenue and headcount",
-      startDate: "2026-02-31",
-    }),
+    () =>
+      registry.call("internet.search_advanced", {
+        query: "TCS latest revenue and headcount",
+        startDate: "2026-02-31",
+      }),
     {
       field: "startDate",
       expected: "a YYYY-MM-DD date",
       invalidValues: ["2026-02-31"],
-    },
+    }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -656,16 +784,17 @@ test("UnifiedToolRegistry rejects internet.search_advanced explicit date ranges 
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.search_advanced", {
-      query: "current U.S. business and technology news",
-      startDate: "2026-06-01",
-      endDate: "2026-06-01",
-    }),
+    () =>
+      registry.call("internet.search_advanced", {
+        query: "current U.S. business and technology news",
+        startDate: "2026-06-01",
+        endDate: "2026-06-01",
+      }),
     {
       field: "startDate",
       expected: "endDate must be a different YYYY-MM-DD date than startDate",
       invalidValues: ["2026-06-01", "2026-06-01"],
-    },
+    }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -685,15 +814,17 @@ test("UnifiedToolRegistry rejects internet.search_advanced exactMatch queries wi
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.search_advanced", {
-      query: "current U.S. business and technology news",
-      exactMatch: true,
-    }),
+    () =>
+      registry.call("internet.search_advanced", {
+        query: "current U.S. business and technology news",
+        exactMatch: true,
+      }),
     {
       field: "query",
-      expected: "a query containing at least one double-quoted phrase when exactMatch is true",
+      expected:
+        "a query containing at least one double-quoted phrase when exactMatch is true",
       invalidValues: ["current U.S. business and technology news"],
-    },
+    }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -811,22 +942,24 @@ test("UnifiedToolRegistry rejects invalid built-in internet URLs before provider
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.extract", {
-      url: "/relative/path",
-    }),
+    () =>
+      registry.call("internet.extract", {
+        url: "/relative/path",
+      }),
     {
       field: "url",
       invalidValues: ["/relative/path"],
-    },
+    }
   );
   await assertToolInputInvalid(
-    () => registry.call("internet.extract", {
-      url: "ftp://example.com/article",
-    }),
+    () =>
+      registry.call("internet.extract", {
+        url: "ftp://example.com/article",
+      }),
     {
       field: "url",
       invalidValues: ["ftp://example.com/article"],
-    },
+    }
   );
   assert.equal(internetProvider.extractCalls.length, 0);
 });
@@ -846,34 +979,37 @@ test("UnifiedToolRegistry rejects local built-in internet URLs before provider c
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.call("internet.extract", {
-      url: "http://127.0.0.1:8000/index.html",
-    }),
+    () =>
+      registry.call("internet.extract", {
+        url: "http://127.0.0.1:8000/index.html",
+      }),
     {
       field: "url",
       expected: "public absolute http or https URLs",
       invalidValues: ["http://127.0.0.1:8000/index.html"],
-    },
+    }
   );
   await assertToolInputInvalid(
-    () => registry.call("internet.crawl", {
-      url: "http://localhost:3000",
-    }),
+    () =>
+      registry.call("internet.crawl", {
+        url: "http://localhost:3000",
+      }),
     {
       field: "url",
       expected: "a public absolute http or https URL",
       invalidValues: ["http://localhost:3000"],
-    },
+    }
   );
   await assertToolInputInvalid(
-    () => registry.call("internet.map", {
-      url: "http://192.168.1.10",
-    }),
+    () =>
+      registry.call("internet.map", {
+        url: "http://192.168.1.10",
+      }),
     {
       field: "url",
       expected: "a public absolute http or https URL",
       invalidValues: ["http://192.168.1.10"],
-    },
+    }
   );
   assert.equal(internetProvider.extractCalls.length, 0);
   assert.equal(internetProvider.crawlCalls.length, 0);
@@ -895,15 +1031,16 @@ test("UnifiedToolRegistry reports built-in schema bound failures as recoverable 
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => registry.validateInput("internet.extract", {
-      url: "https://example.com/article",
-      maxChars: 100,
-    }),
+    () =>
+      registry.validateInput("internet.extract", {
+        url: "https://example.com/article",
+        maxChars: 100,
+      }),
     {
       field: "maxChars",
       expected: "value >= 500",
       invalidValues: [100],
-    },
+    }
   );
   assert.equal(internetProvider.extractCalls.length, 0);
 });
@@ -932,11 +1069,11 @@ test("UnifiedToolRegistry accepts valid built-in internet URLs", async () => {
   assert.deepEqual(internetProvider.extractCalls, [
     {
       urls: ["https://example.com/article"],
-      maxChars: 12000,
+      maxChars: 12_000,
     },
     {
       urls: ["http://example.com/article"],
-      maxChars: 12000,
+      maxChars: 12_000,
     },
   ]);
 });
@@ -1033,16 +1170,17 @@ test("UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
   await registry.refresh();
 
   await assert.rejects(
-    () => registry.validateInput("mcp.remote.counter", {
-      count: 1,
-    }),
+    () =>
+      registry.validateInput("mcp.remote.counter", {
+        count: 1,
+      }),
     (error: unknown) => {
       assert.equal(error instanceof RuntimeFailure, true);
       const failure = error as RuntimeFailure;
       assert.equal(failure.code, "TOOL_INPUT_SCHEMA_FAILED");
       assert.notEqual(failure.code, "TOOL_INPUT_INVALID");
       return true;
-    },
+    }
   );
   assert.equal(mcp.calls.length, 0);
 });
@@ -1131,7 +1269,10 @@ test("UnifiedToolRegistry hides code.execute when profile code-mode is disabled"
   await registry.refresh();
   assert.deepEqual(registry.getModelTools(), []);
   assert.deepEqual(registry.getCapabilityManifest(), []);
-  await assert.rejects(() => registry.call("code.execute", {}), /disabled for this profile/);
+  await assert.rejects(
+    () => registry.call("code.execute", {}),
+    /disabled for this profile/
+  );
 });
 
 test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", async () => {
@@ -1154,8 +1295,12 @@ test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", asy
   assert.deepEqual(disabledRegistry.getModelTools(), []);
   assert.deepEqual(disabledRegistry.getCapabilityManifest(), []);
   await assert.rejects(
-    () => disabledRegistry.call("dev.shell.run", { command: "echo ok", workspaceRoot: "." }),
-    /disabled for this profile/,
+    () =>
+      disabledRegistry.call("dev.shell.run", {
+        command: "echo ok",
+        workspaceRoot: ".",
+      }),
+    /disabled for this profile/
   );
 
   const enabledRegistry = new UnifiedToolRegistry({
@@ -1176,7 +1321,7 @@ test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", asy
   await enabledRegistry.refresh();
   assert.deepEqual(
     enabledRegistry.getModelTools().map((tool) => tool.name),
-    ["dev.shell.run"],
+    ["dev.shell.run"]
   );
 });
 
@@ -1224,7 +1369,7 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
           },
         },
       }),
-    },
+    }
   );
 
   await registry.call(
@@ -1255,11 +1400,15 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
           },
         },
       }),
-    },
+    }
   );
 
   assert.deepEqual(execInputs[0]?.sourceWriteGuard, { enabled: true });
-  assert.deepEqual(execInputs[1]?.sourceWriteGuard, { enabled: true, managedWorktree: true, approvalGrants: [] });
+  assert.deepEqual(execInputs[1]?.sourceWriteGuard, {
+    enabled: true,
+    managedWorktree: true,
+    approvalGrants: [],
+  });
   assert.equal(execInputs[0]?.sourceWriteAuthority, undefined);
   assert.equal(execInputs[1]?.sourceWriteAuthority, "source_write");
 });
@@ -1309,7 +1458,7 @@ test("UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev
           },
         },
       }),
-    },
+    }
   );
 
   await registry.call(
@@ -1326,10 +1475,12 @@ test("UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev
           },
         },
       }),
-    },
+    }
   );
 
-  assert.deepEqual(execInputs[0]?.packageManagerPreflight, { pnpmApproveBuilds: "approve_all" });
+  assert.deepEqual(execInputs[0]?.packageManagerPreflight, {
+    pnpmApproveBuilds: "approve_all",
+  });
   assert.equal(execInputs[1]?.packageManagerPreflight, undefined);
 });
 
@@ -1390,7 +1541,7 @@ test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding do
         },
         sessionState: state,
       }),
-    },
+    }
   );
 
   await registry.call(
@@ -1408,7 +1559,7 @@ test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding do
         },
         sessionState: state,
       }),
-    },
+    }
   );
 
   assert.deepEqual(execInputs[0]?.sourceWriteGuard, { enabled: true });
@@ -1464,7 +1615,7 @@ test("UnifiedToolRegistry does not grant direct source writes for explicit manag
           },
         },
       }),
-    },
+    }
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, undefined);
@@ -1522,7 +1673,7 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
           },
         },
       }),
-    },
+    }
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, "source_write");
@@ -1581,7 +1732,7 @@ test("UnifiedToolRegistry ignores descriptive workspace authority without an exp
           },
         },
       }),
-    },
+    }
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, undefined);
@@ -1608,28 +1759,40 @@ test("UnifiedToolRegistry exposes allowlisted filesystem tools and can call them
   const tools = registry.getModelTools();
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ["fs.read_text", "fs.write_text"],
+    ["fs.read_text", "fs.write_text"]
   );
 
   const manifest = registry.getCapabilityManifest();
   assert.deepEqual(
-    manifest.map((item) => ({ name: item.name, executionClass: item.executionClass })),
+    manifest.map((item) => ({
+      name: item.name,
+      executionClass: item.executionClass,
+    })),
     [
       { name: "fs.read_text", executionClass: "read_only" },
       { name: "fs.write_text", executionClass: "sandboxed_only" },
-    ],
+    ]
   );
 
   const result = await registry.call("fs.read_text", {
     path: filePath,
   });
-  assert.equal((result.auditRecord.output as { content?: string }).content, "registry file");
+  assert.equal(
+    (result.auditRecord.output as { content?: string }).content,
+    "registry file"
+  );
 });
 
 test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-repo-trace-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-unified-repo-trace-")
+  );
   await fsMkdir(path.join(tempDir, "src"), { recursive: true });
-  await writeFile(path.join(tempDir, "src", "main.ts"), "export const value = 'TRACE_TOKEN';\n", "utf8");
+  await writeFile(
+    path.join(tempDir, "src", "main.ts"),
+    "export const value = 'TRACE_TOKEN';\n",
+    "utf8"
+  );
 
   const registry = new UnifiedToolRegistry({
     allowlist: ["repo.trace"],
@@ -1650,20 +1813,39 @@ test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace 
   await registry.refresh();
 
   const tools = registry.getModelTools();
-  assert.deepEqual(tools.map((tool) => tool.name), ["repo.trace"]);
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["repo.trace"]
+  );
 
   const manifest = registry.getCapabilityManifest();
   assert.deepEqual(
-    manifest.map((item) => ({ name: item.name, executionClass: item.executionClass, capabilityClasses: item.capabilityClasses })),
-    [{ name: "repo.trace", executionClass: "read_only", capabilityClasses: ["fs.read", "repo.trace"] }],
+    manifest.map((item) => ({
+      name: item.name,
+      executionClass: item.executionClass,
+      capabilityClasses: item.capabilityClasses,
+    })),
+    [
+      {
+        name: "repo.trace",
+        executionClass: "read_only",
+        capabilityClasses: ["fs.read", "repo.trace"],
+      },
+    ]
   );
 
   const result = await registry.call("repo.trace", {
     seeds: ["TRACE_TOKEN"],
   });
-  const output = result.auditRecord.output as { resultCount?: number; groups?: Array<{ path: string }> };
+  const output = result.auditRecord.output as {
+    resultCount?: number;
+    groups?: Array<{ path: string }>;
+  };
   assert.equal(output.resultCount, 1);
-  assert.deepEqual(output.groups?.map((group) => group.path), ["src/main.ts"]);
+  assert.deepEqual(
+    output.groups?.map((group) => group.path),
+    ["src/main.ts"]
+  );
   assert.match(result.modelContext.text, /Tool result: repo\.trace/u);
   assert.match(result.modelContext.text, /resultCount: 1/u);
   assert.match(result.modelContext.text, /src\/main\.ts/u);
@@ -1776,19 +1958,21 @@ test("UnifiedToolRegistry scopes allowlists per run context", async () => {
   await registry.refresh();
 
   const runWithAllowlist = async (toolAllowlist: string[]) =>
-    registry.getModelTools({
-      runContext: createToolRunContext({
-        runId: `run-${toolAllowlist.join("-")}`,
-        sessionId: `session-${toolAllowlist.join("-")}`,
-        payload: {
-          orchestration: {
-            runtimeAssembly: {
-              toolAllowlist,
+    registry
+      .getModelTools({
+        runContext: createToolRunContext({
+          runId: `run-${toolAllowlist.join("-")}`,
+          sessionId: `session-${toolAllowlist.join("-")}`,
+          payload: {
+            orchestration: {
+              runtimeAssembly: {
+                toolAllowlist,
+              },
             },
           },
-        },
-      }),
-    }).map((tool) => tool.name);
+        }),
+      })
+      .map((tool) => tool.name);
 
   const [filesystemOnly, mcpOnly] = await Promise.all([
     runWithAllowlist(["fs.read_text"]),
@@ -1801,7 +1985,12 @@ test("UnifiedToolRegistry scopes allowlists per run context", async () => {
 
 test("UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["internet.search", "FinalizeAnswer", "effect_result_lookup", "delegate.spawn_child"],
+    allowlist: [
+      "internet.search",
+      "FinalizeAnswer",
+      "effect_result_lookup",
+      "delegate.spawn_child",
+    ],
     context: {
       onFinalize: (payload) => payload,
     },
@@ -1822,10 +2011,12 @@ test("UnifiedToolRegistry preserves runtime built-ins when pruning unavailable t
     "mcp.remote.lookup",
   ]);
 
-  assert.deepEqual(
-    resolved,
-    ["internet.search", "FinalizeAnswer", "effect_result_lookup", "delegate.spawn_child"],
-  );
+  assert.deepEqual(resolved, [
+    "internet.search",
+    "FinalizeAnswer",
+    "effect_result_lookup",
+    "delegate.spawn_child",
+  ]);
 });
 
 test("UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool", async () => {
@@ -1835,7 +2026,9 @@ test("UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn 
       onFinalize: (payload) => payload,
       delegationService: {
         async spawnTask() {
-          throw new Error("spawnTask should not be called by model tool listing");
+          throw new Error(
+            "spawnTask should not be called by model tool listing"
+          );
         },
         async listTasks() {
           return [];
@@ -1856,14 +2049,19 @@ test("UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn 
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["agent.spawn"],
+    ["agent.spawn"]
   );
 });
 
 test("UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted", async () => {
   const now = new Date().toISOString();
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn", "delegate.spawn_child", "delegate.list_children", "delegate.get_child_result"],
+    allowlist: [
+      "agent.spawn",
+      "delegate.spawn_child",
+      "delegate.list_children",
+      "delegate.get_child_result",
+    ],
     context: {
       delegationService: {
         async spawnTask(input) {
@@ -1900,41 +2098,50 @@ test("UnifiedToolRegistry blocks internal delegate runtime tools even when allow
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["agent.spawn"],
+    ["agent.spawn"]
   );
   await assert.rejects(
-    () => registry.call("delegate.spawn_child", {
-      title: "Legacy child",
-      prompt: "Do the legacy thing",
-      parentSessionId: "session-parent",
-    }),
-    /internal-only runtime tool/,
+    () =>
+      registry.call("delegate.spawn_child", {
+        title: "Legacy child",
+        prompt: "Do the legacy thing",
+        parentSessionId: "session-parent",
+      }),
+    /internal-only runtime tool/
   );
   await assert.rejects(
-    () => registry.validateInput("delegate.list_children", {
-      parentSessionId: "session-parent",
-    }),
-    /internal-only runtime tool/,
+    () =>
+      registry.validateInput("delegate.list_children", {
+        parentSessionId: "session-parent",
+      }),
+    /internal-only runtime tool/
   );
 
-  const result = await registry.call("agent.spawn", {
-    task: "Spawn through the supported boundary",
-  }, {
-    runContext: createToolRunContext({
-      runId: "run-parent",
-      sessionId: "session-parent",
-      payload: {
-        orchestration: {
-          threadId: "thread-parent",
-          activeTaskId: "task-parent",
-          runtimeAssembly: {
-            toolAllowlist: ["agent.spawn"],
+  const result = await registry.call(
+    "agent.spawn",
+    {
+      task: "Spawn through the supported boundary",
+    },
+    {
+      runContext: createToolRunContext({
+        runId: "run-parent",
+        sessionId: "session-parent",
+        payload: {
+          orchestration: {
+            threadId: "thread-parent",
+            activeTaskId: "task-parent",
+            runtimeAssembly: {
+              toolAllowlist: ["agent.spawn"],
+            },
           },
         },
-      },
-    }),
-  });
-  assert.equal((result.auditRecord.output as { taskId?: string }).taskId, "task-child");
+      }),
+    }
+  );
+  assert.equal(
+    (result.auditRecord.output as { taskId?: string }).taskId,
+    "task-child"
+  );
 });
 
 test("agent.spawn accepts only a task string", async () => {
@@ -1962,17 +2169,21 @@ test("agent.spawn accepts only a task string", async () => {
   });
   await registry.refresh();
 
-  assert.deepEqual(await registry.validateInput("agent.spawn", {
-    task: "Investigate failing tests",
-  }), {
-    task: "Investigate failing tests",
-  });
-  await assert.rejects(
-    () => registry.validateInput("agent.spawn", {
+  assert.deepEqual(
+    await registry.validateInput("agent.spawn", {
       task: "Investigate failing tests",
-      parentSessionId: "session-1",
     }),
-    /parentSessionId/,
+    {
+      task: "Investigate failing tests",
+    }
+  );
+  await assert.rejects(
+    () =>
+      registry.validateInput("agent.spawn", {
+        task: "Investigate failing tests",
+        parentSessionId: "session-1",
+      }),
+    /parentSessionId/
   );
 });
 
@@ -1988,7 +2199,9 @@ test("agent.spawn delegates using the active runtime context", async () => {
           return {
             taskId: "task-child",
             parentSessionId: input.parentSessionId,
-            ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
+            ...(input.parentRunId !== undefined
+              ? { parentRunId: input.parentRunId }
+              : {}),
             title: input.title,
             status: "PENDING",
             childSessionId: "child-session",
@@ -2016,33 +2229,41 @@ test("agent.spawn delegates using the active runtime context", async () => {
     }),
   });
   await registry.refresh();
-  const result = await registry.call("agent.spawn", {
-    task: "Investigate failing tests\nUse the unit output as the starting point.",
-  }, {
-    runContext: createToolRunContext({
-      runId: "run-parent",
-      sessionId: "session-parent",
-      payload: {
-        orchestration: {
-          threadId: "thread-parent",
-          activeTaskId: "task-parent",
-          delegationId: "delegation-parent",
-          delegationDepth: 2,
-          runtimeAssembly: {
-            toolAllowlist: ["agent.spawn"],
+  const result = await registry.call(
+    "agent.spawn",
+    {
+      task: "Investigate failing tests\nUse the unit output as the starting point.",
+    },
+    {
+      runContext: createToolRunContext({
+        runId: "run-parent",
+        sessionId: "session-parent",
+        payload: {
+          orchestration: {
+            threadId: "thread-parent",
+            activeTaskId: "task-parent",
+            delegationId: "delegation-parent",
+            delegationDepth: 2,
+            runtimeAssembly: {
+              toolAllowlist: ["agent.spawn"],
+            },
           },
         },
-      },
-    }),
-  });
+      }),
+    }
+  );
 
-  assert.equal((result.auditRecord.output as { taskId?: string }).taskId, "task-child");
+  assert.equal(
+    (result.auditRecord.output as { taskId?: string }).taskId,
+    "task-child"
+  );
   assert.deepEqual(requests, [
     {
       parentSessionId: "thread-parent",
       parentRunId: "run-parent",
       title: "Investigate failing tests",
-      prompt: "Investigate failing tests\nUse the unit output as the starting point.",
+      prompt:
+        "Investigate failing tests\nUse the unit output as the starting point.",
       launchedBy: "agent",
       taskId: "task-parent",
       parentTaskId: "task-parent",
@@ -2053,7 +2274,9 @@ test("agent.spawn delegates using the active runtime context", async () => {
 });
 
 test("UnifiedToolRegistry scopes filesystem root per workspace payload", async () => {
-  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-workspace-fs-"));
+  const baseDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-unified-workspace-fs-")
+  );
   const workspaceA = path.join(baseDir, "workspace-a");
   const workspaceB = path.join(baseDir, "workspace-b");
   const tempRoot = path.join(baseDir, "temp-root");
@@ -2098,7 +2321,7 @@ test("UnifiedToolRegistry scopes filesystem root per workspace payload", async (
             },
           },
         }),
-      },
+      }
     );
 
   const [left, right] = await Promise.all([
@@ -2106,29 +2329,32 @@ test("UnifiedToolRegistry scopes filesystem root per workspace payload", async (
     readWithinWorkspace(workspaceB),
   ]);
 
-  assert.equal((left.auditRecord.output as { content?: string }).content, "workspace-a");
-  assert.equal((right.auditRecord.output as { content?: string }).content, "workspace-b");
-  await assert.rejects(
-    async () => {
-      await registry.call(
-        "fs.read_text",
-        { path: path.join(baseDir, "outside.txt") },
-        {
-          runContext: createToolRunContext({
-            runId: "run-outside",
-            sessionId: "session-outside",
-            payload: {
-              workspace: {
-                workspaceId: "workspace-a",
-                workspaceRoot: workspaceA,
-                appRoot: ".",
-                commands: {},
-              },
-            },
-          }),
-        },
-      );
-    },
-    /outside allowed roots/i,
+  assert.equal(
+    (left.auditRecord.output as { content?: string }).content,
+    "workspace-a"
   );
+  assert.equal(
+    (right.auditRecord.output as { content?: string }).content,
+    "workspace-b"
+  );
+  await assert.rejects(async () => {
+    await registry.call(
+      "fs.read_text",
+      { path: path.join(baseDir, "outside.txt") },
+      {
+        runContext: createToolRunContext({
+          runId: "run-outside",
+          sessionId: "session-outside",
+          payload: {
+            workspace: {
+              workspaceId: "workspace-a",
+              workspaceRoot: workspaceA,
+              appRoot: ".",
+              commands: {},
+            },
+          },
+        }),
+      }
+    );
+  }, /outside allowed roots/i);
 });

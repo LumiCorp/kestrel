@@ -15,6 +15,7 @@ import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 const reference = {
   source: "kestrel-one" as const,
   organizationId: "org-acme",
+  environmentId: "env-production",
   gatewayId: "gateway-openrouter",
   rawModelId: "openai/gpt-5.4",
 };
@@ -27,6 +28,7 @@ function lease(input: {
     version: GATEWAY_CREDENTIAL_LEASE_VERSION,
     leaseId: input.leaseId,
     organizationId: reference.organizationId,
+    environmentId: reference.environmentId,
     gatewayId: reference.gatewayId,
     rawModelId: reference.rawModelId,
     provider: "openrouter",
@@ -60,6 +62,7 @@ test("credential broker client sends its dedicated token and validates the lease
   assert.equal(authorization, "Bearer broker-secret");
   assert.equal(requestBody?.gatewayId, reference.gatewayId);
   assert.equal(requestBody?.organizationId, reference.organizationId);
+  assert.equal(requestBody?.environmentId, reference.environmentId);
   assert.equal(result.leaseId, "lease-1");
 });
 
@@ -148,6 +151,29 @@ test("credential cache isolates otherwise identical references by organization",
   const second = await cache.get({
     ...reference,
     organizationId: "org-other",
+  });
+  assert.equal(first.leaseId, "lease-1");
+  assert.equal(second.leaseId, "lease-2");
+  assert.equal(loads, 2);
+});
+
+test("credential cache isolates otherwise identical references by Environment", async () => {
+  let loads = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async (current) => ({
+      ...lease({
+        leaseId: `lease-${++loads}`,
+        expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+      }),
+      environmentId: current.environmentId,
+    }),
+  });
+
+  const first = await cache.get(reference);
+  const second = await cache.get({
+    ...reference,
+    environmentId: "env-staging",
   });
   assert.equal(first.leaseId, "lease-1");
   assert.equal(second.leaseId, "lease-2");

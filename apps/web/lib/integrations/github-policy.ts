@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, isNull, or } from "drizzle-orm";
+import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   type GitHubCapability,
@@ -39,86 +40,131 @@ export async function authorizeGitHubCapability(input: {
   requireRunExecution?: boolean | undefined;
 }) {
   const { ticket } = input;
-  const [connection, environment, workspace, thread, resource] =
+  const thread = await knowledgeDb.query.threads.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.id, ticket.threadId),
+        eq(table.organizationId, ticket.organizationId)
+      ),
+    columns: { id: true, projectId: true },
+  });
+  if (!thread?.projectId) {
+    throw new GitHubPolicyError("GITHUB_CONTEXT_DENIED");
+  }
+  const access = await resolveEffectiveProjectAppAccess({
+    organizationId: ticket.organizationId,
+    projectId: thread.projectId,
+    appKey: "github",
+    userId: ticket.actorId,
+  });
+  const capability = access?.capabilities.find(
+    (candidate) => candidate.key === input.capability
+  );
+  if (
+    !(access?.connectionId && capability) ||
+    access.environmentId !== ticket.environmentId
+  ) {
+    throw new GitHubPolicyError("GITHUB_CAPABILITY_DENIED");
+  }
+  const connectionId = access.connectionId;
+  const [connection, workspace, binding, resource, subjectRestrictions] =
     await Promise.all([
-      knowledgeDb.query.userToolConnections.findFirst({
+      knowledgeDb.query.appConnections.findFirst({
         where: (table, { and, eq }) =>
           and(
+            eq(table.id, connectionId),
             eq(table.organizationId, ticket.organizationId),
-            eq(table.providerKey, "github"),
+            eq(table.appKey, "github"),
+            eq(table.ownerType, "personal"),
             eq(table.userId, ticket.actorId),
             eq(table.status, "connected")
           ),
-      }),
-      knowledgeDb.query.environments.findFirst({
-        where: (table, { and, eq }) =>
-          and(
-            eq(table.id, ticket.environmentId),
-            eq(table.organizationId, ticket.organizationId)
-          ),
-        columns: { id: true },
       }),
       knowledgeDb.query.environmentWorkspaces.findFirst({
         where: (table, { and, eq }) =>
           and(
             eq(table.id, ticket.workspaceId),
             eq(table.environmentId, ticket.environmentId),
-            eq(table.organizationId, ticket.organizationId)
+            eq(table.organizationId, ticket.organizationId),
+            eq(table.projectId, thread.projectId!)
           ),
         columns: { id: true, sourceResourceId: true },
       }),
-      knowledgeDb.query.threads.findFirst({
+      knowledgeDb.query.threadExecutionBindings.findFirst({
         where: (table, { and, eq }) =>
           and(
-            eq(table.id, ticket.threadId),
-            eq(table.organizationId, ticket.organizationId)
-          ),
-        columns: { id: true, projectId: true },
-      }),
-      knowledgeDb.query.toolConnectionResources.findFirst({
-        where: (table, { and, eq }) =>
-          and(
+            eq(table.threadId, ticket.threadId),
             eq(table.organizationId, ticket.organizationId),
-            eq(table.providerKey, "github"),
-            eq(table.resourceType, "repository"),
+            eq(table.environmentId, ticket.environmentId),
+            eq(table.workspaceId, ticket.workspaceId)
+          ),
+        columns: { threadId: true },
+      }),
+      knowledgeDb.query.appConnectionResources.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.connectionId, connectionId),
             eq(table.externalId, `repository:${input.repository}`),
+            eq(table.resourceType, "repository"),
             eq(table.enabled, true)
           ),
       }),
-    ]);
-  if (!(connection && environment && workspace && thread && resource)) {
-    throw new GitHubPolicyError("GITHUB_CONTEXT_DENIED");
-  }
-  if (workspace.sourceResourceId !== resource.id) {
-    throw new GitHubPolicyError("GITHUB_PROJECT_RESOURCE_DENIED");
-  }
-  const actorResourceAccess =
-    await knowledgeDb.query.userToolConnectionResources.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.connectionId, connection.id),
-          eq(table.resourceId, resource.id)
+      knowledgeDb
+        .select()
+        .from(schema.environmentCapabilitySubjectRestrictions)
+        .where(
+          and(
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.organizationId,
+              ticket.organizationId
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.environmentId,
+              ticket.environmentId
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.providerKey,
+              "github"
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.capabilityKey,
+              input.capability
+            ),
+            or(
+              and(
+                eq(
+                  schema.environmentCapabilitySubjectRestrictions.subjectType,
+                  "actor"
+                ),
+                eq(
+                  schema.environmentCapabilitySubjectRestrictions.subjectId,
+                  ticket.actorId
+                )
+              ),
+              and(
+                eq(
+                  schema.environmentCapabilitySubjectRestrictions.subjectType,
+                  "agent"
+                ),
+                eq(
+                  schema.environmentCapabilitySubjectRestrictions.subjectId,
+                  ticket.agentId
+                )
+              )
+            ),
+            isNull(schema.environmentCapabilitySubjectRestrictions.resourceId)
+          )
         ),
-    });
+    ]);
   if (
-    !actorResourceAccess ||
-    (input.capability === "repository.read" && !actorResourceAccess.canPull) ||
+    !(connection?.externalAccountId && workspace && binding && resource) ||
+    workspace.sourceResourceId !== resource.id ||
+    (input.capability === "repository.read" && !resource.permissions?.pull) ||
     (input.capability === "repository.push_agent_branch" &&
-      !actorResourceAccess.canPush)
+      !resource.permissions?.push)
   ) {
     throw new GitHubPolicyError("GITHUB_ACTOR_RESOURCE_DENIED");
   }
-  const binding = await knowledgeDb.query.threadExecutionBindings.findFirst({
-    where: (table, { and, eq }) =>
-      and(
-        eq(table.threadId, ticket.threadId),
-        eq(table.organizationId, ticket.organizationId),
-        eq(table.environmentId, ticket.environmentId),
-        eq(table.workspaceId, ticket.workspaceId)
-      ),
-    columns: { threadId: true },
-  });
-  if (!binding) throw new GitHubPolicyError("GITHUB_BINDING_DENIED");
   if (input.requireRunExecution) {
     const execution =
       await knowledgeDb.query.environmentRunExecutions.findFirst({
@@ -135,102 +181,12 @@ export async function authorizeGitHubCapability(input: {
       });
     if (!execution) throw new GitHubPolicyError("GITHUB_RUN_DENIED");
   }
-  const grant = await knowledgeDb.query.environmentCapabilityGrants.findFirst({
-    where: (table, { and, eq, isNull, or }) =>
-      and(
-        eq(table.environmentId, ticket.environmentId),
-        eq(table.providerKey, "github"),
-        eq(table.capabilityKey, input.capability),
-        or(eq(table.resourceId, resource.id), isNull(table.resourceId))
-      ),
-  });
-  if (!grant) throw new GitHubPolicyError("GITHUB_CAPABILITY_DENIED");
-  const [projectRestrictions, subjectRestrictions] = await Promise.all([
-    thread.projectId
-      ? knowledgeDb
-          .select()
-          .from(schema.projectCapabilityRestrictions)
-          .where(
-            and(
-              eq(
-                schema.projectCapabilityRestrictions.projectId,
-                thread.projectId
-              ),
-              eq(schema.projectCapabilityRestrictions.providerKey, "github"),
-              eq(
-                schema.projectCapabilityRestrictions.capabilityKey,
-                input.capability
-              ),
-              or(
-                eq(
-                  schema.projectCapabilityRestrictions.resourceId,
-                  resource.id
-                ),
-                isNull(schema.projectCapabilityRestrictions.resourceId)
-              )
-            )
-          )
-      : Promise.resolve([]),
-    knowledgeDb
-      .select()
-      .from(schema.environmentCapabilitySubjectRestrictions)
-      .where(
-        and(
-          eq(
-            schema.environmentCapabilitySubjectRestrictions.organizationId,
-            ticket.organizationId
-          ),
-          eq(
-            schema.environmentCapabilitySubjectRestrictions.environmentId,
-            ticket.environmentId
-          ),
-          eq(
-            schema.environmentCapabilitySubjectRestrictions.providerKey,
-            "github"
-          ),
-          eq(
-            schema.environmentCapabilitySubjectRestrictions.capabilityKey,
-            input.capability
-          ),
-          or(
-            and(
-              eq(
-                schema.environmentCapabilitySubjectRestrictions.subjectType,
-                "actor"
-              ),
-              eq(
-                schema.environmentCapabilitySubjectRestrictions.subjectId,
-                ticket.actorId
-              )
-            ),
-            and(
-              eq(
-                schema.environmentCapabilitySubjectRestrictions.subjectType,
-                "agent"
-              ),
-              eq(
-                schema.environmentCapabilitySubjectRestrictions.subjectId,
-                ticket.agentId
-              )
-            )
-          ),
-          or(
-            eq(
-              schema.environmentCapabilitySubjectRestrictions.resourceId,
-              resource.id
-            ),
-            isNull(schema.environmentCapabilitySubjectRestrictions.resourceId)
-          )
-        )
-      ),
-  ]);
-  const restrictions = [...projectRestrictions, ...subjectRestrictions];
-  if (restrictions.some((restriction) => !restriction.enabled)) {
+  if (subjectRestrictions.some((restriction) => !restriction.enabled)) {
     throw new GitHubPolicyError("GITHUB_RESTRICTION_DENIED");
   }
   const approvalMode = intersectApprovalModes([
-    grant.approvalMode,
-    ...restrictions.map((restriction) => restriction.approvalMode),
+    capability.approvalMode,
+    ...subjectRestrictions.map((restriction) => restriction.approvalMode),
     ...(requiresExplicitApproval(input.capability) ? ["ask" as const] : []),
   ]);
   if (approvalMode === "deny") {
@@ -238,9 +194,10 @@ export async function authorizeGitHubCapability(input: {
   }
   return {
     connection,
+    providerAccountId: connection.externalAccountId,
     resource,
     approvalMode,
-    loggingMode: grant.loggingMode,
+    loggingMode: capability.loggingMode,
     projectId: thread.projectId,
   };
 }

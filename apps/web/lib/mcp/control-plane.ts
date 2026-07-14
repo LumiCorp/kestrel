@@ -1,6 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 
 import { logAdminEvent } from "@/lib/admin/logs";
+import {
+  mcpAppAccessMode,
+  mcpAppCapabilityKey,
+  mcpAppRuntimeName,
+} from "@/lib/apps/mcp-app";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { digestCanonicalJson } from "./capability-snapshot";
@@ -140,6 +145,26 @@ export async function revokeEnvironmentMcpCredential(input: {
           eq(schema.mcpServers.credentialId, input.credentialId)
         )
       );
+    const affectedServers = await transaction.query.mcpServers.findMany({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.organizationId, input.organizationId),
+          equals(table.environmentId, input.environmentId),
+          equals(table.credentialId, input.credentialId)
+        ),
+      columns: { id: true },
+    });
+    for (const server of affectedServers) {
+      await transaction
+        .update(schema.appConnections)
+        .set({
+          status: "degraded",
+          failureCode: "MCP_CREDENTIAL_REVOKED",
+          failureMessage: "The Custom App credential was revoked.",
+          updatedAt: now,
+        })
+        .where(eq(schema.appConnections.id, server.id));
+    }
     return revoked;
   });
   await logAdminEvent({
@@ -385,6 +410,32 @@ export async function installEnvironmentMcpServer(input: {
       createdAt: now,
       updatedAt: now,
     });
+    await transaction.insert(schema.appDefinitions).values({
+      key: providerKey,
+      slug: `custom-${input.server.slug}-${serverId}`,
+      displayName: input.server.name,
+      description:
+        "A custom App connected through an approved capability server.",
+      category: "custom",
+      kind: "custom",
+      connectionModel: "environment",
+      delivery: "mcp",
+      installMode: "explicit",
+      published: true,
+      metadata: { custom: true },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await transaction.insert(schema.appInstallations).values({
+      organizationId: input.organizationId,
+      appKey: providerKey,
+      status: "installed",
+      installedByUserId: input.actorUserId,
+      settings: {},
+      installedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
     const [server] = await transaction
       .insert(schema.mcpServers)
       .values({
@@ -420,6 +471,19 @@ export async function installEnvironmentMcpServer(input: {
     if (!server) {
       throw new Error("MCP server installation failed.");
     }
+    await transaction.insert(schema.appConnections).values({
+      id: server.id,
+      organizationId: input.organizationId,
+      appKey: providerKey,
+      ownerType: "environment",
+      environmentId: input.environmentId,
+      name: input.server.name,
+      status: "disconnected",
+      scopes: [],
+      deliveryConfig: { mcpServerId: server.id },
+      createdAt: now,
+      updatedAt: now,
+    });
     return server;
   });
   await logAdminEvent({
@@ -446,17 +510,27 @@ export async function disableEnvironmentMcpServer(input: {
   serverId: string;
   actorUserId: string;
 }) {
-  const [server] = await knowledgeDb
-    .update(schema.mcpServers)
-    .set({ status: "disabled", updatedAt: new Date() })
-    .where(
-      and(
-        eq(schema.mcpServers.id, input.serverId),
-        eq(schema.mcpServers.organizationId, input.organizationId),
-        eq(schema.mcpServers.environmentId, input.environmentId)
+  const now = new Date();
+  const server = await knowledgeDb.transaction(async (transaction) => {
+    const [disabled] = await transaction
+      .update(schema.mcpServers)
+      .set({ status: "disabled", updatedAt: now })
+      .where(
+        and(
+          eq(schema.mcpServers.id, input.serverId),
+          eq(schema.mcpServers.organizationId, input.organizationId),
+          eq(schema.mcpServers.environmentId, input.environmentId)
+        )
       )
-    )
-    .returning();
+      .returning();
+    if (disabled) {
+      await transaction
+        .update(schema.appConnections)
+        .set({ status: "disconnected", disconnectedAt: now, updatedAt: now })
+        .where(eq(schema.appConnections.id, disabled.id));
+    }
+    return disabled;
+  });
   if (!server) {
     throw Object.assign(new Error("MCP server not found."), {
       code: "MCP_SERVER_NOT_FOUND",
@@ -663,6 +737,36 @@ export async function setEnvironmentMcpCapabilityPolicy(input: {
           );
       }
     }
+    const appCapabilityKey = mcpAppCapabilityKey(
+      capability.kind,
+      capability.capabilityKey
+    );
+    await transaction
+      .insert(schema.environmentAppCapabilityGrants)
+      .values({
+        environmentId: input.environmentId,
+        appKey: capability.providerKey,
+        capabilityKey: appCapabilityKey,
+        enabled: input.enabled,
+        approvalMode: input.enabled ? input.approvalMode : "deny",
+        loggingMode: "full",
+        rateLimitMode: "default",
+        settings: {},
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.environmentAppCapabilityGrants.environmentId,
+          schema.environmentAppCapabilityGrants.appKey,
+          schema.environmentAppCapabilityGrants.capabilityKey,
+        ],
+        set: {
+          enabled: input.enabled,
+          approvalMode: input.enabled ? input.approvalMode : "deny",
+          updatedAt: now,
+        },
+      });
     return capability;
   });
   await logAdminEvent({
@@ -693,7 +797,10 @@ export async function reviewEnvironmentMcpSnapshot(input: {
   const now = new Date();
   const snapshot = await knowledgeDb.transaction(async (transaction) => {
     const rows = await transaction
-      .select({ snapshot: schema.mcpCapabilitySnapshots })
+      .select({
+        snapshot: schema.mcpCapabilitySnapshots,
+        providerKey: schema.mcpServers.providerKey,
+      })
       .from(schema.mcpCapabilitySnapshots)
       .innerJoin(
         schema.mcpServers,
@@ -708,12 +815,13 @@ export async function reviewEnvironmentMcpSnapshot(input: {
         )
       )
       .limit(1);
-    const current = rows[0]?.snapshot;
-    if (!current) {
+    const currentRecord = rows[0];
+    if (!currentRecord) {
       throw Object.assign(new Error("MCP capability snapshot not found."), {
         code: "MCP_SNAPSHOT_NOT_FOUND",
       });
     }
+    const { providerKey, snapshot: current } = currentRecord;
     if (current.status !== "pending_review") {
       throw new Error("MCP capability snapshot has already been reviewed.");
     }
@@ -736,7 +844,13 @@ export async function reviewEnvironmentMcpSnapshot(input: {
             where: (table, { eq }) => eq(table.snapshotId, previousApproved.id),
           })
         : [];
+      const nextAppCapabilityKeys = new Set<string>();
       for (const capability of nextCapabilities) {
+        const appCapabilityKey = mcpAppCapabilityKey(
+          capability.kind,
+          capability.capabilityKey
+        );
+        nextAppCapabilityKeys.add(appCapabilityKey);
         const previous = previousCapabilities.find(
           (candidate) =>
             candidate.kind === capability.kind &&
@@ -797,6 +911,97 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               )
             );
         }
+        await transaction
+          .insert(schema.appCapabilities)
+          .values({
+            appKey: capability.providerKey,
+            key: appCapabilityKey,
+            runtimeName: mcpAppRuntimeName(capability.id),
+            displayName: capability.displayName ?? capability.capabilityKey,
+            description:
+              capability.description ??
+              `Capability provided by ${capability.providerKey}.`,
+            groupKey: capability.kind,
+            accessMode: mcpAppAccessMode(capability.kind),
+            audience: "project",
+            defaultEnabled: false,
+            defaultApprovalMode: "deny",
+            defaultRateLimitMode: "default",
+            defaultLoggingMode: "full",
+            defaultSettings: {},
+            metadata: {
+              mcpCapabilityId: capability.id,
+              mcpKind: capability.kind,
+              definitionDigest: digestCanonicalJson(capability.definition),
+            },
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [schema.appCapabilities.appKey, schema.appCapabilities.key],
+            set: {
+              runtimeName: mcpAppRuntimeName(capability.id),
+              displayName: capability.displayName ?? capability.capabilityKey,
+              description:
+                capability.description ??
+                `Capability provided by ${capability.providerKey}.`,
+              groupKey: capability.kind,
+              accessMode: mcpAppAccessMode(capability.kind),
+              metadata: {
+                mcpCapabilityId: capability.id,
+                mcpKind: capability.kind,
+                definitionDigest: digestCanonicalJson(capability.definition),
+              },
+              updatedAt: now,
+            },
+          });
+        await transaction
+          .insert(schema.environmentAppCapabilityGrants)
+          .values({
+            environmentId: input.environmentId,
+            appKey: capability.providerKey,
+            capabilityKey: appCapabilityKey,
+            enabled: capability.environmentEnabled,
+            approvalMode: capability.environmentEnabled
+              ? capability.approvalMode
+              : "deny",
+            loggingMode: "full",
+            rateLimitMode: "default",
+            settings: {},
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [
+              schema.environmentAppCapabilityGrants.environmentId,
+              schema.environmentAppCapabilityGrants.appKey,
+              schema.environmentAppCapabilityGrants.capabilityKey,
+            ],
+            set: {
+              enabled: capability.environmentEnabled,
+              approvalMode: capability.environmentEnabled
+                ? capability.approvalMode
+                : "deny",
+              updatedAt: now,
+            },
+          });
+      }
+      const existingAppCapabilities =
+        await transaction.query.appCapabilities.findMany({
+          where: (table, { eq: equals }) => equals(table.appKey, providerKey),
+          columns: { key: true, appKey: true },
+        });
+      for (const stale of existingAppCapabilities) {
+        if (!nextAppCapabilityKeys.has(stale.key)) {
+          await transaction
+            .delete(schema.appCapabilities)
+            .where(
+              and(
+                eq(schema.appCapabilities.appKey, stale.appKey),
+                eq(schema.appCapabilities.key, stale.key)
+              )
+            );
+        }
       }
       await transaction
         .update(schema.mcpCapabilitySnapshots)
@@ -844,6 +1049,19 @@ export async function reviewEnvironmentMcpSnapshot(input: {
         updatedAt: now,
       })
       .where(eq(schema.mcpServers.id, input.serverId));
+    await transaction
+      .update(schema.appConnections)
+      .set({
+        status: approved ? "connected" : "degraded",
+        failureCode: approved ? null : "MCP_CAPABILITIES_REJECTED",
+        failureMessage: approved
+          ? null
+          : "The discovered App capabilities were rejected.",
+        lastHealthAt: now,
+        disconnectedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.appConnections.id, input.serverId));
     return reviewed;
   });
   await logAdminEvent({

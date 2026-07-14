@@ -1,0 +1,25 @@
+import { AppsGallery } from "@/components/apps/apps-gallery";
+import { AppPage } from "@/components/app-page";
+import { listAppsForOrganization } from "@/lib/apps/service";
+import {
+  canManageOrganization,
+  requireActiveOrganization,
+} from "@/lib/knowledge/auth";
+
+export default async function AppsPage() {
+  const { organizationId, session } = await requireActiveOrganization();
+  const canManage = await canManageOrganization({
+    organizationId,
+    userId: session.user.id,
+  });
+  const overview = await listAppsForOrganization({
+    organizationId,
+    userId: session.user.id,
+    canManageOrganization: canManage,
+  });
+  return (
+    <AppPage className="mx-auto w-full max-w-7xl p-6 lg:p-8">
+      <AppsGallery initial={overview} />
+    </AppPage>
+  );
+}

@@ -55,12 +55,10 @@ async function proxyGitUploadPack(request: Request, context: RouteContext) {
     }
     const url = new URL(request.url);
     assertGitUploadPackRequest(request.method, gitPath, url.searchParams);
-    const resource = await knowledgeDb.query.toolConnectionResources.findFirst({
+    const resource = await knowledgeDb.query.appConnectionResources.findFirst({
       where: (table, { and, eq }) =>
         and(
           eq(table.id, resourceId),
-          eq(table.organizationId, verifiedTicket.organizationId),
-          eq(table.providerKey, "github"),
           eq(table.resourceType, "repository"),
           eq(table.enabled, true)
         ),
@@ -79,7 +77,7 @@ async function proxyGitUploadPack(request: Request, context: RouteContext) {
     const credential = await auth.api.getAccessToken({
       body: {
         providerId: "github",
-        accountId: policy.connection.providerAccountId,
+        accountId: policy.providerAccountId,
         userId: verifiedTicket.actorId,
       },
     });

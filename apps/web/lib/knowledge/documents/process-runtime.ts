@@ -1,8 +1,12 @@
 import { getStorageAdapter } from "@/lib/storage";
 import { chunkKnowledgeDocument } from "./chunk";
-import { embedKnowledgeTexts, getKnowledgeEmbeddingMode } from "./embed";
+import { embedKnowledgeTexts, getKnowledgeEmbeddingRuntime } from "./embed";
 import { extractKnowledgeDocument } from "./extract";
 import { getKnowledgeOcrMode } from "./ocr-config";
+import {
+  buildKnowledgeExtractionMetadata,
+  buildKnowledgeIngestionFailureState,
+} from "./process-state";
 import {
   getKnowledgeDocumentById,
   getKnowledgeIngestionRun,
@@ -37,14 +41,19 @@ export async function processKnowledgeDocumentRun(runId: string) {
     error: null,
   });
 
+  const embeddingRuntime = getKnowledgeEmbeddingRuntime();
+  const embeddingProvenance = embeddingRuntime.provenance ?? {
+    mode: "lexical" as const,
+  };
+
   try {
     const ocrMode = getKnowledgeOcrMode();
-    const embeddingMode = getKnowledgeEmbeddingMode();
     const diagnostics: Record<string, unknown> = {
       modes: {
         ocr: ocrMode,
-        embedding: embeddingMode,
+        embedding: embeddingRuntime.mode,
       },
+      embedding: embeddingProvenance,
       stageTimingsMs: {},
     };
     const storage = getStorageAdapter();
@@ -86,10 +95,11 @@ export async function processKnowledgeDocumentRun(runId: string) {
         title: extracted.title ?? document.title,
         pageCount: extracted.pageCount,
         chunkCount: 0,
-        extractionMetadata: {
+        extractionMetadata: buildKnowledgeExtractionMetadata({
           warnings: extracted.warnings,
           metadata: extracted.metadata,
-        },
+          embedding: { mode: "lexical" },
+        }),
         status: "partial",
         error:
           extracted.warnings.join("; ") || "No searchable text was extracted",
@@ -140,10 +150,11 @@ export async function processKnowledgeDocumentRun(runId: string) {
       title: extracted.title ?? document.title ?? document.filename,
       pageCount: extracted.pageCount,
       chunkCount: chunks.length,
-      extractionMetadata: {
+      extractionMetadata: buildKnowledgeExtractionMetadata({
         warnings: extracted.warnings,
         metadata: extracted.metadata,
-      },
+        embedding: embeddingProvenance,
+      }),
       status: extracted.warnings.length > 0 ? "partial" : "ready",
       error:
         extracted.warnings.length > 0 ? extracted.warnings.join("; ") : null,
@@ -159,23 +170,15 @@ export async function processKnowledgeDocumentRun(runId: string) {
       finishedAt: new Date(),
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown ingestion error";
-    await updateKnowledgeDocument(document.id, {
-      status: "failed",
-      error: message,
-    });
-    await updateKnowledgeIngestionRun(run.id, {
-      status: "failed",
-      error: message,
-      diagnostics: {
-        modes: {
-          ocr: getKnowledgeOcrMode(),
-          embedding: getKnowledgeEmbeddingMode(),
-        },
-      },
+    const failure = buildKnowledgeIngestionFailureState({
+      error,
+      ocrMode: getKnowledgeOcrMode(),
+      embeddingMode: embeddingRuntime.mode,
+      embedding: embeddingProvenance,
       finishedAt: new Date(),
     });
+    await updateKnowledgeDocument(document.id, failure.documentUpdate);
+    await updateKnowledgeIngestionRun(run.id, failure.runUpdate);
     throw error;
   }
 }

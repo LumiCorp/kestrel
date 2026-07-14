@@ -25,6 +25,8 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = 401;
   } else if (
     code === "PROJECT_NOT_FOUND" ||
+    code === "APP_NOT_FOUND" ||
+    code === "APP_CONNECTION_NOT_FOUND" ||
     code === "MCP_SERVER_NOT_FOUND" ||
     code === "MCP_SNAPSHOT_NOT_FOUND" ||
     code === "MCP_CREDENTIAL_NOT_FOUND"
@@ -53,12 +55,24 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "ENVIRONMENT_UNAVAILABLE" ||
     code === "ENVIRONMENT_IS_DEFAULT" ||
     code === "ENVIRONMENT_HAS_PROJECTS" ||
+    code === "APP_NOT_INSTALLED" ||
+    code === "APP_CONNECTION_NOT_SUPPORTED" ||
+    code === "APP_CONNECTION_SCOPE_INVALID" ||
+    code === "APP_CAPABILITY_NOT_AVAILABLE" ||
+    code === "APP_POLICY_WIDENS_ENVIRONMENT" ||
     code === "MCP_INTERACTION_CONFLICT" ||
     code === "TURN_CONFLICT" ||
     code === "QUEUE_PAUSED" ||
     message === "MCP capability snapshot has already been reviewed."
   ) {
     status = 409;
+  } else if (code === "APP_CONNECTION_INVALID") {
+    status = 400;
+  } else if (
+    code === "APP_PROVIDER_UNAVAILABLE" ||
+    code === "APP_CONNECTION_TEST_FAILED"
+  ) {
+    status = 503;
   } else if (code === "TURN_NOT_FOUND") {
     status = 404;
   } else if (code === "TURN_FORBIDDEN") {

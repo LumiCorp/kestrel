@@ -5,7 +5,6 @@ import {
   inArray,
   isNull,
   notInArray,
-  or,
   sql,
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -357,6 +356,30 @@ export async function bindProjectToEnvironment(input: {
           "Project Environment cannot change while a run is active.",
         );
       }
+      const activeTurn = await transaction
+        .select({ id: schema.threadTurns.id })
+        .from(schema.threadTurns)
+        .innerJoin(
+          schema.threads,
+          eq(schema.threads.id, schema.threadTurns.threadId)
+        )
+        .where(
+          and(
+            eq(schema.threads.projectId, project.id),
+            inArray(schema.threadTurns.status, [
+              "queued",
+              "running",
+              "waiting_for_input",
+            ])
+          )
+        )
+        .limit(1);
+      if (activeTurn.length > 0) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Project Environment cannot change while a Thread turn is active."
+        );
+      }
       await transaction
         .delete(schema.threadExecutionBindings)
         .where(
@@ -671,59 +694,40 @@ async function resolveWorkspaceSourceForActor(
     };
   }
   const resourceId = input.source.resourceId;
-  const sourceResource =
-    await transaction.query.toolConnectionResources.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.id, resourceId),
-          eq(table.organizationId, input.organizationId),
-          eq(table.providerKey, "github"),
-          eq(table.resourceType, "repository"),
-          eq(table.enabled, true)
-        ),
-    });
-  const [actorAccess] = sourceResource
-    ? await transaction
-        .select({ id: schema.userToolConnections.id })
-        .from(schema.userToolConnections)
-        .innerJoin(
-          schema.userToolConnectionResources,
-          eq(
-            schema.userToolConnectionResources.connectionId,
-            schema.userToolConnections.id
-          )
-        )
-        .where(
-          and(
-            eq(schema.userToolConnections.organizationId, input.organizationId),
-            eq(schema.userToolConnections.providerKey, "github"),
-            eq(schema.userToolConnections.userId, input.userId),
-            eq(schema.userToolConnections.status, "connected"),
-            eq(
-              schema.userToolConnectionResources.resourceId,
-              sourceResource.id
-            ),
-            eq(schema.userToolConnectionResources.canPull, true)
-          )
-        )
-        .limit(1)
-    : [];
+  const [sourceResourceRow] = await transaction
+    .select({ resource: schema.appConnectionResources })
+    .from(schema.appConnectionResources)
+    .innerJoin(
+      schema.appConnections,
+      eq(schema.appConnections.id, schema.appConnectionResources.connectionId)
+    )
+    .where(
+      and(
+        eq(schema.appConnectionResources.id, resourceId),
+        eq(schema.appConnectionResources.resourceType, "repository"),
+        eq(schema.appConnectionResources.enabled, true),
+        eq(schema.appConnections.organizationId, input.organizationId),
+        eq(schema.appConnections.appKey, "github"),
+        eq(schema.appConnections.ownerType, "personal"),
+        eq(schema.appConnections.userId, input.userId),
+        eq(schema.appConnections.status, "connected")
+      )
+    )
+    .limit(1);
+  const sourceResource = sourceResourceRow?.resource ?? null;
   const grant = sourceResource
-    ? await transaction.query.environmentCapabilityGrants.findFirst({
+    ? await transaction.query.environmentAppCapabilityGrants.findFirst({
         where: (table, { and, eq, notInArray }) =>
           and(
             eq(table.environmentId, input.environmentId),
-            eq(table.providerKey, "github"),
+            eq(table.appKey, "github"),
             eq(table.capabilityKey, "repository.read"),
-            or(
-              isNull(table.resourceId),
-              eq(table.resourceId, sourceResource.id)
-            ),
+            eq(table.enabled, true),
             notInArray(table.approvalMode, ["deny"])
           ),
       })
     : null;
-  if (!(sourceResource && actorAccess && grant)) {
+  if (!(sourceResource && sourceResource.permissions?.pull && grant)) {
     throw new EnvironmentContractError(
       "WORKSPACE_SOURCE_FORBIDDEN",
       "You or this Environment cannot read the repository."
@@ -1013,12 +1017,115 @@ export async function createOrConfigureProjectWorkspace(input: {
         "Move the Project to this Environment before configuring its Workspace.",
       );
     }
-    const sourceValues = await resolveWorkspaceSourceForActor(transaction, {
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      userId: input.userId,
-      source: input.source,
-    });
+    const source = input.source;
+    const [sourceResourceRow] =
+      source.type === "github"
+        ? await transaction
+            .select({ resource: schema.appConnectionResources })
+            .from(schema.appConnectionResources)
+            .innerJoin(
+              schema.appConnections,
+              eq(
+                schema.appConnections.id,
+                schema.appConnectionResources.connectionId,
+              ),
+            )
+            .innerJoin(
+              schema.projectAppConnections,
+              and(
+                eq(
+                  schema.projectAppConnections.connectionId,
+                  schema.appConnections.id,
+                ),
+                eq(schema.projectAppConnections.projectId, input.projectId),
+                eq(schema.projectAppConnections.appKey, "github"),
+              ),
+            )
+            .where(
+              and(
+                eq(schema.appConnectionResources.id, source.resourceId),
+                eq(schema.appConnectionResources.resourceType, "repository"),
+                eq(schema.appConnectionResources.enabled, true),
+                eq(schema.appConnections.organizationId, input.organizationId),
+                eq(schema.appConnections.appKey, "github"),
+                eq(schema.appConnections.ownerType, "personal"),
+                eq(schema.appConnections.userId, input.userId),
+                eq(schema.appConnections.status, "connected"),
+                eq(schema.projectAppConnections.scope, "personal"),
+                eq(schema.projectAppConnections.userId, input.userId),
+              ),
+            )
+            .limit(1)
+        : [];
+    const sourceResource = sourceResourceRow?.resource ?? null;
+    if (source.type === "github") {
+      const grant = sourceResource
+        ? await transaction.query.environmentAppCapabilityGrants.findFirst({
+            where: (table, { and, eq, notInArray }) =>
+              and(
+                eq(table.environmentId, input.environmentId),
+                eq(table.appKey, "github"),
+                eq(table.capabilityKey, "repository.read"),
+                eq(table.enabled, true),
+                notInArray(table.approvalMode, ["deny"]),
+              ),
+          })
+        : null;
+      const projectApp = sourceResource
+        ? await transaction.query.projectApps.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.projectId, input.projectId),
+                eq(table.appKey, "github"),
+                eq(table.enabled, true),
+              ),
+          })
+        : null;
+      const projectPolicy = projectApp
+        ? await transaction.query.projectAppCapabilityPolicies.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.projectId, input.projectId),
+                eq(table.appKey, "github"),
+                eq(table.capabilityKey, "repository.read"),
+              ),
+          })
+        : null;
+      if (
+        !(
+          sourceResource &&
+          sourceResource.permissions?.pull &&
+          grant &&
+          projectApp &&
+          (!projectPolicy ||
+            (projectPolicy.enabled && projectPolicy.approvalMode !== "deny"))
+        )
+      ) {
+        throw new EnvironmentContractError(
+          "WORKSPACE_SOURCE_FORBIDDEN",
+          "You or this Environment cannot read the repository.",
+        );
+      }
+    }
+    const sourceValues = sourceResource
+      ? {
+          sourceType: "github" as const,
+          sourceResourceId: sourceResource.id,
+          sourceRepository: sourceResource.label,
+          sourceDefaultBranch:
+            sourceResource.metadata &&
+            typeof sourceResource.metadata === "object" &&
+            "defaultBranch" in sourceResource.metadata &&
+            typeof sourceResource.metadata.defaultBranch === "string"
+              ? sourceResource.metadata.defaultBranch
+              : null,
+        }
+      : {
+          sourceType: "blank" as const,
+          sourceResourceId: null,
+          sourceRepository: null,
+          sourceDefaultBranch: null,
+        };
     await transaction
       .insert(schema.projectEnvironmentBindings)
       .values({

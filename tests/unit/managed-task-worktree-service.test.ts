@@ -7,7 +7,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { ManagedTaskWorktreeService } from "../../src/workspace/ManagedTaskWorktreeService.js";
-import { WorkspaceLifecycleService } from "../../src/workspace/WorkspaceLifecycleService.js";
+import {
+  WorkspaceLifecycleService,
+  isAutoProvisionedDevWorkspaceTool,
+} from "../../src/workspace/WorkspaceLifecycleService.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -899,6 +902,12 @@ test("WorkspaceLifecycleService ignores non-auto-provisioned tools", async () =>
   });
 
   assert.equal(result, undefined);
+});
+
+test("WorkspaceLifecycleService classifies the exec_command shell alias for auto-provisioning", () => {
+  assert.equal(isAutoProvisionedDevWorkspaceTool("exec_command"), true);
+  assert.equal(isAutoProvisionedDevWorkspaceTool("dev.shell.run"), true);
+  assert.equal(isAutoProvisionedDevWorkspaceTool("dev.process.start"), true);
 });
 
 test("WorkspaceLifecycleService returns normalized auto dev-tool binding context", async () => {

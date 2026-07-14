@@ -142,7 +142,11 @@ export class WorkspaceLifecycleService {
 }
 
 export function isAutoProvisionedDevWorkspaceTool(toolName: string): boolean {
-  return toolName === "dev.shell.run" || toolName === "dev.process.start";
+  return (
+    toolName === "exec_command" ||
+    toolName === "dev.shell.run" ||
+    toolName === "dev.process.start"
+  );
 }
 
 export function isAutoProvisionedSourceWorkspaceTool(toolName: string): boolean {

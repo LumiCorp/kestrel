@@ -3,6 +3,8 @@ import {
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq } from "drizzle-orm";
+import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
+import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
@@ -164,6 +166,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     runId,
     environmentId: environment.id,
     workspaceId: workspace.id,
+    effectiveCapabilities,
     ...(mcpContext ? { mcpContext } : {}),
   };
 }
@@ -380,56 +383,65 @@ async function snapshotEffectiveCapabilities(input: {
   actorId: string;
   agentId: string;
 }) {
-  const [thread, grants, subjectRestrictions] = await Promise.all([
-    knowledgeDb.query.threads.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.id, input.threadId),
-          eq(table.organizationId, input.organizationId)
-        ),
-      columns: { projectId: true },
-    }),
-    knowledgeDb.query.environmentCapabilityGrants.findMany({
-      where: (table, { and, eq, notInArray }) =>
-        and(
-          eq(table.environmentId, input.environmentId),
-          notInArray(table.approvalMode, ["deny"])
-        ),
-    }),
-    knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
-      where: (table, { and, eq, or }) =>
-        and(
+  await ensureEnvironmentAppPolicies({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
+  const [thread, definitions, installations, subjectRestrictions] =
+    await Promise.all([
+      knowledgeDb.query.threads.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.id, input.threadId),
+            eq(table.organizationId, input.organizationId)
+          ),
+        columns: { projectId: true },
+      }),
+      knowledgeDb.query.appDefinitions.findMany({
+        where: (table, { eq }) => eq(table.published, true),
+      }),
+      knowledgeDb.query.appInstallations.findMany({
+        where: (table, { eq }) =>
           eq(table.organizationId, input.organizationId),
-          eq(table.environmentId, input.environmentId),
-          or(
-            and(
-              eq(table.subjectType, "actor"),
-              eq(table.subjectId, input.actorId)
-            ),
-            and(
-              eq(table.subjectType, "agent"),
-              eq(table.subjectId, input.agentId)
+      }),
+      knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
+        where: (table, { and, eq, or }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            or(
+              and(
+                eq(table.subjectType, "actor"),
+                eq(table.subjectId, input.actorId)
+              ),
+              and(
+                eq(table.subjectType, "agent"),
+                eq(table.subjectId, input.agentId)
+              )
             )
-          )
-        ),
-    }),
-  ]);
+          ),
+      }),
+    ]);
   if (!thread) throw new Error("Environment execution Thread is unavailable.");
-  const restrictions = thread.projectId
-    ? await knowledgeDb.query.projectCapabilityRestrictions.findMany({
-        where: (table, { eq }) => eq(table.projectId, thread.projectId!),
-      })
-    : [];
-  return grants.flatMap((grant) => {
-    const matchingRestrictions = [
-      ...restrictions,
-      ...subjectRestrictions,
-    ].filter(
-      (candidate) =>
-        candidate.providerKey === grant.providerKey &&
-        candidate.capabilityKey === grant.capabilityKey &&
-        (candidate.resourceId === null ||
-          candidate.resourceId === grant.resourceId)
+  const installationByApp = new Map(
+    installations.map((installation) => [installation.appKey, installation])
+  );
+  const availableDefinitions = definitions.filter(
+    (definition) =>
+      definition.installMode === "inherited" ||
+      installationByApp.get(definition.key)?.status === "installed"
+  );
+
+  function restrictApprovalMode(inputApproval: {
+    appKey: string;
+    capabilityKey: string;
+    approvalMode: "auto" | "ask" | "deny";
+  }) {
+    const matchingRestrictions = subjectRestrictions.filter(
+      (restriction) =>
+        restriction.providerKey === inputApproval.appKey &&
+        restriction.capabilityKey === inputApproval.capabilityKey &&
+        restriction.resourceId === null
     );
     if (
       matchingRestrictions.some(
@@ -437,17 +449,75 @@ async function snapshotEffectiveCapabilities(input: {
           !restriction.enabled || restriction.approvalMode === "deny"
       )
     ) {
-      return [];
+      return null;
     }
-    const approvalMode = matchingRestrictions.some(
+    return matchingRestrictions.some(
       (restriction) => restriction.approvalMode === "ask"
     )
       ? "ask"
-      : grant.approvalMode;
-    return [
-      `tool:${grant.providerKey}.${grant.capabilityKey}:${grant.resourceId ?? "*"}:${approvalMode}`,
-    ];
+      : inputApproval.approvalMode;
+  }
+
+  if (!thread.projectId) {
+    const [grants, capabilities] = await Promise.all([
+      knowledgeDb.query.environmentAppCapabilityGrants.findMany({
+        where: (table, { eq }) => eq(table.environmentId, input.environmentId),
+      }),
+      knowledgeDb.query.appCapabilities.findMany(),
+    ]);
+    const definitionByKey = new Map(
+      availableDefinitions.map((definition) => [definition.key, definition])
+    );
+    const capabilityByKey = new Map(
+      capabilities.map((capability) => [
+        `${capability.appKey}:${capability.key}`,
+        capability,
+      ])
+    );
+    return grants.flatMap((grant) => {
+      const definition = definitionByKey.get(grant.appKey);
+      const capability = capabilityByKey.get(
+        `${grant.appKey}:${grant.capabilityKey}`
+      );
+      if (
+        definition?.connectionModel !== "none" ||
+        !capability?.runtimeName ||
+        !grant.enabled ||
+        grant.approvalMode === "deny"
+      ) {
+        return [];
+      }
+      const approvalMode = restrictApprovalMode({
+        appKey: grant.appKey,
+        capabilityKey: grant.capabilityKey,
+        approvalMode: grant.approvalMode,
+      });
+      return approvalMode
+        ? [`app:${grant.appKey}.${grant.capabilityKey}:${approvalMode}`]
+        : [];
+    });
+  }
+
+  const appAccess = await resolveEffectiveProjectAppsAccess({
+    organizationId: input.organizationId,
+    projectId: thread.projectId,
+    userId: input.actorId,
   });
+  const appCapabilities = appAccess.flatMap((access) =>
+    access
+      ? access.capabilities.flatMap((capability) => {
+          const approvalMode = restrictApprovalMode({
+            appKey: access.appKey,
+            capabilityKey: capability.key,
+            approvalMode: capability.approvalMode,
+          });
+          return approvalMode
+            ? [`app:${access.appKey}.${capability.key}:${approvalMode}`]
+            : [];
+        })
+      : []
+  );
+  return appCapabilities;
 }
 
 export function describeEnvironmentActivation(input: {

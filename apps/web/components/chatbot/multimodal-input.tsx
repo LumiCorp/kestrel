@@ -68,6 +68,10 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import type { VisibilityType } from "./visibility-selector";
 
+type ScopedChatModel = ChatModel & {
+  scope?: "environment" | "organization" | "platform";
+};
+
 type ComposerActivity = {
   label: string;
   tone: "working" | "streaming" | "attention" | "error";
@@ -295,6 +299,8 @@ function PureMultimodalInput({
   selectedVisibilityType,
   selectedModelId,
   onModelChange,
+  activeEnvironmentName,
+  modelScopeQuery,
 }: {
   threadId: string;
   input: string;
@@ -310,6 +316,8 @@ function PureMultimodalInput({
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
+  activeEnvironmentName?: string;
+  modelScopeQuery?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -353,7 +361,7 @@ function PureMultimodalInput({
     false
   );
   const [availableModels, setAvailableModels] =
-    useState<ChatModel[]>(chatModels);
+    useState<ScopedChatModel[]>(chatModels);
   const [imageModels, setImageModels] = useState<ChatModel[]>([]);
   const [videoModels, setVideoModels] = useState<ChatModel[]>([]);
   const [mediaModelsResolved, setMediaModelsResolved] = useState(false);
@@ -389,9 +397,12 @@ function PureMultimodalInput({
   useEffect(() => {
     let isMounted = true;
 
-    void fetch("/api/models/approved?modality=language", {
-      cache: "no-store",
-    })
+    void fetch(
+      `/api/models/approved?modality=language${modelScopeQuery ?? ""}`,
+      {
+        cache: "no-store",
+      }
+    )
       .then(async (response) => {
         const json = await response.json().catch(() => ({}));
         if (!(response.ok && Array.isArray(json.models))) {
@@ -408,6 +419,7 @@ function PureMultimodalInput({
             name: model.name,
             provider: model.provider,
             description: model.description || "Approved model",
+            scope: model.scope,
           }))
         );
       })
@@ -418,12 +430,12 @@ function PureMultimodalInput({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [modelScopeQuery]);
 
   useEffect(() => {
     let isMounted = true;
 
-    void fetch("/api/tools/runtime", { cache: "no-store" })
+    void fetch("/api/runtime/apps", { cache: "no-store" })
       .then(async (response) => {
         const json = await response.json().catch(() => ({}));
 
@@ -431,9 +443,9 @@ function PureMultimodalInput({
           return;
         }
 
-        if (response.ok && Array.isArray(json.runtimeNames)) {
+        if (response.ok && Array.isArray(json.capabilities)) {
           setKnowledgeEnabled(
-            json.runtimeNames.includes("searchKnowledgeDocuments")
+            json.capabilities.includes("searchKnowledgeDocuments")
           );
         }
       })
@@ -461,8 +473,12 @@ function PureMultimodalInput({
     const loadMediaModels = async () => {
       try {
         const [imageResponse, videoResponse] = await Promise.all([
-          fetch("/api/models/approved?modality=image", { cache: "no-store" }),
-          fetch("/api/models/approved?modality=video", { cache: "no-store" }),
+          fetch(`/api/models/approved?modality=image${modelScopeQuery ?? ""}`, {
+            cache: "no-store",
+          }),
+          fetch(`/api/models/approved?modality=video${modelScopeQuery ?? ""}`, {
+            cache: "no-store",
+          }),
         ]);
 
         const [imageJson, videoJson] = await Promise.all([
@@ -512,7 +528,7 @@ function PureMultimodalInput({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [modelScopeQuery]);
 
   useEffect(() => {
     const models = mediaKind === "image" ? imageModels : videoModels;
@@ -890,6 +906,11 @@ function PureMultimodalInput({
         </div>
         <PromptInputToolbar className="border-top-0! border-t-0! p-0 shadow-none dark:border-0 dark:border-transparent!">
           <PromptInputTools className="gap-0 sm:gap-0.5">
+            {activeEnvironmentName ? (
+              <span className="hidden max-w-40 truncate rounded-md border px-2 py-1 text-muted-foreground text-xs sm:inline">
+                Environment: {activeEnvironmentName}
+              </span>
+            ) : null}
             <AttachmentsButton
               fileInputRef={fileInputRef}
               selectedModelId={selectedModelId}
@@ -1208,27 +1229,27 @@ function PureModelSelectorCompact({
   selectedModelId,
   onModelChange,
 }: {
-  availableModels: ChatModel[];
+  availableModels: ScopedChatModel[];
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const selectedModelFallback = buildChatModel(selectedModelId);
-  const mergedModels = Array.from(
+  const mergedModels: ScopedChatModel[] = Array.from(
     new Map(
-      [selectedModelFallback, ...availableModels].map((model) => [
-        model.id,
-        model,
-      ])
+      ([selectedModelFallback, ...availableModels] as ScopedChatModel[]).map(
+        (model) => [model.id, model]
+      )
     ).values()
   );
   const groupedModels = mergedModels.reduce(
     (acc, model) => {
-      if (!acc[model.provider]) {
-        acc[model.provider] = [];
+      const group = model.scope ?? model.provider;
+      if (!acc[group]) {
+        acc[group] = [];
       }
 
-      acc[model.provider].push(model);
+      acc[group].push(model);
       return acc;
     },
     {} as Record<string, typeof availableModels>
@@ -1242,6 +1263,9 @@ function PureModelSelectorCompact({
 
   // Provider display names
   const providerNames: Record<string, string> = {
+    environment: "Environment models",
+    organization: "Organization models",
+    platform: "Platform models",
     anthropic: "Anthropic",
     openai: "OpenAI",
     openrouter: "OpenRouter",

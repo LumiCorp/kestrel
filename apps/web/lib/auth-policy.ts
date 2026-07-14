@@ -1,4 +1,6 @@
-export function isDisallowedGithubSignIn(input: {
+const LINKED_TOOL_PROVIDERS = new Set(["github", "google"]);
+
+export function isDisallowedToolProviderSignIn(input: {
   path: string;
   body: unknown;
 }) {
@@ -10,6 +12,11 @@ export function isDisallowedGithubSignIn(input: {
   }
   return (
     "provider" in input.body &&
-    (input.body as { provider?: unknown }).provider === "github"
+    typeof (input.body as { provider?: unknown }).provider === "string" &&
+    LINKED_TOOL_PROVIDERS.has(
+      (input.body as { provider: string }).provider
+    )
   );
 }
+
+export const isDisallowedGithubSignIn = isDisallowedToolProviderSignIn;

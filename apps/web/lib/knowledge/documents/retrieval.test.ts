@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PgDialect } from "drizzle-orm/pg-core";
+import {
+  buildKnowledgeVectorSearchQuery,
+  searchKnowledgeDocumentsWithDependencies,
+} from "./retrieval";
 import { groupKnowledgeRetrievalRows } from "./retrieval-grouping";
 
 const EMPLOYEE_HANDBOOK_PATTERN = /Employee Handbook/;
@@ -94,4 +99,154 @@ test("groupKnowledgeRetrievalRows applies document limits after ranking document
   assert.equal(results.length, 1);
   assert.equal(results[0]?.documentId, "doc-high");
   assert.equal(results[0]?.maxScore, 0.94);
+});
+
+test("vector search requires exact semantic embedding provenance", () => {
+  const dialect = new PgDialect();
+  const query = dialect.sqlToQuery(
+    buildKnowledgeVectorSearchQuery({
+      organizationId: "org-1",
+      embedding: [1, 0],
+      rawLimit: 12,
+      provenance: {
+        mode: "semantic",
+        provider: "openrouter",
+        model: "openai/text-embedding-3-small",
+        dimensions: 1536,
+      },
+    })
+  );
+
+  assert.match(query.sql, /d\.extraction_metadata @> \$\d+::jsonb/);
+  assert.ok(
+    query.params.includes(
+      JSON.stringify({
+        embedding: {
+          mode: "semantic",
+          provider: "openrouter",
+          model: "openai/text-embedding-3-small",
+          dimensions: 1536,
+        },
+      })
+    )
+  );
+});
+
+const semanticRuntime = {
+  provider: "openrouter",
+  apiKey: "openrouter-key",
+  baseURL: "https://openrouter.ai/api/v1",
+  model: "openai/text-embedding-3-small",
+  headers: {},
+  mode: "live" as const,
+  surface: "embedding" as const,
+  usesPlaceholderKey: false,
+  retrievalStrategy: "semantic-first" as const,
+  provenance: {
+    mode: "semantic" as const,
+    provider: "openrouter",
+    model: "openai/text-embedding-3-small",
+    dimensions: 1536 as const,
+  },
+};
+
+const lexicalFallbackResult = [
+  {
+    documentId: "legacy-doc",
+    filename: "legacy.md",
+    title: "Legacy notes",
+    mediaType: "text/markdown",
+    url: "/api/knowledge/documents/legacy-doc/download",
+    maxScore: 0.5,
+    excerptCount: 1,
+    excerpts: [
+      {
+        chunkIndex: 0,
+        text: "Legacy lexical evidence",
+        pageNumber: null,
+        sectionTitle: null,
+        score: 0.5,
+      },
+    ],
+    citations: [],
+  },
+];
+
+test("semantic retrieval returns paraphrased vector evidence before lexical fallback", async () => {
+  let lexicalCalls = 0;
+  const results = await searchKnowledgeDocumentsWithDependencies(
+    {
+      organizationId: "org-1",
+      query: "When may leadership be paged?",
+    },
+    {
+      embeddingRuntime: semanticRuntime,
+      embedQuery: async () => [1, 0],
+      searchVector: async () => [
+        {
+          documentId: "semantic-doc",
+          filename: "operations.md",
+          title: "Operations policy",
+          mediaType: "text/markdown",
+          chunkText:
+            "Executive notification requires a completed severity assessment.",
+          chunkIndex: 0,
+          pageNumber: null,
+          sectionTitle: "Escalation prerequisite",
+          score: 0.91,
+        },
+      ],
+      searchLexical: async () => {
+        lexicalCalls += 1;
+        return lexicalFallbackResult;
+      },
+    }
+  );
+
+  assert.equal(lexicalCalls, 0);
+  assert.equal(results[0]?.documentId, "semantic-doc");
+  assert.match(results[0]?.excerpts[0]?.text ?? "", /severity assessment/);
+});
+
+test("query embedding failures fall back to lexical retrieval", async () => {
+  let capturedError: unknown;
+  const results = await searchKnowledgeDocumentsWithDependencies(
+    {
+      organizationId: "org-1",
+      query: "provider outage",
+    },
+    {
+      embeddingRuntime: semanticRuntime,
+      embedQuery: async () => {
+        throw new Error("OpenRouter unavailable");
+      },
+      searchVector: async () => {
+        throw new Error("vector search should not run");
+      },
+      searchLexical: async () => lexicalFallbackResult,
+      onQueryEmbeddingError: (error) => {
+        capturedError = error;
+      },
+    }
+  );
+
+  assert.match(String(capturedError), /OpenRouter unavailable/);
+  assert.equal(results[0]?.documentId, "legacy-doc");
+});
+
+test("no semantic results fall back to the full lexical corpus", async () => {
+  const results = await searchKnowledgeDocumentsWithDependencies(
+    {
+      organizationId: "org-1",
+      query: "no semantic match",
+    },
+    {
+      embeddingRuntime: semanticRuntime,
+      embedQuery: async () => [1, 0],
+      searchVector: async () => [],
+      searchLexical: async () => lexicalFallbackResult,
+    }
+  );
+
+  assert.equal(results[0]?.documentId, "legacy-doc");
 });
