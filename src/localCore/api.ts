@@ -33,8 +33,11 @@ import {
 } from "../desktopShell/contracts.js";
 import type {
   EnsureLocalCoreReadyOptions,
+  LocalCoreRuntimeStoreReset,
+  LocalCoreRuntimeStoreResetResult,
   LocalCoreStatus,
 } from "./contracts.js";
+import { parseLocalCoreRuntimeStoreResetRequest } from "./contracts.js";
 import {
   createLocalCoreConnectionDescriptor,
   type LocalCoreConnectionDescriptor,
@@ -62,7 +65,11 @@ import {
   resolveLocalCoreDesktopExecutionConfig,
 } from "./profileProvider.js";
 import { ensureLocalCoreReady } from "./ready.js";
-import { closeLocalCoreStore, ensureLocalCoreStore } from "./store.js";
+import {
+  archiveLocalCorePgliteStore,
+  closeLocalCoreStore,
+  ensureLocalCoreStore,
+} from "./store.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
@@ -95,6 +102,11 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
 interface LocalCoreExecutionBundle {
   handler: RunnerServiceHttpHandler;
   store: RuntimeSessionStore;
+}
+
+interface LocalCoreMaintenanceOperation {
+  kind: "restart" | "runtime_store_reset";
+  promise: Promise<unknown>;
 }
 
 const activeLocalCoreAuthorities = new Set<string>();
@@ -130,7 +142,9 @@ export async function startLocalCoreApiServer(
   let server: http.Server | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let idleTimeout: NodeJS.Timeout | undefined;
-  let restartPromise: Promise<LocalCoreStatus> | undefined;
+  let maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
+  let activeRuntimeStoreRequests = 0;
+  let activeRuntimeConfigurationMutations = 0;
   let closePromise: Promise<void> | undefined;
   const projectRunEventClients = new Set<ProjectRunEventClient>();
 
@@ -147,11 +161,15 @@ export async function startLocalCoreApiServer(
     await rm(paths.apiSocketPath, { force: true });
     socketPrepared = true;
     const token = await ensureApiToken(paths.apiTokenPath);
-    executionBundle = await createExecutionBundle({
-      status,
-      options,
-      token,
-    });
+    try {
+      executionBundle = await createExecutionBundle({
+        status,
+        options,
+        token,
+      });
+    } catch (error) {
+      status = markExecutionUnavailable(status, error);
+    }
 
     projectRunRegistry = new DesktopProjectRunRegistry({
       ledger: createDesktopProjectRunLedger({
@@ -165,7 +183,11 @@ export async function startLocalCoreApiServer(
       await projectRunRegistry!.hydrate();
     });
 
-    const restartExecution = (): Promise<LocalCoreStatus> => {
+    const beginMaintenance = <T>(input: {
+      kind: LocalCoreMaintenanceOperation["kind"];
+      coalesce: boolean;
+      run(): Promise<T>;
+    }): Promise<T> => {
       if (closePromise !== undefined) {
         throw new LocalCoreApiRequestError(
           503,
@@ -173,18 +195,130 @@ export async function startLocalCoreApiServer(
           "Local Core is shutting down.",
         );
       }
-      if (restartPromise !== undefined) {
-        return restartPromise;
-      }
-      const operation = (async () => {
-        const previous = executionBundle;
-        if (previous?.handler.hasActiveExecutions() === true) {
-          throw new LocalCoreApiRequestError(
-            409,
-            "LOCAL_CORE_EXECUTION_ACTIVE",
-            "Local Core cannot restart its execution store while a run is active.",
-          );
+      const activeMaintenance = maintenanceOperation;
+      if (activeMaintenance !== undefined) {
+        if (input.coalesce && activeMaintenance.kind === input.kind) {
+          return activeMaintenance.promise as Promise<T>;
         }
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_MAINTENANCE_ACTIVE",
+          "Local Core is already performing a maintenance operation.",
+        );
+      }
+
+      const operation = Promise.resolve().then(input.run);
+      let wrappedOperation: Promise<T>;
+      wrappedOperation = operation.finally(() => {
+        if (maintenanceOperation?.promise === wrappedOperation) {
+          maintenanceOperation = undefined;
+        }
+      });
+      maintenanceOperation = {
+        kind: input.kind,
+        promise: wrappedOperation,
+      };
+      return wrappedOperation;
+    };
+
+    const assertRuntimeStoreCanEnterMaintenance = (
+      previous: LocalCoreExecutionBundle | undefined,
+      operation: "restart" | "reset",
+    ): void => {
+      if (previous?.handler.hasActiveExecutions() === true) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_EXECUTION_ACTIVE",
+          `Local Core cannot ${operation} its execution store while a run is active.`,
+        );
+      }
+      if (previous?.handler.hasActiveRequests() === true) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_REQUEST_BUSY",
+          `Local Core cannot ${operation} its execution store while a runtime request is being admitted.`,
+        );
+      }
+      if (activeRuntimeStoreRequests > 0) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_STORE_BUSY",
+          `Local Core cannot ${operation} its execution store while runtime evidence is being read.`,
+        );
+      }
+      if (activeRuntimeConfigurationMutations > 0) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_CONFIG_BUSY",
+          `Local Core cannot ${operation} its execution store while runtime configuration is being updated.`,
+        );
+      }
+    };
+
+    const withRuntimeStore = async <T>(
+      callback: (store: RuntimeSessionStore) => Promise<T>,
+    ): Promise<T> => {
+      if (closePromise !== undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_SHUTTING_DOWN",
+          "Local Core is shutting down.",
+        );
+      }
+      if (maintenanceOperation !== undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+          "Local Core execution is unavailable during maintenance.",
+        );
+      }
+      const runtimeStore = executionBundle?.store;
+      if (runtimeStore === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+          "Local Core execution is unavailable until Core is healthy.",
+        );
+      }
+      activeRuntimeStoreRequests += 1;
+      try {
+        return await callback(runtimeStore);
+      } finally {
+        activeRuntimeStoreRequests -= 1;
+      }
+    };
+
+    const withRuntimeConfigurationMutation = async <T>(
+      callback: () => Promise<T>,
+    ): Promise<T> => {
+      if (closePromise !== undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_SHUTTING_DOWN",
+          "Local Core is shutting down.",
+        );
+      }
+      if (maintenanceOperation !== undefined) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_MAINTENANCE_ACTIVE",
+          "Local Core cannot update runtime configuration during maintenance.",
+        );
+      }
+      activeRuntimeConfigurationMutations += 1;
+      try {
+        return await callback();
+      } finally {
+        activeRuntimeConfigurationMutations -= 1;
+      }
+    };
+
+    const restartExecution = (): Promise<LocalCoreStatus> => beginMaintenance({
+      kind: "restart",
+      coalesce: true,
+      async run() {
+        const previous = executionBundle;
+        assertRuntimeStoreCanEnterMaintenance(previous, "restart");
 
         executionBundle = undefined;
         status = markExecutionRestarting(status);
@@ -210,21 +344,70 @@ export async function startLocalCoreApiServer(
           status = markExecutionUnavailable(status, error);
           throw error;
         }
-      })();
-      let wrappedOperation: Promise<LocalCoreStatus>;
-      wrappedOperation = operation.finally(() => {
-        if (restartPromise === wrappedOperation) {
-          restartPromise = undefined;
+      },
+    });
+
+    const resetRuntimeStore = (): Promise<LocalCoreRuntimeStoreResetResult> => beginMaintenance({
+      kind: "runtime_store_reset",
+      coalesce: false,
+      async run() {
+        const previous = executionBundle;
+        assertRuntimeStoreCanEnterMaintenance(previous, "reset");
+
+        const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
+        const configuredMode = readyOptions.databaseMode === "external"
+          ? "external"
+          : "pglite";
+        if (status.dbMode !== "pglite" || configuredMode !== "pglite") {
+          throw new LocalCoreApiRequestError(
+            409,
+            "LOCAL_CORE_RUNTIME_STORE_RESET_UNSUPPORTED",
+            "Local Core can reset only its Core-owned PGlite runtime store.",
+          );
         }
-      });
-      restartPromise = wrappedOperation;
-      return wrappedOperation;
-    };
+
+        executionBundle = undefined;
+        status = markExecutionResetting(status);
+        let reset: LocalCoreRuntimeStoreReset | undefined;
+        try {
+          await previous?.handler.close({ abortActiveRuns: false });
+          reset = await archiveLocalCorePgliteStore({ homePath: home.homePath });
+
+          const next = await ensureLocalCoreReady({
+            ...readyOptions,
+            lockOwnerPid: process.pid,
+            lockAuthorityId: authorityId,
+          });
+          assertLocalCoreApiOwnership(next, authorityId);
+          status = next;
+          const nextBundle = await createExecutionBundle({
+            status: next,
+            options,
+            token,
+          });
+          if (nextBundle === undefined) {
+            throw new Error(
+              next.lastError?.message
+                ?? "Local Core remained blocked after resetting its runtime store.",
+            );
+          }
+          executionBundle = nextBundle;
+          return { reset, status: next };
+        } catch (error) {
+          status = markRuntimeStoreResetFailed(status, error, reset);
+          throw new LocalCoreApiRequestError(
+            500,
+            "LOCAL_CORE_RUNTIME_STORE_RESET_FAILED",
+            status.lastError?.message ?? "Local Core could not reset its runtime store.",
+          );
+        }
+      },
+    });
 
     server = http.createServer(async (request, response) => {
       if (isRuntimeV2Request(request.url)) {
         const activeExecution = executionBundle;
-        if (activeExecution === undefined) {
+        if (activeExecution === undefined || maintenanceOperation !== undefined) {
           writeJson(response, 503, errorBody(
             "LOCAL_CORE_EXECUTION_UNAVAILABLE",
             status.lastError?.message ?? "Local Core execution is unavailable until Core is healthy.",
@@ -241,8 +424,10 @@ export async function startLocalCoreApiServer(
           token,
           status,
           ensureOptions: options,
-          getRuntimeStore: () => executionBundle?.store,
+          withRuntimeStore,
+          withRuntimeConfigurationMutation,
           restartExecution,
+          resetRuntimeStore,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
         });
@@ -268,7 +453,7 @@ export async function startLocalCoreApiServer(
         clearTimeout(idleTimeout);
       }
       closePromise = (async () => {
-        await restartPromise?.catch(() => undefined);
+        await maintenanceOperation?.promise.catch(() => undefined);
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -296,6 +481,10 @@ export async function startLocalCoreApiServer(
         if (
           projectRunRegistry?.hasActiveRuns() === true
           || executionBundle?.handler.hasActiveExecutions() === true
+          || executionBundle?.handler.hasActiveRequests() === true
+          || activeRuntimeStoreRequests > 0
+          || activeRuntimeConfigurationMutations > 0
+          || maintenanceOperation !== undefined
         ) {
           scheduleIdleTimeout();
           return;
@@ -414,6 +603,15 @@ function markExecutionRestarting(status: LocalCoreStatus): LocalCoreStatus {
   };
 }
 
+function markExecutionResetting(status: LocalCoreStatus): LocalCoreStatus {
+  return {
+    ...status,
+    state: "starting",
+    summary: "Kestrel Local Core is resetting its runtime store.",
+    lastError: undefined,
+  };
+}
+
 function markExecutionUnavailable(status: LocalCoreStatus, error: unknown): LocalCoreStatus {
   const cause = error instanceof Error ? error.message : String(error);
   return {
@@ -424,6 +622,33 @@ function markExecutionUnavailable(status: LocalCoreStatus, error: unknown): Loca
       code: "LOCAL_CORE_EXECUTION_INIT_FAILED",
       message: `Kestrel Local Core could not initialize its execution authority: ${cause}`,
       details: { cause },
+    },
+  };
+}
+
+function markRuntimeStoreResetFailed(
+  status: LocalCoreStatus,
+  error: unknown,
+  reset: LocalCoreRuntimeStoreReset | undefined,
+): LocalCoreStatus {
+  const cause = error instanceof Error ? error.message : String(error);
+  return {
+    ...status,
+    state: "blocked",
+    summary: "Kestrel Local Core runtime-store reset failed.",
+    lastError: {
+      code: "LOCAL_CORE_RUNTIME_STORE_RESET_FAILED",
+      message: `Kestrel Local Core could not reset its runtime store: ${cause}`,
+      details: {
+        cause,
+        ...(reset !== undefined
+          ? {
+              storePath: reset.storePath,
+              archivedStorePath: reset.archivedStorePath,
+              resetAt: reset.resetAt,
+            }
+          : {}),
+      },
     },
   };
 }
@@ -529,8 +754,10 @@ async function handleRequest(input: {
   token: string;
   status: LocalCoreStatus;
   ensureOptions: StartLocalCoreApiServerOptions;
-  getRuntimeStore(): RuntimeSessionStore | undefined;
+  withRuntimeStore<T>(callback: (store: RuntimeSessionStore) => Promise<T>): Promise<T>;
+  withRuntimeConfigurationMutation<T>(callback: () => Promise<T>): Promise<T>;
   restartExecution(): Promise<LocalCoreStatus>;
+  resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
 }): Promise<void> {
@@ -556,8 +783,11 @@ async function handleRequest(input: {
       return;
     }
     if (method === "PATCH" && url.pathname === "/v1/settings") {
-      const patch = await readJsonBody(input.request);
-      writeJson(input.response, 200, { ok: true, settings: await patchSettings(input.status.home.homePath, patch) });
+      const settings = await input.withRuntimeConfigurationMutation(async () => {
+        const patch = await readJsonBody(input.request);
+        return await patchSettings(input.status.home.homePath, patch);
+      });
+      writeJson(input.response, 200, { ok: true, settings });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
@@ -599,9 +829,15 @@ async function handleRequest(input: {
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/runtime-settings") {
-      const body = await readJsonBody(input.request);
-      await writeRuntimeSettings(input.status.home.homePath, normalizeObjectField<RuntimeSettingsFile>(body, "runtimeSettings"));
-      writeJson(input.response, 200, { ok: true, runtimeSettings: await readRuntimeSettings(input.status.home.homePath) });
+      const runtimeSettings = await input.withRuntimeConfigurationMutation(async () => {
+        const body = await readJsonBody(input.request);
+        await writeRuntimeSettings(
+          input.status.home.homePath,
+          normalizeObjectField<RuntimeSettingsFile>(body, "runtimeSettings"),
+        );
+        return await readRuntimeSettings(input.status.home.homePath);
+      });
+      writeJson(input.response, 200, { ok: true, runtimeSettings });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/workspaces") {
@@ -675,39 +911,34 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/runs") {
-      const runtimeStore = input.getRuntimeStore();
-      if (runtimeStore === undefined) {
-        writeJson(input.response, 503, errorBody(
-          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
-          "Local Core execution is unavailable until Core is healthy.",
-        ));
-        return;
-      }
       writeJson(input.response, 200, {
         ok: true,
-        runs: await runtimeStore.listRunSummaries({ limit: 100 }),
+        runs: await input.withRuntimeStore(async (runtimeStore) =>
+          await runtimeStore.listRunSummaries({ limit: 100 })),
       });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/runtime/replay") {
-      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
       const query = normalizeReplayQueryBody(await readJsonBody(input.request));
-      const replay = await new RunReplayService(runtimeStore).replay(query);
+      const replay = await input.withRuntimeStore(async (runtimeStore) =>
+        await new RunReplayService(runtimeStore).replay(query));
       writeJson(input.response, 200, { ok: true, replay });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/runtime/doctor") {
-      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
       const query = normalizeReplayQueryBody(await readJsonBody(input.request));
-      const service = new RunReplayService(runtimeStore);
-      const replay = await service.replay(query);
-      writeJson(input.response, 200, { ok: true, doctor: service.doctor(replay) });
+      const doctor = await input.withRuntimeStore(async (runtimeStore) => {
+        const service = new RunReplayService(runtimeStore);
+        const replay = await service.replay(query);
+        return service.doctor(replay);
+      });
+      writeJson(input.response, 200, { ok: true, doctor });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/runtime/bundle") {
-      const runtimeStore = requireRuntimeStore(input.getRuntimeStore());
       const query = normalizeReplayQueryBody(await readJsonBody(input.request));
-      const { bundle } = await buildRuntimeReplayBundle(runtimeStore, query);
+      const bundle = await input.withRuntimeStore(async (runtimeStore) =>
+        (await buildRuntimeReplayBundle(runtimeStore, query)).bundle);
       writeJson(input.response, 200, { ok: true, bundle });
       return;
     }
@@ -879,6 +1110,20 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, status: next });
       return;
     }
+    if (method === "POST" && url.pathname === "/v1/runtime/store/reset") {
+      try {
+        parseLocalCoreRuntimeStoreResetRequest(await readJsonBody(input.request));
+      } catch {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_RUNTIME_STORE_RESET_INVALID",
+          "Local Core runtime-store reset requires exactly { confirm: true }.",
+        );
+      }
+      const result = await input.resetRuntimeStore();
+      writeJson(input.response, 200, { ok: true, ...result });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/legacy-state") {
       writeJson(input.response, 200, {
         ok: true,
@@ -946,17 +1191,6 @@ function normalizeNumberField(value: unknown, field: string): number {
     throw new Error(`Request body field '${field}' must be a number.`);
   }
   return Math.floor(candidate);
-}
-
-function requireRuntimeStore(store: RuntimeSessionStore | undefined): RuntimeSessionStore {
-  if (store === undefined) {
-    throw new LocalCoreApiRequestError(
-      503,
-      "LOCAL_CORE_EXECUTION_UNAVAILABLE",
-      "Local Core execution is unavailable until Core is healthy.",
-    );
-  }
-  return store;
 }
 
 function normalizeReplayQueryBody(value: unknown): ReplayQuery {

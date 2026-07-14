@@ -1,4 +1,5 @@
-import { chmod, mkdir, realpath } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath, rename } from "node:fs/promises";
+import path from "node:path";
 
 import type { SessionStore } from "../kestrel/contracts/store.js";
 import {
@@ -9,7 +10,10 @@ import {
   PostgresSessionStore,
   type SqlExecutor,
 } from "../store/PostgresSessionStore.js";
-import type { LocalCoreConfiguredDatabaseMode } from "./contracts.js";
+import type {
+  LocalCoreConfiguredDatabaseMode,
+  LocalCoreRuntimeStoreReset,
+} from "./contracts.js";
 import { resolveLocalCorePaths } from "./home.js";
 
 export interface LocalCoreStoreHandle {
@@ -26,6 +30,11 @@ export interface EnsureLocalCoreStoreOptions {
   homePath: string;
   mode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
+}
+
+export interface ArchiveLocalCorePgliteStoreOptions {
+  homePath: string;
+  now?: Date | undefined;
 }
 
 interface StoreEntry {
@@ -74,6 +83,71 @@ export async function ensureLocalCoreStore(
 
 export async function closeLocalCoreStore(homePath: string): Promise<void> {
   const stateRootPath = (await resolveCanonicalStorePaths(homePath, false)).stateRootPath;
+  await closeLocalCoreStoreByStateRoot(stateRootPath);
+}
+
+/**
+ * Close and archive the one Core-owned PGlite store without touching settings,
+ * workspaces, project-run state, credentials, or legacy runtime files.
+ */
+export async function archiveLocalCorePgliteStore(
+  options: ArchiveLocalCorePgliteStoreOptions,
+): Promise<LocalCoreRuntimeStoreReset> {
+  const paths = await resolveCanonicalStorePaths(options.homePath, false);
+  await closeLocalCoreStoreByStateRoot(paths.stateRootPath);
+
+  const resetAt = (options.now ?? new Date()).toISOString();
+  const storePath = paths.pgliteDataPath;
+  const databasePath = path.dirname(storePath);
+  let canonicalDatabasePath: string;
+  try {
+    canonicalDatabasePath = await realpath(databasePath);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return { storePath, archivedStorePath: null, resetAt };
+    }
+    throw error;
+  }
+  if (canonicalDatabasePath !== databasePath) {
+    throw new Error(
+      "Local Core refused to archive a PGlite store through a linked database directory.",
+    );
+  }
+
+  try {
+    const entry = await lstat(storePath);
+    if (entry.isDirectory() === false && entry.isSymbolicLink() === false) {
+      throw new Error("Local Core PGlite store path is not a directory or symbolic link.");
+    }
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return { storePath, archivedStorePath: null, resetAt };
+    }
+    throw error;
+  }
+
+  const archiveStem = `${storePath}.archived-${archiveTimestamp(resetAt)}`;
+  for (let collision = 0; collision < 1_000; collision += 1) {
+    const archivedStorePath = collision === 0
+      ? archiveStem
+      : `${archiveStem}-${collision}`;
+    if (await pathEntryExists(archivedStorePath)) {
+      continue;
+    }
+    try {
+      await rename(storePath, archivedStorePath);
+      return { storePath, archivedStorePath, resetAt };
+    } catch (error) {
+      if (isAlreadyExistsError(error) || isDirectoryNotEmptyError(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Local Core could not allocate a unique PGlite archive path.");
+}
+
+async function closeLocalCoreStoreByStateRoot(stateRootPath: string): Promise<void> {
   const existing = storesByStateRoot.get(stateRootPath);
   if (existing === undefined) {
     return;
@@ -191,4 +265,28 @@ async function resolveCanonicalStorePaths(homePath: string, create: boolean) {
 
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function isDirectoryNotEmptyError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOTEMPTY";
+}
+
+async function pathEntryExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function archiveTimestamp(timestamp: string): string {
+  return timestamp.replaceAll(":", "-").replaceAll(".", "-");
 }

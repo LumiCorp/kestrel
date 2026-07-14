@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { request, type IncomingMessage } from "node:http";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { request, type ClientRequest, type IncomingMessage } from "node:http";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -290,36 +290,470 @@ test("Local Core API does not steal or unlink another process authority", async 
   }
 });
 
-test("Local Core API releases startup ownership when journal initialization fails", async () => {
+test("Local Core keeps control authority reachable and resets a broken startup store", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcfail-"));
   const paths = resolveLocalCorePaths(home);
+  let server: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
   try {
     const store = await ensureLocalCoreStore({ homePath: home });
+    const canonicalPaths = resolveLocalCorePaths(await realpath(paths.stateRootPath));
     await store.executor.query("DROP TABLE runner_protocol_events");
+    await writeFile(path.join(paths.pgliteDataPath, "reset-sentinel"), "archived\n", "utf8");
+    await writeFile(path.join(home, "runtime.db"), "legacy-runtime\n", "utf8");
+    await mkdir(paths.settingsPath, { recursive: true });
+    await writeFile(path.join(paths.settingsPath, "preserve-sentinel"), "settings\n", "utf8");
+    await mkdir(paths.workspaceRegistryPath, { recursive: true });
+    await writeFile(path.join(paths.workspaceRegistryPath, "preserve-sentinel"), "workspaces\n", "utf8");
     await closeLocalCoreStore(home);
 
-    await assert.rejects(
-      () => startLocalCoreApiServer({
-        env: { KESTREL_CORE_HOME: home },
-        platform: "darwin",
-        coreVersion: "0.6.0",
-        idleTimeoutMs: 0,
-      }),
-      /runner_protocol_events/u,
-    );
-    assert.equal(existsSync(paths.lockPath), false);
-    assert.equal(existsSync(paths.apiSocketPath), false);
-
-    await rm(paths.pgliteDataPath, { recursive: true, force: true });
-    const recovered = await startLocalCoreApiServer({
+    server = await startLocalCoreApiServer({
       env: { KESTREL_CORE_HOME: home },
       platform: "darwin",
       coreVersion: "0.6.0",
       idleTimeoutMs: 0,
     });
-    await recovered.close();
+    const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+    const blocked = await client.status();
+    assert.equal(blocked.state, "blocked");
+    assert.equal(blocked.lastError?.code, "LOCAL_CORE_EXECUTION_INIT_FAILED");
+    assert.match(blocked.lastError?.message ?? "", /runner_protocol_events/u);
+    assert.deepEqual(await client.health(), { ok: true });
+    assert.equal(existsSync(paths.lockPath), true);
+    assert.equal(existsSync(paths.apiSocketPath), true);
+    const tokenBefore = await readFile(paths.apiTokenPath, "utf8");
+    const authorityBefore = JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId;
+    await assert.rejects(
+      () => client.runs(),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 503
+        && error.code === "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+    );
+
+    const recovered = await client.resetRuntimeStore();
+    assert.equal(recovered.status.state, "healthy");
+    assert.equal(recovered.reset.storePath, canonicalPaths.pgliteDataPath);
+    assert.ok(recovered.reset.archivedStorePath);
+    assert.equal(
+      await readFile(path.join(recovered.reset.archivedStorePath, "reset-sentinel"), "utf8"),
+      "archived\n",
+    );
+    await assert.rejects(readFile(path.join(paths.pgliteDataPath, "reset-sentinel"), "utf8"), { code: "ENOENT" });
+    assert.equal((await stat(paths.pgliteDataPath)).isDirectory(), true);
+    assert.equal(await readFile(path.join(home, "runtime.db"), "utf8"), "legacy-runtime\n");
+    assert.equal(await readFile(path.join(paths.settingsPath, "preserve-sentinel"), "utf8"), "settings\n");
+    assert.equal(await readFile(path.join(paths.workspaceRegistryPath, "preserve-sentinel"), "utf8"), "workspaces\n");
+    assert.equal(await readFile(paths.apiTokenPath, "utf8"), tokenBefore);
+    assert.equal(JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId, authorityBefore);
+    assert.deepEqual((await client.runs() as { runs?: unknown[] }).runs, []);
+    assert.equal(
+      JSON.stringify(await client.supportBundle()).includes(recovered.reset.archivedStorePath),
+      false,
+    );
+
+    const sdk = new KestrelSdkClient({
+      target: {
+        kind: "local",
+        socketPath: server.socketPath,
+        authToken: server.token,
+      },
+    });
+    try {
+      assert.deepEqual(await sdk.ping({ nonce: "after-reset" }, {
+        actor: { actorId: "runtime-store-reset-test", actorType: "operator" },
+      }), { nonce: "after-reset" });
+    } finally {
+      await sdk.close();
+    }
+
+    await server.close();
+    assert.equal(existsSync(paths.lockPath), false);
+    assert.equal(existsSync(paths.apiSocketPath), false);
   } finally {
+    await server?.close();
     await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core runtime-store reset requires explicit confirmation and exposes typed errors", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-contract-"));
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  try {
+    for (const body of [{}, { confirm: true, path: "/tmp/not-authoritative" }]) {
+      await assert.rejects(
+        () => client.postJson("/v1/runtime/store/reset", body),
+        (error) => error instanceof LocalCoreApiError
+          && error.statusCode === 400
+          && error.code === "LOCAL_CORE_RUNTIME_STORE_RESET_INVALID"
+          && error.serviceMessage === "Local Core runtime-store reset requires exactly { confirm: true }."
+          && error.message === error.serviceMessage,
+      );
+    }
+
+    const unauthorized = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: "wrong-token",
+    });
+    await assert.rejects(
+      () => unauthorized.postJson("/v1/runtime/store/reset", { confirm: true }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 401
+        && error.code === "LOCAL_CORE_API_UNAUTHORIZED",
+    );
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core runtime-store reset refuses external database authority without mutation", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-external-"));
+  const paths = resolveLocalCorePaths(home);
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    databaseMode: "external",
+    idleTimeoutMs: 0,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  try {
+    await mkdir(paths.pgliteDataPath, { recursive: true });
+    await writeFile(path.join(paths.pgliteDataPath, "dormant-sentinel"), "untouched\n", "utf8");
+
+    await assert.rejects(
+      () => client.resetRuntimeStore(),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 409
+        && error.code === "LOCAL_CORE_RUNTIME_STORE_RESET_UNSUPPORTED",
+    );
+    assert.equal((await client.status()).dbMode, "external");
+    assert.equal(
+      await readFile(path.join(paths.pgliteDataPath, "dormant-sentinel"), "utf8"),
+      "untouched\n",
+    );
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core runtime-store reset rejects an active execution before archiving", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-active-"));
+  const paths = resolveLocalCorePaths(home);
+  let releaseRun: (() => void) | undefined;
+  const runCanFinish = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: () => ({
+      async runTurn(turn) {
+        await runCanFinish;
+        return {
+          assistantText: "The active run completed before reset.",
+          finalizedPayload: null,
+          output: {
+            status: "COMPLETED" as const,
+            sessionId: turn.sessionId,
+            runId: turn.runId ?? "run-reset-active",
+            errors: [],
+            quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+            telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+          },
+        };
+      },
+      async close() {},
+    }),
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  const sdk = new KestrelSdkClient({
+    target: { kind: "local", socketPath: server.socketPath, authToken: server.token },
+  });
+  try {
+    await writeFile(path.join(paths.pgliteDataPath, "active-run-sentinel"), "present\n", "utf8");
+    const stream = sdk.streamRun({
+      profileId: "reference",
+      turn: {
+        sessionId: "session-reset-active",
+        runId: "run-reset-active",
+        message: "remain active until released",
+        eventType: "user.message",
+      },
+    }, {
+      actor: { actorId: "reset-active-test", actorType: "operator" },
+      durability: "continue_on_disconnect",
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+    while (true) {
+      const next = await withTimeout(iterator.next());
+      assert.equal(next.done, false);
+      if (next.value?.type === "run.started") {
+        break;
+      }
+    }
+
+    await assert.rejects(
+      withTimeout(client.resetRuntimeStore()),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 409
+        && error.code === "LOCAL_CORE_EXECUTION_ACTIVE",
+    );
+    assert.equal((await client.status()).state, "healthy");
+    assert.equal(
+      await readFile(path.join(paths.pgliteDataPath, "active-run-sentinel"), "utf8"),
+      "present\n",
+    );
+
+    releaseRun?.();
+    while ((await withTimeout(iterator.next())).done === false) {
+      // Drain the original execution before retrying maintenance.
+    }
+    assert.equal((await stream.result).type, "run.completed");
+
+    const reset = await client.resetRuntimeStore();
+    assert.equal(reset.status.state, "healthy");
+    assert.ok(reset.reset.archivedStorePath);
+  } finally {
+    releaseRun?.();
+    await sdk.close();
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core restart and reset reject an in-flight runtime-store read", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-read-"));
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  const handle = await ensureLocalCoreStore({ homePath: home });
+  type ListRunSummaries = typeof handle.store.listRunSummaries;
+  const mutableStore = handle.store as { listRunSummaries: ListRunSummaries };
+  const originalListRunSummaries = handle.store.listRunSummaries.bind(handle.store) as ListRunSummaries;
+  let releaseRead: (() => void) | undefined;
+  let markReadEntered: (() => void) | undefined;
+  const readEntered = new Promise<void>((resolve) => {
+    markReadEntered = resolve;
+  });
+  const readCanFinish = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  mutableStore.listRunSummaries = (async (...args: Parameters<ListRunSummaries>) => {
+    markReadEntered?.();
+    await readCanFinish;
+    return await originalListRunSummaries(...args);
+  }) as ListRunSummaries;
+
+  try {
+    const pendingRead = client.runs();
+    await withTimeout(readEntered, 5_000, "Timed out waiting for the runtime-store read.");
+    const maintenanceOperations: Array<() => Promise<unknown>> = [
+      () => client.restart(),
+      () => client.resetRuntimeStore(),
+    ];
+    for (const maintenance of maintenanceOperations) {
+      await assert.rejects(
+        withTimeout(maintenance()),
+        (error) => error instanceof LocalCoreApiError
+          && error.statusCode === 409
+          && error.code === "LOCAL_CORE_RUNTIME_STORE_BUSY",
+      );
+    }
+    assert.equal((await client.status()).state, "healthy");
+
+    releaseRead?.();
+    await pendingRead;
+    mutableStore.listRunSummaries = originalListRunSummaries;
+    assert.equal((await client.resetRuntimeStore()).status.state, "healthy");
+  } finally {
+    releaseRead?.();
+    mutableStore.listRunSummaries = originalListRunSummaries;
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core maintenance rejects runtime admission and configuration mutation races", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-admission-"));
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  let runtimeRequest: ClientRequest | undefined;
+  let settingsRequest: ClientRequest | undefined;
+  try {
+    runtimeRequest = await openSlowAuthorizedJsonRequest({
+      socketPath: server.socketPath,
+      token: server.token,
+      method: "POST",
+      requestPath: "/runtime/v2/commands",
+      body: "{}",
+    });
+    for (const maintenance of [() => client.restart(), () => client.resetRuntimeStore()]) {
+      await assert.rejects(
+        maintenance(),
+        (error) => error instanceof LocalCoreApiError
+          && error.statusCode === 409
+          && error.code === "LOCAL_CORE_RUNTIME_REQUEST_BUSY",
+      );
+    }
+    await destroySlowRequest(runtimeRequest);
+    runtimeRequest = undefined;
+
+    settingsRequest = await openSlowAuthorizedJsonRequest({
+      socketPath: server.socketPath,
+      token: server.token,
+      method: "PATCH",
+      requestPath: "/v1/settings",
+      body: JSON.stringify({ databaseMode: "external" }),
+    });
+    const settingsPath = path.join(
+      resolveLocalCorePaths(home).settingsPath,
+      "local-core-settings.json",
+    );
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, "{", "utf8");
+    for (const maintenance of [() => client.restart(), () => client.resetRuntimeStore()]) {
+      await assert.rejects(
+        maintenance(),
+        (error) => error instanceof LocalCoreApiError
+          && error.statusCode === 409
+          && error.code === "LOCAL_CORE_RUNTIME_CONFIG_BUSY",
+      );
+    }
+    await writeFile(settingsPath, "{}\n", "utf8");
+    await destroySlowRequest(settingsRequest);
+    settingsRequest = undefined;
+
+    await waitFor(async () => {
+      try {
+        return (await client.resetRuntimeStore()).status.state === "healthy";
+      } catch (error) {
+        if (
+          error instanceof LocalCoreApiError
+          && error.code === "LOCAL_CORE_RUNTIME_CONFIG_BUSY"
+        ) {
+          return false;
+        }
+        throw error;
+      }
+    });
+  } finally {
+    if (runtimeRequest !== undefined) {
+      await destroySlowRequest(runtimeRequest);
+    }
+    if (settingsRequest !== undefined) {
+      await destroySlowRequest(settingsRequest);
+    }
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core serializes reset against every other maintenance request", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcreset-maintenance-"));
+  let releaseRuntimeClose: (() => void) | undefined;
+  let markRuntimeCloseEntered: (() => void) | undefined;
+  const runtimeCloseEntered = new Promise<void>((resolve) => {
+    markRuntimeCloseEntered = resolve;
+  });
+  const runtimeCloseCanFinish = new Promise<void>((resolve) => {
+    releaseRuntimeClose = resolve;
+  });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: () => ({
+      async runTurn(turn) {
+        return {
+          assistantText: "Runtime created for maintenance serialization.",
+          finalizedPayload: null,
+          output: {
+            status: "COMPLETED" as const,
+            sessionId: turn.sessionId,
+            runId: turn.runId ?? "run-reset-maintenance",
+            errors: [],
+            quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+            telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+          },
+        };
+      },
+      async close() {
+        markRuntimeCloseEntered?.();
+        await runtimeCloseCanFinish;
+      },
+    }),
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+  const sdk = new KestrelSdkClient({
+    target: { kind: "local", socketPath: server.socketPath, authToken: server.token },
+  });
+  try {
+    const stream = sdk.streamRun({
+      profileId: "reference",
+      turn: {
+        sessionId: "session-reset-maintenance",
+        runId: "run-reset-maintenance",
+        message: "create one runtime",
+        eventType: "user.message",
+      },
+    }, {
+      actor: { actorId: "reset-maintenance-test", actorType: "operator" },
+    });
+    for await (const _event of stream) {
+      // Consume the completed run so only runtime close remains in maintenance.
+    }
+    assert.equal((await stream.result).type, "run.completed");
+
+    const resetPromise = client.resetRuntimeStore();
+    await withTimeout(runtimeCloseEntered, 5_000, "Timed out waiting for reset maintenance to close the runtime.");
+    const conflictingOperations: Array<() => Promise<unknown>> = [
+      () => client.restart(),
+      () => client.resetRuntimeStore(),
+    ];
+    for (const operation of conflictingOperations) {
+      await assert.rejects(
+        operation(),
+        (error) => error instanceof LocalCoreApiError
+          && error.statusCode === 409
+          && error.code === "LOCAL_CORE_MAINTENANCE_ACTIVE",
+      );
+    }
+    await assert.rejects(
+      () => client.patchSettings({
+        databaseMode: "external",
+        databaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+      }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 409
+        && error.code === "LOCAL_CORE_MAINTENANCE_ACTIVE",
+    );
+
+    releaseRuntimeClose?.();
+    assert.equal((await resetPromise).status.state, "healthy");
+  } finally {
+    releaseRuntimeClose?.();
+    await sdk.close();
+    await server.close();
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -471,7 +905,7 @@ test("Local Core API reports execution unavailable after a failed store restart"
   }
 });
 
-test("Local Core API restart ends subscriptions owned by the retired execution handler", async () => {
+test("Local Core maintenance ends subscriptions owned by each retired execution handler", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcrst-stream-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -480,6 +914,7 @@ test("Local Core API restart ends subscriptions owned by the retired execution h
     idleTimeoutMs: 0,
   });
   let subscription: IncomingMessage | undefined;
+  let resetSubscription: IncomingMessage | undefined;
   try {
     subscription = await openRuntimeEventSubscription({
       socketPath: server.socketPath,
@@ -506,6 +941,26 @@ test("Local Core API restart ends subscriptions owned by the retired execution h
     );
     assert.equal(subscription.complete, true);
 
+    resetSubscription = await openRuntimeEventSubscription({
+      socketPath: server.socketPath,
+      token: server.token,
+      runId: "run-reset-subscription",
+    });
+    assert.equal(resetSubscription.statusCode, 200);
+    const resetStreamEnded = new Promise<void>((resolve, reject) => {
+      resetSubscription?.once("end", resolve);
+      resetSubscription?.once("error", reject);
+      resetSubscription?.resume();
+    });
+    const reset = await client.resetRuntimeStore();
+    assert.equal(reset.status.state, "healthy");
+    await withTimeout(
+      resetStreamEnded,
+      5_000,
+      "Timed out waiting for Local Core reset to end the retired event stream.",
+    );
+    assert.equal(resetSubscription.complete, true);
+
     const sdk = new KestrelSdkClient({
       target: {
         kind: "local",
@@ -520,6 +975,7 @@ test("Local Core API restart ends subscriptions owned by the retired execution h
     }
   } finally {
     subscription?.destroy();
+    resetSubscription?.destroy();
     await server.close();
     await rm(home, { recursive: true, force: true });
   }
@@ -1274,9 +1730,7 @@ test("Local Core API owns Desktop project runs and streams changes", async () =>
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
     platform: "darwin",
-    coreVersion: "0.5.0-beta.0",
-    databaseMode: "external",
-    externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+    coreVersion: "0.6.0",
     idleTimeoutMs: 0,
   });
   const events: Array<{ runs: Array<{ runId: string; status: string; primaryPreviewUrl?: string | undefined }> }> = [];
@@ -1301,6 +1755,12 @@ test("Local Core API owns Desktop project runs and streams changes", async () =>
         return runs.some((entry) => entry.runId === run.runId && entry.primaryPreviewUrl === "http://127.0.0.1:4123/");
       });
 
+      const reset = await client.resetRuntimeStore();
+      assert.equal(reset.status.state, "healthy");
+      const preserved = (await client.listDesktopProjectRuns()).find((entry) => entry.runId === run.runId);
+      assert.equal(preserved?.status, "running");
+      assert.equal(preserved?.primaryPreviewUrl, "http://127.0.0.1:4123/");
+
       const stopped = await client.stopDesktopProjectRun(run.runId);
       assert.equal(stopped?.runId, run.runId);
       await waitFor(() => events.some((event) => event.runs.some((entry) => entry.runId === run.runId && entry.status === "stopped")));
@@ -1323,6 +1783,44 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   assert.fail("Timed out waiting for expected Local Core API state.");
+}
+
+async function openSlowAuthorizedJsonRequest(input: {
+  socketPath: string;
+  token: string;
+  method: "PATCH" | "POST";
+  requestPath: string;
+  body: string;
+}): Promise<ClientRequest> {
+  return await new Promise<ClientRequest>((resolve, reject) => {
+    const req = request({
+      socketPath: input.socketPath,
+      path: input.requestPath,
+      method: input.method,
+      headers: {
+        authorization: `Bearer ${input.token}`,
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(input.body),
+        expect: "100-continue",
+      },
+    }, (response) => {
+      response.resume();
+    });
+    req.once("continue", () => resolve(req));
+    req.once("error", reject);
+    req.flushHeaders();
+  });
+}
+
+async function destroySlowRequest(requestToDestroy: ClientRequest): Promise<void> {
+  if (requestToDestroy.destroyed) {
+    return;
+  }
+  const closed = new Promise<void>((resolve) => {
+    requestToDestroy.once("close", resolve);
+  });
+  requestToDestroy.destroy();
+  await closed;
 }
 
 async function openRuntimeEventSubscription(input: {

@@ -99,6 +99,13 @@ export interface RunnerServiceHttpHandler {
   readonly health: RunnerHealthV1;
   ready(): Promise<void>;
   hasActiveExecutions(): boolean;
+  /**
+   * Reports command-bearing HTTP requests accepted by this handler, including
+   * requests that are still being parsed and have not reached RunnerHost yet.
+   * Durable event subscriptions are intentionally excluded so maintenance can
+   * retire them by closing the handler.
+   */
+  hasActiveRequests(): boolean;
   close(options?: RunnerServiceHostCloseOptions): Promise<void>;
 }
 
@@ -133,6 +140,7 @@ export function createRunnerServiceHttpHandler(
   options: RunnerServiceHttpHandlerOptions = {},
 ): RunnerServiceHttpHandler {
   const pathPrefix = normalizePathPrefix(options.pathPrefix);
+  let activeRequests = 0;
   const serviceHost = new RunnerServiceHost({
     runtimeFactory: options.runtimeFactory,
     profileProvider: options.profileProvider,
@@ -142,6 +150,17 @@ export function createRunnerServiceHttpHandler(
 
   return {
     handle(request, response) {
+      const releaseRequest = isMaintenanceBlockingRunnerRequest(
+        request.method,
+        request.url,
+        pathPrefix,
+      )
+        ? trackActiveHttpRequest(response, () => {
+            activeRequests += 1;
+          }, () => {
+            activeRequests -= 1;
+          })
+        : undefined;
       void serviceHost.ready()
         .then(() => handleRunnerServiceRequest(
           request,
@@ -154,6 +173,11 @@ export function createRunnerServiceHttpHandler(
         ))
         .catch((error) => {
           writeUnhandledServiceError(response, error);
+        })
+        .finally(() => {
+          if (response.writableEnded || response.destroyed) {
+            releaseRequest?.();
+          }
         });
     },
     health: serviceHost.health,
@@ -163,10 +187,48 @@ export function createRunnerServiceHttpHandler(
     hasActiveExecutions() {
       return serviceHost.hasActiveExecutions();
     },
+    hasActiveRequests() {
+      return activeRequests > 0;
+    },
     close(closeOptions = { abortActiveRuns: true }) {
       return serviceHost.close(closeOptions);
     },
   };
+}
+
+function isMaintenanceBlockingRunnerRequest(
+  method: string | undefined,
+  requestUrl: string | undefined,
+  pathPrefix: string,
+): boolean {
+  const requestPath = resolveRunnerServiceRequestPath(requestUrl, pathPrefix);
+  if (method === "POST" && (requestPath === "/commands" || requestPath === "/commands/stream")) {
+    return true;
+  }
+  return method === "POST"
+    && requestPath !== undefined
+    && isOpenAiCompatibilityRoute(method, requestPath);
+}
+
+function trackActiveHttpRequest(
+  response: ServerResponse,
+  onStart: () => void,
+  onFinish: () => void,
+): () => void {
+  let active = true;
+  const release = () => {
+    if (active === false) {
+      return;
+    }
+    active = false;
+    response.off("finish", release);
+    response.off("close", release);
+    onFinish();
+  };
+  onStart();
+  response.once("finish", release);
+  response.once("close", release);
+  return release;
 }
 
 export async function createRunnerServiceServer(options: RunnerServiceOptions = {}): Promise<RunnerServiceServer> {

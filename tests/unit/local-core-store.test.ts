@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { ensureLocalCoreReady } from "../../src/localCore/ready.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../src/localCore/home.js";
 import {
+  archiveLocalCorePgliteStore,
   closeLocalCoreStore,
   ensureLocalCoreStore,
 } from "../../src/localCore/store.js";
@@ -90,6 +91,80 @@ test("Local Core store keys canonicalize symlink aliases to one PGlite authority
   } finally {
     await closeLocalCoreStore(productRoot);
     await rm(alias, { force: true });
+    await rm(productRoot, { recursive: true, force: true });
+  }
+});
+
+test("Local Core archives the canonical PGlite store without touching legacy state", async () => {
+  const productRoot = await mkdtemp(path.join("/tmp", "kcstore-archive-"));
+  const alias = `${productRoot}-alias`;
+  const now = new Date("2026-07-13T12:00:00.000Z");
+  await symlink(productRoot, alias, "dir");
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: alias });
+    assert.ok(handle.pglitePath);
+    await writeFile(path.join(handle.pglitePath, "active-sentinel"), "active\n", "utf8");
+    const legacyRuntimePath = path.join(productRoot, "runtime.db");
+    await writeFile(legacyRuntimePath, "legacy-runtime\n", "utf8");
+    await closeLocalCoreStore(alias);
+
+    const firstArchive = `${handle.pglitePath}.archived-2026-07-13T12-00-00-000Z`;
+    await mkdir(firstArchive, { recursive: true });
+    await writeFile(path.join(firstArchive, "collision-sentinel"), "existing\n", "utf8");
+
+    const reset = await archiveLocalCorePgliteStore({ homePath: alias, now });
+
+    assert.equal(reset.storePath, handle.pglitePath);
+    assert.equal(reset.archivedStorePath, `${firstArchive}-1`);
+    assert.equal(reset.resetAt, now.toISOString());
+    assert.equal(reset.storePath.includes("-alias"), false);
+    assert.equal(await readFile(path.join(firstArchive, "collision-sentinel"), "utf8"), "existing\n");
+    assert.equal(await readFile(path.join(reset.archivedStorePath!, "active-sentinel"), "utf8"), "active\n");
+    assert.equal((await stat(reset.archivedStorePath!)).mode & 0o777, 0o700);
+    assert.equal(await readFile(legacyRuntimePath, "utf8"), "legacy-runtime\n");
+    await assert.rejects(stat(reset.storePath), { code: "ENOENT" });
+  } finally {
+    await closeLocalCoreStore(productRoot);
+    await rm(alias, { force: true });
+    await rm(productRoot, { recursive: true, force: true });
+  }
+});
+
+test("Local Core archives a leaf symlink without traversing its external target", async () => {
+  const productRoot = await mkdtemp(path.join("/tmp", "kcstore-link-"));
+  const externalTarget = await mkdtemp(path.join("/tmp", "kcstore-external-"));
+  const paths = resolveLocalCorePaths(productRoot);
+  try {
+    await mkdir(path.dirname(paths.pgliteDataPath), { recursive: true });
+    await writeFile(path.join(externalTarget, "external-sentinel"), "untouched\n", "utf8");
+    await symlink(externalTarget, paths.pgliteDataPath, "dir");
+
+    const reset = await archiveLocalCorePgliteStore({
+      homePath: productRoot,
+      now: new Date("2026-07-13T12:30:00.000Z"),
+    });
+
+    assert.ok(reset.archivedStorePath);
+    assert.equal((await lstat(reset.archivedStorePath)).isSymbolicLink(), true);
+    assert.equal(await realpath(reset.archivedStorePath), await realpath(externalTarget));
+    assert.equal(await readFile(path.join(externalTarget, "external-sentinel"), "utf8"), "untouched\n");
+    await assert.rejects(lstat(paths.pgliteDataPath), { code: "ENOENT" });
+  } finally {
+    await rm(productRoot, { recursive: true, force: true });
+    await rm(externalTarget, { recursive: true, force: true });
+  }
+});
+
+test("Local Core reports a missing PGlite store without inventing an archive", async () => {
+  const productRoot = await mkdtemp(path.join("/tmp", "kcstore-missing-"));
+  try {
+    const reset = await archiveLocalCorePgliteStore({
+      homePath: productRoot,
+      now: new Date("2026-07-13T13:00:00.000Z"),
+    });
+    assert.equal(reset.archivedStorePath, null);
+    assert.equal(reset.storePath, resolveLocalCorePaths(productRoot).pgliteDataPath);
+  } finally {
     await rm(productRoot, { recursive: true, force: true });
   }
 });

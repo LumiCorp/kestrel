@@ -8,6 +8,10 @@ import {
   acquireCoreLock,
   createCoreManifest,
   ensureLocalCoreReady,
+  parseLocalCoreRuntimeStoreReset,
+  parseLocalCoreRuntimeStoreResetRequest,
+  parseLocalCoreRuntimeStoreResetResult,
+  parseLocalCoreStatus,
   readCoreLock,
   readCoreManifest,
   releaseCoreLock,
@@ -16,6 +20,77 @@ import {
   writeCoreManifest,
 } from "../../src/localCore/index.js";
 import { closeLocalCoreStore } from "../../src/localCore/store.js";
+
+function canonicalLocalCoreStatus(): Record<string, unknown> {
+  const productRootPath = "/tmp/kestrel";
+  const homePath = path.join(productRootPath, "state", "0.6");
+  const paths = resolveLocalCorePaths(homePath);
+  return {
+    state: "healthy",
+    summary: "Kestrel Local Core ready.",
+    home: {
+      productRootPath,
+      homePath,
+      stateEpoch: "0.6",
+      source: "explicit_core_home",
+      isolated: false,
+      platform: "darwin",
+    },
+    manifest: {
+      version: 2,
+      stateEpoch: "0.6",
+      coreVersion: "0.6.0",
+      schemaVersion: 1,
+      homePath,
+      dbMode: "pglite",
+      capabilities: ["local-core.contract.v2", "local-core.store.pglite"],
+      paths,
+      createdAt: "2026-07-13T12:00:00.000Z",
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    },
+    lock: {
+      state: "live",
+      lockPath: paths.lockPath,
+      lock: {
+        version: 1,
+        ownerPid: 123,
+        authorityId: "authority-123",
+        ownerExecutable: "/usr/local/bin/kestrel",
+        coreVersion: "0.6.0",
+        schemaVersion: 1,
+        startedAt: "2026-07-13T12:00:00.000Z",
+        heartbeatAt: "2026-07-13T12:00:01.000Z",
+        socketPath: paths.apiSocketPath,
+      },
+    },
+    dbMode: "pglite",
+    database: {
+      mode: "pglite",
+      state: "healthy",
+      summary: "Kestrel Local Core PGlite database ready.",
+      managed: true,
+      initialized: true,
+      running: true,
+      identityVerified: true,
+      pglitePath: paths.pgliteDataPath,
+      dataPath: paths.pgliteDataPath,
+    },
+    migrations: {
+      state: "healthy",
+      summary: "Core-owned PGlite schema ready.",
+      schemaVersion: 1,
+      lock: {
+        state: "missing",
+        lockPath: paths.migrationLockPath,
+      },
+      migrated: true,
+    },
+    settingsReady: true,
+    workspaceRegistryReady: true,
+    diagnosticsPath: paths.diagnosticsPath,
+    logsPath: paths.logsPath,
+  };
+}
 
 test("resolveKestrelCoreHome isolates the default macOS product root in the 0.6 state epoch", () => {
   const resolved = resolveKestrelCoreHome({}, "darwin");
@@ -55,6 +130,92 @@ test("resolveKestrelCoreHome keeps an already canonical state root stable", () =
 
   assert.equal(resolved.productRootPath, "/tmp/kestrel-product");
   assert.equal(resolved.homePath, stateRoot);
+});
+
+test("Local Core runtime-store reset contracts require explicit confirmation and canonical output", () => {
+  assert.deepEqual(parseLocalCoreRuntimeStoreResetRequest({ confirm: true }), {
+    confirm: true,
+  });
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreResetRequest({}),
+    /confirm: true/u,
+  );
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreResetRequest({ confirm: true, path: "/tmp/other" }),
+    /unsupported field 'path'/u,
+  );
+
+  const reset = parseLocalCoreRuntimeStoreReset({
+    storePath: "/tmp/kestrel/state/0.6/core/database/pglite",
+    archivedStorePath: null,
+    resetAt: "2026-07-13T12:00:00.000Z",
+  });
+  assert.equal(reset.archivedStorePath, null);
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreReset({
+      ...reset,
+      archivedStorePath: reset.storePath,
+    }),
+    /archive must differ/u,
+  );
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreReset({
+      ...reset,
+      resetAt: "2026-07-13 12:00:00Z",
+    }),
+    /canonical ISO timestamp/u,
+  );
+
+  const status = canonicalLocalCoreStatus();
+  const result = parseLocalCoreRuntimeStoreResetResult({
+    ok: true,
+    reset,
+    status,
+  });
+  assert.deepEqual(result.status, status);
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreResetResult({
+      ok: true,
+      reset,
+      status,
+      secret: "not-allowed",
+    }),
+    /unsupported field 'secret'/u,
+  );
+  assert.throws(
+    () => parseLocalCoreRuntimeStoreResetResult({
+      ok: true,
+      reset,
+      status: { state: "healthy" },
+    }),
+    /status\.summary must be a non-empty string/u,
+  );
+});
+
+test("Local Core status parser validates the complete nested boundary contract", () => {
+  const status = canonicalLocalCoreStatus();
+  assert.deepEqual(parseLocalCoreStatus(status), status);
+
+  const incomplete = structuredClone(status);
+  delete incomplete.workspaceRegistryReady;
+  assert.throws(
+    () => parseLocalCoreStatus(incomplete),
+    /status\.workspaceRegistryReady must be a boolean/u,
+  );
+
+  const malformed = structuredClone(status);
+  (malformed.database as Record<string, unknown>).running = "yes";
+  assert.throws(
+    () => parseLocalCoreStatus(malformed),
+    /status\.database\.running must be a boolean/u,
+  );
+
+  const unknownNestedField = structuredClone(status);
+  (unknownNestedField.lock as Record<string, unknown>).token = "not-allowed";
+  assert.throws(
+    () => parseLocalCoreStatus(unknownNestedField),
+    /status\.lock includes unsupported field 'token'/u,
+  );
 });
 
 test("Core manifest round-trips canonical paths", async () => {

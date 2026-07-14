@@ -17,7 +17,10 @@ import type {
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import {
   parseLocalCoreDesktopExecutionConfig,
+  parseLocalCoreRuntimeStoreResetResult,
+  parseLocalCoreStatus,
   type LocalCoreDesktopExecutionConfig,
+  type LocalCoreRuntimeStoreResetResult,
   type LocalCoreStatus,
 } from "./contracts.js";
 
@@ -43,11 +46,13 @@ export class LocalCoreClient {
   }
 
   async status(): Promise<LocalCoreStatus> {
-    const response = await this.get("/v1/status") as { status?: LocalCoreStatus };
-    if (response.status === undefined) {
-      throw new Error("Local Core status response did not include status.");
-    }
-    return response.status;
+    return parseLocalCoreStatus(
+      readObjectField<Record<string, unknown>>(
+        await this.get("/v1/status"),
+        "status",
+        "status",
+      ),
+    );
   }
 
   async settings(): Promise<unknown> {
@@ -278,19 +283,35 @@ export class LocalCoreClient {
   }
 
   async restart(): Promise<LocalCoreStatus> {
-    const response = await this.post("/v1/restart", {}) as { status?: LocalCoreStatus };
-    if (response.status === undefined) {
-      throw new Error("Local Core restart response did not include status.");
-    }
-    return response.status;
+    return parseLocalCoreStatus(
+      readObjectField<Record<string, unknown>>(
+        await this.post("/v1/restart", {}),
+        "status",
+        "restart",
+      ),
+    );
   }
 
   async repair(): Promise<LocalCoreStatus> {
-    const response = await this.post("/v1/repair", {}) as { status?: LocalCoreStatus };
-    if (response.status === undefined) {
-      throw new Error("Local Core repair response did not include status.");
-    }
-    return response.status;
+    return parseLocalCoreStatus(
+      readObjectField<Record<string, unknown>>(
+        await this.post("/v1/repair", {}),
+        "status",
+        "repair",
+      ),
+    );
+  }
+
+  async resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult> {
+    return parseLocalCoreRuntimeStoreResetResult(
+      await this.request(
+        "POST",
+        "/v1/runtime/store/reset",
+        { confirm: true },
+        true,
+        { timeout: "none" },
+      ),
+    );
   }
 
   async legacyState(): Promise<unknown> {
@@ -337,14 +358,20 @@ export class LocalCoreClient {
     return await this.request("DELETE", path, undefined, true);
   }
 
-  private request(method: string, path: string, body: unknown, auth: boolean): Promise<unknown> {
+  private request(
+    method: string,
+    path: string,
+    body: unknown,
+    auth: boolean,
+    options: { timeout?: "default" | "none" | undefined } = {},
+  ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
       const req = request({
         socketPath: this.socketPath,
         path,
         method,
-        timeout: this.timeoutMs,
+        ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
         headers: {
           ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
           ...(payload !== undefined
@@ -395,10 +422,36 @@ function readObjectField<T extends object>(value: unknown, field: string, label:
 export class LocalCoreApiError extends Error {
   readonly statusCode: number;
   readonly body: unknown;
+  readonly code: string | undefined;
+  readonly serviceMessage: string | undefined;
 
   constructor(statusCode: number, body: unknown) {
-    super(`Local Core API request failed with HTTP ${statusCode}.`);
+    const serviceError = readServiceError(body);
+    super(serviceError?.message ?? `Local Core API request failed with HTTP ${statusCode}.`);
     this.statusCode = statusCode;
     this.body = body;
+    this.code = serviceError?.code;
+    this.serviceMessage = serviceError?.message;
   }
+}
+
+function readServiceError(body: unknown): { code: string; message: string } | undefined {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return undefined;
+  }
+  const error = (body as Record<string, unknown>).error;
+  if (typeof error !== "object" || error === null || Array.isArray(error)) {
+    return undefined;
+  }
+  const code = (error as Record<string, unknown>).code;
+  const message = (error as Record<string, unknown>).message;
+  if (
+    typeof code !== "string"
+    || code.trim().length === 0
+    || typeof message !== "string"
+    || message.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return { code: code.trim(), message: message.trim() };
 }
