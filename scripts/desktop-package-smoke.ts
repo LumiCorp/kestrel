@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,7 +18,6 @@ import { _electron as electron, type ElectronApplication, type Page } from "@pla
 
 import { resolveDesktopPackagerConfig } from "../apps/desktop/src/packageConfig.js";
 import { resolveLocalCorePaths } from "../src/localCore/home.js";
-import { resolveLocalCorePostgresInstallation } from "../src/localCore/postgres.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const expectedDesktopVersion = readDesktopVersion(repoRoot);
@@ -28,10 +28,6 @@ const packagedRoot = process.env.KESTREL_DESKTOP_PACKAGE_PATH?.trim()
     `${packagerConfig.appName}-${packagerConfig.platform}-${packagerConfig.arch}`,
   );
 const executablePath = resolvePackagedExecutable(packagedRoot, packagerConfig.platform);
-const postgresBundleRoot = resolvePackagedPostgresBundleRoot(
-  packagedRoot,
-  packagerConfig.platform,
-);
 const evidenceDir = path.join(repoRoot, "apps", "desktop", "out", "package-smoke");
 const smokeLockPath = path.join(evidenceDir, "active.lock");
 const screenshotPath = path.join(evidenceDir, "renderer.png");
@@ -59,6 +55,16 @@ acquireSmokeLock(smokeLockPath);
 const smokeRoot = mkdtempSync(path.join(resolveSmokeTempParent(), "kdp-gui-"));
 const coreHome = path.join(smokeRoot, "core-home");
 const userDataPath = path.join(smokeRoot, "user-data");
+const liveModelApproved = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_LIVE_MODEL_APPROVED === "1";
+const sourceCoreHome = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_SOURCE_CORE_HOME?.trim();
+if (liveModelApproved) {
+  assert.equal(
+    typeof sourceCoreHome === "string" && sourceCoreHome.length > 0,
+    true,
+    "Live model smoke requires KESTREL_DESKTOP_PACKAGE_SMOKE_SOURCE_CORE_HOME.",
+  );
+  copyDesktopModelConfiguration(sourceCoreHome!, coreHome);
+}
 
 let electronApp: ElectronApplication | undefined;
 let electronPid: number | undefined;
@@ -92,17 +98,42 @@ try {
   });
   const window = await electronApp.firstWindow({ timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
-  await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
   await window.waitForFunction(
     async () => {
+      if (document.querySelector("#root") !== null) {
+        return true;
+      }
       const bridge = (globalThis as typeof globalThis & {
         kestrelDesktop?: { getBootState(): Promise<{ phase?: string | undefined }> };
       }).kestrelDesktop;
       const state = await bridge?.getBootState();
-      return state?.phase === "ready" || state?.phase === "failed";
+      return state?.phase === "failed";
     },
     undefined,
     { timeout: 60_000 },
+  );
+  await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
+  await window.waitForLoadState("domcontentloaded");
+  await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
+  const terminalBootState = await window.evaluate(async () => {
+    const bridge = (globalThis as typeof globalThis & {
+      kestrelDesktop?: {
+        getBootState(): Promise<{
+          phase: string;
+          code?: string | undefined;
+          message: string;
+          details?: string | undefined;
+        }>;
+      };
+    }).kestrelDesktop;
+    return await bridge?.getBootState();
+  });
+  assert.equal(
+    terminalBootState?.phase,
+    "ready",
+    terminalBootState === undefined
+      ? "Desktop preload bridge did not expose boot state."
+      : JSON.stringify(terminalBootState),
   );
   const mainProcess = await electronApp.evaluate(({ app }) => ({
     isPackaged: app.isPackaged,
@@ -127,6 +158,18 @@ try {
       bodyText: document.body.innerText,
       hasNextAsset: document.querySelector('[src*="/_next/"], [href*="/_next/"]') !== null,
       hasRoot: document.querySelector("#root") !== null,
+      chatLayout: (() => {
+        const activity = document.querySelector(".activity-line")?.getBoundingClientRect();
+        const composer = document.querySelector(".composer")?.getBoundingClientRect();
+        return activity === undefined || composer === undefined
+          ? undefined
+          : {
+              activityLeft: activity.left,
+              activityWidth: activity.width,
+              composerLeft: composer.left,
+              composerWidth: composer.width,
+            };
+      })(),
     };
   });
 
@@ -141,9 +184,23 @@ try {
   assert.equal(renderer.bootState.phase, "ready", renderer.bootState.code ?? renderer.bootState.message);
   assert.equal(renderer.hasRoot, true, "Packaged Desktop must mount the Vite renderer root.");
   assert.equal(renderer.hasNextAsset, false, "Packaged Desktop must not load Next.js assets.");
+  assert.notEqual(renderer.chatLayout, undefined, "Packaged Desktop must render chat activity and composer geometry.");
+  assert.equal(
+    Math.abs(renderer.chatLayout!.activityLeft - renderer.chatLayout!.composerLeft) < 1,
+    true,
+    "Ephemeral activity must share the composer's left edge.",
+  );
+  assert.equal(
+    Math.abs(renderer.chatLayout!.activityWidth - renderer.chatLayout!.composerWidth) < 1,
+    true,
+    "Ephemeral activity must share the composer's width.",
+  );
   assert.match(renderer.bodyText, /Kestrel/u);
 
   await window.screenshot({ path: screenshotPath, fullPage: true });
+  const liveModel = liveModelApproved
+    ? await verifyLiveModelResponse(window)
+    : undefined;
   const surfaces = await verifyStaticRendererSurfaces(window);
   const evidence = {
     version: "desktop-package-smoke-v1",
@@ -156,8 +213,10 @@ try {
     renderer: {
       hasRoot: renderer.hasRoot,
       hasNextAsset: renderer.hasNextAsset,
+      chatLayout: renderer.chatLayout,
       screenshotPath,
       surfaces,
+      ...(liveModel !== undefined ? { liveModel } : {}),
     },
   };
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
@@ -168,7 +227,6 @@ try {
     process.stderr.write(`[desktop-package-smoke] main process output:\n${output}\n`);
   }
   const corePaths = resolveLocalCorePaths(coreHome);
-  printDiagnosticLog(corePaths.postgresLogPath, "postgres");
   printDiagnosticLog(path.join(corePaths.logsPath, "desktop-runtime.log"), "runtime");
   process.stderr.write(
     `[desktop-package-smoke] main exit=${JSON.stringify(mainExit ?? null)} isolatedState=${smokeRoot}\n`,
@@ -181,7 +239,6 @@ try {
       electronPid,
       coreHome,
       packagedRoot,
-      postgresBundleRoot,
     });
   } finally {
     rmSync(smokeLockPath, { force: true });
@@ -206,6 +263,89 @@ function resolveSmokeTempParent(): string {
   return process.platform === "darwin" ? "/tmp" : tmpdir();
 }
 
+function copyDesktopModelConfiguration(sourceHome: string, targetHome: string): void {
+  const liveModelSettingKeys = [
+    "selectedProvider",
+    "providerSelectionCompletedAt",
+    "openrouterApiKey",
+    "openrouterBaseUrl",
+    "openrouterSiteUrl",
+    "openrouterAppName",
+    "openaiApiKey",
+    "openaiBaseUrl",
+    "openaiOrgId",
+    "openaiProjectId",
+    "anthropicApiKey",
+    "anthropicBaseUrl",
+    "anthropicVersion",
+    "ollamaBaseUrl",
+    "lmstudioBaseUrl",
+  ] as const;
+  const source = resolveLocalCorePaths(sourceHome);
+  const target = resolveLocalCorePaths(targetHome);
+  const sourcePolicyPath = path.join(source.stateRootPath, "model-policy.json");
+  const targetPolicyPath = path.join(target.stateRootPath, "model-policy.json");
+  assert.equal(existsSync(sourcePolicyPath), true, `Live model smoke configuration is missing: ${sourcePolicyPath}`);
+  mkdirSync(path.dirname(targetPolicyPath), { recursive: true, mode: 0o700 });
+  copyFileSync(sourcePolicyPath, targetPolicyPath);
+
+  const sourceSettingsPath = path.join(source.settingsPath, "local-core-settings.json");
+  const targetSettingsPath = path.join(target.settingsPath, "local-core-settings.json");
+  assert.equal(existsSync(sourceSettingsPath), true, `Live model smoke configuration is missing: ${sourceSettingsPath}`);
+  const sourceSettings = JSON.parse(readFileSync(sourceSettingsPath, "utf8")) as Record<string, unknown>;
+  const providerSettings = Object.fromEntries(
+    liveModelSettingKeys.flatMap((key) => sourceSettings[key] === undefined
+      ? []
+      : [[key, sourceSettings[key]]]),
+  );
+  mkdirSync(path.dirname(targetSettingsPath), { recursive: true, mode: 0o700 });
+  writeFileSync(targetSettingsPath, `${JSON.stringify(providerSettings, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+async function verifyLiveModelResponse(window: Page): Promise<{
+  verified: true;
+  expectedToken: string;
+  markdownRendered: true;
+}> {
+  const expectedToken = "KESTREL_DESKTOP_MODEL_OK";
+  await window.getByRole("button", { name: "Chat", exact: true }).click();
+  await window.getByRole("textbox", { name: "Message", exact: true }).fill(
+    `Reply with exactly this token and nothing else: ${expectedToken}`,
+  );
+  await window.getByRole("button", { name: "Send message", exact: true }).click();
+  await window.waitForFunction(
+    (token) => {
+      const assistantResponded = Array.from(
+        document.querySelectorAll(".message-assistant .message-body"),
+      ).some((element) => element.textContent?.trim() === String(token));
+      if (assistantResponded) {
+        return true;
+      }
+      const error = document.querySelector(".activity-error")?.textContent?.trim();
+      if (error !== undefined && error.length > 0) {
+        throw new Error(error);
+      }
+      return false;
+    },
+    expectedToken,
+    { timeout: 180_000 },
+  );
+  await window.getByText(expectedToken, { exact: true }).waitFor({ timeout: 30_000 });
+  const assistantMessage = window.locator(".message-assistant .message-body-markdown").filter({
+    hasText: expectedToken,
+  });
+  await assistantMessage.waitFor({ state: "visible", timeout: 30_000 });
+  assert.equal(
+    await assistantMessage.locator("p").count() > 0,
+    true,
+    "The live assistant response must render through Streamdown semantic markup.",
+  );
+  return { verified: true, expectedToken, markdownRendered: true };
+}
+
 function readDesktopVersion(root: string): string {
   const manifest = JSON.parse(
     readFileSync(path.join(root, "apps", "desktop", "package.json"), "utf8"),
@@ -215,10 +355,24 @@ function readDesktopVersion(root: string): string {
 }
 
 async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string, string>> {
+  await window.getByRole("button", { name: "Configure provider and model", exact: true }).click();
+  await window.getByRole("dialog", { name: "Model provider", exact: true }).waitFor({ timeout: 30_000 });
+  assert.equal(
+    (await window.getByRole("textbox", { name: "Model ID", exact: true }).inputValue()).length > 0,
+    true,
+    "Provider settings must expose the configured model ID.",
+  );
+  await window.getByRole("button", { name: "Close model provider settings", exact: true }).click();
+
   await openRendererSurface(window, "Mission control", "Mission control");
   await window.getByText("No tasks in this session", { exact: true }).waitFor({ timeout: 30_000 });
   await window.getByRole("button", { name: "Runs", exact: true }).click();
-  await window.getByText("No runtime runs", { exact: true }).waitFor({ timeout: 30_000 });
+  await window.waitForFunction(
+    () => document.body.innerText.includes("No runtime runs")
+      || document.querySelector(".runtime-run-index") !== null,
+    undefined,
+    { timeout: 30_000 },
+  );
   await assertNoSurfaceError(window, "Mission control");
   await window.screenshot({ path: missionControlScreenshotPath, fullPage: true });
 
@@ -318,25 +472,16 @@ function resolvePackagedExecutable(packagedPath: string, platform: string): stri
   return path.join(packagedPath, "Kestrel");
 }
 
-function resolvePackagedPostgresBundleRoot(packagedPath: string, platform: string): string {
-  if (platform === "darwin") {
-    return path.join(packagedPath, "Kestrel.app", "Contents", "Resources", "postgres-bundle");
-  }
-  return path.join(packagedPath, "resources", "postgres-bundle");
-}
-
 async function cleanupIsolatedSmoke(input: {
   electronApp: ElectronApplication | undefined;
   electronPid: number | undefined;
   coreHome: string;
   packagedRoot: string;
-  postgresBundleRoot: string;
 }): Promise<void> {
   const errors: Error[] = [];
   for (const cleanup of [
     () => closeElectronApplication(input.electronApp),
     () => stopIsolatedLocalCore(input.coreHome),
-    () => stopIsolatedManagedPostgres(input.coreHome, input.postgresBundleRoot),
     () => input.electronPid === undefined
       ? Promise.resolve()
       : stopOwnedProcess(input.electronPid),
@@ -421,53 +566,6 @@ async function stopIsolatedLocalCore(homePath: string): Promise<void> {
   await stopOwnedProcess(ownerPid, 10_000);
 }
 
-async function stopIsolatedManagedPostgres(
-  homePath: string,
-  bundleRootPath: string,
-): Promise<void> {
-  const paths = resolveLocalCorePaths(homePath);
-  if (existsSync(path.join(paths.postgresDataPath, "PG_VERSION")) === false) {
-    return;
-  }
-  const postgresPid = readPostmasterPid(paths.postgresDataPath);
-  try {
-    const installation = await resolveLocalCorePostgresInstallation({ bundleRootPath });
-    if (installation !== undefined) {
-      execFileSync(installation.pgCtlPath, [
-        "stop",
-        "-D",
-        paths.postgresDataPath,
-        "-m",
-        "fast",
-        "-w",
-      ], {
-        env: {
-          ...process.env,
-          DYLD_LIBRARY_PATH: installation.libDir,
-          PATH: `${installation.binDir}:${process.env.PATH ?? ""}`,
-        },
-        stdio: "ignore",
-      });
-    }
-  } catch (error) {
-    if (postgresPid === undefined) {
-      throw error;
-    }
-  }
-  if (postgresPid !== undefined) {
-    await stopOwnedProcess(postgresPid);
-  }
-}
-
-function readPostmasterPid(dataPath: string): number | undefined {
-  const pidPath = path.join(dataPath, "postmaster.pid");
-  if (existsSync(pidPath) === false) {
-    return undefined;
-  }
-  const firstLine = readFileSync(pidPath, "utf8").split(/\r?\n/u)[0];
-  const pid = Number.parseInt(firstLine ?? "", 10);
-  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-}
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;

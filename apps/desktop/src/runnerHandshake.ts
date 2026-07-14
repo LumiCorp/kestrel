@@ -8,6 +8,13 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 4_000;
 interface RunnerPingCommandEnvelope {
   id: string;
   type: "runner.ping";
+  metadata: {
+    actor: {
+      actorId: string;
+      actorType: "operator";
+      displayName: string;
+    };
+  };
   payload: {
     nonce: string;
   };
@@ -26,7 +33,7 @@ export interface RunnerHandshakeTransport {
   observe(observer: RunnerProtocolObserver): () => void;
 }
 
-export async function ensureManagedRunnerResponsive(
+export async function ensureDesktopRunnerResponsive(
   transport: RunnerHandshakeTransport,
   options: {
     timeoutMs?: number | undefined;
@@ -107,6 +114,13 @@ export async function ensureManagedRunnerResponsive(
       const command: RunnerPingCommandEnvelope = {
         id: commandId,
         type: "runner.ping",
+        metadata: {
+          actor: {
+            actorId: "kestrel-desktop",
+            actorType: "operator",
+            displayName: "Kestrel Desktop",
+          },
+        },
         payload: {
           nonce: commandId,
         },

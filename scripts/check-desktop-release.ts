@@ -2,9 +2,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { verifyPreparedDesktopPostgresBundle } from "./prepare-desktop-postgres-bundle.js";
 
-const TARGET_VERSION = "0.5.1";
+const TARGET_VERSION = "0.6.0";
 const ROOT = resolveRepoRoot(process.cwd());
 
 const VERSIONED_MANIFESTS = [
@@ -53,12 +52,10 @@ const REQUIRED_RUNTIME_RESOURCE_PATHS = [
 ] as const;
 
 const REQUIRED_RELEASE_DOCS = [
+  "docs/runbooks/2026-07-13-desktop-v0.6-macos-release.md",
+  "docs/runbooks/2026-07-13-desktop-v0.6-clean-machine-smoke.md",
   "docs/runbooks/2026-07-10-desktop-v0.5.1-state-bridge.md",
-  "docs/runbooks/2026-06-16-desktop-v0.5-beta-macos-install.md",
-  "docs/runbooks/2026-06-16-desktop-v0.5-beta-clean-machine-smoke.md",
-  "docs/runbooks/2026-06-17-local-core-beta-migration-evidence.md",
-  "docs/plans/2026-06-17-kestrel-local-core-shell-model.md",
-  "docs/analysis/2026-06-17-kestrel-local-core-state-inventory.md",
+  "docs/plans/2026-07-13-kestrel-local-platform-architecture.md",
 ] as const;
 
 const errors: string[] = [];
@@ -99,6 +96,19 @@ function checkDesktopPackagerVersionSource(): void {
   if (!source.includes("appVersion: desktopPackageJson.version")) {
     errors.push("scripts/package-desktop.ts must source appVersion from apps/desktop/package.json.");
   }
+  for (const required of [
+    "KESTREL_DESKTOP_RELEASE",
+    "KESTREL_DESKTOP_SIGN_IDENTITY",
+    "KESTREL_DESKTOP_NOTARY_PROFILE",
+    '"notarytool", "submit"',
+    '"stapler", "staple"',
+    '"stapler", "validate"',
+    '"spctl"',
+  ]) {
+    if (!source.includes(required)) {
+      errors.push(`scripts/package-desktop.ts must preserve release security step '${required}'.`);
+    }
+  }
 }
 
 function checkDesktopLocalCoreOwnership(): void {
@@ -123,6 +133,12 @@ function checkDesktopLocalCoreOwnership(): void {
   }
   if (!mainSource.includes("ensureLocalCoreDaemonReady")) {
     errors.push("apps/desktop/src/main.ts must start or attach to Kestrel Local Core through the daemon helper.");
+  }
+  if (!mainSource.includes("new LocalCoreRunnerTransport")) {
+    errors.push("apps/desktop/src/main.ts must send execution through Local Core.");
+  }
+  if (mainSource.includes("new ManagedRunnerTransport")) {
+    errors.push("apps/desktop/src/main.ts must not launch an independent runner process.");
   }
   if (!mainSource.includes("runMigrations: true")) {
     errors.push("apps/desktop/src/main.ts must request Core-owned migrations during Local Core readiness.");
@@ -167,20 +183,18 @@ function checkForbiddenLocalCoreBarrelImports(): void {
 function checkReleaseDocs(): void {
   for (const relativePath of REQUIRED_RELEASE_DOCS) {
     if (!existsSync(path.join(ROOT, relativePath))) {
-      errors.push(`missing Desktop v0.5 beta release doc: ${relativePath}`);
+      errors.push(`missing Desktop v0.6 release doc: ${relativePath}`);
     }
   }
 }
 
 function checkLocalCoreReleaseDocs(): void {
-  const installDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-06-16-desktop-v0.5-beta-macos-install.md"), "utf8");
-  const smokeDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-06-16-desktop-v0.5-beta-clean-machine-smoke.md"), "utf8");
-  const migrationDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-06-17-local-core-beta-migration-evidence.md"), "utf8");
+  const installDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-07-13-desktop-v0.6-macos-release.md"), "utf8");
+  const smokeDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-07-13-desktop-v0.6-clean-machine-smoke.md"), "utf8");
 
   for (const [label, source] of [
     ["Desktop install notes", installDoc],
     ["clean-machine smoke checklist", smokeDoc],
-    ["Local Core migration evidence runbook", migrationDoc],
   ] as const) {
     if (!source.includes("Kestrel Local Core")) {
       errors.push(`${label} must describe Kestrel Local Core as the shared local source of truth.`);
@@ -193,19 +207,21 @@ function checkLocalCoreReleaseDocs(): void {
     "concurrent launch",
     "stale lock",
     "inherited `DATABASE_URL`",
+    "0.5 state remains untouched",
   ]) {
     if (!smokeDoc.includes(requiredPhrase)) {
       errors.push(`clean-machine smoke checklist must cover ${requiredPhrase}.`);
     }
   }
   for (const requiredPhrase of [
-    "found old Desktop state",
-    "found old CLI state",
-    "isolated/dev mode active",
-    "do not move or overwrite automatically",
+    "Developer ID Application",
+    "notarized",
+    "stapled",
+    "PGlite",
+    "KESTREL_DESKTOP_RELEASE=1",
   ]) {
-    if (!migrationDoc.includes(requiredPhrase)) {
-      errors.push(`Local Core migration evidence runbook must document '${requiredPhrase}'.`);
+    if (!installDoc.includes(requiredPhrase)) {
+      errors.push(`Desktop 0.6 release runbook must document '${requiredPhrase}'.`);
     }
   }
 }
@@ -232,28 +248,6 @@ function checkDesktopBridgeReleaseDoc(): void {
 function checkDesktopResources(): void {
   if (!existsSync(path.join(ROOT, "apps", "desktop", "static", "renderer", "index.html"))) {
     errors.push("Desktop Vite renderer is missing. Run `pnpm --filter @kestrel/desktop renderer:build` before release checks.");
-  }
-
-  const postgresTargetRoot = path.join(
-    ROOT,
-    "apps",
-    "desktop",
-    "resources",
-    "postgres-bundle",
-    `${process.platform}-${process.arch}`,
-  );
-  if (process.platform === "darwin") {
-    try {
-      verifyPreparedDesktopPostgresBundle({
-        targetRoot: postgresTargetRoot,
-        expectedPlatform: process.platform,
-        expectedArch: process.arch,
-      });
-    } catch (error) {
-      errors.push(
-        `Desktop Postgres bundle is not portable: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
   }
 
   const resourcesRoot = path.join(ROOT, "apps", "desktop", "resources", "kestrel-repo");
@@ -309,13 +303,25 @@ function checkDesktopResources(): void {
     if (stagedPackage.version !== TARGET_VERSION) {
       errors.push(`Desktop package stage version must be ${TARGET_VERSION}; found ${String(stagedPackage.version)}`);
     }
-    for (const dependency of ["tsx", "pg", "@kestrel-agents/protocol"]) {
-      if (!existsSync(path.join(resourcesRoot, "node_modules", dependency, "package.json"))) {
+    const packagedRuntimeRoot = path.join(
+      ROOT,
+      "apps",
+      "desktop",
+      "out",
+      `Kestrel-${process.env.KESTREL_DESKTOP_PLATFORM ?? process.platform}-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
+      "Kestrel.app",
+      "Contents",
+      "Resources",
+      "kestrel-repo",
+    );
+    const installedRuntimeRoot = existsSync(packagedRuntimeRoot) ? packagedRuntimeRoot : resourcesRoot;
+    for (const dependency of ["tsx", "pg", "@electric-sql/pglite", "@kestrel-agents/protocol"]) {
+      if (!existsSync(path.join(installedRuntimeRoot, "node_modules", dependency, "package.json"))) {
         errors.push(`Prepared package resources must include node_modules/${dependency}.`);
       }
     }
     const installedProtocolPath = path.join(
-      resourcesRoot,
+      installedRuntimeRoot,
       "node_modules",
       "@kestrel-agents",
       "protocol",
@@ -327,7 +333,21 @@ function checkDesktopResources(): void {
         errors.push(`Prepared package resources must install @kestrel-agents/protocol ${TARGET_VERSION}.`);
       }
     }
-    checkInstalledPackageDependencies(resourcesRoot, "tsx");
+    checkInstalledPackageDependencies(installedRuntimeRoot, "tsx");
+  }
+
+  const packagedResourcesRoot = path.join(
+    ROOT,
+    "apps",
+    "desktop",
+    "out",
+    `Kestrel-${process.env.KESTREL_DESKTOP_PLATFORM ?? process.platform}-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
+    "Kestrel.app",
+    "Contents",
+    "Resources",
+  );
+  if (existsSync(path.join(packagedResourcesRoot, "postgres-bundle"))) {
+    errors.push("Desktop 0.6 package must not include the retired bundled Postgres runtime.");
   }
 }
 
@@ -346,6 +366,9 @@ function checkPackagedDesktopSignature(): void {
     "Kestrel.app",
   );
   if (!existsSync(appPath)) {
+    if (process.env.KESTREL_DESKTOP_RELEASE === "1") {
+      errors.push(`Desktop release package is missing at ${path.relative(ROOT, appPath)}.`);
+    }
     return;
   }
   const verification = spawnSync(
@@ -355,6 +378,29 @@ function checkPackagedDesktopSignature(): void {
   );
   if (verification.status !== 0) {
     errors.push(`packaged Desktop signature is invalid: ${verification.stderr.trim()}`);
+  }
+  if (process.env.KESTREL_DESKTOP_RELEASE !== "1") {
+    return;
+  }
+  const signature = spawnSync("codesign", ["-dv", "--verbose=4", appPath], { encoding: "utf8" });
+  const signatureDetails = `${signature.stdout}\n${signature.stderr}`;
+  if (signature.status !== 0 || !signatureDetails.includes("Authority=Developer ID Application:")) {
+    errors.push("packaged Desktop release must have a Developer ID Application signature.");
+  }
+  if (!/flags=.*\([^)]*\bruntime\b[^)]*\)/u.test(signatureDetails)) {
+    errors.push("packaged Desktop release must enable hardened runtime.");
+  }
+  const staple = spawnSync("xcrun", ["stapler", "validate", appPath], { encoding: "utf8" });
+  if (staple.status !== 0) {
+    errors.push(`packaged Desktop release has no valid stapled notarization ticket: ${staple.stderr.trim()}`);
+  }
+  const gatekeeper = spawnSync(
+    "spctl",
+    ["--assess", "--type", "execute", "--verbose=4", appPath],
+    { encoding: "utf8" },
+  );
+  if (gatekeeper.status !== 0) {
+    errors.push(`packaged Desktop release failed Gatekeeper assessment: ${gatekeeper.stderr.trim()}`);
   }
 }
 

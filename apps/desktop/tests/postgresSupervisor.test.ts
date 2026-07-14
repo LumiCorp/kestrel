@@ -100,6 +100,29 @@ test("DesktopPostgresSupervisor reports a blocked status when the bundle is miss
   }
 });
 
+test("DesktopPostgresSupervisor repair never deletes database state", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-safe-repair-"));
+  let removeCalls = 0;
+  const supervisor = new DesktopPostgresSupervisor({
+    bundleRootPath: path.join(root, "missing-bundle"),
+    dataPath: path.join(root, "state", "data"),
+    logPath: path.join(root, "logs", "desktop-postgres.log"),
+    metadataPath: path.join(root, "state", "metadata.json"),
+    platform: "darwin",
+    arch: "arm64",
+    rmImpl: async () => {
+      removeCalls += 1;
+    },
+  });
+
+  try {
+    await assert.rejects(() => supervisor.repair(), /No bundled Postgres installation/u);
+    assert.equal(removeCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("DesktopPostgresSupervisor reuses an already-running managed cluster", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-running-"));
   const bundleRoot = path.join(root, "postgres-bundle");

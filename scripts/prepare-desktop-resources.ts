@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareDesktopPostgresBundle } from "./prepare-desktop-postgres-bundle.js";
 import {
   resolveRuntimeDependencyInstallArgs,
   resolveRuntimePackageDependencies,
@@ -58,11 +57,6 @@ function main(): void {
   if (shouldInstallDesktopRuntimeDependencies({ packageStage: false })) {
     installDesktopRuntimeDependencies(desktopResourcesDir);
   }
-  const postgresBundle = prepareDesktopPostgresBundle({ repoRoot });
-  if (!postgresBundle.prepared && process.platform === "darwin") {
-    console.warn(`[desktop] bundled postgres unavailable: ${postgresBundle.reason ?? "unavailable"}`);
-  }
-
   console.log(`[desktop] prepared resources in ${desktopResourcesDir}`);
 }
 

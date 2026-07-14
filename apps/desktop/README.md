@@ -20,7 +20,7 @@ It is not a separate runtime implementation. It is the flagship local product su
 - present the main packaged user experience for Kestrel
 - boot the Electron window and preload bridge
 - manage desktop-specific IPC actions such as workspace picking, diagnostics reveal, and opening external URLs
-- manage the runtime transport lifecycle
+- connect the renderer to Local Core's authenticated execution transport
 - load the packaged static Vite renderer without a local web application server
 - browse registered project files and launch managed project scripts through typed IPC
 - discover local MCP servers without rendering discovered credentials
@@ -34,7 +34,7 @@ Desktop is implemented as an Electron app over the shared Kestrel surfaces. On s
 
 - resolves desktop paths and resources
 - starts or attaches to Kestrel Local Core
-- starts or reconnects to the managed runtime transport in the main process
+- connects to the execution protocol owned by Local Core
 - loads the packaged Vite renderer into a context-isolated Electron window
 - exposes capability-scoped, validated operations through the typed preload bridge
 
@@ -42,7 +42,7 @@ The renderer does not receive runner or Local Core credentials. Desktop settings
 
 The static renderer owns conversation, Mission Control task and product-board operations, project workspace, local MCP discovery, and diagnostics views. Mission Control reads runner-owned project snapshots, submits validated task and board actions, and projects runner-owned `operator.thread` and `operator.run` views through typed IPC; it does not maintain browser-local runtime state. The legacy embedded Next.js cockpit has been removed, and release checks reject Next.js or hosted-product source in packaged Desktop resources.
 
-## 0.5.1 State Bridge
+## 0.5.1 Upgrade Bridge
 
 The 0.5.1 compatibility release mirrors the existing Desktop cockpit state into Local Core before the renderer moves from embedded Next.js to a static Vite build.
 
@@ -58,31 +58,31 @@ The 0.5.1 compatibility release mirrors the existing Desktop cockpit state into 
 Local Core settings support two database modes:
 
 - `Default`: preserve existing desktop behavior.
-  - Packaged desktop uses the bundled managed Postgres path.
-  - Dev desktop uses the local default Postgres URL.
+  - Desktop uses embedded PGlite owned by Local Core.
+  - The 0.6 state epoch is isolated from 0.5 data.
 - `External`: use a hosted Postgres `DATABASE_URL` from Settings > Database.
 
 `External` mode requires `DATABASE_URL`. Desktop validates connectivity during runtime startup/restart and surfaces failures through runtime health and recovery flows.
 
-The static renderer shows the active database mode and recovery state but does not yet accept a new external URL. External database mode remains optional; packaged Desktop defaults to its bundled managed Postgres runtime.
+The static renderer shows the active database mode and recovery state but does not yet accept a new external URL. External database mode remains optional; packaged Desktop defaults to PGlite and does not ship a Postgres server.
 
 ## First-Run Setup
 
-Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. The v0.5 proof line uses a macOS ad-hoc-signed beta artifact.
+Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. A public 0.6 artifact must be Developer ID signed and notarized.
 
 - Guided setup requires the user to choose one provider first: `openrouter`, `openai`, `anthropic`, `ollama`, or `lmstudio`.
 - Hosted providers require a local desktop-stored API key before runs can start.
-- Local providers (`ollama`, `lmstudio`) do not require an API key by default and use local OpenAI-compatible base URLs. They are beta paths in v0.5.
+- Local providers (`ollama`, `lmstudio`) do not require an API key by default and use local OpenAI-compatible base URLs.
 - If onboarding is incomplete, Desktop resumes the first unfinished milestone instead of routing provider setup through the blocked recovery screen.
 - The static renderer exposes provider selection and write-only hosted-provider credential setup through Desktop IPC.
 
-## v0.5 Beta Boundaries
+## 0.6 Release Boundaries
 
 - macOS is the first clean-machine proof target.
-- The v0.5 beta artifact is ad-hoc signed. It is not Apple Developer ID signed or notarized.
+- Release packaging fails unless the app is Developer ID signed, hardened, notarized, stapled, and accepted by Gatekeeper.
 - Auto-update is out of scope.
-- Managed packaged Postgres is bundled and covered by clean-package lifecycle smoke tests; it remains a beta surface in v0.5.
-- Code/dev-shell workflows and `kcron` automation are beta companion surfaces, not the default first-run promise.
+- Local Core owns PGlite storage and execution; Desktop does not launch independent Postgres or runner processes.
+- Code/dev-shell workflows and `kcron` automation are companion surfaces, not the default first-run promise.
 
 ## Local Development
 
@@ -107,6 +107,15 @@ pnpm run desktop:build
 Package:
 
 ```bash
+pnpm run desktop:package
+```
+
+Public macOS release package:
+
+```bash
+KESTREL_DESKTOP_RELEASE=1 \
+KESTREL_DESKTOP_SIGN_IDENTITY="Developer ID Application: ..." \
+KESTREL_DESKTOP_NOTARY_PROFILE="kestrel-notary" \
 pnpm run desktop:package
 ```
 

@@ -91,17 +91,18 @@ import {
   resolveVerifiedDesktopPathTarget,
 } from "./fileAccess.js";
 import { createDesktopBeforeQuitHandler } from "./lifecycle.js";
-import { ManagedRunnerTransport } from "./runnerTransport.js";
 import {
-  buildDesktopRunnerEnvironment,
-  buildDesktopModelEnvironment,
+  LocalCoreRunnerTransport,
+  type DesktopRunnerControlTransport,
+} from "./localCoreRunnerTransport.js";
+import {
   buildDesktopRunnerProfile,
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
 } from "./settingsStore.js";
 import { createCoreOwnedDesktopDatabaseController, type DesktopDatabaseController } from "./databaseController.js";
 import { archiveRuntimeStore } from "./runtimeStoreReset.js";
-import { ensureManagedRunnerResponsive } from "./runnerHandshake.js";
+import { ensureDesktopRunnerResponsive } from "./runnerHandshake.js";
 import { buildDesktopSupportBundle } from "./supportBundle.js";
 import {
   ensureDesktopProjectGitBootstrap,
@@ -139,7 +140,7 @@ let bootState: DesktopBootState = {
   startedAt: bootStartedAt,
   updatedAt: bootStartedAt,
 };
-let runnerTransport: ManagedRunnerTransport | undefined;
+let runnerTransport: DesktopRunnerControlTransport | undefined;
 let desktopConfig: ReturnType<typeof resolveDesktopPathConfig> | undefined;
 let localCoreStatus: LocalCoreStatus | undefined;
 let runtimeHealth: DesktopRuntimeHealth = {
@@ -247,16 +248,9 @@ async function main(): Promise<void> {
   syncDesktopWebEnvironment(desktopSettings);
   applyDesktopProfileOverride(desktopSettings);
   await reconfigureDatabaseController(desktopConfig, desktopSettings);
-  runnerTransport = new ManagedRunnerTransport({
-    repoRoot: desktopConfig.repoRoot,
+  runnerTransport = new LocalCoreRunnerTransport({
+    client: localCoreClient,
     logPath: desktopConfig.runtimeLogPath,
-    env: {
-      ...buildDesktopModelEnvironment(process.env, desktopSettings, desktopModelPolicy),
-      KESTREL_HOME: desktopConfig.runtimeHomePath,
-      ...(localCoreStatus.home.source !== "isolated_dev_home"
-        ? { KESTREL_CORE_HOME: localCoreStatus.home.homePath }
-        : {}),
-    },
   });
   subscribeToCoreProjectRuns();
   globalThis.__kestrelDesktopRunnerTransportFactory = () => {
@@ -370,7 +364,7 @@ async function ensureMainWindow(): Promise<void> {
 async function bootDesktop(input: {
   config: ReturnType<typeof resolveDesktopPathConfig>;
   window: BrowserWindow;
-  runnerTransport: ManagedRunnerTransport;
+  runnerTransport: DesktopRunnerControlTransport;
 }): Promise<void> {
   try {
     if (databaseController === undefined) {
@@ -387,24 +381,12 @@ async function bootDesktop(input: {
     const database = await databaseController.prepare();
     currentDatabaseUrl = database.databaseUrl;
     databaseStatus = database.status;
-    input.runnerTransport.setEnvironment(
-      buildDesktopRunnerEnvironment(
-        process.env,
-        desktopSettings,
-        desktopModelPolicy,
-        input.config.runtimeHomePath,
-        {
-          databaseUrl: database.databaseUrl,
-          databaseUrlSource: currentDatabaseUrlSource,
-        },
-      ),
-    );
     updateBootState({
       phase: "starting_runtime",
       message: "Starting Kestrel runtime…",
       database: databaseStatus,
     }, input.window.webContents);
-    await ensureManagedRunnerResponsive(input.runnerTransport);
+    await ensureDesktopRunnerResponsive(input.runnerTransport);
 
     updateBootState({
       phase: "starting_web",
@@ -532,7 +514,7 @@ async function sendDesktopCommand(command: DesktopShellCommand): Promise<void> {
 }
 
 function registerIpcHandlers(
-  runnerTransport: ManagedRunnerTransport,
+  runnerTransport: DesktopRunnerControlTransport,
 ): void {
   ipcMain.handle("desktop:get-bridge-info", () => ({
     connected: true,
@@ -694,20 +676,6 @@ function registerIpcHandlers(
       syncDesktopWebEnvironment(desktopSettings);
     }
     applyDesktopProfileOverride(desktopSettings);
-    runnerTransport.setEnvironment(
-      buildDesktopRunnerEnvironment(
-        process.env,
-        desktopSettings,
-        desktopModelPolicy,
-        desktopConfig.runtimeHomePath,
-        currentDatabaseUrl !== undefined
-          ? {
-              databaseUrl: currentDatabaseUrl,
-              databaseUrlSource: currentDatabaseUrlSource,
-            }
-          : {},
-      ),
-    );
     await resetDesktopRunnerAdapter();
     updateBootState({
       phase: "starting_runtime",
@@ -910,18 +878,6 @@ function registerIpcHandlers(
       const database = await databaseController.prepare();
       currentDatabaseUrl = database.databaseUrl;
       databaseStatus = database.status;
-      runnerTransport.setEnvironment(
-        buildDesktopRunnerEnvironment(
-          process.env,
-          desktopSettings,
-          desktopModelPolicy,
-          desktopConfig.runtimeHomePath,
-          {
-            databaseUrl: database.databaseUrl,
-            databaseUrlSource: currentDatabaseUrlSource,
-          },
-        ),
-      );
     }
     updateBootState({
       phase: "starting_runtime",
@@ -930,7 +886,7 @@ function registerIpcHandlers(
     }, mainWindow?.webContents);
     await stopCoreProjectRuns();
     await runnerTransport.stop();
-    await ensureManagedRunnerResponsive(runnerTransport);
+    await ensureDesktopRunnerResponsive(runnerTransport);
     const status = runnerTransport.getStatus();
     updateBootState({
       phase: "ready",
@@ -962,20 +918,8 @@ function registerIpcHandlers(
         const database = await databaseController.prepare();
         currentDatabaseUrl = database.databaseUrl;
         databaseStatus = database.status;
-        runnerTransport.setEnvironment(
-          buildDesktopRunnerEnvironment(
-            process.env,
-            desktopSettings,
-            desktopModelPolicy,
-            desktopConfig.runtimeHomePath,
-            {
-              databaseUrl: database.databaseUrl,
-              databaseUrlSource: currentDatabaseUrlSource,
-            },
-          ),
-        );
       }
-      await ensureManagedRunnerResponsive(runnerTransport);
+      await ensureDesktopRunnerResponsive(runnerTransport);
       const runtimeStatus = runnerTransport.getStatus();
       updateBootState({
         phase: "ready",
@@ -1023,14 +967,6 @@ function registerIpcHandlers(
     }
     databaseStatus = await databaseController.restart();
     currentDatabaseUrl = databaseController.getDatabaseUrl();
-    if (databaseStatus.running && currentDatabaseUrl !== undefined && desktopConfig !== undefined) {
-      runnerTransport.setEnvironment(
-        buildDesktopRunnerEnvironment(process.env, desktopSettings, desktopModelPolicy, desktopConfig.runtimeHomePath, {
-          databaseUrl: currentDatabaseUrl,
-          databaseUrlSource: currentDatabaseUrlSource,
-        }),
-      );
-    }
     runtimeHealth = deriveRuntimeHealth(bootState);
     mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
     return databaseStatus;
@@ -1044,14 +980,6 @@ function registerIpcHandlers(
     }
     databaseStatus = await databaseController.repair();
     currentDatabaseUrl = databaseController.getDatabaseUrl();
-    if (databaseStatus.running && currentDatabaseUrl !== undefined && desktopConfig !== undefined) {
-      runnerTransport.setEnvironment(
-        buildDesktopRunnerEnvironment(process.env, desktopSettings, desktopModelPolicy, desktopConfig.runtimeHomePath, {
-          databaseUrl: currentDatabaseUrl,
-          databaseUrlSource: currentDatabaseUrlSource,
-        }),
-      );
-    }
     runtimeHealth = deriveRuntimeHealth(bootState);
     mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
     return databaseStatus;
@@ -2164,7 +2092,7 @@ function requireLocalCoreStatus(): LocalCoreStatus {
 }
 
 function requireDesktopRunnerAdapter(
-  transport: ManagedRunnerTransport,
+  transport: DesktopRunnerControlTransport,
 ): WebRunnerAdapter {
   if (desktopRunnerAdapter === undefined) {
     desktopRunnerAdapter = createWebRunnerAdapter({
@@ -2202,7 +2130,7 @@ async function saveDesktopCoreSettings(
 }
 
 async function persistDesktopRendererConfiguration(
-  runner: ManagedRunnerTransport,
+  runner: DesktopRunnerControlTransport,
   input: {
     settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined };
     restartRuntime: boolean;
@@ -2219,20 +2147,6 @@ async function persistDesktopRendererConfiguration(
   await saveDesktopCoreSettings(input.settings);
   syncDesktopWebEnvironment(desktopSettings);
   applyDesktopProfileOverride(desktopSettings);
-  runner.setEnvironment(
-    buildDesktopRunnerEnvironment(
-      process.env,
-      desktopSettings,
-      desktopModelPolicy,
-      desktopConfig.runtimeHomePath,
-      currentDatabaseUrl !== undefined
-        ? {
-            databaseUrl: currentDatabaseUrl,
-            databaseUrlSource: currentDatabaseUrlSource,
-          }
-        : {},
-    ),
-  );
   if (input.resetRunnerProfile) {
     await resetDesktopRunnerAdapter();
   }
@@ -2356,8 +2270,7 @@ async function ensureDesktopLocalCoreReady(
     platform: process.platform,
     coreVersion: app.getVersion(),
     ownerExecutable: process.execPath,
-    databaseMode: "managed",
-    postgresBundleRootPath: config.postgresBundleRootPath,
+    databaseMode: "pglite",
     repoRoot: config.repoRoot,
     runMigrations: true,
   });

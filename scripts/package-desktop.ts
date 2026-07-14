@@ -3,7 +3,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { resolveDesktopPackagerConfig } from "../apps/desktop/src/packageConfig.ts";
-import { verifyPreparedDesktopPostgresBundle } from "./prepare-desktop-postgres-bundle.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopPackageJson = readPackageJson(path.join(repoRoot, "apps", "desktop", "package.json"));
@@ -19,7 +18,7 @@ const extraResources = [
   path.join(resourcesDir, "kestrel-repo"),
   path.join(repoRoot, "apps", "desktop", "static"),
 ];
-const postgresBundlePath = path.join(resourcesDir, "postgres-bundle");
+const releaseBuild = process.env.KESTREL_DESKTOP_RELEASE === "1";
 const darwinSigning = packagerConfig.platform === "darwin"
   ? resolveDarwinSigningOptions()
   : undefined;
@@ -27,25 +26,6 @@ const darwinSigning = packagerConfig.platform === "darwin"
 if (existsSync(packagerConfig.stageDir) === false) {
   throw new Error("Desktop package stage is missing. Run prepare:package-stage before packaging.");
 }
-if (packagerConfig.platform === "darwin") {
-  const targetRoot = path.join(
-    postgresBundlePath,
-    `${packagerConfig.platform}-${packagerConfig.arch}`,
-  );
-  const manifest = verifyPreparedDesktopPostgresBundle({
-    targetRoot,
-    expectedPlatform: packagerConfig.platform,
-    expectedArch: packagerConfig.arch,
-  });
-  console.log(
-    `[desktop] verified self-contained Postgres ${manifest.version} `
-      + `(${manifest.scannedBinaries} Mach-O binaries)`,
-  );
-  extraResources.push(postgresBundlePath);
-} else if (existsSync(postgresBundlePath)) {
-  extraResources.push(postgresBundlePath);
-}
-
 mkdirSync(packagerConfig.outDir, { recursive: true });
 
 const outputPrefix = `${packagerConfig.appName}-${packagerConfig.platform}-${packagerConfig.arch}`;
@@ -82,6 +62,12 @@ for (const packagedPath of packagedPaths) {
     signDesktopPackageAdHoc(packagedPath, packagerConfig);
   }
   verifyDesktopPackage(packagedPath, packagerConfig, darwinSigning?.hardenedRuntime);
+  if (packagerConfig.platform === "darwin" && releaseBuild) {
+    notarizeDesktopPackage(packagedPath, packagerConfig);
+  } else if (packagerConfig.platform === "darwin") {
+    const archivePath = createDesktopPackageArchive(packagedPath, packagerConfig);
+    console.log(`[desktop] packaged archive at ${archivePath}`);
+  }
   console.log(`[desktop] packaged app at ${packagedPath}`);
 }
 
@@ -119,11 +105,63 @@ function verifyDesktopPackage(
         + `received ${String(hasHardenedRuntime)}.`,
     );
   }
+  if (releaseBuild && !signatureDetails.includes("Authority=Developer ID Application:")) {
+    throw new Error("Desktop release package must be signed with a Developer ID Application certificate.");
+  }
   execFileSync(
     "codesign",
     ["--verify", "--deep", "--strict", "--verbose=4", appPath],
     { stdio: "inherit" },
   );
+}
+
+function notarizeDesktopPackage(
+  packagedPath: string,
+  config: { appName: string; platform: string; arch: string },
+): void {
+  const notaryProfile = process.env.KESTREL_DESKTOP_NOTARY_PROFILE?.trim();
+  if (notaryProfile === undefined || notaryProfile.length === 0) {
+    throw new Error("KESTREL_DESKTOP_NOTARY_PROFILE is required for a Desktop release build.");
+  }
+  const appPath = path.join(packagedPath, `${config.appName}.app`);
+  const submissionZip = path.join(
+    packagerConfig.outDir,
+    `${config.appName}-${desktopPackageJson.version}-${config.platform}-${config.arch}.notary.zip`,
+  );
+  rmSync(submissionZip, { force: true });
+  execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, submissionZip], {
+    stdio: "inherit",
+  });
+  try {
+    execFileSync(
+      "xcrun",
+      ["notarytool", "submit", submissionZip, "--keychain-profile", notaryProfile, "--wait"],
+      { stdio: "inherit" },
+    );
+    execFileSync("xcrun", ["stapler", "staple", appPath], { stdio: "inherit" });
+    execFileSync("xcrun", ["stapler", "validate", appPath], { stdio: "inherit" });
+    execFileSync("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath], { stdio: "inherit" });
+  } finally {
+    rmSync(submissionZip, { force: true });
+  }
+  const releaseZip = createDesktopPackageArchive(packagedPath, config);
+  console.log(`[desktop] notarized release artifact at ${releaseZip}`);
+}
+
+function createDesktopPackageArchive(
+  packagedPath: string,
+  config: { appName: string; platform: string; arch: string },
+): string {
+  const appPath = path.join(packagedPath, `${config.appName}.app`);
+  const archivePath = path.join(
+    packagerConfig.outDir,
+    `${config.appName}-${desktopPackageJson.version}-${config.platform}-${config.arch}.zip`,
+  );
+  rmSync(archivePath, { force: true });
+  execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, archivePath], {
+    stdio: "inherit",
+  });
+  return archivePath;
 }
 
 function resolveDarwinSigningOptions(): {
@@ -135,11 +173,14 @@ function resolveDarwinSigningOptions(): {
   const identity = configuredIdentity && configuredIdentity.length > 0
     ? configuredIdentity
     : "-";
+  if (releaseBuild && identity === "-") {
+    throw new Error("KESTREL_DESKTOP_SIGN_IDENTITY must name a Developer ID Application certificate for a release build.");
+  }
   if (identity !== "-") {
     return {
       identity,
       hardenedRuntime: true,
-      options: { identity },
+      options: { identity, hardenedRuntime: true },
     };
   }
   return {

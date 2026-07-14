@@ -132,6 +132,27 @@ export function selectRendererThread(
     : state;
 }
 
+export function resolveRendererThreadProjectPath(input: {
+  thread: Pick<RendererThread, "projectPath">;
+  activeProjectPath?: string | undefined;
+  projects: readonly { path: string }[];
+}): string | undefined {
+  const registeredPaths = new Set(input.projects.map((project) => project.path));
+  if (
+    input.thread.projectPath !== undefined
+    && registeredPaths.has(input.thread.projectPath)
+  ) {
+    return input.thread.projectPath;
+  }
+  if (
+    input.activeProjectPath !== undefined
+    && registeredPaths.has(input.activeProjectPath)
+  ) {
+    return input.activeProjectPath;
+  }
+  return input.projects[0]?.path;
+}
+
 export function setRendererTheme(
   state: DesktopRendererState,
   theme: RendererTheme,

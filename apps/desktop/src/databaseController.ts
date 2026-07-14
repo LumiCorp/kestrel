@@ -15,7 +15,7 @@ import {
 } from "./postgresSupervisor.js";
 
 export interface DesktopDatabaseController {
-  prepare(): Promise<{ databaseUrl: string; status: DesktopDatabaseStatus }>;
+  prepare(): Promise<{ databaseUrl?: string | undefined; status: DesktopDatabaseStatus }>;
   getStatus(): Promise<DesktopDatabaseStatus>;
   restart(): Promise<DesktopDatabaseStatus>;
   repair(): Promise<DesktopDatabaseStatus>;
@@ -91,10 +91,14 @@ class CoreOwnedDesktopDatabaseController implements DesktopDatabaseController {
     }
   }
 
-  async prepare(): Promise<{ databaseUrl: string; status: DesktopDatabaseStatus }> {
+  async prepare(): Promise<{ databaseUrl?: string | undefined; status: DesktopDatabaseStatus }> {
     const coreStatus = await this.ensureReady();
     this.applyCoreStatus(coreStatus);
-    if (coreStatus.state === "blocked" || this.databaseUrl === undefined) {
+    const pgliteReady = coreStatus.dbMode === "pglite"
+      && coreStatus.database.state === "healthy"
+      && coreStatus.database.initialized
+      && coreStatus.database.running;
+    if (coreStatus.state === "blocked" || (this.databaseUrl === undefined && !pgliteReady)) {
       throw createRuntimeFailure(
         coreStatus.lastError?.code ?? coreStatus.database.lastError?.code ?? "LOCAL_CORE_DATABASE_UNAVAILABLE",
         coreStatus.lastError?.message ?? coreStatus.database.lastError?.message ?? coreStatus.summary,
@@ -102,7 +106,7 @@ class CoreOwnedDesktopDatabaseController implements DesktopDatabaseController {
       );
     }
     return {
-      databaseUrl: this.databaseUrl,
+      ...(this.databaseUrl !== undefined ? { databaseUrl: this.databaseUrl } : {}),
       status: this.status,
     };
   }

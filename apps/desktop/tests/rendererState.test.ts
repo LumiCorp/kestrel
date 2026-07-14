@@ -10,6 +10,7 @@ import {
   MAX_PERSISTED_TRANSCRIPT_BYTES,
   MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD,
   readDesktopRendererState,
+  resolveRendererThreadProjectPath,
   serializeDesktopRendererState,
   toDesktopRunHistory,
 } from "../renderer/src/state.js";
@@ -178,6 +179,33 @@ test("Vite renderer persists a project binding on project conversations", () => 
   assert.equal(hydrated.activeThreadId, scoped.activeThreadId);
   assert.equal(hydrated.threads[0]?.projectPath, "/workspace/project-a");
   assert.equal(hydrated.threads[1]?.projectPath, undefined);
+});
+
+test("Vite renderer binds an unscoped conversation turn to the active registered project", () => {
+  const state = readDesktopRendererState(null);
+  const projectPath = resolveRendererThreadProjectPath({
+    thread: state.threads[0]!,
+    activeProjectPath: "/workspace/project-b",
+    projects: [
+      { path: "/workspace/project-a" },
+      { path: "/workspace/project-b" },
+    ],
+  });
+
+  assert.equal(projectPath, "/workspace/project-b");
+});
+
+test("Vite renderer preserves a conversation project binding over the currently viewed project", () => {
+  const projectPath = resolveRendererThreadProjectPath({
+    thread: { projectPath: "/workspace/project-a" },
+    activeProjectPath: "/workspace/project-b",
+    projects: [
+      { path: "/workspace/project-a" },
+      { path: "/workspace/project-b" },
+    ],
+  });
+
+  assert.equal(projectPath, "/workspace/project-a");
 });
 
 test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {

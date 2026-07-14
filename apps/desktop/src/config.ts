@@ -11,7 +11,6 @@ export interface DesktopPathConfig {
   runtimeHomePath: string;
   settingsPath: string;
   projectRunLedgerPath: string;
-  postgresBundleRootPath: string;
   postgresDataPath: string;
   postgresLogPath: string;
   postgresMetadataPath: string;
@@ -54,9 +53,6 @@ export function resolveDesktopPathConfig(input: {
     runtimeHomePath: stateRoot,
     settingsPath: path.join(localCorePaths.settingsPath, "desktop-settings.json"),
     projectRunLedgerPath: path.join(localCorePaths.workspaceRegistryPath, "desktop-project-runs.json"),
-    postgresBundleRootPath: input.isPackaged
-      ? path.join(input.resourcesPath ?? input.cwd, "postgres-bundle")
-      : path.join(repoRoot, "apps", "desktop", "resources", "postgres-bundle"),
     postgresDataPath: localCorePaths.postgresDataPath,
     postgresLogPath: path.join(localCorePaths.logsPath, "desktop-postgres.log"),
     postgresMetadataPath: localCorePaths.postgresMetadataPath,

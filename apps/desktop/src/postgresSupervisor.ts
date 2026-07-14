@@ -95,14 +95,7 @@ export class DesktopPostgresSupervisor {
   }
 
   async repair(): Promise<DesktopDatabaseStatus> {
-    const metadata = await this.readOrCreateMetadata();
-    await this.stop();
-    await this.options.rmImpl?.(this.options.dataPath, { recursive: true, force: true });
-    if (this.options.rmImpl === undefined) {
-      await rm(this.options.dataPath, { recursive: true, force: true });
-    }
-    await this.writeMetadata(metadata);
-    return (await this.ensureReady()).status;
+    return this.restart();
   }
 
   async stop(): Promise<void> {

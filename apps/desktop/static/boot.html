@@ -404,10 +404,11 @@
 
       function renderQuickActions(state, items) {
         const actions = [];
+        const priority = { blocked: 0, degraded: 1, starting: 2, unknown: 3, ready: 4 };
         if (state.code === "STORE_SQLITE_INIT_FAILED") {
           actions.push({ label: "Reset Runtime Store", command: "reset_runtime_store" });
         }
-        for (const item of items) {
+        for (const item of [...items].sort((a, b) => (priority[a.state] ?? 5) - (priority[b.state] ?? 5))) {
           if (item.action && !actions.some((action) => action.command === item.action.command)) {
             actions.push(item.action);
           }
@@ -496,10 +497,6 @@
         }
         if (command === "copy_help_packet") {
           await copyHelp();
-          return;
-        }
-        if (command === "repair_database") {
-          await desktopBridge?.repairDatabase();
           return;
         }
         if (command === "reset_runtime_store") {
