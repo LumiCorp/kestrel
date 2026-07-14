@@ -20,6 +20,12 @@ import {
   resolveLanguageModelTransport,
 } from "./model-transport";
 import {
+  artifactModel,
+  chatModel,
+  reasoningModel,
+  titleModel,
+} from "./models.mock";
+import {
   type AISurface,
   getAISurfacePolicy,
   getDirectRuntimeConfig,
@@ -36,9 +42,6 @@ const shouldUseMockProvider =
 
 function createMockLanguageModels() {
   const defaultModelId = getDefaultAIModel();
-
-  const { artifactModel, chatModel, reasoningModel, titleModel } =
-    require("./models.mock");
 
   return customProvider({
     languageModels: {

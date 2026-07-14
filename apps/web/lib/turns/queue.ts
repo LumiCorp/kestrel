@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
@@ -10,7 +10,10 @@ export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
 let bossPromise: Promise<PgBoss> | null = null;
 let workerRegistered = false;
-let pushTimer: ReturnType<typeof setInterval> | null = null;
+let maintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let maintenanceRunning = false;
+
+const NONTERMINAL_JOB_STATES = new Set(["active", "created", "retry"]);
 
 async function drainMobilePushOutbox() {
   const {
@@ -59,13 +62,58 @@ async function sendTurn(boss: PgBoss, turnId: string) {
   }
 }
 
-export async function enqueueDurableThreadTurn(turnId: string) {
-  await sendTurn(await getTurnBoss(), turnId);
+async function dispatchTurnOrFail(boss: PgBoss, turnId: string) {
+  try {
+    await sendTurn(boss, turnId);
+  } catch (error) {
+    await completeDurableThreadTurn({
+      turnId,
+      status: "failed",
+      failureCode: "TURN_DISPATCH_FAILED",
+      failureMessage:
+        "The Kestrel agent could not start this turn. Please try again.",
+    });
+    throw error;
+  }
 }
 
-async function recoverDispatchableTurns(boss: PgBoss) {
+export async function enqueueDurableThreadTurn(turnId: string) {
+  await dispatchTurnOrFail(await getTurnBoss(), turnId);
+}
+
+export async function finalizeExhaustedDurableTurnJob(input: {
+  turnId: string;
+  retryCount: number;
+  retryLimit: number;
+}) {
+  if (input.retryCount < input.retryLimit) {
+    return false;
+  }
+  await completeDurableThreadTurn({
+    turnId: input.turnId,
+    status: "failed",
+    failureCode: "TURN_DISPATCH_FAILED",
+    failureMessage:
+      "The Kestrel agent could not start this turn. Please try again.",
+  });
+  return true;
+}
+
+async function hasNonterminalJob(boss: PgBoss, turnId: string) {
+  const jobs = await boss.findJobs<{ turnId?: unknown }>(
+    DURABLE_THREAD_TURN_QUEUE,
+    { data: { turnId } }
+  );
+  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
+async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
   const turns = await knowledgeDb
-    .select({ turnId: schema.threadTurnQueueState.activeTurnId })
+    .select({
+      queueState: schema.threadTurnQueueState.state,
+      status: schema.threadTurns.status,
+      turnId: schema.threadTurnQueueState.activeTurnId,
+    })
     .from(schema.threadTurnQueueState)
     .innerJoin(
       schema.threadTurns,
@@ -73,15 +121,48 @@ async function recoverDispatchableTurns(boss: PgBoss) {
     )
     .where(
       and(
-        eq(schema.threadTurnQueueState.state, "running"),
         isNotNull(schema.threadTurnQueueState.activeTurnId),
-        eq(schema.threadTurns.status, "queued")
+        inArray(schema.threadTurns.status, [
+          "queued",
+          "running",
+          "waiting_for_input",
+        ])
       )
     );
   for (const turn of turns) {
-    if (turn.turnId) {
-      await sendTurn(boss, turn.turnId);
+    if (!(turn.turnId && !(await hasNonterminalJob(boss, turn.turnId)))) {
+      continue;
     }
+    if (turn.status === "queued" && turn.queueState === "running") {
+      await dispatchTurnOrFail(boss, turn.turnId);
+      continue;
+    }
+    if (turn.status === "running" || turn.status === "waiting_for_input") {
+      await completeDurableThreadTurn({
+        turnId: turn.turnId,
+        status: "failed",
+        failureCode: "TURN_WORKER_INTERRUPTED",
+        failureMessage:
+          "The Kestrel agent was interrupted before this turn finished. Please try again.",
+      });
+    }
+  }
+}
+
+export async function reconcileDurableThreadTurnQueue() {
+  await reconcileDurableThreadTurnQueueWithBoss(await getTurnBoss());
+}
+
+async function runWorkerMaintenance(boss: PgBoss) {
+  if (maintenanceRunning) {
+    return;
+  }
+  maintenanceRunning = true;
+  try {
+    await reconcileDurableThreadTurnQueueWithBoss(boss);
+    await drainMobilePushOutbox().catch(reportPushFailure);
+  } finally {
+    maintenanceRunning = false;
   }
 }
 
@@ -104,28 +185,28 @@ export async function startDurableThreadTurnWorker() {
             );
             const result = await processDurableThreadTurn(turnId);
             if (result.nextTurnId) {
-              await sendTurn(boss, result.nextTurnId);
+              await dispatchTurnOrFail(boss, result.nextTurnId);
             }
             await drainMobilePushOutbox().catch(reportPushFailure);
           } catch (error) {
-            if (job.retryCount >= job.retryLimit) {
-              await completeDurableThreadTurn({
-                turnId,
-                status: "failed",
-                failureCode: "TURN_DISPATCH_FAILED",
-                failureMessage:
-                  "The Kestrel agent could not start this turn. Please try again.",
-              });
-            }
+            await finalizeExhaustedDurableTurnJob({
+              turnId,
+              retryCount: job.retryCount,
+              retryLimit: job.retryLimit,
+            });
             throw error;
           }
         }
       }
     );
-    await recoverDispatchableTurns(boss);
+    await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
-    pushTimer = setInterval(() => {
-      void drainMobilePushOutbox().catch(reportPushFailure);
+    maintenanceTimer = setInterval(() => {
+      void runWorkerMaintenance(boss).catch((error) => {
+        console.error("Kestrel One worker maintenance failed.", {
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
     }, 5000);
   }
   return boss;
@@ -136,9 +217,9 @@ export async function stopDurableThreadTurnWorker() {
     return;
   }
   const boss = await bossPromise;
-  if (pushTimer) {
-    clearInterval(pushTimer);
-    pushTimer = null;
+  if (maintenanceTimer) {
+    clearInterval(maintenanceTimer);
+    maintenanceTimer = null;
   }
   await boss.stop({ graceful: true, timeout: 30_000 });
   bossPromise = null;
