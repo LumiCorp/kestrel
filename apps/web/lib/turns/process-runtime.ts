@@ -6,7 +6,7 @@ import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
 import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
 import type { Session } from "@/lib/auth-types";
-import { generateTitleFromUserMessage } from "@/lib/chat/actions";
+import { generateTitleForOrganization } from "@/lib/chat/title";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   issueProjectContextGrant,
@@ -190,9 +190,10 @@ export async function processDurableThreadTurn(turnId: string) {
       transientTitle: turn.approvalId
         ? null
         : submittedUserMessage
-          ? generateTitleFromUserMessage({
+          ? generateTitleForOrganization({
               message: submittedUserMessage,
               modelId: turn.requestedModelId ?? undefined,
+              organizationId: turn.organizationId,
             }).catch(() => null)
           : null,
       signal: cancellation.signal,

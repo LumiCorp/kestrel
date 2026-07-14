@@ -39,6 +39,13 @@ const workerEntrypoint = fs.readFileSync(
   ),
   "utf8"
 );
+const workerRuntime = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../turns/process-runtime.ts"
+  ),
+  "utf8"
+);
 const workerServerOnlyLoader = fs.readFileSync(
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -122,4 +129,10 @@ test("the production worker entrypoint starts without top-level await", () => {
   );
   assert.doesNotMatch(webPackage.scripts["worker:turns"] ?? "", /react-server/u);
   assert.match(workerServerOnlyLoader, /specifier === "server-only"/u);
+});
+
+test("the durable worker uses pinned organization context without request auth", () => {
+  assert.doesNotMatch(workerRuntime, /@\/lib\/chat\/actions/u);
+  assert.match(workerRuntime, /generateTitleForOrganization/u);
+  assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
 });

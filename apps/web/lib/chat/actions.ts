@@ -1,14 +1,12 @@
 "use server";
 
-import { generateText, type UIMessage } from "ai";
-import { titlePrompt } from "@/lib/ai/prompts";
-import { resolveRequiredLanguageModel } from "@/lib/ai/providers";
+import type { UIMessage } from "ai";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import {
   deleteThreadMessagesAfterTimestamp,
   getThreadMessageByIdForUser,
 } from "@/lib/threads/store";
-import { getTextFromMessage } from "@/lib/utils";
+import { generateTitleForOrganization } from "./title";
 
 export async function generateTitleFromUserMessage({
   message,
@@ -18,21 +16,7 @@ export async function generateTitleFromUserMessage({
   modelId?: string | null;
 }) {
   const { organizationId } = await requireActiveOrganization();
-  const resolvedTitleModel = await resolveRequiredLanguageModel({
-    modelId,
-    surface: "title",
-    organizationId,
-  });
-  const { text } = await generateText({
-    model: resolvedTitleModel.model,
-    system: titlePrompt,
-    prompt: getTextFromMessage(message),
-  });
-
-  return text
-    .replace(/^[#*"\s]+/, "")
-    .replace(/["]+$/, "")
-    .trim();
+  return generateTitleForOrganization({ message, modelId, organizationId });
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {
