@@ -110,6 +110,7 @@ import {
 import { discoverMcpServersFromKnownConfigFiles } from "./mcpDiscovery.js";
 import { DesktopProjectFileIndex } from "./projectFileIndex.js";
 import { toDesktopRendererSettings } from "./rendererSettings.js";
+import { resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
 import {
   getDesktopProjectSnapshot,
   getDesktopOperatorRun,
@@ -624,8 +625,17 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
+    const { projectPath, ...turnRequest } = request;
+    const workspace = resolveDesktopThreadWorkspace({
+      ...(projectPath !== undefined ? { projectPath } : {}),
+      projects: desktopSettings.projects,
+      defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+    });
     return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
-      request,
+      {
+        ...turnRequest,
+        workspace,
+      },
       {
         onEvent(runnerEvent) {
           if (event.sender.isDestroyed() === false) {
@@ -2141,6 +2151,16 @@ function requireLocalCoreClient(): LocalCoreClient {
     });
   }
   return localCoreClient;
+}
+
+function requireLocalCoreStatus(): LocalCoreStatus {
+  if (localCoreStatus === undefined) {
+    throw createDesktopError({
+      code: "desktop.local_core_unavailable",
+      message: "Kestrel Local Core status is unavailable.",
+    });
+  }
+  return localCoreStatus;
 }
 
 function requireDesktopRunnerAdapter(

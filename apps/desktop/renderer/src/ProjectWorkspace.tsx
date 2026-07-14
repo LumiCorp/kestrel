@@ -3,6 +3,7 @@ import {
   ExternalLink,
   File,
   Folder,
+  MessageSquare,
   Play,
   RefreshCw,
   Search,
@@ -22,6 +23,7 @@ import type {
 
 export function ProjectWorkspace(props: {
   project: DesktopProjectRegistration | undefined;
+  onChat: (project: DesktopProjectRegistration) => void;
   onError: (message: string | undefined) => void;
 }) {
   const [listing, setListing] = useState<DesktopDirectoryListing>();
@@ -190,19 +192,30 @@ export function ProjectWorkspace(props: {
           <h1>{props.project.label}</h1>
           <p>{props.project.path}</p>
         </div>
-        <button
-          className="icon-button"
-          type="button"
-          title="Refresh project"
-          aria-label="Refresh project"
-          onClick={() => {
-            void loadDirectory(listing?.directoryPath).catch((cause) => {
-              props.onError(errorMessage(cause));
-            });
-          }}
-        >
-          <RefreshCw size={16} />
-        </button>
+        <div className="surface-header-actions">
+          <button
+            className="icon-button"
+            type="button"
+            title={`Chat in ${props.project.label}`}
+            aria-label={`Chat in ${props.project.label}`}
+            onClick={() => props.onChat(props.project!)}
+          >
+            <MessageSquare size={16} />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            title="Refresh project"
+            aria-label="Refresh project"
+            onClick={() => {
+              void loadDirectory(listing?.directoryPath).catch((cause) => {
+                props.onError(errorMessage(cause));
+              });
+            }}
+          >
+            <RefreshCw size={16} />
+          </button>
+        </div>
       </header>
 
       <div className="project-grid">

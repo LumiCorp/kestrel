@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  addRendererThread,
   appendRendererTranscript,
   getRendererTurnContinuation,
   getTerminalWaitEventType,
@@ -160,6 +161,23 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     hydrated.threads[0]?.pendingWaitEventType,
     "user.approval",
   );
+});
+
+test("Vite renderer persists a project binding on project conversations", () => {
+  const initial = readDesktopRendererState(null);
+  const scoped = addRendererThread(initial, { projectPath: "/workspace/project-a" });
+  const serialized = serializeDesktopRendererState(scoped);
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    sourceAppVersion: "0.6.0",
+    capturedAt: "2026-07-14T12:00:00.000Z",
+    entries: serialized,
+  });
+
+  assert.equal(hydrated.activeThreadId, scoped.activeThreadId);
+  assert.equal(hydrated.threads[0]?.projectPath, "/workspace/project-a");
+  assert.equal(hydrated.threads[1]?.projectPath, undefined);
 });
 
 test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {

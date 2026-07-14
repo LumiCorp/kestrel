@@ -201,6 +201,9 @@ export function DesktopApp() {
           : {}),
         history,
         interactionMode: activeThread.mode,
+        ...(activeThread.projectPath !== undefined
+          ? { projectPath: activeThread.projectPath }
+          : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
       });
       const assistantText = extractTerminalMessage(terminal);
@@ -307,6 +310,13 @@ export function DesktopApp() {
     const saved = await window.kestrelDesktop.saveSettings({ projects });
     setSettings(saved);
     setActiveProjectPath(project.path);
+  }
+
+  function startProjectConversation(projectPath: string): void {
+    setState((current) => current === undefined
+      ? current
+      : addRendererThread(current, { projectPath }));
+    setSurface("chat");
   }
 
   async function updateProvider(
@@ -569,7 +579,11 @@ export function DesktopApp() {
           <div className="surface-host">
             {error !== undefined ? <div className="surface-error" role="alert">{error}</div> : null}
             {surface === "projects" ? (
-              <ProjectWorkspace project={activeProject} onError={setError} />
+              <ProjectWorkspace
+                project={activeProject}
+                onChat={(project) => startProjectConversation(project.path)}
+                onError={setError}
+              />
             ) : surface === "mission-control" ? (
               <MissionControlWorkspace
                 sessionId={activeThread.sessionId}

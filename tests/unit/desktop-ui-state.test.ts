@@ -65,6 +65,24 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
     },
   ]);
+  assert.equal(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      projectPath: "  /workspace/project-a  ",
+    }).projectPath,
+    "/workspace/project-a",
+  );
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      projectPath: 42,
+    }),
+    /projectPath.*must be a non-empty string/u,
+  );
   assert.throws(
     () => parseDesktopRunTurnRequest({
       sessionId: "session-1",
