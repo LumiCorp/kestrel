@@ -67,3 +67,20 @@ test("web approval responses preserve the approval contract across durable dispa
   assert.match(route, /messageId: null,[\s\S]*approvalDecision:/u);
   assert.match(worker, /approvalDecision:[\s\S]*turn\.approvalId/u);
 });
+
+test("durable turn creation never rebinds an existing message ID", () => {
+  const source = readAppSource("lib/turns/store.ts");
+
+  assert.match(
+    source,
+    /\.onConflictDoNothing\(\{ target: schema\.threadMessages\.id \}\)[\s\S]*\.returning\(\{ id: schema\.threadMessages\.id \}\)/u
+  );
+  assert.match(
+    source,
+    /if \(!insertedMessage\) \{[\s\S]*"TURN_CONFLICT"[\s\S]*"The input message ID is already in use\."/u
+  );
+  assert.match(
+    source,
+    /\.update\(schema\.threadMessages\)[\s\S]*eq\(schema\.threadMessages\.id, input\.messageId\)[\s\S]*eq\(schema\.threadMessages\.threadId, input\.threadId\)/u
+  );
+});

@@ -244,7 +244,7 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
     const turnId = crypto.randomUUID();
     const now = new Date();
     if (input.messageId) {
-      await tx
+      const [insertedMessage] = await tx
         .insert(schema.threadMessages)
         .values({
           id: input.messageId,
@@ -257,7 +257,14 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
           source: input.source,
           createdAt: now,
         })
-        .onConflictDoNothing({ target: schema.threadMessages.id });
+        .onConflictDoNothing({ target: schema.threadMessages.id })
+        .returning({ id: schema.threadMessages.id });
+      if (!insertedMessage) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The input message ID is already in use."
+        );
+      }
     }
     const [turn] = await tx
       .insert(schema.threadTurns)
@@ -287,7 +294,12 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
       await tx
         .update(schema.threadMessages)
         .set({ turnId })
-        .where(eq(schema.threadMessages.id, input.messageId));
+        .where(
+          and(
+            eq(schema.threadMessages.id, input.messageId),
+            eq(schema.threadMessages.threadId, input.threadId)
+          )
+        );
     }
     await appendTurnEvent(tx, {
       turnId,
