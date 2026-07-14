@@ -21,7 +21,7 @@ import {
   isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
 import {
-  RunPodConnectionTestError,
+  isRunPodConnectionTestError,
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
 import { RunPodControlPlaneError } from "./runpod-control-plane";
@@ -67,7 +67,7 @@ function safeFailure(error: unknown) {
       retryable: error.retryable,
     };
   }
-  if (error instanceof RunPodConnectionTestError) {
+  if (isRunPodConnectionTestError(error)) {
     return {
       code: error.code,
       message: error.message,

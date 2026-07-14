@@ -84,6 +84,10 @@ test("RunPod validation proves streaming and a complete tool-result round trip",
   });
 
   assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.body.temperature, 0);
+  assert.equal(requests[0]?.body.seed, 0);
+  assert.equal(requests[1]?.body.temperature, 0);
+  assert.equal(requests[1]?.body.seed, 0);
   assert.equal(
     requests[0]?.url,
     "https://api.runpod.ai/v2/endpoint_1/openai/v1/chat/completions"

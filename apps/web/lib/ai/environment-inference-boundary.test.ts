@@ -123,15 +123,11 @@ test("manual RunPod model validation still requires tool round-trip evidence", (
   const gateways = read("lib/ai/gateways.ts");
   assert.match(
     gateways,
-    /validateRunPodGatewayModelByRawId[\s\S]*validateRunPodToolRoundTrip/u
+    /validateRunPodGatewayModelByRawId[\s\S]*approved: false[\s\S]*validateRunPodGatewayModel\(/u
   );
   assert.match(
     gateways,
-    /validateRunPodGatewayModelByRawId[\s\S]*mergeRunPodValidationEvidence/u
-  );
-  assert.match(
-    gateways,
-    /validateRunPodGatewayModelByRawId[\s\S]*saveGatewayModel/u
+    /validateRunPodGatewayModelByRawId[\s\S]*validateRunPodGatewayModel\([\s\S]*approved: true/u
   );
 });
 

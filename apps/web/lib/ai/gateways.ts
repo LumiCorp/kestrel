@@ -1026,6 +1026,7 @@ export async function saveGatewayModel(input: {
 export async function validateRunPodGatewayModel(input: {
   gatewayId: string;
   modelId: string;
+  timeoutMs?: number;
   fetchImpl?: RunPodFetch;
   now?: Date;
 }) {
@@ -1062,6 +1063,7 @@ export async function validateRunPodGatewayModel(input: {
     apiKey,
     baseUrl,
     model: selected.model.rawModelId,
+    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     ...(input.now ? { now: input.now } : {}),
   });
@@ -1120,32 +1122,40 @@ export async function validateRunPodGatewayModelByRawId(input: {
         operators.eq(table.rawModelId, rawModelId)
       ),
   });
-  const evidence = await validateRunPodToolRoundTrip({
-    apiKey,
-    baseUrl,
-    model: rawModelId,
+  const candidate =
+    existing ??
+    (await saveGatewayModel({
+      gatewayId: gateway.id,
+      gatewayProvider: "runpod",
+      gatewayBaseUrl: gateway.baseUrl,
+      rawModelId,
+      modality: "language",
+      approved: false,
+      isDefault: false,
+      metadata: null,
+    }));
+  const validation = await validateRunPodGatewayModel({
+    gatewayId: gateway.id,
+    modelId: candidate.id,
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     ...(input.now ? { now: input.now } : {}),
   });
   const model = await saveGatewayModel({
-    id: existing?.id,
+    id: validation.model.id,
     gatewayId: gateway.id,
     gatewayProvider: "runpod",
     gatewayBaseUrl: gateway.baseUrl,
     rawModelId,
-    alias: existing?.alias ?? null,
+    alias: validation.model.alias,
     modality: "language",
     approved: true,
-    isDefault: input.isDefault ?? existing?.isDefault ?? false,
-    description: existing?.description ?? null,
-    metadata: mergeRunPodValidationEvidence({
-      metadata: existing?.metadata,
-      evidence,
-    }),
+    isDefault: input.isDefault ?? validation.model.isDefault,
+    description: validation.model.description,
+    metadata: validation.model.metadata as Record<string, unknown> | null,
   });
 
-  return { model, validation: evidence };
+  return { model, validation: validation.validation };
 }
 
 type ResolvedGatewayModel = {

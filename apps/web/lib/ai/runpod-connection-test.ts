@@ -36,6 +36,26 @@ export class RunPodConnectionTestError extends Error {
   }
 }
 
+export function isRunPodConnectionTestError(
+  error: unknown
+): error is RunPodConnectionTestError {
+  if (error instanceof RunPodConnectionTestError) return true;
+  if (!(error instanceof Error) || error.name !== "RunPodConnectionTestError") {
+    return false;
+  }
+  const candidate = error as Error & {
+    code?: unknown;
+    retryable?: unknown;
+    status?: unknown;
+  };
+  return (
+    typeof candidate.code === "string" &&
+    candidate.code.startsWith("RUNPOD_") &&
+    typeof candidate.retryable === "boolean" &&
+    (candidate.status === null || typeof candidate.status === "number")
+  );
+}
+
 export function getRunPodValidationEvidence(
   metadata: unknown
 ): RunPodValidationEvidence | null {
@@ -161,6 +181,8 @@ export async function validateRunPodToolRoundTrip(input: {
       },
       parallel_tool_calls: false,
       stream: true,
+      temperature: 0,
+      seed: 0,
       max_tokens: 128,
     },
   });
@@ -213,6 +235,8 @@ export async function validateRunPodToolRoundTrip(input: {
       tools,
       tool_choice: "none",
       stream: true,
+      temperature: 0,
+      seed: 0,
       max_tokens: 128,
     },
   });
