@@ -27,6 +27,8 @@ Credential storage and Desktop cutover form one activation boundary even when th
 
 The dormant credential substrate uses four stable provider/tool credential IDs, a macOS Keychain backend with no plaintext fallback, and frozen per-profile environment views that isolate model, Tavily, runtime, and MCP configuration. The existing daemon does not select that backend automatically yet: an injected store is required, so current CLI and Desktop behavior remains unchanged until migration and cutover activate the new authority together. This milestone covers provider and Tavily credentials only; an external `databaseUrl` may itself contain a password and requires a separate credential design before Kestrel can claim that every Local Core secret has left settings storage.
 
+Local Core also owns recovery of its PGlite runtime store. The authenticated control API remains available when execution-bundle initialization is blocked and exposes an explicitly confirmed reset operation that retires runtime subscriptions, archives only the canonical PGlite directory, recreates a ready execution bundle, and preserves settings, workspaces, project processes, credentials, authority, and 0.5 state. Reset and restart share one maintenance boundary: they reject active executions, commands crossing the admission boundary, in-flight evidence reads, and concurrent runtime-configuration writes; block new execution admission; serialize against one another; and never mutate an external Postgres database. The reset client waits for the destructive operation to finish instead of applying the ordinary short request timeout. Desktop does not call this operation until the later authority cutover removes its obsolete `runtime.db` reset path.
+
 ## Target Topology
 
 ```text
