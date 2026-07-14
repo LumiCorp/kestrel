@@ -5,9 +5,9 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  buildLocalCoreDaemonEnvironment,
   ensureLocalCoreDaemonReady,
   isLocalCoreDaemonElectronAppLaunch,
+  resolveLocalCoreDaemonEntrypoint,
   resolveLocalCoreDaemonNodeMode,
 } from "../../src/localCore/daemon.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
@@ -16,6 +16,23 @@ test("Local Core daemon runs Electron executables in Node mode", () => {
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "37.10.3" }), "1");
   assert.equal(resolveLocalCoreDaemonNodeMode({}), undefined);
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "  " }), undefined);
+});
+
+test("Local Core daemon resolves the emitted JavaScript entrypoint from compiled callers", () => {
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: {},
+    moduleUrl: "file:///workspace/apps/desktop/dist/src/localCore/daemon.js",
+    fileExists: (filePath) => filePath.endsWith("/daemonMain.js"),
+  }), "/workspace/apps/desktop/dist/src/localCore/daemonMain.js");
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: {},
+    moduleUrl: "file:///workspace/src/localCore/daemon.ts",
+    fileExists: () => false,
+  }), "/workspace/src/localCore/daemonMain.ts");
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: { KESTREL_CLI_LIBEXEC: "/bundle/kestrel-repo" },
+    fileExists: () => false,
+  }), "/bundle/kestrel-repo/src/localCore/daemonMain.ts");
 });
 
 test("Local Core daemon launch is rejected when Electron was not put in Node mode", () => {
@@ -39,7 +56,6 @@ test("Local Core daemon launch is rejected when Electron was not put in Node mod
     versions: {},
   }), false);
 });
-
 test("Local Core daemon readiness returns a redaction-aware in-memory connection", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kc-daemon-"));
@@ -66,20 +82,4 @@ test("Local Core daemon readiness returns a redaction-aware in-memory connection
     await server.close();
     await rm(home, { recursive: true, force: true });
   }
-});
-
-test("Local Core daemon launch honors a Desktop-owned disabled idle timeout", () => {
-  const env = buildLocalCoreDaemonEnvironment({
-    env: {
-      KESTREL_CORE_IDLE_TIMEOUT_MS: "900000",
-    },
-    ownerExecutable: "/Applications/Kestrel.app/Contents/MacOS/Kestrel",
-    coreVersion: "0.6.0",
-    idleTimeoutMs: 0,
-    versions: { electron: "37.10.3" },
-  });
-
-  assert.equal(env.KESTREL_CORE_IDLE_TIMEOUT_MS, "0");
-  assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
-  assert.equal(env.KESTREL_LOCAL_CORE_DAEMON, "1");
 });

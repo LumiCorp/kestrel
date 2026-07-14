@@ -1,4 +1,5 @@
 import { chmod, mkdir } from "node:fs/promises";
+import path from "node:path";
 import {
   LOCAL_CORE_SCHEMA_VERSION,
   LOCAL_CORE_STATE_EPOCH,
@@ -253,6 +254,7 @@ async function resolveDatabaseStatus(
   paths: ReturnType<typeof resolveLocalCorePaths>,
   mode: LocalCoreConfiguredDatabaseMode,
 ): Promise<LocalCoreDatabaseStatus> {
+  const repoRoot = normalizeString(options.repoRoot);
   if (mode === "external") {
     const databaseUrl = options.externalDatabaseUrl
       ?? (options.allowInheritedDatabaseUrl === true ? normalizeString(options.env?.DATABASE_URL) : undefined);
@@ -309,6 +311,9 @@ async function resolveDatabaseStatus(
     const handle = await ensureLocalCoreStore({
       homePath: paths.stateRootPath,
       mode: "pglite",
+      ...(repoRoot !== undefined
+        ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
+        : {}),
     });
     return {
       mode: "pglite",

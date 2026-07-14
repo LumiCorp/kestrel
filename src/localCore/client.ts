@@ -228,7 +228,15 @@ export class LocalCoreClient {
     onError?(error: Error): void;
   }): () => void {
     let closed = false;
+    let disconnectReported = false;
     let buffer = "";
+    const reportDisconnect = (error: Error) => {
+      if (closed || disconnectReported) {
+        return;
+      }
+      disconnectReported = true;
+      input.onError?.(error);
+    };
     const req = request({
       socketPath: this.socketPath,
       path: "/v1/desktop/project-runs/events",
@@ -259,15 +267,17 @@ export class LocalCoreClient {
         }
       });
       response.on("error", (error) => {
-        if (!closed) {
-          input.onError?.(error);
-        }
+        reportDisconnect(error);
+      });
+      response.on("end", () => {
+        reportDisconnect(createLocalCoreStreamClosedError());
+      });
+      response.on("close", () => {
+        reportDisconnect(createLocalCoreStreamClosedError());
       });
     });
     req.on("error", (error) => {
-      if (!closed) {
-        input.onError?.(error);
-      }
+      reportDisconnect(error);
     });
     req.end();
     return () => {
@@ -506,6 +516,13 @@ export class LocalCoreClient {
       req.end();
     });
   }
+}
+
+function createLocalCoreStreamClosedError(): NodeJS.ErrnoException {
+  return Object.assign(
+    new Error("Local Core project run event stream closed."),
+    { code: "ECONNRESET" },
+  );
 }
 
 function parseRunnerCommandEnvelope(line: string): { id: string; type: string } {

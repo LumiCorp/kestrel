@@ -30,6 +30,7 @@ export interface EnsureLocalCoreStoreOptions {
   homePath: string;
   mode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
+  migrationsDir?: string | undefined;
 }
 
 export interface ArchiveLocalCorePgliteStoreOptions {
@@ -50,12 +51,13 @@ export async function ensureLocalCoreStore(
   const paths = await resolveCanonicalStorePaths(options.homePath, true);
   const mode = normalizeMode(options.mode);
   const externalDatabaseUrl = normalizeString(options.externalDatabaseUrl);
+  const migrationsDir = normalizeString(options.migrationsDir);
   if (mode === "external" && externalDatabaseUrl === undefined) {
     throw new Error("External Local Core store mode requires an explicit database URL.");
   }
 
   const configurationKey = mode === "pglite"
-    ? `pglite:${paths.pgliteDataPath}`
+    ? `pglite:${paths.pgliteDataPath}:${migrationsDir ?? "default"}`
     : `external:${externalDatabaseUrl}`;
   const existing = storesByStateRoot.get(paths.stateRootPath);
   if (existing?.configurationKey === configurationKey) {
@@ -67,6 +69,7 @@ export async function ensureLocalCoreStore(
     pglitePath: paths.pgliteDataPath,
     mode,
     externalDatabaseUrl,
+    migrationsDir,
   });
   const entry = { configurationKey, handle };
   storesByStateRoot.set(paths.stateRootPath, entry);
@@ -173,6 +176,7 @@ async function createStoreAfterClosing(
     pglitePath: string;
     mode: LocalCoreConfiguredDatabaseMode;
     externalDatabaseUrl?: string | undefined;
+    migrationsDir?: string | undefined;
   },
 ): Promise<LocalCoreStoreHandle> {
   if (previousHandle !== undefined) {
@@ -189,6 +193,7 @@ async function createStoreAfterClosing(
     ? {
       driver: "sqlite",
       sqlitePath: input.pglitePath,
+      ...(input.migrationsDir !== undefined ? { migrationsDir: input.migrationsDir } : {}),
       enforceSchemaV3: true,
     }
     : {

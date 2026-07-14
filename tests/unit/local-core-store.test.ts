@@ -199,6 +199,31 @@ test("Local Core makes existing state and PGlite authority roots private", {
   }
 });
 
+test("Local Core PGlite initialization honors its explicit migration directory", async () => {
+  const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-explicit-migrations-"));
+  const migrationsDir = path.join(productRoot, "runtime-assets", "db", "migrations");
+  try {
+    await mkdir(migrationsDir, { recursive: true });
+    await writeFile(
+      path.join(migrationsDir, "001_explicit_marker.sql"),
+      "CREATE TABLE explicit_migration_marker (id INTEGER PRIMARY KEY);\n",
+      "utf8",
+    );
+
+    const handle = await ensureLocalCoreStore({
+      homePath: productRoot,
+      migrationsDir,
+    });
+    const result = await handle.executor.query<{ table_name: string }>(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'explicit_migration_marker'",
+    );
+    assert.deepEqual(result.rows, [{ table_name: "explicit_migration_marker" }]);
+  } finally {
+    await closeLocalCoreStore(productRoot);
+    await rm(productRoot, { recursive: true, force: true });
+  }
+});
+
 test("external Postgres readiness rejects an unreachable explicit database", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-external-store-"));
   const databaseUrl = "postgres://kestrel:kestrel@127.0.0.1:1/kestrel?connect_timeout=1";
