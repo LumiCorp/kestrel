@@ -134,8 +134,8 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
     "node --import tsx scripts/check-kestrel-boundary.ts",
   );
   assert.equal(appPackage.scripts?.["runtime:build"], undefined);
-  assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.5.1");
-  assert.equal(appPackage.dependencies?.["@kestrel-agents/sdk"], "0.5.1");
+  assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.6.0");
+  assert.equal(appPackage.dependencies?.["@kestrel-agents/sdk"], "0.6.0");
   for (const command of Object.values(appPackage.scripts ?? {})) {
     assert.doesNotMatch(command, /pnpm\s+(?:--filter|-F)\s+@?kestrel/iu);
   }
