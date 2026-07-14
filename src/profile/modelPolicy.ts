@@ -24,6 +24,16 @@ export type ResolvedModelPolicy = ModelPolicyV1;
 
 const POLICY_VERSION_BY_PATH = new Map<string, number>();
 const MODEL_POLICY_STAGE_IDS = new Set<string>(AGENT_MODEL_CONFIG_STAGES.map((stage) => stage.stageId));
+const MODEL_POLICY_STRING_MAX_LENGTH = 512;
+const MODEL_POLICY_FIELDS = new Set([
+  "version",
+  "provider",
+  "model",
+  "modelByStage",
+  "modelTimeoutMs",
+  "modelCapabilities",
+]);
+const MODEL_POLICY_CAPABILITY_FIELDS = new Set(["visionInputEnabled"]);
 
 export function isAllowedModelPolicyStageId(stageId: string): boolean {
   return MODEL_POLICY_STAGE_IDS.has(stageId);
@@ -37,6 +47,88 @@ export function createDefaultModelPolicy(): ModelPolicyV1 {
     modelByStage: {},
     modelCapabilities: {
       visionInputEnabled: false,
+    },
+  };
+}
+
+/**
+ * Parse the canonical v1 model-policy contract without reading or writing any
+ * profile state. This stricter parser is intended for versioned boundaries
+ * that must reject rather than repair malformed configuration.
+ */
+export function parseModelPolicyV1(value: unknown): ModelPolicyV1 {
+  const record = requireStrictModelPolicyRecord(value, "Model policy");
+  rejectUnknownModelPolicyFields(record, MODEL_POLICY_FIELDS, "Model policy");
+  if (record.version !== 1) {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_VERSION_INVALID",
+      "Model policy version must be 1.",
+    );
+  }
+
+  const provider = normalizeProvider(record.provider, { strict: true });
+  const model = requireStrictModelPolicyString(record.model, "Model policy model");
+  const modelByStageRecord = requireStrictModelPolicyRecord(
+    record.modelByStage,
+    "Model policy modelByStage",
+  );
+  const modelByStage: Record<string, string> = {};
+  for (const [stageId, stageModel] of Object.entries(modelByStageRecord)) {
+    if (
+      stageId.trim() !== stageId
+      || stageId.length === 0
+      || isAllowedModelPolicyStageId(stageId) === false
+    ) {
+      throw createRuntimeFailure(
+        "MODEL_POLICY_STAGE_UNKNOWN",
+        "Model policy modelByStage contains an unknown stage.",
+      );
+    }
+    modelByStage[stageId] = requireStrictModelPolicyString(
+      stageModel,
+      `Model policy modelByStage.${stageId}`,
+    );
+  }
+
+  const modelCapabilities = requireStrictModelPolicyRecord(
+    record.modelCapabilities,
+    "Model policy modelCapabilities",
+  );
+  rejectUnknownModelPolicyFields(
+    modelCapabilities,
+    MODEL_POLICY_CAPABILITY_FIELDS,
+    "Model policy modelCapabilities",
+  );
+  if (typeof modelCapabilities.visionInputEnabled !== "boolean") {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_VISION_FLAG_INVALID",
+      "Model policy modelCapabilities.visionInputEnabled must be a boolean.",
+    );
+  }
+
+  let modelTimeoutMs: number | undefined;
+  if (record.modelTimeoutMs !== undefined) {
+    if (
+      typeof record.modelTimeoutMs !== "number"
+      || Number.isSafeInteger(record.modelTimeoutMs) === false
+      || record.modelTimeoutMs <= 0
+    ) {
+      throw createRuntimeFailure(
+        "MODEL_POLICY_TIMEOUT_INVALID",
+        "Model policy modelTimeoutMs must be a positive safe integer.",
+      );
+    }
+    modelTimeoutMs = record.modelTimeoutMs;
+  }
+
+  return {
+    version: 1,
+    provider,
+    model,
+    modelByStage,
+    ...(modelTimeoutMs !== undefined ? { modelTimeoutMs } : {}),
+    modelCapabilities: {
+      visionInputEnabled: modelCapabilities.visionInputEnabled,
     },
   };
 }
@@ -286,4 +378,51 @@ function normalizeVisionInputEnabled(value: unknown, options: { strict: boolean 
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function requireStrictModelPolicyRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_INVALID",
+      `${label} must be an object.`,
+    );
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnknownModelPolicyFields(
+  record: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string,
+): void {
+  if (Object.keys(record).some((key) => allowed.has(key) === false)) {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_FIELD_UNKNOWN",
+      `${label} contains an unsupported field.`,
+    );
+  }
+}
+
+function requireStrictModelPolicyString(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || value.trim().length === 0
+    || /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_STRING_INVALID",
+      `${label} must be a non-empty string without control characters.`,
+    );
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > MODEL_POLICY_STRING_MAX_LENGTH) {
+    throw createRuntimeFailure(
+      "MODEL_POLICY_STRING_INVALID",
+      `${label} is too long.`,
+    );
+  }
+  return trimmed;
 }

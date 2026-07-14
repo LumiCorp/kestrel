@@ -12,6 +12,16 @@ import {
   parseLocalCoreDesktopExecutionConfig,
   type LocalCoreDesktopExecutionConfig,
 } from "./contracts.js";
+import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
+
+export interface LocalCoreProfileProviderOptions {
+  /**
+   * One immutable configuration snapshot shared with the execution bundle.
+   * When omitted, callers retain the pre-0.6 compatibility path backed by the
+   * legacy ModelPolicyStore.
+   */
+  runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+}
 
 export class LocalCoreReservedProfileIdError extends Error {
   constructor() {
@@ -22,7 +32,10 @@ export class LocalCoreReservedProfileIdError extends Error {
   }
 }
 
-export function resolveLocalCoreDesktopProfile(homePath: string): TuiProfile {
+export function resolveLocalCoreDesktopProfile(
+  homePath: string,
+  options: LocalCoreProfileProviderOptions = {},
+): TuiProfile {
   const baseProfile = createWebDemoProfile("desktop");
   return resolveProfileWithModelPolicy(
     {
@@ -31,15 +44,17 @@ export function resolveLocalCoreDesktopProfile(homePath: string): TuiProfile {
       sessionPrefix: LOCAL_CORE_DESKTOP_PROFILE_ID,
       default: false,
     },
-    new ModelPolicyStore(homePath).read(),
+    options.runtimeConfiguration?.modelPolicy
+      ?? new ModelPolicyStore(homePath).read(),
   );
 }
 
 export async function resolveLocalCoreDesktopExecutionConfig(
   homePath: string,
+  options: LocalCoreProfileProviderOptions = {},
 ): Promise<LocalCoreDesktopExecutionConfig> {
   assertNoLocalCoreReservedProfileCollision(await new ProfileStore(homePath).load());
-  const profile = resolveLocalCoreDesktopProfile(homePath);
+  const profile = resolveLocalCoreDesktopProfile(homePath, options);
   return parseLocalCoreDesktopExecutionConfig({
     version: LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
     profileId: LOCAL_CORE_DESKTOP_PROFILE_ID,
@@ -66,24 +81,42 @@ export function assertNoLocalCoreReservedProfileCollision(
   }
 }
 
-export function createLocalCoreProfileProvider(homePath: string): RunnerProfileProvider {
+export function resolveLocalCoreConfiguredProfiles(
+  profiles: readonly TuiProfile[],
+  runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
+): TuiProfile[] {
+  return profiles.map((profile) =>
+    resolveProfileWithModelPolicy(profile, runtimeConfiguration.modelPolicy)
+  );
+}
+
+export function createLocalCoreProfileProvider(
+  homePath: string,
+  options: LocalCoreProfileProviderOptions = {},
+): RunnerProfileProvider {
   const store = new ProfileStore(homePath);
+  const resolveConfiguredProfiles = (profiles: readonly TuiProfile[]): TuiProfile[] => {
+    const runtimeConfiguration = options.runtimeConfiguration;
+    return runtimeConfiguration === undefined
+      ? [...profiles]
+      : resolveLocalCoreConfiguredProfiles(profiles, runtimeConfiguration);
+  };
   return {
     async listProfiles() {
       const configuredProfiles = await store.load();
       assertNoLocalCoreReservedProfileCollision(configuredProfiles);
       return [
-        ...configuredProfiles,
-        resolveLocalCoreDesktopProfile(homePath),
+        ...resolveConfiguredProfiles(configuredProfiles),
+        resolveLocalCoreDesktopProfile(homePath, options),
       ];
     },
     async getProfile(profileId) {
       const configuredProfiles = await store.load();
       assertNoLocalCoreReservedProfileCollision(configuredProfiles);
       if (profileId === LOCAL_CORE_DESKTOP_PROFILE_ID) {
-        return resolveLocalCoreDesktopProfile(homePath);
+        return resolveLocalCoreDesktopProfile(homePath, options);
       }
-      return store.findById(configuredProfiles, profileId);
+      return store.findById(resolveConfiguredProfiles(configuredProfiles), profileId);
     },
   };
 }

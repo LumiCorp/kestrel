@@ -13,3 +13,22 @@ export * from "./client.js";
 export * from "./profileProvider.js";
 export * from "./daemon.js";
 export * from "./desktopUiState.js";
+export {
+  LOCAL_CORE_CREDENTIAL_IDS,
+  parseLocalCoreCredentialId,
+  parseLocalCoreCredentialStoreStatus,
+  type LocalCoreCredentialId,
+  type LocalCoreCredentialStatus,
+  type LocalCoreCredentialStore,
+  type LocalCoreCredentialStoreBackend,
+  type LocalCoreCredentialStoreStatus,
+} from "./credentialStore.js";
+export {
+  LOCAL_CORE_RUNTIME_CONFIGURATION_VERSION,
+  LocalCoreRuntimeConfigurationError,
+  createDefaultLocalCoreRuntimeConfiguration,
+  parseLocalCoreRuntimeConfiguration,
+  type LocalCoreRuntimeConfigurationErrorCode,
+  type LocalCoreRuntimeConfigurationV1,
+  type LocalCoreRuntimeEnvironmentOptionsMode,
+} from "./runtimeConfiguration.js";

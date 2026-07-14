@@ -11,10 +11,14 @@ import {
   LocalCoreApiError,
   LocalCoreClient,
   acquireCoreLock,
+  createDefaultLocalCoreRuntimeConfiguration,
   parseLocalCoreDesktopExecutionConfig,
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
+import {
+  LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME,
+} from "../../src/localCore/runtimeConfiguration.js";
 import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
@@ -66,6 +70,20 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     assert.equal(status.lock.state, "live");
     assert.equal(status.lock.lock.socketPath, paths.apiSocketPath);
     assert.equal(status.dbMode, "pglite");
+
+    const runtimeConfiguration = await client.runtimeConfiguration();
+    assert.equal(runtimeConfiguration.version, 1);
+    assert.equal(runtimeConfiguration.generation, 0);
+    assert.equal(runtimeConfiguration.environmentOptionsMode, "inherit");
+    assert.equal(runtimeConfiguration.modelPolicy.provider, "openrouter");
+    assert.deepEqual(await client.credentialStatus(), {
+      backend: "unavailable",
+      available: false,
+      credentials: LOCAL_CORE_CREDENTIAL_IDS.map((id) => ({
+        id,
+        configured: false,
+      })),
+    });
 
     const sdk = new KestrelSdkClient({
       target: {
@@ -129,6 +147,14 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     const unauthorized = new LocalCoreClient({ socketPath: server.socketPath, token: "wrong" });
     await assert.rejects(
       () => unauthorized.status(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
+    await assert.rejects(
+      () => unauthorized.runtimeConfiguration(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
+    await assert.rejects(
+      () => unauthorized.credentialStatus(),
       (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
     );
   } finally {
@@ -318,6 +344,8 @@ test("Local Core keeps control authority reachable and resets a broken startup s
     assert.equal(blocked.lastError?.code, "LOCAL_CORE_EXECUTION_INIT_FAILED");
     assert.match(blocked.lastError?.message ?? "", /runner_protocol_events/u);
     assert.deepEqual(await client.health(), { ok: true });
+    assert.equal((await client.runtimeConfiguration()).version, 1);
+    assert.equal((await client.credentialStatus()).backend, "unavailable");
     assert.equal(existsSync(paths.lockPath), true);
     assert.equal(existsSync(paths.apiSocketPath), true);
     const tokenBefore = await readFile(paths.apiTokenPath, "utf8");
@@ -371,6 +399,108 @@ test("Local Core keeps control authority reachable and resets a broken startup s
   } finally {
     await server?.close();
     await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core repairs malformed runtime configuration while execution is blocked", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kcbadcfg-"));
+  const paths = resolveLocalCorePaths(home);
+  const configurationPath = path.join(
+    paths.settingsPath,
+    LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME,
+  );
+  let server: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
+  try {
+    await mkdir(paths.settingsPath, { recursive: true });
+    await writeFile(configurationPath, "{not-json}\n", "utf8");
+    server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+    });
+    const client = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: server.token,
+    });
+
+    assert.equal((await client.status()).state, "blocked");
+    await assert.rejects(
+      () => client.runtimeConfiguration(),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 500
+        && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_INVALID",
+    );
+    await assert.rejects(
+      () => client.putJson("/v1/profiles", { profiles: [] }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 500
+        && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_INVALID",
+    );
+    assert.equal(existsSync(path.join(paths.stateRootPath, "profiles.json")), false);
+    await assert.rejects(
+      () => client.postJson("/v1/runtime/configuration/repair", {
+        runtimeConfiguration: { version: 1 },
+      }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 400
+        && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_INVALID",
+    );
+    assert.equal(await readFile(configurationPath, "utf8"), "{not-json}\n");
+
+    const replacement = {
+      ...createDefaultLocalCoreRuntimeConfiguration(),
+      generation: 7,
+      environmentOptionsMode: "replace" as const,
+    };
+    const initialRepair = {
+      ...replacement,
+      generation: 0,
+    };
+    assert.deepEqual(
+      await client.repairRuntimeConfiguration(replacement),
+      initialRepair,
+    );
+    assert.equal((await client.status()).state, "healthy");
+    assert.deepEqual(await client.runtimeConfiguration(), initialRepair);
+
+    await writeFile(configurationPath, "{not-json-again}\n", "utf8");
+    const subsequentRepair = {
+      ...replacement,
+      generation: 1,
+    };
+    assert.deepEqual(
+      await client.repairRuntimeConfiguration(replacement),
+      subsequentRepair,
+    );
+    assert.deepEqual(await client.runtimeConfiguration(), subsequentRepair);
+    await assert.rejects(
+      () => client.repairRuntimeConfiguration(replacement),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 409
+        && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_NOT_REQUIRED",
+    );
+
+    const sdk = new KestrelSdkClient({
+      target: {
+        kind: "local",
+        socketPath: server.socketPath,
+        authToken: server.token,
+      },
+    });
+    try {
+      assert.deepEqual(await sdk.ping({ nonce: "repaired-configuration" }, {
+        actor: {
+          actorId: "local-core-runtime-configuration-repair-test",
+          actorType: "end_user",
+        },
+      }), { nonce: "repaired-configuration" });
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    await server?.close();
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -606,7 +736,19 @@ test("Local Core maintenance rejects runtime admission and configuration mutatio
       requestPath: "/runtime/v2/commands",
       body: "{}",
     });
-    for (const maintenance of [() => client.restart(), () => client.resetRuntimeStore()]) {
+    for (const maintenance of [
+      () => client.restart(),
+      () => client.resetRuntimeStore(),
+      () => client.patchSettings({
+        modelPolicy: {
+          version: 1,
+          provider: "ollama",
+          model: "llama3.2:latest",
+          modelByStage: {},
+          modelCapabilities: { visionInputEnabled: false },
+        },
+      }),
+    ]) {
       await assert.rejects(
         maintenance(),
         (error) => error instanceof LocalCoreApiError
@@ -825,6 +967,25 @@ test("Local Core provider readiness follows the authoritative credential store",
   const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
 
   try {
+    const credentialStatus = await client.credentialStatus();
+    assert.equal(credentialStatus.backend, "memory");
+    assert.equal(credentialStatus.available, true);
+    assert.equal(
+      credentialStatus.credentials.find((entry) =>
+        entry.id === "provider.openrouter.default"
+      )?.configured,
+      true,
+    );
+    assert.equal(
+      JSON.stringify(credentialStatus).includes("stored-openrouter-key"),
+      false,
+    );
+    const serializedRuntimeConfiguration = JSON.stringify(
+      await client.runtimeConfiguration(),
+    );
+    assert.equal(serializedRuntimeConfiguration.includes("stored-openrouter-key"), false);
+    assert.equal(serializedRuntimeConfiguration.includes("ambient-openai-key-must-not-count"), false);
+    assert.equal(serializedRuntimeConfiguration.includes("ambient-anthropic-key-must-not-count"), false);
     const response = await client.providerReadiness() as {
       providerReadiness?: Record<string, { ready?: boolean; credential?: string }>;
     };
@@ -1504,6 +1665,9 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
   };
 
   try {
+    const initialRuntimeConfiguration = await client.runtimeConfiguration();
+    assert.equal(initialRuntimeConfiguration.generation, 0);
+    assert.equal(initialRuntimeConfiguration.modelPolicy.provider, "openrouter");
     const initial = await client.desktopExecutionConfig();
     assert.equal(initial.version, 1);
     assert.equal(initial.profileId, LOCAL_CORE_DESKTOP_PROFILE_ID);
@@ -1557,6 +1721,19 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
         && (error.body as { error?: { code?: string } }).error?.code === "LOCAL_CORE_PROFILE_ID_RESERVED",
     );
 
+    await assert.rejects(
+      () => client.patchSettings({
+        modelPolicy: {
+          ...initialRuntimeConfiguration.modelPolicy,
+          apiKey: "must-not-enter-runtime-configuration",
+        },
+      }),
+      (error) => error instanceof LocalCoreApiError
+        && error.statusCode === 400
+        && error.code === "LOCAL_CORE_MODEL_POLICY_INVALID",
+    );
+    assert.equal((await client.runtimeConfiguration()).generation, 0);
+
     await client.patchSettings({
       modelPolicy: {
         version: 1,
@@ -1570,6 +1747,25 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
         },
       },
     });
+
+    const updatedRuntimeConfiguration = await client.runtimeConfiguration();
+    assert.equal(updatedRuntimeConfiguration.generation, 1);
+    assert.equal(updatedRuntimeConfiguration.environmentOptionsMode, "inherit");
+    assert.equal(updatedRuntimeConfiguration.modelPolicy.provider, "ollama");
+    assert.equal(updatedRuntimeConfiguration.modelPolicy.model, "llama3.2:latest");
+
+    const canonicalProfiles = await client.getJson("/v1/profiles") as {
+      profiles: Array<{ modelProvider?: string; model?: string }>;
+    };
+    assert.equal(canonicalProfiles.profiles[0]?.modelProvider, "ollama");
+    assert.equal(canonicalProfiles.profiles[0]?.model, "llama3.2:latest");
+    const savedProfiles = await client.putJson("/v1/profiles", {
+      profiles: storedProfiles.profiles,
+    }) as {
+      profiles: Array<{ modelProvider?: string; model?: string }>;
+    };
+    assert.equal(savedProfiles.profiles[0]?.modelProvider, "ollama");
+    assert.equal(savedProfiles.profiles[0]?.model, "llama3.2:latest");
 
     const resolved = await client.desktopExecutionConfig();
     assert.equal(resolved.profileId, initial.profileId);

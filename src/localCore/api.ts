@@ -20,7 +20,11 @@ import type { SessionsFile, TuiHistoryRecord, TuiProfile, UiState, WorkspacesFil
 import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "../../cli/config/RuntimeSettings.js";
 import { buildSupportBundle } from "../diagnostics/supportBundle.js";
 import type { SessionStore as RuntimeSessionStore } from "../kestrel/contracts/store.js";
-import { ModelPolicyStore } from "../profile/modelPolicy.js";
+import {
+  ModelPolicyStore,
+  parseModelPolicyV1,
+  type ModelPolicyV1,
+} from "../profile/modelPolicy.js";
 import { RunReplayService, type ReplayQuery } from "../replay/RunReplayService.js";
 import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
@@ -51,6 +55,7 @@ import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
   readLocalCoreCredentialStoreStatus,
+  UnavailableLocalCoreCredentialStore,
   type LocalCoreCredentialStore,
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
@@ -59,9 +64,16 @@ import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
 import { createLocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import {
+  LocalCoreRuntimeConfigurationError,
+  LocalCoreRuntimeConfigurationStore,
+  parseLocalCoreRuntimeConfiguration,
+  type LocalCoreRuntimeConfigurationV1,
+} from "./runtimeConfiguration.js";
+import {
   assertNoLocalCoreReservedProfileCollision,
   createLocalCoreProfileProvider,
   LocalCoreReservedProfileIdError,
+  resolveLocalCoreConfiguredProfiles,
   resolveLocalCoreDesktopExecutionConfig,
 } from "./profileProvider.js";
 import { ensureLocalCoreReady } from "./ready.js";
@@ -102,10 +114,11 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
 interface LocalCoreExecutionBundle {
   handler: RunnerServiceHttpHandler;
   store: RuntimeSessionStore;
+  runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
 }
 
 interface LocalCoreMaintenanceOperation {
-  kind: "restart" | "runtime_store_reset";
+  kind: "restart" | "runtime_store_reset" | "runtime_configuration_update";
   promise: Promise<unknown>;
 }
 
@@ -124,6 +137,12 @@ export async function startLocalCoreApiServer(
   }
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
+  const runtimeConfigurationStore = new LocalCoreRuntimeConfigurationStore(
+    home.homePath,
+    {
+      fallbackModelPolicy: () => new ModelPolicyStore(home.homePath).read(),
+    },
+  );
   await mkdir(paths.stateRootPath, { recursive: true, mode: 0o700 });
   await chmod(paths.stateRootPath, 0o700);
   await mkdir(paths.corePath, { recursive: true, mode: 0o700 });
@@ -166,6 +185,7 @@ export async function startLocalCoreApiServer(
         status,
         options,
         token,
+        runtimeConfigurationStore,
       });
     } catch (error) {
       status = markExecutionUnavailable(status, error);
@@ -223,34 +243,37 @@ export async function startLocalCoreApiServer(
 
     const assertRuntimeStoreCanEnterMaintenance = (
       previous: LocalCoreExecutionBundle | undefined,
-      operation: "restart" | "reset",
+      operation: "restart" | "reset" | "update runtime configuration",
     ): void => {
+      const action = operation === "update runtime configuration"
+        ? "update runtime configuration for"
+        : operation;
       if (previous?.handler.hasActiveExecutions() === true) {
         throw new LocalCoreApiRequestError(
           409,
           "LOCAL_CORE_EXECUTION_ACTIVE",
-          `Local Core cannot ${operation} its execution store while a run is active.`,
+          `Local Core cannot ${action} its execution store while a run is active.`,
         );
       }
       if (previous?.handler.hasActiveRequests() === true) {
         throw new LocalCoreApiRequestError(
           409,
           "LOCAL_CORE_RUNTIME_REQUEST_BUSY",
-          `Local Core cannot ${operation} its execution store while a runtime request is being admitted.`,
+          `Local Core cannot ${action} its execution store while a runtime request is being admitted.`,
         );
       }
       if (activeRuntimeStoreRequests > 0) {
         throw new LocalCoreApiRequestError(
           409,
           "LOCAL_CORE_RUNTIME_STORE_BUSY",
-          `Local Core cannot ${operation} its execution store while runtime evidence is being read.`,
+          `Local Core cannot ${action} its execution store while runtime evidence is being read.`,
         );
       }
       if (activeRuntimeConfigurationMutations > 0) {
         throw new LocalCoreApiRequestError(
           409,
           "LOCAL_CORE_RUNTIME_CONFIG_BUSY",
-          `Local Core cannot ${operation} its execution store while runtime configuration is being updated.`,
+          `Local Core cannot ${action} its execution store while runtime configuration is being updated.`,
         );
       }
     };
@@ -337,9 +360,57 @@ export async function startLocalCoreApiServer(
             status: next,
             options,
             token,
+            runtimeConfigurationStore,
           });
           executionBundle = nextBundle;
           return next;
+        } catch (error) {
+          status = markExecutionUnavailable(status, error);
+          throw error;
+        }
+      },
+    });
+
+    const updateRuntimeConfiguration = (
+      update: (
+        lastKnownConfiguration: LocalCoreRuntimeConfigurationV1 | undefined,
+      ) => Promise<LocalCoreRuntimeConfigurationV1>,
+    ): Promise<LocalCoreRuntimeConfigurationV1> => beginMaintenance({
+      kind: "runtime_configuration_update",
+      coalesce: false,
+      async run() {
+        const previous = executionBundle;
+        assertRuntimeStoreCanEnterMaintenance(
+          previous,
+          "update runtime configuration",
+        );
+
+        // Validate and persist the complete next snapshot before retiring the
+        // healthy bundle. While this maintenance lease is held, no new runtime
+        // request can observe the old configuration after the write.
+        const runtimeConfiguration = await update(previous?.runtimeConfiguration);
+        executionBundle = undefined;
+        status = markExecutionRestarting(status);
+        try {
+          await previous?.handler.close({ abortActiveRuns: false });
+          await closeLocalCoreStore(home.homePath);
+
+          const next = await ensureLocalCoreReady({
+            ...await resolveCoreOwnedReadyOptions(home.homePath, options),
+            lockOwnerPid: process.pid,
+            lockAuthorityId: authorityId,
+          });
+          assertLocalCoreApiOwnership(next, authorityId);
+          status = next;
+          const nextBundle = await createExecutionBundle({
+            status: next,
+            options,
+            token,
+            runtimeConfigurationStore,
+            runtimeConfiguration,
+          });
+          executionBundle = nextBundle;
+          return runtimeConfiguration;
         } catch (error) {
           status = markExecutionUnavailable(status, error);
           throw error;
@@ -384,6 +455,7 @@ export async function startLocalCoreApiServer(
             status: next,
             options,
             token,
+            runtimeConfigurationStore,
           });
           if (nextBundle === undefined) {
             throw new Error(
@@ -424,8 +496,10 @@ export async function startLocalCoreApiServer(
           token,
           status,
           ensureOptions: options,
+          runtimeConfigurationStore,
           withRuntimeStore,
           withRuntimeConfigurationMutation,
+          updateRuntimeConfiguration,
           restartExecution,
           resetRuntimeStore,
           projectRunRegistry: projectRunRegistry!,
@@ -537,10 +611,14 @@ async function createExecutionBundle(input: {
   status: LocalCoreStatus;
   options: StartLocalCoreApiServerOptions;
   token: string;
+  runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
+  runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
     return undefined;
   }
+  const runtimeConfiguration = input.runtimeConfiguration
+    ?? await input.runtimeConfigurationStore.read();
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
@@ -550,16 +628,15 @@ async function createExecutionBundle(input: {
   });
   let runtimeFactory = input.options.executionRuntimeFactory;
   if (runtimeFactory === undefined) {
-    const runtimeEnvironmentResolver = input.options.credentialStore === undefined
-      ? undefined
-      : await createLocalCoreRuntimeEnvironmentResolver({
-          baseEnv: input.options.env ?? process.env,
-          credentialStore: input.options.credentialStore,
-        });
-    runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
-      ...(runtimeEnvironmentResolver !== undefined
-        ? { runtimeEnvironmentResolver }
+    const runtimeEnvironmentResolver = await createLocalCoreRuntimeEnvironmentResolver({
+      baseEnv: input.options.env ?? process.env,
+      runtimeConfiguration,
+      ...(input.options.credentialStore !== undefined
+        ? { credentialStore: input.options.credentialStore }
         : {}),
+    });
+    runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
+      runtimeEnvironmentResolver,
     });
   }
   const handler = createRunnerServiceHttpHandler({
@@ -567,12 +644,19 @@ async function createExecutionBundle(input: {
     authToken: input.token,
     serviceVersion: input.options.coreVersion,
     runtimeFactory,
-    profileProvider: createLocalCoreProfileProvider(input.status.home.homePath),
+    profileProvider: createLocalCoreProfileProvider(
+      input.status.home.homePath,
+      { runtimeConfiguration },
+    ),
     eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
   });
   try {
     await handler.ready();
-    return { handler, store: storeHandle.store };
+    return {
+      handler,
+      store: storeHandle.store,
+      runtimeConfiguration,
+    };
   } catch (error) {
     await handler.close({ abortActiveRuns: true }).catch(() => undefined);
     await closeLocalCoreStore(input.status.home.homePath).catch(() => undefined);
@@ -754,8 +838,14 @@ async function handleRequest(input: {
   token: string;
   status: LocalCoreStatus;
   ensureOptions: StartLocalCoreApiServerOptions;
+  runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
   withRuntimeStore<T>(callback: (store: RuntimeSessionStore) => Promise<T>): Promise<T>;
   withRuntimeConfigurationMutation<T>(callback: () => Promise<T>): Promise<T>;
+  updateRuntimeConfiguration(
+    update: (
+      lastKnownConfiguration: LocalCoreRuntimeConfigurationV1 | undefined,
+    ) => Promise<LocalCoreRuntimeConfigurationV1>,
+  ): Promise<LocalCoreRuntimeConfigurationV1>;
   restartExecution(): Promise<LocalCoreStatus>;
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   projectRunRegistry: DesktopProjectRunRegistry;
@@ -779,21 +869,117 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/settings") {
-      writeJson(input.response, 200, { ok: true, settings: await readSettings(input.status.home.homePath) });
+      writeJson(input.response, 200, {
+        ok: true,
+        settings: await readSettings(
+          input.status.home.homePath,
+          input.runtimeConfigurationStore,
+        ),
+      });
       return;
     }
     if (method === "PATCH" && url.pathname === "/v1/settings") {
-      const settings = await input.withRuntimeConfigurationMutation(async () => {
-        const patch = await readJsonBody(input.request);
-        return await patchSettings(input.status.home.homePath, patch);
-      });
+      const patch = await input.withRuntimeConfigurationMutation(async () =>
+        parseSettingsPatch(await readJsonBody(input.request))
+      );
+      let settings: Record<string, unknown>;
+      if (patch.modelPolicy !== undefined) {
+        await input.updateRuntimeConfiguration(async () => {
+          await patchLocalSettings(
+            input.status.home.homePath,
+            patch.localSettings,
+          );
+          return await input.runtimeConfigurationStore.update((current) => ({
+            ...current,
+            modelPolicy: patch.modelPolicy!,
+          }));
+        });
+        settings = await readSettings(
+          input.status.home.homePath,
+          input.runtimeConfigurationStore,
+        );
+      } else {
+        settings = await input.withRuntimeConfigurationMutation(async () => {
+          await patchLocalSettings(
+            input.status.home.homePath,
+            patch.localSettings,
+          );
+          return await readSettings(
+            input.status.home.homePath,
+            input.runtimeConfigurationStore,
+          );
+        });
+      }
       writeJson(input.response, 200, { ok: true, settings });
       return;
     }
-    if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
+    if (method === "GET" && url.pathname === "/v1/runtime/configuration") {
       writeJson(input.response, 200, {
         ok: true,
-        executionConfig: await resolveLocalCoreDesktopExecutionConfig(input.status.home.homePath),
+        runtimeConfiguration: await input.runtimeConfigurationStore.read(),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime/configuration/repair") {
+      const runtimeConfiguration = await input.withRuntimeConfigurationMutation(
+        async () => {
+          try {
+            return parseLocalCoreRuntimeConfiguration(
+              normalizeObjectField(
+                await readJsonBody(input.request),
+                "runtimeConfiguration",
+              ),
+            );
+          } catch (error) {
+            throw new LocalCoreApiRequestError(
+              400,
+              "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_INVALID",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        },
+      );
+      try {
+        const repaired = await input.updateRuntimeConfiguration(
+          async (lastKnownConfiguration) => await input.runtimeConfigurationStore.repairInvalid(
+            runtimeConfiguration,
+            {
+              lastKnownGeneration: lastKnownConfiguration?.generation,
+            },
+          ),
+        );
+        writeJson(input.response, 200, {
+          ok: true,
+          runtimeConfiguration: repaired,
+        });
+      } catch (error) {
+        if (
+          error instanceof LocalCoreRuntimeConfigurationError
+          && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_NOT_REQUIRED"
+        ) {
+          throw new LocalCoreApiRequestError(409, error.code, error.message);
+        }
+        throw error;
+      }
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/credentials") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      writeJson(input.response, 200, {
+        ok: true,
+        credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
+      });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
+      const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+      writeJson(input.response, 200, {
+        ok: true,
+        executionConfig: await resolveLocalCoreDesktopExecutionConfig(
+          input.status.home.homePath,
+          { runtimeConfiguration },
+        ),
       });
       return;
     }
@@ -997,16 +1183,33 @@ async function handleRequest(input: {
       const store = new ProfileStore(input.status.home.homePath);
       const profiles = await store.load();
       assertNoLocalCoreReservedProfileCollision(profiles);
-      writeJson(input.response, 200, { ok: true, profiles, notices: store.consumeLoadNotices() });
+      writeJson(input.response, 200, {
+        ok: true,
+        profiles: resolveLocalCoreConfiguredProfiles(
+          profiles,
+          await input.runtimeConfigurationStore.read(),
+        ),
+        notices: store.consumeLoadNotices(),
+      });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/profiles") {
-      const body = await readJsonBody(input.request);
-      const store = new ProfileStore(input.status.home.homePath);
-      const profiles = normalizeArrayField<TuiProfile>(body, "profiles");
-      assertNoLocalCoreReservedProfileCollision(profiles);
-      await store.save(profiles);
-      writeJson(input.response, 200, { ok: true, profiles: await store.load(), notices: store.consumeLoadNotices() });
+      const result = await input.withRuntimeConfigurationMutation(async () => {
+        const body = await readJsonBody(input.request);
+        const store = new ProfileStore(input.status.home.homePath);
+        const profiles = normalizeArrayField<TuiProfile>(body, "profiles");
+        assertNoLocalCoreReservedProfileCollision(profiles);
+        const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+        await store.save(profiles);
+        return {
+          profiles: resolveLocalCoreConfiguredProfiles(
+            await store.load(),
+            runtimeConfiguration,
+          ),
+          notices: store.consumeLoadNotices(),
+        };
+      });
+      writeJson(input.response, 200, { ok: true, ...result });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/history") {
@@ -1139,8 +1342,14 @@ async function handleRequest(input: {
   } catch (error) {
     const requestError = error instanceof LocalCoreApiRequestError ? error : undefined;
     const profileIdError = error instanceof LocalCoreReservedProfileIdError ? error : undefined;
+    const runtimeConfigurationError = error instanceof LocalCoreRuntimeConfigurationError
+      ? error
+      : undefined;
     writeJson(input.response, requestError?.statusCode ?? (profileIdError === undefined ? 500 : 409), errorBody(
-      requestError?.code ?? (profileIdError === undefined ? "LOCAL_CORE_API_ERROR" : "LOCAL_CORE_PROFILE_ID_RESERVED"),
+      requestError?.code
+        ?? (profileIdError !== undefined
+          ? "LOCAL_CORE_PROFILE_ID_RESERVED"
+          : runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR"),
       error instanceof Error ? error.message : String(error),
     ));
   }
@@ -1424,12 +1633,15 @@ async function ensureApiToken(tokenPath: string): Promise<string> {
   }
 }
 
-async function readSettings(homePath: string): Promise<Record<string, unknown>> {
-  const modelPolicy = new ModelPolicyStore(homePath).read();
+async function readSettings(
+  homePath: string,
+  runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore,
+): Promise<Record<string, unknown>> {
+  const runtimeConfiguration = await runtimeConfigurationStore.read();
   const localSettings = await readLocalSettings(homePath);
   return {
     ...localSettings,
-    modelPolicy,
+    modelPolicy: runtimeConfiguration.modelPolicy,
   };
 }
 
@@ -1456,21 +1668,54 @@ async function resolveCoreOwnedReadyOptions(
   };
 }
 
-async function patchSettings(homePath: string, patch: unknown): Promise<Record<string, unknown>> {
+interface ParsedLocalCoreSettingsPatch {
+  localSettings: Record<string, unknown>;
+  modelPolicy?: ModelPolicyV1 | undefined;
+}
+
+function parseSettingsPatch(patch: unknown): ParsedLocalCoreSettingsPatch {
   if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
-    throw new Error("Settings patch must be an object.");
+    throw new LocalCoreApiRequestError(
+      400,
+      "LOCAL_CORE_SETTINGS_INVALID",
+      "Settings patch must be an object.",
+    );
   }
   const record = patch as Record<string, unknown>;
-  if (typeof record.modelPolicy === "object" && record.modelPolicy !== null && Array.isArray(record.modelPolicy) === false) {
-    new ModelPolicyStore(homePath).write(record.modelPolicy);
+  let modelPolicy: ModelPolicyV1 | undefined;
+  if (Object.hasOwn(record, "modelPolicy")) {
+    try {
+      modelPolicy = parseModelPolicyV1(record.modelPolicy);
+    } catch (error) {
+      throw new LocalCoreApiRequestError(
+        400,
+        "LOCAL_CORE_MODEL_POLICY_INVALID",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  return {
+    localSettings: Object.fromEntries(
+      Object.entries(record).filter(([key]) => key !== "modelPolicy"),
+    ),
+    ...(modelPolicy !== undefined ? { modelPolicy } : {}),
+  };
+}
+
+async function patchLocalSettings(
+  homePath: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (Object.keys(patch).length === 0) {
+    return;
   }
   const current = await readLocalSettings(homePath);
   const next = {
     ...current,
-    ...Object.fromEntries(Object.entries(record).filter(([key]) => key !== "modelPolicy")),
+    ...patch,
   };
   await writeLocalSettings(homePath, next);
-  return await readSettings(homePath);
 }
 
 async function readLocalSettings(homePath: string): Promise<Record<string, unknown>> {
