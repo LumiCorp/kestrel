@@ -84,6 +84,15 @@ export async function generateMetadata(props: {
     title: meta.title,
     description: meta.summary,
     keywords: [meta.section, SITE_TITLE],
+    alternates: {
+      canonical: meta.url,
+    },
+    openGraph: {
+      type: "article",
+      title: meta.title,
+      description: meta.summary,
+      url: meta.url,
+    },
   };
 }
 

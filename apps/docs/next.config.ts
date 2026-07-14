@@ -5,11 +5,30 @@ const withMDX = createMDX({
   extension: /\.(md|mdx)$/,
 });
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   experimental: {
     externalDir: true,
   },
   pageExtensions: ["ts", "tsx", "md", "mdx"],
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+      {
+        source: "/search-index.json",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=0, s-maxage=300, stale-while-revalidate=86400" },
+        ],
+      },
+    ];
+  },
   async redirects() {
     return [
       { source: "/apps/desktop", destination: "/desktop", permanent: true },
@@ -36,6 +55,6 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
-};
+} satisfies NextConfig;
 
 export default withMDX(nextConfig);

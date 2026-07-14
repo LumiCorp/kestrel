@@ -1,14 +1,15 @@
 {
   "name": "@kestrel/docs",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "WATCHPACK_POLLING=true next dev --port 43102",
     "build": "next build",
     "start": "next start --port 43102",
     "lint": "next lint",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "smoke:deployment": "tsx scripts/smoke-deployment.ts"
   },
   "dependencies": {
     "@mdx-js/loader": "^3.1.0",
@@ -18,7 +19,7 @@
     "gray-matter": "^4.0.3",
     "minisearch": "^7.1.2",
     "next": "15.5.19",
-    "next-mdx-remote": "^5.0.0",
+    "next-mdx-remote": "^6.0.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "rehype-pretty-code": "^0.14.4",

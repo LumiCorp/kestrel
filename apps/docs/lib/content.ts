@@ -205,9 +205,9 @@ function deriveSearchPriority(spec: RegisteredPageSpec) {
   return 55;
 }
 
-export const getAllPages = cache(async () => {
+async function loadPages(specs: RegisteredPageSpec[]) {
   const pages = await Promise.all(
-    pageRegistry.map(async (spec) => {
+    specs.map(async (spec) => {
       const rawSource = await readPageSource(spec);
       const parsed = matter(rawSource);
       const normalizedContent = normalizeMarkdownLinks(parsed.content, spec.sourcePath, routeMap);
@@ -233,14 +233,17 @@ export const getAllPages = cache(async () => {
       };
     })
     .sort((left, right) => left.meta.url.localeCompare(right.meta.url));
-});
+}
+
+export const getAllPages = cache(async () => loadPages(pageRegistry));
 
 export function isPublicDocsPage(meta: DocsPageMeta) {
   return !meta.internal && !meta.archive && meta.section !== "archive" && meta.audience !== "maintainers";
 }
 
 export const getPublicPages = cache(async () => {
-  const pages = await getAllPages();
+  const publicSpecs = pageRegistry.filter((spec) => !spec.internal && !spec.archive);
+  const pages = await loadPages(publicSpecs);
   return pages.filter((page) => isPublicDocsPage(page.meta));
 });
 
@@ -258,7 +261,7 @@ export const getRenderedPageBySlug = cache(async (slug: string[]): Promise<Rende
   if (!spec) {
     return null;
   }
-  const page = (await getAllPages()).find((candidate) => candidate.meta.url === createPageUrl(slug));
+  const page = (await getPublicPages()).find((candidate) => candidate.meta.url === createPageUrl(slug));
   if (!page) return null;
   const { meta, rawContent: normalizedContent } = page;
   if (!isPublicDocsPage(meta)) {
