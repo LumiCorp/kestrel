@@ -4,6 +4,7 @@ export const knowledgeQueueState = {
   databaseUrl: process.env.POSTGRES_URL || process.env.DATABASE_URL,
   bossPromise: null as Promise<PgBoss> | null,
   workersRegistered: false,
+  managedRunPodWorkersRegistered: false,
 };
 
 export async function getKnowledgeQueueStatus() {

@@ -8,7 +8,6 @@ import { auth } from "@/lib/auth";
 import type { SerializedSessionRecord, Session } from "@/lib/auth-types";
 import { dbClient } from "@/lib/db-client";
 import UserCard from "../user-card";
-import { GithubConnectionCard } from "./github-connection-card";
 
 export default async function UserPage() {
   const session = await auth.api.getSession({
@@ -61,7 +60,6 @@ export default async function UserPage() {
         )}
         session={session as Session}
       />
-      <GithubConnectionCard />
     </AppPage>
   );
 }

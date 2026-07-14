@@ -8,14 +8,17 @@ import { searchWorkspace } from "@/lib/search";
 export default async function SearchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; projectId?: string }>;
 }) {
-  const query = (await searchParams).q?.trim() ?? "";
+  const params = await searchParams;
+  const query = params.q?.trim() ?? "";
+  const projectId = params.projectId?.trim() || undefined;
   const { organizationId, session } = await requireActiveOrganization();
   const results = await searchWorkspace({
     organizationId,
     userId: session.user.id,
     query,
+    projectId,
   });
 
   return (
@@ -23,11 +26,23 @@ export default async function SearchPage({
       <header>
         <h1 className="font-semibold text-3xl">Search</h1>
         <p className="mt-1 text-muted-foreground">
-          Authorized Projects, Threads, and message text are ranked within their
-          own groups.
+          {projectId
+            ? "Results are scoped to the active Project."
+            : "Authorized Projects, Threads, and message text are ranked within their own groups."}
         </p>
+        {projectId ? (
+          <Link
+            className="mt-2 inline-block text-sm underline-offset-4 hover:underline"
+            href={query ? `/search?q=${encodeURIComponent(query)}` : "/search"}
+          >
+            Search all Projects
+          </Link>
+        ) : null}
       </header>
       <form>
+        {projectId ? (
+          <input name="projectId" type="hidden" value={projectId} />
+        ) : null}
         <Input
           aria-label="Search workspace"
           autoFocus

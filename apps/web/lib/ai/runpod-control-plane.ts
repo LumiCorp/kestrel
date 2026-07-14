@@ -23,12 +23,22 @@ const endpointSchema = z.object({
   workersMax: z.number().int().optional(),
 });
 
+const runPodBillingTimeSchema = z
+  .union([
+    z.string().datetime({ offset: true }),
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u)
+      .transform((value) => `${value.replace(" ", "T")}Z`),
+  ])
+  .transform((value) => new Date(value).toISOString());
+
 const billingRecordSchema = z.object({
   amount: z.number(),
   diskSpaceBilledGb: z.number().int().default(0),
   endpointId: z.string().min(1),
   gpuTypeId: z.string().nullable().optional(),
-  time: z.string().datetime(),
+  time: runPodBillingTimeSchema,
   timeBilledMs: z.number().int().default(0),
 });
 

@@ -2959,6 +2959,63 @@ test("exec.dispatch does not request managed worktree approval for dev shell aut
   assert.notEqual(transition.waitFor?.metadata?.purpose, "managed_worktree");
 });
 
+test("exec.dispatch treats exec_command as the auto-provisioned dev shell alias", async () => {
+  let proposalCalled = false;
+  const step = createExecDispatchStep({
+    ...buildExecConfig(),
+    managedWorktreeProposalProvider: async () => {
+      proposalCalled = true;
+      throw new Error("proposal should be handled by runtime auto-provisioning");
+    },
+    capabilityManifestProvider: () => [
+      {
+        name: "exec_command",
+        freshnessClass: "volatile" as const,
+        capabilityClasses: ["dev.shell", "host.shell"],
+        executionClass: "external_side_effect" as const,
+      },
+    ],
+  });
+
+  const transition = await step(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: {
+          agent: {
+            nextAction: {
+              kind: "tool",
+              name: "exec_command",
+              input: { command: "pwd" },
+            },
+          },
+        },
+      },
+      event: {
+        ...buildContext().event,
+        payload: {
+          workspace: {
+            workspaceRoot: "/repo",
+          },
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async () => {
+        throw new Error("durable tool should not run inline");
+      },
+    },
+  );
+
+  assert.equal(proposalCalled, false);
+  assert.notEqual(transition.waitFor?.metadata?.purpose, "managed_worktree");
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.wait_effect");
+});
+
 test("exec.dispatch does not request managed worktree approval for dev process auto-provision tools", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({

@@ -218,7 +218,7 @@ Removed from the supported core product surface:
 - `/api/stats/usage`
 - `/api/agent-config`
 - `/api/agent-config/public`
-- `/api/tools/runtime`
+- `/api/runtime/apps`
 - `/api/admin/*`
 
 ## Project Structure
@@ -289,7 +289,10 @@ The Playwright suite covers authenticated chat, admin, knowledge, sharing, API-k
 
 ## Docs
 
-Admin docs now complement the live bot setup surface at `/admin/tools`. GitHub webhook handling and Discord guild/gateway configuration both run against the same org-scoped knowledge snapshots used by web chat.
+Admin docs describe the remaining deployment-managed bot adapters. Agent-facing
+services and capabilities are discovered and governed through `/apps`, while
+GitHub webhook handling and Discord messaging continue to use the same
+organization-scoped knowledge snapshots as web chat.
 
 Additional references:
 

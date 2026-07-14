@@ -315,8 +315,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         if (isBuiltInToolDisabledByContext(name, activeBuiltInContext)) {
           continue;
         }
+        const appApprovalMode =
+          activeBuiltInContext.kestrelOne?.appApprovalModes?.[name];
         manifest.push({
           ...builtIn,
+          ...(appApprovalMode === "ask"
+            ? {
+                approvalCapabilities: [
+                  ...(builtIn.approvalCapabilities ?? []),
+                  "external.confirm" as const,
+                ],
+              }
+            : {}),
         });
         continue;
       }
@@ -708,9 +718,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       return this.mcpStatus;
     }
     const context = parseHostedMcpContext(input.mcpContext);
-    const hosted = this.hostedMcpScopes.get(
-      context.grantId
-    )?.snapshot;
+    const hosted = this.hostedMcpScopes.get(context.grantId)?.snapshot;
     return hosted
       ? combineMcpSnapshots(this.mcpStatus, hosted)
       : this.mcpStatus;
@@ -776,7 +784,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         runContext.sessionId
       ),
       this.hostedMcpScopes.get(readHostedMcpGrantId(runContext.payload) ?? "")
-        ?.executionTicket,
+        ?.executionTicket
     );
   }
 }
@@ -932,7 +940,7 @@ function resolveScopedRunContext(
   baseContext: SharedToolContext,
   runtime: RuntimeToolRunContext,
   trustedManagedWorktree: boolean,
-  ephemeralExecutionTicket?: string | undefined,
+  ephemeralExecutionTicket?: string | undefined
 ): {
   allowlist: ReadonlySet<string>;
   builtInContext: SharedToolContext;

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import * as schema from "@/drizzle/schema";
@@ -48,46 +48,55 @@ export async function GET(
           })
         : Promise.resolve(null),
       knowledgeDb
-        .select({ resource: schema.toolConnectionResources })
-        .from(schema.userToolConnections)
+        .select({
+          resource: schema.appConnectionResources,
+          permissions: schema.appConnectionResources.permissions,
+        })
+        .from(schema.projectAppConnections)
         .innerJoin(
-          schema.userToolConnectionResources,
+          schema.appConnections,
           eq(
-            schema.userToolConnectionResources.connectionId,
-            schema.userToolConnections.id
+            schema.appConnections.id,
+            schema.projectAppConnections.connectionId
           )
         )
         .innerJoin(
-          schema.toolConnectionResources,
+          schema.appConnectionResources,
           eq(
-            schema.toolConnectionResources.id,
-            schema.userToolConnectionResources.resourceId
+            schema.appConnectionResources.connectionId,
+            schema.appConnections.id
           )
         )
         .where(
           and(
-            eq(schema.userToolConnections.organizationId, organizationId),
-            eq(schema.userToolConnections.providerKey, "github"),
-            eq(schema.userToolConnections.userId, session.user.id),
-            eq(schema.userToolConnections.status, "connected"),
-            eq(schema.userToolConnectionResources.canPull, true),
-            eq(schema.toolConnectionResources.organizationId, organizationId),
-            eq(schema.toolConnectionResources.resourceType, "repository"),
-            eq(schema.toolConnectionResources.enabled, true)
+            eq(schema.projectAppConnections.projectId, id),
+            eq(schema.projectAppConnections.appKey, "github"),
+            eq(schema.projectAppConnections.scope, "personal"),
+            eq(schema.projectAppConnections.userId, session.user.id),
+            eq(schema.appConnections.organizationId, organizationId),
+            eq(schema.appConnections.appKey, "github"),
+            eq(schema.appConnections.ownerType, "personal"),
+            eq(schema.appConnections.userId, session.user.id),
+            eq(schema.appConnections.status, "connected"),
+            eq(schema.appConnectionResources.resourceType, "repository"),
+            eq(schema.appConnectionResources.enabled, true)
           )
         )
-        .orderBy(schema.toolConnectionResources.label)
-        .then((rows) => rows.map((row) => row.resource)),
+        .orderBy(schema.appConnectionResources.label)
+        .then((rows) =>
+          rows.flatMap((row) => (row.permissions?.pull ? [row.resource] : []))
+        ),
       environments.length > 0
-        ? knowledgeDb.query.environmentCapabilityGrants.findMany({
-            where: (table, { and, eq, inArray, notInArray }) =>
+        ? knowledgeDb.query.environmentAppCapabilityGrants.findMany({
+            where: (table, { and, eq, notInArray }) =>
               and(
                 inArray(
                   table.environmentId,
                   environments.map((environment) => environment.id)
                 ),
-                eq(table.providerKey, "github"),
+                eq(table.appKey, "github"),
                 eq(table.capabilityKey, "repository.read"),
+                eq(table.enabled, true),
                 notInArray(table.approvalMode, ["deny"])
               ),
           })

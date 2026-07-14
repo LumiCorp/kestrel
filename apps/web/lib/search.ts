@@ -6,9 +6,11 @@ export async function searchWorkspace(input: {
   userId: string;
   query: string;
   limit?: number;
+  projectId?: string;
 }) {
   const query = input.query.trim();
   const limit = Math.min(Math.max(input.limit ?? 10, 1), 20);
+  const projectId = input.projectId ?? null;
   if (!query) {
     return { projects: [], threads: [], messages: [] };
   }
@@ -33,6 +35,7 @@ export async function searchWorkspace(input: {
         and om."organizationId" = ${input.organizationId}
         and om."userId" = ${input.userId}
         and p.archived_at is null
+        and (${projectId}::text is null or p.id = ${projectId})
         and to_tsvector('simple', coalesce(p.name, '') || ' ' || coalesce(p.description, ''))
           @@ websearch_to_tsquery('simple', ${query})
       order by rank desc, p.updated_at desc, p.id asc
@@ -52,6 +55,7 @@ export async function searchWorkspace(input: {
       where
         t.organization_id = ${input.organizationId}
         and t.archived_at is null
+        and (${projectId}::text is null or t.project_id = ${projectId})
         and (
           (t.project_id is null and t.created_by_user_id = ${input.userId})
           or exists (
@@ -88,6 +92,7 @@ export async function searchWorkspace(input: {
       where
         t.organization_id = ${input.organizationId}
         and t.archived_at is null
+        and (${projectId}::text is null or t.project_id = ${projectId})
         and (
           (t.project_id is null and t.created_by_user_id = ${input.userId})
           or exists (

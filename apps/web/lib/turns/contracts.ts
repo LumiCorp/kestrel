@@ -23,7 +23,7 @@ const ALLOWED_TRANSITIONS: Record<
   ThreadTurnStatus,
   readonly ThreadTurnStatus[]
 > = {
-  queued: ["running", "cancelled"],
+  queued: ["running", "failed", "cancelled"],
   running: ["waiting_for_input", "completed", "failed", "cancelled"],
   waiting_for_input: ["running", "completed", "failed", "cancelled"],
   completed: [],

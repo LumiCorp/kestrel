@@ -12,7 +12,7 @@ import type { TuiProfile } from "../contracts.js";
 
 /** Versioned runner-to-Kestrel-One credential lease contract. */
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
-  "gateway-credential-lease-v2" as const;
+  "gateway-credential-lease-v3" as const;
 export const GATEWAY_CREDENTIAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const GATEWAY_CREDENTIAL_CACHE_JITTER_MS = 30 * 1000;
 const GATEWAY_CREDENTIAL_CACHE_MAX_ENTRIES = 64;
@@ -21,6 +21,7 @@ export interface GatewayCredentialReference {
   source: "kestrel-one";
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   rawModelId: string;
 }
 
@@ -29,6 +30,7 @@ export interface GatewayCredentialLease {
   leaseId: string;
   gatewayId: string;
   organizationId: string;
+  environmentId: string;
   rawModelId: string;
   provider:
     | "openai"
@@ -97,6 +99,7 @@ export class GatewayCredentialBrokerClient {
           version: GATEWAY_CREDENTIAL_LEASE_VERSION,
           gatewayId: reference.gatewayId,
           organizationId: reference.organizationId,
+          environmentId: reference.environmentId,
           rawModelId: reference.rawModelId,
         }),
       });
@@ -430,6 +433,7 @@ function parseGatewayCredentialLease(
     asNonEmptyString(lease.leaseId) === undefined ||
     lease.gatewayId !== reference.gatewayId ||
     lease.organizationId !== reference.organizationId ||
+    lease.environmentId !== reference.environmentId ||
     lease.rawModelId !== reference.rawModelId ||
     ![
       "openai",
@@ -473,7 +477,7 @@ function isLoopbackHostname(hostname: string) {
 }
 
 function credentialCacheKey(reference: GatewayCredentialReference) {
-  return `${reference.organizationId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
+  return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
 }
 
 function isModelAuthenticationError(error: unknown) {

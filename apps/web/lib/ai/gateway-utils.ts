@@ -153,6 +153,16 @@ export function selectPreferredGatewayModelId(
   return models.find((model) => model.isDefault)?.id || models[0]?.id || null;
 }
 
+export function isGatewayModelDefault(input: {
+  environmentDefaultModelId?: string | null;
+  modelId: string;
+  modelIsDefault: boolean;
+}) {
+  return input.environmentDefaultModelId
+    ? input.environmentDefaultModelId === input.modelId
+    : input.modelIsDefault;
+}
+
 export function selectGatewayModelSelection<
   T extends {
     id: string;

@@ -30,6 +30,7 @@ import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
+import { restrictKestrelOneProfileTools } from "@/lib/agent/kestrel-tool-profile";
 import type { KestrelUiStreamChunk } from "@/lib/agent/kestrel-ui-stream";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
@@ -97,6 +98,7 @@ export type KestrelOneAgentResponseInput = {
   agent?: KestrelAgent;
   session: Session;
   organizationId: string;
+  environmentId: string;
   threadId: string;
   messages: UIMessage[];
   approvalDecision?:
@@ -126,6 +128,7 @@ export type KestrelOneAgentResponseInput = {
 
 function createModelAwareKestrelOneAgent(input: {
   organizationId: string;
+  environmentId: string;
   threadId: string;
   actorUserId: string;
   projectContextRevisionId?: string | undefined;
@@ -141,6 +144,7 @@ function createModelAwareKestrelOneAgent(input: {
         try {
           const route = await resolveEnvironmentExecutionRoute({
             organizationId: input.organizationId,
+            expectedEnvironmentId: input.environmentId,
             threadId: input.threadId,
             actorUserId: input.actorUserId,
             agentId: getKestrelOneProfileId(),
@@ -185,26 +189,24 @@ function createModelAwareKestrelOneAgent(input: {
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
             mcpAuthorization: { executionTicket: route.authToken },
           };
-          const downstream = runtimeModel
-            ? client.streamRunWithProfile(
-                {
-                  profile: applyKestrelOneModelToProfile(
-                    await client.getProfile(getKestrelOneProfileId(), context),
-                    runtimeModel
-                  ),
-                  turn: normalizedTurn,
-                  ...(signal ? { signal } : {}),
-                },
-                context
-              )
-            : client.streamRun(
-                {
-                  profileId: getKestrelOneProfileId(),
-                  turn: normalizedTurn,
-                  ...(signal ? { signal } : {}),
-                },
-                context
-              );
+          const baseProfile = await client.getProfile(
+            getKestrelOneProfileId(),
+            context
+          );
+          const selectedProfile = runtimeModel
+            ? applyKestrelOneModelToProfile(baseProfile, runtimeModel)
+            : baseProfile;
+          const downstream = client.streamRunWithProfile(
+            {
+              profile: restrictKestrelOneProfileTools({
+                profile: selectedProfile,
+                effectiveCapabilities: route.effectiveCapabilities,
+              }),
+              turn: normalizedTurn,
+              ...(signal ? { signal } : {}),
+            },
+            context
+          );
           routed.attachCancel(() => downstream.cancel());
           for await (const event of downstream) {
             await recordGitHubActionApprovalRequest({
@@ -394,6 +396,7 @@ export async function generateKestrelOneExternalReply(input: {
     });
     const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
       organizationId: input.organizationId,
+      environmentId: route.environmentId,
     });
     if (!resolvedModel) {
       throw new Error(
@@ -406,13 +409,17 @@ export async function generateKestrelOneExternalReply(input: {
       getKestrelOneProfileId(),
       context
     );
-    const profile = applyKestrelOneModelToProfile(
-      baseProfile,
-      toKestrelOneRuntimeModelSelection({
-        ...resolvedModel.model,
-        organizationId: input.organizationId,
-      })
-    );
+    const profile = restrictKestrelOneProfileTools({
+      profile: applyKestrelOneModelToProfile(
+        baseProfile,
+        toKestrelOneRuntimeModelSelection({
+          ...resolvedModel.model,
+          organizationId: input.organizationId,
+          environmentId: route.environmentId,
+        })
+      ),
+      effectiveCapabilities: route.effectiveCapabilities,
+    });
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: createProfileBoundExternalReplyAgent({
         profile,
@@ -457,6 +464,7 @@ export async function createKestrelOneAgentResponse(
   const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
     selection: input.modelId,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
   if (!resolvedModel) {
     throw new Error(
@@ -470,12 +478,14 @@ export async function createKestrelOneAgentResponse(
   const runtimeModel = toKestrelOneRuntimeModelSelection({
     ...resolvedModel.model,
     organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)
     : createModelAwareKestrelOneAgent({
         organizationId: input.organizationId,
+        environmentId: input.environmentId,
         threadId: input.threadId,
         actorUserId: input.session.user.id,
         projectContextRevisionId: input.projectContext?.contextRevisionId,

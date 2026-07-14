@@ -2,6 +2,7 @@
 
 import type * as React from "react";
 import { NavMain } from "@/components/nav-main";
+import { NavSettings } from "@/components/nav-settings";
 import { NavUser } from "@/components/nav-user";
 import { TeamSwitcher } from "@/components/team-switcher";
 import {
@@ -31,12 +32,13 @@ export function AppSidebar({
         <TeamSwitcher initialActiveOrganization={activeOrganization} />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain
+        <NavMain />
+      </SidebarContent>
+      <SidebarFooter>
+        <NavSettings
           canManageOrganization={canManageOrganization}
           isAdmin={isAdmin}
         />
-      </SidebarContent>
-      <SidebarFooter>
         <NavUser session={session} />
       </SidebarFooter>
       <SidebarRail />

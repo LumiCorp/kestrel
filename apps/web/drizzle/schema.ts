@@ -596,6 +596,7 @@ export const threadTurns = pgTable(
       () => environmentRunExecutions.id,
       { onDelete: "set null" }
     ),
+    requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sequence: integer("sequence").notNull(),
     source: text("source", { enum: ["web", "mobile", "api"] })
@@ -645,6 +646,12 @@ export const threadTurns = pgTable(
       table.projectContextRevisionId
     ),
     index("thread_turns_execution_idx").on(table.environmentExecutionId),
+    index("thread_turns_environment_idx").on(table.requestedEnvironmentId),
+    foreignKey({
+      columns: [table.organizationId, table.requestedEnvironmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "thread_turns_organization_environment_fk",
+    }).onDelete("restrict"),
     check(
       "thread_turns_input_contract_check",
       sql`(
@@ -1174,7 +1181,10 @@ export const environmentWorkspaces = pgTable(
     sourceType: text("source_type", { enum: ["blank", "github"] })
       .notNull()
       .default("blank"),
-    sourceResourceId: text("source_resource_id"),
+    sourceResourceId: text("source_resource_id").references(
+      () => appConnectionResources.id,
+      { onDelete: "restrict" }
+    ),
     sourceRepository: text("source_repository"),
     sourceDefaultBranch: text("source_default_branch"),
     status: text("status", {
@@ -1782,6 +1792,509 @@ export const userToolConnectionResources = pgTable(
   (table) => [
     primaryKey({ columns: [table.connectionId, table.resourceId] }),
     index("user_tool_connection_resources_resource_idx").on(table.resourceId),
+  ]
+);
+
+export const projectAppUserCapabilities = pgTable(
+  "project_app_user_capabilities",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => appConnections.id, { onDelete: "cascade" }),
+    appKey: text("app_key").notNull(),
+    capabilityKey: text("capability_key").notNull(),
+    audience: text("audience", { enum: ["self", "project"] }).notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_app_user_capabilities_scope_idx").on(
+      table.projectId,
+      table.connectionId,
+      table.appKey,
+      table.capabilityKey,
+      table.audience
+    ),
+    foreignKey({
+      columns: [table.appKey, table.capabilityKey],
+      foreignColumns: [appCapabilities.appKey, appCapabilities.key],
+      name: "project_app_user_capabilities_capability_fk",
+    }).onDelete("cascade"),
+    index("project_app_user_capabilities_project_idx").on(table.projectId),
+    index("project_app_user_capabilities_connection_idx").on(
+      table.connectionId
+    ),
+    index("project_app_user_capabilities_subject_idx").on(
+      table.projectId,
+      table.appKey,
+      table.capabilityKey,
+      table.audience,
+      table.enabled
+    ),
+  ]
+);
+
+/** =========================
+ *  Apps capability platform
+ *  ========================= */
+
+export const appDefinitions = pgTable(
+  "app_definitions",
+  {
+    key: text("key").primaryKey(),
+    slug: text("slug").notNull(),
+    displayName: text("display_name").notNull(),
+    description: text("description").notNull(),
+    category: text("category", {
+      enum: [
+        "kestrel",
+        "search_research",
+        "productivity",
+        "engineering",
+        "knowledge_sources",
+        "communication",
+        "custom",
+      ],
+    }).notNull(),
+    kind: text("kind", {
+      enum: ["built_in", "external", "custom"],
+    }).notNull(),
+    connectionModel: text("connection_model", {
+      enum: ["none", "personal", "environment"],
+    }).notNull(),
+    delivery: text("delivery", {
+      enum: ["native", "oauth", "api_key", "mcp", "webhook", "source"],
+    }).notNull(),
+    installMode: text("install_mode", {
+      enum: ["inherited", "explicit"],
+    }).notNull(),
+    icon: text("icon"),
+    published: boolean("published").notNull().default(true),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("app_definitions_slug_idx").on(table.slug),
+    index("app_definitions_category_idx").on(table.category),
+    index("app_definitions_published_idx").on(table.published),
+  ]
+);
+
+export const appCapabilities = pgTable(
+  "app_capabilities",
+  {
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    runtimeName: text("runtime_name"),
+    displayName: text("display_name").notNull(),
+    description: text("description").notNull(),
+    groupKey: text("group_key").notNull().default("general"),
+    accessMode: text("access_mode", {
+      enum: ["read", "write", "status", "internal"],
+    }).notNull(),
+    audience: text("audience", {
+      enum: ["self", "project", "both"],
+    })
+      .notNull()
+      .default("project"),
+    defaultEnabled: boolean("default_enabled").notNull().default(true),
+    defaultApprovalMode: text("default_approval_mode", {
+      enum: ["auto", "ask", "deny"],
+    })
+      .notNull()
+      .default("auto"),
+    defaultRateLimitMode: text("default_rate_limit_mode", {
+      enum: ["default", "strict", "off"],
+    })
+      .notNull()
+      .default("default"),
+    defaultLoggingMode: text("default_logging_mode", {
+      enum: ["full", "metadata_only", "minimal"],
+    })
+      .notNull()
+      .default("metadata_only"),
+    defaultSettings: jsonb("default_settings").$type<Record<string, unknown>>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.appKey, table.key] }),
+    index("app_capabilities_runtime_name_idx").on(table.runtimeName),
+    index("app_capabilities_group_idx").on(table.appKey, table.groupKey),
+  ]
+);
+
+export const appInstallations = pgTable(
+  "app_installations",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    status: text("status", { enum: ["installed", "disabled"] })
+      .notNull()
+      .default("installed"),
+    installedByUserId: text("installed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    settings: jsonb("settings").$type<Record<string, unknown>>(),
+    installedAt: timestamp("installed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.appKey] }),
+    index("app_installations_status_idx").on(table.organizationId, table.status),
+  ]
+);
+
+export const appCredentials = pgTable(
+  "app_credentials",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    kind: text("kind", {
+      enum: ["api_key", "oauth", "secret_headers"],
+    }).notNull(),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    envelopeVersion: text("envelope_version").notNull().default("kapp:v1"),
+    status: text("status", { enum: ["active", "revoked"] })
+      .notNull()
+      .default("active"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "app_credentials_organization_environment_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("app_credentials_environment_app_name_idx")
+      .on(table.environmentId, table.appKey, table.name)
+      .where(sql`${table.status} = 'active'`),
+    uniqueIndex("app_credentials_environment_id_idx").on(
+      table.environmentId,
+      table.id
+    ),
+    index("app_credentials_app_status_idx").on(table.appKey, table.status),
+    check(
+      "app_credentials_encrypted_payload_check",
+      sql`${table.encryptedPayload} like 'kapp:v1:%' or ${table.encryptedPayload} like 'kmcp:v1:%'`
+    ),
+  ]
+);
+
+export const appConnections = pgTable(
+  "app_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    ownerType: text("owner_type", {
+      enum: ["system", "personal", "environment", "deployment_managed"],
+    }).notNull(),
+    environmentId: text("environment_id"),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    authAccountId: text("auth_account_id").references(() => accounts.id, {
+      onDelete: "set null",
+    }),
+    credentialId: text("credential_id"),
+    name: text("name").notNull(),
+    status: text("status", {
+      enum: ["connected", "degraded", "disconnected"],
+    })
+      .notNull()
+      .default("connected"),
+    externalAccountId: text("external_account_id"),
+    externalAccountLabel: text("external_account_label"),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+    deliveryConfig: jsonb("delivery_config").$type<Record<string, unknown>>(),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    lastHealthAt: timestamp("last_health_at", { withTimezone: true }),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "app_connections_organization_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.environmentId, table.credentialId],
+      foreignColumns: [appCredentials.environmentId, appCredentials.id],
+      name: "app_connections_environment_credential_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("app_connections_personal_name_idx")
+      .on(table.organizationId, table.appKey, table.userId, table.name)
+      .where(sql`${table.ownerType} = 'personal'`),
+    uniqueIndex("app_connections_environment_name_idx")
+      .on(table.environmentId, table.appKey, table.name)
+      .where(sql`${table.ownerType} in ('environment', 'deployment_managed')`),
+    index("app_connections_org_app_status_idx").on(
+      table.organizationId,
+      table.appKey,
+      table.status
+    ),
+    index("app_connections_user_idx").on(table.userId, table.status),
+    check(
+      "app_connections_owner_scope_check",
+      sql`(
+        (${table.ownerType} = 'system' and ${table.environmentId} is null and ${table.userId} is null and ${table.credentialId} is null)
+        or
+        (${table.ownerType} = 'personal' and ${table.userId} is not null and ${table.environmentId} is null and ${table.credentialId} is null)
+        or
+        (${table.ownerType} in ('environment', 'deployment_managed') and ${table.environmentId} is not null and ${table.userId} is null)
+      )`
+    ),
+  ]
+);
+
+export const appConnectionResources = pgTable(
+  "app_connection_resources",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => appConnections.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    resourceType: text("resource_type").notNull(),
+    label: text("label").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    permissions: jsonb("permissions").$type<Record<string, boolean>>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("app_connection_resources_external_idx").on(
+      table.connectionId,
+      table.resourceType,
+      table.externalId
+    ),
+    index("app_connection_resources_connection_idx").on(table.connectionId),
+  ]
+);
+
+export const environmentAppCapabilityGrants = pgTable(
+  "environment_app_capability_grants",
+  {
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    appKey: text("app_key").notNull(),
+    capabilityKey: text("capability_key").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
+      .notNull()
+      .default("deny"),
+    loggingMode: text("logging_mode", {
+      enum: ["full", "metadata_only", "minimal"],
+    })
+      .notNull()
+      .default("metadata_only"),
+    rateLimitMode: text("rate_limit_mode", {
+      enum: ["default", "strict", "off"],
+    })
+      .notNull()
+      .default("default"),
+    settings: jsonb("settings").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.environmentId, table.appKey, table.capabilityKey] }),
+    foreignKey({
+      columns: [table.appKey, table.capabilityKey],
+      foreignColumns: [appCapabilities.appKey, appCapabilities.key],
+      name: "environment_app_capability_grants_capability_fk",
+    }).onDelete("cascade"),
+    index("environment_app_capability_grants_app_idx").on(
+      table.environmentId,
+      table.appKey
+    ),
+  ]
+);
+
+export const projectApps = pgTable(
+  "project_apps",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    addedByUserId: text("added_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    settings: jsonb("settings").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.appKey] }),
+    index("project_apps_app_enabled_idx").on(table.appKey, table.enabled),
+  ]
+);
+
+export const projectAppConnections = pgTable(
+  "project_app_connections",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    appKey: text("app_key").notNull(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => appConnections.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["shared", "personal"] }).notNull(),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    isDefault: boolean("is_default").notNull().default(false),
+    addedByUserId: text("added_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.appKey, table.connectionId] }),
+    foreignKey({
+      columns: [table.projectId, table.appKey],
+      foreignColumns: [projectApps.projectId, projectApps.appKey],
+      name: "project_app_connections_project_app_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("project_app_connections_shared_default_idx")
+      .on(table.projectId, table.appKey)
+      .where(sql`${table.scope} = 'shared' and ${table.isDefault} = true`),
+    uniqueIndex("project_app_connections_personal_default_idx")
+      .on(table.projectId, table.appKey, table.userId)
+      .where(sql`${table.scope} = 'personal' and ${table.isDefault} = true`),
+    index("project_app_connections_connection_idx").on(table.connectionId),
+    check(
+      "project_app_connections_scope_check",
+      sql`(
+        (${table.scope} = 'shared' and ${table.userId} is null)
+        or
+        (${table.scope} = 'personal' and ${table.userId} is not null)
+      )`
+    ),
+  ]
+);
+
+export const projectAppCapabilityPolicies = pgTable(
+  "project_app_capability_policies",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    appKey: text("app_key").notNull(),
+    capabilityKey: text("capability_key").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
+      .notNull()
+      .default("deny"),
+    loggingMode: text("logging_mode", {
+      enum: ["full", "metadata_only", "minimal"],
+    })
+      .notNull()
+      .default("metadata_only"),
+    rateLimitMode: text("rate_limit_mode", {
+      enum: ["default", "strict", "off"],
+    })
+      .notNull()
+      .default("default"),
+    settings: jsonb("settings").$type<Record<string, unknown>>(),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.appKey, table.capabilityKey] }),
+    foreignKey({
+      columns: [table.projectId, table.appKey],
+      foreignColumns: [projectApps.projectId, projectApps.appKey],
+      name: "project_app_capability_policies_project_app_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.appKey, table.capabilityKey],
+      foreignColumns: [appCapabilities.appKey, appCapabilities.key],
+      name: "project_app_capability_policies_capability_fk",
+    }).onDelete("cascade"),
+    index("project_app_capability_policies_app_idx").on(
+      table.projectId,
+      table.appKey
+    ),
   ]
 );
 
@@ -2762,6 +3275,7 @@ export const aiGateways = pgTable(
     organizationId: text("organization_id").references(() => organizations.id, {
       onDelete: "cascade",
     }),
+    environmentId: text("environment_id"),
     deploymentId: text("deployment_id"),
     providerConnectionId: text("provider_connection_id").references(
       () => aiProviderConnections.id,
@@ -2800,12 +3314,27 @@ export const aiGateways = pgTable(
     uniqueIndex("ai_gateways_global_provider_display_name_idx")
       .on(table.provider, table.displayName)
       .where(sql`${table.organizationId} IS NULL`),
-    uniqueIndex("ai_gateways_org_provider_display_name_idx")
+    uniqueIndex("ai_gateways_org_shared_provider_display_name_idx")
       .on(table.organizationId, table.provider, table.displayName)
-      .where(sql`${table.organizationId} IS NOT NULL`),
+      .where(
+        sql`${table.organizationId} IS NOT NULL AND ${table.environmentId} IS NULL`
+      ),
+    uniqueIndex("ai_gateways_environment_provider_display_name_idx")
+      .on(table.environmentId, table.provider, table.displayName)
+      .where(sql`${table.environmentId} IS NOT NULL`),
     index("ai_gateways_org_id_idx").on(table.organizationId),
+    index("ai_gateways_environment_id_idx").on(table.environmentId),
     index("ai_gateways_enabled_idx").on(table.enabled),
     index("ai_gateways_provider_idx").on(table.provider),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "ai_gateways_organization_environment_fk",
+    }).onDelete("restrict"),
+    check(
+      "ai_gateways_environment_scope_check",
+      sql`${table.environmentId} IS NULL OR ${table.organizationId} IS NOT NULL`
+    ),
   ]
 );
 
@@ -2844,6 +3373,38 @@ export const aiGatewayModels = pgTable(
   ]
 );
 
+export const environmentAiModelDefaults = pgTable(
+  "environment_ai_model_defaults",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
+    modality: text("modality", {
+      enum: ["language", "image", "speech", "video", "embedding"],
+    }).notNull(),
+    modelId: text("model_id")
+      .notNull()
+      .references(() => aiGatewayModels.id, { onDelete: "cascade" }),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...knowledgeTimestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.environmentId, table.modality] }),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "environment_ai_model_defaults_organization_environment_fk",
+    }).onDelete("cascade"),
+    index("environment_ai_model_defaults_model_idx").on(table.modelId),
+  ]
+);
+
 export const aiDeployments = pgTable(
   "ai_deployments",
   {
@@ -2853,6 +3414,7 @@ export const aiDeployments = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
@@ -2895,14 +3457,20 @@ export const aiDeployments = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("ai_deployments_active_org_profile_idx")
-      .on(table.organizationId, table.profileId)
+    uniqueIndex("ai_deployments_active_environment_profile_idx")
+      .on(table.environmentId, table.profileId)
       .where(sql`${table.deletedAt} IS NULL`),
     uniqueIndex("ai_deployments_provider_endpoint_idx").on(
       table.providerEndpointId
     ),
     index("ai_deployments_org_id_idx").on(table.organizationId),
+    index("ai_deployments_environment_id_idx").on(table.environmentId),
     index("ai_deployments_status_idx").on(table.status),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "ai_deployments_organization_environment_fk",
+    }).onDelete("restrict"),
   ]
 );
 
@@ -3598,6 +4166,24 @@ export type ToolConnectionResource = InferSelectModel<
 export type UserToolConnection = InferSelectModel<typeof userToolConnections>;
 export type UserToolConnectionResource = InferSelectModel<
   typeof userToolConnectionResources
+>;
+export type AppDefinition = InferSelectModel<typeof appDefinitions>;
+export type AppCapability = InferSelectModel<typeof appCapabilities>;
+export type AppInstallation = InferSelectModel<typeof appInstallations>;
+export type AppCredential = InferSelectModel<typeof appCredentials>;
+export type AppConnection = InferSelectModel<typeof appConnections>;
+export type AppConnectionResource = InferSelectModel<
+  typeof appConnectionResources
+>;
+export type EnvironmentAppCapabilityGrant = InferSelectModel<
+  typeof environmentAppCapabilityGrants
+>;
+export type ProjectApp = InferSelectModel<typeof projectApps>;
+export type ProjectAppConnection = InferSelectModel<
+  typeof projectAppConnections
+>;
+export type ProjectAppCapabilityPolicy = InferSelectModel<
+  typeof projectAppCapabilityPolicies
 >;
 export type EnvironmentCapabilityGrant = InferSelectModel<
   typeof environmentCapabilityGrants

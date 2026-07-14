@@ -463,6 +463,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.85.9
         version: 5.100.9(react@19.2.4)
+      '@tavily/core':
+        specifier: ^0.7.2
+        version: 0.7.2
       '@vercel/analytics':
         specifier: ^1.3.1
         version: 1.6.1(next@16.0.10(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)

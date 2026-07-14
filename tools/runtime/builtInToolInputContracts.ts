@@ -62,6 +62,12 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.github_pull_request_merge": { mode: "schema-only" },
   "kestrel_one.github_release_create": { mode: "schema-only" },
   "kestrel_one.github_workflow_dispatch": { mode: "schema-only" },
+  "kestrel_one.google_calendar_list_events": { mode: "schema-only" },
+  "kestrel_one.google_calendar_create_event": { mode: "schema-only" },
+  "kestrel_one.google_calendar_update_event": { mode: "schema-only" },
+  "kestrel_one.google_calendar_delete_event": { mode: "schema-only" },
+  "kestrel_one.google_calendar_list_availability_subjects": { mode: "schema-only" },
+  "kestrel_one.google_calendar_check_availability": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
 export function validateBuiltInToolInputContract(name: string, input: unknown): void {

@@ -1,6 +1,7 @@
 export type KestrelOneRouteOwner =
   | "admin"
   | "agent-config"
+  | "apps"
   | "artifacts"
   | "auth"
   | "credential-boundary"
@@ -8,17 +9,16 @@ export type KestrelOneRouteOwner =
   | "dashboard"
   | "debug"
   | "dev"
+  | "email-delivery"
   | "environments"
   | "files"
   | "health"
-  | "integrations"
   | "knowledge"
   | "media"
   | "messages"
   | "mobile"
   | "models"
   | "public"
-  | "runtime-tools"
   | "sandbox"
   | "snapshot"
   | "sources"
@@ -114,7 +114,6 @@ const AUTHENTICATED_API = {
 } as const;
 
 export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
-  page("app/page.tsx", "/", "public", "public", "public"),
   api(
     "app/account/deletion/confirm/route.ts",
     "/account/deletion/confirm",
@@ -173,12 +172,19 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
 
   page(
-    "app/(workspace)/threads/page.tsx",
-    "/threads",
+    "app/(workspace)/page.tsx",
+    "/",
     "threads",
     "authenticated",
     "redirect-sign-in",
     { primaryNavigation: true }
+  ),
+  page(
+    "app/(workspace)/threads/page.tsx",
+    "/threads",
+    "threads",
+    "authenticated",
+    "redirect-sign-in"
   ),
   page(
     "app/(workspace)/threads/new/page.tsx",
@@ -206,16 +212,29 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/projects",
     "projects",
     "authenticated",
+    "redirect-sign-in"
+  ),
+  page(
+    "app/(workspace)/apps/page.tsx",
+    "/apps",
+    "apps",
+    "authenticated",
     "redirect-sign-in",
     { primaryNavigation: true }
+  ),
+  page(
+    "app/(workspace)/apps/[appKey]/page.tsx",
+    "/apps/:appKey",
+    "apps",
+    "authenticated",
+    "redirect-sign-in"
   ),
   page(
     "app/(workspace)/model-deployments/page.tsx",
     "/model-deployments",
     "models",
     "authenticated",
-    "redirect-sign-in",
-    { primaryNavigation: true }
+    "redirect-sign-in"
   ),
   page(
     "app/(workspace)/projects/[id]/page.tsx",
@@ -251,6 +270,48 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "environments",
     "authenticated",
     "redirect-sign-in"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/page.tsx",
+    "/settings/environments/:id",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/workspaces/page.tsx",
+    "/settings/environments/:id/workspaces",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/inference/page.tsx",
+    "/settings/environments/:id/inference",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/apps/page.tsx",
+    "/settings/environments/:id/apps",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/tools/page.tsx",
+    "/settings/environments/:id/tools",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/activity/page.tsx",
+    "/settings/environments/:id/activity",
+    "environments",
+    "admin",
+    "admin-denied"
   ),
   page(
     "app/dashboard/page.tsx",
@@ -371,16 +432,9 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.unauthorized
   ),
   page(
-    "app/admin/integrations/page.tsx",
-    "/admin/integrations",
-    "integrations",
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/integrations/email/page.tsx",
-    "/admin/integrations/email",
-    "integrations",
+    "app/admin/email/page.tsx",
+    "/admin/email",
+    "email-delivery",
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized
   ),
@@ -394,13 +448,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/admin/stats/page.tsx",
     "/admin/stats",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/tools/page.tsx",
-    "/admin/tools",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized
@@ -428,6 +475,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "auth",
     "public",
     "public"
+  ),
+  api(
+    "app/api/apps/route.ts",
+    "/api/apps",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/apps/[appKey]/route.ts",
+    "/api/apps/:appKey",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/apps/[appKey]/installation/route.ts",
+    "/api/apps/:appKey/installation",
+    "apps",
+    "admin",
+    "api-unauthorized"
   ),
   api(
     "app/api/shared/[token]/route.ts",
@@ -500,8 +568,22 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/google-calendar/action/route.ts",
+    "/api/runtime/google-calendar/action",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/runtime/environments/idle/route.ts",
     "/api/runtime/environments/idle",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
+    "app/api/runtime/apps/tavily/[capability]/[approval]/[...path]/route.ts",
+    "/api/runtime/apps/tavily/:capability/:approval/[...path]",
     "credential-boundary",
     "service-boundary",
     "service-bearer"
@@ -538,6 +620,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/admin/environments/[id]/operations/route.ts",
     "/api/admin/environments/:id/operations",
     ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/route.ts",
+    "/api/admin/environments/:id/inference",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/deployments/[deploymentId]/route.ts",
+    "/api/admin/environments/:id/inference/deployments/:deploymentId",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts",
+    "/api/admin/environments/:id/inference/gateways/:gatewayId",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/default/route.ts",
+    "/api/admin/environments/:id/inference/default",
+    "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
@@ -717,16 +827,16 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/integrations/email/route.ts",
-    "/api/admin/integrations/email",
-    "integrations",
+    "app/api/admin/email/route.ts",
+    "/api/admin/email",
+    "email-delivery",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/integrations/email/test/route.ts",
-    "/api/admin/integrations/email/test",
-    "integrations",
+    "app/api/admin/email/test/route.ts",
+    "/api/admin/email/test",
+    "email-delivery",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
@@ -747,41 +857,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/logs/stats/route.ts",
     "/api/admin/logs/stats",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/tools/route.ts",
-    "/api/admin/tools",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/tools/[providerKey]/route.ts",
-    "/api/admin/tools/:providerKey",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/tools/[providerKey]/test/route.ts",
-    "/api/admin/tools/:providerKey/test",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/tools/[providerKey]/capabilities/[capabilityKey]/route.ts",
-    "/api/admin/tools/:providerKey/capabilities/:capabilityKey",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/tools/discord/binding/route.ts",
-    "/api/admin/tools/discord/binding",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
@@ -817,42 +892,63 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/discord/gateway/route.ts",
     "/api/discord/gateway",
-    "integrations",
+    "webhook",
     "admin",
     "admin-denied"
   ),
   api(
-    "app/api/github/repos/route.ts",
-    "/api/github/repos",
-    "integrations",
+    "app/api/apps/github/route.ts",
+    "/api/apps/github",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
+    "/api/environments/:environmentId/apps/:appKey",
+    "apps",
     "admin",
     "admin-denied"
   ),
   api(
-    "app/api/integrations/github/route.ts",
-    "/api/integrations/github",
-    "integrations",
+    "app/api/environments/[environmentId]/apps/[appKey]/connections/route.ts",
+    "/api/environments/:environmentId/apps/:appKey/connections",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/environments/[environmentId]/apps/[appKey]/connections/[connectionId]/route.ts",
+    "/api/environments/:environmentId/apps/:appKey/connections/:connectionId",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/environments/[environmentId]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
+    "/api/environments/:environmentId/apps/:appKey/capabilities/:capabilityKey",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/apps/github/connect/route.ts",
+    "/api/apps/github/connect",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/integrations/github/connect/route.ts",
-    "/api/integrations/github/connect",
-    "integrations",
+    "app/api/apps/github/repositories/route.ts",
+    "/api/apps/github/repositories",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/integrations/github/repositories/route.ts",
-    "/api/integrations/github/repositories",
-    "integrations",
-    AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
-  ),
-  api(
-    "app/api/integrations/github/sync/route.ts",
-    "/api/integrations/github/sync",
-    "integrations",
+    "app/api/apps/github/sync/route.ts",
+    "/api/apps/github/sync",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
@@ -1084,6 +1180,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
+    "app/api/knowledge/ask/route.ts",
+    "/api/knowledge/ask",
+    "knowledge",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/knowledge/documents/route.ts",
     "/api/knowledge/documents",
     "knowledge",
@@ -1224,9 +1327,9 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/tools/runtime/route.ts",
-    "/api/tools/runtime",
-    "runtime-tools",
+    "app/api/runtime/apps/route.ts",
+    "/api/runtime/apps",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
@@ -1240,6 +1343,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/projects/route.ts",
     "/api/projects",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/active/route.ts",
+    "/api/projects/active",
     "projects",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
@@ -1280,9 +1390,65 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/projects/[id]/capabilities/route.ts",
-    "/api/projects/:id/capabilities",
-    "projects",
+    "app/api/projects/[id]/apps/route.ts",
+    "/api/projects/:id/apps",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/[appKey]/route.ts",
+    "/api/projects/:id/apps/:appKey",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/[appKey]/connections/[connectionId]/route.ts",
+    "/api/projects/:id/apps/:appKey/connections/:connectionId",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
+    "/api/projects/:id/apps/:appKey/capabilities/:capabilityKey",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/google/route.ts",
+    "/api/projects/:id/apps/google",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/google/connect/route.ts",
+    "/api/projects/:id/apps/google/connect",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/google/sync/route.ts",
+    "/api/projects/:id/apps/google/sync",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/google/sharing/route.ts",
+    "/api/projects/:id/apps/google/sharing",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/apps/google/disconnect/route.ts",
+    "/api/projects/:id/apps/google/disconnect",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),

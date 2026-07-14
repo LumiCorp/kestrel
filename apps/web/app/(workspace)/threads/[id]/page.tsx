@@ -5,6 +5,10 @@ import { Chat } from "@/components/chat";
 import { DataStreamHandler } from "@/components/data-stream-handler";
 import { ThreadActions } from "@/components/threads/thread-actions";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
+import {
+  getDefaultOrganizationEnvironment,
+  resolveThreadEnvironment,
+} from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
@@ -27,12 +31,18 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     true
   );
-  const cookieStore = await cookies();
+  const [cookieStore, environment] = await Promise.all([
+    cookies(),
+    chat
+      ? resolveThreadEnvironment({ organizationId, threadId: chat.id })
+      : getDefaultOrganizationEnvironment(organizationId),
+  ]);
   const chatModelFromCookie = cookieStore.get("chat-model");
   const initialChatModel = await resolvePreferredLanguageModelId(
     chatModelFromCookie?.value,
     null,
-    organizationId
+    organizationId,
+    environment?.id
   );
   const [projectDetail, projectRows] = await Promise.all([
     chat?.projectId
@@ -50,6 +60,11 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   return (
     <>
       <Chat
+        activeEnvironment={
+          environment
+            ? { id: environment.id, name: environment.name }
+            : undefined
+        }
         canPublish={chat?.access.canPublish ?? false}
         id={chat?.id ?? id}
         initialChatExists={Boolean(chat)}
@@ -58,6 +73,15 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         initialShareToken={chat?.shareToken ?? null}
         initialVisibilityType={chat?.isPublic ? "public" : "private"}
         isReadonly={Boolean(chat?.archivedAt)}
+        project={
+          projectDetail
+            ? {
+                id: projectDetail.project.id,
+                name: projectDetail.project.name,
+              }
+            : null
+        }
+        threadTitle={chat?.title || "New Thread"}
       />
       {chat && (
         <ThreadActions

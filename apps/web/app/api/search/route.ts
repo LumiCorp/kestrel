@@ -7,6 +7,7 @@ import { searchWorkspace } from "@/lib/search";
 const querySchema = z.object({
   q: z.string().trim().min(1).max(500),
   limit: z.coerce.number().int().positive().max(20).optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -20,6 +21,7 @@ export async function GET(request: NextRequest) {
       userId: session.user.id,
       query: query.q,
       limit: query.limit,
+      projectId: query.projectId,
     });
     return NextResponse.json({ query: query.q, ...results });
   } catch (error) {

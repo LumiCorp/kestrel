@@ -84,6 +84,10 @@ test("RunPod validation proves streaming and a complete tool-result round trip",
   });
 
   assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.body.temperature, 0);
+  assert.equal(requests[0]?.body.seed, 0);
+  assert.equal(requests[1]?.body.temperature, 0);
+  assert.equal(requests[1]?.body.seed, 0);
   assert.equal(
     requests[0]?.url,
     "https://api.runpod.ai/v2/endpoint_1/openai/v1/chat/completions"
@@ -112,6 +116,85 @@ test("RunPod validation rejects a non-streaming provider response safely", async
         (error as { code?: string }).code,
         "RUNPOD_STREAMING_UNSUPPORTED"
       );
+      return true;
+    }
+  );
+});
+
+test("RunPod validation explains missing OpenAI routes without assuming the cause", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret-not-in-error",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "RUNPOD_OPENAI_CHAT_UNAVAILABLE"
+      );
+      assert.match(String(error), /Confirm the endpoint ID and template/u);
+      assert.match(String(error), /queue-only \/run and \/runsync/u);
+      assert.equal(String(error).includes("secret-not-in-error"), false);
+      return true;
+    }
+  );
+});
+
+test("RunPod validation classifies cold starts and provider throttling as retryable", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => {
+        throw new Error("cold start");
+      },
+    }),
+    (error: unknown) => {
+      assert.equal((error as { retryable?: boolean }).retryable, true);
+      assert.equal((error as { status?: number | null }).status, null);
+      return true;
+    }
+  );
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => new Response(null, { status: 429 }),
+    }),
+    (error: unknown) => {
+      assert.equal((error as { retryable?: boolean }).retryable, true);
+      assert.equal((error as { status?: number | null }).status, 429);
+      return true;
+    }
+  );
+});
+
+test("RunPod validation retries an interrupted event stream", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("stream interrupted"));
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } }
+        ),
+    }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "RUNPOD_STREAM_INTERRUPTED"
+      );
+      assert.equal((error as { retryable?: boolean }).retryable, true);
       return true;
     }
   );

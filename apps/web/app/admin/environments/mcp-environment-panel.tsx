@@ -116,7 +116,9 @@ export function McpEnvironmentPanel({
       )
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
-          toast.error(errorMessage(error, "MCP configuration failed to load."));
+          toast.error(
+            errorMessage(error, "Custom App configuration failed to load.")
+          );
         }
       })
       .finally(() => {
@@ -155,7 +157,7 @@ export function McpEnvironmentPanel({
       setCredentials((current) => [payload.credential!, ...current]);
       setCredentialId(payload.credential.id);
       setCredentialName("");
-      toast.success("Encrypted MCP credential created.");
+      toast.success("Encrypted credential created.");
     } catch (error) {
       toast.error(errorMessage(error, "Credential creation failed."));
     } finally {
@@ -173,11 +175,11 @@ export function McpEnvironmentPanel({
         response
       );
       if (!response.ok) {
-        throw new Error(payload.error ?? "MCP operations failed to load.");
+        throw new Error(payload.error ?? "Custom App activity failed to load.");
       }
       setOperations(payload);
     } catch (error) {
-      toast.error(errorMessage(error, "MCP operations failed to load."));
+      toast.error(errorMessage(error, "Custom App activity failed to load."));
     } finally {
       setBusyAction(null);
     }
@@ -204,11 +206,11 @@ export function McpEnvironmentPanel({
         error?: string;
       }>(response);
       if (!(response.ok && payload.authorizationUrl)) {
-        throw new Error(payload.error ?? "MCP OAuth authorization failed.");
+        throw new Error(payload.error ?? "App sign-in could not be started.");
       }
       window.location.assign(payload.authorizationUrl);
     } catch (error) {
-      toast.error(errorMessage(error, "MCP OAuth authorization failed."));
+      toast.error(errorMessage(error, "App sign-in could not be started."));
       setBusyAction(null);
     }
   }
@@ -245,7 +247,7 @@ export function McpEnvironmentPanel({
             : server
         )
       );
-      toast.success("MCP credential revoked.");
+      toast.success("Credential revoked.");
     } catch (error) {
       toast.error(errorMessage(error, "Credential revocation failed."));
     } finally {
@@ -306,7 +308,7 @@ export function McpEnvironmentPanel({
         response
       );
       if (!(response.ok && payload.server)) {
-        throw new Error(payload.error ?? "MCP server installation failed.");
+        throw new Error(payload.error ?? "Custom App could not be added.");
       }
       setServers((current) => [payload.server!, ...current]);
       setServerName("");
@@ -315,9 +317,11 @@ export function McpEnvironmentPanel({
       setImageReference("");
       setLaunchArguments("");
       setEgressOrigins("");
-      toast.success("MCP server installed. Run discovery before enabling it.");
+      toast.success(
+        "Custom App added. Check its capabilities before enabling access."
+      );
     } catch (error) {
-      toast.error(errorMessage(error, "MCP server installation failed."));
+      toast.error(errorMessage(error, "Custom App could not be added."));
     } finally {
       setBusyAction(null);
     }
@@ -333,11 +337,11 @@ export function McpEnvironmentPanel({
         response
       );
       if (!response.ok) {
-        throw new Error(payload.error ?? "MCP server details failed to load.");
+        throw new Error(payload.error ?? "Custom App details failed to load.");
       }
       setDetails((current) => ({ ...current, [serverId]: payload }));
     } catch (error) {
-      toast.error(errorMessage(error, "MCP server details failed to load."));
+      toast.error(errorMessage(error, "Custom App details failed to load."));
     } finally {
       setBusyAction(null);
     }
@@ -352,7 +356,9 @@ export function McpEnvironmentPanel({
       );
       const payload = await readJson<{ error?: string }>(response);
       if (!response.ok) {
-        throw new Error(payload.error ?? "MCP discovery could not be queued.");
+        throw new Error(
+          payload.error ?? "Capability check could not be queued."
+        );
       }
       setServers((current) =>
         current.map((server) =>
@@ -361,9 +367,9 @@ export function McpEnvironmentPanel({
             : server
         )
       );
-      toast.success("MCP capability discovery queued.");
+      toast.success("Capability check queued.");
     } catch (error) {
-      toast.error(errorMessage(error, "MCP discovery could not be queued."));
+      toast.error(errorMessage(error, "Capability check could not be queued."));
     } finally {
       setBusyAction(null);
     }
@@ -390,7 +396,7 @@ export function McpEnvironmentPanel({
       }
       await loadServer(serverId);
       toast.success(
-        `Capability snapshot ${decision === "approve" ? "approved" : "rejected"}.`
+        `App capabilities ${decision === "approve" ? "approved" : "rejected"}.`
       );
     } catch (error) {
       toast.error(errorMessage(error, "Snapshot review failed."));
@@ -419,14 +425,12 @@ export function McpEnvironmentPanel({
       );
       const payload = await readJson<{ error?: string }>(response);
       if (!response.ok) {
-        throw new Error(
-          payload.error ?? "MCP capability policy update failed."
-        );
+        throw new Error(payload.error ?? "Custom App access update failed.");
       }
       await loadServer(serverId);
-      toast.success("Environment MCP policy updated.");
+      toast.success("Environment App access updated.");
     } catch (error) {
-      toast.error(errorMessage(error, "MCP capability policy update failed."));
+      toast.error(errorMessage(error, "Custom App access update failed."));
     } finally {
       setBusyAction(null);
     }
@@ -434,7 +438,7 @@ export function McpEnvironmentPanel({
 
   if (loading) {
     return (
-      <p className="text-muted-foreground text-sm">Loading MCP servers…</p>
+      <p className="text-muted-foreground text-sm">Loading Custom Apps…</p>
     );
   }
 
@@ -443,15 +447,14 @@ export function McpEnvironmentPanel({
   );
 
   return (
-    <section className="space-y-4 border-t pt-4">
+    <section className="space-y-4">
       <div>
         <div className="flex items-start gap-2">
           <div className="mr-auto">
-            <h3 className="font-medium text-sm">MCP servers</h3>
+            <h3 className="font-medium text-sm">Custom Apps</h3>
             <p className="text-muted-foreground text-xs">
-              Install remote Streamable HTTP or digest-pinned OCI servers.
-              Discovered capabilities remain disabled until an administrator
-              approves them.
+              Connect a private App and review what it can do before making it
+              available to Projects.
             </p>
           </div>
           <Button
@@ -470,7 +473,7 @@ export function McpEnvironmentPanel({
 
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-medium text-sm">
-          Add encrypted credential
+          Advanced: add a private credential
         </summary>
         <div className="mt-3 grid gap-3">
           <div className="space-y-2">
@@ -500,7 +503,7 @@ export function McpEnvironmentPanel({
             type="button"
             variant="outline"
           >
-            Save encrypted credential
+            Save credential
           </Button>
           {credentials.length > 0 ? (
             <div className="grid gap-2">
@@ -533,7 +536,7 @@ export function McpEnvironmentPanel({
 
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-medium text-sm">
-          Connect with OAuth 2.1
+          Advanced: connect a sign-in account
         </summary>
         <div className="mt-3 grid gap-3">
           <div className="space-y-2">
@@ -543,14 +546,14 @@ export function McpEnvironmentPanel({
             <Input
               id={`mcp-oauth-name-${environmentId}`}
               onChange={(event) => setCredentialName(event.target.value)}
-              placeholder="Production OAuth"
+              placeholder="Production account"
               value={credentialName}
             />
           </div>
           <Input
-            aria-label="MCP resource URL"
+            aria-label="App resource URL"
             onChange={(event) => setOauthResource(event.target.value)}
-            placeholder="https://mcp.example.com/mcp"
+            placeholder="https://apps.example.com/connect"
             type="url"
             value={oauthResource}
           />
@@ -577,14 +580,14 @@ export function McpEnvironmentPanel({
             type="button"
             variant="outline"
           >
-            Authorize with PKCE
+            Continue to sign in
           </Button>
         </div>
       </details>
 
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-medium text-sm">
-          Install MCP server
+          Add Custom App
         </summary>
         <div className="mt-3 grid gap-3">
           <div className="flex gap-2">
@@ -596,7 +599,9 @@ export function McpEnvironmentPanel({
                 type="button"
                 variant={sourceType === candidate ? "default" : "outline"}
               >
-                {candidate === "remote" ? "Remote HTTP" : "OCI stdio"}
+                {candidate === "remote"
+                  ? "Connection URL"
+                  : "Private container"}
               </Button>
             ))}
           </div>
@@ -606,7 +611,7 @@ export function McpEnvironmentPanel({
               <Input
                 id={`mcp-server-name-${environmentId}`}
                 onChange={(event) => setServerName(event.target.value)}
-                placeholder="GitHub MCP"
+                placeholder="Team knowledge App"
                 value={serverName}
               />
             </div>
@@ -624,12 +629,12 @@ export function McpEnvironmentPanel({
             <>
               <div className="space-y-2">
                 <Label htmlFor={`mcp-remote-url-${environmentId}`}>
-                  Streamable HTTP endpoint
+                  App connection URL
                 </Label>
                 <Input
                   id={`mcp-remote-url-${environmentId}`}
                   onChange={(event) => setRemoteUrl(event.target.value)}
-                  placeholder="https://mcp.example.com/mcp"
+                  placeholder="https://apps.example.com/connect"
                   type="url"
                   value={remoteUrl}
                 />
@@ -689,8 +694,8 @@ export function McpEnvironmentPanel({
               value={egressOrigins}
             />
             <p className="text-muted-foreground text-xs">
-              OCI servers remain on an internal network and can reach only these
-              origins through the isolated egress broker.
+              Private container Apps remain on an internal network and can reach
+              only these origins through the isolated egress broker.
             </p>
           </div>
           <Button
@@ -706,15 +711,13 @@ export function McpEnvironmentPanel({
             size="sm"
             type="button"
           >
-            Install server
+            Add App
           </Button>
         </div>
       </details>
 
       {servers.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No MCP servers installed.
-        </p>
+        <p className="text-muted-foreground text-sm">No Custom Apps added.</p>
       ) : (
         <div className="grid gap-3">
           {servers.map((server) => {
@@ -725,7 +728,6 @@ export function McpEnvironmentPanel({
                   <span className="mr-auto font-medium text-sm">
                     {server.name}
                   </span>
-                  <Badge variant="outline">{server.sourceType}</Badge>
                   <Badge variant="outline">{server.status}</Badge>
                   <Button
                     disabled={
@@ -736,7 +738,7 @@ export function McpEnvironmentPanel({
                     type="button"
                     variant="outline"
                   >
-                    Discover
+                    Check capabilities
                   </Button>
                   <Button
                     disabled={busyAction !== null}
@@ -745,7 +747,7 @@ export function McpEnvironmentPanel({
                     type="button"
                     variant="ghost"
                   >
-                    {detail ? "Refresh" : "Review"}
+                    {detail ? "Refresh" : "Review access"}
                   </Button>
                 </div>
                 {server.failureMessage ? (
@@ -774,7 +776,7 @@ export function McpEnvironmentPanel({
                             size="sm"
                             type="button"
                           >
-                            Approve snapshot
+                            Approve capabilities
                           </Button>
                           <Button
                             disabled={busyAction !== null}
@@ -865,15 +867,15 @@ async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
   >(operationsResponse);
   if (!credentialsResponse.ok) {
     throw new Error(
-      credentialsPayload.error ?? "MCP credentials failed to load."
+      credentialsPayload.error ?? "Custom App credentials failed to load."
     );
   }
   if (!serversResponse.ok) {
-    throw new Error(serversPayload.error ?? "MCP servers failed to load.");
+    throw new Error(serversPayload.error ?? "Custom Apps failed to load.");
   }
   if (!operationsResponse.ok) {
     throw new Error(
-      operationsPayload.error ?? "MCP operations failed to load."
+      operationsPayload.error ?? "Custom App activity failed to load."
     );
   }
   return {
@@ -885,17 +887,17 @@ async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
 
 function OperationalSurface({ snapshot }: { snapshot: OperationalSnapshot }) {
   const metrics = [
-    ["Servers", snapshot.summary.servers],
+    ["Apps", snapshot.summary.servers],
     ["Ready", snapshot.summary.readyServers],
     ["Degraded", snapshot.summary.degradedServers],
-    ["Discovery active", snapshot.summary.activeDiscoveryJobs],
-    ["Interactions pending", snapshot.summary.pendingInteractions],
-    ["Invocations failed", snapshot.summary.failedInvocations],
+    ["Checks active", snapshot.summary.activeDiscoveryJobs],
+    ["Requests pending", snapshot.summary.pendingInteractions],
+    ["Calls failed", snapshot.summary.failedInvocations],
   ] as const;
   return (
     <details className="rounded-md border p-3">
       <summary className="cursor-pointer font-medium text-sm">
-        Health and recent activity
+        Advanced health and recent activity
       </summary>
       <div className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -914,10 +916,10 @@ function OperationalSurface({ snapshot }: { snapshot: OperationalSnapshot }) {
             secondary: job.failureCode ?? shortId(job.serverId),
             timestamp: job.completedAt ?? job.createdAt,
           }))}
-          title="Discovery"
+          title="Capability checks"
         />
         <RecentActivity
-          emptyMessage="No MCP invocations."
+          emptyMessage="No Custom App calls."
           items={snapshot.invocations.map((invocation) => ({
             id: invocation.id,
             primary: `${invocation.method} · ${invocation.status}`,
@@ -930,17 +932,17 @@ function OperationalSurface({ snapshot }: { snapshot: OperationalSnapshot }) {
               }`,
             timestamp: invocation.completedAt ?? invocation.createdAt,
           }))}
-          title="Invocations"
+          title="App calls"
         />
         <RecentActivity
-          emptyMessage="No sampling or elicitation checkpoints."
+          emptyMessage="No App requests need attention."
           items={snapshot.interactions.map((interaction) => ({
             id: interaction.id,
             primary: `${interaction.kind} · ${interaction.status}`,
             secondary: `thread ${shortId(interaction.threadId)}`,
             timestamp: interaction.resolvedAt ?? interaction.createdAt,
           }))}
-          title="Sampling and elicitation"
+          title="App requests"
         />
         <p className="text-muted-foreground text-xs">
           This surface exposes status, identifiers, error codes, and replay

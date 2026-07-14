@@ -59,8 +59,16 @@ export async function POST(request: Request) {
     );
     await assertManagedRunPodLaunchAccess(actor);
     const body = bodySchema.parse(await request.json());
+    const environment = await import("@/lib/environments/store").then(
+      ({ ensureOrganizationDefaultEnvironment }) =>
+        ensureOrganizationDefaultEnvironment({
+          organizationId: actor.organizationId,
+          userId: actor.userId,
+        })
+    );
     const result = await createManagedRunPodDeployment({
       organizationId: actor.organizationId,
+      environmentId: environment.environment.id,
       actorUserId: actor.userId,
       ...body,
     });
