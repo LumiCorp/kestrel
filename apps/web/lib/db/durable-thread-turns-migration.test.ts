@@ -18,6 +18,13 @@ const journal = fs.readFileSync(
   ),
   "utf8"
 );
+const workerDockerfile = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../../deploy/fly/kestrel-one-turn-worker/Dockerfile"
+  ),
+  "utf8"
+);
 
 test("durable turns establish the shared queue and replay ledger", () => {
   for (const table of [
@@ -59,4 +66,12 @@ test("mobile registrations remain user-owned and platform bounded", () => {
 
 test("durable turn migration is registered with the unified migrator", () => {
   assert.match(journal, /"tag": "0023_durable_thread_turns"/u);
+});
+
+test("the production worker image retains its TypeScript runtime toolchain", () => {
+  assert.match(
+    workerDockerfile,
+    /pnpm install --frozen-lockfile --prod=false/u
+  );
+  assert.match(workerDockerfile, /"worker:turns"/u);
 });

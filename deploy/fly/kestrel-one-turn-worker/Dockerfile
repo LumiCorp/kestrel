@@ -11,6 +11,6 @@ COPY . .
 
 # The worker runs TypeScript directly so the image intentionally includes the
 # web package development toolchain. It contains no public HTTP service.
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 
 CMD ["pnpm", "--filter", "@kestrel/kestrel-one", "worker:turns"]
