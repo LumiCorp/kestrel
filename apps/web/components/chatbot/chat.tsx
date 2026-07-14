@@ -738,6 +738,7 @@ export function Chat({
   useEffect(() => {
     const nextQueued = queuedMessages[0];
     if (
+      resumeTurnIdRef.current ||
       controller.status !== "ready" ||
       !nextQueued?.turnId ||
       nextQueued.message.metadata?.deliveryState !== "queued"
@@ -747,12 +748,12 @@ export function Chat({
 
     const { deliveryState: _deliveryState, ...metadata } =
       nextQueued.message.metadata ?? {};
+    resumeTurnIdRef.current = nextQueued.turnId;
     controller.setMessages((current) => [
       ...current,
       { ...nextQueued.message, metadata },
     ]);
     setQueuedMessages((current) => current.slice(1));
-    resumeTurnIdRef.current = nextQueued.turnId;
     void controller.resumeStream().finally(() => {
       if (resumeTurnIdRef.current === nextQueued.turnId) {
         resumeTurnIdRef.current = null;
