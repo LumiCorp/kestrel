@@ -117,6 +117,26 @@ test("RunPod validation rejects a non-streaming provider response safely", async
   );
 });
 
+test("RunPod validation identifies queue-only handlers precisely", async () => {
+  await assert.rejects(
+    validateRunPodToolRoundTrip({
+      apiKey: "secret-not-in-error",
+      baseUrl: "https://api.runpod.ai/v2/endpoint/openai/v1",
+      model: "model",
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "RUNPOD_OPENAI_CHAT_UNAVAILABLE"
+      );
+      assert.match(String(error), /Queue-only \/run and \/runsync/u);
+      assert.equal(String(error).includes("secret-not-in-error"), false);
+      return true;
+    }
+  );
+});
+
 test("client metadata cannot forge RunPod validation evidence", () => {
   const forged = {
     [RUNPOD_VALIDATION_METADATA_KEY]: {

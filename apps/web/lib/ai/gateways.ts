@@ -1089,6 +1089,62 @@ export async function validateRunPodGatewayModel(input: {
   return { model: updated, validation: evidence };
 }
 
+export async function validateRunPodGatewayModelByRawId(input: {
+  gatewayId: string;
+  rawModelId: string;
+  fetchImpl?: RunPodFetch;
+  now?: Date;
+}) {
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: (table, operators) => operators.eq(table.id, input.gatewayId),
+  });
+  if (gateway?.provider !== "runpod") {
+    throw new Error("RunPod gateway not found.");
+  }
+  const apiKey = getGatewayApiKey(gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!(apiKey && baseUrl)) {
+    throw new Error("RunPod gateway credential or endpoint is missing.");
+  }
+
+  const rawModelId = input.rawModelId.trim();
+  if (!rawModelId) {
+    throw new Error("Served model ID is required.");
+  }
+  const existing = await knowledgeDb.query.aiGatewayModels.findFirst({
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.gatewayId, gateway.id),
+        operators.eq(table.rawModelId, rawModelId)
+      ),
+  });
+  const evidence = await validateRunPodToolRoundTrip({
+    apiKey,
+    baseUrl,
+    model: rawModelId,
+    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    ...(input.now ? { now: input.now } : {}),
+  });
+  const model = await saveGatewayModel({
+    id: existing?.id,
+    gatewayId: gateway.id,
+    gatewayProvider: "runpod",
+    gatewayBaseUrl: gateway.baseUrl,
+    rawModelId,
+    alias: existing?.alias ?? null,
+    modality: "language",
+    approved: true,
+    isDefault: existing?.isDefault ?? false,
+    description: existing?.description ?? null,
+    metadata: mergeRunPodValidationEvidence({
+      metadata: existing?.metadata,
+      evidence,
+    }),
+  });
+
+  return { model, validation: evidence };
+}
+
 type ResolvedGatewayModel = {
   gateway: GatewayRecord;
   model: GatewayCatalogModel;

@@ -32,6 +32,7 @@ const bodySchema = z.discriminatedUnion("kind", [
       .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u),
     displayName: z.string().trim().min(1).max(120),
     apiKey: z.string().trim().min(1),
+    servedModelId: z.string().trim().min(1).max(512).optional(),
   }),
 ]);
 

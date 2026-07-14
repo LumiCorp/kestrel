@@ -56,7 +56,10 @@ test("managed jobs are produced by Vercel and consumed by the persistent worker"
 test("managed maintenance idles until its provider connection is enabled", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
   assert.match(runtime, /await getRunPodProviderConnection\(\)/u);
-  assert.equal(runtime.match(/if \(!connection\?\.enabled\) return/g)?.length, 2);
+  assert.equal(
+    runtime.match(/if \(!connection\?\.enabled\) return/g)?.length,
+    2
+  );
 });
 
 test("Qwen bootstrap preserves the administrator-selected credential source", () => {
@@ -75,16 +78,39 @@ test("managed qualification retries cold-start model discovery failures", () => 
   );
 });
 
-test("connected inference exposes recovery after model discovery fails", () => {
+test("connected inference supports explicit model validation when discovery fails", () => {
   const route = read(
     "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"
+  );
+  const connectRoute = read(
+    "app/api/admin/environments/[id]/inference/route.ts"
   );
   const client = read(
     "app/(workspace)/settings/environments/[id]/inference/page-client.tsx"
   );
   assert.match(route, /action: z\.literal\("sync"\)/u);
+  assert.match(route, /action: z\.literal\("validate_served_model"\)/u);
   assert.match(route, /resyncEnvironmentRunPodEndpoint/u);
+  assert.match(connectRoute, /servedModelId/u);
+  assert.match(client, /Validate model/u);
   assert.match(client, /Retry discovery/u);
+  assert.match(client, /Queue-only \/run and \/runsync/u);
+});
+
+test("manual RunPod model validation still requires tool round-trip evidence", () => {
+  const gateways = read("lib/ai/gateways.ts");
+  assert.match(
+    gateways,
+    /validateRunPodGatewayModelByRawId[\s\S]*validateRunPodToolRoundTrip/u
+  );
+  assert.match(
+    gateways,
+    /validateRunPodGatewayModelByRawId[\s\S]*mergeRunPodValidationEvidence/u
+  );
+  assert.match(
+    gateways,
+    /validateRunPodGatewayModelByRawId[\s\S]*saveGatewayModel/u
+  );
 });
 
 test("turn Environment is enforced before runtime credential use", () => {

@@ -4,6 +4,7 @@ import {
   removeEnvironmentConnectedEndpoint,
   resyncEnvironmentRunPodEndpoint,
   validateAndEnableEnvironmentRunPodModel,
+  validateAndEnableEnvironmentRunPodModelByRawId,
 } from "@/lib/ai/environment-inference";
 import { assertEnvironmentPrivateInferenceEnabled } from "@/lib/ai/managed-runpod-config";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
@@ -14,6 +15,10 @@ const paramsSchema = z.object({ id: routeIdSchema, gatewayId: routeIdSchema });
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("sync") }),
   z.object({ action: z.literal("validate"), modelId: routeIdSchema }),
+  z.object({
+    action: z.literal("validate_served_model"),
+    servedModelId: z.string().trim().min(1).max(512),
+  }),
 ]);
 
 export async function POST(
@@ -33,6 +38,17 @@ export async function POST(
           organizationId,
           environmentId,
           gatewayId,
+        })
+      );
+    }
+    if (body.action === "validate_served_model") {
+      return NextResponse.json(
+        await validateAndEnableEnvironmentRunPodModelByRawId({
+          organizationId,
+          environmentId,
+          gatewayId,
+          rawModelId: body.servedModelId,
+          actorUserId: session.user.id,
         })
       );
     }

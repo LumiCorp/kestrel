@@ -10,6 +10,7 @@ import {
   syncGatewayModels,
   updateGateway,
   validateRunPodGatewayModel,
+  validateRunPodGatewayModelByRawId,
 } from "./gateways";
 import { isManagedRunPodEnabled } from "./managed-runpod-config";
 import {
@@ -122,6 +123,7 @@ export async function connectEnvironmentRunPodEndpoint(input: {
   displayName: string;
   endpointId: string;
   apiKey: string;
+  servedModelId?: string;
   actorUserId: string;
 }) {
   await requireOwnedEnvironment(input);
@@ -139,6 +141,16 @@ export async function connectEnvironmentRunPodEndpoint(input: {
     },
   });
   try {
+    if (input.servedModelId?.trim()) {
+      await validateAndEnableEnvironmentRunPodModelByRawId({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        gatewayId: gateway.id,
+        rawModelId: input.servedModelId,
+        actorUserId: input.actorUserId,
+      });
+      return getEnvironmentPrivateInference(input);
+    }
     const synced = await syncGatewayModels(gateway.id);
     const languageModels = synced.models.filter(
       (model) => model.modality === "language"
@@ -153,17 +165,82 @@ export async function connectEnvironmentRunPodEndpoint(input: {
       });
     }
     return getEnvironmentPrivateInference(input);
-  } catch {
+  } catch (error) {
+    const suppliedModelId = Boolean(input.servedModelId?.trim());
     await updateGateway(gateway.id, {
       enabled: false,
       metadata: {
         managedBy: "environment",
         connectedByUserId: input.actorUserId,
-        validationStatus: "failed",
+        validationStatus: suppliedModelId
+          ? "validation_failed"
+          : "model_id_required",
+        validationMessage: suppliedModelId
+          ? error instanceof Error
+            ? error.message
+            : "The served model could not be validated."
+          : "Model discovery is unavailable for this endpoint. Enter the served model ID to validate it directly.",
       },
     });
     return getEnvironmentPrivateInference(input);
   }
+}
+
+export async function validateAndEnableEnvironmentRunPodModelByRawId(input: {
+  organizationId: string;
+  environmentId: string;
+  gatewayId: string;
+  rawModelId: string;
+  actorUserId: string;
+}) {
+  await requireOwnedEnvironment(input);
+  const gateway = await knowledgeDb.query.aiGateways.findFirst({
+    where: and(
+      eq(schema.aiGateways.id, input.gatewayId),
+      eq(schema.aiGateways.organizationId, input.organizationId),
+      eq(schema.aiGateways.environmentId, input.environmentId),
+      eq(schema.aiGateways.provider, "runpod"),
+      isNull(schema.aiGateways.deploymentId)
+    ),
+  });
+  if (!gateway) {
+    throw new Error("Connected RunPod endpoint not found.");
+  }
+  let validation: Awaited<ReturnType<typeof validateRunPodGatewayModelByRawId>>;
+  try {
+    validation = await validateRunPodGatewayModelByRawId({
+      gatewayId: gateway.id,
+      rawModelId: input.rawModelId,
+    });
+  } catch (error) {
+    await updateGateway(gateway.id, {
+      enabled: false,
+      metadata: {
+        ...(gateway.metadata as Record<string, unknown> | null),
+        validationStatus: "validation_failed",
+        validationMessage:
+          error instanceof Error
+            ? error.message
+            : "The served model could not be validated.",
+      },
+    });
+    throw error;
+  }
+  await updateGateway(gateway.id, {
+    enabled: true,
+    metadata: {
+      ...(gateway.metadata as Record<string, unknown> | null),
+      validationStatus: "ready",
+      validationMessage: null,
+    },
+  });
+  await setEnvironmentDefaultModelIfMissing({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    modelId: validation.model.id,
+    actorUserId: input.actorUserId,
+  });
+  return getEnvironmentPrivateInference(input);
 }
 
 export async function validateAndEnableEnvironmentRunPodModel(input: {

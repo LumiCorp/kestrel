@@ -90,6 +90,10 @@ export function EnvironmentInferenceClient({
   const [endpointName, setEndpointName] = useState("Private RunPod endpoint");
   const [endpointId, setEndpointId] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [servedModelId, setServedModelId] = useState("");
+  const [gatewayModelIds, setGatewayModelIds] = useState<
+    Record<string, string>
+  >({});
   const [busy, setBusy] = useState(false);
   const endpoint = `/api/admin/environments/${state.environment.id}/inference`;
 
@@ -122,10 +126,13 @@ export function EnvironmentInferenceClient({
   );
 
   async function request(
-    body: object,
+    body: Record<string, unknown>,
     options?: { method?: string; path?: string }
   ) {
     setBusy(true);
+    const priorGatewayIds = new Set(
+      state.connected.map((gateway) => gateway.id)
+    );
     try {
       const response = await fetch(options?.path ?? endpoint, {
         method: options?.method ?? "POST",
@@ -135,8 +142,33 @@ export function EnvironmentInferenceClient({
       const payload = await readPayload(response);
       if ("environment" in payload) setState(payload);
       else await refresh();
-      toast.success("Private inference updated.");
+      const connectedWarning =
+        body.kind === "connected" && "connected" in payload
+          ? payload.connected.find(
+              (gateway) =>
+                !priorGatewayIds.has(gateway.id) &&
+                ["model_id_required", "validation_failed"].includes(
+                  String(gateway.metadata?.validationStatus)
+                )
+            )
+          : null;
+      const warningMessage =
+        typeof connectedWarning?.metadata?.validationMessage === "string"
+          ? connectedWarning.metadata.validationMessage
+          : null;
+      if (connectedWarning) {
+        toast.warning(
+          warningMessage ?? "The endpoint needs a served model ID."
+        );
+      } else {
+        toast.success("Private inference updated.");
+      }
     } catch (error) {
+      try {
+        await refresh();
+      } catch {
+        // Preserve the action error as the message the administrator sees.
+      }
       toast.error(
         error instanceof Error
           ? error.message
@@ -248,6 +280,21 @@ export function EnvironmentInferenceClient({
                   value={apiKey}
                 />
               </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="served-model-id">Served model ID</Label>
+                <Input
+                  autoComplete="off"
+                  id="served-model-id"
+                  onChange={(event) => setServedModelId(event.target.value)}
+                  placeholder="Qwen/Qwen3-8B"
+                  value={servedModelId}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Optional when the endpoint supports model discovery; required
+                  otherwise. Use the exact model ID accepted by its chat
+                  completions API.
+                </p>
+              </div>
               <Button
                 className="md:col-span-2"
                 disabled={
@@ -262,6 +309,9 @@ export function EnvironmentInferenceClient({
                     displayName: endpointName,
                     endpointId,
                     apiKey,
+                    ...(servedModelId.trim()
+                      ? { servedModelId: servedModelId.trim() }
+                      : {}),
                   })
                 }
               >
@@ -354,6 +404,11 @@ export function EnvironmentInferenceClient({
           (model) =>
             model.gatewayId === gateway.id && model.modality === "language"
         );
+        const validationMessage =
+          typeof gateway.metadata?.validationMessage === "string"
+            ? gateway.metadata.validationMessage
+            : null;
+        const manualModelId = gatewayModelIds[gateway.id] ?? "";
         return (
           <Card key={gateway.id}>
             <CardHeader className="flex-row items-start justify-between space-y-0">
@@ -368,30 +423,71 @@ export function EnvironmentInferenceClient({
               </Badge>
             </CardHeader>
             <CardContent className="space-y-3">
-              {gateway.metadata?.validationStatus === "failed" ? (
+              {gateway.metadata?.validationStatus === "model_id_required" ? (
                 <p className="text-destructive text-sm">
-                  Automatic validation failed. Retry discovery or validate a
-                  discovered model.
+                  {validationMessage ??
+                    "Model discovery is unavailable for this endpoint. Enter the served model ID to validate it directly."}
+                </p>
+              ) : null}
+              {gateway.metadata?.validationStatus === "validation_failed" ? (
+                <p className="text-destructive text-sm">
+                  {validationMessage ??
+                    "The served model could not be validated."}
                 </p>
               ) : null}
               {models.length === 0 ? (
-                <div className="flex items-center justify-between rounded-md border p-3">
-                  <span className="text-muted-foreground text-sm">
-                    No models have been discovered yet.
-                  </span>
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void request(
-                        { action: "sync" },
-                        { path: `${endpoint}/gateways/${gateway.id}` }
-                      )
-                    }
-                    size="sm"
-                    variant="outline"
-                  >
-                    Retry discovery
-                  </Button>
+                <div className="space-y-3 rounded-md border p-3">
+                  <div className="space-y-2">
+                    <Label htmlFor={`gateway-model-${gateway.id}`}>
+                      Served model ID
+                    </Label>
+                    <Input
+                      id={`gateway-model-${gateway.id}`}
+                      onChange={(event) =>
+                        setGatewayModelIds((current) => ({
+                          ...current,
+                          [gateway.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Qwen/Qwen3-8B"
+                      value={manualModelId}
+                    />
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    Kestrel validates streaming OpenAI-compatible chat
+                    completions with tool calling. Queue-only /run and /runsync
+                    handlers are not supported yet.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      disabled={busy || !manualModelId.trim()}
+                      onClick={() =>
+                        void request(
+                          {
+                            action: "validate_served_model",
+                            servedModelId: manualModelId.trim(),
+                          },
+                          { path: `${endpoint}/gateways/${gateway.id}` }
+                        )
+                      }
+                      size="sm"
+                    >
+                      Validate model
+                    </Button>
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        void request(
+                          { action: "sync" },
+                          { path: `${endpoint}/gateways/${gateway.id}` }
+                        )
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Retry discovery
+                    </Button>
+                  </div>
                 </div>
               ) : null}
               {models.map((model) => (
