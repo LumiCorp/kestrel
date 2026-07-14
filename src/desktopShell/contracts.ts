@@ -128,6 +128,7 @@ export interface DesktopRunTurnRequest {
   sessionId: string;
   message: string;
   eventType: string;
+  projectPath?: string | undefined;
   history?: DesktopRunHistoryLine[] | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
@@ -356,6 +357,9 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
   const sessionId = parseRequiredDesktopString(input.sessionId, "sessionId");
   const message = parseRequiredDesktopText(input.message, "message");
   const eventType = parseRequiredDesktopString(input.eventType, "eventType");
+  const projectPath = input.projectPath === undefined
+    ? undefined
+    : parseRequiredDesktopString(input.projectPath, "projectPath");
   const interactionMode = input.interactionMode;
   if (
     interactionMode !== undefined
@@ -384,6 +388,7 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
     sessionId,
     message,
     eventType,
+    ...(projectPath !== undefined ? { projectPath } : {}),
     ...(history !== undefined ? { history } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
     ...(actSubmode !== undefined ? { actSubmode } : {}),

@@ -121,6 +121,33 @@ test("Local Core API serves health/status with bearer token auth", async () => {
       await cli.close();
     }
 
+    const runnerEvents: string[] = [];
+    await client.sendRunnerCommand(JSON.stringify({
+      id: "local-core-desktop-ping",
+      type: "runner.ping",
+      metadata: {
+        actor: {
+          actorId: "kestrel-desktop",
+          actorType: "operator",
+          displayName: "Kestrel Desktop",
+        },
+      },
+      payload: { nonce: "desktop-local-core" },
+    }), {
+      onLine(line) {
+        runnerEvents.push(line);
+      },
+    });
+    assert.equal(runnerEvents.length, 1);
+    const runnerEvent = JSON.parse(runnerEvents[0] ?? "{}") as {
+      type?: string;
+      commandId?: string;
+      payload?: { nonce?: string };
+    };
+    assert.equal(runnerEvent.type, "runner.pong");
+    assert.equal(runnerEvent.commandId, "local-core-desktop-ping");
+    assert.equal(runnerEvent.payload?.nonce, "desktop-local-core");
+
     const runs = await client.runs() as { runs?: unknown[] | undefined };
     assert.deepEqual(runs.runs, []);
 

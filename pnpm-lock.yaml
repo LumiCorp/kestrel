@@ -126,6 +126,9 @@ importers:
       react-dom:
         specifier: 19.2.4
         version: 19.2.4(react@19.2.4)
+      streamdown:
+        specifier: ^2.0.1
+        version: 2.5.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
@@ -344,10 +347,10 @@ importers:
         specifier: ^13.7.0
         version: 13.13.0(react@19.2.4)
       '@kestrel-agents/next':
-        specifier: 0.5.1
+        specifier: 0.6.0
         version: link:../../packages/next
       '@kestrel-agents/sdk':
-        specifier: 0.5.1
+        specifier: 0.6.0
         version: link:../../packages/sdk
       '@kestrel/mcp-security':
         specifier: workspace:*

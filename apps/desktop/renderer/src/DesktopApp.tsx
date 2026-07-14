@@ -15,6 +15,7 @@ import {
   Square,
   Sun,
   Wrench,
+  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -32,7 +33,9 @@ import type {
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
 } from "../../src/contracts";
+import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
+import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import { ProjectWorkspace } from "./ProjectWorkspace";
@@ -43,6 +46,7 @@ import {
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
   readDesktopRendererState,
+  resolveRendererThreadProjectPath,
   selectRendererThread,
   serializeDesktopRendererState,
   setRendererTheme,
@@ -67,6 +71,12 @@ export function DesktopApp() {
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
   const [draft, setDraft] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
+  const [modelPolicy, setModelPolicy] = useState<ModelPolicyV1>();
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
+  const [providerDraft, setProviderDraft] = useState<DesktopRendererSettings["selectedProvider"]>("openrouter");
+  const [modelDraft, setModelDraft] = useState("");
+  const [providerSettingsSaving, setProviderSettingsSaving] = useState(false);
+  const [providerSettingsError, setProviderSettingsError] = useState<string>();
   const [activeRun, setActiveRun] = useState<ActiveRun>();
   const [activity, setActivity] = useState("Ready");
   const [error, setError] = useState<string>();
@@ -88,7 +98,8 @@ export function DesktopApp() {
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
       window.kestrelDesktop.getBridgeInfo(),
-    ]).then(([uiState, nextSettings, health, info]) => {
+      window.kestrelDesktop.getModelPolicy(),
+    ]).then(([uiState, nextSettings, health, info, nextModelPolicy]) => {
       if (disposed) {
         return;
       }
@@ -97,6 +108,7 @@ export function DesktopApp() {
       setActiveProjectPath((current) => current ?? nextSettings.projects[0]?.path);
       setRuntimeHealth(health);
       setBridgeInfo(info);
+      setModelPolicy(nextModelPolicy);
     }).catch((cause) => {
       if (disposed === false) {
         setError(errorMessage(cause));
@@ -165,6 +177,11 @@ export function DesktopApp() {
     const threadId = activeThread.id;
     const history = toDesktopRunHistory(activeThread);
     const continuation = getRendererTurnContinuation(activeThread);
+    const projectPath = resolveRendererThreadProjectPath({
+      thread: activeThread,
+      ...(activeProjectPath !== undefined ? { activeProjectPath } : {}),
+      projects: settings?.projects ?? [],
+    });
     const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     setDraft("");
     setError(undefined);
@@ -184,6 +201,7 @@ export function DesktopApp() {
       });
       return updateRendererThread(appended, threadId, (thread) => ({
         ...thread,
+        ...(projectPath !== undefined ? { projectPath } : {}),
         pendingWaitEventType: undefined,
       }));
     });
@@ -201,9 +219,13 @@ export function DesktopApp() {
           : {}),
         history,
         interactionMode: activeThread.mode,
+        ...(projectPath !== undefined
+          ? { projectPath }
+          : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
       });
       const assistantText = extractTerminalMessage(terminal);
+      const terminalError = extractTerminalError(terminal);
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
       const waitingPrompt = getTerminalWaitingPrompt(terminal);
       const terminalLine = assistantText !== undefined
@@ -242,8 +264,13 @@ export function DesktopApp() {
               pendingWaitEventType,
             })));
       }
+      if (terminalError !== undefined) {
+        setError(terminalError);
+      }
       setActivity(
-        pendingWaitEventType !== undefined
+        terminal.type === "run.failed"
+          ? "Run failed"
+          : pendingWaitEventType !== undefined
           ? `Waiting for ${pendingWaitEventType}`
           : terminal.type === "run.cancelled"
             ? "Cancelled"
@@ -309,6 +336,13 @@ export function DesktopApp() {
     setActiveProjectPath(project.path);
   }
 
+  function startProjectConversation(projectPath: string): void {
+    setState((current) => current === undefined
+      ? current
+      : addRendererThread(current, { projectPath }));
+    setSurface("chat");
+  }
+
   async function updateProvider(
     selectedProvider: DesktopRendererSettings["selectedProvider"],
   ): Promise<void> {
@@ -341,6 +375,58 @@ export function DesktopApp() {
     } catch (cause) {
       setError(errorMessage(cause));
       setActivity("Provider setup failed");
+    }
+  }
+
+  async function openProviderSettings(): Promise<void> {
+    setProviderSettingsError(undefined);
+    setProviderApiKey("");
+    try {
+      const [nextSettings, nextModelPolicy] = await Promise.all([
+        window.kestrelDesktop.getSettings(),
+        window.kestrelDesktop.getModelPolicy(),
+      ]);
+      setSettings(nextSettings);
+      setModelPolicy(nextModelPolicy);
+      setProviderDraft(nextModelPolicy.provider);
+      setModelDraft(nextModelPolicy.model);
+      setProviderSettingsOpen(true);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function saveProviderSettings(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (modelPolicy === undefined || modelDraft.trim().length === 0) {
+      setProviderSettingsError("Model ID is required.");
+      return;
+    }
+    setProviderSettingsSaving(true);
+    setProviderSettingsError(undefined);
+    try {
+      if (isCredentialedProvider(providerDraft) && providerApiKey.trim().length > 0) {
+        await window.kestrelDesktop.saveProviderCredential({
+          provider: providerDraft,
+          apiKey: providerApiKey,
+        });
+      }
+      const savedPolicy = await window.kestrelDesktop.saveModelPolicy({
+        ...modelPolicy,
+        provider: providerDraft,
+        model: modelDraft.trim(),
+      });
+      const savedSettings = await window.kestrelDesktop.getSettings();
+      setModelPolicy(savedPolicy);
+      setSettings(savedSettings);
+      setProviderApiKey("");
+      setProviderSettingsOpen(false);
+      setRuntimeHealth(await window.kestrelDesktop.getRuntimeHealth());
+      setActivity("Ready");
+    } catch (cause) {
+      setProviderSettingsError(errorMessage(cause));
+    } finally {
+      setProviderSettingsSaving(false);
     }
   }
 
@@ -427,7 +513,13 @@ export function DesktopApp() {
                   type="button"
                   title="New conversation"
                   aria-label="New conversation"
-                  onClick={() => setState((current) => current === undefined ? current : addRendererThread(current))}
+                  onClick={() => setState((current) => current === undefined
+                    ? current
+                    : addRendererThread(current, {
+                        ...(activeProject?.path !== undefined
+                          ? { projectPath: activeProject.path }
+                          : {}),
+                      }))}
                 >
                   <Plus size={17} />
                 </button>
@@ -438,9 +530,14 @@ export function DesktopApp() {
                     className={`thread-row ${thread.id === state.activeThreadId ? "active" : ""}`}
                     key={thread.id}
                     type="button"
-                    onClick={() => setState((current) => current === undefined
-                      ? current
-                      : selectRendererThread(current, thread.id))}
+                    onClick={() => {
+                      setState((current) => current === undefined
+                        ? current
+                        : selectRendererThread(current, thread.id));
+                      if (thread.projectPath !== undefined) {
+                        setActiveProjectPath(thread.projectPath);
+                      }
+                    }}
                   >
                     <span>{thread.title}</span>
                     <time>{formatThreadTime(thread.updatedAt)}</time>
@@ -499,16 +596,18 @@ export function DesktopApp() {
                   <strong>{line.role === "user" ? "You" : line.role === "assistant" ? "Kestrel" : "System"}</strong>
                   <time>{formatMessageTime(line.timestamp)}</time>
                 </div>
-                <div className="message-body">{line.text}</div>
+                <MessageContent role={line.role} text={line.text} />
               </article>
             ))}
             <div ref={transcriptEndRef} />
           </section>
 
-          <div className="activity-line" aria-live="polite">
-            <Activity size={14} aria-hidden="true" />
-            <span>{activity}</span>
-            {error !== undefined ? <span className="activity-error">{error}</span> : null}
+          <div className="activity-shell">
+            <div className="activity-line" aria-live="polite" aria-atomic="true">
+              <Activity size={14} aria-hidden="true" />
+              <span>{activity}</span>
+              {error !== undefined ? <span className="activity-error">{error}</span> : null}
+            </div>
           </div>
 
           <form className="composer" onSubmit={(event) => void submitTurn(event)}>
@@ -569,7 +668,11 @@ export function DesktopApp() {
           <div className="surface-host">
             {error !== undefined ? <div className="surface-error" role="alert">{error}</div> : null}
             {surface === "projects" ? (
-              <ProjectWorkspace project={activeProject} onError={setError} />
+              <ProjectWorkspace
+                project={activeProject}
+                onChat={(project) => startProjectConversation(project.path)}
+                onError={setError}
+              />
             ) : surface === "mission-control" ? (
               <MissionControlWorkspace
                 sessionId={activeThread.sessionId}
@@ -640,7 +743,15 @@ export function DesktopApp() {
             <section className="inspector-section">
               <div className="section-heading">
                 <span>Provider</span>
-                <Settings size={15} aria-hidden="true" />
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Configure provider and model"
+                  aria-label="Configure provider and model"
+                  onClick={() => void openProviderSettings()}
+                >
+                  <Settings size={15} aria-hidden="true" />
+                </button>
               </div>
               <select
                 aria-label="Model provider"
@@ -659,6 +770,9 @@ export function DesktopApp() {
                 <span aria-hidden="true" />
                 {settings?.providerCredentialConfigured === false ? "Credential required" : "Provider ready"}
               </div>
+              {modelPolicy !== undefined ? (
+                <p className="provider-model" title={modelPolicy.model}>{modelPolicy.model}</p>
+              ) : null}
               {settings?.providerCredentialConfigured === false
                 && isCredentialedProvider(settings.selectedProvider) ? (
                   <form className="provider-credential" onSubmit={(event) => void saveProviderCredential(event)}>
@@ -686,6 +800,111 @@ export function DesktopApp() {
           </aside>
         ) : null}
       </div>
+
+      {providerSettingsOpen && modelPolicy !== undefined ? (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && providerSettingsSaving === false) {
+              setProviderSettingsOpen(false);
+            }
+          }}
+        >
+          <form
+            className="provider-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-dialog-title"
+            onSubmit={(event) => void saveProviderSettings(event)}
+          >
+            <div className="provider-dialog-header">
+              <div>
+                <h2 id="provider-dialog-title">Model provider</h2>
+                <p>Choose the provider and model used for new runs.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                title="Close model provider settings"
+                aria-label="Close model provider settings"
+                disabled={providerSettingsSaving}
+                onClick={() => setProviderSettingsOpen(false)}
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <label className="provider-dialog-field">
+              <span>Provider</span>
+              <select
+                aria-label="Configured model provider"
+                value={providerDraft}
+                onChange={(event) => {
+                  setProviderDraft(event.target.value as DesktopRendererSettings["selectedProvider"]);
+                  setProviderApiKey("");
+                }}
+              >
+                <option value="openrouter">OpenRouter</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="ollama">Ollama</option>
+                <option value="lmstudio">LM Studio</option>
+              </select>
+            </label>
+
+            <label className="provider-dialog-field">
+              <span>Model ID</span>
+              <input
+                aria-label="Model ID"
+                autoComplete="off"
+                value={modelDraft}
+                onChange={(event) => setModelDraft(event.target.value)}
+                placeholder="Provider model ID"
+              />
+            </label>
+
+            {isCredentialedProvider(providerDraft) ? (
+              <label className="provider-dialog-field">
+                <span>API key</span>
+                <input
+                  aria-label={`${providerLabel(providerDraft)} API key`}
+                  autoComplete="off"
+                  type="password"
+                  value={providerApiKey}
+                  onChange={(event) => setProviderApiKey(event.target.value)}
+                  placeholder={
+                    settings?.selectedProvider === providerDraft
+                    && settings.providerCredentialConfigured
+                      ? "Leave blank to keep saved key"
+                      : "Enter API key"
+                  }
+                />
+              </label>
+            ) : null}
+
+            {providerSettingsError !== undefined ? (
+              <div className="provider-dialog-error" role="alert">{providerSettingsError}</div>
+            ) : null}
+
+            <div className="provider-dialog-actions">
+              <button
+                type="button"
+                disabled={providerSettingsSaving}
+                onClick={() => setProviderSettingsOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="provider-dialog-save"
+                type="submit"
+                disabled={providerSettingsSaving || modelDraft.trim().length === 0}
+              >
+                {providerSettingsSaving ? "Applying…" : "Apply"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -697,6 +916,10 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
   if (event.type === "run.progress") {
     const update = asRecord(event.payload.update);
     return readString(update?.message) ?? readString(update?.summary) ?? "Working";
+  }
+  if (event.type === "run.reasoning") {
+    const update = asRecord(event.payload.update);
+    return readString(update?.message) ?? readString(update?.summary) ?? "Thinking";
   }
   if (
     event.type === "run.tool.started"
@@ -727,6 +950,14 @@ function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
   }
   const result = asRecord(event.payload.result);
   return readString(result?.assistantText);
+}
+
+function extractTerminalError(event: DesktopRunnerEvent): string | undefined {
+  if (event.type !== "run.failed") {
+    return undefined;
+  }
+  const error = asRecord(event.payload.error);
+  return readString(error?.message) ?? readString(error?.code) ?? "Run failed.";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

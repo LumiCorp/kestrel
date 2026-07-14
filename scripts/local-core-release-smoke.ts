@@ -13,7 +13,7 @@ import {
 import { WorkspaceStore } from "../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../cli/session/SessionStore.js";
 
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 const SMOKE_TEMP_ROOT = process.platform === "darwin" ? "/tmp" : os.tmpdir();
 
 async function main(): Promise<void> {

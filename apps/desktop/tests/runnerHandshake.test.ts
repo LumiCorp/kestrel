@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ensureManagedRunnerResponsive, type RunnerHandshakeTransport } from "../src/runnerHandshake.js";
+import { ensureDesktopRunnerResponsive, type RunnerHandshakeTransport } from "../src/runnerHandshake.js";
 import type { RunnerProtocolObserver } from "../src/runnerTransport.js";
 
 class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
@@ -38,9 +38,9 @@ class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
   }
 }
 
-test("ensureManagedRunnerResponsive resolves only after a matching runner.pong", async () => {
+test("ensureDesktopRunnerResponsive resolves only after a matching runner.pong", async () => {
   const transport = new FakeRunnerHandshakeTransport();
-  const handshake = ensureManagedRunnerResponsive(transport, { timeoutMs: 100 });
+  const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
   await Promise.resolve();
   assert.equal(transport.ensureStartedCalls, 1);
@@ -59,9 +59,9 @@ test("ensureManagedRunnerResponsive resolves only after a matching runner.pong",
   await handshake;
 });
 
-test("ensureManagedRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
+test("ensureDesktopRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
   const transport = new FakeRunnerHandshakeTransport();
-  const handshake = ensureManagedRunnerResponsive(transport, { timeoutMs: 100 });
+  const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
   await Promise.resolve();
   transport.emitStdout(JSON.stringify({
@@ -81,9 +81,9 @@ test("ensureManagedRunnerResponsive surfaces top-level runner startup errors wit
   });
 });
 
-test("ensureManagedRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
+test("ensureDesktopRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
   const transport = new FakeRunnerHandshakeTransport();
-  const handshake = ensureManagedRunnerResponsive(transport, { timeoutMs: 100 });
+  const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
   await Promise.resolve();
   transport.emitStdout(JSON.stringify({
@@ -105,7 +105,7 @@ test("ensureManagedRunnerResponsive preserves diagnostics for malformed runner e
   });
 });
 
-test("ensureManagedRunnerResponsive handles synchronous observer errors without sending ping", async () => {
+test("ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping", async () => {
   let sendCalls = 0;
   const transport: RunnerHandshakeTransport = {
     observe(observer) {
@@ -129,7 +129,7 @@ test("ensureManagedRunnerResponsive handles synchronous observer errors without 
   };
 
   await assert.rejects(
-    ensureManagedRunnerResponsive(transport, { timeoutMs: 100 }),
+    ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 }),
     (error: unknown) => {
       assert.equal((error as { code?: unknown }).code, "RUNNER_BOOT_FAILED");
       assert.match(String((error as Error).message), /Runner failed during boot/u);
@@ -139,9 +139,9 @@ test("ensureManagedRunnerResponsive handles synchronous observer errors without 
   assert.equal(sendCalls, 0);
 });
 
-test("ensureManagedRunnerResponsive rejects when the runner exits before responding", async () => {
+test("ensureDesktopRunnerResponsive rejects when the runner exits before responding", async () => {
   const transport = new FakeRunnerHandshakeTransport();
-  const handshake = ensureManagedRunnerResponsive(transport, { timeoutMs: 100 });
+  const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
   await Promise.resolve();
   transport.emitExit(1);

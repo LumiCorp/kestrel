@@ -18,8 +18,10 @@ test("boot screen exposes Reset Runtime Store only for sqlite init failures", as
   assert.match(source, /id="checklist"/u);
   assert.match(source, /renderChecklist/u);
   assert.match(source, /renderTimeline/u);
+  assert.match(source, /for \(const item of \[\.\.\.items\]\.sort/u);
   assert.match(source, /resetStore\.hidden = state\.code !== "STORE_SQLITE_INIT_FAILED";/u);
   assert.match(source, /desktopBridge\.resetRuntimeStore\(\)/u);
   assert.match(source, /desktopBridge\.getSupportBundle\(\)/u);
   assert.doesNotMatch(source, /id="check-resources"/u);
+  assert.doesNotMatch(source, /repair_database/u);
 });

@@ -164,13 +164,6 @@ export function DiagnosticsWorkspace(props: {
               </button>
               <button
                 type="button"
-                disabled={busyAction !== undefined || database?.managed !== true}
-                onClick={() => void runAction("repair-database", () => window.kestrelDesktop.repairDatabase())}
-              >
-                <RefreshCw size={15} /> Repair
-              </button>
-              <button
-                type="button"
                 disabled={database?.managed !== true}
                 onClick={() => void window.kestrelDesktop.revealDatabaseFiles("data")}
               >

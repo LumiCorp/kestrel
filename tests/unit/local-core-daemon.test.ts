@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   ensureLocalCoreDaemonReady,
   isLocalCoreDaemonElectronAppLaunch,
+  resolveLocalCoreDaemonEntrypoint,
   resolveLocalCoreDaemonNodeMode,
 } from "../../src/localCore/daemon.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
@@ -15,6 +16,23 @@ test("Local Core daemon runs Electron executables in Node mode", () => {
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "37.10.3" }), "1");
   assert.equal(resolveLocalCoreDaemonNodeMode({}), undefined);
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "  " }), undefined);
+});
+
+test("Local Core daemon resolves the emitted JavaScript entrypoint from compiled callers", () => {
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: {},
+    moduleUrl: "file:///workspace/apps/desktop/dist/src/localCore/daemon.js",
+    fileExists: (filePath) => filePath.endsWith("/daemonMain.js"),
+  }), "/workspace/apps/desktop/dist/src/localCore/daemonMain.js");
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: {},
+    moduleUrl: "file:///workspace/src/localCore/daemon.ts",
+    fileExists: () => false,
+  }), "/workspace/src/localCore/daemonMain.ts");
+  assert.equal(resolveLocalCoreDaemonEntrypoint({
+    env: { KESTREL_CLI_LIBEXEC: "/bundle/kestrel-repo" },
+    fileExists: () => false,
+  }), "/bundle/kestrel-repo/src/localCore/daemonMain.ts");
 });
 
 test("Local Core daemon launch is rejected when Electron was not put in Node mode", () => {
@@ -38,7 +56,6 @@ test("Local Core daemon launch is rejected when Electron was not put in Node mod
     versions: {},
   }), false);
 });
-
 test("Local Core daemon readiness returns a redaction-aware in-memory connection", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kc-daemon-"));

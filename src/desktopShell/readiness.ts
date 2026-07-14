@@ -271,8 +271,8 @@ function databaseItem(
     database.running ? "database process is reachable" : "database process is not reachable",
     state === "blocked"
       ? {
-          label: "Repair Database",
-          command: "repair_database",
+          label: "Retry Database",
+          command: "restart_database",
         }
       : state === "degraded"
         ? {
@@ -334,14 +334,19 @@ function summarize(
     return {
       state: "blocked",
       title: "Desktop startup blocked",
-      detail: firstActionItem(items)?.detail ?? runtimeHealth?.summary ?? bootState?.message ?? "One or more Desktop checks are blocked.",
+      detail: firstItemInState(items, "blocked")?.detail
+        ?? runtimeHealth?.summary
+        ?? bootState?.message
+        ?? "One or more Desktop checks are blocked.",
     };
   }
   if (items.some((entry) => entry.state === "degraded")) {
     return {
       state: "degraded",
       title: "Desktop degraded",
-      detail: firstActionItem(items)?.detail ?? runtimeHealth?.summary ?? "Desktop is available with degraded checks.",
+      detail: firstItemInState(items, "degraded")?.detail
+        ?? runtimeHealth?.summary
+        ?? "Desktop is available with degraded checks.",
     };
   }
   if (items.some((entry) => entry.state === "starting")) {
@@ -365,6 +370,10 @@ function summarize(
   };
 }
 
-function firstActionItem(items: DesktopReadinessItem[]): DesktopReadinessItem | undefined {
-  return items.find((entry) => entry.action !== undefined);
+function firstItemInState(
+  items: DesktopReadinessItem[],
+  state: DesktopReadinessState,
+): DesktopReadinessItem | undefined {
+  return items.find((entry) => entry.state === state && entry.action !== undefined)
+    ?? items.find((entry) => entry.state === state);
 }

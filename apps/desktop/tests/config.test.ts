@@ -8,7 +8,7 @@ import {
   resolveDesktopPathConfig,
 } from "../src/config.js";
 
-test("resolveDesktopLibexecRoot points packaged Local Core bootstrap at bundled runtime sources", () => {
+test("resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: true,
     repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-repo",
@@ -21,7 +21,7 @@ test("resolveDesktopLibexecRoot points packaged Local Core bootstrap at bundled 
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: false,
     repoRoot: "/workspace/kestrel",
-  }), undefined);
+  }), "/workspace/kestrel");
 });
 
 test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
@@ -40,7 +40,6 @@ test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
     assert.equal(config.rendererHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "renderer", "index.html"));
     assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
     assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
-    assert.equal(config.postgresBundleRootPath, path.join(repoRoot, "apps", "desktop", "resources", "postgres-bundle"));
     assert.equal(config.postgresDataPath, path.join(stateRoot, "core", "postgres", "data"));
     assert.equal(config.postgresLogPath, path.join(stateRoot, "core", "logs", "desktop-postgres.log"));
     assert.equal(config.postgresMetadataPath, path.join(stateRoot, "core", "postgres", "metadata.json"));
@@ -65,7 +64,6 @@ test("resolveDesktopPathConfig uses packaged resource paths in production", () =
   assert.equal(config.rendererHtmlPath, path.join(resourcesPath, "static", "renderer", "index.html"));
   assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
   assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
-  assert.equal(config.postgresBundleRootPath, path.join(resourcesPath, "postgres-bundle"));
   assert.equal(config.postgresDataPath, path.join(stateRoot, "core", "postgres", "data"));
   assert.equal(config.postgresLogPath, path.join(stateRoot, "core", "logs", "desktop-postgres.log"));
   assert.equal(config.postgresMetadataPath, path.join(stateRoot, "core", "postgres", "metadata.json"));

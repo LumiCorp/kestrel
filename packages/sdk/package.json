@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/sdk",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Framework-agnostic TypeScript client for a Kestrel-compatible runner service",
   "license": "MIT",
   "repository": {

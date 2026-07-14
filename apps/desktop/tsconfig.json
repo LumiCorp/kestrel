@@ -22,6 +22,7 @@
     "../../src/kestrel/index.ts",
     "../../src/kestrel/contracts/**/*.ts",
     "../../src/kestrel/executableActions.ts",
+    "../../src/localCore/daemonMain.ts",
     "../../src/runtime/RuntimeFailure.ts",
     "../../src/runtime/databasePreflight.ts",
     "../../src/runtime/localDatabaseSelfHeal.ts"

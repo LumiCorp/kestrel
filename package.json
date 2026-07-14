@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/kestrel",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Minimal durable runtime kernel for agentic step execution",
   "type": "module",
   "main": "dist/src/index.js",
@@ -70,8 +70,7 @@
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
     "desktop:package": "pnpm --filter @kestrel/desktop package",
-    "desktop:postgres-smoke": "node --import tsx scripts/desktop-postgres-package-smoke.ts",
-    "desktop:package-smoke": "pnpm run desktop:postgres-smoke && node --import tsx scripts/desktop-package-smoke.ts",
+    "desktop:package-smoke": "node --import tsx scripts/desktop-package-smoke.ts",
     "desktop:release-check": "node --import tsx scripts/check-desktop-release.ts",
     "desktop:test": "pnpm --filter @kestrel/desktop test",
     "prompt-suite": "node --import tsx scripts/prompt-suite.ts",

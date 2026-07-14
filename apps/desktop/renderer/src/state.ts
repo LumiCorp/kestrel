@@ -27,6 +27,7 @@ export interface RendererThread {
   id: string;
   title: string;
   sessionId: string;
+  projectPath?: string | undefined;
   updatedAt: string;
   transcript: RendererTranscriptLine[];
   pendingWaitEventType?: string | undefined;
@@ -61,13 +62,14 @@ export function readDesktopRendererState(
   };
 }
 
-export function createRendererThread(): RendererThread {
+export function createRendererThread(input: { projectPath?: string | undefined } = {}): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   return {
     id,
     title: "New conversation",
     sessionId: crypto.randomUUID(),
+    ...(input.projectPath !== undefined ? { projectPath: input.projectPath } : {}),
     updatedAt: now,
     transcript: [],
     mode: "build",
@@ -109,8 +111,11 @@ export function updateRendererThread(
   };
 }
 
-export function addRendererThread(state: DesktopRendererState): DesktopRendererState {
-  const thread = createRendererThread();
+export function addRendererThread(
+  state: DesktopRendererState,
+  input: { projectPath?: string | undefined } = {},
+): DesktopRendererState {
+  const thread = createRendererThread(input);
   return {
     ...state,
     activeThreadId: thread.id,
@@ -125,6 +130,27 @@ export function selectRendererThread(
   return state.threads.some((thread) => thread.id === threadId)
     ? { ...state, activeThreadId: threadId }
     : state;
+}
+
+export function resolveRendererThreadProjectPath(input: {
+  thread: Pick<RendererThread, "projectPath">;
+  activeProjectPath?: string | undefined;
+  projects: readonly { path: string }[];
+}): string | undefined {
+  const registeredPaths = new Set(input.projects.map((project) => project.path));
+  if (
+    input.thread.projectPath !== undefined
+    && registeredPaths.has(input.thread.projectPath)
+  ) {
+    return input.thread.projectPath;
+  }
+  if (
+    input.activeProjectPath !== undefined
+    && registeredPaths.has(input.activeProjectPath)
+  ) {
+    return input.activeProjectPath;
+  }
+  return input.projects[0]?.path;
 }
 
 export function setRendererTheme(
@@ -153,6 +179,9 @@ export function serializeDesktopRendererState(
     {
       ...thread.rawState,
       sessionId: thread.sessionId,
+      ...(thread.projectPath !== undefined
+        ? { projectPath: thread.projectPath }
+        : { projectPath: undefined }),
       transcript: persistedTranscripts.get(thread.id) ?? [],
       ...(thread.pendingWaitEventType !== undefined
         ? { pendingWaitEventType: thread.pendingWaitEventType }
@@ -287,6 +316,9 @@ function collectThreads(store: {
         ? rawSummary.title
         : "Conversation",
       sessionId: rawState.sessionId,
+      ...(typeof rawState.projectPath === "string" && rawState.projectPath.trim().length > 0
+        ? { projectPath: rawState.projectPath.trim() }
+        : {}),
       updatedAt,
       transcript,
       ...(typeof rawState.pendingWaitEventType === "string" &&

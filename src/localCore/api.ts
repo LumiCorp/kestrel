@@ -619,9 +619,13 @@ async function createExecutionBundle(input: {
   }
   const runtimeConfiguration = input.runtimeConfiguration
     ?? await input.runtimeConfigurationStore.read();
+  const repoRoot = normalizeString(input.options.repoRoot);
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
+    ...(input.status.dbMode !== "external" && repoRoot !== undefined
+      ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
+      : {}),
     ...(input.status.databaseUrl !== undefined
       ? { externalDatabaseUrl: input.status.databaseUrl }
       : {}),
