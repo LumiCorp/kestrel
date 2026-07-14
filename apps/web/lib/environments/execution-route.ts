@@ -41,10 +41,12 @@ const ROUTE_CAPABILITIES = [
   "workspace.promotions.read",
   "workspace.promotions.apply",
   "knowledge.search",
+  "kestrel.tools.invoke",
 ] as const;
 
 export async function resolveEnvironmentExecutionRoute(input: {
   organizationId: string;
+  expectedEnvironmentId?: string;
   threadId: string;
   actorUserId: string;
   agentId?: string | undefined;
@@ -66,6 +68,14 @@ export async function resolveEnvironmentExecutionRoute(input: {
     threadId: input.threadId,
     userId: input.actorUserId,
   });
+  if (
+    input.expectedEnvironmentId &&
+    resolved.binding.environmentId !== input.expectedEnvironmentId
+  ) {
+    throw new Error(
+      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment."
+    );
+  }
   if (resolved.created && resolved.operation?.status === "queued") {
     await enqueueEnvironmentOperation(resolved.operation.id);
   }

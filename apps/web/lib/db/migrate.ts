@@ -2,6 +2,10 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres, { type Sql } from "postgres";
+import {
+  hasKnownMigrationLedgerDrift,
+  reconcileSkippedMigrations,
+} from "./schema-reconciliation";
 
 config({
   path: ".env.local",
@@ -14,33 +18,46 @@ const runMigrate = async () => {
     console.log(
       "⏭️  POSTGRES_URL/DATABASE_URL not defined, skipping migrations"
     );
-    process.exit(0);
+    return;
   }
 
   const connection = postgres(databaseUrl, { max: 1 });
-  const db = drizzle(connection);
+  try {
+    await connection`
+      SELECT pg_advisory_lock(hashtext('kestrel-one-schema-migrate'))
+    `;
+    const db = drizzle(connection);
 
-  console.log("⏳ Running migrations...");
+    console.log("⏳ Running migrations...");
 
-  const start = Date.now();
-  await migrate(db, {
-    migrationsFolder: "./drizzle/migrations",
-    migrationsTable: "__unified_app_migrations",
-  });
-  // Bootstrap the legacy knowledge/threads tables before applying follow-up
-  // migrations that add foreign keys against them.
-  await ensureKnowledgeSchema(connection);
-  await migrate(db, {
-    migrationsFolder: "./lib/db/migrations",
-  });
-  const { backfillPersonalWorkspaceData } = await import(
-    "@/lib/personal-workspace"
-  );
-  await backfillPersonalWorkspaceData();
-  const end = Date.now();
+    const start = Date.now();
+    await migrate(db, {
+      migrationsFolder: "./drizzle/migrations",
+      migrationsTable: "__unified_app_migrations",
+    });
+    // Bootstrap the legacy knowledge/threads tables before applying follow-up
+    // migrations that add foreign keys against them.
+    await ensureKnowledgeSchema(connection);
+    if (await hasKnownMigrationLedgerDrift(connection)) {
+      await reconcileSkippedMigrations(connection);
+    }
+    await migrate(db, {
+      migrationsFolder: "./lib/db/migrations",
+    });
+    await reconcileSkippedMigrations(connection);
+    const { backfillPersonalWorkspaceData } = await import(
+      "@/lib/personal-workspace"
+    );
+    await backfillPersonalWorkspaceData();
+    const end = Date.now();
 
-  console.log("✅ Migrations completed in", end - start, "ms");
-  process.exit(0);
+    console.log("✅ Migrations completed in", end - start, "ms");
+  } finally {
+    await connection`
+      SELECT pg_advisory_unlock(hashtext('kestrel-one-schema-migrate'))
+    `.catch(() => {});
+    await connection.end();
+  }
 };
 
 async function ensureKnowledgeSchema(connection: Sql) {

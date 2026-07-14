@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
@@ -601,6 +602,11 @@ export function EnvironmentsAdminClient({
                       Update runtime
                     </Button>
                   </div>
+                  <Button asChild className="w-full" variant="secondary">
+                    <Link href={`/settings/environments/${environment.id}`}>
+                      Open Environment
+                    </Link>
+                  </Button>
                   <div className="space-y-2 border-t pt-4">
                     <div className="font-medium text-sm">
                       GitHub capability ceiling

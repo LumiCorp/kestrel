@@ -312,6 +312,7 @@ async function ensureManagedGateway(input: {
     apiKey: input.apiKey,
     enabled: false,
     organizationId: input.deployment.organizationId,
+    environmentId: input.deployment.environmentId,
     deploymentId: input.deployment.id,
     providerConnectionId: input.connectionId,
     metadata: { managedBy: "kestrel", deploymentId: input.deployment.id },
@@ -495,6 +496,17 @@ async function processProvision(
       .update(schema.aiGateways)
       .set({ enabled: true, updatedAt: new Date() })
       .where(eq(schema.aiGateways.id, gatewayId));
+    await tx
+      .insert(schema.environmentAiModelDefaults)
+      .values({
+        organizationId: deployment.organizationId,
+        environmentId: deployment.environmentId,
+        modality: "language",
+        modelId: expected.id,
+        updatedByUserId: deployment.createdByUserId,
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing();
     await tx
       .update(schema.aiDeploymentRuns)
       .set({

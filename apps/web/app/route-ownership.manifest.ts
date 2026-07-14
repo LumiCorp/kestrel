@@ -253,6 +253,41 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in"
   ),
   page(
+    "app/(workspace)/settings/environments/[id]/page.tsx",
+    "/settings/environments/:id",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/workspaces/page.tsx",
+    "/settings/environments/:id/workspaces",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/inference/page.tsx",
+    "/settings/environments/:id/inference",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/tools/page.tsx",
+    "/settings/environments/:id/tools",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/activity/page.tsx",
+    "/settings/environments/:id/activity",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
     "app/dashboard/page.tsx",
     "/dashboard",
     "dashboard",
@@ -538,6 +573,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/admin/environments/[id]/operations/route.ts",
     "/api/admin/environments/:id/operations",
     ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/route.ts",
+    "/api/admin/environments/:id/inference",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/deployments/[deploymentId]/route.ts",
+    "/api/admin/environments/:id/inference/deployments/:deploymentId",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts",
+    "/api/admin/environments/:id/inference/gateways/:gatewayId",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/environments/[id]/inference/default/route.ts",
+    "/api/admin/environments/:id/inference/default",
+    "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),

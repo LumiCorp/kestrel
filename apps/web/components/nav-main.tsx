@@ -47,11 +47,6 @@ const workspaceItems = [
     url: "/knowledge",
     icon: FolderKanban,
   },
-  {
-    title: "Model Deployments",
-    url: "/model-deployments",
-    icon: HardDriveDownload,
-  },
 ];
 
 const accountItems = [
@@ -97,7 +92,7 @@ const adminItems = [
     icon: Cpu,
   },
   {
-    title: "Deployments",
+    title: "Inference Catalog",
     url: "/admin/deployments",
     icon: HardDriveDownload,
   },

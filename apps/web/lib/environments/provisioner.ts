@@ -788,6 +788,26 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             "Move every Project to another Environment before deleting this Environment."
           );
         }
+        const [deployment, gateway] = await Promise.all([
+          transaction.query.aiDeployments.findFirst({
+            where: (table, { and, eq, isNull }) =>
+              and(
+                eq(table.environmentId, environmentId),
+                isNull(table.deletedAt)
+              ),
+            columns: { id: true },
+          }),
+          transaction.query.aiGateways.findFirst({
+            where: (table, { eq }) => eq(table.environmentId, environmentId),
+            columns: { id: true },
+          }),
+        ]);
+        if (deployment || gateway) {
+          throw operationError(
+            "ENVIRONMENT_HAS_PRIVATE_INFERENCE",
+            "Remove private inference before deleting this Environment."
+          );
+        }
       });
     },
     async completeEnvironment(input) {
