@@ -260,6 +260,7 @@ test("Desktop package smoke is single-run, isolated, and cleanup-owned", async (
 });
 
 async function readPackage(filePath: string): Promise<{
+  buildCommand?: string;
   main?: string;
   types?: string;
   files?: string[];
@@ -269,6 +270,7 @@ async function readPackage(filePath: string): Promise<{
   overrides?: Record<string, string>;
 }> {
   return JSON.parse(await readFile(filePath, "utf8")) as {
+    buildCommand?: string;
     main?: string;
     types?: string;
     files?: string[];
