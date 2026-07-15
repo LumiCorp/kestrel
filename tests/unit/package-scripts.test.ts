@@ -15,7 +15,7 @@ test("root package exposes public product scripts and a broad monorepo test gate
   );
   assert.equal(
     scripts.build,
-    "pnpm run sdk:build && pnpm run clean && tsc -p tsconfig.json",
+    "pnpm run ai-sdk:build && pnpm run clean && tsc -p tsconfig.json",
   );
   assert.equal(scripts["studio:dev"], undefined);
   assert.equal(scripts["studio:build"], undefined);
@@ -53,6 +53,7 @@ test("root package exposes public product scripts and a broad monorepo test gate
     "pnpm run docs:test",
     "pnpm run protocol:test",
     "pnpm run sdk:test",
+    "pnpm run ai-sdk:test",
     "pnpm run next:test",
     "pnpm run observability:test",
   ]) {
@@ -122,7 +123,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
 
   assert.equal(
     rootPackage.scripts?.["web:prepare"],
-    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run sdk:build && pnpm run next:build",
+    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run ai-sdk:build && pnpm run next:build",
   );
   assert.equal(
     rootPackage.scripts?.["web:build"],
