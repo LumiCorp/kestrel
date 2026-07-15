@@ -712,6 +712,21 @@ test("canonical event parser rejects unknown and malformed payloads", () => {
   );
 });
 
+test("canonical event parser normalizes a blank optional session updatedAt", () => {
+  const parsed = parseRunnerEventV2({
+    id: "event-session-described",
+    type: "session.described",
+    ts: "2026-07-13T12:00:00.000Z",
+    payload: {
+      sessionId: "session-1",
+      version: 1,
+      updatedAt: "",
+    },
+  });
+  assert.equal(parsed.type, "session.described");
+  assert.equal("updatedAt" in parsed.payload, false);
+});
+
 test("canonical event parser normalizes terminal assistant text without changing payload data", () => {
   const finalizedPayload = {
     deploymentId: "deployment-1",

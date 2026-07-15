@@ -231,6 +231,7 @@ export interface OperatorSessionProjection {
 export async function buildOperatorSessionProjection(
   input: OperatorSessionProjectionInput,
 ): Promise<OperatorSessionProjection> {
+  const updatedAt = normalizeOptionalSessionTimestamp(input.session.updatedAt);
   const mainThread = await ensureMainThread(input.sessionId, input.threadRuntime);
   const threadStatus =
     input.threadRuntime !== undefined && mainThread !== undefined
@@ -285,7 +286,7 @@ export async function buildOperatorSessionProjection(
         ? { threadId: threadStatus.thread.threadId }
         : {}),
     ...(input.session.currentStepAgent !== undefined ? { currentStepAgent: input.session.currentStepAgent } : {}),
-    ...(input.session.updatedAt !== undefined ? { updatedAt: input.session.updatedAt } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
     ...(waitFor !== undefined ? { waitFor } : {}),
     ...(focusedThreadStatus !== null
       ? { activeAssembly: toOperatorAssemblySummary(focusedThreadStatus) }
@@ -329,6 +330,13 @@ export async function buildOperatorSessionProjection(
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
     ...(operatorView !== null ? { operatorThreadView: operatorView } : {}),
   };
+}
+
+function normalizeOptionalSessionTimestamp(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+  return value;
 }
 
 export function toOperatorAssemblySummary(

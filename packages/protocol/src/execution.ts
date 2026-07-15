@@ -1683,17 +1683,20 @@ function parseRunnerEventPayloadV2(
       validateOptionalString(payload.nonce, `${label}.nonce`);
       validateOptionalNonEmptyString(payload.sessionId, `${label}.sessionId`);
       break;
-    case "session.described":
-      validateSessionDescription(payload, label);
-      break;
-    case "session.state":
-      validateSessionDescription(
+    case "session.described": {
+      const session = normalizeSessionDescription(payload);
+      validateSessionDescription(session, label);
+      return session;
+    }
+    case "session.state": {
+      const session = normalizeSessionDescription(
         requireRecord(payload.session, `${label}.session`),
-        `${label}.session`,
       );
+      validateSessionDescription(session, `${label}.session`);
       requireNonNegativeInteger(payload.version, `${label}.version`);
       requireRecord(payload.graph, `${label}.graph`);
-      break;
+      return { ...payload, session };
+    }
     case "operator.inbox":
       requireRecord(payload.inbox, `${label}.inbox`);
       break;
@@ -1947,6 +1950,16 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.contextPosture, `${label}.contextPosture`);
   validateOptionalNonEmptyString(session.focusedThreadId, `${label}.focusedThreadId`);
   validateOptionalRecord(session.operatorThreadView, `${label}.operatorThreadView`);
+}
+
+function normalizeSessionDescription(
+  session: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof session.updatedAt !== "string" || session.updatedAt.trim()) {
+    return session;
+  }
+  const { updatedAt: _discarded, ...normalized } = session;
+  return normalized;
 }
 
 function validateRunError(value: unknown, label: string): void {

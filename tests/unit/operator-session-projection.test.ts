@@ -153,6 +153,24 @@ test("buildOperatorSessionProjection returns a minimal projection without a thre
   });
 });
 
+test("buildOperatorSessionProjection omits a blank optional updatedAt", async () => {
+  for (const updatedAt of ["", "   "]) {
+    const projection = await buildOperatorSessionProjection({
+      sessionId: "session-legacy-blank-timestamp",
+      session: {
+        version: 8,
+        updatedAt,
+        state: {},
+      },
+    });
+
+    assert.deepEqual(projection, {
+      sessionId: "session-legacy-blank-timestamp",
+      version: 8,
+    });
+  }
+});
+
 test("buildOperatorSessionProjection exposes normalized visible todos", async () => {
   const projection = await buildOperatorSessionProjection({
     sessionId: "session-visible-todos",
