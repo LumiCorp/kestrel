@@ -120,6 +120,7 @@ test("runtime package publishes only the public executable boundary", async () =
 test("canonical apps/web uses exact public packages and keeps sibling builds at the root", async () => {
   const rootPackage = await readPackage(path.join(ROOT, "package.json"));
   const appPackage = await readPackage(path.join(ROOT, "apps", "web", "package.json"));
+  const vercelConfig = await readPackage(path.join(ROOT, "apps", "web", "vercel.json"));
 
   assert.equal(
     rootPackage.scripts?.["web:prepare"],
@@ -135,6 +136,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
     "node --import tsx scripts/check-kestrel-boundary.ts",
   );
   assert.equal(appPackage.scripts?.build, "pnpm run clean && next build --webpack");
+  assert.equal(vercelConfig.buildCommand, "cd ../.. && pnpm run web:build");
   assert.equal(appPackage.scripts?.["runtime:build"], undefined);
   assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.6.0");
   assert.equal(appPackage.dependencies?.["@kestrel-agents/sdk"], "0.6.0");

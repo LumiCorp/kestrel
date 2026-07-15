@@ -1,0 +1,22 @@
+# Local runtime and evaluation state must never enter the Vercel source bundle.
+runs/
+jobs/
+logs/
+output/
+.artifacts/
+.kestrel/
+apps/web/.local/
+apps/web/.next/
+apps/cli/
+apps/desktop/
+apps/docs/
+apps/scenerunner/
+.venv-swebench/
+.hf-cache/
+.external/
+**/node_modules/
+**/dist/
+**/out/
+**/.next/
+**/.turbo/
+**/*.sock
