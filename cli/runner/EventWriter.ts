@@ -62,6 +62,17 @@ export function normalizeRunnerEventPayload<TType extends RunnerEventType>(
   type: TType,
   payload: RunnerEventPayloadByType[TType],
 ): RunnerEventPayloadByType[TType] {
+  if (type === "session.described") {
+    const session = payload as RunnerEventPayloadByType["session.described"];
+    return omitBlankSessionUpdatedAt(session) as RunnerEventPayloadByType[TType];
+  }
+  if (type === "session.state") {
+    const state = payload as RunnerEventPayloadByType["session.state"];
+    return {
+      ...state,
+      session: omitBlankSessionUpdatedAt(state.session),
+    } as RunnerEventPayloadByType[TType];
+  }
   if (
     type === "run.completed" ||
     type === "run.failed" ||
@@ -71,4 +82,12 @@ export function normalizeRunnerEventPayload<TType extends RunnerEventType>(
     return parseRunnerTerminalPayloadV2(type, payload) as unknown as RunnerEventPayloadByType[TType];
   }
   return payload;
+}
+
+function omitBlankSessionUpdatedAt<T extends { updatedAt?: string | undefined }>(payload: T): T {
+  if (typeof payload.updatedAt !== "string" || payload.updatedAt.trim().length > 0) {
+    return payload;
+  }
+  const { updatedAt: _discarded, ...normalized } = payload;
+  return normalized as T;
 }

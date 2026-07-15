@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
+import { normalizeRunnerEventPayload } from "../../cli/runner/EventWriter.js";
 import { createInMemoryRunnerService } from "../../cli/runner/RunnerService.js";
 
 const profile: TuiProfile = {
@@ -10,6 +11,30 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
+
+test("runner event shaping removes blank session timestamps before protocol validation", () => {
+  const described = normalizeRunnerEventPayload("session.described", {
+    sessionId: "session-legacy-blank-timestamp",
+    version: 1,
+    updatedAt: "   ",
+  });
+  assert.equal("updatedAt" in described, false);
+
+  const state = normalizeRunnerEventPayload("session.state", {
+    session: {
+      sessionId: "session-legacy-blank-timestamp",
+      version: 1,
+      updatedAt: "",
+    },
+    version: 1,
+    graph: {
+      version: 1,
+      nodes: [],
+      edges: [],
+    },
+  });
+  assert.equal("updatedAt" in state.session, false);
+});
 
 test("runner service describes a legacy session repeatedly without emitting a protocol error", async () => {
   let descriptions = 0;
