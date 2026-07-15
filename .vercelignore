@@ -10,7 +10,7 @@ apps/web/.next/
 apps/cli/
 apps/desktop/
 apps/docs/
-apps/scenerunner/
+apps/scene*/
 .venv-swebench/
 .hf-cache/
 .external/
