@@ -69,11 +69,16 @@ type ChatController = {
 
 function createChatTransport(
   currentModelIdRef: { current: string },
-  resumeTurnIdRef: { current: string | null }
+  resumeTurnIdRef: { current: string | null },
+  onSuccessfulResponse?: () => void
 ) {
   return new CompatibleChatTransport<ChatMessage>({
     api: "/api/threads",
-    fetch: fetchWithErrorHandlers as typeof fetch,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetchWithErrorHandlers(input, init);
+      onSuccessfulResponse?.();
+      return response;
+    }) as typeof fetch,
     prepareSendMessagesRequest(request) {
       return {
         api: `/api/threads/${request.id}`,
@@ -324,6 +329,7 @@ function ChatShell({
   modelScopeQuery,
   project,
   threadTitle,
+  threadExists,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   attachments: Attachment[];
@@ -353,6 +359,7 @@ function ChatShell({
   modelScopeQuery?: string;
   project?: { id: string; name: string } | null;
   threadTitle?: string;
+  threadExists: boolean;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -382,7 +389,7 @@ function ChatShell({
           threadId={threadId}
         />
 
-        {isReadonly ? null : (
+        {isReadonly || !threadExists ? null : (
           <McpInteractionPanel
             active={status === "submitted" || status === "streaming"}
             threadId={threadId}
@@ -572,6 +579,7 @@ export function BootstrapChat({
         setMessages={() => {}}
         showPendingAssistant={false}
         status="ready"
+        threadExists={false}
         threadId={id}
         threadTitle="New Thread"
       />
@@ -669,7 +677,11 @@ export function Chat({
     resume: initialChatExists,
     generateId: generateUUID,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    transport: createChatTransport(shared.currentModelIdRef, resumeTurnIdRef),
+    transport: createChatTransport(
+      shared.currentModelIdRef,
+      resumeTurnIdRef,
+      () => setChatExists(true)
+    ),
     ...callbacks,
   });
 
@@ -933,6 +945,7 @@ export function Chat({
         setMessages={controller.setMessages}
         showPendingAssistant={showPendingAssistant}
         status={controller.status}
+        threadExists={chatExists}
         threadId={id}
         threadTitle={threadTitle}
       />

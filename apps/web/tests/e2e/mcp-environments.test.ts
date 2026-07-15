@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+function createEventStreamBody(events: string[]) {
+  return events.map((event) => `data: ${event}\n\n`).join("");
+}
+
 const now = "2026-07-13T12:00:00.000Z";
 const server = {
   id: "mcp-server-1",
@@ -195,10 +199,43 @@ test("Environment admins can operate Custom Apps and inspect replay-safe health"
   expect(snapshotDecision).toEqual({ decision: "approve" });
 });
 
+test("New Thread waits for persistence before checking App request status", async ({
+  page,
+}) => {
+  let statusRequests = 0;
+  await page.route(
+    /\/api\/threads\/[^/]+\/mcp\/interactions$/,
+    async (route) => {
+      statusRequests += 1;
+      await route.fulfill({ json: { interactions: [] } });
+    }
+  );
+
+  await page.goto("/threads/new");
+  await page.waitForTimeout(250);
+
+  expect(statusRequests).toBe(0);
+  await expect(page.getByText("App request status failed.")).toHaveCount(0);
+});
+
 test("Threads pause for sampling and elicitation and submit explicit decisions", async ({
   page,
 }) => {
   const resolutions: Array<Record<string, unknown>> = [];
+  await page.route(/\/api\/threads\/[^/]+$/, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: createEventStreamBody([
+        JSON.stringify({ type: "start", messageId: "assistant-browser" }),
+        JSON.stringify({ type: "finish", finishReason: "stop" }),
+      ]),
+    });
+  });
   await page.route(
     /\/api\/threads\/[^/]+\/mcp\/interactions(?:\/[^/]+)?$/,
     async (route) => {
@@ -250,7 +287,8 @@ test("Threads pause for sampling and elicitation and submit explicit decisions",
     }
   );
 
-  await page.goto("/threads/new");
+  await page.goto("/threads/new?query=Handle%20the%20pending%20App%20request");
+  await expect(page).toHaveURL(/\/threads\/[^/]+$/);
   const samplingCard = page.locator("[data-slot='card']").filter({
     hasText: "An App wants to use the model",
   });
