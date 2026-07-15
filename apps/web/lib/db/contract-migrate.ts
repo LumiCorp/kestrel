@@ -2,17 +2,21 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { resolveMigrationDatabaseConnection } from "./migration-connection";
 
 config({ path: ".env.local" });
 
 async function run() {
-  const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("POSTGRES_URL or DATABASE_URL is required");
+  const databaseConnection = resolveMigrationDatabaseConnection();
+  if (!databaseConnection) {
+    throw new Error("An unpooled or pooled database URL is required");
   }
 
-  const connection = postgres(databaseUrl, { max: 1 });
+  const connection = postgres(databaseConnection.url, { max: 1 });
   try {
+    process.stdout.write(
+      `🔒 Serializing contract migrations through ${databaseConnection.key}\n`
+    );
     await connection`
       SELECT pg_advisory_lock(hashtext('kestrel-one-schema-migrate'))
     `;

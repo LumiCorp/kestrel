@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres, { type Sql } from "postgres";
+import { resolveMigrationDatabaseConnection } from "./migration-connection";
 import {
   hasKnownMigrationLedgerDrift,
   reconcilePublishedMigrationLedgerTimestamps,
@@ -13,17 +14,18 @@ config({
 });
 
 const runMigrate = async () => {
-  const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+  const databaseConnection = resolveMigrationDatabaseConnection();
 
-  if (!databaseUrl) {
+  if (!databaseConnection) {
     console.log(
-      "⏭️  POSTGRES_URL/DATABASE_URL not defined, skipping migrations"
+      "⏭️  No unpooled or pooled database URL is defined, skipping migrations"
     );
     return;
   }
 
-  const connection = postgres(databaseUrl, { max: 1 });
+  const connection = postgres(databaseConnection.url, { max: 1 });
   try {
+    console.log(`🔒 Serializing migrations through ${databaseConnection.key}`);
     await connection`
       SELECT pg_advisory_lock(hashtext('kestrel-one-schema-migrate'))
     `;
