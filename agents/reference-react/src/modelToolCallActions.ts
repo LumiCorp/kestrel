@@ -29,6 +29,7 @@ export type ModelToolAliasRegistry = KestrelAgentToolAliasRegistry;
 
 export interface NormalizedModelToolTurn {
   action?: ReactAction | undefined;
+  assistantProgress?: string | undefined;
   visibleTodos?: VisibleTodoState | undefined;
   transcriptToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>;
   provenance: {
@@ -88,6 +89,7 @@ export function normalizeModelToolCallsToAgentTurn(input: {
   const workspaceActions: Array<{ name: string; input: Record<string, unknown> }> = [];
   const terminalActions: ReactAction[] = [];
   let visibleTodos: VisibleTodoState | undefined;
+  let assistantProgress: string | undefined;
 
   for (const [index, intent] of input.toolIntents.entries()) {
     const entry = input.aliasRegistry.byProviderName.get(intent.name);
@@ -99,20 +101,31 @@ export function normalizeModelToolCallsToAgentTurn(input: {
       });
     }
     canonicalNames.push(entry.canonicalName);
+    const progress = asString(intent.input.assistantProgress)?.trim();
+    if (progress === undefined || progress.length === 0 || progress.length > 600) {
+      throw new ModelToolCallActionError("Every model action tool call requires assistantProgress between 1 and 600 characters.", {
+        reason: "invalid_assistant_progress",
+        index,
+      });
+    }
+    const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
+    if (assistantProgress === undefined && entry.canonicalName !== "kestrel.finalize" && entry.canonicalName !== "kestrel.cannot_satisfy" && entry.canonicalName !== "kestrel.ask_user") {
+      assistantProgress = progress;
+    }
     transcriptToolCalls.push({
       name: entry.canonicalName,
-      input: intent.input,
+      input: toolInput,
       ...(intent.id !== undefined ? { id: intent.id } : {}),
     });
     if (entry.kind === "workspace") {
       workspaceActions.push({
         name: entry.canonicalName,
-        input: intent.input,
+        input: toolInput,
       });
       continue;
     }
     if (entry.canonicalName === "kestrel.todo_update") {
-      const todoResult = validateVisibleTodoState(intent.input);
+      const todoResult = validateVisibleTodoState(toolInput);
       if (todoResult.ok === false) {
         throw new ModelToolCallActionError(todoResult.error.message, {
           reason: "invalid_visible_todos",
@@ -124,7 +137,7 @@ export function normalizeModelToolCallsToAgentTurn(input: {
     }
     terminalActions.push(normalizeControlToolCall({
       canonicalName: entry.canonicalName,
-      input: intent.input,
+      input: toolInput,
       inputSchema: entry.inputSchema,
       sourceRunId: input.sourceRunId,
       index,
@@ -171,6 +184,7 @@ export function normalizeModelToolCallsToAgentTurn(input: {
 
   return {
     ...(action !== undefined ? { action } : {}),
+    ...(assistantProgress !== undefined ? { assistantProgress } : {}),
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
     transcriptToolCalls,
     provenance: {

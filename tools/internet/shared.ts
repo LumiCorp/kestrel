@@ -48,8 +48,41 @@ export function getInternetProvider(
   }
 
   return createTavilyInternetProvider({
-    ...(context.internetEnv !== undefined ? { env: context.internetEnv } : {}),
+    ...resolveTavilyProviderOptions(context),
   });
+}
+
+function resolveTavilyProviderOptions(context: SharedToolContext): {
+  apiKey?: string | undefined;
+  baseUrl?: string | undefined;
+  projectId?: string | undefined;
+  httpProxy?: string | undefined;
+  httpsProxy?: string | undefined;
+  env: NodeJS.ProcessEnv;
+} {
+  const configuration = context.providerConfigurations?.resolve("tavily");
+  if (configuration !== undefined) {
+    return {
+      apiKey: configuration.readCredential(),
+      ...(configuration.baseUrl !== undefined
+        ? { baseUrl: configuration.baseUrl }
+        : {}),
+      ...(configuration.settings.projectId !== undefined
+        ? { projectId: configuration.settings.projectId }
+        : {}),
+      ...(configuration.settings.httpProxy !== undefined
+        ? { httpProxy: configuration.settings.httpProxy }
+        : {}),
+      ...(configuration.settings.httpsProxy !== undefined
+        ? { httpsProxy: configuration.settings.httpsProxy }
+        : {}),
+      // An explicit empty environment prevents the low-level SDK adapter from
+      // gaining ambient process authority after a scoped configuration exists.
+      env: Object.create(null) as NodeJS.ProcessEnv,
+    };
+  }
+
+  return { env: context.internetEnv ?? process.env };
 }
 
 export function parseSearchInput(

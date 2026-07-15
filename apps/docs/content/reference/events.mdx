@@ -1,11 +1,11 @@
 ---
 title: Runner event reference
-summary: Exact public event names for request-scoped run, tool, log, reasoning, task, and terminal activity.
+summary: Exact public event names for operational activity, provider reasoning, agent progress, tools, tasks, and terminal results.
 section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-15
 ---
 
 ## Public event names
@@ -13,8 +13,13 @@ updatedAt: 2026-07-13
 | Event | Meaning |
 | --- | --- |
 | `run.started` | The runner accepted the run |
-| `run.progress` | Progress information for active work |
-| `run.reasoning` | Reasoning information allowed by the active policy |
+| `run.progress` | Operational lifecycle and timing information; never conversational agent progress |
+| `run.model.reasoning.started` | A labeled provider reasoning stream began |
+| `run.model.reasoning.delta` | A live-only provider summary or visible-thinking delta; never raw or encrypted reasoning state |
+| `run.model.reasoning.completed` | The current provider reasoning stream completed |
+| `run.model.reasoning.failed` | A visible provider reasoning attempt was interrupted |
+| `run.model.reasoning.unavailable` | The provider returned no visible reasoning for the requested mode |
+| `run.agent_progress` | Concise agent-authored progress from an accepted, committed nonterminal decision |
 | `run.log` | Structured run log activity |
 | `run.console` | Console activity produced during the run |
 | `run.tool.started` | A tool call began |
@@ -30,6 +35,10 @@ updatedAt: 2026-07-13
 
 - Validate the event envelope before updating application state.
 - Correlate events with their session and run.
-- Treat progress, log, and reasoning events as activity, not the final answer.
+- Render provider reasoning by its declared format and attempt; never label it raw reasoning.
+- Treat `contentState: "not_retained"` as metadata only and never expect a text delta.
+- Keep attempt IDs separate, mark interrupted attempts failed, and do not merge visible output across retries.
+- Persist `run.agent_progress`, but treat provider reasoning deltas as live-only unless a separate retention policy is explicitly enabled.
+- Treat operational progress, logs, provider reasoning, and agent progress as activity, not the final answer.
 - Read human-facing `assistantText` and structured data from the terminal result.
 - Waiting is a normalized run status, not a fabricated `run.waiting` event.

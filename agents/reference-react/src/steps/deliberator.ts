@@ -1,5 +1,5 @@
 import type { StepAgent, StepContext, StepIO, Transition, UserWaitForMatcher } from "../../../../src/kestrel/contracts/execution.js";
-import type { ModelRequest, ModelResponse, ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
+import type { ModelReasoningRequest, ModelRequest, ModelResponse, ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
 
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import {
@@ -118,12 +118,16 @@ import {
 import { buildModeBlockedWaitGuidance } from "./modeBlockedPrompt.js";
 
 interface AgentLoopStepConfig {
+  agentProvider?: string | undefined;
   agentModel: string;
   agentToolsProvider: (ctx: StepContext) => ModelToolSpec[];
   capabilityManifestProvider: (ctx: StepContext) => ToolCapabilityManifestItem[];
   defaultGoal: string;
   loopStepId: string;
   execDispatchStepId: string;
+  reasoningRequest?: Omit<ModelReasoningRequest, "continuation"> | undefined;
+  reasoningRetention?: { mode: "live_only" | "provider_visible"; days: number } | undefined;
+  reasoningRetentionScope?: string | undefined;
 }
 
 const DELIBERATOR_SCHEMA_RETRY_LIMIT = 3;
@@ -608,6 +612,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         goal,
         visibleTodos: attempt.visibleTodosOnly,
         modelToolCalls: attempt.modelToolCalls,
+        ...(attempt.assistantProgress !== undefined ? { assistantProgress: attempt.assistantProgress } : {}),
       });
     }
 
@@ -649,6 +654,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       executionPolicy,
       response.output,
       attempt.modelToolCalls,
+      attempt.assistantProgress,
     );
   };
 }
@@ -758,6 +764,7 @@ type DeliberatorPreparedCompileAttempt = {
   } | undefined;
   visibleTodosOnly?: ReturnType<typeof normalizeModelToolCallsToAgentTurn>["visibleTodos"] | undefined;
   modelToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>;
+  assistantProgress?: string | undefined;
 };
 
 type DeliberatorFailedCompileAttempt = {
@@ -849,6 +856,7 @@ function runDeliberatorCompileAttempt(input: {
       prepared,
       visibleTodosOnly: normalizedTurn.visibleTodos,
       modelToolCalls: normalizedTurn.transcriptToolCalls,
+      ...(normalizedTurn.assistantProgress !== undefined ? { assistantProgress: normalizedTurn.assistantProgress } : {}),
     };
   }
 
@@ -894,6 +902,7 @@ function runDeliberatorCompileAttempt(input: {
     prepared,
     compiled,
     modelToolCalls: normalizedTurn.transcriptToolCalls,
+    ...(normalizedTurn.assistantProgress !== undefined ? { assistantProgress: normalizedTurn.assistantProgress } : {}),
   };
 }
 
@@ -946,6 +955,7 @@ async function askDeliberator(
     input,
     messages: messages ?? [],
     tools: aliasRegistry.requestTools,
+    reasoning: config.reasoningRequest ?? { mode: "provider_visible" },
     providerOptions: {
       openrouter: {
         endpoint: "chat",
@@ -962,10 +972,13 @@ async function askDeliberator(
       phase: "agent.loop",
       stepAgent: "agent.loop",
       requestedModel: config.agentModel,
+      ...(config.agentProvider !== undefined ? { requestedProvider: config.agentProvider } : {}),
       modelRole: "tool_action",
       promptVariant: resolvedPromptVariant,
       interactionMode: promptInput.interactionMode,
       ...(promptInput.actSubmode !== undefined ? { actSubmode: promptInput.actSubmode } : {}),
+      reasoningRetention: config.reasoningRetention ?? { mode: "live_only", days: 7 },
+      reasoningRetentionScope: config.reasoningRetentionScope ?? "default",
     },
   };
   return io.useModel<ModelResponse<unknown>>(request);
@@ -1002,6 +1015,7 @@ async function compactContextRequestIfNeeded(input: {
       contextMessages: input.contextRequest.contextMessages,
     }),
     responseFormat: "text",
+    reasoning: { mode: "off" },
     providerOptions: {
       openrouter: { endpoint: "chat", toolChoice: "none" },
       openai: { toolChoice: "none" },
@@ -1011,8 +1025,10 @@ async function compactContextRequestIfNeeded(input: {
       phase: "agent.compaction",
       stepAgent: "agent.loop",
       requestedModel: input.config.agentModel,
+      ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
       modelRole: "compaction",
       modelBudgetClass: "maintenance",
+      reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
     },
   });
   const summary = response.text?.trim() ??
@@ -1344,6 +1360,7 @@ function toAgentLoopTodoOnlyTransition(input: {
   goal: string | undefined;
   visibleTodos: ReturnType<typeof normalizeModelToolCallsToAgentTurn>["visibleTodos"] | undefined;
   modelToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>;
+  assistantProgress?: string | undefined;
 }): Transition {
   let modelTranscript = appendAssistantToolCallsToTranscript({
     transcript: input.reactState.modelTranscript,
@@ -1402,6 +1419,7 @@ function toAgentLoopTodoOnlyTransition(input: {
       parent: "agent",
       child: "loop",
     },
+    ...(input.assistantProgress !== undefined ? { agentProgress: input.assistantProgress } : {}),
   };
 }
 
@@ -1418,6 +1436,7 @@ function toAgentLoopActionTransition(
   executionPolicy: ExecutionPolicyOverride | undefined,
   previousResponse: unknown,
   modelToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>,
+  assistantProgress?: string | undefined,
 ): Transition {
   const action = compiled.action;
   if (action === undefined) {
@@ -1603,6 +1622,9 @@ function toAgentLoopActionTransition(
       parent: "agent",
       child: "loop",
     },
+    ...(assistantProgress !== undefined && action.kind !== "finalize" && action.kind !== "cannot_satisfy" && action.kind !== "ask_user"
+      ? { agentProgress: assistantProgress }
+      : {}),
   };
   return transition;
 }

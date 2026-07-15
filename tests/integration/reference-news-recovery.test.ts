@@ -49,7 +49,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
     const input = record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
       ? record.input as Record<string, unknown>
       : {};
-    return name !== undefined ? [{ name: name.replace(/[^A-Za-z0-9_]/gu, "_"), input }] : [];
+    return name !== undefined ? [{ name: name.replace(/[^A-Za-z0-9_]/gu, "_"), input: { ...input, assistantProgress: `I am using ${name} to continue the requested work.` } }] : [];
   }
   if (kind === "tool_batch") {
     return Array.isArray(record?.items)
@@ -61,7 +61,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
           const input = tool?.input !== null && typeof tool?.input === "object" && !Array.isArray(tool.input)
             ? tool.input as Record<string, unknown>
             : {};
-          return name !== undefined ? [{ name: name.replace(/[^A-Za-z0-9_]/gu, "_"), input }] : [];
+          return name !== undefined ? [{ name: name.replace(/[^A-Za-z0-9_]/gu, "_"), input: { ...input, assistantProgress: `I am using ${name} to continue the requested work.` } }] : [];
         })
       : [];
   }
@@ -71,6 +71,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
       input: {
         status: typeof record?.status === "string" ? record.status : "goal_satisfied",
         message: typeof record?.message === "string" ? record.message : "Done.",
+        assistantProgress: "I have completed the requested work.",
         ...(record?.data !== undefined ? { data: record.data } : {}),
       },
     }];

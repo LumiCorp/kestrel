@@ -101,10 +101,14 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
         id: AGENT_STEP_IDS.loop,
         createStep: () =>
           createAgentLoopStep({
+            agentProvider: config.agentProvider,
             agentModel: config.agentModel,
             agentToolsProvider: config.agentToolsProvider,
             capabilityManifestProvider: config.capabilityManifestProvider,
             defaultGoal: config.defaultGoal,
+            reasoningRequest: config.reasoningRequest,
+            reasoningRetention: config.reasoningRetention,
+            reasoningRetentionScope: config.reasoningRetentionScope,
             execDispatchStepId: AGENT_STEP_IDS.execDispatch,
             loopStepId: AGENT_STEP_IDS.loop,
           }),

@@ -3,7 +3,7 @@ id: cli-kchat-protocol
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-06-30
+last_verified_at: 2026-07-15
 depends_on:
   - kchat.md
   - ../index.md
@@ -107,9 +107,18 @@ The CLI and related thin-client surfaces communicate with Local Core or an expli
 - `job.completed`
 - `job.failed`
 - `run.cancelled`
+- `run.tool.started`
+- `run.tool.completed`
+- `run.tool.failed`
 - `run.log`
+- `run.console`
 - `run.progress`
-- `run.reasoning`
+- `run.model.reasoning.started`
+- `run.model.reasoning.delta`
+- `run.model.reasoning.completed`
+- `run.model.reasoning.failed`
+- `run.model.reasoning.unavailable`
+- `run.agent_progress`
 - `run.completed`
 - `run.failed`
 - `runner.error`
@@ -121,6 +130,9 @@ The CLI and related thin-client surfaces communicate with Local Core or an expli
 
 - `operator.inbox`
 - `operator.thread`
+- `operator.runs`
+- `operator.run`
+- `operator.run.reasoning`
 - `operator.controlled`
 - `task.updated`
 - `task.graph`
@@ -138,6 +150,10 @@ The CLI and related thin-client surfaces communicate with Local Core or an expli
 - `run.start` carries a `turn` payload and optional `profile` or `profileId`.
 - `job.run` carries strict `job_input_v1` input and returns strict `job_output_v1` output contracts.
 - `run.started` includes execution posture details such as interaction mode, act submode, client capabilities, and execution policy when available.
+- `run.started` also reports reasoning encryption-key readiness; opted-in retention must fail closed when readiness is false.
+- `run.model.reasoning.*` carries only provider-visible summaries or thinking, with explicit format, attempt, and content-state fields. It never carries encrypted continuation state.
+- `run.agent_progress` is durable agent-authored text emitted only after a nonterminal decision commits. `run.progress` remains operational telemetry.
+- `operator.run.reasoning` requires an organization-admin actor plus exact run and session IDs; it reads or deletes opted-in encrypted retained-visible content outside normal transcript history.
 - `job.completed` always includes `sessionId`, `threadId`, `runId`, and replay pointers.
 - `run.completed` returns the terminal `RunTurnResult`.
 - `run.failed` and `runner.error` both use normalized `code` and `message` fields; `runner.error` is for validation or dispatch failures before a normal run completes.

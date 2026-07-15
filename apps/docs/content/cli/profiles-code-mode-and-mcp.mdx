@@ -30,19 +30,24 @@ These are the capability-heavy profile fields worth understanding:
 | `toolAllowlist` | controls which tools can be used | narrows capability to the minimum needed for the task |
 | `codeMode` | enables controlled code execution | switches the session from pure chat into code-capable behavior |
 | `mcpServers` | configures external MCP-backed tools | lets the profile expose remote or local server tools |
+| `reasoning` | requests provider-visible reasoning and controls its separate retention policy | keeps live display and encrypted retention explicit instead of conflating them with transcript history |
 | `sessionPrefix` | controls durable naming | makes session continuity readable across repeated runs |
 
 ## Example global profile
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "profiles": [
     {
       "id": "reference",
       "label": "Reference React",
       "agent": "reference-react",
       "sessionPrefix": "reference",
+      "reasoning": {
+        "request": { "mode": "provider_visible", "effort": "medium" },
+        "retention": { "mode": "live_only", "days": 7 }
+      },
       "toolAllowlist": ["free.hn.top", "free.time.current", "code.execute"],
       "codeMode": {
         "enabled": true,
@@ -67,6 +72,12 @@ These are the capability-heavy profile fields worth understanding:
   ]
 }
 ```
+
+`live_only` is the retention default. Opting into `provider_visible` retention
+stores only the provider-visible summary or thinking text, encrypted, for an
+integer from 1 through 30 days. Seven days is the default window. Provider
+continuation signatures or encrypted state are never rendered or retained as
+visible reasoning.
 
 ## Workspace-local example
 

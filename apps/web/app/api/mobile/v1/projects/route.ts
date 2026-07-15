@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { mobileProjectDto } from "@/lib/mobile/dto";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 import { listProjectsForUser } from "@/lib/projects/store";
 
 export async function GET() {
@@ -15,6 +15,6 @@ export async function GET() {
       projects: projects.map(({ project }) => mobileProjectDto({ project })),
     });
   } catch (error) {
-    return errorResponse(error);
+    return mobileErrorResponse(error);
   }
 }

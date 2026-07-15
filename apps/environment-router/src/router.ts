@@ -85,7 +85,9 @@ export function authorizeEnvironmentRequest(input: {
   if (command.tenantId !== ticket.organizationId) {
     return { status: 403, code: "ENVIRONMENT_TENANT_MISMATCH" };
   }
-  const requiredCapability = COMMAND_CAPABILITIES[command.type];
+  const requiredCapability = command.type === "operator.run.reasoning"
+    ? command.action === "delete" ? "reasoning.delete" : "reasoning.read"
+    : COMMAND_CAPABILITIES[command.type];
   if (!requiredCapability || !ticket.capabilities.includes(requiredCapability)) {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
@@ -203,6 +205,7 @@ function parseCommand(value: unknown): {
   type: string;
   tenantId: string | undefined;
   sessionId: string | undefined;
+  action: string | undefined;
 } | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   const metadata = isRecord(value.metadata) ? value.metadata : null;
@@ -210,6 +213,7 @@ function parseCommand(value: unknown): {
   const turn = payload && isRecord(payload.turn) ? payload.turn : null;
   return {
     type: value.type,
+    action: payload && typeof payload.action === "string" ? payload.action : undefined,
     tenantId:
       metadata && typeof metadata.tenantId === "string"
         ? metadata.tenantId

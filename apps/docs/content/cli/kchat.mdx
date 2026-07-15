@@ -20,6 +20,7 @@ For `0.6.0-beta.0`, the release CLI path is a separate macOS ARM64 tarball shape
 - workspace catalog binding when you launch from a project directory
 - operator control commands over the same control plane used by richer app surfaces
 - profile-driven tool, code-mode, and MCP behavior
+- typed live provider reasoning and durable, committed Agent progress
 
 ## The cockpit layout
 
@@ -35,6 +36,12 @@ Advanced screens stay behind the palette:
 - `activity feed`
 
 That makes the CLI more than a bare REPL. It is the local operator cockpit.
+
+The status surface keeps runtime lifecycle and tool telemetry separate from
+conversation history. Provider-returned content is labeled by its declared
+format and remains live-only by default. Only validated, committed
+`run.agent_progress` updates are added to durable assistant history; generic
+`run.progress` events remain diagnostics.
 
 ## Workflow
 

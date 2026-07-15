@@ -1,36 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
-import { mobileTurnDto } from "@/lib/mobile/dto";
+import { mobileErrorResponse } from "@/lib/mobile/http";
+import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import {
-  getDurableTurnForUser,
-  removeQueuedDurableTurn,
-} from "@/lib/turns/store";
+import { removeQueuedDurableTurn } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ turnId: routeIdSchema });
-
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ turnId: string }> }
-) {
-  try {
-    const { session, organizationId } = await requireActiveOrganization();
-    const { turnId } = paramsSchema.parse(await context.params);
-    const turn = await getDurableTurnForUser({
-      turnId,
-      organizationId,
-      userId: session.user.id,
-    });
-    return turn
-      ? NextResponse.json({ turn: mobileTurnDto(turn) })
-      : NextResponse.json({ error: "Turn not found" }, { status: 404 });
-  } catch (error) {
-    return errorResponse(error, 404);
-  }
-}
 
 export async function DELETE(
   _request: NextRequest,
@@ -45,10 +22,16 @@ export async function DELETE(
       userId: session.user.id,
     });
     if (removed.nextTurnId) {
-      await enqueueDurableThreadTurn(removed.nextTurnId);
+      await enqueueDurableThreadTurn(removed.nextTurnId).catch(() => {});
     }
-    return NextResponse.json({ turn: mobileTurnDto(removed.turn) });
+    const snapshot = await getMobileThreadSnapshot({
+      threadId: removed.turn.threadId,
+      organizationId,
+      userId: session.user.id,
+    });
+    if (!snapshot) throw new Error("Thread snapshot unavailable.");
+    return NextResponse.json({ snapshot });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

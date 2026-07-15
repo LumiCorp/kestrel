@@ -51,6 +51,7 @@ import {
   modelsByProvider,
 } from "@/lib/ai/models";
 import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
+import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
@@ -74,15 +75,40 @@ type ScopedChatModel = ChatModel & {
 
 type ComposerActivity = {
   label: string;
-  tone: "working" | "streaming" | "attention" | "error";
+  tone: "ready" | "working" | "streaming" | "attention" | "error";
 };
 
 function getComposerActivity(input: {
   messages: UIMessage[];
   status: UseChatHelpers<ChatMessage>["status"];
+  conversationState: ThreadConversationState;
 }): ComposerActivity | null {
-  if (input.status === "ready") {
-    return null;
+  const activeTurn = input.conversationState.turns.find(
+    (turn) => turn.id === input.conversationState.queue.activeTurnId
+  );
+  const pendingInteraction = input.conversationState.interactions.find(
+    (interaction) => interaction.status === "pending"
+  );
+  const queuedCount = input.conversationState.turns.filter(
+    (turn) => turn.status === "queued"
+  ).length;
+
+  if (pendingInteraction) {
+    return {
+      label:
+        pendingInteraction.kind === "approval" ||
+        pendingInteraction.kind === "mcp_sampling"
+          ? "Waiting for approval"
+          : "Waiting for your response",
+      tone: "attention",
+    };
+  }
+
+  if (activeTurn?.cancelRequestedAt) {
+    return {
+      label: "Interrupt requested · stopping at a safe boundary",
+      tone: "attention",
+    };
   }
 
   if (input.status === "error") {
@@ -90,6 +116,34 @@ function getComposerActivity(input: {
       label: "Agent error",
       tone: "error",
     };
+  }
+
+  if (input.conversationState.queue.pauseReason === "turn_failed") {
+    return {
+      label: "Agent failed · queue paused",
+      tone: "error",
+    };
+  }
+
+  if (input.conversationState.queue.pauseReason === "turn_cancelled") {
+    return {
+      label: "Turn interrupted · queue paused",
+      tone: "attention",
+    };
+  }
+
+  if (activeTurn && input.status === "ready") {
+    return {
+      label:
+        queuedCount > 0
+          ? `Agent working · ${queuedCount} queued`
+          : "Agent working",
+      tone: "working",
+    };
+  }
+
+  if (input.status === "ready") {
+    return { label: "Ready", tone: "ready" };
   }
 
   const latestAssistantMessage = [...input.messages]
@@ -189,14 +243,17 @@ function getComposerActivity(input: {
 
 function ComposerActivityRibbon({
   activity,
+  queueVersion,
 }: {
   activity: ComposerActivity | null;
+  queueVersion: number;
 }) {
   if (!activity) {
     return null;
   }
 
   const trackClassName = {
+    ready: "bg-transparent",
     working: "bg-primary/12",
     streaming: "bg-sky-500/12",
     attention: "bg-amber-500/15",
@@ -204,6 +261,7 @@ function ComposerActivityRibbon({
   }[activity.tone];
 
   const coreClassName = {
+    ready: "from-transparent via-transparent to-transparent",
     working:
       "from-transparent via-primary/95 to-transparent shadow-[0_0_12px_rgba(0,108,255,0.7)]",
     streaming:
@@ -216,26 +274,38 @@ function ComposerActivityRibbon({
 
   return (
     <>
+      <span aria-live="polite" className="sr-only" role="status">
+        {activity.label}
+      </span>
       <div
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none absolute inset-x-3 top-0 z-10 h-[2px] overflow-hidden rounded-full",
-          trackClassName
-        )}
+        className="px-2 pb-1 text-muted-foreground text-xs"
+        data-queue-version={queueVersion}
+        data-testid="composer-state"
       >
-        <div
-          className={cn(
-            "composer-agent-ribbon-sweep absolute inset-y-[-2px] left-[-34%] w-[30%] rounded-full bg-gradient-to-r blur-[4px]",
-            coreClassName
-          )}
-        />
-        <div
-          className={cn(
-            "composer-agent-ribbon-sweep absolute inset-y-0 left-[-22%] w-[18%] rounded-full bg-gradient-to-r",
-            coreClassName
-          )}
-        />
+        {activity.label}
       </div>
+      {activity.tone === "ready" ? null : (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-x-3 top-0 z-10 h-[2px] overflow-hidden rounded-full",
+            trackClassName
+          )}
+        >
+          <div
+            className={cn(
+              "composer-agent-ribbon-sweep absolute inset-y-[-2px] left-[-34%] w-[30%] rounded-full bg-gradient-to-r blur-[4px]",
+              coreClassName
+            )}
+          />
+          <div
+            className={cn(
+              "composer-agent-ribbon-sweep absolute inset-y-0 left-[-22%] w-[18%] rounded-full bg-gradient-to-r",
+              coreClassName
+            )}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -296,6 +366,8 @@ function PureMultimodalInput({
   setMessages,
   sendMessage,
   queueMessage,
+  conversationState,
+  onInterrupt,
   className,
   selectedVisibilityType,
   selectedModelId,
@@ -314,6 +386,8 @@ function PureMultimodalInput({
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   queueMessage?: (message: ChatMessage) => void;
+  conversationState: ThreadConversationState;
+  onInterrupt?: () => Promise<void>;
   className?: string;
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
@@ -552,8 +626,12 @@ function PureMultimodalInput({
       getComposerActivity({
         messages,
         status,
+        conversationState,
       }),
-    [messages, status]
+    [conversationState, messages, status]
+  );
+  const activeTurn = conversationState.turns.find(
+    (turn) => turn.id === conversationState.queue.activeTurnId
   );
 
   const submitForm = useCallback(() => {
@@ -863,7 +941,10 @@ function PureMultimodalInput({
           submitForm();
         }}
       >
-        <ComposerActivityRibbon activity={composerActivity} />
+        <ComposerActivityRibbon
+          activity={composerActivity}
+          queueVersion={conversationState.queue.version}
+        />
 
         {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
@@ -937,6 +1018,7 @@ function PureMultimodalInput({
               selectedModelId={selectedModelId}
             />
             <Button
+              aria-label="Generate an image"
               className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
               data-testid="media-image-button"
               disabled={imageModels.length === 0}
@@ -950,6 +1032,7 @@ function PureMultimodalInput({
               <ImagePlusIcon className="size-4" />
             </Button>
             <Button
+              aria-label="Generate a video"
               className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
               disabled={videoModels.length === 0}
               onClick={() => {
@@ -962,6 +1045,11 @@ function PureMultimodalInput({
               <FilmIcon className="size-4" />
             </Button>
             <Button
+              aria-label={
+                autoPlaySpeech
+                  ? "Disable automatic response playback"
+                  : "Enable automatic response playback"
+              }
               className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
               onClick={() => setAutoPlaySpeech((current) => !current)}
               type="button"
@@ -982,20 +1070,35 @@ function PureMultimodalInput({
               status={status}
             />
           ) : (
-            <PromptInputSubmit
-              className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
-              data-testid="send-button"
-              disabled={
-                (!input.trim() && attachments.length === 0) ||
-                uploadQueue.length > 0 ||
-                ((status === "submitted" || status === "streaming") &&
-                  !queueMessage)
-              }
-              onClick={submitForm}
-              status={status}
-            >
-              <ArrowUpIcon size={14} />
-            </PromptInputSubmit>
+            <>
+              {activeTurn && onInterrupt ? (
+                <Button
+                  aria-label="Interrupt agent at the next safe boundary"
+                  className="size-8 rounded-full"
+                  disabled={Boolean(activeTurn.cancelRequestedAt)}
+                  onClick={() => void onInterrupt()}
+                  title="Interrupt at the next safe boundary"
+                  type="button"
+                  variant="outline"
+                >
+                  <StopIcon size={14} />
+                </Button>
+              ) : null}
+              <PromptInputSubmit
+                className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+                data-testid="send-button"
+                disabled={
+                  (!input.trim() && attachments.length === 0) ||
+                  uploadQueue.length > 0 ||
+                  ((status === "submitted" || status === "streaming") &&
+                    !queueMessage)
+                }
+                onClick={submitForm}
+                status={status}
+              >
+                <ArrowUpIcon size={14} />
+              </PromptInputSubmit>
+            </>
           )}
         </PromptInputToolbar>
       </PromptInput>
@@ -1191,6 +1294,16 @@ export const MultimodalInput = memo(
       return false;
     }
     if (!equal(prevProps.messages, nextProps.messages)) {
+      return false;
+    }
+    if (!equal(prevProps.conversationState, nextProps.conversationState)) {
+      return false;
+    }
+    if (
+      prevProps.activeEnvironmentName !== nextProps.activeEnvironmentName ||
+      prevProps.modelScopeQuery !== nextProps.modelScopeQuery ||
+      prevProps.threadId !== nextProps.threadId
+    ) {
       return false;
     }
     if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType) {

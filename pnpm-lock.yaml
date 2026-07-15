@@ -346,9 +346,15 @@ importers:
       '@icons-pack/react-simple-icons':
         specifier: ^13.7.0
         version: 13.13.0(react@19.2.4)
+      '@kestrel-agents/ai-sdk':
+        specifier: 0.6.0
+        version: link:../../packages/ai-sdk
       '@kestrel-agents/next':
         specifier: 0.6.0
         version: link:../../packages/next
+      '@kestrel-agents/protocol':
+        specifier: 0.6.0
+        version: link:../../packages/protocol
       '@kestrel-agents/sdk':
         specifier: 0.6.0
         version: link:../../packages/sdk
@@ -792,6 +798,19 @@ importers:
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
+
+  packages/ai-sdk:
+    dependencies:
+      '@kestrel-agents/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@kestrel-agents/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+    devDependencies:
+      ai:
+        specifier: 6.0.116
+        version: 6.0.116(zod@4.3.6)
 
   packages/environment-auth:
     devDependencies:

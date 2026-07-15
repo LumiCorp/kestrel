@@ -276,10 +276,17 @@ export function ProjectApps({
       <div className="overflow-hidden rounded-xl border bg-background">
         {projectApps?.apps.map((configuration, index) => {
           const isGoogle = configuration.app.key === "google_workspace";
-          const needsConnection = configuration.app.connectionModel !== "none";
-          const projectDefault = configuration.attachedConnections.find(
-            (connection) => connection.isDefault
-          );
+          const needsConnection =
+            configuration.app.connectionRequirement === "required";
+          const projectDefault =
+            configuration.attachedConnections.find(
+              (connection) =>
+                connection.isDefault && connection.scope === "personal"
+            ) ??
+            configuration.attachedConnections.find(
+              (connection) =>
+                connection.isDefault && connection.scope === "shared"
+            );
           return (
             <button
               className={cn(

@@ -449,7 +449,10 @@ function modelToolIntentsFromLegacyTestAction(
   if (visibleTodos !== undefined) {
     intents.push({
       name: "kestrel_todo_update",
-      input: visibleTodos as Record<string, unknown>,
+      input: {
+        ...(visibleTodos as Record<string, unknown>),
+        assistantProgress: "I am updating the visible work plan.",
+      },
     });
   }
   const record = action !== null && typeof action === "object" && !Array.isArray(action)
@@ -462,7 +465,10 @@ function modelToolIntentsFromLegacyTestAction(
   if (kind === "tool" && typeof record.name === "string") {
     intents.push({
       name: providerToolAliasForCanonicalName(record.name),
-      input: record.input as Record<string, unknown>,
+      input: {
+        ...(record.input as Record<string, unknown>),
+        assistantProgress: `I am using ${record.name} to continue the requested work.`,
+      },
     });
     return intents;
   }
@@ -476,7 +482,10 @@ function modelToolIntentsFromLegacyTestAction(
       }
       intents.push({
         name: providerToolAliasForCanonicalName(itemRecord.name),
-        input: itemRecord.input as Record<string, unknown>,
+        input: {
+          ...(itemRecord.input as Record<string, unknown>),
+          assistantProgress: `I am using ${itemRecord.name} to continue the requested work.`,
+        },
       });
     }
     return intents;
@@ -488,6 +497,7 @@ function modelToolIntentsFromLegacyTestAction(
       input: {
         status: record.status ?? record.finalizeReason ?? "goal_satisfied",
         message: record.message ?? inputRecord?.message,
+        assistantProgress: "I have completed the requested work.",
         ...(record.data !== undefined ? { data: record.data } : {}),
         ...(inputRecord?.data !== undefined ? { data: inputRecord.data } : {}),
       },
@@ -499,6 +509,7 @@ function modelToolIntentsFromLegacyTestAction(
       name: "kestrel_ask_user",
       input: {
         prompt: record.prompt,
+        assistantProgress: "I need one detail from you before I can continue.",
       },
     });
     return intents;
@@ -509,6 +520,7 @@ function modelToolIntentsFromLegacyTestAction(
       input: {
         reasonCode: record.reasonCode,
         message: record.message,
+        assistantProgress: "I found a blocker that prevents me from continuing.",
         ...(record.details !== undefined ? { details: record.details } : {}),
       },
     });
@@ -520,6 +532,7 @@ function modelToolIntentsFromLegacyTestAction(
       input: {
         message: record.message,
         continuation: record.continuation,
+        assistantProgress: "The plan is ready to continue in build mode.",
         ...(record.data !== undefined ? { data: record.data } : {}),
       },
     });

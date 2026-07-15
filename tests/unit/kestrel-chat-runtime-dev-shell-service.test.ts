@@ -279,6 +279,7 @@ function createRuntimeFactory(input: {
           });
           onFinalize({ ok: true });
           return {
+            assistantText: "The runtime metadata test turn completed.",
             output: {
               status: "COMPLETED",
               text: "ok",

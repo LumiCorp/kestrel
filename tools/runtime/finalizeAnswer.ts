@@ -1,5 +1,6 @@
 import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput } from "../helpers.js";
+import { buildAgentToolSuccessResult } from "../toolResult.js";
 
 export const finalizeAnswerTool: SharedToolModule = {
   definition: {
@@ -30,17 +31,60 @@ export const finalizeAnswerTool: SharedToolModule = {
         assertFinalizeProvenance(input);
       }
 
-      if (context.onFinalize !== undefined) {
-        return context.onFinalize(input);
-      }
-
-      return {
-        finalized: true,
-        payload: input,
-      };
+      const output = context.onFinalize !== undefined
+        ? await context.onFinalize(input)
+        : { finalized: true, payload: input };
+      return buildAgentToolSuccessResult({
+        toolName: "FinalizeAnswer",
+        input,
+        output,
+        presentation: readFinalizePresentation(input),
+      });
     };
   },
 };
+
+function readFinalizePresentation(input: unknown) {
+  const root = asRecord(input);
+  const data = asRecord(root?.data);
+  const ui = asRecord(data?.ui);
+  const artifacts = Array.isArray(ui?.artifacts) ? ui.artifacts : [];
+  return {
+    artifacts: artifacts.flatMap((value) => {
+      const artifact = asRecord(value);
+      const id = readNonEmptyString(artifact?.id);
+      const title = readNonEmptyString(artifact?.title);
+      const kind = readNonEmptyString(artifact?.kind);
+      if (!(id && title && kind)) return [];
+      return [{
+        id,
+        title,
+        kind,
+        ...(readNonEmptyString(artifact?.url)
+          ? { url: readNonEmptyString(artifact?.url) }
+          : {}),
+        ...(readNonEmptyString(artifact?.mediaType)
+          ? { mediaType: readNonEmptyString(artifact?.mediaType) }
+          : {}),
+        ...(asRecord(artifact?.metadata)
+          ? { metadata: asRecord(artifact?.metadata) }
+          : {}),
+      }];
+    }),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
 
 function assertFinalizeProvenance(input: unknown): void {
   const record = parseObjectInput("FinalizeAnswer", input);

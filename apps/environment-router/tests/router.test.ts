@@ -82,6 +82,26 @@ const promotionToken = signEnvironmentExecutionTicket({
     nonce: "nonce-3",
   },
 });
+const reasoningReadToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 1,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-admin",
+    actorId: "admin-1",
+    agentId: "kestrel-control-plane",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    capabilities: ["reasoning.read"],
+    issuedAt: 1_000,
+    expiresAt: 1_300,
+    nonce: "nonce-reasoning-read",
+  },
+});
 
 test("router binds event subscriptions to the ticket Thread", () => {
   assert.equal(
@@ -108,6 +128,33 @@ test("router binds event subscriptions to the ticket Thread", () => {
     }).status,
     403
   );
+});
+
+test("router binds retained reasoning commands to action capability, tenant, and Thread", () => {
+  const command = (action: "read" | "delete", sessionId = "thread-1") => ({
+    id: "command-reasoning",
+    type: "operator.run.reasoning",
+    payload: { runId: "runtime-run-1", sessionId, action },
+    metadata: { tenantId: "org-1" },
+  });
+  assert.equal(authorizeEnvironmentRequest({
+    authorization: `Bearer ${reasoningReadToken}`,
+    publicKey,
+    now: 1_100,
+    body: command("read"),
+  }).status, 200);
+  assert.equal(authorizeEnvironmentRequest({
+    authorization: `Bearer ${reasoningReadToken}`,
+    publicKey,
+    now: 1_100,
+    body: command("delete"),
+  }).status, 403);
+  assert.equal(authorizeEnvironmentRequest({
+    authorization: `Bearer ${reasoningReadToken}`,
+    publicKey,
+    now: 1_100,
+    body: command("read", "thread-2"),
+  }).status, 403);
 });
 
 test("router authorizes Workspace HTTP APIs by exact method and path", () => {

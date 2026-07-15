@@ -79,7 +79,12 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     profile: {
       ...profile,
       toolAllowlist: [
-        "getWeather",
+        "free.weather.current",
+        "free.weather.forecast",
+        "free.time.current",
+        "free.geocode.lookup",
+        "free.exchange.rate",
+        "free.hn.top",
         "kestrel_one.search_knowledge_documents",
         "bash",
         "bash_batch",
@@ -90,6 +95,11 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     },
     effectiveCapabilities: [
       "app:built_in.weather.getWeather:auto",
+      "app:built_in.weather.forecast:ask",
+      "app:built_in.time.current:auto",
+      "app:built_in.geocoding.lookup:auto",
+      "app:built_in.exchange_rates.rate:auto",
+      "app:built_in.hacker_news.topStories:auto",
       "app:built_in.knowledge_search.searchKnowledgeDocuments:ask",
       "app:built_in.sandbox.bash_batch:auto",
       "app:built_in.artifacts.createDocument:ask",
@@ -98,14 +108,24 @@ test("built-in agent tools are governed by their effective App capabilities", ()
   });
 
   assert.deepEqual(restricted.toolAllowlist, [
-    "getWeather",
+    "free.weather.current",
+    "free.weather.forecast",
+    "free.time.current",
+    "free.geocode.lookup",
+    "free.exchange.rate",
+    "free.hn.top",
     "kestrel_one.search_knowledge_documents",
     "bash_batch",
     "createDocument",
     "requestSuggestions",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
-    getWeather: "auto",
+    "free.weather.current": "auto",
+    "free.weather.forecast": "ask",
+    "free.time.current": "auto",
+    "free.geocode.lookup": "auto",
+    "free.exchange.rate": "auto",
+    "free.hn.top": "auto",
     "kestrel_one.search_knowledge_documents": "ask",
     bash_batch: "auto",
     createDocument: "ask",

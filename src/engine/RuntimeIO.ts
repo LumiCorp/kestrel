@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { ProgressPhase, ProgressUpdateV1, RunToolPhase, RunToolUpdateV1 } from "../kestrel/contracts/events.js";
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
-import type { AgentToolResult, ModelRequest, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
+import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
+import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 
 import type { Guardrails } from "./Guardrails.js";
 import { ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
@@ -88,7 +89,7 @@ interface RuntimeIOOptions {
   deps: Pick<
     RuntimeDependencies,
     "store" | "modelGateway" | "toolGateway" | "consoleReporter"
-  >;
+  > & Partial<Pick<RuntimeDependencies, "reasoningReporter" | "providerReasoningVault">>;
   guardrailConfig: GuardrailConfig;
   toolJobQueue: ToolJobQueue;
   toolQueueEnabled: boolean;
@@ -201,7 +202,7 @@ export class RuntimeIO {
       budget.remainingMs,
     );
     const callId = randomUUID();
-    const providerRequest = {
+    let providerRequest: ModelRequest = {
       ...request,
       metadata: {
         ...(request.metadata ?? {}),
@@ -214,6 +215,23 @@ export class RuntimeIO {
       this.options.runtimeMetadata?.turnId ?? this.options.runtimeMetadata?.activeTurnId,
     );
     const threadId = readNonEmptyString(this.options.runtimeMetadata?.threadId);
+    const reasoningRetention = readProviderReasoningRetention(requestMetadata.reasoningRetention);
+    const reasoningRetentionScope = readNonEmptyString(requestMetadata.reasoningRetentionScope) ?? "default";
+    const reasoningContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      ...(turnId !== undefined ? { turnId } : {}),
+      ...(requestedProvider !== undefined ? { provider: requestedProvider } : {}),
+      ...(requestedModel !== undefined ? { model: requestedModel } : {}),
+      retentionScope: reasoningRetentionScope,
+      retention: reasoningRetention,
+    };
+    if (this.options.deps.providerReasoningVault !== undefined) {
+      providerRequest = await this.options.deps.providerReasoningVault.prepareRequest(
+        providerRequest,
+        reasoningContext,
+      );
+    }
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
@@ -263,8 +281,8 @@ export class RuntimeIO {
     const promptDump = await this.options.persistModelPromptDump({
       callId,
       progress,
-      request,
-      providerRequest,
+      request: redactModelRequestForDiagnostics(request),
+      providerRequest: redactModelRequestForDiagnostics(providerRequest),
       requestedModel,
       requestedProvider,
       modelRole,
@@ -358,10 +376,16 @@ export class RuntimeIO {
           this.options.deps.modelGateway.call<T>({
             ...providerRequest,
           }, {
-            signal: progress.signal,
+            ...(progress.signal !== undefined ? { signal: progress.signal } : {}),
+            onEvent: async (event) => {
+              await this.emitModelReasoningEvent(event, requestedProvider, requestedModel);
+            },
           }),
       );
       throwIfRuntimeIOAborted(progress.signal);
+      if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
+        await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
+      }
       const modelUsage = this.options.extractModelUsage(result);
       guardrails.onModelUsage(modelUsage);
       const modelMetadata = this.options.extractModelMetadata(result);
@@ -372,7 +396,7 @@ export class RuntimeIO {
         status: "COMPLETED",
         completedAt: new Date().toISOString(),
         latencyMs: Date.now() - startedAt,
-        response: result,
+        response: redactModelResponseForDiagnostics(result),
       });
       await this.options.deps.store.updateModelCallProvenance?.({
         callId,
@@ -457,6 +481,40 @@ export class RuntimeIO {
       });
       throw error;
     }
+  }
+
+  private async emitModelReasoningEvent(
+    event: ModelGatewayStreamEvent,
+    provider: string | undefined,
+    model: string | undefined,
+  ): Promise<void> {
+    if (event.type !== "reasoning.started" && event.type !== "reasoning.delta" && event.type !== "reasoning.completed" && event.type !== "reasoning.failed" && event.type !== "reasoning.unavailable") {
+      return;
+    }
+    const progress = this.options.progress;
+    await this.options.deps.reasoningReporter?.emit({
+      version: "v1",
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      ts: new Date().toISOString(),
+      seq: progress.sequence(),
+      event: event.type === "reasoning.started"
+        ? "started"
+        : event.type === "reasoning.delta"
+          ? "delta"
+          : event.type === "reasoning.unavailable"
+            ? "unavailable"
+            : event.type === "reasoning.failed"
+              ? "failed"
+              : "completed",
+      attempt: event.attempt,
+      format: event.format,
+      ...(event.type === "reasoning.delta" ? { delta: event.delta } : {}),
+      contentState: "live",
+      stepIndex: progress.stepIndex,
+      stepAgent: progress.stepAgent,
+      ...(provider !== undefined || model !== undefined ? { model: { ...(provider !== undefined ? { provider } : {}), ...(model !== undefined ? { model } : {}) } } : {}),
+    });
   }
 
   async tool(name: string, input: unknown): Promise<AgentToolResult> {
@@ -784,7 +842,7 @@ export class RuntimeIO {
     toolCallId: string;
     toolName: string;
     input?: unknown;
-    output?: unknown;
+    output?: AgentToolResult;
     error?: RuntimeError | undefined;
     durationMs?: number | undefined;
   }): Promise<void> {
@@ -805,6 +863,9 @@ export class RuntimeIO {
       provider: readToolProvider(input.toolName),
       ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
       ...(input.output !== undefined ? { output: sanitizeToolActivityValue(input.output) } : {}),
+      ...(input.output?.presentation !== undefined
+        ? { presentation: input.output.presentation }
+        : {}),
       ...(input.error !== undefined
         ? {
             error: {
@@ -841,6 +902,9 @@ export class RuntimeIO {
         provider: update.provider,
         ...(update.input !== undefined ? { input: update.input } : {}),
         ...(update.output !== undefined ? { output: update.output } : {}),
+        ...(update.presentation !== undefined
+          ? { presentation: update.presentation }
+          : {}),
         ...(update.error !== undefined ? { error: update.error } : {}),
         ...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
       },
@@ -1073,4 +1137,51 @@ function formatToolDisplayName(toolName: string): string {
     .filter((part) => part.length > 0)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function redactModelRequestForDiagnostics(request: ModelRequest): ModelRequest {
+  if (request.reasoning?.continuation === undefined) return request;
+  const { continuation: _continuation, ...reasoning } = request.reasoning;
+  return {
+    ...request,
+    reasoning,
+  };
+}
+
+function redactModelResponseForDiagnostics(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const response = value as Record<string, unknown>;
+  const reasoning = typeof response.reasoning === "object" && response.reasoning !== null && !Array.isArray(response.reasoning)
+    ? response.reasoning as Record<string, unknown>
+    : undefined;
+  const { rawResponse: _rawResponse, ...safe } = response;
+  return reasoning === undefined
+    ? safe
+    : {
+        ...safe,
+        reasoning: "[PROVIDER_REASONING_NOT_RETAINED]",
+      };
+}
+
+function readProviderReasoningRetention(value: unknown): ProviderReasoningRetentionPolicy {
+  if (value === undefined) return { mode: "live_only", days: 7 };
+  const record = asPlainRecord(value);
+  const mode = record?.mode;
+  const days = record?.days;
+  if (
+    (mode !== "live_only" && mode !== "provider_visible") ||
+    typeof days !== "number" ||
+    Number.isInteger(days) === false ||
+    days < 1 ||
+    days > 30
+  ) {
+    throw new Error("Invalid provider reasoning retention policy");
+  }
+  return { mode, days };
+}
+
+function isModelResponse(value: unknown): value is ModelResponse<unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const provider = (value as Record<string, unknown>).provider;
+  return typeof provider === "object" && provider !== null && !Array.isArray(provider);
 }

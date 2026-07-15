@@ -17,6 +17,7 @@ import type {
   OperatorControlCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
+  OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
   ProfileGetCommandPayload,
@@ -174,6 +175,12 @@ export class CommandRouter {
       if (command.type === "operator.run") {
         const payload = validateOperatorRunPayload(command.payload);
         await this.host.operatorRun(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "operator.run.reasoning") {
+        const payload = validateOperatorRunReasoningPayload(command.payload);
+        await this.host.operatorRunReasoning(command.id, payload, command.metadata);
         return;
       }
 
@@ -1622,6 +1629,27 @@ function validateOperatorRunPayload(value: unknown): OperatorRunCommandPayload {
     throw new Error("operator.run payload.runId must be a non-empty string");
   }
   return value as OperatorRunCommandPayload;
+}
+
+function validateOperatorRunReasoningPayload(value: unknown): OperatorRunReasoningCommandPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("operator.run.reasoning payload must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.runId !== "string" || record.runId.trim().length === 0) {
+    throw new Error("operator.run.reasoning payload.runId must be a non-empty string");
+  }
+  if (typeof record.sessionId !== "string" || record.sessionId.trim().length === 0) {
+    throw new Error("operator.run.reasoning payload.sessionId must be a non-empty string");
+  }
+  if (record.action !== undefined && record.action !== "read" && record.action !== "delete") {
+    throw new Error("operator.run.reasoning payload.action must be read or delete");
+  }
+  return {
+    runId: record.runId.trim(),
+    sessionId: record.sessionId.trim(),
+    ...(record.action !== undefined ? { action: record.action } : {}),
+  };
 }
 
 function validateOperatorControlPayload(

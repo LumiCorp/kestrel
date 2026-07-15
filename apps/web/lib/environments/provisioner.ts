@@ -8,6 +8,7 @@ import {
   workspaceStatusSchema,
 } from "./contracts";
 import { environmentLifecycleLockKey } from "./lifecycle-lock";
+import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import {
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
@@ -695,7 +696,11 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(
           and(
             eq(schema.environmentOperations.id, operationId),
-            inArray(schema.environmentOperations.status, ["queued", "running"])
+            inArray(schema.environmentOperations.status, ["queued", "running"]),
+            inArray(
+              schema.environmentOperations.type,
+              PROVISIONER_OPERATION_TYPES
+            )
           )
         )
         .returning({

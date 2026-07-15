@@ -15,7 +15,7 @@ test("Vercel compilation never mutates the database", () => {
   const packageJson = JSON.parse(read("package.json")) as {
     scripts: Record<string, string>;
   };
-  assert.equal(packageJson.scripts.build, "next build --webpack");
+  assert.equal(packageJson.scripts.build, "pnpm run clean && next build --webpack");
   assert.equal(
     packageJson.scripts["db:migrate:deploy"],
     "tsx lib/db/migrate.ts"

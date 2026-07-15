@@ -91,7 +91,7 @@ export function createSdkE2eRuntimeFactory(
       session.runCount += 1;
       onTaskUpdate({
         kind: "waiting",
-        assistantText: null,
+        assistantText: "The SDK E2E task is waiting for input.",
         task: {
           taskId: `task-${session.runCount}`,
           parentSessionId: input.sessionId,
@@ -100,7 +100,7 @@ export function createSdkE2eRuntimeFactory(
       } as never);
 
       const complete = () => ({
-        assistantText: null,
+        assistantText: "The SDK E2E turn completed.",
         output: {
           status: "COMPLETED" as const,
           sessionId: input.sessionId,

@@ -233,7 +233,7 @@ export class ProfileStore {
     }
 
     const payload: ProfilesFile = {
-      version: 3,
+      version: 4,
       profiles: profiles.map((profile) => sanitizeProfileForPersistence(profile)),
     };
 
@@ -302,8 +302,8 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
 
   const root = decoded as Record<string, unknown>;
   const version = root.version;
-  if (version !== 2 && version !== 3) {
-    throw new ProfileSchemaVersionError("profiles.json version must be 2 or 3");
+  if (version !== 2 && version !== 3 && version !== 4) {
+    throw new ProfileSchemaVersionError("profiles.json version must be 2, 3, or 4");
   }
 
   const profiles = root.profiles;
@@ -325,7 +325,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
 
   return {
     profiles: validated,
-    migrated: false,
+    migrated: version !== 4,
     notices,
   };
 }
@@ -340,7 +340,7 @@ function ensureKestrelOneProfile(profiles: TuiProfile[]): TuiProfile[] {
 
 class ProfileSchemaVersionError extends Error {}
 
-function validateProfile(value: unknown, version: 2 | 3, notices: string[]): TuiProfile {
+function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("profile entries must be objects");
   }
@@ -391,14 +391,15 @@ function validateProfile(value: unknown, version: 2 | 3, notices: string[]): Tui
       : undefined;
 
   const guardrails = parseGuardrails(item.guardrails);
-  const mcpServers = version === 3 ? parseMcpServers(item.mcpServers, id) : undefined;
-  const toolQueue = version === 3 ? parseToolQueue(item.toolQueue, id) : undefined;
-  const codeMode = version === 3 ? parseCodeMode(item.codeMode, id) : undefined;
-  const devShell = version === 3 ? parseDevShell(item.devShell, id) : undefined;
-  const agentStageConfig = version === 3 ? parseAgentStageConfig(item.agentStageConfig, id) : undefined;
-  const modelTimeoutMs = version === 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
-  const theme = version === 3 ? parseTheme(item.theme, id, notices) : undefined;
-  const delegation = version === 3 ? parseDelegation(item.delegation) : undefined;
+  const mcpServers = version >= 3 ? parseMcpServers(item.mcpServers, id) : undefined;
+  const toolQueue = version >= 3 ? parseToolQueue(item.toolQueue, id) : undefined;
+  const codeMode = version >= 3 ? parseCodeMode(item.codeMode, id) : undefined;
+  const devShell = version >= 3 ? parseDevShell(item.devShell, id) : undefined;
+  const agentStageConfig = version >= 3 ? parseAgentStageConfig(item.agentStageConfig, id) : undefined;
+  const modelTimeoutMs = version >= 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
+  const theme = version >= 3 ? parseTheme(item.theme, id, notices) : undefined;
+  const delegation = version >= 3 ? parseDelegation(item.delegation) : undefined;
+  const reasoning = version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
 
   return {
     id,
@@ -426,6 +427,7 @@ function validateProfile(value: unknown, version: 2 | 3, notices: string[]): Tui
     ...(modelTimeoutMs !== undefined ? { modelTimeoutMs } : {}),
     ...(delegation !== undefined ? { delegation } : {}),
     ...(theme !== undefined ? { theme } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
     ...(defaultFlag !== undefined ? { default: defaultFlag } : {}),
   };
 }
@@ -497,6 +499,10 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     codeMode,
     devShell,
     delegation,
+    reasoning: profile.reasoning ?? {
+      request: { mode: "provider_visible" },
+      retention: { mode: "live_only", days: 7 },
+    },
   };
 }
 
@@ -618,6 +624,40 @@ function parseDelegation(value: unknown): TuiProfile["delegation"] {
       ? { maxConcurrentChildSessions }
       : {}),
     ...(maxDepth !== undefined ? { maxDepth } : {}),
+  };
+}
+
+function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["reasoning"] {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Profile '${profileId}' field 'reasoning' must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const request = typeof record.request === "object" && record.request !== null && !Array.isArray(record.request)
+    ? record.request as Record<string, unknown>
+    : undefined;
+  const retention = typeof record.retention === "object" && record.retention !== null && !Array.isArray(record.retention)
+    ? record.retention as Record<string, unknown>
+    : undefined;
+  const mode = request?.mode;
+  const effort = request?.effort;
+  const retentionMode = retention?.mode;
+  const days = retention?.days;
+  if (mode !== "off" && mode !== "summary" && mode !== "provider_visible") {
+    throw new Error(`Profile '${profileId}' reasoning.request.mode is invalid`);
+  }
+  if (effort !== undefined && effort !== "low" && effort !== "medium" && effort !== "high") {
+    throw new Error(`Profile '${profileId}' reasoning.request.effort is invalid`);
+  }
+  if (retentionMode !== "live_only" && retentionMode !== "provider_visible") {
+    throw new Error(`Profile '${profileId}' reasoning.retention.mode is invalid`);
+  }
+  if (typeof days !== "number" || Number.isInteger(days) === false || days < 1 || days > 30) {
+    throw new Error(`Profile '${profileId}' reasoning.retention.days must be an integer from 1 to 30`);
+  }
+  return {
+    request: { mode, ...(effort !== undefined ? { effort } : {}) },
+    retention: { mode: retentionMode, days },
   };
 }
 

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { toMobileTurnEvent } from "@/lib/mobile/event-contract";
 import {
   decodeTurnEventCursor,
   encodeTurnEventCursor,
@@ -45,12 +46,17 @@ export function createMobileTurnEventResponse(input: {
           for (const event of events) {
             sequence = event.sequence;
             const id = encodeTurnEventCursor(input.turnId, event.sequence);
+            const mobileEvent = toMobileTurnEvent({
+              turnId: input.turnId,
+              type: event.type,
+              data: event.data,
+            });
             controller.enqueue(
               encoder.encode(
-                `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify({
+                `id: ${id}\nevent: ${mobileEvent.type}\ndata: ${JSON.stringify({
                   id,
-                  type: event.type,
-                  data: event.data,
+                  type: mobileEvent.type,
+                  data: mobileEvent.data,
                   createdAt: event.createdAt.toISOString(),
                 })}\n\n`
               )

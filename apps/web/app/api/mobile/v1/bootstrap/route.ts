@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { errorResponse } from "@/lib/knowledge/http";
 import { MOBILE_API_VERSION } from "@/lib/mobile/dto";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 
 export async function GET() {
   try {
@@ -45,6 +45,6 @@ export async function GET() {
       },
     });
   } catch (error) {
-    return errorResponse(error);
+    return mobileErrorResponse(error);
   }
 }

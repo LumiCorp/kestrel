@@ -6,8 +6,9 @@ export type {
   ProgressKind,
   ProgressPhase,
   ProgressUpdateV1,
+  AgentProgressUpdateV1,
+  ModelReasoningUpdateV1,
   ReasoningMilestone,
-  ReasoningSidecarConfig,
   ReasoningUpdateV1,
   RunConsoleChannel,
   RunConsoleStatus,
@@ -32,6 +33,11 @@ export type {
   Transition,
 } from "./contracts/execution.js";
 export type {
+  ModelGatewayCallOptions,
+  ModelGatewayStreamEvent,
+  ModelReasoningRequest,
+  ModelReasoningContinuation,
+  ModelVisibleReasoning,
   ModelRequest,
   ModelToolSpec,
   ToolConsoleEvent,

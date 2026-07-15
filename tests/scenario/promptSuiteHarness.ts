@@ -1523,7 +1523,12 @@ function promptSuiteToolIntentsForAction(action: Record<string, unknown>): Model
   if (kind === "tool") {
     const name = asString(action.name);
     const input = asRecord(action.input) ?? {};
-    return name !== undefined ? [{ name: promptSuiteProviderToolName(name), input }] : [];
+    return name !== undefined
+      ? [{
+          name: promptSuiteProviderToolName(name),
+          input: { ...input, assistantProgress: promptSuiteAssistantProgress(name) },
+        }]
+      : [];
   }
   if (kind === "tool_batch") {
     return asArray(action.items).flatMap((item) => {
@@ -1532,7 +1537,13 @@ function promptSuiteToolIntentsForAction(action: Record<string, unknown>): Model
       if (name === undefined) {
         return [];
       }
-      return [{ name: promptSuiteProviderToolName(name), input: asRecord(record?.input) ?? {} }];
+      return [{
+        name: promptSuiteProviderToolName(name),
+        input: {
+          ...(asRecord(record?.input) ?? {}),
+          assistantProgress: promptSuiteAssistantProgress(name),
+        },
+      }];
     });
   }
   if (kind === "finalize") {
@@ -1542,13 +1553,17 @@ function promptSuiteToolIntentsForAction(action: Record<string, unknown>): Model
         status: asString(action.status) ?? "goal_satisfied",
         message: asString(action.message) ?? "Done.",
         ...(asRecord(action.data) !== undefined ? { data: asRecord(action.data) } : {}),
+        assistantProgress: "I have completed the requested work.",
       },
     }];
   }
   if (kind === "ask_user") {
     return [{
       name: "kestrel_ask_user",
-      input: { prompt: asString(action.prompt) ?? "Please clarify the request." },
+      input: {
+        prompt: asString(action.prompt) ?? "Please clarify the request.",
+        assistantProgress: "I need one detail from you before I can continue.",
+      },
     }];
   }
   if (kind === "cannot_satisfy") {
@@ -1558,6 +1573,7 @@ function promptSuiteToolIntentsForAction(action: Record<string, unknown>): Model
         reasonCode: asString(action.reasonCode) ?? "unsatisfied_by_available_tools",
         message: asString(action.message) ?? "I cannot complete the request with the available tools.",
         ...(asRecord(action.details) !== undefined ? { details: asRecord(action.details) } : {}),
+        assistantProgress: "I found a blocker that prevents me from continuing.",
       },
     }];
   }
@@ -1568,10 +1584,15 @@ function promptSuiteToolIntentsForAction(action: Record<string, unknown>): Model
         message: asString(action.message) ?? "Handing this plan to build mode.",
         continuation: asRecord(action.continuation) ?? {},
         ...(asRecord(action.data) !== undefined ? { data: asRecord(action.data) } : {}),
+        assistantProgress: "The plan is ready to continue in build mode.",
       },
     }];
   }
   return [];
+}
+
+function promptSuiteAssistantProgress(toolName: string): string {
+  return `I am using ${toolName} to continue the requested work.`;
 }
 
 function promptSuiteProviderToolName(name: string): string {

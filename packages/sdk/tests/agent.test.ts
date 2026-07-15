@@ -60,7 +60,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
             sessionId: "session-agent-1",
             payload: {
               result: {
-                assistantText: null,
+                assistantText: "Completed SDK test turn.",
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-agent-1",
@@ -92,6 +92,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
     {
       sessionId: "session-agent-1",
       message: "continue",
+      requestId: "request-sdk-1",
     },
     context,
   );
@@ -112,6 +113,10 @@ test("createAgent runs and resumes with the configured profile", async () => {
   assert.equal(
     ((requests[1]?.payload as { turn?: { resumeBlockedRun?: boolean } })?.turn?.resumeBlockedRun),
     true,
+  );
+  assert.equal(
+    ((requests[1]?.payload as { turn?: { resumeRequestId?: string } })?.turn?.resumeRequestId),
+    "request-sdk-1",
   );
   await agent.close();
 });

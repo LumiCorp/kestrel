@@ -230,10 +230,13 @@ export function AppDetail({ app }: { app: AppDetailType }) {
                 <div className="space-y-3">
                   <p className="text-muted-foreground text-sm">
                     {app.installationStatus === "installed"
-                      ? "This App is installed but still needs a connection."
+                      ? app.connectionRequirement === "optional"
+                        ? "This App is ready. Add a connection to enable its optional provider path."
+                        : "This App is installed but still needs a connection."
                       : "Install this App before adding a connection."}
                   </p>
-                  {app.connectionModel === "environment" ? (
+                  {app.connectionModel === "environment" ||
+                  app.connectionModel === "hybrid" ? (
                     <Button asChild size="sm" variant="outline">
                       <Link href="/settings/environments">
                         Open Environments

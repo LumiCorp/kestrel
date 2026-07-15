@@ -9,7 +9,7 @@ import {
   type KestrelOneRunnerTerminalEvent,
 } from "@/lib/agent/kestrel-runtime-core";
 import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
+import type { KestrelTerminalStatus } from "@kestrel-agents/ai-sdk";
 import type { Session } from "@/lib/auth-types";
 
 const session = {
@@ -23,26 +23,10 @@ const session = {
 test("Kestrel-One runtime stream proof aligns primary stream reconnect and persistence for completed runs", async () => {
   const terminal = completedTerminal("Final runtime answer.", { message: "Structured runtime data." });
   const transcript: KestrelOneRunnerStreamEvent[] = [
-    { type: "run.started" },
-    {
-      type: "run.progress",
-      payload: { update: { message: "Checking runtime context." } },
-    },
-    {
-      type: "run.reasoning",
-      payload: { update: { message: "Checking runtime context." } },
-    },
-    {
-      type: "run.progress",
-      payload: {
-        update: {
-          tool: {
-            name: "kestrel_one.search_knowledge_documents",
-            status: "completed",
-          },
-        },
-      },
-    },
+    startedEvent(),
+    progressEvent("progress-1", 1, "Checking runtime context."),
+    agentProgressEvent("agent-progress-2", 2, "Checking runtime context."),
+    toolEvent(),
     terminal,
   ];
 
@@ -60,8 +44,8 @@ test("Kestrel-One runtime stream proof aligns primary stream reconnect and persi
   assert.equal(primary.body.includes("Checking runtime context."), true);
   assert.equal(
     countOccurrences(primary.body, "Checking runtime context."),
-    1,
-    "primary stream should suppress consecutive duplicate progress lines"
+    2,
+    "primary stream should preserve distinct durable progress events"
   );
   assert.equal(
     primary.persistedText.includes("Checking runtime context."),
@@ -69,9 +53,9 @@ test("Kestrel-One runtime stream proof aligns primary stream reconnect and persi
     "persisted assistant text must exclude transient progress"
   );
   assert.ok(
-    primary.body.indexOf("reasoning-end") <
+    primary.body.indexOf("data-kestrel-progress") <
       primary.body.lastIndexOf("Final runtime answer."),
-    "primary stream should close reasoning before final answer text"
+    "primary stream should emit progress before final answer text"
   );
   assert.equal(
     reconnect.chunks.some(
@@ -92,7 +76,7 @@ test("Kestrel-One runtime stream proof keeps failed and cancelled terminal text 
       expectedStatus: "failed" as const,
     },
     {
-      terminal: { type: "run.cancelled" as const },
+      terminal: cancelledTerminal(),
       expectedText: "",
       expectedError: "The run was cancelled before it finished.",
       expectedStatus: "cancelled" as const,
@@ -100,8 +84,13 @@ test("Kestrel-One runtime stream proof keeps failed and cancelled terminal text 
   ]) {
     const transcript: KestrelOneRunnerStreamEvent[] = [
       {
+        id: "runner-warning",
         type: "runner.error",
-        payload: { message: "Runner boundary warning." },
+        ts: "2026-05-06T00:00:00.000Z",
+        payload: {
+          code: "RUNNER_BOUNDARY_WARNING",
+          message: "Runner boundary warning.",
+        },
       },
       scenario.terminal,
     ];
@@ -160,7 +149,7 @@ async function runPrimarySmoke(
       },
     ],
     onFinishPersist: async (messages, meta) => {
-      const part = messages[0]?.parts[0];
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText =
         part?.type === "text" && "text" in part ? part.text : "";
       persistedMeta = meta;
@@ -212,11 +201,21 @@ function completedTerminal(
   finalizedPayload: unknown
 ): KestrelOneRunnerTerminalEvent {
   return {
+    id: "evt_completed",
     type: "run.completed",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
     payload: {
       result: {
         assistantText,
         finalizedPayload,
+        output: {
+          status: "COMPLETED",
+          sessionId: "chat_runtime_smoke",
+          runId: "run_runtime_smoke",
+          errors: [],
+        },
       },
     },
   };
@@ -224,10 +223,138 @@ function completedTerminal(
 
 function failedTerminal(message: string): KestrelOneRunnerTerminalEvent {
   return {
+    id: "evt_failed",
     type: "run.failed",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
     payload: {
+      result: {
+        assistantText: null,
+        output: {
+          status: "FAILED",
+          sessionId: "chat_runtime_smoke",
+          runId: "run_runtime_smoke",
+          errors: [{ code: "RUN_FAILED", message }],
+        },
+      },
       error: {
+        code: "RUN_FAILED",
         message,
+      },
+    },
+  };
+}
+
+function cancelledTerminal(): KestrelOneRunnerTerminalEvent {
+  return {
+    id: "evt_cancelled",
+    type: "run.cancelled",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
+    payload: {
+      sessionId: "chat_runtime_smoke",
+      runId: "run_runtime_smoke",
+      result: {
+        assistantText: null,
+        output: {
+          status: "FAILED",
+          sessionId: "chat_runtime_smoke",
+          runId: "run_runtime_smoke",
+          errors: [],
+        },
+      },
+    },
+  };
+}
+
+function startedEvent(): KestrelOneRunnerStreamEvent {
+  return {
+    id: "run-started",
+    type: "run.started",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
+    payload: {
+      sessionId: "chat_runtime_smoke",
+      runId: "run_runtime_smoke",
+      eventType: "user.message",
+    },
+  };
+}
+
+function progressEvent(
+  id: string,
+  seq: number,
+  message: string,
+): KestrelOneRunnerStreamEvent {
+  return {
+    id,
+    type: "run.progress",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_runtime_smoke",
+        sessionId: "chat_runtime_smoke",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq,
+        kind: "stage",
+        phase: "agent",
+        code: "STEP_STARTED",
+        message,
+        persist: true,
+      },
+    },
+  };
+}
+
+function agentProgressEvent(
+  id: string,
+  seq: number,
+  message: string,
+): KestrelOneRunnerStreamEvent {
+  return {
+    id,
+    type: "run.agent_progress",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_runtime_smoke",
+        sessionId: "chat_runtime_smoke",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq,
+        message,
+        stepIndex: 1,
+        stepAgent: "agent.loop",
+      },
+    },
+  };
+}
+
+function toolEvent(): KestrelOneRunnerStreamEvent {
+  return {
+    id: "tool-completed",
+    type: "run.tool.completed",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_runtime_smoke",
+    sessionId: "chat_runtime_smoke",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_runtime_smoke",
+        sessionId: "chat_runtime_smoke",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq: 3,
+        toolCallId: "knowledge-search-1",
+        toolName: "kestrel_one.search_knowledge_documents",
+        phase: "completed",
       },
     },
   };

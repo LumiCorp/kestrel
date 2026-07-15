@@ -12,7 +12,7 @@ import type {
   SessionStateEventPayload,
 } from "@kestrel-agents/protocol";
 
-// Execution Protocol v2 owns every command, event, envelope, and wire payload.
+// Execution Protocol v3 owns every command, event, envelope, and wire payload.
 // Re-export those names so existing SDK imports remain source-compatible.
 export type * from "@kestrel-agents/protocol";
 

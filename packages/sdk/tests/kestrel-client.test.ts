@@ -202,7 +202,7 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
             sessionId: "session-sdk-1",
             payload: {
               result: {
-                assistantText: null,
+                assistantText: "Completed SDK run.",
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-sdk-1",
@@ -292,7 +292,20 @@ test("KestrelClient streams jobs and exposes operator run and promotion undo com
             sessionId: replay.sessionId,
             threadId: replay.threadId,
             runId: replay.runId,
-            payload: { update: {} },
+            payload: {
+              update: {
+                version: "v1",
+                runId: replay.runId,
+                sessionId: replay.sessionId,
+                ts: new Date().toISOString(),
+                seq: 1,
+                kind: "stage",
+                phase: "agent",
+                code: "STEP_STARTED",
+                message: "Running the job.",
+                persist: true,
+              },
+            },
           })}\n\n` +
           `event: job.completed\ndata: ${JSON.stringify({
             id: "evt-job-completed",
@@ -464,7 +477,7 @@ test("KestrelClient streamRun stays request-scoped", async () => {
             sessionId: "session-sdk-1",
             payload: {
               result: {
-                assistantText: null,
+                assistantText: "Completed SDK stream.",
                 output: {
                   status: "COMPLETED",
                   sessionId: "session-sdk-1",
@@ -828,7 +841,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
                     seq: 1,
                     kind: "stage",
                     phase: "engine",
-                    code: "RUN_ACTIVE",
+                    code: "RUN_STILL_ACTIVE",
                     message: "Run active.",
                     persist: true,
                   },

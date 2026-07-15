@@ -1,5 +1,8 @@
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
-import type { RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
+import type {
+  RunnerAssistantTextHistoryDataV2,
+  RunnerWaitingPromptHistoryDataV2,
+} from "@kestrel-agents/protocol";
 import type { TaskAction } from "../missionControl/contracts.js";
 import type {
   ProductProjectBoardAction,
@@ -115,8 +118,12 @@ interface DesktopRunHistoryLineBase {
 
 export type DesktopRunHistoryLine = DesktopRunHistoryLineBase & (
   | {
-      role: "user" | "assistant";
+      role: "user";
       data?: undefined;
+    }
+  | {
+      role: "assistant";
+      data?: RunnerAssistantTextHistoryDataV2 | undefined;
     }
   | {
       role: "system";
@@ -788,6 +795,21 @@ export interface DesktopProviderCredentialInput {
   apiKey: string;
 }
 
+export type DesktopToolCredentialProvider = "visual-crossing";
+export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
+
+export interface DesktopToolCredentialStatus {
+  provider: DesktopToolCredentialProvider;
+  configured: boolean;
+  available: boolean;
+  backend: DesktopCredentialBackend;
+}
+
+export interface DesktopToolCredentialInput {
+  provider: DesktopToolCredentialProvider;
+  apiKey: string;
+}
+
 export function parseDesktopRendererSettingsUpdate(
   value: unknown,
 ): DesktopRendererSettingsUpdate {
@@ -845,6 +867,34 @@ export function parseDesktopProviderCredentialInput(
   }
   return {
     provider: input.provider,
+    apiKey: parseRequiredDesktopString(input.apiKey, "apiKey"),
+  };
+}
+
+export function parseDesktopToolCredentialProvider(
+  value: unknown,
+): DesktopToolCredentialProvider {
+  if (value !== "visual-crossing") {
+    throw new Error("Desktop tool credential provider is not supported.");
+  }
+  return value;
+}
+
+export function parseDesktopToolCredentialInput(
+  value: unknown,
+): DesktopToolCredentialInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop tool credential must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const unsupportedKey = Object.keys(input).find(
+    (key) => key !== "provider" && key !== "apiKey",
+  );
+  if (unsupportedKey !== undefined) {
+    throw new Error(`Desktop tool credential includes unsupported field '${unsupportedKey}'.`);
+  }
+  return {
+    provider: parseDesktopToolCredentialProvider(input.provider),
     apiKey: parseRequiredDesktopString(input.apiKey, "apiKey"),
   };
 }

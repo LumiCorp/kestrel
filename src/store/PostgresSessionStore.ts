@@ -18,6 +18,8 @@ import type {
   PersistedRunRecord,
   PersistedRunSummaryRecord,
   PersistedRunStateRecord,
+  ProviderReasoningEncryptedRecord,
+  ProviderReasoningRecordKind,
   OutboxEventRecord,
   PersistedEffect,
   SessionProductStateRecord,
@@ -113,6 +115,30 @@ type SessionProductStateRow = Record<string, unknown> & {
   updated_at: string;
 };
 
+function mapProviderReasoningRow(row: Record<string, unknown>): ProviderReasoningEncryptedRecord {
+  const kind = row.record_kind;
+  if (kind !== "continuation" && kind !== "retained_visible") {
+    throw new Error("Invalid provider reasoning record kind");
+  }
+  return {
+    recordId: String(row.record_id),
+    kind,
+    runId: String(row.run_id),
+    sessionId: String(row.session_id),
+    turnId: String(row.turn_id),
+    retentionScope: String(row.retention_scope),
+    provider: String(row.provider),
+    model: String(row.model),
+    ...(typeof row.reasoning_format === "string" ? { format: row.reasoning_format } : {}),
+    ciphertext: String(row.ciphertext),
+    iv: String(row.iv),
+    authTag: String(row.auth_tag),
+    keyVersion: Number(row.key_version),
+    createdAt: normalizeTimestampString(row.created_at),
+    expiresAt: normalizeTimestampString(row.expires_at),
+  };
+}
+
 export interface SqlExecutor {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
     text: string,
@@ -147,13 +173,181 @@ export class PostgresSessionStore implements SessionStore {
     this.orchestrationStore = new PostgresOrchestrationStore(db);
   }
 
+  async saveProviderReasoningRecord(record: ProviderReasoningEncryptedRecord): Promise<void> {
+    await this.ensureSchemaV3();
+    const values = [
+      record.recordId,
+      record.kind,
+      record.runId,
+      record.sessionId,
+      record.turnId,
+      record.retentionScope,
+      record.provider,
+      record.model,
+      record.format ?? null,
+      record.ciphertext,
+      record.iv,
+      record.authTag,
+      record.keyVersion,
+      record.createdAt,
+      record.expiresAt,
+    ];
+    if (record.kind === "continuation") {
+      await this.db.query(
+        `INSERT INTO provider_reasoning_state (
+           record_id, record_kind, run_id, session_id, turn_id, retention_scope, provider, model,
+           reasoning_format, ciphertext, iv, auth_tag, key_version, created_at, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         ON CONFLICT (session_id, turn_id, provider, model)
+           WHERE record_kind = 'continuation'
+         DO UPDATE SET
+           record_id = EXCLUDED.record_id,
+           run_id = EXCLUDED.run_id,
+           retention_scope = EXCLUDED.retention_scope,
+           reasoning_format = EXCLUDED.reasoning_format,
+           ciphertext = EXCLUDED.ciphertext,
+           iv = EXCLUDED.iv,
+           auth_tag = EXCLUDED.auth_tag,
+           key_version = EXCLUDED.key_version,
+           created_at = EXCLUDED.created_at,
+           expires_at = EXCLUDED.expires_at`,
+        values,
+      );
+      return;
+    }
+    await this.db.query(
+      `INSERT INTO provider_reasoning_state (
+         record_id, record_kind, run_id, session_id, turn_id, retention_scope, provider, model,
+         reasoning_format, ciphertext, iv, auth_tag, key_version, created_at, expires_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       ON CONFLICT (record_id) DO NOTHING`,
+      values,
+    );
+  }
+
+  async appendProviderReasoningAccessAudit(record: {
+    runId: string;
+    sessionId: string;
+    actorId: string;
+    actorRole: string;
+    action: "read" | "delete" | "policy_change";
+    metadata?: Record<string, unknown> | undefined;
+  }): Promise<void> {
+    await this.ensureSchemaV3();
+    await this.db.query(
+      `INSERT INTO provider_reasoning_access_audit
+         (run_id, session_id, actor_id, actor_role, action, metadata_json)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [record.runId, record.sessionId, record.actorId, record.actorRole, record.action, stringifySanitizedJson(record.metadata ?? {})],
+    );
+  }
+
+  async listProviderReasoningRecords(input: {
+    runId?: string | undefined;
+    sessionId?: string | undefined;
+    turnId?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    kind?: ProviderReasoningRecordKind | undefined;
+    includeExpired?: boolean | undefined;
+  }): Promise<ProviderReasoningEncryptedRecord[]> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<Record<string, unknown>>(
+      `SELECT record_id, record_kind, run_id, session_id, turn_id, retention_scope, provider, model,
+              reasoning_format, ciphertext, iv, auth_tag, key_version, created_at, expires_at
+         FROM provider_reasoning_state
+        WHERE ($1::text IS NULL OR run_id = $1)
+          AND ($2::text IS NULL OR session_id = $2)
+          AND ($3::text IS NULL OR turn_id = $3)
+          AND ($4::text IS NULL OR provider = $4)
+          AND ($5::text IS NULL OR model = $5)
+          AND ($6::text IS NULL OR record_kind = $6)
+          AND ($7::boolean = TRUE OR expires_at > NOW())
+        ORDER BY created_at ASC`,
+      [
+        input.runId ?? null,
+        input.sessionId ?? null,
+        input.turnId ?? null,
+        input.provider ?? null,
+        input.model ?? null,
+        input.kind ?? null,
+        input.includeExpired === true,
+      ],
+    );
+    return result.rows.map(mapProviderReasoningRow);
+  }
+
+  async deleteProviderReasoningRecords(input: {
+    runId?: string | undefined;
+    sessionId?: string | undefined;
+    turnId?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    kind?: ProviderReasoningRecordKind | undefined;
+  }): Promise<number> {
+    await this.ensureSchemaV3();
+    if (input.runId === undefined && input.sessionId === undefined && input.turnId === undefined) {
+      throw new Error("Provider reasoning deletion requires runId, sessionId, or turnId");
+    }
+    const result = await this.db.query(
+      `DELETE FROM provider_reasoning_state
+        WHERE ($1::text IS NULL OR run_id = $1)
+          AND ($2::text IS NULL OR session_id = $2)
+          AND ($3::text IS NULL OR turn_id = $3)
+          AND ($4::text IS NULL OR provider = $4)
+          AND ($5::text IS NULL OR model = $5)
+          AND ($6::text IS NULL OR record_kind = $6)`,
+      [
+        input.runId ?? null,
+        input.sessionId ?? null,
+        input.turnId ?? null,
+        input.provider ?? null,
+        input.model ?? null,
+        input.kind ?? null,
+      ],
+    );
+    return result.rowCount;
+  }
+
+  async purgeExpiredProviderReasoning(now = new Date().toISOString()): Promise<number> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query(
+      "DELETE FROM provider_reasoning_state WHERE expires_at <= $1",
+      [now],
+    );
+    return result.rowCount;
+  }
+
+  async applyProviderReasoningRetentionPolicy(input: {
+    retentionScope: string;
+    mode: "live_only" | "provider_visible";
+    expiresAt: string;
+  }): Promise<number> {
+    await this.ensureSchemaV3();
+    const result = input.mode === "live_only"
+      ? await this.db.query(
+          `DELETE FROM provider_reasoning_state
+            WHERE retention_scope = $1 AND record_kind = 'retained_visible'`,
+          [input.retentionScope],
+        )
+      : await this.db.query(
+          `UPDATE provider_reasoning_state
+              SET expires_at = LEAST(expires_at, $2::timestamptz)
+            WHERE retention_scope = $1
+              AND record_kind = 'retained_visible'
+              AND expires_at > $2::timestamptz`,
+          [input.retentionScope, input.expiresAt],
+        );
+    return result.rowCount;
+  }
+
   async getSession(sessionId: string): Promise<SessionRecord | null> {
     await this.ensureSchemaV3();
     const result = await this.db.query<{
       session_id: string;
       current_version: number;
       current_step_agent: string | null;
-      updated_at: string;
+      updated_at: unknown;
       current_state_json: Record<string, unknown> | null;
       legacy_readonly?: boolean;
     }>(
@@ -2165,6 +2359,10 @@ export class PostgresSessionStore implements SessionStore {
         [runId, status, stringifySanitizedJson(error ?? null)],
       );
       const sessionId = runResult.rows[0]?.session_id;
+      await executor.query(
+        "DELETE FROM provider_reasoning_state WHERE run_id = $1 AND record_kind = 'continuation'",
+        [runId],
+      );
       if (sessionId !== undefined) {
         await executor.query(
           `UPDATE sessions
@@ -2377,7 +2575,7 @@ export class PostgresSessionStore implements SessionStore {
       session_id: string;
       current_version: number;
       current_step_agent: string | null;
-      updated_at: string;
+      updated_at: unknown;
       current_state_json: Record<string, unknown> | null;
       legacy_readonly?: boolean;
     }>(
@@ -2400,7 +2598,7 @@ export class PostgresSessionStore implements SessionStore {
     session_id: string;
     current_version: number;
     current_step_agent: string | null;
-    updated_at: string;
+    updated_at: unknown;
     current_state_json: Record<string, unknown> | null;
     legacy_readonly?: boolean;
   }): SessionRecord & { legacyReadonly: boolean } {
@@ -2409,7 +2607,7 @@ export class PostgresSessionStore implements SessionStore {
       version: row.current_version,
       state: normalizeRuntimeStateForPersist(row.current_state_json ?? {}),
       currentStepAgent: row.current_step_agent ?? undefined,
-      updatedAt: row.updated_at,
+      updatedAt: normalizeTimestampString(row.updated_at),
       legacyReadonly: row.legacy_readonly ?? false,
     };
   }

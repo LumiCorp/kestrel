@@ -3,13 +3,16 @@ import path from "node:path";
 
 import { startLocalCoreApiServer } from "./api.js";
 import { LOCAL_CORE_SCHEMA_VERSION } from "./contracts.js";
+import { MacosKeychainCredentialStore } from "./macosKeychainCredentialStore.js";
+import { parseLocalCorePlatform } from "./platform.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const platform = parseLocalCorePlatform(env.KESTREL_CORE_PLATFORM) ?? process.platform;
   const server = await startLocalCoreApiServer({
     env,
-    platform: parsePlatform(env.KESTREL_CORE_PLATFORM) ?? process.platform,
+    platform,
     coreVersion: readRequiredEnv(env, "KESTREL_CORE_VERSION"),
     schemaVersion: parseInteger(env.KESTREL_CORE_SCHEMA_VERSION) ?? LOCAL_CORE_SCHEMA_VERSION,
     ownerExecutable: env.KESTREL_CORE_OWNER_EXECUTABLE ?? process.execPath,
@@ -20,6 +23,9 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
     runMigrations: env.KESTREL_CORE_RUN_MIGRATIONS === "1",
     repoRoot: env.KESTREL_CORE_REPO_ROOT,
     idleTimeoutMs: parseInteger(env.KESTREL_CORE_IDLE_TIMEOUT_MS) ?? DEFAULT_IDLE_TIMEOUT_MS,
+    ...(platform === "darwin" && env.KESTREL_CORE_CREDENTIAL_STORE === "macos_keychain"
+      ? { credentialStore: new MacosKeychainCredentialStore() }
+      : {}),
   });
 
   const close = async () => {
@@ -47,25 +53,6 @@ function parseInteger(value: string | undefined): number | undefined {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function parsePlatform(value: string | undefined): NodeJS.Platform | undefined {
-  if (
-    value === "aix" ||
-    value === "android" ||
-    value === "darwin" ||
-    value === "freebsd" ||
-    value === "haiku" ||
-    value === "linux" ||
-    value === "openbsd" ||
-    value === "sunos" ||
-    value === "win32" ||
-    value === "cygwin" ||
-    value === "netbsd"
-  ) {
-    return value;
-  }
-  return undefined;
 }
 
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);

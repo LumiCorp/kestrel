@@ -6,6 +6,7 @@ import type {
 } from "../kestrel/contracts/execution.js";
 import type {
   ProgressUpdateV1,
+  ModelReasoningUpdateV1,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
   RunLogEntry,
@@ -128,7 +129,7 @@ export class NoopReasoningReporter implements ReasoningReporter {
   }
 }
 
-export type ReasoningListener = (update: ReasoningUpdateV1) => void | Promise<void>;
+export type ReasoningListener = (update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void | Promise<void>;
 
 export class FanoutReasoningReporter implements ReasoningReporter {
   private readonly primary: ReasoningReporter;
@@ -139,10 +140,15 @@ export class FanoutReasoningReporter implements ReasoningReporter {
     this.listener = listener;
   }
 
-  async emit(update: ReasoningUpdateV1): Promise<void> {
+  async emit(update: ReasoningUpdateV1 | ModelReasoningUpdateV1): Promise<void> {
     await this.primary.emit(update);
     try {
-      await this.listener(update);
+      const delivery = this.listener(update);
+      if (delivery !== undefined) {
+        void Promise.resolve(delivery).catch(() => {
+          // Live reasoning delivery is best-effort and must not delay inference.
+        });
+      }
     } catch {
       // Listener errors should not fail runtime execution.
     }

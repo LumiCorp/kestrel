@@ -84,6 +84,7 @@ function buildChatBody(
     model,
     messages,
   };
+  applyReasoningRequest(body, request);
 
   if (typeof openrouter?.temperature === "number") {
     body.temperature = openrouter.temperature;
@@ -140,6 +141,7 @@ function buildResponsesBody(
     model,
     input: toResponsesInput(request),
   };
+  applyReasoningRequest(body, request);
 
   if (typeof openrouter?.temperature === "number") {
     body.temperature = openrouter.temperature;
@@ -229,7 +231,9 @@ function toResponseFormat(request: ModelRequest): {
 
 function toMessages(request: ModelRequest): Array<Record<string, unknown>> {
   if (Array.isArray(request.messages) && request.messages.length > 0) {
-    return request.messages.map((message) => mapMessage(message));
+    const mapped = request.messages.map((message) => mapMessage(message));
+    applyOpenRouterContinuation(mapped, request);
+    return mapped;
   }
 
   if (typeof request.input === "string") {
@@ -242,6 +246,29 @@ function toMessages(request: ModelRequest): Array<Record<string, unknown>> {
       content: safeJsonStringify(request.input),
     },
   ];
+}
+
+function applyReasoningRequest(body: Record<string, unknown>, request: ModelRequest): void {
+  if (request.reasoning === undefined || request.reasoning.mode === "off") return;
+  body.reasoning = {
+    exclude: false,
+    ...(request.reasoning.effort !== undefined ? { effort: request.reasoning.effort } : {}),
+  };
+}
+
+function applyOpenRouterContinuation(
+  messages: Array<Record<string, unknown>>,
+  request: ModelRequest,
+): void {
+  const details = (request.reasoning?.continuation ?? [])
+    .filter((item) => item.provider === "openrouter" && item.kind === "reasoning_details")
+    .flatMap((item) => Array.isArray(item.value) ? item.value : [item.value]);
+  if (details.length === 0) return;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "assistant") continue;
+    messages[index] = { ...messages[index], reasoning_details: details };
+    break;
+  }
 }
 
 function toResponsesInput(request: ModelRequest): unknown {
@@ -390,12 +417,14 @@ function mapChatPayload<TOutput>(
   const textOutput = parsedOutput === undefined ? parseOutput<TOutput>(text) : undefined;
   const output = parsedOutput ?? textOutput;
   const toolIntents = extractToolIntentsFromOpenAIToolCalls(message?.tool_calls);
+  const reasoning = extractOpenRouterChatReasoning(message);
 
   return {
     output,
     ...(text !== undefined ? { text } : {}),
     toolIntents: dedupeToolIntents(toolIntents),
     usage: mapUsage(asRecord(root?.usage), "chat"),
+    ...(reasoning !== undefined ? { reasoning } : {}),
     provider: {
       name: "openrouter",
       model: asString(root?.model) ?? context.requestedModel,
@@ -422,12 +451,14 @@ function mapResponsesPayload<TOutput>(
   const output = parseOutput<TOutput>(outputText);
 
   const toolIntents = extractToolIntentsFromResponsesOutput(root?.output);
+  const reasoning = extractOpenRouterResponsesReasoning(root?.output);
 
   return {
     output,
     ...(outputText !== undefined ? { text: outputText } : {}),
     toolIntents: dedupeToolIntents(toolIntents),
     usage: mapUsage(asRecord(root?.usage), "responses"),
+    ...(reasoning !== undefined ? { reasoning } : {}),
     provider: {
       name: "openrouter",
       model: asString(root?.model) ?? context.requestedModel,
@@ -673,21 +704,9 @@ function extractChatMessageText(value: unknown): string | undefined {
     return outputText;
   }
 
-  const reasoningText = asString(valueRecord?.reasoning);
-  if (reasoningText !== undefined) {
-    return reasoningText;
-  }
-
   const refusalText = asString(valueRecord?.refusal);
   if (refusalText !== undefined) {
     return refusalText;
-  }
-
-  const reasoningSummary = asArray(valueRecord?.summary)
-    .map((item) => extractChatMessageText(item))
-    .filter((item): item is string => item !== undefined && item.length > 0);
-  if (reasoningSummary.length > 0) {
-    return reasoningSummary.join("\n");
   }
 
   const chunks = asArray(value)
@@ -699,6 +718,53 @@ function extractChatMessageText(value: unknown): string | undefined {
   }
 
   return chunks.join("\n");
+}
+
+function extractOpenRouterChatReasoning(
+  message: Record<string, unknown> | undefined,
+): ModelResponse["reasoning"] | undefined {
+  if (message === undefined) return undefined;
+  const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
+  const details = asArray(message.reasoning_details);
+  for (const detail of details) {
+    const record = asRecord(detail);
+    const type = asString(record?.type);
+    if (type === "reasoning.text" && asString(record?.text) !== undefined) {
+      visible.push({ format: "provider_reasoning_text", text: asString(record?.text) as string });
+    } else if (type === "reasoning.summary" && asString(record?.summary) !== undefined) {
+      visible.push({ format: "summary", text: asString(record?.summary) as string });
+    }
+  }
+  const plainReasoning = asString(message.reasoning);
+  if (plainReasoning !== undefined && plainReasoning.length > 0 && visible.length === 0) {
+    visible.push({ format: "provider_reasoning_text", text: plainReasoning });
+  }
+  const continuation = details.length > 0
+    ? [{ provider: "openrouter" as const, kind: "reasoning_details" as const, value: details }]
+    : [];
+  return visible.length > 0 || continuation.length > 0 ? { visible, continuation } : undefined;
+}
+
+function extractOpenRouterResponsesReasoning(value: unknown): ModelResponse["reasoning"] | undefined {
+  const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
+  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] = [];
+  for (const item of asArray(value)) {
+    const record = asRecord(item);
+    if (asString(record?.type) !== "reasoning") continue;
+    const summary = asArray(record?.summary)
+      .map((part) => asString(asRecord(part)?.text) ?? asString(part))
+      .filter((part): part is string => part !== undefined && part.length > 0)
+      .join("\n");
+    if (summary.length > 0) visible.push({ format: "summary", text: summary });
+    const reasoningText = asString(record?.reasoning);
+    if (reasoningText !== undefined && reasoningText.length > 0) {
+      visible.push({ format: "provider_reasoning_text", text: reasoningText });
+    }
+    if (record?.encrypted_content !== undefined) {
+      continuation.push({ provider: "openrouter", kind: "reasoning_details", value: record });
+    }
+  }
+  return visible.length > 0 || continuation.length > 0 ? { visible, continuation } : undefined;
 }
 
 function parseArgs(value: string | undefined): Record<string, unknown> {

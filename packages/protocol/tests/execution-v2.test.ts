@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  EXECUTION_PROTOCOL_V2,
+  EXECUTION_PROTOCOL_V3,
   EXECUTION_PROTOCOL_VERSION,
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_COMMAND_TYPES,
@@ -75,6 +75,41 @@ const jobOutput = {
   result: terminalResult,
 };
 
+const presentationIdentity = {
+  version: "v1",
+  runId: "run-1",
+  sessionId: "session-1",
+  ts: "2026-07-13T12:00:00.000Z",
+  seq: 1,
+} as const;
+
+const progressUpdate = {
+  ...presentationIdentity,
+  kind: "stage",
+  phase: "agent",
+  code: "STEP_STARTED",
+  message: "Applying the accepted action.",
+  persist: true,
+} as const;
+
+const toolUpdate = (phase: "started" | "completed" | "failed") => ({
+  ...presentationIdentity,
+  toolCallId: "tool-1",
+  toolName: "knowledge.search",
+  phase,
+});
+
+const reasoningUpdate = (
+  event: "started" | "delta" | "completed" | "failed" | "unavailable",
+) => ({
+  ...presentationIdentity,
+  event,
+  attempt: 1,
+  format: "summary" as const,
+  ...(event === "delta" ? { delta: "Checking" } : {}),
+  contentState: event === "unavailable" ? "not_retained" as const : "live" as const,
+});
+
 const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "profile.list": {},
   "profile.get": { profileId: "reference" },
@@ -93,6 +128,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "operator.thread": { threadId: "thread-1" },
   "operator.runs": { status: "RUNNING", limit: 10 },
   "operator.run": { runId: "run-1" },
+  "operator.run.reasoning": { runId: "run-1", sessionId: "session-1", action: "read" },
   "operator.control": { action: "approve", threadId: "thread-1" },
   "task.graph.get": { sessionId: "session-1" },
   "task.graph.update": { sessionId: "session-1", graph: {} },
@@ -163,15 +199,32 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
     output: { ...jobOutput, status: "FAILED" },
     error: { code: "JOB_FAILED", message: "Job failed" },
   },
-  "run.started": { sessionId: "session-1", eventType: "user.message" },
+  "run.started": {
+    sessionId: "session-1",
+    eventType: "user.message",
+    reasoningKeyReady: true,
+    reasoningKeyVersion: 1,
+  },
   "run.cancelled": { sessionId: "session-1", result: terminalResult },
-  "run.tool.started": { update: {} },
-  "run.tool.completed": { update: {} },
-  "run.tool.failed": { update: {} },
+  "run.tool.started": { update: toolUpdate("started") },
+  "run.tool.completed": { update: toolUpdate("completed") },
+  "run.tool.failed": { update: toolUpdate("failed") },
   "run.log": { entry: {} },
   "run.console": { update: {} },
-  "run.progress": { update: {} },
-  "run.reasoning": { update: {} },
+  "run.progress": { update: progressUpdate },
+  "run.model.reasoning.started": { update: reasoningUpdate("started") },
+  "run.model.reasoning.delta": { update: reasoningUpdate("delta") },
+  "run.model.reasoning.completed": { update: reasoningUpdate("completed") },
+  "run.model.reasoning.failed": { update: reasoningUpdate("failed") },
+  "run.model.reasoning.unavailable": { update: reasoningUpdate("unavailable") },
+  "run.agent_progress": {
+    update: {
+      ...presentationIdentity,
+      message: "I am applying the accepted action.",
+      stepIndex: 1,
+      stepAgent: "agent.loop",
+    },
+  },
   "run.completed": { result: terminalResult },
   "run.failed": {
     result: { ...terminalResult, output: { ...terminalResult.output, status: "FAILED" } },
@@ -189,6 +242,13 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "operator.thread": { view: {} },
   "operator.runs": { view: {} },
   "operator.run": { view: {} },
+  "operator.run.reasoning": {
+    runId: "run-1",
+    entries: [],
+    action: "read",
+    retention: "provider_visible",
+    access: "org_admin",
+  },
   "operator.controlled": { threadId: "thread-1" },
   "task.updated": { task: {}, kind: "waiting", assistantText: null },
   "task.graph": { sessionId: "session-1", version: 1, graph: {} },
@@ -199,11 +259,11 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "mcp.refreshed": { status: {} },
 };
 
-test("Execution Protocol v2 descriptor owns the full supported registries", () => {
-  assert.equal(EXECUTION_PROTOCOL_VERSION, "execution-protocol-v2");
-  assert.equal(RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v2");
-  assert.equal(RUNNER_EVENT_CONTRACT_VERSION, "dotted-runtime-events-v2");
-  assert.deepEqual(EXECUTION_PROTOCOL_V2, {
+test("Execution Protocol v3 descriptor owns the full supported registries", () => {
+  assert.equal(EXECUTION_PROTOCOL_VERSION, "execution-protocol-v3");
+  assert.equal(RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v3");
+  assert.equal(RUNNER_EVENT_CONTRACT_VERSION, "dotted-runtime-events-v3");
+  assert.deepEqual(EXECUTION_PROTOCOL_V3, {
     version: EXECUTION_PROTOCOL_VERSION,
     contracts: {
       command: RUNNER_COMMAND_CONTRACT_VERSION,
@@ -215,9 +275,9 @@ test("Execution Protocol v2 descriptor owns the full supported registries", () =
     },
     events: {
       supported: RUNNER_EVENT_TYPES,
-      runStream: EXECUTION_PROTOCOL_V2.events.runStream,
+      runStream: EXECUTION_PROTOCOL_V3.events.runStream,
       jobStream: RUNNER_JOB_STREAM_EVENT_TYPES,
-      runTerminal: EXECUTION_PROTOCOL_V2.events.runTerminal,
+      runTerminal: EXECUTION_PROTOCOL_V3.events.runTerminal,
     },
   });
   assert.equal(new Set(RUNNER_COMMAND_TYPES).size, RUNNER_COMMAND_TYPES.length);
@@ -236,7 +296,7 @@ test("Execution Protocol v2 descriptor owns the full supported registries", () =
   assert.equal(isRunnerStreamingCommandType("run.cancel"), false);
 });
 
-test("Execution Protocol v2 correlates command responses and shared workspace operations", () => {
+test("Execution Protocol v3 correlates command responses and shared workspace operations", () => {
   const event = parseRunnerEventV2({
     id: "event-workspace-list",
     type: "workspace.checkpoint",
@@ -270,7 +330,7 @@ test("Execution Protocol v2 correlates command responses and shared workspace op
     type: "run.progress",
     ts: "2026-07-13T12:00:00.000Z",
     commandId: "command-job",
-    payload: { update: {} },
+    payload: { update: progressUpdate },
   });
   assert.equal(isRunnerEventAllowedForCommand("job.run", runtimeProgress), true);
   assert.equal(isRunnerTerminalResponseEvent(runtimeProgress.type), false);
@@ -315,7 +375,7 @@ test("canonical command parser rejects unknown and malformed payloads", () => {
   );
   assert.throws(
     () => parseRunnerCommandV2({ id: "command-1", type: "unknown.run", payload: {} }),
-    /supported Execution Protocol v2 command/u,
+    /supported Execution Protocol v3 command/u,
   );
   assert.throws(
     () => parseRunnerCommandV2({ id: "command-1", type: "profile.get", payload: {} }),
@@ -660,6 +720,93 @@ test("canonical turn parsing validates structured auto-compaction fields", () =>
   );
 });
 
+test("canonical turn history distinguishes runtime assistant text from legacy waiting prompts", () => {
+  const parsed = parseRunnerCommandV2({
+    id: "command-runtime-assistant-history",
+    type: "run.start",
+    payload: {
+      profileId: "reference",
+      turn: {
+        ...turn,
+        history: [
+          {
+            role: "assistant",
+            text: "Which workspace should I inspect?",
+            timestamp: "2026-07-15T12:00:00.000Z",
+            data: { kind: "runtime.assistant_text", runId: "run-waiting" },
+          },
+          {
+            role: "system",
+            text: "Legacy prompt",
+            timestamp: "2026-07-15T11:59:00.000Z",
+            data: { kind: "runtime.waiting_prompt", runId: "run-legacy" },
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(parsed.type, "run.start");
+
+  for (const history of [
+    [{
+      role: "assistant",
+      text: "Prompt",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      data: { kind: "runtime.waiting_prompt", runId: "run-wrong-role" },
+    }],
+    [{
+      role: "user",
+      text: "Reply",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      data: { kind: "runtime.assistant_text", runId: "run-wrong-role" },
+    }],
+  ]) {
+    assert.throws(
+      () => parseRunnerCommandV2({
+        id: "command-invalid-runtime-history",
+        type: "run.start",
+        payload: { profileId: "reference", turn: { ...turn, history } },
+      }),
+      /data\.kind|data is only valid/u,
+    );
+  }
+});
+
+test("canonical tool presentation validates citation and Artifact identity", () => {
+  const event = parseRunnerEventV2({
+    id: "event-tool-presentation",
+    type: "run.tool.completed",
+    ts: "2026-07-15T12:00:00.000Z",
+    runId: "run-1",
+    sessionId: "session-1",
+    payload: {
+      update: {
+        ...toolUpdate("completed"),
+        presentation: {
+          citations: [{ id: "citation-1", title: "Project brief", documentId: "document-1" }],
+          artifacts: [{ id: "artifact-1", title: "Analysis", kind: "document" }],
+        },
+      },
+    },
+  });
+  assert.equal(event.type, "run.tool.completed");
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-tool-invalid-presentation",
+      type: "run.tool.completed",
+      ts: "2026-07-15T12:00:00.000Z",
+      payload: {
+        update: {
+          ...toolUpdate("completed"),
+          presentation: { citations: [{ id: "citation-1", title: "" }] },
+        },
+      },
+    }),
+    /presentation\.citations\[0\]\.title/u,
+  );
+});
+
 test("canonical event parser accepts every registered discriminant", () => {
   for (const type of RUNNER_EVENT_TYPES) {
     const parsed = parseRunnerEventV2({
@@ -673,6 +820,23 @@ test("canonical event parser accepts every registered discriminant", () => {
   }
 });
 
+test("provider reasoning events reject opaque continuation state at the protocol boundary", () => {
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-reasoning-opaque-state",
+      type: "run.model.reasoning.delta",
+      ts: "2026-07-15T12:00:00.000Z",
+      payload: {
+        update: {
+          ...reasoningUpdate("delta"),
+          encrypted_content: "opaque-provider-state",
+        },
+      },
+    }),
+    /encrypted_content is not supported/u,
+  );
+});
+
 test("canonical event parser rejects unknown and malformed payloads", () => {
   assert.throws(
     () => parseRunnerEventV2({
@@ -681,7 +845,7 @@ test("canonical event parser rejects unknown and malformed payloads", () => {
       ts: "2026-07-13T12:00:00.000Z",
       payload: {},
     }),
-    /supported Execution Protocol v2 event/u,
+    /supported Execution Protocol v3 event/u,
   );
   assert.throws(
     () => parseRunnerEventV2({
@@ -751,23 +915,21 @@ test("canonical event parser normalizes terminal assistant text without changing
   assert.equal(parsed.payload.result.assistantText, "Deployment completed.");
   assert.equal(parsed.payload.result.finalizedPayload, finalizedPayload);
 
-  const explicitNull = parseRunnerEventV2({
-    id: "event-2",
-    type: "run.completed",
-    ts: "2026-07-13T12:00:00.000Z",
-    payload: {
-      result: {
-        assistantText: null,
-        finalizedPayload: null,
-        output: terminalResult.output,
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-2",
+      type: "run.completed",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        result: {
+          assistantText: null,
+          finalizedPayload: null,
+          output: terminalResult.output,
+        },
       },
-    },
-  });
-  assert.equal(explicitNull.type, "run.completed");
-  if (explicitNull.type === "run.completed") {
-    assert.equal(explicitNull.payload.result.assistantText, null);
-    assert.equal(explicitNull.payload.result.finalizedPayload, null);
-  }
+    }),
+    /assistantText is required when output.status is COMPLETED/u,
+  );
 
   const jobTerminal = parseRunnerEventV2({
     id: "event-job-terminal",
@@ -842,6 +1004,57 @@ test("canonical event parser normalizes terminal assistant text without changing
     }),
     /runner result must be an object/u,
   );
+});
+
+test("waiting outcomes require one canonical assistant prompt and durable request", () => {
+  const waiting = {
+    status: "WAITING",
+    sessionId: "session-1",
+    runId: "run-1",
+    errors: [],
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "opaque-request-1",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Which workspace should I inspect?",
+      },
+    },
+  };
+  const parsed = parseRunnerEventV2({
+    id: "event-waiting",
+    type: "run.completed",
+    ts: "2026-07-15T12:00:00.000Z",
+    payload: {
+      result: {
+        assistantText: "Which workspace should I inspect?",
+        output: waiting,
+      },
+    },
+  });
+  assert.equal(parsed.type, "run.completed");
+  if (parsed.type !== "run.completed") assert.fail("expected run.completed");
+  assert.equal(parsed.payload.result.assistantText, waiting.waitFor.interaction.prompt);
+  assert.equal(
+    parsed.payload.result.output.waitFor?.interaction?.requestId,
+    "opaque-request-1",
+  );
+
+  for (const assistantText of [null, "A different question."]) {
+    assert.throws(
+      () =>
+        parseRunnerEventV2({
+          id: `event-waiting-invalid-${String(assistantText)}`,
+          type: "run.completed",
+          ts: "2026-07-15T12:00:00.000Z",
+          payload: { result: { assistantText, output: waiting } },
+        }),
+      /assistantText|interaction prompt/u,
+    );
+  }
 });
 
 test("canonical terminal parsing rejects malformed concrete run outputs", () => {

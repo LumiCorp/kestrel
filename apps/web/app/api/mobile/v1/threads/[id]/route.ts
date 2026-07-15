@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
-import { mobileThreadDtos } from "@/lib/mobile/dto";
-import { getThreadWithMessagesForUser } from "@/lib/threads/store";
-import { convertToUIMessages } from "@/lib/utils";
+import { mobileErrorResponse } from "@/lib/mobile/http";
+import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 
@@ -16,19 +14,16 @@ export async function GET(
   try {
     const { session, organizationId } = await requireActiveOrganization();
     const { id } = paramsSchema.parse(await context.params);
-    const thread = await getThreadWithMessagesForUser(
-      id,
-      session.user.id,
-      organizationId
-    );
-    if (!thread || thread.mode !== "chat") {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
-    }
-    return NextResponse.json({
-      thread: (await mobileThreadDtos([thread]))[0],
-      messages: convertToUIMessages(thread.messages),
+    const snapshot = await getMobileThreadSnapshot({
+      threadId: id,
+      userId: session.user.id,
+      organizationId,
     });
+    if (!snapshot) {
+      return mobileErrorResponse(new Error("Thread not found"), 404);
+    }
+    return NextResponse.json(snapshot);
   } catch (error) {
-    return errorResponse(error, 404);
+    return mobileErrorResponse(error, 404);
   }
 }

@@ -11,9 +11,10 @@ import type {
 import {
   createKestrelOneAgentResponseFromAgent,
   createKestrelOneRequestContext,
-  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import type { Session } from "@/lib/auth-types";
+import type { ChatMessage } from "@/lib/types";
+import type { KestrelOneAgentResponsePersistMeta } from "@/lib/agent/kestrel-runtime-core";
 
 const session = {
   user: {
@@ -44,41 +45,14 @@ test("createKestrelOneRequestContext maps session and organization into runner c
   });
 });
 
-test("resolveKestrelOneTurnEventType resumes only an explicit user reply wait", () => {
-  assert.equal(
-    resolveKestrelOneTurnEventType({
-      requestedEventType: "user.message",
-      waitFor: { eventType: "user.reply" },
-    }),
-    "user.reply"
-  );
-  assert.equal(
-    resolveKestrelOneTurnEventType({
-      requestedEventType: "user.message",
-      waitFor: { eventType: "system.timer" },
-    }),
-    "user.message"
-  );
-  assert.equal(
-    resolveKestrelOneTurnEventType({
-      requestedEventType: "user.approval",
-      waitFor: { eventType: "user.reply" },
-    }),
-    "user.approval"
-  );
-});
 test("createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   let capturedContext: KestrelOneRequestContext | undefined;
   let persistedText = "";
-  let persistedMeta:
-    | {
-        errorMessage: string | null;
-        failureVisible: boolean;
-        terminalStatus: string;
-      }
-    | undefined;
-  const terminal = completedTerminal("Runtime answer", { message: "Structured answer data" });
+  let persistedMeta: KestrelOneAgentResponsePersistMeta | undefined;
+  const terminal = completedTerminal("Runtime answer", {
+    message: "Structured answer data",
+  });
   const agent = fakeAgent({
     terminal,
     onStream(input, context) {
@@ -111,7 +85,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
       },
     ],
     onFinishPersist: async (messages, meta) => {
-      const part = messages[0]?.parts[0];
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText = part?.type === "text" && "text" in part ? part.text : "";
       persistedMeta = meta;
     },
@@ -155,13 +129,92 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   assert.match(body, /Runtime answer/);
   assert.match(body, /kestrelTerminalStatus/);
   assert.equal(persistedText, "Runtime answer");
-  assert.deepEqual(persistedMeta, {
+  assert.deepEqual(
+    persistedMeta && {
+      model: persistedMeta.model,
+      title: persistedMeta.title,
+      errorMessage: persistedMeta.errorMessage,
+      failureVisible: persistedMeta.failureVisible,
+      terminalStatus: persistedMeta.terminalStatus,
+    },
+    {
     model: "kestrel-one",
     title: null,
     errorMessage: null,
     failureVisible: false,
     terminalStatus: "completed",
+    }
+  );
+  assert.equal(typeof (persistedMeta as { assistantMessageId?: unknown })?.assistantMessageId, "string");
+  assert.equal((persistedMeta as { runId?: unknown })?.runId, "run_123");
+});
+
+test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
+  let persistedText = "";
+  let persistedTerminalStatus = "";
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/threads/thread_waiting", {
+      method: "POST",
+    }),
+    agent: fakeAgent({
+      terminal: {
+        id: "evt_waiting",
+        type: "run.completed",
+        ts: "2026-07-15T12:02:03.000Z",
+        payload: {
+          result: {
+            assistantText: "What city or location should I check?",
+            output: {
+              status: "WAITING",
+              sessionId: "thread_waiting",
+              runId: "run_waiting",
+              errors: [],
+              waitFor: {
+                kind: "user",
+                eventType: "user.reply",
+                interaction: {
+                  version: "v1",
+                  requestId: "request-location",
+                  kind: "user_input",
+                  eventType: "user.reply",
+                  prompt: "What city or location should I check?",
+                },
+                metadata: {
+                  prompt: "What city or location should I check?",
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: {
+      requestId: "req_waiting",
+      correlationId: "req_waiting",
+    },
+    threadId: "thread_waiting",
+    messages: [
+      {
+        id: "msg_user",
+        role: "user",
+        parts: [{ type: "text", text: "What's tomorrow's forecast?" }],
+      },
+    ],
+    onFinishPersist: async (messages, meta) => {
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
+      persistedText = part?.type === "text" && "text" in part ? part.text : "";
+      persistedTerminalStatus = meta.terminalStatus;
+    },
   });
+
+  const body = await response.text();
+
+  assert.match(body, /What city or location should I check\?/u);
+  assert.equal(persistedText, "What city or location should I check?");
+  assert.equal(persistedTerminalStatus, "waiting");
 });
 
 test("createKestrelOneAgentResponse isolates transient title failures from the agent stream", async () => {
@@ -178,7 +231,9 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
         method: "POST",
       }),
       agent: fakeAgent({
-        terminal: completedTerminal("Runtime answer", { message: "Structured answer data" }),
+        terminal: completedTerminal("Runtime answer", {
+          message: "Structured answer data",
+        }),
       }),
       ownsAgent: false,
       session,
@@ -217,24 +272,18 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
   }
 });
 
-test("createKestrelOneAgentResponse dedupes progress and persists only final assistant text", async () => {
+test("createKestrelOneAgentResponse preserves typed progress with final assistant text", async () => {
   let persistedText = "";
-  const terminal = completedTerminal("Final answer", { message: "Structured answer data" });
+  let persistedParts: ChatMessage["parts"] = [];
+  const terminal = completedTerminal("Final answer", {
+    message: "Structured answer data",
+  });
   const agent = fakeAgent({
     terminal,
     events: [
-      {
-        type: "run.progress",
-        payload: { update: { message: "Checking sources." } },
-      },
-      {
-        type: "run.reasoning",
-        payload: { update: { message: "Checking sources." } },
-      },
-      {
-        type: "run.progress",
-        payload: { update: { message: "Writing answer." } },
-      },
+      progressEvent("progress-1", 1, "Checking sources."),
+      agentProgressEvent("agent-progress-2", 2, "Checking sources."),
+      progressEvent("progress-3", 3, "Writing answer."),
     ],
   });
 
@@ -259,23 +308,34 @@ test("createKestrelOneAgentResponse dedupes progress and persists only final ass
       },
     ],
     onFinishPersist: async (messages) => {
-      const part = messages[0]?.parts[0];
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText = part?.type === "text" && "text" in part ? part.text : "";
+      persistedParts = (messages[0]?.parts ?? []) as ChatMessage["parts"];
     },
   });
 
   const body = await response.text();
 
-  assert.equal(countOccurrences(body, "Checking sources."), 1);
-  assert.equal(countOccurrences(body, "Writing answer."), 1);
+  assert.equal(body.includes("Checking sources."), true);
+  assert.equal(body.includes("Writing answer."), true);
   assert.equal(countOccurrences(body, "Final answer"), 1);
   assert.equal(persistedText, "Final answer");
+  assert.equal(
+    persistedParts.filter(
+      (part) =>
+        part.type === "data-kestrel-progress" ||
+        part.type === "data-kestrel-agent-progress"
+    ).length,
+    3
+  );
 });
 
 test("createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({
-    terminal: completedTerminal("Project answer", { message: "Structured project data" }),
+    terminal: completedTerminal("Project answer", {
+      message: "Structured project data",
+    }),
     onStream(input) {
       capturedInput = input;
     },
@@ -344,6 +404,15 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
     type: "run.failed",
     ts: "2026-05-06T00:00:00.000Z",
     payload: {
+      result: {
+        assistantText: null,
+        output: {
+          status: "FAILED",
+          sessionId: "chat_123",
+          runId: "run_123",
+          errors: [{ code: "RUN_FAILED", message: "Runner failed" }],
+        },
+      },
       error: {
         code: "RUN_FAILED",
         message: "Runner failed",
@@ -371,13 +440,13 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
       },
     ],
     onFinishPersist: async (messages, meta) => {
-      const part = messages[0]?.parts[0];
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText = part?.type === "text" && "text" in part ? part.text : "";
       persistedMeta = meta;
     },
   });
 
-  assert.doesNotMatch(await response.text(), /Runner failed/);
+  assert.match(await response.text(), /Runner failed/);
   assert.equal(persistedText, "");
   assert.equal(persistedMeta?.failureVisible, true);
   assert.equal(persistedMeta?.terminalStatus, "failed");
@@ -389,7 +458,7 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
     request: new Request("http://example.test/api/chats/chat_123", {
       method: "POST",
     }),
-    agent: fakeAgent({ terminal: { type: "run.cancelled" } }),
+    agent: fakeAgent({ terminal: cancelledTerminal() }),
     ownsAgent: false,
     session,
     organizationId: "org_123",
@@ -406,19 +475,24 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
       },
     ],
     onFinishPersist: async (messages) => {
-      const part = messages[0]?.parts[0];
+      const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText = part?.type === "text" && "text" in part ? part.text : "";
     },
   });
 
   const body = await response.text();
 
-  assert.equal(countOccurrences(body, "The run was cancelled before it finished."), 0);
+  assert.equal(
+    countOccurrences(body, "The run was cancelled before it finished."),
+    1
+  );
   assert.equal(persistedText, "");
 });
 
 test("createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives", async () => {
-  const terminal = completedTerminal(null, { message: "must not be displayed" });
+  const terminal = completedTerminal(null, {
+    message: "must not be displayed",
+  });
   const response = createKestrelOneAgentResponseFromAgent({
     request: new Request("http://example.test/api/chats/chat_123", {
       method: "POST",
@@ -427,8 +501,13 @@ test("createKestrelOneAgentResponse shows runner error fallback when no terminal
       terminal,
       events: [
         {
+          id: "evt_runner_error",
           type: "runner.error",
-          payload: { message: "Runner boundary failed." },
+          ts: "2026-05-06T00:00:00.000Z",
+          payload: {
+            code: "RUNNER_BOUNDARY_FAILED",
+            message: "Runner boundary failed.",
+          },
         },
       ],
     }),
@@ -472,6 +551,83 @@ function completedTerminal(
           runId: "run_123",
           errors: [],
         },
+      },
+    },
+  };
+}
+
+function cancelledTerminal(): KestrelOneRunnerTerminalEvent {
+  return {
+    id: "evt_cancelled",
+    type: "run.cancelled",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_123",
+    sessionId: "chat_123",
+    payload: {
+      sessionId: "chat_123",
+      runId: "run_123",
+      result: {
+        assistantText: null,
+        output: {
+          status: "FAILED",
+          sessionId: "chat_123",
+          runId: "run_123",
+          errors: [],
+        },
+      },
+    },
+  };
+}
+
+function progressEvent(
+  id: string,
+  seq: number,
+  message: string,
+): KestrelOneRunnerStreamEvent {
+  return {
+    id,
+    type: "run.progress",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_123",
+    sessionId: "chat_123",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_123",
+        sessionId: "chat_123",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq,
+        kind: "stage",
+        phase: "agent",
+        code: "STEP_STARTED",
+        message,
+        persist: true,
+      },
+    },
+  };
+}
+
+function agentProgressEvent(
+  id: string,
+  seq: number,
+  message: string,
+): KestrelOneRunnerStreamEvent {
+  return {
+    id,
+    type: "run.agent_progress",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_123",
+    sessionId: "chat_123",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_123",
+        sessionId: "chat_123",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq,
+        message,
+        stepIndex: 1,
+        stepAgent: "agent.loop",
       },
     },
   };

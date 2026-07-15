@@ -1421,6 +1421,57 @@ button:disabled {
   font-size: 11px;
 }
 
+.provider-dialog-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.credential-readiness-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.credential-readiness-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.credential-readiness-card strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.credential-readiness-card span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.credential-state {
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.credential-state.ready {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+}
+
+.credential-state.optional {
+  color: var(--muted);
+}
+
 .provider-dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -1444,6 +1495,53 @@ button:disabled {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-contrast);
+}
+
+.provider-dialog-actions-split {
+  justify-content: space-between;
+}
+
+.provider-dialog-actions-split > div {
+  display: flex;
+  gap: 8px;
+}
+
+.provider-dialog-actions .provider-dialog-remove {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+}
+
+.app-readiness-row {
+  display: grid;
+  width: 100%;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.app-readiness-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.app-readiness-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.app-readiness-copy strong {
+  font-size: 12px;
+}
+
+.app-readiness-copy small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .provider-dialog-actions button:disabled {

@@ -3,6 +3,7 @@ export const LOCAL_CORE_CREDENTIAL_IDS = Object.freeze([
   "provider.openai.default",
   "provider.anthropic.default",
   "tool.tavily.default",
+  "tool.visual-crossing.default",
 ] as const);
 
 export type LocalCoreCredentialId = (typeof LOCAL_CORE_CREDENTIAL_IDS)[number];

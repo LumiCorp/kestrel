@@ -15,8 +15,8 @@ import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import type {
+  AgentProgressUpdateV1,
   NormalizedOutput,
-  ReasoningUpdateV1,
 } from "../../src/index.js";
 
 function makeCompletedOutput(sessionId: string, runId: string): NormalizedOutput {
@@ -79,7 +79,7 @@ function createRunHarness(input: {
   }>;
   diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }>;
   runLogs: AgentRunLogLine[];
-  reasoning: ReasoningUpdateV1[];
+  reasoning: AgentProgressUpdateV1[];
 } {
   const activeProfile: TuiProfile = {
     id: "reference",
@@ -128,7 +128,7 @@ function createRunHarness(input: {
   }> = [];
   const diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }> = [];
   const runLogs: AgentRunLogLine[] = [];
-  const reasoning: ReasoningUpdateV1[] = [];
+  const reasoning: AgentProgressUpdateV1[] = [];
 
   const context: TuiRunControllerContext = {
     options: { cwd: process.cwd() },
@@ -223,7 +223,7 @@ function createRunHarness(input: {
     pushRunLog: (line: AgentRunLogLine) => {
       runLogs.push(line);
     },
-    enqueueReasoningTranscriptUpdate: (update: ReasoningUpdateV1) => {
+    enqueueAgentProgressTranscriptUpdate: (update: AgentProgressUpdateV1) => {
       reasoning.push(update);
     },
   } as unknown as TuiRunControllerContext;
@@ -648,7 +648,7 @@ test("TuiRunController cancelActiveRun preserves run.cancel payload shape", asyn
   });
 });
 
-test("TuiRunController runner events update progress, reasoning, and run logs", () => {
+test("TuiRunController separates operational progress, provider reasoning, and agent progress", () => {
   const harness = createRunHarness();
 
   harness.controller.onRunnerEvent({
@@ -666,22 +666,41 @@ test("TuiRunController runner events update progress, reasoning, and run logs", 
     },
   } as unknown as RunnerEvent);
   harness.controller.onRunnerEvent({
-    type: "run.reasoning",
+    type: "run.agent_progress",
     payload: {
       update: {
+        version: "v1",
         sessionId: "session-1",
         runId: "run-progress-1",
         message: "Thinking",
-        milestone: "route",
+        ts: new Date().toISOString(),
         seq: 2,
+        stepIndex: 1,
+        stepAgent: "agent.loop",
+      },
+    },
+  } as unknown as RunnerEvent);
+  harness.controller.onRunnerEvent({
+    type: "run.model.reasoning.delta",
+    payload: {
+      update: {
+        version: "v1",
+        sessionId: "session-1",
+        runId: "run-progress-1",
+        ts: new Date().toISOString(),
+        seq: 3,
+        event: "delta",
+        attempt: 1,
+        format: "summary",
+        delta: "Provider check",
+        contentState: "live",
       },
     },
   } as unknown as RunnerEvent);
 
   assert.equal(harness.uiStore.getState().latestProgressForSession?.message, "Working");
-  assert.equal(harness.uiStore.getState().latestReasoningForSession?.message, "Thinking");
+  assert.equal(harness.uiStore.getState().statusLine, "Provider reasoning summary (attempt 1): Provider check");
   assert.equal(harness.runLogs[0]?.eventName, "progress_step");
-  assert.equal(harness.runLogs[1]?.eventName, "reasoning_update");
   assert.equal(harness.reasoning[0]?.message, "Thinking");
 });
 

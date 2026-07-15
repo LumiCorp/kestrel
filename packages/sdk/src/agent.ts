@@ -46,10 +46,18 @@ export interface KestrelMemoryUpdateRequest {
   patch: KestrelMemoryUpdate;
 }
 
-export interface KestrelAgentTurnInput extends Omit<RunnerTurnInput, "eventType" | "resumeBlockedRun"> {
+export interface KestrelAgentTurnInput extends Omit<
+  RunnerTurnInput,
+  "eventType" | "resumeBlockedRun" | "resumeRequestId"
+> {
   sessionId: string;
   message: string;
   eventType?: string | undefined;
+}
+
+export interface KestrelAgentResumeInput extends KestrelAgentTurnInput {
+  /** Exact durable interaction request being answered or approved. */
+  requestId: string;
 }
 
 export interface KestrelAgentDefinition extends KestrelClientOptions {
@@ -85,7 +93,13 @@ export interface KestrelAgent {
     },
     context: KestrelRequestContext,
   ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>;
-  resume(input: KestrelAgentTurnInput, context: KestrelRequestContext): Promise<RunnerRunTerminalEvent>;
+  resume(input: KestrelAgentResumeInput, context: KestrelRequestContext): Promise<RunnerRunTerminalEvent>;
+  resumeStream(
+    input: KestrelAgentResumeInput & {
+      signal?: AbortSignal | undefined;
+    },
+    context: KestrelRequestContext,
+  ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>;
   subscribe(
     filter: RunnerEventSubscriptionFilter,
     context: KestrelRequestContext,
@@ -132,10 +146,18 @@ export function createAgent(definition: KestrelAgentDefinition): KestrelAgent {
       return runner.run(
         {
           profileId: definition.profileId,
-          turn: {
-            ...toTurnInput(input, defaultEventType),
-            resumeBlockedRun: true,
-          },
+          turn: toResumeTurnInput(input, defaultEventType),
+        },
+        context,
+      );
+    },
+
+    resumeStream(input, context) {
+      return runner.streamRun(
+        {
+          profileId: definition.profileId,
+          turn: toResumeTurnInput(input, defaultEventType),
+          ...(input.signal !== undefined ? { signal: input.signal } : {}),
         },
         context,
       );
@@ -194,6 +216,18 @@ export function createAgent(definition: KestrelAgentDefinition): KestrelAgent {
     async close() {
       await runner.close();
     },
+  };
+}
+
+function toResumeTurnInput(
+  input: KestrelAgentResumeInput,
+  defaultEventType: string,
+): RunnerTurnInput {
+  const { requestId, ...turn } = input;
+  return {
+    ...toTurnInput(turn, defaultEventType),
+    resumeBlockedRun: true,
+    resumeRequestId: requestId,
   };
 }
 

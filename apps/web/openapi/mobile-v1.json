@@ -1,353 +1,100 @@
 {
   "openapi": "3.1.0",
-  "info": {
-    "title": "Kestrel One Mobile API",
-    "version": "1.0.0",
-    "description": "The narrow, authenticated companion API for Kestrel One Mobile. Projects are read-only; Threads, durable turns, interactions, and device registrations are the only mutable product surfaces."
-  },
+  "info": { "title": "Kestrel One Mobile API", "version": "1.1.0", "description": "Authenticated companion contract. Projects are read-only and all execution state is hosted." },
   "servers": [{ "url": "/api/mobile/v1" }],
   "security": [{ "sessionCookie": [] }, { "sessionBearer": [] }],
   "paths": {
-    "/account/deletion-request": {
-      "get": {
-        "operationId": "getMobileAccountDeletionRequest",
-        "responses": {
-          "200": {
-            "description": "The signed-in user's latest hosted deletion request."
-          }
-        }
-      },
-      "post": {
-        "operationId": "requestMobileAccountDeletion",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["confirmation"],
-                "properties": {
-                  "confirmation": { "type": "string", "const": "DELETE" }
-                },
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Email confirmation sent for the hosted deletion request."
-          }
-        }
-      }
-    },
-    "/bootstrap": {
-      "get": {
-        "operationId": "getMobileBootstrap",
-        "responses": {
-          "200": {
-            "description": "Identity, organizations, version, and mobile capabilities."
-          }
-        }
-      }
-    },
-    "/projects": {
-      "get": {
-        "operationId": "listMobileProjects",
-        "responses": {
-          "200": { "description": "Read-only Project summaries." }
-        }
-      }
-    },
-    "/projects/{id}": {
-      "get": {
-        "operationId": "getMobileProject",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
-        "responses": {
-          "200": { "description": "A read-only Project and its Threads." },
-          "404": { "$ref": "#/components/responses/NotFound" }
-        }
-      }
-    },
+    "/bootstrap": { "get": { "operationId": "getMobileBootstrap", "responses": { "200": { "$ref": "#/components/responses/Bootstrap" }, "401": { "$ref": "#/components/responses/Error" } } } },
+    "/projects": { "get": { "operationId": "listMobileProjects", "responses": { "200": { "$ref": "#/components/responses/Projects" }, "401": { "$ref": "#/components/responses/Error" } } } },
+    "/projects/{id}": { "get": { "operationId": "getMobileProject", "parameters": [{ "$ref": "#/components/parameters/Id" }], "responses": { "200": { "$ref": "#/components/responses/ProjectDetail" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } } },
     "/threads": {
-      "get": {
-        "operationId": "listMobileThreads",
-        "parameters": [
-          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": { "type": "integer", "minimum": 1, "maximum": 50 }
-          },
-          { "name": "projectId", "in": "query", "schema": { "type": "string" } }
-        ],
-        "responses": { "200": { "description": "Recent chat Threads." } }
-      },
-      "post": {
-        "operationId": "createMobileThread",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateThreadInput" }
-            }
-          }
-        },
-        "responses": {
-          "201": { "description": "Created standalone or Project Thread." }
-        }
-      }
+      "get": { "operationId": "listMobileThreads", "parameters": [{ "name": "cursor", "in": "query", "schema": { "type": "string" } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50 } }, { "name": "projectId", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Threads" }, "401": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createMobileThreadWithFirstTurn", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateThreadInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/AcceptedTurn" }, "202": { "$ref": "#/components/responses/AcceptedTurn" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } } }
     },
-    "/threads/{id}": {
-      "get": {
-        "operationId": "getMobileThread",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
-        "responses": {
-          "200": { "description": "Thread metadata and persisted transcript." },
-          "404": { "$ref": "#/components/responses/NotFound" }
-        }
-      }
-    },
+    "/threads/{id}": { "get": { "operationId": "getMobileThreadSnapshot", "parameters": [{ "$ref": "#/components/parameters/Id" }], "responses": { "200": { "$ref": "#/components/responses/ThreadSnapshot" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } } },
     "/threads/{id}/turns": {
-      "get": {
-        "operationId": "listMobileThreadQueue",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Id"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The ordered visible durable Turn queue and pause state."
-          }
-        }
-      },
-      "post": {
-        "operationId": "createMobileTurn",
-        "parameters": [
-          { "$ref": "#/components/parameters/Id" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateTurnInput" }
-            }
-          }
-        },
-        "responses": {
-          "202": { "description": "Durable turn accepted." },
-          "409": { "$ref": "#/components/responses/Conflict" }
-        }
-      }
+      "post": { "operationId": "createMobileTurn", "parameters": [{ "$ref": "#/components/parameters/Id" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTurnInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/AcceptedTurn" }, "202": { "$ref": "#/components/responses/AcceptedTurn" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
-    "/threads/{id}/queue/resume": {
-      "post": {
-        "operationId": "resumeMobileThreadQueue",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
-        "responses": {
-          "200": {
-            "description": "Queue resumed; returns the next Turn ID when present."
-          },
-          "409": { "$ref": "#/components/responses/Conflict" }
-        }
-      }
-    },
-    "/threads/{id}/interactions": {
-      "get": {
-        "operationId": "listMobileInteractions",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
-        "responses": {
-          "200": {
-            "description": "Pending agent questions and approval checkpoints."
-          }
-        }
-      }
-    },
-    "/threads/{id}/interactions/{checkpointId}": {
-      "post": {
-        "operationId": "resolveMobileInteraction",
-        "parameters": [
-          { "$ref": "#/components/parameters/Id" },
-          { "$ref": "#/components/parameters/CheckpointId" }
-        ],
-        "responses": {
-          "200": { "description": "Interaction resolved exactly once." },
-          "409": { "$ref": "#/components/responses/Conflict" }
-        }
-      }
-    },
+    "/threads/{id}/queue/resume": { "post": { "operationId": "resumeMobileThreadQueue", "parameters": [{ "$ref": "#/components/parameters/Id" }], "responses": { "200": { "$ref": "#/components/responses/SnapshotEnvelope" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
+    "/threads/{id}/interactions/{checkpointId}": { "post": { "operationId": "resolveMobileInteraction", "parameters": [{ "$ref": "#/components/parameters/Id" }, { "$ref": "#/components/parameters/CheckpointId" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveInteractionInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/SnapshotEnvelope" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
     "/turns/{turnId}": {
-      "get": {
-        "operationId": "getMobileTurn",
-        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
-        "responses": {
-          "200": { "description": "Durable turn status." },
-          "404": { "$ref": "#/components/responses/NotFound" }
-        }
-      },
-      "delete": {
-        "operationId": "removeQueuedMobileTurn",
-        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
-        "responses": {
-          "200": {
-            "description": "Author-owned queued Turn removed before execution."
-          },
-          "409": { "$ref": "#/components/responses/Conflict" }
-        }
-      }
+      "delete": { "operationId": "removeMobileQueuedTurn", "parameters": [{ "$ref": "#/components/parameters/TurnId" }], "responses": { "200": { "$ref": "#/components/responses/SnapshotEnvelope" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
-    "/turns/{turnId}/events": {
-      "get": {
-        "operationId": "streamMobileTurnEvents",
-        "parameters": [
-          { "$ref": "#/components/parameters/TurnId" },
-          { "$ref": "#/components/parameters/LastEventId" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resumable SSE stream. Event IDs are opaque cursors.",
-            "content": { "text/event-stream": {} }
-          }
-        }
-      }
-    },
-    "/turns/{turnId}/stop": {
-      "post": {
-        "operationId": "stopMobileTurn",
-        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
-        "responses": {
-          "202": {
-            "description": "Cancellation requested; the queue pauses when cancellation settles."
-          },
-          "409": { "$ref": "#/components/responses/Conflict" }
-        }
-      }
-    },
+    "/turns/{turnId}/stop": { "post": { "operationId": "stopMobileTurn", "parameters": [{ "$ref": "#/components/parameters/TurnId" }], "responses": { "202": { "$ref": "#/components/responses/SnapshotEnvelope" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
+    "/turns/{turnId}/events": { "get": { "operationId": "streamMobileTurnEvents", "parameters": [{ "$ref": "#/components/parameters/TurnId" }, { "name": "Last-Event-ID", "in": "header", "schema": { "type": "string" } }, { "name": "cursor", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Typed mobile-safe SSE stream.", "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/TurnEvent" } } } }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } } },
     "/devices": {
-      "post": {
-        "operationId": "registerMobileDevice",
-        "responses": {
-          "200": {
-            "description": "Expo push token registered for the signed-in user."
-          }
-        }
-      },
-      "delete": {
-        "operationId": "disableMobileDevice",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string" }
-          }
-        ],
-        "responses": {
-          "204": { "description": "Device registration disabled." }
-        }
-      }
+      "post": { "operationId": "registerMobileDevice", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterDeviceInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Device" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "disableMobileDevice", "parameters": [{ "name": "id", "in": "query", "required": true, "schema": { "type": "string" } }], "responses": { "204": { "description": "Device disabled." }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/account/deletion-request": {
+      "get": { "operationId": "getMobileAccountDeletionRequest", "responses": { "200": { "$ref": "#/components/responses/DeletionRequest" }, "401": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "requestMobileAccountDeletion", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["confirmation"], "properties": { "confirmation": { "type": "string", "const": "DELETE" } }, "additionalProperties": false } } } }, "responses": { "200": { "$ref": "#/components/responses/DeletionAccepted" }, "202": { "$ref": "#/components/responses/DeletionAccepted" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
     }
   },
   "components": {
-    "securitySchemes": {
-      "sessionCookie": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "better-auth.session_token"
-      },
-      "sessionBearer": { "type": "http", "scheme": "bearer" }
-    },
+    "securitySchemes": { "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "better-auth.session_token" }, "sessionBearer": { "type": "http", "scheme": "bearer" } },
     "parameters": {
-      "Id": {
-        "name": "id",
-        "in": "path",
-        "required": true,
-        "schema": { "type": "string" }
-      },
-      "TurnId": {
-        "name": "turnId",
-        "in": "path",
-        "required": true,
-        "schema": { "type": "string" }
-      },
-      "CheckpointId": {
-        "name": "checkpointId",
-        "in": "path",
-        "required": true,
-        "schema": { "type": "string" }
-      },
-      "IdempotencyKey": {
-        "name": "Idempotency-Key",
-        "in": "header",
-        "required": false,
-        "schema": { "type": "string" }
-      },
-      "LastEventId": {
-        "name": "Last-Event-ID",
-        "in": "header",
-        "required": false,
-        "schema": { "type": "string" }
-      }
+      "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 200 } },
+      "TurnId": { "name": "turnId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 200 } },
+      "CheckpointId": { "name": "checkpointId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 200 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 200 } }
     },
     "responses": {
-      "NotFound": {
-        "description": "The resource is absent or not visible in the selected organization."
-      },
-      "Conflict": {
-        "description": "The durable Turn or queue state no longer permits the requested transition."
-      }
+      "Error": { "description": "Stable public failure.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "Bootstrap": { "description": "Mobile bootstrap.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MobileBootstrap" } } } },
+      "Projects": { "description": "Projects.", "content": { "application/json": { "schema": { "type": "object", "required": ["projects"], "properties": { "projects": { "type": "array", "items": { "$ref": "#/components/schemas/MobileProject" } } }, "additionalProperties": false } } } },
+      "ProjectDetail": { "description": "Project detail.", "content": { "application/json": { "schema": { "type": "object", "required": ["project", "threads"], "properties": { "project": { "$ref": "#/components/schemas/MobileProject" }, "threads": { "type": "array", "items": { "$ref": "#/components/schemas/MobileThread" } } }, "additionalProperties": false } } } },
+      "Threads": { "description": "Thread page.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThreadPage" } } } },
+      "ThreadSnapshot": { "description": "Authoritative Thread snapshot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThreadSnapshot" } } } },
+      "SnapshotEnvelope": { "description": "Current authoritative Thread snapshot.", "content": { "application/json": { "schema": { "type": "object", "required": ["snapshot"], "properties": { "snapshot": { "$ref": "#/components/schemas/ThreadSnapshot" } }, "additionalProperties": false } } } },
+      "AcceptedTurn": { "description": "Turn accepted with current snapshot.", "content": { "application/json": { "schema": { "type": "object", "required": ["snapshot", "acceptedTurnId"], "properties": { "snapshot": { "$ref": "#/components/schemas/ThreadSnapshot" }, "acceptedTurnId": { "type": "string" } }, "additionalProperties": false } } } },
+      "Device": { "description": "Device registration.", "content": { "application/json": { "schema": { "type": "object", "required": ["deviceId"], "properties": { "deviceId": { "type": "string" } }, "additionalProperties": false } } } },
+      "DeletionRequest": { "description": "Deletion request.", "content": { "application/json": { "schema": { "type": "object", "required": ["request"], "properties": { "request": { "oneOf": [{ "$ref": "#/components/schemas/AccountDeletionRequest" }, { "type": "null" }] } }, "additionalProperties": false } } } },
+      "DeletionAccepted": { "description": "Deletion accepted.", "content": { "application/json": { "schema": { "type": "object", "required": ["requestId", "status"], "properties": { "requestId": { "type": "string" }, "status": { "$ref": "#/components/schemas/DeletionStatus" } }, "additionalProperties": false } } } }
     },
     "schemas": {
-      "CreateThreadInput": {
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-          "id": { "type": "string" },
-          "projectId": { "type": ["string", "null"] }
-        },
-        "additionalProperties": false
-      },
-      "CreateTurnInput": {
-        "type": "object",
-        "required": ["message"],
-        "properties": {
-          "message": {
-            "type": "object",
-            "required": ["id", "parts"],
-            "properties": {
-              "id": { "type": "string" },
-              "parts": { "type": "array", "items": { "type": "object" } }
-            }
-          },
-          "model": { "type": "string" }
-        },
-        "additionalProperties": false
-      }
+      "IsoDate": { "type": "string", "format": "date-time" },
+      "TurnStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_input", "completed", "failed", "cancelled"] },
+      "DeletionStatus": { "type": "string", "enum": ["requested", "confirmed", "processing", "completed", "rejected", "cancelled"] },
+      "ErrorResponse": { "type": "object", "required": ["error"], "properties": { "error": { "type": "object", "required": ["code", "message", "retryable"], "properties": { "code": { "type": "string", "enum": ["BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "SERVICE_UNAVAILABLE", "INTERNAL_ERROR"] }, "message": { "type": "string" }, "retryable": { "type": "boolean" } }, "additionalProperties": false } }, "additionalProperties": false },
+      "MobileBootstrap": { "type": "object", "required": ["apiVersion", "minimumSupportedAppVersion", "user", "activeOrganizationId", "organizations", "capabilities"], "properties": { "apiVersion": { "type": "string" }, "minimumSupportedAppVersion": { "type": "string" }, "user": { "$ref": "#/components/schemas/UserSummary" }, "activeOrganizationId": { "type": "string" }, "organizations": { "type": "array", "items": { "$ref": "#/components/schemas/OrganizationSummary" } }, "capabilities": { "$ref": "#/components/schemas/Capabilities" } }, "additionalProperties": false },
+      "UserSummary": { "type": "object", "required": ["id", "name", "email", "image"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "email": { "type": "string" }, "image": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "OrganizationSummary": { "type": "object", "required": ["id", "name", "slug", "logo"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "slug": { "type": "string" }, "logo": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "Capabilities": { "type": "object", "required": ["projects", "threadCreation", "durableTurns", "turnQueue", "interactiveCheckpoints", "pushNotifications", "uploads", "administration", "billing"], "properties": { "projects": { "type": "string", "const": "read_only" }, "threadCreation": { "type": "boolean", "const": true }, "durableTurns": { "type": "boolean", "const": true }, "turnQueue": { "type": "boolean", "const": true }, "interactiveCheckpoints": { "type": "boolean", "const": true }, "pushNotifications": { "type": "boolean", "const": true }, "uploads": { "type": "boolean", "const": false }, "administration": { "type": "boolean", "const": false }, "billing": { "type": "boolean", "const": false } }, "additionalProperties": false },
+      "MobileProject": { "type": "object", "required": ["id", "name", "description", "updatedAt"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": ["string", "null"] }, "updatedAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "MobileThread": { "type": "object", "required": ["id", "title", "project", "preview", "runStatus", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "project": { "oneOf": [{ "$ref": "#/components/schemas/ProjectRef" }, { "type": "null" }] }, "preview": { "type": "string" }, "runStatus": { "oneOf": [{ "$ref": "#/components/schemas/TurnStatus" }, { "type": "null" }] }, "createdAt": { "$ref": "#/components/schemas/IsoDate" }, "updatedAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "ProjectRef": { "type": "object", "required": ["id", "name"], "properties": { "id": { "type": "string" }, "name": { "type": "string" } }, "additionalProperties": false },
+      "TextPart": { "type": "object", "required": ["type", "text"], "properties": { "type": { "type": "string", "const": "text" }, "text": { "type": "string" } }, "additionalProperties": false },
+      "SourceUrlPart": { "type": "object", "required": ["type", "sourceId", "url", "title"], "properties": { "type": { "type": "string", "const": "source_url" }, "sourceId": { "type": "string" }, "url": { "type": "string", "format": "uri" }, "title": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "SourceDocumentPart": { "type": "object", "required": ["type", "sourceId", "mediaType", "title", "filename"], "properties": { "type": { "type": "string", "const": "source_document" }, "sourceId": { "type": "string" }, "mediaType": { "type": "string" }, "title": { "type": "string" }, "filename": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "ToolStatusPart": { "type": "object", "required": ["type", "toolCallId", "toolName", "state"], "properties": { "type": { "type": "string", "const": "tool_status" }, "toolCallId": { "type": "string" }, "toolName": { "type": "string" }, "state": { "type": "string", "enum": ["pending", "running", "waiting_for_approval", "completed", "failed", "denied", "unavailable"] } }, "additionalProperties": false },
+      "ProgressPart": { "type": "object", "required": ["type", "id", "category", "label", "text", "timestamp"], "properties": { "type": { "type": "string", "const": "progress" }, "id": { "type": "string" }, "category": { "type": "string", "enum": ["runtime", "agent"] }, "label": { "type": "string" }, "text": { "type": "string" }, "timestamp": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "CitationPart": { "type": "object", "required": ["type", "id", "title", "url", "documentId", "excerpt"], "properties": { "type": { "type": "string", "const": "citation" }, "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": ["string", "null"] }, "documentId": { "type": ["string", "null"] }, "excerpt": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "ArtifactPart": { "type": "object", "required": ["type", "id", "title", "kind", "url", "mediaType"], "properties": { "type": { "type": "string", "const": "artifact" }, "id": { "type": "string" }, "title": { "type": "string" }, "kind": { "type": "string" }, "url": { "type": ["string", "null"] }, "mediaType": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "InteractionStatusPart": { "type": "object", "required": ["type", "requestId", "kind", "prompt", "status"], "properties": { "type": { "type": "string", "const": "interaction_status" }, "requestId": { "type": "string" }, "kind": { "type": "string", "enum": ["question", "approval"] }, "prompt": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "resolved", "cancelled"] } }, "additionalProperties": false },
+      "AssistantStatusPart": { "type": "object", "required": ["type", "status", "errorCode", "message"], "properties": { "type": { "type": "string", "const": "assistant_status" }, "status": { "type": "string", "enum": ["working", "completed", "waiting", "failed", "cancelled", "contract_failure"] }, "errorCode": { "oneOf": [{ "type": "string", "enum": ["AGENT_RUN_FAILED", "AGENT_RUN_CANCELLED", "PRESENTATION_CONTRACT_FAILURE"] }, { "type": "null" }] }, "message": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "MessagePart": { "oneOf": [{ "$ref": "#/components/schemas/TextPart" }, { "$ref": "#/components/schemas/SourceUrlPart" }, { "$ref": "#/components/schemas/SourceDocumentPart" }, { "$ref": "#/components/schemas/ToolStatusPart" }, { "$ref": "#/components/schemas/ProgressPart" }, { "$ref": "#/components/schemas/CitationPart" }, { "$ref": "#/components/schemas/ArtifactPart" }, { "$ref": "#/components/schemas/InteractionStatusPart" }, { "$ref": "#/components/schemas/AssistantStatusPart" }] },
+      "MobileMessage": { "type": "object", "required": ["id", "turnId", "role", "parts", "createdAt"], "properties": { "id": { "type": "string" }, "turnId": { "type": ["string", "null"] }, "role": { "type": "string", "enum": ["user", "assistant", "system"] }, "parts": { "type": "array", "items": { "$ref": "#/components/schemas/MessagePart" } }, "createdAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "TurnFailure": { "type": "object", "required": ["code", "message", "retryable"], "properties": { "code": { "type": "string", "enum": ["AGENT_RUN_FAILED", "AGENT_RUN_CANCELLED"] }, "message": { "type": "string" }, "retryable": { "type": "boolean" } }, "additionalProperties": false },
+      "MobileTurn": { "type": "object", "required": ["id", "threadId", "inputMessageId", "sequence", "status", "failure", "cancelRequestedAt", "startedAt", "finishedAt", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "threadId": { "type": "string" }, "inputMessageId": { "type": ["string", "null"] }, "sequence": { "type": "integer" }, "status": { "$ref": "#/components/schemas/TurnStatus" }, "failure": { "oneOf": [{ "$ref": "#/components/schemas/TurnFailure" }, { "type": "null" }] }, "cancelRequestedAt": { "oneOf": [{ "$ref": "#/components/schemas/IsoDate" }, { "type": "null" }] }, "startedAt": { "oneOf": [{ "$ref": "#/components/schemas/IsoDate" }, { "type": "null" }] }, "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/IsoDate" }, { "type": "null" }] }, "createdAt": { "$ref": "#/components/schemas/IsoDate" }, "updatedAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "ThreadQueue": { "type": "object", "required": ["state", "pauseReason", "activeTurnId", "version", "orderedTurnIds"], "properties": { "state": { "type": "string", "enum": ["running", "paused"] }, "pauseReason": { "type": ["string", "null"] }, "activeTurnId": { "type": ["string", "null"] }, "version": { "type": "integer", "minimum": 0 }, "orderedTurnIds": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+      "InteractionField": { "type": "object", "required": ["name", "label", "type", "required"], "properties": { "name": { "type": "string" }, "label": { "type": "string" }, "type": { "type": "string", "enum": ["text", "number", "boolean", "select", "multi_select"] }, "required": { "type": "boolean" }, "options": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+      "MobileInteraction": { "type": "object", "required": ["id", "kind", "title", "prompt", "fields", "createdAt"], "properties": { "id": { "type": "string" }, "kind": { "type": "string", "enum": ["question", "approval"] }, "title": { "type": "string" }, "prompt": { "type": "string" }, "fields": { "type": "array", "items": { "$ref": "#/components/schemas/InteractionField" } }, "createdAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "ThreadSnapshot": { "type": "object", "required": ["snapshotVersion", "thread", "messages", "turns", "queue", "interactions"], "properties": { "snapshotVersion": { "type": "string" }, "thread": { "$ref": "#/components/schemas/MobileThread" }, "messages": { "type": "array", "items": { "$ref": "#/components/schemas/MobileMessage" } }, "turns": { "type": "array", "items": { "$ref": "#/components/schemas/MobileTurn" } }, "queue": { "$ref": "#/components/schemas/ThreadQueue" }, "interactions": { "type": "array", "items": { "$ref": "#/components/schemas/MobileInteraction" } } }, "additionalProperties": false },
+      "ThreadPage": { "type": "object", "required": ["threads", "nextCursor"], "properties": { "threads": { "type": "array", "items": { "$ref": "#/components/schemas/MobileThread" } }, "nextCursor": { "type": ["string", "null"] } }, "additionalProperties": false },
+      "InputMessage": { "type": "object", "required": ["id", "parts"], "properties": { "id": { "type": "string" }, "parts": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/components/schemas/TextPart" } } }, "additionalProperties": false },
+      "CreateThreadInput": { "type": "object", "required": ["id", "projectId", "message"], "properties": { "id": { "type": "string" }, "projectId": { "type": ["string", "null"] }, "message": { "$ref": "#/components/schemas/InputMessage" } }, "additionalProperties": false },
+      "CreateTurnInput": { "type": "object", "required": ["message"], "properties": { "message": { "$ref": "#/components/schemas/InputMessage" } }, "additionalProperties": false },
+      "ResolveInteractionInput": { "type": "object", "required": ["decision"], "properties": { "decision": { "type": "string", "enum": ["approve", "deny"] }, "content": { "type": "object", "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }, { "type": "array", "items": { "type": "string" } }] } } }, "additionalProperties": false },
+      "RegisterDeviceInput": { "type": "object", "required": ["id", "platform", "expoPushToken"], "properties": { "id": { "type": "string" }, "platform": { "type": "string", "enum": ["ios", "android"] }, "expoPushToken": { "type": "string" }, "appVersion": { "type": "string" }, "locale": { "type": "string" }, "timezone": { "type": "string" } }, "additionalProperties": false },
+      "AccountDeletionRequest": { "type": "object", "required": ["id", "status", "createdAt", "confirmedAt", "completedAt"], "properties": { "id": { "type": "string" }, "status": { "$ref": "#/components/schemas/DeletionStatus" }, "createdAt": { "$ref": "#/components/schemas/IsoDate" }, "confirmedAt": { "oneOf": [{ "$ref": "#/components/schemas/IsoDate" }, { "type": "null" }] }, "completedAt": { "oneOf": [{ "$ref": "#/components/schemas/IsoDate" }, { "type": "null" }] } }, "additionalProperties": false },
+      "TurnEvent": { "oneOf": [{ "$ref": "#/components/schemas/MessageDeltaEvent" }, { "$ref": "#/components/schemas/SnapshotChangedEvent" }] },
+      "MessageDeltaEvent": { "type": "object", "required": ["id", "type", "data", "createdAt"], "properties": { "id": { "type": "string" }, "type": { "type": "string", "const": "message.delta" }, "data": { "type": "object", "required": ["turnId", "textDelta"], "properties": { "turnId": { "type": "string" }, "textDelta": { "type": "string" } }, "additionalProperties": false }, "createdAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false },
+      "SnapshotChangedEvent": { "type": "object", "required": ["id", "type", "data", "createdAt"], "properties": { "id": { "type": "string" }, "type": { "type": "string", "const": "snapshot.changed" }, "data": { "type": "object", "required": ["turnId", "reason"], "properties": { "turnId": { "type": "string" }, "reason": { "type": "string", "enum": ["message_updated", "turn_updated", "interaction_updated"] } }, "additionalProperties": false }, "createdAt": { "$ref": "#/components/schemas/IsoDate" } }, "additionalProperties": false }
     }
   },
   "x-kestrel-product-boundary": {
-    "allowed": [
-      "authentication",
-      "account-deletion-request",
-      "organization-switching",
-      "read-only-projects",
-      "threads",
-      "durable-turns",
-      "interactions",
-      "push-registration"
-    ],
-    "forbidden": [
-      "signup",
-      "billing",
-      "administration",
-      "project-mutation",
-      "agent-configuration",
-      "model-management",
-      "uploads",
-      "artifact-editing",
-      "runner-management"
-    ]
+    "allowed": ["authentication", "account-deletion-request", "organization-switching", "read-only-projects", "threads", "durable-turns", "interactions", "push-registration"],
+    "forbidden": ["signup", "billing", "administration", "project-mutation", "agent-configuration", "model-management", "uploads", "artifact-editing", "runner-management"]
   }
 }

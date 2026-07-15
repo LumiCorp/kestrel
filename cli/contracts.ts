@@ -256,12 +256,22 @@ export interface TuiProfile {
   codeMode?: CodeModeProfileConfig | undefined;
   devShell?: DevShellProfileConfig | undefined;
   delegation?: DelegationPolicyConfig | undefined;
+  reasoning?: {
+    request: {
+      mode: "off" | "summary" | "provider_visible";
+      effort?: "low" | "medium" | "high" | undefined;
+    };
+    retention: {
+      mode: "live_only" | "provider_visible";
+      days: number;
+    };
+  } | undefined;
   theme?: ThemeOverrides | undefined;
   default?: boolean | undefined;
 }
 
 export interface ProfilesFile {
-  version: 3;
+  version: 4;
   profiles: TuiProfile[];
 }
 

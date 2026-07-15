@@ -1564,6 +1564,10 @@ test("ExecutionEngine writes full model prompt dumps to disk when enabled", asyn
         ({
           output: { ok: true },
           toolIntents: [],
+          reasoning: {
+            visible: [{ format: "summary", text: "provider-visible-secret" }],
+            continuation: [{ provider: "openai", kind: "encrypted_content", value: "provider-opaque-secret" }],
+          },
           provider: {
             name: "openrouter",
             model: "openai/gpt-4.1",
@@ -1590,6 +1594,10 @@ test("ExecutionEngine writes full model prompt dumps to disk when enabled", asyn
           },
         },
         responseFormat: "json",
+        reasoning: {
+          mode: "summary",
+          continuation: [{ provider: "openai", kind: "encrypted_content", value: "request-opaque-secret" }],
+        },
         providerOptions: {
           openrouter: {
             endpoint: "chat",
@@ -1636,6 +1644,10 @@ test("ExecutionEngine writes full model prompt dumps to disk when enabled", asyn
     const outputResponse = response?.output as Record<string, unknown> | undefined;
     assert.equal(modelResult?.status, "COMPLETED");
     assert.equal(outputResponse?.ok, true);
+    const serializedDump = JSON.stringify(dumpJson);
+    assert.equal(serializedDump.includes("request-opaque-secret"), false);
+    assert.equal(serializedDump.includes("provider-opaque-secret"), false);
+    assert.equal(serializedDump.includes("provider-visible-secret"), false);
   } finally {
     if (previousHome === undefined) {
       delete process.env.KESTREL_HOME;

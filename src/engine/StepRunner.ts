@@ -28,7 +28,6 @@ export interface StepRunnerState {
   laneCursor: string | undefined;
   stepIndex: number;
   progressSeq: number;
-  reasoningSeq: number;
   continuation?: NormalizedOutput["continuation"] | undefined;
 }
 
@@ -136,20 +135,6 @@ interface StepRunnerDependencies {
     } | undefined;
     persist: boolean;
     bypassRunEventBuffer?: boolean | undefined;
-  }) => Promise<number>;
-  maybeEmitReasoningUpdate: (input: {
-    runId: string;
-    sessionId: string;
-    seq: number;
-    stepIndex: number;
-    stepAgent: string;
-    previousState: Record<string, unknown>;
-    currentState: Record<string, unknown>;
-    transition: StepTransition;
-    recentMessages: string[];
-    runElapsedMs: number;
-    stepElapsedMs?: number | undefined;
-    signal?: AbortSignal | undefined;
   }) => Promise<number>;
   appendRuntimeEventIntents: (input: {
     runId: string;
@@ -299,7 +284,6 @@ export class StepRunner {
     state: StepRunnerState;
     guardrails: Guardrails;
     errors: RuntimeError[];
-    recentReasoningMessages: string[];
     signal?: AbortSignal | undefined;
   }): Promise<NormalizedOutput | undefined> {
     this.deps.throwIfAborted(input.signal);
@@ -320,19 +304,6 @@ export class StepRunner {
         session: input.state.session,
         step: selection.step,
         waitFor: selection.waitFor,
-      });
-      input.state.reasoningSeq = await this.deps.maybeEmitReasoningUpdate({
-        runId: input.runId,
-        sessionId: input.state.session.sessionId,
-        seq: input.state.reasoningSeq,
-        stepIndex: input.state.stepIndex,
-        stepAgent: selection.step,
-        previousState: input.state.session.state,
-        currentState: mergeWait.state,
-        transition: mergeWait.transition,
-        recentMessages: input.recentReasoningMessages,
-        runElapsedMs: Date.now() - input.runStartedAt,
-        signal: input.signal,
       });
       const waitingOutput = await this.deps.runLifecycleController.returnTerminal({
         runId: input.runId,
@@ -422,7 +393,6 @@ export class StepRunner {
     input.state.session = autoManagedWorktreeContext.session;
 
     const step = this.deps.registry.resolve(stepName);
-    const stepStartedAt = Date.now();
     const memorySnapshot = this.deps.resolveMemorySnapshot(input.state.session.state);
     const stepContext = this.deps.createStepContext(
       input.runId,
@@ -809,6 +779,29 @@ export class StepRunner {
       step: stepName,
       stateNode: transition.stateNode,
     }, input.state.stepIndex);
+    const agentProgress = transition.agentProgress?.trim();
+    if (
+      agentProgress !== undefined &&
+      agentProgress.length > 0 &&
+      agentProgress.length <= 600 &&
+      transition.status === "RUNNING"
+    ) {
+      input.state.progressSeq += 1;
+      await this.deps.appendRunEvent(
+        input.runId,
+        input.state.session.sessionId,
+        "agent.progress",
+        "INFO",
+        {
+          version: "v1",
+          seq: input.state.progressSeq,
+          ts: new Date().toISOString(),
+          message: agentProgress,
+          stepAgent: stepName,
+        },
+        input.state.stepIndex,
+      );
+    }
     input.state.progressSeq = await this.deps.emitProgress({
       runId: input.runId,
       sessionId: input.state.session.sessionId,
@@ -824,20 +817,6 @@ export class StepRunner {
         maxSteps: input.guardrails.configSnapshot().maxStepsPerRun,
       },
       persist: true,
-    });
-    input.state.reasoningSeq = await this.deps.maybeEmitReasoningUpdate({
-      runId: input.runId,
-      sessionId: input.state.session.sessionId,
-      seq: input.state.reasoningSeq,
-      stepIndex: input.state.stepIndex,
-      stepAgent: stepName,
-      previousState: previousSessionState,
-      currentState: input.state.session.state,
-      transition,
-      recentMessages: input.recentReasoningMessages,
-      runElapsedMs: Date.now() - input.runStartedAt,
-      stepElapsedMs: Date.now() - stepStartedAt,
-      signal: input.signal,
     });
 
     const regionActions = this.deps.regionScheduler.afterTransition({

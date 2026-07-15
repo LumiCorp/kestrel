@@ -1,15 +1,15 @@
 import type { SharedToolModule } from "../contracts.js";
 import {
-  asRecord,
   createToolInputError,
-  ensureFetchOk,
-  fetchImplOrDefault,
-  parseJsonRecord,
   parseObjectInput,
   readNumber,
   readString,
 } from "../helpers.js";
 import { resolveCoordinatesForCity } from "./geocodeResolver.js";
+import { WEATHER_FORECAST_OUTPUT_CONTRACT } from "./weatherContracts.js";
+import { executeWeatherFailover } from "./weatherFailover.js";
+import { WEATHER_FAILOVER_POLICY } from "./weatherPolicy.js";
+import { resolveWeatherProviderSet } from "./weatherProviderResolver.js";
 
 const DEFAULT_FORECAST_DAYS = 5;
 const MAX_FORECAST_DAYS = 10;
@@ -18,7 +18,7 @@ export const weatherForecastTool: SharedToolModule = {
   definition: {
     name: "free.weather.forecast",
     description:
-      "Fetch up to 10 days of daily and hourly weather from Open-Meteo for a city or coordinates. Use days for date ranges. To select one target hour, pair localHour with exactly one of localDate or dayOffset.",
+      "Fetch up to 10 days of daily and hourly weather using Open-Meteo with explicit Visual Crossing failover when configured. Use days for date ranges. To select one target hour, pair localHour with exactly one of localDate or dayOffset.",
     inputSchema: {
       type: "object",
       properties: {
@@ -29,32 +29,38 @@ export const weatherForecastTool: SharedToolModule = {
         timezone: { type: "string", description: "IANA timezone or 'auto'." },
         localDate: {
           type: "string",
-          description: "YYYY-MM-DD in local timezone. Requires localHour and cannot be combined with dayOffset.",
+          description:
+            "YYYY-MM-DD in local timezone. Requires localHour and cannot be combined with dayOffset.",
         },
         localHour: {
           type: "number",
           minimum: 0,
           maximum: 23,
-          description: "0-23 local hour. Requires exactly one of localDate or dayOffset.",
+          description:
+            "0-23 local hour. Requires exactly one of localDate or dayOffset.",
         },
         dayOffset: {
           type: "number",
-          description: "Whole-day offset from today in local timezone. Requires localHour and cannot be combined with localDate.",
+          description:
+            "Whole-day offset from today in local timezone. Requires localHour and cannot be combined with localDate.",
         },
         days: {
           type: "number",
           minimum: 1,
           maximum: MAX_FORECAST_DAYS,
-          description: "Number of forecast days to return for a date range, from 1 through 10.",
+          description:
+            "Number of forecast days to return for a date range, from 1 through 10.",
         },
         granularity: {
           type: "string",
           enum: ["hourly", "daily", "mixed"],
-          description: "Forecast shape preference. mixed returns both daily and hourly slices.",
+          description:
+            "Forecast shape preference. mixed returns both daily and hourly slices.",
         },
       },
       additionalProperties: false,
     },
+    outputContract: WEATHER_FORECAST_OUTPUT_CONTRACT,
     capability: {
       freshnessClass: "live",
       latencyClass: "medium",
@@ -81,14 +87,16 @@ export const weatherForecastTool: SharedToolModule = {
     },
   },
   createHandler(context) {
-    const fetchImpl = fetchImplOrDefault(context.fetchImpl);
+    const fetchImpl = context.fetchImpl ?? fetch;
+    const providers = resolveWeatherProviderSet(context);
 
     return async (input: unknown) => {
       const body = parseObjectInput("free.weather.forecast", input);
       const selector = parseTargetSelector(body);
       let latitude = readNumber(body, "latitude");
       let longitude = readNumber(body, "longitude");
-      const city = readInputString(body, "city") ?? readInputString(body, "location");
+      const city =
+        readInputString(body, "city") ?? readInputString(body, "location");
 
       if (latitude === undefined || longitude === undefined) {
         if (city === undefined || city.length === 0) {
@@ -110,47 +118,40 @@ export const weatherForecastTool: SharedToolModule = {
       const requestedTimezone = readString(body, "timezone") ?? "auto";
       const requestedDays = clampForecastDays(readNumber(body, "days"));
       const granularity = readGranularity(body);
-      const forecastUrl =
-        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-        "&current=temperature_2m" +
-        "&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m" +
-        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max" +
-        `&forecast_days=${requestedDays}&timezone=${encodeURIComponent(requestedTimezone)}`;
-
-      const forecastResponse = await fetchImpl(forecastUrl);
-      ensureFetchOk("free.weather.forecast", "open-meteo", forecastResponse, {
-        city,
-        latitude,
-        longitude,
-        requestedDays,
+      const providerOutcome = await executeWeatherFailover({
+        policy: WEATHER_FAILOVER_POLICY,
+        primary: (signal) =>
+          providers.primary.adapter.forecast({
+            toolName: "free.weather.forecast",
+            latitude,
+            longitude,
+            days: requestedDays,
+            timezone: requestedTimezone,
+            signal,
+          }),
+        ...(providers.fallback
+          ? {
+              fallback: (signal: AbortSignal) =>
+                providers.fallback!.adapter.forecast({
+                  toolName: "free.weather.forecast",
+                  latitude,
+                  longitude,
+                  days: requestedDays,
+                  timezone: requestedTimezone,
+                  signal,
+                }),
+            }
+          : {}),
       });
-
-      const payload = parseJsonRecord("free.weather.forecast", "open-meteo", await forecastResponse.json(), {
-        city,
-        latitude,
-        longitude,
-      });
-      const hourly = parseJsonRecord("free.weather.forecast", "open-meteo", payload.hourly ?? {}, {
-        field: "hourly",
-      });
+      const providerForecast = providerOutcome.value;
+      const hourly = providerForecast.hourly;
       const times = asStringArray(hourly.time);
-      const daily = parseJsonRecord("free.weather.forecast", "open-meteo", payload.daily ?? {}, {
-        field: "daily",
-      });
+      const daily = providerForecast.daily;
       const dailyTimes = asStringArray(daily.time);
-      if (times.length === 0 && dailyTimes.length === 0) {
-        throw createToolInputError(
-          "free.weather.forecast",
-          "Forecast provider returned no hourly or daily timeline.",
-          { provider: "open-meteo" },
-        );
-      }
-
-      const current = asRecord(payload.current);
       const selectedIndex = selectForecastIndex(
         times,
         selector,
-        readString(current, "time"),
+        readString(providerForecast.current, "time"),
       );
       if (selector !== undefined && selectedIndex === undefined) {
         throw createToolInputError(
@@ -159,22 +160,26 @@ export const weatherForecastTool: SharedToolModule = {
           {
             reason: "hourly_target_out_of_range",
             requestedDays,
-            ...(selector.localDate !== undefined ? { localDate: selector.localDate } : {}),
-            ...(selector.dayOffset !== undefined ? { dayOffset: selector.dayOffset } : {}),
+            ...(selector.localDate !== undefined
+              ? { localDate: selector.localDate }
+              : {}),
+            ...(selector.dayOffset !== undefined
+              ? { dayOffset: selector.dayOffset }
+              : {}),
             localHour: selector.localHour,
           },
         );
       }
 
-      const resolvedTimezone = readString(payload, "timezone") ?? requestedTimezone;
-
       return {
-        source: "open-meteo",
-        latitude,
-        longitude,
-        timezone: resolvedTimezone,
+        source: providerForecast.source,
+        latitude: providerForecast.latitude,
+        longitude: providerForecast.longitude,
+        timezone: providerForecast.timezone,
         requestedDays,
         granularity,
+        attempts: providerOutcome.attempts,
+        fallbackUsed: providerOutcome.fallbackUsed,
         ...(selectedIndex !== undefined
           ? {
               target: mapHourAtIndex(hourly, times, selectedIndex),
@@ -188,7 +193,11 @@ export const weatherForecastTool: SharedToolModule = {
           : {}),
         ...(dailyTimes.length > 0
           ? {
-              daily: buildDailySlice(daily, dailyTimes, Math.min(requestedDays, dailyTimes.length)),
+              daily: buildDailySlice(
+                daily,
+                dailyTimes,
+                Math.min(requestedDays, dailyTimes.length),
+              ),
             }
           : {}),
       };
@@ -270,7 +279,11 @@ function parseTargetSelector(
       { field: "localDate|dayOffset", reason: "incomplete_target_selector" },
     );
   }
-  if (hasLocalDate === false && hasLocalHour === false && hasDayOffset === false) {
+  if (
+    hasLocalDate === false &&
+    hasLocalHour === false &&
+    hasDayOffset === false
+  ) {
     return undefined;
   }
   if (hasDayOffset && Number.isInteger(dayOffset) === false) {
@@ -316,7 +329,9 @@ function selectForecastIndex(
       date.setUTCDate(date.getUTCDate() + Math.trunc(options.dayOffset));
       const targetDate = `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(date.getUTCDate())}`;
       const targetPrefix = `${targetDate}T${padHour(options.localHour)}:`;
-      const offsetIndex = times.findIndex((time) => time.startsWith(targetPrefix));
+      const offsetIndex = times.findIndex((time) =>
+        time.startsWith(targetPrefix),
+      );
       return offsetIndex >= 0 ? offsetIndex : undefined;
     }
   }
@@ -332,7 +347,10 @@ function mapHourAtIndex(
     time: times[index],
     temperatureC: getNumericAt(hourly.temperature_2m, index),
     apparentTemperatureC: getNumericAt(hourly.apparent_temperature, index),
-    precipitationProbabilityPct: getNumericAt(hourly.precipitation_probability, index),
+    precipitationProbabilityPct: getNumericAt(
+      hourly.precipitation_probability,
+      index,
+    ),
     precipitationMm: getNumericAt(hourly.precipitation, index),
     windSpeedKph: getNumericAt(hourly.wind_speed_10m, index),
   };
@@ -362,7 +380,10 @@ function buildDailySlice(
       date: times[index],
       maxTemperatureC: getNumericAt(daily.temperature_2m_max, index),
       minTemperatureC: getNumericAt(daily.temperature_2m_min, index),
-      precipitationProbabilityPct: getNumericAt(daily.precipitation_probability_max, index),
+      precipitationProbabilityPct: getNumericAt(
+        daily.precipitation_probability_max,
+        index,
+      ),
       precipitationMm: getNumericAt(daily.precipitation_sum, index),
       windSpeedKph: getNumericAt(daily.wind_speed_10m_max, index),
       weatherCode: getNumericAt(daily.weather_code, index),

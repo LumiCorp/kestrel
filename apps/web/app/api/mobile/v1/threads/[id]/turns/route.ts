@@ -2,46 +2,33 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
-import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
-import { mobileTurnDto } from "@/lib/mobile/dto";
+import { routeIdSchema } from "@/lib/knowledge/validation";
+import { mobileErrorResponse } from "@/lib/mobile/http";
+import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import {
-  createDurableThreadTurn,
-  listDurableThreadQueueForUser,
-} from "@/lib/turns/store";
+import { createDurableThreadTurn } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
-const bodySchema = z.object({
-  message: z.object({
-    id: routeIdSchema,
-    parts: z.array(uiMessagePartSchema).min(1).max(200),
-  }),
-  model: z.string().min(1).max(200).optional(),
-});
-
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { session, organizationId } = await requireActiveOrganization();
-    const { id } = paramsSchema.parse(await context.params);
-    const state = await listDurableThreadQueueForUser({
-      threadId: id,
-      organizationId,
-      userId: session.user.id,
-    });
-    return NextResponse.json({
-      turns: state.turns.map(mobileTurnDto),
-      queue: state.queue,
-    });
-  } catch (error) {
-    return errorResponse(error, 404);
-  }
-}
+const bodySchema = z
+  .object({
+    message: z.object({
+      id: routeIdSchema,
+      parts: z
+        .array(
+          z
+            .object({
+              type: z.literal("text"),
+              text: z.string().min(1).max(50_000),
+            })
+            .strict()
+        )
+        .min(1)
+        .max(1),
+    }),
+  })
+  .strict();
 
 export async function POST(
   request: NextRequest,
@@ -51,9 +38,13 @@ export async function POST(
     const { session, organizationId } = await requireActiveOrganization();
     const { id } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
+    const idempotencyKey = request.headers.get("idempotency-key")?.trim();
+    if (!idempotencyKey) {
+      return mobileErrorResponse(new Error("Idempotency key required"), 400);
+    }
     const thread = await getThreadForUser(id, session.user.id, organizationId);
     if (!thread || thread.mode !== "chat") {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+      return mobileErrorResponse(new Error("Thread not found"), 404);
     }
     const projectContext = await resolveProjectRuntimeContext({
       projectId: thread.projectId,
@@ -74,23 +65,30 @@ export async function POST(
       requestedEnvironmentId: environment.id,
       messageId: body.message.id,
       messageParts: body.message.parts,
-      idempotencyKey:
-        request.headers.get("idempotency-key")?.trim() || body.message.id,
+      idempotencyKey,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
-      requestedModelId: body.model ?? null,
+      requestedModelId: null,
       source: "mobile",
     });
     if (durable.shouldDispatch) {
-      await enqueueDurableThreadTurn(durable.dispatchTurnId ?? durable.turn.id);
+      await enqueueDurableThreadTurn(
+        durable.dispatchTurnId ?? durable.turn.id
+      ).catch(() => {});
     }
+    const snapshot = await getMobileThreadSnapshot({
+      threadId: id,
+      organizationId,
+      userId: session.user.id,
+    });
+    if (!snapshot) throw new Error("Thread snapshot unavailable.");
     return NextResponse.json(
-      { turn: mobileTurnDto(durable.turn) },
+      { snapshot, acceptedTurnId: durable.turn.id },
       {
         status: durable.created ? 202 : 200,
         headers: { location: `/api/mobile/v1/turns/${durable.turn.id}` },
       }
     );
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

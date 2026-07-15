@@ -32,6 +32,9 @@ import type {
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopToolCredentialInput,
+  DesktopToolCredentialProvider,
+  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopReadinessView,
@@ -103,6 +106,9 @@ export type {
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopToolCredentialInput,
+  DesktopToolCredentialProvider,
+  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopReadinessView,
@@ -175,6 +181,9 @@ export interface DesktopBridge {
   getSettings(): Promise<DesktopRendererSettings>;
   saveSettings(settings: DesktopRendererSettingsUpdate): Promise<DesktopRendererSettings>;
   saveProviderCredential(input: DesktopProviderCredentialInput): Promise<DesktopRendererSettings>;
+  getToolCredentialStatus(provider: DesktopToolCredentialProvider): Promise<DesktopToolCredentialStatus>;
+  saveToolCredential(input: DesktopToolCredentialInput): Promise<DesktopToolCredentialStatus>;
+  deleteToolCredential(provider: DesktopToolCredentialProvider): Promise<DesktopToolCredentialStatus>;
   getUiState(): Promise<DesktopUiStateV1 | null>;
   syncLegacyUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
   saveUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;

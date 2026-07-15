@@ -11,11 +11,11 @@ test("root package exposes public product scripts and a broad monorepo test gate
 
   assert.equal(
     scripts["test:core"],
-    "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test tests/**/*.test.ts agents/**/*.test.ts",
+    "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test --test-concurrency=4 tests/**/*.test.ts agents/**/*.test.ts",
   );
   assert.equal(
     scripts.build,
-    "pnpm run sdk:build && pnpm run clean && tsc -p tsconfig.json",
+    "pnpm run ai-sdk:build && pnpm run clean && tsc -p tsconfig.json",
   );
   assert.equal(scripts["studio:dev"], undefined);
   assert.equal(scripts["studio:build"], undefined);
@@ -53,6 +53,7 @@ test("root package exposes public product scripts and a broad monorepo test gate
     "pnpm run docs:test",
     "pnpm run protocol:test",
     "pnpm run sdk:test",
+    "pnpm run ai-sdk:test",
     "pnpm run next:test",
     "pnpm run observability:test",
   ]) {
@@ -122,7 +123,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
 
   assert.equal(
     rootPackage.scripts?.["web:prepare"],
-    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run sdk:build && pnpm run next:build",
+    "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run ai-sdk:build && pnpm run next:build",
   );
   assert.equal(
     rootPackage.scripts?.["web:build"],
@@ -133,6 +134,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
     appPackage.scripts?.["check:kestrel-boundary"],
     "node --import tsx scripts/check-kestrel-boundary.ts",
   );
+  assert.equal(appPackage.scripts?.build, "pnpm run clean && next build --webpack");
   assert.equal(appPackage.scripts?.["runtime:build"], undefined);
   assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.6.0");
   assert.equal(appPackage.dependencies?.["@kestrel-agents/sdk"], "0.6.0");

@@ -1,11 +1,11 @@
 ---
 title: Runner events
-summary: Handle progress, task, waiting, completion, cancellation, and failure events from a streamed run.
+summary: Handle operational progress, provider reasoning, agent-authored progress, tasks, and terminal events from a streamed run.
 section: build
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-15
 ---
 
 Request streams report activity before delivering one terminal result.
@@ -13,7 +13,9 @@ Request streams report activity before delivering one terminal result.
 ## Public stream events
 
 - `run.started` marks the accepted run.
-- `run.progress`, `run.reasoning`, `run.log`, and `run.console` describe active work.
+- `run.progress`, `run.log`, and `run.console` describe operational activity and should not be presented as agent-authored progress.
+- `run.model.reasoning.started`, `.delta`, `.completed`, `.failed`, and `.unavailable` carry labeled provider-returned summaries or visible thinking by attempt. They never carry encrypted continuation state or unavailable raw reasoning.
+- `run.agent_progress` carries a concise update only after the agent decision commits. It is safe to persist with ordinary conversation history.
 - `run.tool.started`, `run.tool.completed`, and `run.tool.failed` describe tool activity.
 - `task.updated` reports delegated task lifecycle.
 - `run.completed`, `run.failed`, and `run.cancelled` are terminal events.
@@ -23,4 +25,4 @@ Treat events as protocol data: validate the envelope before updating application
 
 ## Finish from the terminal event
 
-Progress and reasoning events may be useful to display, but they do not own the final answer. Read `assistantText`, structured `output`, and any operator state from the terminal result.
+Operational progress, provider reasoning, and agent progress may be useful to display, but they do not own the final answer. Provider deltas are live-only by default and should be discarded after the active run. Read `assistantText`, structured `output`, and any operator state from the terminal result.

@@ -31,6 +31,7 @@ test("ThreadRuntime groups a submitted run into a durable conversation turn", as
             durationMs: 1,
           },
         },
+        assistantText: "Implemented the runtime plan.",
       }),
     },
   });
@@ -67,6 +68,10 @@ test("ThreadRuntime appends resume replies as segments without changing the root
       getSession: (sessionId) => store.getSession(sessionId),
       executeTurn: async (input) => {
         callCount += 1;
+        const assistantText =
+          callCount === 1
+            ? "Need one more detail"
+            : "Completed the rewrite using the command processor plan.";
         return {
           output: normalizedOutput({
             sessionId: input.sessionId,
@@ -82,6 +87,7 @@ test("ThreadRuntime appends resume replies as segments without changing the root
                 }
               : {}),
           }),
+          assistantText,
         };
       },
     },

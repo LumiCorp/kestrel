@@ -2,6 +2,7 @@ import type {
   RunEventLevel,
   RunEventType,
 } from "./base.js";
+import type { AgentToolPresentation } from "./model-io.js";
 
 export interface RuntimeEvent {
   id: string;
@@ -162,6 +163,37 @@ export interface ReasoningUpdateV1 {
     | undefined;
 }
 
+export interface ModelReasoningUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  event: "started" | "delta" | "completed" | "failed" | "unavailable";
+  attempt: number;
+  format: "summary" | "provider_thinking" | "provider_reasoning_text";
+  /** Present only on live delta delivery. Never contains encrypted provider state. */
+  delta?: string | undefined;
+  contentState: "live" | "not_retained";
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
+  model?: {
+    provider?: string | undefined;
+    model?: string | undefined;
+  } | undefined;
+}
+
+export interface AgentProgressUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  message: string;
+  stepIndex: number;
+  stepAgent: string;
+}
+
 export type RunConsoleChannel = "stdout" | "stderr" | "merged";
 
 export type RunConsoleStatus =
@@ -219,12 +251,5 @@ export interface RunToolUpdateV1 {
       }
     | undefined;
   durationMs?: number | undefined;
-}
-
-export interface ReasoningSidecarConfig {
-  enabled?: boolean | undefined;
-  model?: string | undefined;
-  timeoutMs?: number | undefined;
-  maxTokens?: number | undefined;
-  inheritProcessEnv?: boolean | undefined;
+  presentation?: AgentToolPresentation | undefined;
 }

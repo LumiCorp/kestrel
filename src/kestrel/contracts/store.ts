@@ -148,6 +148,61 @@ export interface PersistedRunStateRecord {
   deltaCount: number;
 }
 
+export type ProviderReasoningRecordKind = "continuation" | "retained_visible";
+
+export interface ProviderReasoningEncryptedRecord {
+  recordId: string;
+  kind: ProviderReasoningRecordKind;
+  runId: string;
+  sessionId: string;
+  turnId: string;
+  retentionScope: string;
+  provider: string;
+  model: string;
+  format?: string | undefined;
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  keyVersion: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface ProviderReasoningStore {
+  appendProviderReasoningAccessAudit?(record: {
+    runId: string;
+    sessionId: string;
+    actorId: string;
+    actorRole: string;
+    action: "read" | "delete" | "policy_change";
+    metadata?: Record<string, unknown> | undefined;
+  }): Promise<void>;
+  saveProviderReasoningRecord?(record: ProviderReasoningEncryptedRecord): Promise<void>;
+  listProviderReasoningRecords?(input: {
+    runId?: string | undefined;
+    sessionId?: string | undefined;
+    turnId?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    kind?: ProviderReasoningRecordKind | undefined;
+    includeExpired?: boolean | undefined;
+  }): Promise<ProviderReasoningEncryptedRecord[]>;
+  deleteProviderReasoningRecords?(input: {
+    runId?: string | undefined;
+    sessionId?: string | undefined;
+    turnId?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    kind?: ProviderReasoningRecordKind | undefined;
+  }): Promise<number>;
+  purgeExpiredProviderReasoning?(now?: string): Promise<number>;
+  applyProviderReasoningRetentionPolicy?(input: {
+    retentionScope: string;
+    mode: "live_only" | "provider_visible";
+    expiresAt: string;
+  }): Promise<number>;
+}
+
 export interface PersistedEffect {
   runId: string;
   sessionId: string;
@@ -479,7 +534,8 @@ export interface RuntimeStore
     EffectStore,
     OutboxStore,
     EventStore,
-    ArtifactStore {}
+    ArtifactStore,
+    ProviderReasoningStore {}
 
 export interface ReplayStore
   extends SessionRepository,

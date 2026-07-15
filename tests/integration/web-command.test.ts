@@ -28,6 +28,9 @@ import { resolveLocalCorePaths } from "../../src/localCore/home.js";
 const execFileAsync = promisify(execFile);
 const CURL_REQUEST_TIMEOUT_SECONDS = "5";
 const CURL_STREAM_TIMEOUT_SECONDS = "15";
+const KESTREL_SUITE_VERSION = (
+  createRequire(import.meta.url)("../../package.json") as { version: string }
+).version;
 
 test("kestrel web prints env exports and answers curl health checks", async (t) => {
   await ensureCurlAvailable();
@@ -47,7 +50,7 @@ test("kestrel web prints env exports and answers curl health checks", async (t) 
     ok: true,
     service: {
       name: "kestrel-runner",
-      version: "0.5.1",
+      version: KESTREL_SUITE_VERSION,
     },
     contracts: {
       execution: EXECUTION_PROTOCOL_VERSION,
@@ -147,6 +150,11 @@ test("kestrel web loads project provider credentials before starting Local Core"
     ...process.env,
     KESTREL_CORE_HOME: coreHome,
     KESTREL_HOME: coreHome,
+    // This test exercises project dotenv capture. macOS Local Core deliberately
+    // makes Keychain authoritative, so use the portable ambient-credential
+    // boundary instead of depending on credentials from the developer's
+    // personal Keychain.
+    KESTREL_CORE_PLATFORM: "linux",
     KESTREL_LOCAL_CORE_DIRECT: "0",
     KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
     FORCE_COLOR: "0",
@@ -474,10 +482,13 @@ async function startWebRunner(
         ...process.env,
         ...envOverrides,
         KESTREL_HOME: kestrelHome,
+        // The web-runner fixture supplies isolated ambient credentials. Avoid
+        // coupling it to the host developer's macOS Keychain.
+        KESTREL_CORE_PLATFORM: "linux",
         KESTREL_DISABLE_DOTENV: "1",
         KESTREL_LOCAL_CORE_DIRECT: "0",
         KESTREL_LOCAL_CORE_DAEMON: "1",
-        KESTREL_CORE_VERSION: "0.5.1",
+        KESTREL_CORE_VERSION: KESTREL_SUITE_VERSION,
         KESTREL_CORE_OWNER_EXECUTABLE: path.resolve(repoRoot, "src/localCore/daemonMain.ts"),
         KESTREL_CORE_REPO_ROOT: repoRoot,
         KESTREL_CORE_RUN_MIGRATIONS: "1",
@@ -559,6 +570,10 @@ async function startWebRunner(
       core.kill("SIGTERM");
     }
     await coreExitPromise;
+    // The runner may have replaced an incompatible fixture daemon. This
+    // isolated home belongs to the test, so stop whichever daemon currently
+    // owns its lock before deleting the home.
+    await stopLocalCoreFromLock(corePaths.lockPath);
     await rm(kestrelHome, { recursive: true, force: true });
   });
 
@@ -858,6 +873,7 @@ async function handleFakeOpenRouterRequest(
     response_format?: { json_schema?: { name?: string | undefined } | undefined } | undefined;
     tools?: unknown[] | undefined;
     messages?: Array<{ content?: string | undefined }> | undefined;
+    stream?: boolean | undefined;
   };
 
   const schemaName = parsed.response_format?.json_schema?.name ?? parsed.metadata?.schemaName ??
@@ -888,6 +904,33 @@ async function handleFakeOpenRouterRequest(
     return;
   }
 
+  const toolCall = {
+    id: "call_fake_finalize",
+    type: "function",
+    function: {
+      name: "kestrel_finalize",
+      arguments: JSON.stringify({
+        status: "goal_satisfied",
+        message: finalMessage,
+        assistantProgress: "I have completed the deterministic test response.",
+      }),
+    },
+  };
+
+  if (parsed.stream === true) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      connection: "close",
+    });
+    response.end(
+      `data: ${JSON.stringify({
+        model: "openai/gpt-5.2-chat",
+        choices: [{ delta: { tool_calls: [{ index: 0, ...toolCall }] } }],
+      })}\n\ndata: [DONE]\n\n`,
+    );
+    return;
+  }
+
   response.writeHead(200, {
     "content-type": "application/json",
     connection: "close",
@@ -902,17 +945,7 @@ async function handleFakeOpenRouterRequest(
               reason: "This deterministic test path can answer directly without tools.",
             }),
             tool_calls: [
-              {
-                id: "call_fake_finalize",
-                type: "function",
-                function: {
-                  name: "kestrel_finalize",
-                  arguments: JSON.stringify({
-                    status: "goal_satisfied",
-                    message: finalMessage,
-                  }),
-                },
-              },
+              toolCall,
             ],
           },
         },

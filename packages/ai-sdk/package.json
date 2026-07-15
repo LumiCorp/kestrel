@@ -1,0 +1,41 @@
+{
+  "name": "@kestrel-agents/ai-sdk",
+  "version": "0.6.0",
+  "description": "Typed Vercel AI SDK presentation adapter for Kestrel runner streams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LumiCorp/kestrel.git",
+    "directory": "packages/ai-sdk"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@kestrel-agents/protocol": "workspace:*",
+    "@kestrel-agents/sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "ai": ">=6.0.0 <7"
+  },
+  "devDependencies": {
+    "ai": "6.0.116"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kestrel-agents/sdk build && node --import tsx --test tests/**/*.test.ts",
+    "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ createKestrelPresentationAccumulator }) => { void createKestrelPresentationAccumulator; })\"",
+    "release:check": "pnpm run build && pnpm run smoke:import"
+  }
+}

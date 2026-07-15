@@ -20,7 +20,6 @@ export type {
   KestrelOneRunnerTerminalEvent,
   KestrelOneRuntimeContextInput,
 } from "./kestrel-runtime-core";
-export * from "./kestrel-stream-events";
 export * from "./prompts";
 export * from "./shell-policy";
 export * from "./types";

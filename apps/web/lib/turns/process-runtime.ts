@@ -1,10 +1,13 @@
 import "server-only";
 
 import type { UIMessage } from "ai";
+import type {
+  KestrelInteractionPresentation,
+  KestrelTerminalStatus,
+} from "@kestrel-agents/ai-sdk";
 import { eq } from "drizzle-orm";
 import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
 import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -13,10 +16,7 @@ import {
   revokeProjectContextGrant,
 } from "@/lib/projects/context-grants";
 import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
-import {
-  saveThreadMessages,
-  updateThreadTitleForUser,
-} from "@/lib/threads/store";
+import { updateThreadTitleForUser } from "@/lib/threads/store";
 import {
   appendDurableTurnEvent,
   bindDurableTurnExecution,
@@ -24,6 +24,7 @@ import {
   completeDurableThreadTurn,
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
+  persistDurableAssistantOutcome,
 } from "@/lib/turns/store";
 import {
   convertToUIMessages,
@@ -58,10 +59,13 @@ function terminalTurnStatus(status: KestrelTerminalStatus) {
   if (status === "cancelled") {
     return "cancelled" as const;
   }
-  if (status === "failed" || status === "runner_error") {
+  if (status === "failed" || status === "contract_failure") {
     return "failed" as const;
   }
-  return "completed" as const;
+  if (status === "completed") {
+    return "completed" as const;
+  }
+  return "failed" as const;
 }
 
 async function loadWorkerSession(userId: string): Promise<Session> {
@@ -148,15 +152,23 @@ export async function processDurableThreadTurn(turnId: string) {
     null;
   let eventWrites = Promise.resolve();
   const cancellation = new AbortController();
+  let cancellationRequested = false;
   const cancellationPoll = setInterval(() => {
     void isDurableTurnCancellationRequested(turn.id).then((requested) => {
       if (requested) {
-        cancellation.abort();
+        cancellationRequested = true;
       }
     });
   }, 1000);
-  let terminalStatus: KestrelTerminalStatus = "runner_error";
-  let terminalError: string | null = null;
+  const terminal: {
+    status: KestrelTerminalStatus;
+    error: string | null;
+    interaction: KestrelInteractionPresentation | null;
+  } = {
+    status: "contract_failure",
+    error: null,
+    interaction: null,
+  };
   try {
     const [session, storedMessages] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
@@ -186,6 +198,7 @@ export async function processDurableThreadTurn(turnId: string) {
               ...(turn.approvalReason ? { reason: turn.approvalReason } : {}),
             }
           : undefined,
+      interactionResponse: turn.interactionResponse ?? undefined,
       projectContext: projectContext ?? undefined,
       transientTitle: turn.approvalId
         ? null
@@ -201,6 +214,13 @@ export async function processDurableThreadTurn(turnId: string) {
         bindDurableTurnExecution({ turnId: turn.id, executionId }).then(
           () => {}
         ),
+      onRuntimeEvent(event) {
+        if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
+          cancellation.abort(
+            new Error("The user interrupted this turn at a safe boundary.")
+          );
+        }
+      },
       onUiChunk(chunk) {
         eventWrites = eventWrites.then(() =>
           appendDurableTurnEvent({
@@ -212,8 +232,9 @@ export async function processDurableThreadTurn(turnId: string) {
       },
       onFinishPersist: async (finishedMessages, meta) => {
         await eventWrites;
-        terminalStatus = meta.terminalStatus;
-        terminalError = meta.errorMessage;
+        terminal.status = meta.terminalStatus;
+        terminal.error = meta.errorMessage;
+        terminal.interaction = meta.interaction;
         const messagesForPersistence =
           prepareKestrelRuntimeMessagesForPersistence(finishedMessages, meta);
         const assistantMessages = messagesForPersistence.filter(
@@ -221,19 +242,18 @@ export async function processDurableThreadTurn(turnId: string) {
             message.role === "assistant" &&
             isPersistableAssistantMessage(message)
         );
-        await saveThreadMessages(
+        await persistDurableAssistantOutcome({
+          turnId: turn.id,
+          interaction: meta.interaction,
+          messages:
           assistantMessages.map((message) => ({
             id: message.id,
-            threadId: turn.threadId,
-            turnId: turn.id,
-            role: "assistant" as const,
-            authorUserId: null,
             projectContextRevisionId: turn.projectContextRevisionId,
             parts: message.parts,
             model: meta.model,
             source: turn.source,
-          }))
-        );
+          })),
+        });
         if (meta.title) {
           await updateThreadTitleForUser({
             id: turn.threadId,
@@ -246,14 +266,17 @@ export async function processDurableThreadTurn(turnId: string) {
     });
     await drainResponse(response);
     await eventWrites;
+    if (terminal.status === "waiting" && terminal.interaction) {
+      return { processed: true, nextTurnId: null };
+    }
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
-      status: terminalTurnStatus(terminalStatus),
+      status: terminalTurnStatus(terminal.status),
       failureCode:
-        terminalTurnStatus(terminalStatus) === "failed"
+        terminalTurnStatus(terminal.status) === "failed"
           ? "RUNTIME_FAILED"
           : null,
-      failureMessage: terminalError,
+      failureMessage: terminal.error,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
@@ -273,4 +296,14 @@ export async function processDurableThreadTurn(turnId: string) {
       await revokeProjectContextGrant(projectContext.grantId).catch(() => {});
     }
   }
+}
+
+function isSafeInterruptBoundary(eventType: string) {
+  return (
+    eventType === "run.started" ||
+    eventType === "run.model.completed" ||
+    eventType === "run.model.failed" ||
+    eventType === "run.tool.completed" ||
+    eventType === "run.tool.failed"
+  );
 }

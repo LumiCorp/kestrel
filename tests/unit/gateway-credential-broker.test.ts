@@ -599,7 +599,7 @@ test("all gateway transports send the leased model and credential to the expecte
         rawModelId: "gpt-5.4",
         baseUrl: "https://api.openai.com",
       },
-      expectedUrl: "https://api.openai.com/v1/chat/completions",
+      expectedUrl: "https://api.openai.com/v1/responses",
       expectedAuthorization: "Bearer provider-secret",
       expectedAnthropicKey: null,
     },

@@ -47,6 +47,10 @@ export class PostgresMcpInteractionCoordinator
     }).slice("sha256:".length);
     const invocationId = `interaction-${interactionDigest}`;
     const checkpointId = `checkpoint-${interactionDigest}`;
+    const prompt =
+      input.kind === "sampling"
+        ? "Allow the agent to perform this protected model operation?"
+        : readMcpElicitationPrompt(input.request);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -97,6 +101,34 @@ export class PostgresMcpInteractionCoordinator
             requestDigest,
             policyDigest: input.grant.policyDigest,
           },
+        ]
+      );
+      await client.query(
+        `INSERT INTO thread_interactions
+          (id, request_id, organization_id, thread_id, turn_id, source,
+           source_checkpoint_id, kind, event_type, prompt, status,
+           request_envelope)
+         VALUES (
+           $1, $2, $3, $4,
+           (SELECT id FROM thread_turns
+             WHERE environment_execution_id = $5
+             ORDER BY created_at DESC LIMIT 1),
+           'mcp', $6, $7, $8, $9, 'pending', $10
+         )
+         ON CONFLICT (request_id) DO NOTHING`,
+        [
+          `interaction-${checkpointId}`,
+          checkpointId,
+          input.grant.organizationId,
+          input.grant.threadId,
+          input.grant.runExecutionId,
+          checkpointId,
+          input.kind === "sampling" ? "mcp_sampling" : "mcp_elicitation",
+          input.kind === "sampling"
+            ? "mcp.sampling.response"
+            : "mcp.elicitation.response",
+          prompt,
+          input.request,
         ]
       );
       await client.query("COMMIT");
@@ -205,6 +237,12 @@ export class PostgresMcpInteractionCoordinator
             AND status = 'processing'
             AND processing_expires_at <= now()
           RETURNING id
+       ), failed_interaction AS (
+         UPDATE thread_interactions
+            SET status = 'failed', resolved_at = now(), updated_at = now()
+          WHERE source_checkpoint_id = $1
+            AND EXISTS (SELECT 1 FROM failed_checkpoint)
+          RETURNING id
        )
        UPDATE mcp_invocations
           SET status = 'failed',
@@ -224,6 +262,12 @@ export class PostgresMcpInteractionCoordinator
             SET status = 'denied', updated_at = now()
           WHERE id = $1 AND status IN ('requested', 'approved')
           RETURNING id
+       ), cancelled_interaction AS (
+         UPDATE thread_interactions
+            SET status = 'cancelled', resolved_at = now(), updated_at = now()
+          WHERE source_checkpoint_id = $1
+            AND EXISTS (SELECT 1 FROM cancelled_checkpoint)
+          RETURNING id
        )
        UPDATE mcp_invocations
           SET status = 'cancelled', completed_at = now(), updated_at = now()
@@ -233,6 +277,19 @@ export class PostgresMcpInteractionCoordinator
       [checkpointId, invocationId]
     );
   }
+}
+
+function readMcpElicitationPrompt(request: unknown) {
+  if (
+    typeof request === "object" &&
+    request !== null &&
+    !Array.isArray(request) &&
+    typeof (request as { message?: unknown }).message === "string" &&
+    (request as { message: string }).message.trim()
+  ) {
+    return (request as { message: string }).message.trim();
+  }
+  throw new Error("MCP elicitation requires a non-empty message prompt.");
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

@@ -12,6 +12,10 @@ import {
 } from "./policy";
 import { ensureCoreAppCatalog, ensureEnvironmentAppPolicies } from "./service";
 import type { AppConnectionSummary } from "./types";
+import type {
+  AppConnectionModel,
+  AppConnectionRequirement,
+} from "./types";
 
 export type ProjectAppConnection = AppConnectionSummary & {
   scope: "shared" | "personal";
@@ -41,7 +45,9 @@ export type ProjectAppConfiguration = {
     displayName: string;
     description: string;
     icon: string | null;
-    connectionModel: "none" | "personal" | "environment";
+    connectionModel: AppConnectionModel;
+    connectionRequirement: AppConnectionRequirement;
+    authMethods: import("./types").AppAuthMethod[];
   };
   enabled: boolean;
   availableConnections: AppConnectionSummary[];
@@ -217,11 +223,13 @@ export async function listProjectAppConfigurations(input: {
       (connection) =>
         connection.appKey === definition.key &&
         connection.status === "connected" &&
-        ((definition.connectionModel === "environment" &&
+        (((definition.connectionModel === "environment" ||
+          definition.connectionModel === "hybrid") &&
           connection.environmentId === binding.environmentId &&
           (connection.ownerType === "environment" ||
             connection.ownerType === "deployment_managed")) ||
-          (definition.connectionModel === "personal" &&
+          ((definition.connectionModel === "personal" ||
+            definition.connectionModel === "hybrid") &&
             connection.ownerType === "personal" &&
             connection.userId === input.userId))
     );
@@ -252,6 +260,10 @@ export async function listProjectAppConfigurations(input: {
         description: definition.description,
         icon: definition.icon,
         connectionModel: definition.connectionModel,
+        connectionRequirement: definition.connectionRequirement,
+        authMethods: Array.isArray(definition.metadata?.authMethods)
+          ? (definition.metadata.authMethods as import("./types").AppAuthMethod[])
+          : [],
       },
       enabled:
         projectAppByKey.get(definition.key)?.enabled ??
@@ -309,14 +321,14 @@ export async function resolveEffectiveProjectAppsAccess(input: {
   const configurations = await listProjectAppConfigurations(input);
   return configurations.flatMap((configuration) => {
     if (!configuration.enabled) return [];
-    const selectedConnection =
-      configuration.app.connectionModel === "none"
-        ? null
-        : configuration.attachedConnections.find(
-            (connection) =>
-              connection.isDefault && connection.status === "connected"
-          );
-    if (configuration.app.connectionModel !== "none" && !selectedConnection) {
+    const selectedConnection = selectEffectiveConnection({
+      connectionModel: configuration.app.connectionModel,
+      connections: configuration.attachedConnections,
+    });
+    if (
+      configuration.app.connectionRequirement === "required" &&
+      !selectedConnection
+    ) {
       return [];
     }
     const capabilities = configuration.capabilities.flatMap((capability) =>
@@ -418,7 +430,7 @@ export async function attachProjectAppConnection(input: {
   scope: "shared" | "personal";
   isDefault: boolean;
 }) {
-  const { binding } = await requireProjectAppContext(input);
+  const { binding, definition } = await requireProjectAppContext(input);
   const connection = await knowledgeDb.query.appConnections.findFirst({
     where: (table, { and: all, eq: equals }) =>
       all(
@@ -436,11 +448,15 @@ export async function attachProjectAppConnection(input: {
   }
   const validShared =
     input.scope === "shared" &&
+    (definition.connectionModel === "environment" ||
+      definition.connectionModel === "hybrid") &&
     connection.environmentId === binding.environmentId &&
     (connection.ownerType === "environment" ||
       connection.ownerType === "deployment_managed");
   const validPersonal =
     input.scope === "personal" &&
+    (definition.connectionModel === "personal" ||
+      definition.connectionModel === "hybrid") &&
     connection.ownerType === "personal" &&
     connection.userId === input.actorUserId;
   if (!(validShared || validPersonal)) {
@@ -701,17 +717,17 @@ export async function resolveEffectiveProjectAppAccess(input: {
       where: (table, { eq: equals }) => equals(table.appKey, input.appKey),
     }),
   ]);
-  const selectedAttachment =
-    definition.connectionModel === "none"
-      ? null
-      : definition.connectionModel === "personal"
-        ? attachments.find(
-            (attachment) =>
-              attachment.scope === "personal" &&
-              attachment.userId === input.userId
-          )
-        : attachments.find((attachment) => attachment.scope === "shared");
-  if (definition.connectionModel !== "none" && !selectedAttachment) return null;
+  const selectedAttachment = selectEffectiveAttachment({
+    connectionModel: definition.connectionModel,
+    userId: input.userId,
+    attachments,
+  });
+  if (
+    definition.connectionRequirement === "required" &&
+    !selectedAttachment
+  ) {
+    return null;
+  }
   const selectedConnection = selectedAttachment
     ? await knowledgeDb.query.appConnections.findFirst({
         where: (table, { and: all, eq: equals }) =>
@@ -719,11 +735,16 @@ export async function resolveEffectiveProjectAppAccess(input: {
             equals(table.id, selectedAttachment.connectionId),
             equals(table.organizationId, input.organizationId),
             equals(table.appKey, input.appKey),
-            equals(table.status, "connected")
+            inArray(table.status, ["connected", "degraded"])
           ),
       })
     : null;
-  if (definition.connectionModel !== "none" && !selectedConnection) return null;
+  if (
+    definition.connectionRequirement === "required" &&
+    !selectedConnection
+  ) {
+    return null;
+  }
   const grantByKey = new Map(
     grants.map((grant) => [grant.capabilityKey, grant])
   );
@@ -763,4 +784,74 @@ export async function resolveEffectiveProjectAppAccess(input: {
     connectionId: selectedConnection?.id ?? null,
     capabilities: effectiveCapabilities,
   };
+}
+
+export function selectEffectiveConnection(input: {
+  connectionModel: AppConnectionModel;
+  connections: ProjectAppConnection[];
+}): ProjectAppConnection | null {
+  if (input.connectionModel === "none") return null;
+  const defaults = input.connections.filter((connection) => connection.isDefault);
+  return (
+    selectByScopeAndStatus(input.connectionModel, defaults, "connected") ??
+    selectByScopeAndStatus(input.connectionModel, defaults, "degraded")
+  );
+}
+
+function selectByScopeAndStatus(
+  connectionModel: AppConnectionModel,
+  connections: ProjectAppConnection[],
+  status: "connected" | "degraded"
+): ProjectAppConnection | null {
+  const candidates = connections.filter(
+    (connection) => connection.status === status
+  );
+  if (
+    connectionModel === "personal" ||
+    connectionModel === "hybrid"
+  ) {
+    const personal = candidates.find(
+      (connection) => connection.scope === "personal"
+    );
+    if (personal) return personal;
+  }
+  if (
+    connectionModel === "environment" ||
+    connectionModel === "hybrid"
+  ) {
+    return (
+      candidates.find((connection) => connection.scope === "shared") ??
+      null
+    );
+  }
+  return null;
+}
+
+function selectEffectiveAttachment(input: {
+  connectionModel: AppConnectionModel;
+  userId: string;
+  attachments: Array<typeof schema.projectAppConnections.$inferSelect>;
+}) {
+  if (input.connectionModel === "none") return null;
+  if (
+    input.connectionModel === "personal" ||
+    input.connectionModel === "hybrid"
+  ) {
+    const personal = input.attachments.find(
+      (attachment) =>
+        attachment.scope === "personal" &&
+        attachment.userId === input.userId
+    );
+    if (personal) return personal;
+  }
+  if (
+    input.connectionModel === "environment" ||
+    input.connectionModel === "hybrid"
+  ) {
+    return (
+      input.attachments.find((attachment) => attachment.scope === "shared") ??
+      null
+    );
+  }
+  return null;
 }

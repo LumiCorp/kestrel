@@ -39,7 +39,7 @@ export interface WebRunnerProxyServer {
 }
 
 /**
- * Exposes Local Core's Execution Protocol v2 endpoint to TCP clients without
+ * Exposes Local Core's Execution Protocol v3 endpoint to TCP clients without
  * creating another runtime authority. The public runner token is validated at
  * this boundary and replaced with Local Core's private token only upstream.
  */

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { deliverTransactionalEmail } from "@/lib/email/service";
 import { requireSession } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { errorResponse } from "@/lib/knowledge/http";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 
 const requestSchema = z.object({ confirmation: z.literal("DELETE") });
 
@@ -34,7 +34,7 @@ export async function GET() {
         : null,
     });
   } catch (error) {
-    return errorResponse(error);
+    return mobileErrorResponse(error);
   }
 }
 
@@ -101,6 +101,6 @@ export async function POST(request: Request) {
       { status: 202 }
     );
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

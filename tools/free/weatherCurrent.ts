@@ -1,19 +1,21 @@
 import type { SharedToolModule } from "../contracts.js";
 import {
   createToolInputError,
-  ensureFetchOk,
-  fetchImplOrDefault,
-  parseJsonRecord,
   parseObjectInput,
   readNumber,
   readString,
 } from "../helpers.js";
 import { resolveCoordinatesForCity } from "./geocodeResolver.js";
+import { WEATHER_CURRENT_OUTPUT_CONTRACT } from "./weatherContracts.js";
+import { executeWeatherFailover } from "./weatherFailover.js";
+import { WEATHER_FAILOVER_POLICY } from "./weatherPolicy.js";
+import { resolveWeatherProviderSet } from "./weatherProviderResolver.js";
 
 export const weatherCurrentTool: SharedToolModule = {
   definition: {
     name: "free.weather.current",
-    description: "Fetch current weather from Open-Meteo for coordinates or a city name.",
+    description:
+      "Fetch current weather for coordinates or a city name using Open-Meteo with explicit Visual Crossing failover when configured.",
     inputSchema: {
       type: "object",
       properties: {
@@ -24,6 +26,7 @@ export const weatherCurrentTool: SharedToolModule = {
       },
       additionalProperties: false,
     },
+    outputContract: WEATHER_CURRENT_OUTPUT_CONTRACT,
     capability: {
       freshnessClass: "live",
       latencyClass: "medium",
@@ -32,9 +35,7 @@ export const weatherCurrentTool: SharedToolModule = {
       capabilityClasses: ["weather.current"],
       suitability: {
         supportsAttribution: true,
-        typicalFailureModes: [
-          "requires_city_or_coordinates",
-        ],
+        typicalFailureModes: ["requires_city_or_coordinates"],
       },
     },
     presentation: {
@@ -46,13 +47,15 @@ export const weatherCurrentTool: SharedToolModule = {
     },
   },
   createHandler(context) {
-    const fetchImpl = fetchImplOrDefault(context.fetchImpl);
+    const fetchImpl = context.fetchImpl ?? fetch;
+    const providers = resolveWeatherProviderSet(context);
 
     return async (input: unknown) => {
       const body = parseObjectInput("free.weather.current", input);
       let latitude = readNumber(body, "latitude");
       let longitude = readNumber(body, "longitude");
-      const city = readInputString(body, "city") ?? readInputString(body, "location");
+      const city =
+        readInputString(body, "city") ?? readInputString(body, "location");
 
       if (latitude === undefined || longitude === undefined) {
         if (city === undefined || city.length === 0) {
@@ -71,30 +74,31 @@ export const weatherCurrentTool: SharedToolModule = {
         longitude = resolved.longitude;
       }
 
-      const weatherUrl =
-        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=UTC`;
-      const weatherResponse = await fetchImpl(weatherUrl);
-      ensureFetchOk("free.weather.current", "open-meteo", weatherResponse, { city, latitude, longitude });
-
-      const weatherPayload = parseJsonRecord("free.weather.current", "open-meteo", await weatherResponse.json(), {
-        city,
-        latitude,
-        longitude,
+      const outcome = await executeWeatherFailover({
+        policy: WEATHER_FAILOVER_POLICY,
+        primary: (signal) =>
+          providers.primary.adapter.current({
+            toolName: "free.weather.current",
+            latitude,
+            longitude,
+            signal,
+          }),
+        ...(providers.fallback
+          ? {
+              fallback: (signal: AbortSignal) =>
+                providers.fallback!.adapter.current({
+                  toolName: "free.weather.current",
+                  latitude,
+                  longitude,
+                  signal,
+                }),
+            }
+          : {}),
       });
-      const current = parseJsonRecord("free.weather.current", "open-meteo", weatherPayload.current ?? {}, {
-        field: "current",
-      });
-
       return {
-        source: "open-meteo",
-        latitude,
-        longitude,
-        temperatureC: readNumber(current, "temperature_2m"),
-        apparentTemperatureC: readNumber(current, "apparent_temperature"),
-        humidityPct: readNumber(current, "relative_humidity_2m"),
-        weatherCode: readNumber(current, "weather_code"),
-        windSpeedKph: readNumber(current, "wind_speed_10m"),
-        observedAt: readString(current, "time"),
+        ...outcome.value,
+        attempts: outcome.attempts,
+        fallbackUsed: outcome.fallbackUsed,
       };
     };
   },

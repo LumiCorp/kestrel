@@ -207,6 +207,7 @@ export interface ReplyToRequestInput {
 
 export interface ResumeBlockedTurnInput {
   threadId: string;
+  requestId: string;
   message: string;
   interactionMode?: InteractionMode | undefined;
   actSubmode?: ActSubmode | undefined;

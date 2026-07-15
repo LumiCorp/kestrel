@@ -46,7 +46,6 @@ export {
 } from "../agents/reference-react/src/index.js";
 export * from "./web/index.js";
 export * from "./orchestration/index.js";
-export * from "./reasoning/index.js";
 export * from "./taskGraph/contracts.js";
 export * from "./taskGraph/RuntimeTaskGraphProjection.js";
 export * from "./taskGraph/state.js";
@@ -69,6 +68,7 @@ export * from "./workspace/threadWorkspaceBinding.js";
 export * from "./workspace/WorkspaceAuthority.js";
 export * from "./workspace/ManagedTaskWorktreeService.js";
 export * from "./workspace/RuntimeWorkspaceServices.js";
+export * from "./runtime/ProviderReasoningVault.js";
 export * from "./workspaceCheckpoints/contracts.js";
 export * from "./workspaceCheckpoints/state.js";
 export * from "./workspaceCheckpoints/service.js";

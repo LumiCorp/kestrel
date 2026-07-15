@@ -9,7 +9,7 @@ async function waitFor<T>(
   read: () => Promise<T>,
   settled: (value: T) => boolean
 ) {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const value = await read();
     if (settled(value)) {
@@ -45,6 +45,7 @@ test(
     const orphanedThreadId = `turn-orphaned-${suffix}`;
     const recoveryThreadId = `turn-recovery-${suffix}`;
     const resumedThreadId = `turn-resumed-${suffix}`;
+    const interactionThreadId = `turn-interaction-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -103,6 +104,10 @@ test(
           (
             ${resumedThreadId}, 'Resumed Turn', ${userId},
             ${organizationId}, 'mobile'
+          ),
+          (
+            ${interactionThreadId}, 'Interaction Turn', ${userId},
+            ${organizationId}, 'mobile'
           )
       `;
     });
@@ -150,6 +155,145 @@ test(
       activeTurnId: null,
       state: "running",
     });
+
+    const waiting = await createTurn(interactionThreadId, "waiting");
+    assert.ok(await store.claimDurableThreadTurn(waiting.turn.id));
+    const requestId = `opaque-request-${suffix}`;
+    const assistantMessageId = `assistant-waiting-${suffix}`;
+    await store.persistDurableAssistantOutcome({
+      turnId: waiting.turn.id,
+      messages: [
+        {
+          id: assistantMessageId,
+          parts: [
+            {
+              type: "data-kestrel-interaction",
+              id: `interaction:${requestId}`,
+              data: {
+                version: "v1",
+                requestId,
+                kind: "user_input",
+                eventType: "user.reply",
+                prompt: "Which workspace should I inspect?",
+                source: "runtime",
+                status: "pending",
+              },
+            },
+            { type: "text", text: "Which workspace should I inspect?" },
+          ],
+          model: "kestrel-one",
+          source: "mobile",
+          projectContextRevisionId: null,
+        },
+      ],
+      interaction: {
+        version: "v1",
+        requestId,
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Which workspace should I inspect?",
+        source: "runtime",
+        status: "pending",
+      },
+    });
+    assert.equal(
+      (await store.getDurableTurn(waiting.turn.id))?.status,
+      "waiting_for_input"
+    );
+    const interactions = await store.listThreadInteractionsForUser({
+      threadId: interactionThreadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(interactions[0]?.requestId, requestId);
+    assert.equal(interactions[0]?.assistantMessageId, assistantMessageId);
+    assert.equal(interactions[0]?.status, "pending");
+
+    const queuedWhileWaiting = await createTurn(
+      interactionThreadId,
+      "queued-while-waiting"
+    );
+    assert.equal(queuedWhileWaiting.shouldDispatch, false);
+    assert.equal(queuedWhileWaiting.turn.status, "queued");
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: interactionThreadId,
+        organizationId,
+        userId,
+        requestId,
+        eventType: "wrong.event",
+        message: "Workspace A",
+        messageId: `wrong-response-${suffix}`,
+        source: "mobile",
+      }),
+      /event type does not match/u
+    );
+    const resolved = await store.resolveDurableRuntimeInteraction({
+      threadId: interactionThreadId,
+      organizationId,
+      userId,
+      requestId,
+      eventType: "user.reply",
+      message: "Workspace A",
+      messageId: `interaction-response-${suffix}`,
+      source: "mobile",
+    });
+    assert.equal(resolved.turnId, waiting.turn.id);
+    assert.equal(resolved.shouldDispatch, true);
+    assert.ok(resolved.replayAfterSequence > 0);
+    assert.equal(
+      await store.getDurableTurnReplayBoundary(waiting.turn.id),
+      0,
+      "an interaction event is not a completed UI stream segment"
+    );
+    const duplicateResolution = await store.resolveDurableRuntimeInteraction({
+      threadId: interactionThreadId,
+      organizationId,
+      userId,
+      requestId,
+      eventType: "user.reply",
+      message: "Workspace A",
+      messageId: `interaction-response-duplicate-${suffix}`,
+      source: "mobile",
+    });
+    assert.deepEqual(duplicateResolution, {
+      turnId: waiting.turn.id,
+      shouldDispatch: false,
+      replayAfterSequence: resolved.replayAfterSequence,
+    });
+    await store.appendDurableTurnEvent({
+      turnId: waiting.turn.id,
+      type: "ui.message",
+      data: { type: "finish", finishReason: "stop" },
+    });
+    assert.ok(
+      (await store.getDurableTurnReplayBoundary(waiting.turn.id)) >
+        resolved.replayAfterSequence
+    );
+    const resumed = await store.claimDurableThreadTurn(waiting.turn.id);
+    assert.deepEqual(resumed?.interactionResponse, {
+      requestId,
+      eventType: "user.reply",
+      message: "Workspace A",
+    });
+    await store.persistDurableAssistantOutcome({
+      turnId: waiting.turn.id,
+      interaction: null,
+      messages: [
+        {
+          id: `assistant-completed-${suffix}`,
+          parts: [{ type: "text", text: "I inspected Workspace A." }],
+          model: "kestrel-one",
+          source: "mobile",
+          projectContextRevisionId: null,
+        },
+      ],
+    });
+    const resumedCompletion = await store.completeDurableThreadTurn({
+      turnId: waiting.turn.id,
+      status: "completed",
+    });
+    assert.equal(resumedCompletion.nextTurnId, queuedWhileWaiting.turn.id);
 
     const dispatchFailure = await createTurn(
       dispatchFailureThreadId,

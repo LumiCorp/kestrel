@@ -36,6 +36,11 @@ The exact contract types live in [tools/contracts.ts](https://github.com/LumiCor
 - `createDefaultToolGateway(...)` builds an allowlisted runtime gateway.
 - `DEFAULT_BALANCED_TOOL_ALLOWLIST` exposes the starter allowlist intended for balanced general-purpose runs.
 
+Kestrel One Apps govern these same canonical runtime names. Built-in App
+capabilities must point at the shared catalog name (for example,
+`free.weather.current`) instead of defining a second app-only tool name or
+handler.
+
 Example:
 
 ```ts
@@ -54,6 +59,8 @@ const toolGateway = createDefaultToolGateway({
 - Boundary-facing handlers should parse or validate unknown input before use.
 - Runtime-facing failures should use normalized error shapes.
 - Internet tools expose normalized provider-backed envelopes rather than leaking provider-specific raw payloads into higher layers.
+- Provider credentials enter shared handlers only through the scoped `providerConfigurations` resolver; diagnostic serialization exposes readiness, never secret values.
+- Weather uses one normalized provider adapter contract for Open-Meteo and Visual Crossing. Local Visual Crossing calls use the scoped credential resolver, while Kestrel One calls use the App broker so hosted credentials remain server-side. Its explicit sequence is one Open-Meteo attempt capped at 8 seconds followed, only for approved retryable failures, by one Visual Crossing attempt capped at the remaining portion of an 18-second provider budget (and never more than 10 seconds).
 - Filesystem tools are wrapped with the default filesystem policy before handler registration.
 
 ## Active Defaults and Intentional Non-Defaults

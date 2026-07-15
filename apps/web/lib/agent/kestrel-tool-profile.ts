@@ -32,7 +32,27 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   string,
   { appKey: string; capabilityKey: string }
 >([
-  ["getWeather", { appKey: "built_in.weather", capabilityKey: "getWeather" }],
+  [
+    "free.weather.current",
+    { appKey: "built_in.weather", capabilityKey: "getWeather" },
+  ],
+  [
+    "free.weather.forecast",
+    { appKey: "built_in.weather", capabilityKey: "forecast" },
+  ],
+  ["free.time.current", { appKey: "built_in.time", capabilityKey: "current" }],
+  [
+    "free.geocode.lookup",
+    { appKey: "built_in.geocoding", capabilityKey: "lookup" },
+  ],
+  [
+    "free.exchange.rate",
+    { appKey: "built_in.exchange_rates", capabilityKey: "rate" },
+  ],
+  [
+    "free.hn.top",
+    { appKey: "built_in.hacker_news", capabilityKey: "topStories" },
+  ],
   [
     "kestrel_one.search_knowledge_documents",
     {

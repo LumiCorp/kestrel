@@ -1,5 +1,15 @@
 import { SiDiscord, SiGithub, SiYoutube } from "@icons-pack/react-simple-icons";
-import { BookOpen, Boxes, CloudSun, FileText, Terminal } from "lucide-react";
+import {
+  ArrowLeftRight,
+  BookOpen,
+  Boxes,
+  Clock,
+  CloudSun,
+  FileText,
+  MapPin,
+  Newspaper,
+  Terminal,
+} from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +52,18 @@ export function AppIcon({
     }
     if (appKey === "built_in.weather") {
       return <CloudSun aria-hidden className={iconClass} />;
+    }
+    if (appKey === "built_in.time") {
+      return <Clock aria-hidden className={iconClass} />;
+    }
+    if (appKey === "built_in.geocoding") {
+      return <MapPin aria-hidden className={iconClass} />;
+    }
+    if (appKey === "built_in.exchange_rates") {
+      return <ArrowLeftRight aria-hidden className={iconClass} />;
+    }
+    if (appKey === "built_in.hacker_news") {
+      return <Newspaper aria-hidden className={iconClass} />;
     }
     if (appKey === "built_in.knowledge_search") {
       return <BookOpen aria-hidden className={iconClass} />;

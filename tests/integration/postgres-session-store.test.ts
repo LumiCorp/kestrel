@@ -9,6 +9,33 @@ import {
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 
+test("getSession normalizes database Date timestamps before protocol projection", async () => {
+  const updatedAt = new Date("2026-07-14T23:27:08.000Z");
+  const sql = new ScriptedSqlExecutor([
+    {
+      match: /^SELECT session_id, current_version, current_step_agent, updated_at, current_state_json, legacy_readonly/,
+      rows: [
+        {
+          session_id: "session-date",
+          current_version: 3,
+          current_step_agent: "agent.loop",
+          updated_at: updatedAt,
+          current_state_json: {},
+          legacy_readonly: false,
+        },
+      ],
+    },
+  ]);
+
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(
+    (await store.getSession("session-date"))?.updatedAt,
+    updatedAt.toISOString()
+  );
+  sql.assertExhausted();
+});
+
 test("listRunSummaries projects bounded event aggregates in one query", async () => {
   const sql = new ScriptedSqlExecutor([
     {

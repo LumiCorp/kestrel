@@ -11,8 +11,9 @@ import {
   decryptAppCredential,
   encryptAppCredential,
 } from "./credential-crypto";
-import { validateTavilyConnection } from "./tavily-connection";
+import { getAppProviderAdapter } from "./provider-adapter";
 import type {
+  AppAuthMethod,
   AppCatalogItem,
   AppConnectionSummary,
   AppDetail,
@@ -22,10 +23,27 @@ import type {
   EnvironmentAppConfiguration,
 } from "./types";
 
+const APP_AUTH_METHODS = new Set<AppAuthMethod>([
+  "none",
+  "api_key",
+  "oauth_personal",
+  "oauth_environment",
+  "deployment_managed",
+]);
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function authMethods(value: unknown): AppAuthMethod[] {
+  const methods = record(value).authMethods;
+  if (!Array.isArray(methods)) return [];
+  return methods.filter(
+    (method): method is AppAuthMethod =>
+      typeof method === "string" && APP_AUTH_METHODS.has(method as AppAuthMethod)
+  );
 }
 
 export class AppServiceError extends Error {
@@ -58,6 +76,7 @@ export async function ensureCoreAppCatalog() {
         category: app.category,
         kind: app.kind,
         connectionModel: app.connectionModel,
+        connectionRequirement: app.connectionRequirement,
         delivery: app.delivery,
         installMode: app.installMode,
         icon: app.icon,
@@ -75,6 +94,7 @@ export async function ensureCoreAppCatalog() {
           category: app.category,
           kind: app.kind,
           connectionModel: app.connectionModel,
+          connectionRequirement: app.connectionRequirement,
           delivery: app.delivery,
           installMode: app.installMode,
           icon: app.icon,
@@ -203,7 +223,8 @@ export async function ensureEnvironmentAppPolicies(input: {
 function resolveReadiness(input: {
   installMode: "inherited" | "explicit";
   installationStatus: AppInstallationStatus;
-  connectionModel: "none" | "personal" | "environment";
+  connectionModel: "none" | "personal" | "environment" | "hybrid";
+  connectionRequirement: "none" | "optional" | "required";
   connections: AppConnectionSummary[];
 }): AppReadiness {
   if (input.installationStatus === "disabled") return "disabled";
@@ -213,7 +234,12 @@ function resolveReadiness(input: {
   ) {
     return "install_required";
   }
-  if (input.connectionModel === "none") return "ready";
+  if (
+    input.connectionModel === "none" ||
+    input.connectionRequirement !== "required"
+  ) {
+    return "ready";
+  }
   if (
     input.connections.some((connection) => connection.status === "connected")
   ) {
@@ -300,6 +326,8 @@ export async function listAppsForOrganization(input: {
       category: definition.category,
       kind: definition.kind,
       connectionModel: definition.connectionModel,
+      connectionRequirement: definition.connectionRequirement,
+      authMethods: authMethods(definition.metadata),
       delivery: definition.delivery,
       installMode: definition.installMode,
       icon: definition.icon,
@@ -308,6 +336,7 @@ export async function listAppsForOrganization(input: {
         installMode: definition.installMode,
         installationStatus,
         connectionModel: definition.connectionModel,
+        connectionRequirement: definition.connectionRequirement,
         connections,
       }),
       capabilityCount: appCapabilities.length,
@@ -573,6 +602,8 @@ export async function getEnvironmentAppConfiguration(input: {
       description: definition.description,
       category: definition.category,
       connectionModel: definition.connectionModel,
+      connectionRequirement: definition.connectionRequirement,
+      authMethods: authMethods(definition.metadata),
       delivery: definition.delivery,
       icon: definition.icon,
       installationStatus,
@@ -580,6 +611,7 @@ export async function getEnvironmentAppConfiguration(input: {
         installMode: definition.installMode,
         installationStatus,
         connectionModel: definition.connectionModel,
+        connectionRequirement: definition.connectionRequirement,
         connections,
       }),
     },
@@ -643,13 +675,28 @@ async function validateEnvironmentConnection(
   appKey: string,
   input: CreateEnvironmentAppConnectionInput
 ) {
-  if (appKey !== "tavily") {
+  const adapter = getAppProviderAdapter(appKey);
+  if (!adapter?.validateEnvironmentConnection) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_SUPPORTED",
       "This App does not support managed Environment connections yet."
     );
   }
-  return validateTavilyConnection(input);
+  return adapter.validateEnvironmentConnection(input);
+}
+
+function createEnvironmentCredential(
+  appKey: string,
+  input: CreateEnvironmentAppConnectionInput
+) {
+  const adapter = getAppProviderAdapter(appKey);
+  if (!adapter?.createEnvironmentCredential) {
+    throw new AppServiceError(
+      "APP_CONNECTION_NOT_SUPPORTED",
+      "This App does not support managed Environment credentials yet."
+    );
+  }
+  return adapter.createEnvironmentCredential(input);
 }
 
 export async function saveEnvironmentAppConnection(input: {
@@ -661,7 +708,8 @@ export async function saveEnvironmentAppConnection(input: {
 }) {
   const { definition } = await requireEnvironmentApp(input);
   if (
-    definition.connectionModel !== "environment" ||
+    (definition.connectionModel !== "environment" &&
+      definition.connectionModel !== "hybrid") ||
     definition.delivery !== "api_key"
   ) {
     throw new AppServiceError(
@@ -670,6 +718,10 @@ export async function saveEnvironmentAppConnection(input: {
     );
   }
   const health = await validateEnvironmentConnection(
+    input.appKey,
+    input.connection
+  );
+  const credentialPayload = createEnvironmentCredential(
     input.appKey,
     input.connection
   );
@@ -692,16 +744,7 @@ export async function saveEnvironmentAppConnection(input: {
         .where(eq(schema.appCredentials.id, existing.credentialId));
     }
     const credentialId = crypto.randomUUID();
-    const payload: AppCredentialPayload = {
-      kind: "api_key",
-      apiKey: input.connection.apiKey,
-      ...(input.connection.projectId
-        ? { projectId: input.connection.projectId }
-        : {}),
-      ...(input.connection.baseUrl
-        ? { baseUrl: input.connection.baseUrl }
-        : {}),
-    };
+    const payload: AppCredentialPayload = credentialPayload;
     const encryptedPayload = encryptAppCredential({
       organizationId: input.organizationId,
       environmentId: input.environmentId,

@@ -54,3 +54,30 @@ test("prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback 
 
   assert.equal(assistant.parts.some((part) => part.type === "text"), true);
 });
+
+test("prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
+  const messages = prepareKestrelRuntimeMessagesForPersistence(
+    [
+      {
+        id: "assistant_reasoning",
+        role: "assistant" as const,
+        parts: [
+          { type: "text", text: "Final answer." },
+          {
+            type: "data-kestrel-provider-reasoning",
+            data: {
+              label: "Provider-visible thinking",
+              delta: "This must remain live-only.",
+            },
+          },
+        ],
+      },
+    ] as Parameters<typeof prepareKestrelRuntimeMessagesForPersistence>[0],
+    {
+      errorMessage: null,
+      failureVisible: false,
+    }
+  );
+
+  assert.deepEqual(messages[0]?.parts, [{ type: "text", text: "Final answer." }]);
+});

@@ -1,0 +1,51 @@
+---
+title: Provider reasoning and agent progress
+summary: Display provider-returned reasoning truthfully, persist only committed agent progress, and keep encrypted continuation state out of every visible surface.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-07-15
+---
+
+Kestrel has two distinct semantic activity channels:
+
+| Channel | Source | Durability | Display rule |
+| --- | --- | --- | --- |
+| `run.model.reasoning.*` | provider-returned summary or visible thinking | live-only by default | label the declared format and attempt |
+| `run.agent_progress` | primary agent decision after validation and commit | durable | show as concise Agent progress |
+
+Do not turn `run.progress`, logs, model timing, Environment activation, or tool
+lifecycle events into agent-authored narration.
+
+## Provider truthfulness
+
+- OpenAI content is a **Provider reasoning summary**, never raw reasoning.
+- Anthropic thinking is **Provider-visible thinking**; signatures continue back
+  to Anthropic but never render.
+- OpenRouter reasoning details preserve provider order and declared format.
+- Unsupported or empty provider output is **Provider reasoning unavailable**.
+- Encrypted or opaque continuation state never appears in events, UI, logs,
+  traces, prompts, conversation history, or retained-visible records.
+
+Visible attempts have separate attempt IDs. Once a visible reasoning or output
+event begins, Kestrel does not automatically retry that call.
+
+## Retention and inspection
+
+Provider-visible content is live-only unless a profile or Environment
+explicitly enables encrypted `provider_visible` retention. The allowed window
+is 1–30 days and defaults to seven. Organization administrators inspect
+retained content outside normal conversation history; every policy change,
+view, and deletion is audited. Disabling or shortening the policy removes or
+clamps existing scoped content before the next runtime command.
+
+Hosted runtimes must have a valid 32-byte
+`KESTREL_REASONING_MASTER_KEY`. Runtime startup and retained inspection fail
+closed when encryption readiness is unavailable.
+
+## Reconnect behavior
+
+Same-process reconnect can replay the live overlay once by event ID. After a
+runner restart, only redacted `not_retained` metadata remains. Agent progress
+and final answers remain durable across reloads.

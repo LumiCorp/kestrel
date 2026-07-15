@@ -10,6 +10,7 @@ import type { RunTurnResult } from "../../cli/runtime/KestrelChatRuntime.js";
 import { buildPersistedRuntimeEventFromToolUpdate } from "../../src/events/RuntimeEventProjections.js";
 import type {
   ProgressUpdateV1,
+  ModelReasoningUpdateV1,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
   RunEvent,
@@ -333,7 +334,7 @@ test("run.start emits started/log/completed protocol events", async () => {
   let logListener: ((entry: RunLogEntry) => void) | undefined;
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
   let consoleListener: ((update: RunConsoleUpdateV1) => void) | undefined;
-  let reasoningListener: ((update: ReasoningUpdateV1) => void) | undefined;
+  let reasoningListener: ((update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void) | undefined;
   let runEventListener: ((event: RunEvent) => void) | undefined;
   const runtimeFactory = (): RunnerRuntime => ({
     runTurn: async () => {
@@ -367,16 +368,31 @@ test("run.start emits started/log/completed protocol events", async () => {
         channel: "stdout",
         text: "ok\\n",
       });
+      reasoningListener?.({
+        version: "v1",
+        runId: "run-123",
+        sessionId: "session-1",
+        ts: new Date().toISOString(),
+        seq: 3,
+        event: "delta",
+        attempt: 1,
+        format: "summary",
+        delta: "Checking the accepted action.",
+        contentState: "live",
+      });
       runEventListener?.({
         runId: "run-123",
         sessionId: "session-1",
-        type: "reasoning.update",
+        type: "agent.progress",
         level: "INFO",
         timestamp: new Date().toISOString(),
+        stepIndex: 1,
         metadata: {
-          milestone: "phase_changed",
-          message: "I am refining the next action.",
-          seq: 1,
+          version: "v1",
+          message: "I am applying the accepted action.",
+          seq: 4,
+          ts: new Date().toISOString(),
+          stepAgent: "agent.loop",
         },
       });
       return {
@@ -467,7 +483,8 @@ test("run.start emits started/log/completed protocol events", async () => {
     "run.log",
     "run.progress",
     "run.console",
-    "run.reasoning",
+    "run.model.reasoning.delta",
+    "run.agent_progress",
     "run.completed",
   ]);
   const startedPayload = events[0]?.payload as
@@ -493,7 +510,7 @@ test("run.start accepts build interactionMode and forwards it in run.started", a
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
-      assistantText: null,
+      assistantText: "done",
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,
@@ -672,7 +689,7 @@ test("run.start fails closed when runtime returns a different runId than request
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
     runTurn: async (input) => ({
-      assistantText: null,
+      assistantText: "done",
       output: {
         status: "COMPLETED",
         sessionId: input.sessionId,

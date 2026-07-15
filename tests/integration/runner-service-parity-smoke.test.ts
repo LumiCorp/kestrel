@@ -61,7 +61,7 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
 
           if (resumed) {
             return {
-              assistantText: null,
+              assistantText: "The parity workflow completed.",
               output: {
                 status: "COMPLETED",
                 sessionId: input.sessionId,
@@ -84,15 +84,27 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
           }
 
           return {
-            assistantText: null,
+            assistantText: "Should I continue the parity workflow?",
             output: {
               status: "WAITING",
               sessionId: input.sessionId,
               runId,
               errors: [],
               waitFor: {
-                eventType: "user.message",
-                reason: "awaiting_input",
+                kind: "user",
+                eventType: "user.reply",
+                interaction: {
+                  version: "v1",
+                  requestId: "request-parity-resume",
+                  kind: "user_input",
+                  eventType: "user.reply",
+                  prompt: "Should I continue the parity workflow?",
+                },
+                metadata: {
+                  prompt: "Should I continue the parity workflow?",
+                  requestId: "request-parity-resume",
+                  reason: "awaiting_input",
+                },
               },
               quality: {
                 citationCoverage: 1,
@@ -174,8 +186,9 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
           turn: {
             sessionId: "session-parity-main",
             message: "Approved.",
-            eventType: "user.message",
+            eventType: "user.reply",
             resumeBlockedRun: true,
+            resumeRequestId: "request-parity-resume",
           },
         },
       }),

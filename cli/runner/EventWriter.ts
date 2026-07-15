@@ -21,6 +21,7 @@ export interface RunnerEventSink {
       sessionId?: string | undefined;
       threadId?: string | undefined;
       commandId?: string | undefined;
+      durability?: "durable" | "live_only" | undefined;
     },
   ): void;
 }
@@ -40,6 +41,7 @@ export class EventWriter implements RunnerEventSink {
       sessionId?: string | undefined;
       threadId?: string | undefined;
       commandId?: string | undefined;
+      durability?: "durable" | "live_only" | undefined;
     } = {},
   ): void {
     const normalizedPayload = normalizeRunnerEventPayload(type, payload);

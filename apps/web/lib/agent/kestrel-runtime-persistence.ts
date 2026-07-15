@@ -10,9 +10,17 @@ export function prepareKestrelRuntimeMessagesForPersistence(
   messages: UIMessage[],
   meta: KestrelRuntimePersistenceMeta
 ) {
+  const persistableMessages = messages.map((message) => {
+    const parts = message.parts.filter(
+      (part) => part.type !== "data-kestrel-provider-reasoning"
+    );
+
+    return parts.length === message.parts.length ? message : { ...message, parts };
+  });
+
   if (meta.errorMessage && !meta.failureVisible) {
-    return ensureAssistantFailureVisibility(messages, meta.errorMessage);
+    return ensureAssistantFailureVisibility(persistableMessages, meta.errorMessage);
   }
 
-  return messages;
+  return persistableMessages;
 }

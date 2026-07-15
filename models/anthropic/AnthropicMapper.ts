@@ -29,6 +29,15 @@ export function buildAnthropicHttpRequest(
     model,
     messages,
   };
+  if (request.reasoning !== undefined && request.reasoning.mode !== "off") {
+    body.thinking = {
+      type: "adaptive",
+      display: "summarized",
+    };
+    if (request.reasoning.effort !== undefined) {
+      body.output_config = { effort: request.reasoning.effort };
+    }
+  }
   if (system !== undefined) {
     body.system = system;
   }
@@ -51,7 +60,9 @@ export function buildAnthropicHttpRequest(
       name: structuredOutput.schemaName,
     };
   } else {
-    const toolChoice = provider?.toolChoice ?? fallback?.toolChoice;
+    const toolChoice = request.reasoning?.mode !== undefined && request.reasoning.mode !== "off"
+      ? "auto"
+      : provider?.toolChoice ?? fallback?.toolChoice;
     if (typeof toolChoice === "string") {
       body.tool_choice =
         toolChoice === "required"
@@ -90,6 +101,8 @@ export function mapAnthropicResponse<TOutput>(
   const content = asArray(root?.content);
   const textParts: string[] = [];
   const toolIntents: ModelToolIntent[] = [];
+  const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
+  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] = [];
   let structuredOutputValue: TOutput | undefined;
 
   for (const block of content) {
@@ -99,6 +112,16 @@ export function mapAnthropicResponse<TOutput>(
       const text = asString(record?.text);
       if (text !== undefined) {
         textParts.push(text);
+      }
+      continue;
+    }
+    if (type === "thinking") {
+      const thinking = asString(record?.thinking);
+      if (thinking !== undefined && thinking.length > 0) {
+        visible.push({ format: "provider_thinking", text: thinking });
+      }
+      if (record?.signature !== undefined) {
+        continuation.push({ provider: "anthropic", kind: "signature", value: record });
       }
       continue;
     }
@@ -128,6 +151,7 @@ export function mapAnthropicResponse<TOutput>(
     ...(text !== undefined ? { text } : {}),
     toolIntents,
     usage: mapUsage(asRecord(root?.usage)),
+    ...(visible.length > 0 || continuation.length > 0 ? { reasoning: { visible, continuation } } : {}),
     provider: {
       name: "anthropic",
       model: asString(root?.model) ?? context.requestedModel,
@@ -187,7 +211,22 @@ function toAnthropicMessages(request: ModelRequest): Array<Record<string, unknow
         content: typeof request.input === "string" ? request.input : safeJsonStringify(request.input),
       } satisfies ModelMessage];
 
-  return messages.map(mapAnthropicMessage);
+  const mapped = messages.map(mapAnthropicMessage);
+  const continuation = (request.reasoning?.continuation ?? [])
+    .filter((item) => item.provider === "anthropic" && item.kind === "signature")
+    .map((item) => asRecord(item.value))
+    .filter((item): item is Record<string, unknown> => item?.type === "thinking");
+  if (continuation.length === 0) {
+    return mapped;
+  }
+  for (let index = mapped.length - 1; index >= 0; index -= 1) {
+    const message = mapped[index];
+    if (message?.role !== "assistant") continue;
+    const content = Array.isArray(message.content) ? message.content : [];
+    mapped[index] = { ...message, content: [...continuation, ...content] };
+    break;
+  }
+  return mapped;
 }
 
 function mapAnthropicMessage(message: ModelMessage): Record<string, unknown> {

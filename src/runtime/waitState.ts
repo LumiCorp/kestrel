@@ -6,6 +6,7 @@ export interface RuntimeWaitMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface ActiveRuntimeWaitState extends RuntimeWaitMatcher {
@@ -26,6 +27,7 @@ export interface CanonicalRuntimeWaitingFor {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface ClearRuntimeWaitStateOptions {
@@ -74,6 +76,7 @@ export function buildWaitResumeToken(input: {
     eventType: input.waitFor.eventType,
     resumeStepAgent: input.resumeStepAgent ?? "",
     metadata: sortValue(input.waitFor.metadata),
+    interaction: sortValue(input.waitFor.interaction),
   });
 }
 
@@ -104,6 +107,7 @@ export function buildCanonicalWaitingFor(input: {
     ...(input.resumeStepAgent !== undefined ? { resumeStepAgent: input.resumeStepAgent } : {}),
     ...(input.resumeToken !== undefined ? { resumeToken: input.resumeToken } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
+    ...(input.waitFor.interaction !== undefined ? { interaction: input.waitFor.interaction } : {}),
   };
 }
 
@@ -118,6 +122,7 @@ function readCanonicalWaitingFor(value: Record<string, unknown> | undefined): Ac
   }
   const timeoutMs = readNonNegativeNumber(value.timeoutMs);
   const metadata = asRecord(value.metadata);
+  const interaction = readRuntimeInteraction(value.interaction);
   const resumeStepAgent = readNonEmptyString(value.resumeStepAgent);
   const resumeToken = readNonEmptyString(value.resumeToken);
   const reason = readNonEmptyString(value.reason);
@@ -128,12 +133,40 @@ function readCanonicalWaitingFor(value: Record<string, unknown> | undefined): Ac
     eventType,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
+    ...(interaction !== undefined ? { interaction } : {}),
     ...(resumeStepAgent !== undefined ? { resumeStepAgent } : {}),
     ...(resumeToken !== undefined ? { resumeToken } : {}),
     ...(reason !== undefined ? { reason } : {}),
     ...(resumeInstruction !== undefined ? { resumeInstruction } : {}),
     ...(value.blockedAction !== undefined ? { blockedAction: value.blockedAction } : {}),
   };
+}
+
+function readRuntimeInteraction(
+  value: unknown,
+): import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined {
+  const interaction = asRecord(value);
+  const version = interaction?.version;
+  const kind = interaction?.kind;
+  const eventType = readNonEmptyString(interaction?.eventType);
+  const prompt = readNonEmptyString(interaction?.prompt);
+  if (
+    version !== "v1" ||
+    (kind !== "user_input" && kind !== "approval") ||
+    eventType === undefined ||
+    prompt === undefined
+  ) {
+    return undefined;
+  }
+  const requestId = readNonEmptyString(interaction?.requestId);
+  return {
+    ...interaction,
+    version,
+    kind,
+    eventType,
+    prompt,
+    ...(requestId !== undefined ? { requestId } : {}),
+  } as import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1;
 }
 
 function readWaitKind(value: unknown): RuntimeWaitKind | undefined {

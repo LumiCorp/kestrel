@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createOpenRouterHttpError } from "../../models/openrouter/OpenRouterErrors.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import type { ModelGatewayCallOptions, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 
 test("createOpenRouterHttpError preserves retry-after seconds for rate limits", () => {
   const error = createOpenRouterHttpError(
@@ -236,4 +237,30 @@ test("RetryingModelGateway annotates exhausted provider retries", async () => {
   } finally {
     Math.random = originalRandom;
   }
+});
+
+test("RetryingModelGateway never starts a hidden retry after visible provider output", async () => {
+  let attempts = 0;
+  const events: string[] = [];
+  const gateway = new RetryingModelGateway(async <T>(_request: ModelRequest, options?: ModelGatewayCallOptions) => {
+    attempts += 1;
+    await options?.onEvent?.({
+      type: "reasoning.delta",
+      attempt: 1,
+      format: "summary",
+      delta: "Visible summary.",
+    });
+    throw createOpenRouterHttpError(502, JSON.stringify({ error: { message: "transient" } })) as T;
+  }, { retryCount: 2 });
+
+  await assert.rejects(() => gateway.call({ input: "test" }, {
+    onEvent: (event) => { events.push(`${event.type}:${event.attempt}`); },
+  }));
+
+  assert.equal(attempts, 1);
+  assert.deepEqual(events, [
+    "attempt.started:1",
+    "reasoning.delta:1",
+    "reasoning.failed:1",
+  ]);
 });

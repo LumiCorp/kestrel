@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { Suspense } from "react";
 
 import { Chat } from "@/components/chat";
+import { ThreadRouteLoading } from "@/components/chatbot/thread-route-loading";
 import { DataStreamHandler } from "@/components/data-stream-handler";
 import { ThreadActions } from "@/components/threads/thread-actions";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
@@ -12,11 +13,16 @@ import {
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
+import {
+  listDurableThreadQueueForUser,
+  listThreadInteractionsForUser,
+} from "@/lib/turns/store";
 import { convertToUIMessages } from "@/lib/utils";
 
-export default function Page(props: { params: Promise<{ id: string }> }) {
+export default async function Page(props: { params: Promise<{ id: string }> }) {
+  const { id } = await props.params;
   return (
-    <Suspense fallback={<div className="flex h-dvh" />}>
+    <Suspense fallback={<ThreadRouteLoading threadId={id} />}>
       <ChatPage params={props.params} />
     </Suspense>
   );
@@ -44,17 +50,32 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     environment?.id
   );
-  const [projectDetail, projectRows] = await Promise.all([
-    chat?.projectId
-      ? getProjectDetail({
-          projectId: chat.projectId,
-          organizationId,
-          userId: session.user.id,
-          includeArchived: true,
-        })
-      : Promise.resolve(null),
-    listProjectsForUser({ organizationId, userId: session.user.id }),
-  ]);
+  const [projectDetail, projectRows, durableState, interactions] =
+    await Promise.all([
+      chat?.projectId
+        ? getProjectDetail({
+            projectId: chat.projectId,
+            organizationId,
+            userId: session.user.id,
+            includeArchived: true,
+          })
+        : Promise.resolve(null),
+      listProjectsForUser({ organizationId, userId: session.user.id }),
+      chat
+        ? listDurableThreadQueueForUser({
+            threadId: chat.id,
+            organizationId,
+            userId: session.user.id,
+          })
+        : Promise.resolve(null),
+      chat
+        ? listThreadInteractionsForUser({
+            threadId: chat.id,
+            organizationId,
+            userId: session.user.id,
+          })
+        : Promise.resolve([]),
+    ]);
   const uiMessages = chat ? convertToUIMessages(chat.messages) : [];
 
   return (
@@ -69,6 +90,37 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         id={chat?.id ?? id}
         initialChatExists={Boolean(chat)}
         initialChatModel={initialChatModel}
+        initialConversationState={{
+          interactions: interactions.map((interaction) => ({
+            ...interaction,
+            createdAt: interaction.createdAt.toISOString(),
+            resolvedAt: interaction.resolvedAt?.toISOString() ?? null,
+          })),
+          turns: (durableState?.turns ?? []).map((turn) => ({
+            id: turn.id,
+            sequence: turn.sequence,
+            status: turn.status,
+            failureCode: turn.failureCode,
+            failureMessage: turn.failureMessage,
+            cancelRequestedAt: turn.cancelRequestedAt?.toISOString() ?? null,
+          })),
+          queue: durableState
+            ? {
+                ...durableState.queue,
+                pauseReason:
+                  durableState.queue.pauseReason === "turn_failed" ||
+                  durableState.queue.pauseReason === "turn_cancelled" ||
+                  durableState.queue.pauseReason === "interaction_required"
+                    ? durableState.queue.pauseReason
+                    : null,
+              }
+            : {
+                state: "running",
+                pauseReason: null,
+                activeTurnId: null,
+                version: 0,
+              },
+        }}
         initialMessages={uiMessages}
         initialShareToken={chat?.shareToken ?? null}
         initialVisibilityType={chat?.isPublic ? "public" : "private"}

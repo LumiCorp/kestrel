@@ -5,7 +5,9 @@ import type {
 } from "@/lib/tools/types";
 import type {
   AppCategory,
+  AppAuthMethod,
   AppConnectionModel,
+  AppConnectionRequirement,
   AppDelivery,
   AppInstallMode,
   AppKind,
@@ -19,6 +21,8 @@ export type AppCatalogDefinition = {
   category: AppCategory;
   kind: AppKind;
   connectionModel: AppConnectionModel;
+  connectionRequirement: AppConnectionRequirement;
+  authMethods: AppAuthMethod[];
   delivery: AppDelivery;
   installMode: AppInstallMode;
   icon: string | null;
@@ -46,43 +50,10 @@ function metadataRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function categoryFor(provider: ToolProviderDefinition): AppCategory {
-  if (provider.key === "tavily") return "search_research";
-  if (provider.type === "built_in") return "kestrel";
-  if (provider.type === "source_connector") return "knowledge_sources";
-  if (provider.key === "github") return "engineering";
-  if (provider.key === "google_workspace") return "productivity";
-  if (provider.key === "discord") return "communication";
-  if (provider.type === "custom_imported") return "custom";
-  return "productivity";
-}
-
 function kindFor(provider: ToolProviderDefinition): AppKind {
   if (provider.type === "built_in") return "built_in";
   if (provider.type === "custom_imported") return "custom";
   return "external";
-}
-
-function connectionModelFor(
-  provider: ToolProviderDefinition
-): AppConnectionModel {
-  if (provider.type === "built_in") return "none";
-  if (provider.key === "google_workspace" || provider.key === "github") {
-    return "personal";
-  }
-  return "environment";
-}
-
-function deliveryFor(provider: ToolProviderDefinition): AppDelivery {
-  if (provider.type === "built_in") return "native";
-  if (provider.type === "custom_imported") return "mcp";
-  if (provider.type === "source_connector") return "source";
-  if (provider.type === "inbound_adapter") return "webhook";
-  if (provider.authType === "oauth") return "oauth";
-  if (provider.authType === "api_key" || provider.authType === "env") {
-    return "api_key";
-  }
-  return "native";
 }
 
 function groupFor(capability: ToolCapabilityDefinition) {
@@ -108,14 +79,6 @@ function audienceFor(capability: ToolCapabilityDefinition) {
   return "project" as const;
 }
 
-function iconFor(provider: ToolProviderDefinition): string | null {
-  const icon = metadataRecord(provider.metadata).icon;
-  if (typeof icon === "string" && icon.startsWith("/")) return icon;
-  if (provider.key === "google_workspace") return "/integrations/google.svg";
-  if (provider.key === "tavily") return "/integrations/tavily.png";
-  return typeof icon === "string" ? icon : null;
-}
-
 function slugFor(key: string) {
   return key.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
 }
@@ -124,18 +87,22 @@ function toAppDefinition(
   provider: ToolProviderDefinition
 ): AppCatalogDefinition {
   const metadata = metadataRecord(provider.metadata);
+  const authMethods = [...provider.app.authMethods] as AppAuthMethod[];
   return {
     key: provider.key,
     slug: slugFor(provider.key),
     displayName: provider.displayName,
     description: provider.description,
-    category: categoryFor(provider),
+    category: provider.app.category as AppCategory,
     kind: kindFor(provider),
-    connectionModel: connectionModelFor(provider),
-    delivery: deliveryFor(provider),
-    installMode: provider.type === "built_in" ? "inherited" : "explicit",
-    icon: iconFor(provider),
-    metadata,
+    connectionModel: provider.app.connectionModel as AppConnectionModel,
+    connectionRequirement:
+      provider.app.connectionRequirement as AppConnectionRequirement,
+    authMethods,
+    delivery: provider.app.delivery as AppDelivery,
+    installMode: provider.app.installMode as AppInstallMode,
+    icon: provider.app.icon,
+    metadata: { ...metadata, authMethods },
     capabilities: provider.capabilities.map((capability) => ({
       key: capability.key,
       runtimeName: capability.runtimeName,

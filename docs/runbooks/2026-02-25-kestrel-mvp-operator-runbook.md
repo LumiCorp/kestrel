@@ -57,8 +57,8 @@ Failure is recorded and execution continues.
 
 ## Reasoning and Evidence Guardrails
 
-1. Reasoning sidecar updates are non-authoritative diagnostics and must never fail the run.
-2. Keep reasoning output bounded (model, timeout, token budget) and replay-visible through `reasoning.update` events.
+1. Provider-returned reasoning summaries or visible thinking are non-authoritative, live-only diagnostics and must never fail the run.
+2. Keep provider formats and attempts explicit. Do not render encrypted continuation state or expose historical internal `reasoning.update` records as public reasoning.
 3. Evidence recovery must terminate via explicit outcomes (broaden, targeted fetch, handoff/finalize fallback, low-signal stop) rather than silent loops.
 4. News fetch heuristics now strip nav/menu boilerplate before rating quality so truncated headers no longer trigger `low_signal_mix`; the operator is looking at cleaned article bodies when reviewing evidence diagnostics.
 

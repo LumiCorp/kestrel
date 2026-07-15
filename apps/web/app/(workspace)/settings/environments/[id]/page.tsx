@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { ReasoningPolicyForm } from "./reasoning-policy-form";
 
 export default async function EnvironmentOverviewPage({
   params,
@@ -14,6 +15,7 @@ export default async function EnvironmentOverviewPage({
     environmentId: id,
   });
   return (
+    <div className="grid gap-6">
     <Card>
       <CardHeader>
         <CardTitle>Overview</CardTitle>
@@ -33,5 +35,24 @@ export default async function EnvironmentOverviewPage({
         </div>
       </CardContent>
     </Card>
+    {environment ? (
+      <Card>
+        <CardHeader>
+          <CardTitle>Provider reasoning</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ReasoningPolicyForm
+            environmentId={environment.id}
+            initial={{
+              requestMode: environment.reasoningRequestMode,
+              ...(environment.reasoningEffort ? { effort: environment.reasoningEffort } : {}),
+              retentionMode: environment.reasoningRetentionMode,
+              retentionDays: environment.reasoningRetentionDays,
+            }}
+          />
+        </CardContent>
+      </Card>
+    ) : null}
+    </div>
   );
 }

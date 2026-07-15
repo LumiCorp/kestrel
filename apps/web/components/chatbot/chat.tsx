@@ -39,6 +39,11 @@ import {
   writeChatFirstTurnHandoff,
 } from "@/lib/chat/first-turn-handoff";
 import { ChatbotError } from "@/lib/errors";
+import {
+  emptyThreadConversationState,
+  type ThreadConversationState,
+  threadConversationStateSchema,
+} from "@/lib/turns/client-contract";
 import type {
   Attachment,
   ChatFirstTurnHandoff,
@@ -50,10 +55,14 @@ import type {
 import { fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
 import { Artifact } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
-import { McpInteractionPanel } from "./mcp-interaction-panel";
+import {
+  InteractionPanel,
+  type RuntimeInteractionResponse,
+} from "./interaction-panel";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
 import { getThreadHistoryPaginationKey } from "./sidebar-history";
+import { ThreadRouteLoading } from "./thread-route-loading";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
 
@@ -70,13 +79,13 @@ type ChatController = {
 function createChatTransport(
   currentModelIdRef: { current: string },
   resumeTurnIdRef: { current: string | null },
-  onSuccessfulResponse?: () => void
+  onSuccessfulResponse?: (response: Response) => void
 ) {
   return new CompatibleChatTransport<ChatMessage>({
     api: "/api/threads",
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const response = await fetchWithErrorHandlers(input, init);
-      onSuccessfulResponse?.();
+      onSuccessfulResponse?.(response);
       return response;
     }) as typeof fetch,
     prepareSendMessagesRequest(request) {
@@ -220,6 +229,7 @@ function useChatCallbacks(input: {
   hasShownResumedToastRef?: { current: boolean };
   hasShownStreamWarningRef?: { current: boolean };
   mutate: ReturnType<typeof useSWRConfig>["mutate"];
+  refreshConversationState?: () => Promise<void>;
   setDataStream: Dispatch<SetStateAction<unknown[]>>;
   setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
 }) {
@@ -274,6 +284,7 @@ function useChatCallbacks(input: {
     },
     onFinish: () => {
       input.mutate(unstable_serialize(getThreadHistoryPaginationKey));
+      void input.refreshConversationState?.().catch(() => {});
     },
     onError: (error: unknown) => {
       input.setDataStream([]);
@@ -320,6 +331,10 @@ function ChatShell({
   selectedVisibilityType,
   sendMessage,
   queueMessage,
+  conversationState,
+  onInterrupt,
+  onRefreshConversationState,
+  onRuntimeInteractionResponse,
   setAttachments,
   setInput,
   setMessages,
@@ -350,6 +365,12 @@ function ChatShell({
   selectedVisibilityType: VisibilityType;
   sendMessage: ChatController["sendMessage"];
   queueMessage?: (message: ChatMessage) => void;
+  conversationState: ThreadConversationState;
+  onInterrupt?: () => Promise<void>;
+  onRefreshConversationState: () => Promise<void>;
+  onRuntimeInteractionResponse: (
+    interaction: RuntimeInteractionResponse
+  ) => Promise<void>;
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
   setInput: Dispatch<SetStateAction<string>>;
   setMessages: ChatController["setMessages"];
@@ -390,8 +411,12 @@ function ChatShell({
         />
 
         {isReadonly || !threadExists ? null : (
-          <McpInteractionPanel
-            active={status === "submitted" || status === "streaming"}
+          <InteractionPanel
+            interactions={conversationState.interactions.filter(
+              (interaction) => interaction.status === "pending"
+            )}
+            onResolved={onRefreshConversationState}
+            onRuntimeResponse={onRuntimeInteractionResponse}
             threadId={threadId}
           />
         )}
@@ -402,9 +427,11 @@ function ChatShell({
               activeEnvironmentName={activeEnvironment?.name}
               attachments={attachments}
               clearError={clearError}
+              conversationState={conversationState}
               input={input}
               messages={messages}
               modelScopeQuery={modelScopeQuery}
+              onInterrupt={onInterrupt}
               onModelChange={onModelChange}
               queueMessage={queueMessage}
               selectedModelId={currentModelId}
@@ -557,6 +584,7 @@ export function BootstrapChat({
         clearError={() => {
           shared.setDataStream([]);
         }}
+        conversationState={emptyThreadConversationState}
         currentModelId={shared.currentModelId}
         feedbackByMessageId={{}}
         headerReadonly={true}
@@ -568,6 +596,8 @@ export function BootstrapChat({
         }
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
+        onRefreshConversationState={async () => {}}
+        onRuntimeInteractionResponse={async () => {}}
         project={
           projectId && projectName ? { id: projectId, name: projectName } : null
         }
@@ -598,6 +628,7 @@ export function Chat({
   initialVisibilityType,
   initialShareToken,
   initialChatExists,
+  initialConversationState,
   isReadonly,
   canPublish = true,
   activeEnvironment,
@@ -610,6 +641,7 @@ export function Chat({
   initialVisibilityType: VisibilityType;
   initialShareToken?: string | null;
   initialChatExists: boolean;
+  initialConversationState: ThreadConversationState;
   isReadonly: boolean;
   canPublish?: boolean;
   activeEnvironment?: { id: string; name: string };
@@ -632,17 +664,31 @@ export function Chat({
   const hasStartedHandoffRequestRef = useRef(false);
   const [chatExists, setChatExists] = useState(initialChatExists);
   const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
+  const [conversationState, setConversationState] = useState(
+    initialConversationState
+  );
   const resumeTurnIdRef = useRef<string | null>(null);
+  const streamedTurnIdRef = useRef<string | null>(
+    initialConversationState.turns.find(
+      (turn) =>
+        turn.id === initialConversationState.queue.activeTurnId &&
+        (turn.status === "queued" || turn.status === "running")
+    )?.id ?? null
+  );
   const [handoff, setHandoff] = useState<
     ChatFirstTurnHandoff | null | undefined
   >(undefined);
 
   useEffect(() => {
     setChatExists(initialChatExists);
-  }, [id, initialChatExists]);
+    setConversationState(initialConversationState);
+  }, [id, initialChatExists, initialConversationState]);
 
   useEffect(() => {
     hasStartedHandoffRequestRef.current = false;
+    hasShownResumeWarningRef.current = false;
+    hasShownResumedToastRef.current = false;
+    hasShownStreamWarningRef.current = false;
     resetArtifact();
     setMetadata(null);
     setDataStream([]);
@@ -660,6 +706,25 @@ export function Chat({
     }
   }, [handoff?.modelId, shared.setCurrentModelId]);
 
+  const refreshConversationState = useCallback(async () => {
+    if (!chatExists) return;
+    const response = await fetch(`/api/threads/${id}/turns`, {
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof payload.error === "string"
+          ? payload.error
+          : "Conversation state could not be refreshed."
+      );
+    }
+    const nextState = threadConversationStateSchema.parse(payload);
+    setConversationState((current) =>
+      nextState.queue.version >= current.queue.version ? nextState : current
+    );
+  }, [chatExists, id]);
+
   const callbacks = useChatCallbacks({
     currentModelId: shared.currentModelId,
     currentModelIdRef: shared.currentModelIdRef,
@@ -667,23 +732,101 @@ export function Chat({
     hasShownResumedToastRef,
     hasShownStreamWarningRef,
     mutate,
+    refreshConversationState,
     setDataStream: shared.setDataStream as Dispatch<SetStateAction<unknown[]>>,
     setShowCreditCardAlert: shared.setShowCreditCardAlert,
   });
 
+  const chatTransport = useMemo(
+    () =>
+      createChatTransport(
+        shared.currentModelIdRef,
+        resumeTurnIdRef,
+        (response) => {
+          setChatExists(true);
+          const turnId = response.headers.get("x-kestrel-turn-id")?.trim();
+          if (turnId) streamedTurnIdRef.current = turnId;
+        }
+      ),
+    [shared.currentModelIdRef]
+  );
+
   const controller = useChat<ChatMessage>({
     id,
     messages: initialMessages,
-    resume: initialChatExists,
+    resume: Boolean(streamedTurnIdRef.current),
     generateId: generateUUID,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    transport: createChatTransport(
-      shared.currentModelIdRef,
-      resumeTurnIdRef,
-      () => setChatExists(true)
-    ),
+    transport: chatTransport,
     ...callbacks,
   });
+
+  const hasActiveWork = Boolean(conversationState.queue.activeTurnId);
+  useEffect(() => {
+    if (!chatExists) return;
+    void refreshConversationState().catch(() => {});
+    if (
+      !(
+        hasActiveWork ||
+        controller.status === "submitted" ||
+        controller.status === "streaming"
+      )
+    ) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      void refreshConversationState().catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [chatExists, controller.status, hasActiveWork, refreshConversationState]);
+
+  const respondToRuntimeInteraction = useCallback(
+    async (interaction: RuntimeInteractionResponse) => {
+      const messageId = generateUUID();
+      const turnId = conversationState.interactions.find(
+        (candidate) => candidate.requestId === interaction.requestId
+      )?.turnId;
+      if (turnId) streamedTurnIdRef.current = turnId;
+      await controller.sendMessage(
+        {
+          id: messageId,
+          role: "user",
+          parts: [{ type: "text", text: interaction.message }],
+        },
+        {
+          body: {
+            interactionResponse: {
+              ...interaction,
+              messageId,
+            },
+          },
+        }
+      );
+    },
+    [controller.sendMessage, conversationState.interactions]
+  );
+
+  const interruptActiveTurn = useCallback(async () => {
+    const turnId = conversationState.queue.activeTurnId;
+    if (!turnId) return;
+    const response = await fetch(
+      `/api/threads/${id}/turns/${turnId}/interrupt`,
+      { method: "POST" }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof payload.error === "string"
+          ? payload.error
+          : "The interrupt request could not be recorded."
+      );
+    }
+    toast({
+      type: "success",
+      description: "The agent will stop at the next safe boundary.",
+    });
+    await refreshConversationState();
+  }, [conversationState.queue.activeTurnId, id, refreshConversationState]);
 
   const queueMessage = useCallback(
     (message: ChatMessage) => {
@@ -761,6 +904,7 @@ export function Chat({
     const { deliveryState: _deliveryState, ...metadata } =
       nextQueued.message.metadata ?? {};
     resumeTurnIdRef.current = nextQueued.turnId;
+    streamedTurnIdRef.current = nextQueued.turnId;
     controller.setMessages((current) => [
       ...current,
       { ...nextQueued.message, metadata },
@@ -776,6 +920,41 @@ export function Chat({
     controller.setMessages,
     controller.status,
     queuedMessages,
+  ]);
+
+  useEffect(() => {
+    const activeTurn = conversationState.turns.find(
+      (turn) => turn.id === conversationState.queue.activeTurnId
+    );
+    if (!activeTurn) {
+      streamedTurnIdRef.current = null;
+      return;
+    }
+    if (activeTurn.status === "waiting_for_input") {
+      // The waiting assistant message is complete. A subsequent exact
+      // interaction response resumes this same turn with a new stream.
+      streamedTurnIdRef.current = null;
+      return;
+    }
+    if (
+      controller.status !== "ready" ||
+      (activeTurn.status !== "queued" && activeTurn.status !== "running") ||
+      streamedTurnIdRef.current === activeTurn.id
+    ) {
+      return;
+    }
+    resumeTurnIdRef.current = activeTurn.id;
+    streamedTurnIdRef.current = activeTurn.id;
+    void controller.resumeStream().finally(() => {
+      if (resumeTurnIdRef.current === activeTurn.id) {
+        resumeTurnIdRef.current = null;
+      }
+    });
+  }, [
+    controller.resumeStream,
+    controller.status,
+    conversationState.queue.activeTurnId,
+    conversationState.turns,
   ]);
 
   const handoffMessage = useMemo(
@@ -801,14 +980,6 @@ export function Chat({
       setHandoff(null);
     }
   }, [handoff, id, initialChatExists, controller.messages]);
-
-  useEffect(() => {
-    if (controller.status === "submitted") {
-      hasShownResumedToastRef.current = false;
-      hasShownStreamWarningRef.current = false;
-      hasShownResumeWarningRef.current = false;
-    }
-  }, [controller.status]);
 
   useEffect(() => {
     if (
@@ -899,12 +1070,17 @@ export function Chat({
     [controller.messages, handoff, queuedMessages]
   );
   const showPendingAssistant =
-    Boolean(handoff?.pendingAssistant) &&
+    (Boolean(handoff?.pendingAssistant) ||
+      conversationState.turns.some(
+        (turn) =>
+          turn.id === conversationState.queue.activeTurnId &&
+          (turn.status === "queued" || turn.status === "running")
+      )) &&
     controller.status === "ready" &&
-    !controller.messages.some((message) => message.role === "assistant");
+    controller.messages.at(-1)?.role !== "assistant";
 
   if (!chatExists && handoff === undefined) {
-    return null;
+    return <ThreadRouteLoading threadId={id} />;
   }
 
   if (!(chatExists || handoff)) {
@@ -921,6 +1097,7 @@ export function Chat({
           controller.clearError();
           shared.setDataStream([]);
         }}
+        conversationState={conversationState}
         currentModelId={shared.currentModelId}
         feedbackByMessageId={feedbackByMessageId}
         headerReadonly={isReadonly || !canPublish}
@@ -934,7 +1111,10 @@ export function Chat({
             [messageId]: feedback,
           }));
         }}
+        onInterrupt={interruptActiveTurn}
         onModelChange={shared.setCurrentModelId}
+        onRefreshConversationState={refreshConversationState}
+        onRuntimeInteractionResponse={respondToRuntimeInteraction}
         project={project}
         queueMessage={queueMessage}
         regenerate={controller.regenerate}

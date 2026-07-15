@@ -15,7 +15,18 @@ export type AppCategory =
   | "custom";
 
 export type AppKind = "built_in" | "external" | "custom";
-export type AppConnectionModel = "none" | "personal" | "environment";
+export type AppConnectionModel =
+  | "none"
+  | "personal"
+  | "environment"
+  | "hybrid";
+export type AppConnectionRequirement = "none" | "optional" | "required";
+export type AppAuthMethod =
+  | "none"
+  | "api_key"
+  | "oauth_personal"
+  | "oauth_environment"
+  | "deployment_managed";
 export type AppDelivery =
   | "native"
   | "oauth"
@@ -65,6 +76,8 @@ export type AppCatalogItem = {
   category: AppCategory;
   kind: AppKind;
   connectionModel: AppConnectionModel;
+  connectionRequirement: AppConnectionRequirement;
+  authMethods: AppAuthMethod[];
   delivery: AppDelivery;
   installMode: AppInstallMode;
   icon: string | null;
@@ -108,6 +121,8 @@ export type EnvironmentAppConfiguration = {
     | "description"
     | "category"
     | "connectionModel"
+    | "connectionRequirement"
+    | "authMethods"
     | "delivery"
     | "icon"
     | "installationStatus"

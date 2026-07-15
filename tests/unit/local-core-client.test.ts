@@ -93,6 +93,7 @@ test("LocalCoreClient strictly parses nested runtime configuration and credentia
           { id: "provider.openai.default", configured: false },
           { id: "provider.anthropic.default", configured: false },
           { id: "tool.tavily.default", configured: false },
+          { id: "tool.visual-crossing.default", configured: false },
         ],
       },
     };

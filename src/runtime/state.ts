@@ -43,6 +43,7 @@ export interface RuntimeWaitState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface RuntimeCanonicalWaitingForState {
@@ -53,6 +54,7 @@ export interface RuntimeCanonicalWaitingForState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
   blockedAction?: unknown | undefined;
 }
 

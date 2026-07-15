@@ -34,6 +34,7 @@ export type RunEventType =
   | "progress.waiting"
   | "progress.heartbeat"
   | "reasoning.update"
+  | "agent.progress"
   | "tool.queue.enqueued"
   | "tool.queue.dequeued"
   | "tool.queue.overflow"

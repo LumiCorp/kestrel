@@ -1,4 +1,4 @@
-import type { ModelRequest, ModelResponse, ModelToolIntent } from "../src/kestrel/contracts/model-io.js";
+import type { ModelGatewayCallOptions, ModelRequest, ModelResponse, ModelToolIntent } from "../src/kestrel/contracts/model-io.js";
 
 
 export type OpenRouterEndpoint = "chat" | "responses";
@@ -52,15 +52,15 @@ export interface OpenRouterResponseContext {
 }
 
 export interface OpenRouterInvoker {
-  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
 }
 
 export interface OpenAiInvoker {
-  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
 }
 
 export interface AnthropicInvoker {
-  <TOutput>(request: ModelRequest): Promise<ModelResponse<TOutput>>;
+  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
 }
 
 export interface ParsedToolIntent {

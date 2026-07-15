@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type {
   AgentToolAuditRecord,
+  AgentToolPresentation,
   AgentToolResult,
 } from "../src/kestrel/contracts/model-io.js";
 import { buildKestrelAgentToolModelContext } from "../src/runtime/KestrelAgentContextBuilder.js";
@@ -16,6 +17,7 @@ export interface AgentToolResultInput {
   output: unknown;
   startedAt?: string | undefined;
   completedAt?: string | undefined;
+  presentation?: AgentToolPresentation | undefined;
 }
 
 export interface AgentToolFailureInput {
@@ -101,6 +103,9 @@ export function buildAgentToolSuccessResult(input: AgentToolResultInput): AgentT
       durationMs: durationMs(startedAt, completedAt),
       status: "OK",
     },
+    ...(input.presentation !== undefined
+      ? { presentation: input.presentation }
+      : {}),
   };
 }
 

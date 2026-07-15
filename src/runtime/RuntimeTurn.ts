@@ -2,8 +2,8 @@ import type { ClientCapabilities } from "../clientCapabilities.js";
 import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import type {
+  RunnerAssistantHistoryDataV2,
   RunnerResultV2,
-  RunnerWaitingPromptHistoryDataV2,
 } from "@kestrel-agents/protocol";
 import type {
   HostedMcpAuthorization,
@@ -40,7 +40,7 @@ export interface RuntimeTurnHistoryLine {
   text: string;
   timestamp: string;
   attachments?: RunTurnAttachment[] | undefined;
-  data?: RunnerWaitingPromptHistoryDataV2 | undefined;
+  data?: RunnerAssistantHistoryDataV2 | undefined;
 }
 
 export interface RuntimeTurnProjectContext {
@@ -57,6 +57,7 @@ export interface RuntimeTurnInput {
   eventType: string;
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
+  resumeRequestId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -232,6 +233,9 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.input.resumeBlockedRun === true
       ? { resumeBlockedRun: true }
+      : {}),
+    ...(prepared.input.resumeRequestId !== undefined
+      ? { resumeRequestId: prepared.input.resumeRequestId }
       : {}),
     metadata: prepared.metadata,
     orchestration: {

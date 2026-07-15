@@ -68,6 +68,24 @@ function completedOutput(sessionId: string, runId: string): NormalizedOutput {
   };
 }
 
+function sessionWithAssistantText(
+  sessionId: string,
+  assistantText: string,
+  agent: Record<string, unknown> = {},
+): SessionRecord {
+  return {
+    sessionId,
+    version: 1,
+    state: {
+      agent: {
+        ...agent,
+        assistantText,
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 async function waitForProjectCard(
   projectStore: ProductProjectStateStore,
   sessionId: string,
@@ -94,7 +112,8 @@ test("KestrelChatRuntime rejects non-string turn messages at the runtime boundar
         run: async () => {
           throw new Error("runtime should not run for invalid turn input");
         },
-        getSession: async () => null,
+        getSession: async (sessionId: string) =>
+          sessionWithAssistantText(sessionId, "The hosted MCP runtime is ready."),
       } as unknown as Kestrel;
 
       return {
@@ -131,7 +150,8 @@ test("KestrelChatRuntime consumes hosted MCP authorization before compiling the 
           events.push(event);
           return completedOutput(event.sessionId, "run-hosted-mcp");
         },
-        getSession: async () => null,
+        getSession: async (sessionId: string) =>
+          sessionWithAssistantText(sessionId, "The hosted MCP runtime is ready."),
       } as unknown as Kestrel,
       entryStepAgent: "example.step",
       prepareHostedMcpRuntime: async (input) => {
@@ -230,7 +250,16 @@ test("project autopilot tick runs planned card through implementation and testin
           runEvents.push(event);
           return completedOutput(event.sessionId, `run-${runEvents.length}`);
         },
-        getSession: async (sessionId: string) => sessionStore.getSession(sessionId),
+        getSession: async (sessionId: string) => {
+          const session = await sessionStore.getSession(sessionId);
+          return session === null
+            ? sessionWithAssistantText(sessionId, "The project card run completed.")
+            : sessionWithAssistantText(
+                sessionId,
+                "The project card run completed.",
+                (session.state.agent as Record<string, unknown> | undefined) ?? {},
+              );
+        },
       } as unknown as Kestrel;
 
       return {
@@ -293,6 +322,7 @@ test("KestrelChatRuntime delegates direct runtime turns with step agent and oper
             waitFor: {
               kind: "user",
               eventType: "user.reply",
+              metadata: { prompt: "How should I continue?" },
             },
             errors: [],
             quality: {
@@ -314,6 +344,7 @@ test("KestrelChatRuntime delegates direct runtime turns with step agent and oper
           version: 1,
           state: {
             agent: {
+              assistantText: "How should I continue?",
               interactionMode: "plan",
               contextCache: {
                 contextTelemetry: {
@@ -377,6 +408,7 @@ test("KestrelChatRuntime accepts explicit v2 interaction mode through direct run
             waitFor: {
               kind: "user",
               eventType: "user.reply",
+              metadata: { prompt: "How should I continue?" },
             },
             errors: [],
             quality: {
@@ -398,6 +430,7 @@ test("KestrelChatRuntime accepts explicit v2 interaction mode through direct run
           version: 1,
           state: {
             agent: {
+              assistantText: "How should I continue?",
               interactionMode: "build",
               actSubmode: "safe",
             },
@@ -501,6 +534,7 @@ test("KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and 
           version: 1,
           state: {
             agent: {
+              assistantText: "The requested report is complete.",
               interactionMode: "build",
               actSubmode: "safe",
             },
@@ -583,6 +617,7 @@ test("KestrelChatRuntime forwards manual compaction into operator affordance con
           version: 1,
           state: {
             agent: {
+              assistantText: "The requested research is complete.",
               interactionMode: "build",
               actSubmode: "safe",
               contextCache: {
@@ -655,6 +690,7 @@ test("KestrelChatRuntime annotates forced legacy-mode migration for the referenc
             waitFor: {
               kind: "user",
               eventType: "user.reply",
+              metadata: { prompt: "How should I continue?" },
             },
             errors: [],
             quality: {
@@ -676,6 +712,7 @@ test("KestrelChatRuntime annotates forced legacy-mode migration for the referenc
           version: 1,
           state: {
             agent: {
+              assistantText: "How should I continue?",
               interactionMode: "plan",
             },
           },
@@ -736,6 +773,7 @@ test("KestrelChatRuntime captures finalized payload via onFinalize callback", as
           version: 1,
           state: {
             agent: {
+              assistantText: "The requested turn is complete.",
               interactionMode: "plan",
             },
           },
@@ -797,6 +835,7 @@ test("KestrelChatRuntime falls back to persisted finalized payload when no callb
           version: 1,
           state: {
             agent: {
+              assistantText: "The persisted response is ready.",
               interactionMode: "plan",
             },
           },
@@ -914,6 +953,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
           version: 1,
           state: {
             agent: {
+              assistantText: "Switch to build and continue.",
               interactionMode: "build",
               actSubmode: "safe",
             },
@@ -951,6 +991,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
         submitTurn: async (input: Record<string, unknown>) => {
           submitTurnCalls.push(input);
           return {
+            assistantText: "Switch to build and continue.",
             thread: {
               threadId: "thread-session",
               sessionId: "thread-session",
@@ -969,6 +1010,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
                 eventType: "user.reply",
                 metadata: {
                   prompt: "Switch to build and continue.",
+                  question: "Switch to build and continue.",
                   requestId: "request-1",
                   reason: "planner_mode_blocked",
                   toolName: "dev.shell.run",
@@ -994,6 +1036,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
         replyToRequest: async (input: Record<string, unknown>) => {
           replyCalls.push(input);
           return {
+            assistantText: "The requested work is complete.",
             thread: {
               threadId: "thread-session",
               sessionId: "thread-session",
@@ -1025,6 +1068,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
         resumeBlockedTurn: async (input: Record<string, unknown>) => {
           replyCalls.push(input);
           return {
+            assistantText: "The requested work is complete.",
             thread: {
               threadId: "thread-session",
               sessionId: "thread-session",
@@ -1177,6 +1221,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
     ],
     interactionMode: "build",
     resumeBlockedRun: true,
+    resumeRequestId: "request-1",
   });
   const described = await runtime.describeSession("thread-session");
 
@@ -1290,7 +1335,9 @@ test("KestrelChatRuntime describeSession keeps focused thread and blocker parity
           sessionId: "session-parity",
           version: 1,
           state: {
-            agent: {},
+            agent: {
+              assistantText: "The canonical thread turn is complete.",
+            },
           },
           updatedAt: new Date().toISOString(),
         }),
@@ -1394,7 +1441,9 @@ test("KestrelChatRuntime maps operator child-thread tool policy into runtime pol
           sessionId: "session-child-policy",
           version: 1,
           state: {
-            agent: {},
+            agent: {
+              assistantText: "The signal-aware turn is complete.",
+            },
           },
           updatedAt: new Date().toISOString(),
         }),
@@ -1495,6 +1544,7 @@ test("KestrelChatRuntime resolves session turns through the canonical orchestrat
             eventType: input.eventType,
           });
           return {
+            assistantText: "The canonical thread turn is complete.",
             thread: {
               threadId: "thread-web-main",
               sessionId: "session-canonical-thread",
@@ -1625,6 +1675,7 @@ test("KestrelChatRuntime forwards abort signals through ThreadRuntime", async ()
         submitTurn: async (input: { signal?: AbortSignal | undefined }) => {
           observedSignal = input.signal;
           return {
+            assistantText: "The signal-aware turn is complete.",
             thread: {
               threadId: "signal-session",
               sessionId: "signal-session",

@@ -13,7 +13,7 @@ import {
   type RunnerStream,
   type RunnerTurnInput,
 } from "@kestrel-agents/sdk/runner";
-import type { UIMessage } from "ai";
+import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import {
   createProfileBoundExternalReplyAgent,
@@ -24,26 +24,30 @@ import {
   createKestrelOneAgentResponseFromAgent,
   type KestrelOneAgent,
   type KestrelOneAgentResponsePersistMeta,
-  resolveKestrelOneTurnEventType,
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
 import { restrictKestrelOneProfileTools } from "@/lib/agent/kestrel-tool-profile";
-import type { KestrelUiStreamChunk } from "@/lib/agent/kestrel-ui-stream";
+import type { ChatMessage } from "@/lib/types";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import {
   resolveEnvironmentExecutionRoute,
   updateEnvironmentExecutionStatus,
+  updateEnvironmentExecutionRuntimeIdentity,
 } from "@/lib/environments/execution-route";
 import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
+type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 class KestrelOneRunnerClient extends KestrelClient {
+  readRetainedReasoning(runId: string, sessionId: string, action: "read" | "delete", context: KestrelRequestContext) {
+    return this.sendCommand("operator.run.reasoning", { runId, sessionId, action }, context);
+  }
   runWithProfile(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
     context: KestrelRequestContext
@@ -53,6 +57,18 @@ class KestrelOneRunnerClient extends KestrelClient {
       { profile: input.profile, turn: input.turn },
       context
     );
+  }
+
+  async runWithProfileObservingStart(
+    input: { profile: RunnerProfile; turn: RunnerTurnInput },
+    context: KestrelRequestContext,
+    onStarted: (event: Extract<RunnerRunStreamEvent, { type: "run.started" }>) => void | Promise<void>,
+  ): Promise<RunnerRunTerminalEvent> {
+    const stream = this.streamRunWithProfile(input, context);
+    for await (const event of stream) {
+      if (event.type === "run.started") await onStarted(event);
+    }
+    return await stream.result;
   }
 
   streamRunWithProfile(
@@ -89,6 +105,43 @@ class KestrelOneRunnerClient extends KestrelClient {
   }
 }
 
+export async function readKestrelOneRetainedReasoning(input: {
+  baseUrl: string;
+  authToken: string;
+  organizationId: string;
+  actorUserId: string;
+  runtimeRunId: string;
+  sessionId: string;
+  reasoningPolicy: NonNullable<RunnerProfile["reasoning"]>;
+  action?: "read" | "delete" | undefined;
+}) {
+  const client = new KestrelOneRunnerClient({
+    target: { kind: "remote", baseUrl: input.baseUrl, authToken: input.authToken },
+  });
+  try {
+    const baseContext: KestrelRequestContext = {
+      tenantId: input.organizationId,
+      actor: {
+        actorId: input.actorUserId,
+        actorType: "operator",
+        tenantId: input.organizationId,
+        orgRole: "org_admin",
+      },
+    };
+    const baseProfile = await client.getProfile(getKestrelOneProfileId(), baseContext);
+    const event = await client.readRetainedReasoning(input.runtimeRunId, input.sessionId, input.action ?? "read", {
+      ...baseContext,
+      profile: {
+        ...baseProfile,
+        reasoning: input.reasoningPolicy,
+      },
+    });
+    return event.payload;
+  } finally {
+    await client.close();
+  }
+}
+
 function getKestrelOneProfileId() {
   return process.env.KESTREL_ONE_PROFILE_ID?.trim() || DEFAULT_PROFILE_ID;
 }
@@ -108,6 +161,15 @@ export type KestrelOneAgentResponseInput = {
         reason?: string | undefined;
       }
     | undefined;
+  interactionResponse?:
+    | {
+        requestId: string;
+        eventType: string;
+        message: string;
+        approved?: boolean | undefined;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   projectContext?: {
     projectId: string;
@@ -120,6 +182,7 @@ export type KestrelOneAgentResponseInput = {
   signal?: AbortSignal;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
+  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta
@@ -141,6 +204,7 @@ function createModelAwareKestrelOneAgent(input: {
       void (async () => {
         let client: KestrelOneRunnerClient | null = null;
         let executionId: string | null = null;
+        let environmentProgressSequence = 0;
         try {
           const route = await resolveEnvironmentExecutionRoute({
             organizationId: input.organizationId,
@@ -154,9 +218,22 @@ function createModelAwareKestrelOneAgent(input: {
             onProgress: (progress) =>
               routed.push({
                 id: crypto.randomUUID(),
-                type: "run.progress",
+                type: "run.agent_progress",
                 ts: new Date().toISOString(),
-                payload: { update: { message: progress.detail } },
+                runId: `environment:${input.threadId}`,
+                sessionId: input.threadId,
+                payload: {
+                  update: {
+                    version: "v1",
+                    runId: `environment:${input.threadId}`,
+                    sessionId: input.threadId,
+                    ts: new Date().toISOString(),
+                    seq: (environmentProgressSequence += 1),
+                    message: progress.detail,
+                    stepIndex: 0,
+                    stepAgent: "environment.route",
+                  },
+                },
               }),
           });
           executionId = route.runId;
@@ -174,18 +251,17 @@ function createModelAwareKestrelOneAgent(input: {
             },
           });
           clients.add(client);
-          const { signal, ...turn } = turnInput;
-          const requestedEventType = turn.eventType || "user.message";
-          const eventType = await resolveEnvironmentTurnEventType({
-            client,
-            context,
-            sessionId: turn.sessionId,
-            requestedEventType,
-            hasHistory: (turn.history?.length ?? 0) > 0,
-          });
+          const { signal, resumeRequestId, ...turn } = turnInput;
+          const eventType = turn.eventType || "user.message";
           const normalizedTurn = {
             ...turn,
             eventType,
+            ...(resumeRequestId !== undefined
+              ? {
+                  resumeBlockedRun: true,
+                  resumeRequestId,
+                }
+              : {}),
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
             ...(route.mcpContext && route.executionTicket
               ? {
@@ -205,7 +281,7 @@ function createModelAwareKestrelOneAgent(input: {
           const downstream = client.streamRunWithProfile(
             {
               profile: restrictKestrelOneProfileTools({
-                profile: selectedProfile,
+                profile: { ...selectedProfile, reasoning: route.reasoningPolicy },
                 effectiveCapabilities: route.effectiveCapabilities,
               }),
               turn: normalizedTurn,
@@ -215,21 +291,31 @@ function createModelAwareKestrelOneAgent(input: {
           );
           routed.attachCancel(() => downstream.cancel());
           for await (const event of downstream) {
-            await recordGitHubActionApprovalRequest({
-              identity: {
+            if (event.type === "run.started" && event.runId) {
+              await updateEnvironmentExecutionRuntimeIdentity({
                 organizationId: input.organizationId,
-                environmentId: route.environmentId,
-                workspaceId: route.workspaceId,
-                threadId: input.threadId,
-                actorId: input.actorUserId,
-                agentId: getKestrelOneProfileId(),
-              },
-              requestedExecutionId: route.runId,
-              event,
-            });
+                executionId: route.runId,
+                runtimeRunId: event.runId,
+                ...(event.payload.reasoningKeyReady !== undefined
+                  ? { reasoningKeyReady: event.payload.reasoningKeyReady }
+                  : {}),
+              });
+            }
             routed.push(event);
           }
           const terminal = await downstream.result;
+          await recordGitHubActionApprovalRequest({
+            identity: {
+              organizationId: input.organizationId,
+              environmentId: route.environmentId,
+              workspaceId: route.workspaceId,
+              threadId: input.threadId,
+              actorId: input.actorUserId,
+              agentId: getKestrelOneProfileId(),
+            },
+            requestedExecutionId: route.runId,
+            event: terminal,
+          });
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
@@ -259,43 +345,6 @@ function createModelAwareKestrelOneAgent(input: {
       clients.clear();
     },
   };
-}
-
-async function resolveEnvironmentTurnEventType(input: {
-  client: KestrelOneRunnerClient;
-  context: KestrelRequestContext;
-  sessionId: string;
-  requestedEventType: string;
-  hasHistory: boolean;
-}) {
-  if (input.requestedEventType !== "user.message" || !input.hasHistory) {
-    return input.requestedEventType;
-  }
-
-  try {
-    const session = await input.client.describeSession(
-      input.sessionId,
-      input.context
-    );
-    return resolveKestrelOneTurnEventType({
-      requestedEventType: input.requestedEventType,
-      waitFor: session.waitFor,
-    });
-  } catch (error) {
-    if (isMissingRunnerSession(error)) {
-      return input.requestedEventType;
-    }
-    throw error;
-  }
-}
-
-function isMissingRunnerSession(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "STORE_SESSION_NOT_FOUND"
-  );
 }
 
 class EnvironmentRoutedRunnerStream
@@ -417,7 +466,7 @@ export async function generateKestrelOneExternalReply(input: {
     );
     const profile = restrictKestrelOneProfileTools({
       profile: applyKestrelOneModelToProfile(
-        baseProfile,
+        { ...baseProfile, reasoning: route.reasoningPolicy },
         toKestrelOneRuntimeModelSelection({
           ...resolvedModel.model,
           organizationId: input.organizationId,
@@ -430,7 +479,17 @@ export async function generateKestrelOneExternalReply(input: {
       agent: createProfileBoundExternalReplyAgent({
         profile,
         run: (request, requestContext) =>
-          client.runWithProfile(request, requestContext),
+          client.runWithProfileObservingStart(request, requestContext, async (event) => {
+            if (!event.runId) return;
+            await updateEnvironmentExecutionRuntimeIdentity({
+              organizationId: input.organizationId,
+              executionId: route.runId,
+              runtimeRunId: event.runId,
+              ...(event.payload.reasoningKeyReady !== undefined
+                ? { reasoningKeyReady: event.payload.reasoningKeyReady }
+                : {}),
+            });
+          }),
       }),
       sessionId: input.sessionId,
       prompt: input.prompt,
@@ -514,12 +573,14 @@ export async function createKestrelOneAgentResponse(
     threadId: input.threadId,
     messages: input.messages,
     approvalDecision: input.approvalDecision,
+    interactionResponse: input.interactionResponse,
     modelId: resolvedModel.model.id,
     runtimeModel,
     projectContext: input.projectContext,
     transientTitle: input.transientTitle,
     signal: input.signal,
     onUiChunk: input.onUiChunk,
+    onRuntimeEvent: input.onRuntimeEvent,
     onFinishPersist: input.onFinishPersist,
   });
 }

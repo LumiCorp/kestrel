@@ -1,5 +1,6 @@
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
+import { buildAgentToolSuccessResult } from "../toolResult.js";
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
 
@@ -94,10 +95,41 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
         );
       }
 
-      return response.json();
+      const output = await response.json();
+      return buildAgentToolSuccessResult({
+        toolName: TOOL_NAME,
+        input: payload,
+        output,
+        presentation: buildKnowledgePresentation(output),
+      });
     };
   },
 };
+
+function buildKnowledgePresentation(value: unknown) {
+  const root = asRecord(value);
+  const results = Array.isArray(root?.results) ? root.results : [];
+  return {
+    citations: results.flatMap((raw) => {
+      const result = asRecord(raw);
+      const documentId = readString(result?.documentId);
+      const title = readString(result?.title) ?? readString(result?.filename);
+      const url = readString(result?.url);
+      if (!(documentId && title)) return [];
+      const excerpts = Array.isArray(result?.excerpts) ? result.excerpts : [];
+      const firstExcerpt = asRecord(excerpts[0]);
+      return [{
+        id: `knowledge:${documentId}`,
+        title,
+        documentId,
+        ...(url ? { url } : {}),
+        ...(readString(firstExcerpt?.text)
+          ? { excerpt: readString(firstExcerpt?.text) }
+          : {}),
+      }];
+    }),
+  };
+}
 
 export function parseKestrelOneSearchKnowledgeDocumentsInput(input: unknown): {
   query: string;
@@ -148,6 +180,12 @@ function resolveCapabilityUrl(appUrl: string): string {
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
     : undefined;
 }
 

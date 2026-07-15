@@ -411,6 +411,9 @@ test("createOpenAiModelGatewayFromEnv calls chat completions with structured out
       nested: { ok: true },
     },
     providerOptions: {
+      openai: {
+        endpoint: "chat",
+      },
       openrouter: {
         toolChoice: "none",
         responseSchemaName: "kestrel_test_schema",
@@ -482,6 +485,7 @@ test("createOpenAiModelGatewayFromEnv preserves required tool choice", async () 
     tools: [REQUIRED_TOOL],
     providerOptions: {
       openai: {
+        endpoint: "chat",
         toolChoice: "required",
       },
     },
@@ -524,6 +528,11 @@ test("createOpenAiModelGatewayFromEnv does not claim strict mode for optional to
   await gateway.call({
     input: "hello",
     tools: [OPTIONAL_TOOL, UNION_TOOL],
+    providerOptions: {
+      openai: {
+        endpoint: "chat",
+      },
+    },
   });
 
   const tools = requestBody?.tools as

@@ -2,6 +2,10 @@ import type { MemorySnapshot } from "../../../src/kestrel/contracts/events.js";
 import type { Effect, Transition, WaitForMatcher } from "../../../src/kestrel/contracts/execution.js";
 
 import { createRuntimeFailure } from "../../../src/runtime/RuntimeFailure.js";
+import {
+  materializeUserFacingWaitInteraction,
+  readInteractionPrompt,
+} from "../../../src/runtime/assistantResponseContract.js";
 import type { ToolExecutionClass } from "../../../src/mode/contracts.js";
 import {
   buildCanonicalWaitingFor,
@@ -10,6 +14,7 @@ import {
 } from "../../../src/runtime/waitState.js";
 import {
   applyReferenceReactExecPatch,
+  createReferenceReactAssistantTextPatch,
   createReferenceReactWaitingForPatch,
 } from "./state.js";
 import type { ReactAction } from "./types.js";
@@ -225,7 +230,10 @@ export function createReferenceReactWaitCheckpoint(input: {
   regionExecPatch?: Record<string, unknown> | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
-  const runtimeWaitFor = toReferenceReactWaitMatcher(input.waitFor);
+  const runtimeWaitFor = materializeUserFacingWaitInteraction(
+    toReferenceReactWaitMatcher(input.waitFor),
+  );
+  const assistantText = readInteractionPrompt(runtimeWaitFor) ?? null;
   const currentChunk = describeExecutionCheckpoint(input.substate);
   const waitReason = describeWaitReason(runtimeWaitFor);
   const workingPlan = buildReferenceReactWorkingPlan({
@@ -280,6 +288,7 @@ export function createReferenceReactWaitCheckpoint(input: {
     statePatch: createReferenceReactStatePatch({
       reactPatch: {
         ...reactPatchWithWait,
+        ...createReferenceReactAssistantTextPatch(assistantText),
         ...createReferenceReactWaitingForPatch(waitingFor),
       },
       activeRegion: input.activeRegion,

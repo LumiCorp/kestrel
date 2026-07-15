@@ -47,43 +47,79 @@ export async function resolveMcpInteraction(input: {
     const processingExpiresAt = new Date(
       now.getTime() + MCP_SAMPLING_PROCESSING_TIMEOUT_MS,
     );
-    const [claimed] = await knowledgeDb
-      .update(schema.mcpInteractionCheckpoints)
-      .set({
-        status: "processing",
-        resolvedByUserId: input.userId,
-        processingStartedAt: now,
-        processingExpiresAt,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
-          eq(schema.mcpInteractionCheckpoints.status, "requested"),
-        ),
-      )
-      .returning();
+    const claimed = await knowledgeDb.transaction(async (tx) => {
+      const [checkpoint] = await tx
+        .update(schema.mcpInteractionCheckpoints)
+        .set({
+          status: "processing",
+          resolvedByUserId: input.userId,
+          processingStartedAt: now,
+          processingExpiresAt,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
+            eq(schema.mcpInteractionCheckpoints.status, "requested"),
+          ),
+        )
+        .returning();
+      if (checkpoint) {
+        await tx
+          .update(schema.threadInteractions)
+          .set({
+            status: "processing",
+            resolvedByUserId: input.userId,
+            updatedAt: now,
+          })
+          .where(
+            eq(schema.threadInteractions.sourceCheckpointId, input.checkpointId)
+          );
+      }
+      return checkpoint;
+    });
     if (!claimed) throw interactionConflict();
     try {
       const responseEnvelope = await executeApprovedSampling(
         checkpoint.requestEnvelope,
         processingExpiresAt,
       );
-      [updated] = await knowledgeDb
-        .update(schema.mcpInteractionCheckpoints)
-        .set({
-          status: "completed",
-          responseEnvelope,
-          resolvedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
-            eq(schema.mcpInteractionCheckpoints.status, "processing"),
-          ),
-        )
-        .returning();
+      updated = await knowledgeDb.transaction(async (tx) => {
+        const completedAt = new Date();
+        const [completed] = await tx
+          .update(schema.mcpInteractionCheckpoints)
+          .set({
+            status: "completed",
+            responseEnvelope,
+            resolvedAt: completedAt,
+            updatedAt: completedAt,
+          })
+          .where(
+            and(
+              eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
+              eq(schema.mcpInteractionCheckpoints.status, "processing"),
+            ),
+          )
+          .returning();
+        if (completed) {
+          await tx
+            .update(schema.threadInteractions)
+            .set({
+              status: "resolved",
+              responseEnvelope,
+              resolvedByUserId: input.userId,
+              resolvedAt: completedAt,
+              updatedAt: completedAt,
+            })
+            .where(
+              eq(
+                schema.threadInteractions.sourceCheckpointId,
+                input.checkpointId
+              )
+            );
+        }
+        return completed;
+      });
       if (!updated) throw interactionConflict();
     } catch (error) {
       if (
@@ -121,6 +157,20 @@ export async function resolveMcpInteraction(input: {
             .returning({ id: schema.mcpInteractionCheckpoints.id });
           if (failedCheckpoints.length === 0) return false;
           await transaction
+            .update(schema.threadInteractions)
+            .set({
+              status: "failed",
+              resolvedByUserId: input.userId,
+              resolvedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(
+              eq(
+                schema.threadInteractions.sourceCheckpointId,
+                input.checkpointId
+              )
+            );
+          await transaction
             .update(schema.mcpInvocations)
             .set({
               status: "failed",
@@ -146,22 +196,39 @@ export async function resolveMcpInteraction(input: {
             content: input.content,
           })
         : null;
-    [updated] = await knowledgeDb
-      .update(schema.mcpInteractionCheckpoints)
-      .set({
-        status,
-        responseEnvelope,
-        resolvedByUserId: input.userId,
-        resolvedAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
-          eq(schema.mcpInteractionCheckpoints.status, "requested"),
-        ),
-      )
-      .returning();
+    updated = await knowledgeDb.transaction(async (tx) => {
+      const [resolved] = await tx
+        .update(schema.mcpInteractionCheckpoints)
+        .set({
+          status,
+          responseEnvelope,
+          resolvedByUserId: input.userId,
+          resolvedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.mcpInteractionCheckpoints.id, input.checkpointId),
+            eq(schema.mcpInteractionCheckpoints.status, "requested"),
+          ),
+        )
+        .returning();
+      if (resolved) {
+        await tx
+          .update(schema.threadInteractions)
+          .set({
+            status: input.decision === "deny" ? "cancelled" : "resolved",
+            responseEnvelope,
+            resolvedByUserId: input.userId,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            eq(schema.threadInteractions.sourceCheckpointId, input.checkpointId)
+          );
+      }
+      return resolved;
+    });
     if (!updated) throw interactionConflict();
   }
   const status = updated.status;

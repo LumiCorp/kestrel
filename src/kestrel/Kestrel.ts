@@ -7,7 +7,7 @@ import type {
   StepAgent,
 } from "./contracts/execution.js";
 import type { ModelGateway, ToolGateway, ToolRuntimeStatus } from "./contracts/model-io.js";
-import type { ReasoningSidecarConfig, RunEventListener, RuntimeEvent } from "./contracts/events.js";
+import type { RunEventListener, RuntimeEvent } from "./contracts/events.js";
 import type { RuntimeWorkspaceCheckpointService, SessionStore } from "./contracts/store.js";
 import { ExecutionEngine } from "../engine/ExecutionEngine.js";
 import { EffectRegistry } from "../effects/EffectRegistry.js";
@@ -36,10 +36,12 @@ import { InMemoryStepRegistry } from "../steps/StepRegistry.js";
 import { InMemoryStepContractRegistry } from "../engine/StepContractRegistry.js";
 import { RunReplayService, type ReplayQuery, type ReplayResult } from "../replay/RunReplayService.js";
 import type { HeapDiagnosticsReporter } from "../runtime/heapDiagnostics.js";
+import type { ProviderReasoningVault } from "../runtime/ProviderReasoningVault.js";
 
 export interface KestrelOptions {
   store: SessionStore;
   modelGateway: ModelGateway;
+  providerReasoningVault?: ProviderReasoningVault | undefined;
   toolGateway: ToolGateway;
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
@@ -50,7 +52,6 @@ export interface KestrelOptions {
   consoleListener?: ConsoleListener;
   reasoningListener?: ReasoningListener;
   runEventListener?: RunEventListener;
-  reasoningSidecar?: ReasoningSidecarConfig | undefined;
   stepContractRegistry?: StepContractRegistry;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
 }
@@ -65,11 +66,13 @@ export class Kestrel {
   private readonly managedTaskWorktreeService: ManagedTaskWorktreeService | undefined;
   private readonly outbox: InlineOutbox;
   private readonly replayService: RunReplayService;
+  private readonly providerReasoningVault: ProviderReasoningVault | undefined;
 
   constructor(options: KestrelOptions) {
     this.store = options.store;
     this.toolGateway = options.toolGateway;
     this.managedTaskWorktreeService = options.managedTaskWorktreeService;
+    this.providerReasoningVault = options.providerReasoningVault;
 
     const executeToolCallHandler = createExecuteToolCallHandler(this.toolGateway);
     this.effectRegistry.register("send_message", sendMessageHandler);
@@ -117,13 +120,15 @@ export class Kestrel {
           ? { managedTaskWorktreeService: options.managedTaskWorktreeService }
           : {}),
         modelGateway: options.modelGateway,
+        ...(options.providerReasoningVault !== undefined
+          ? { providerReasoningVault: options.providerReasoningVault }
+          : {}),
         effectRunner: new InlineEffectRunner(this.store, this.effectRegistry),
         outbox,
         runLogger,
         progressReporter,
         ...(consoleReporter !== undefined ? { consoleReporter } : {}),
         reasoningReporter,
-        ...(options.reasoningSidecar !== undefined ? { reasoningSidecar: options.reasoningSidecar } : {}),
         ...(options.runEventListener !== undefined ? { runEventListener: options.runEventListener } : {}),
         ...(options.heapDiagnostics !== undefined ? { heapDiagnostics: options.heapDiagnostics } : {}),
         outputNormalizer: new DefaultOutputNormalizer(),
@@ -153,6 +158,28 @@ export class Kestrel {
 
   async cancelActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
     return this.engine.cancelActiveRun(sessionId);
+  }
+
+  async getRetainedProviderReasoning(input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) {
+    if (this.providerReasoningVault === undefined) {
+      throw new Error("Provider reasoning retention is unavailable because the encrypted vault is not configured");
+    }
+    return this.providerReasoningVault.readRetainedForAdmin(input);
+  }
+
+  async deleteRetainedProviderReasoning(input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) {
+    if (this.providerReasoningVault === undefined) {
+      throw new Error("Provider reasoning retention is unavailable because the encrypted vault is not configured");
+    }
+    return this.providerReasoningVault.deleteRetainedForAdmin(input);
+  }
+
+  getProviderReasoningVaultStatus() {
+    return this.providerReasoningVault?.status() ?? {
+      ready: false as const,
+      keyVersion: 0,
+      keySource: "unavailable" as const,
+    };
   }
 
   async getToolRuntimeStatus(): Promise<ToolRuntimeStatus> {

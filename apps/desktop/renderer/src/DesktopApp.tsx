@@ -32,6 +32,7 @@ import type {
   DesktopRendererSettings,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
+  DesktopToolCredentialStatus,
 } from "../../src/contracts";
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
@@ -77,6 +78,11 @@ export function DesktopApp() {
   const [modelDraft, setModelDraft] = useState("");
   const [providerSettingsSaving, setProviderSettingsSaving] = useState(false);
   const [providerSettingsError, setProviderSettingsError] = useState<string>();
+  const [weatherCredential, setWeatherCredential] = useState<DesktopToolCredentialStatus>();
+  const [weatherSettingsOpen, setWeatherSettingsOpen] = useState(false);
+  const [weatherApiKey, setWeatherApiKey] = useState("");
+  const [weatherSettingsSaving, setWeatherSettingsSaving] = useState(false);
+  const [weatherSettingsError, setWeatherSettingsError] = useState<string>();
   const [activeRun, setActiveRun] = useState<ActiveRun>();
   const [activity, setActivity] = useState("Ready");
   const [error, setError] = useState<string>();
@@ -99,7 +105,8 @@ export function DesktopApp() {
       window.kestrelDesktop.getRuntimeHealth(),
       window.kestrelDesktop.getBridgeInfo(),
       window.kestrelDesktop.getModelPolicy(),
-    ]).then(([uiState, nextSettings, health, info, nextModelPolicy]) => {
+      window.kestrelDesktop.getToolCredentialStatus("visual-crossing"),
+    ]).then(([uiState, nextSettings, health, info, nextModelPolicy, nextWeatherCredential]) => {
       if (disposed) {
         return;
       }
@@ -109,6 +116,7 @@ export function DesktopApp() {
       setRuntimeHealth(health);
       setBridgeInfo(info);
       setModelPolicy(nextModelPolicy);
+      setWeatherCredential(nextWeatherCredential);
     }).catch((cause) => {
       if (disposed === false) {
         setError(errorMessage(cause));
@@ -430,6 +438,48 @@ export function DesktopApp() {
     }
   }
 
+  function openWeatherSettings(): void {
+    setWeatherApiKey("");
+    setWeatherSettingsError(undefined);
+    setWeatherSettingsOpen(true);
+  }
+
+  async function saveWeatherCredential(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (weatherApiKey.trim().length === 0) return;
+    setWeatherSettingsSaving(true);
+    setWeatherSettingsError(undefined);
+    try {
+      const status = await window.kestrelDesktop.saveToolCredential({
+        provider: "visual-crossing",
+        apiKey: weatherApiKey,
+      });
+      setWeatherCredential(status);
+      setWeatherApiKey("");
+      setWeatherSettingsOpen(false);
+      setActivity("Weather fallback ready");
+    } catch (cause) {
+      setWeatherSettingsError(errorMessage(cause));
+    } finally {
+      setWeatherSettingsSaving(false);
+    }
+  }
+
+  async function removeWeatherCredential(): Promise<void> {
+    setWeatherSettingsSaving(true);
+    setWeatherSettingsError(undefined);
+    try {
+      const status = await window.kestrelDesktop.deleteToolCredential("visual-crossing");
+      setWeatherCredential(status);
+      setWeatherApiKey("");
+      setActivity("Weather fallback removed");
+    } catch (cause) {
+      setWeatherSettingsError(errorMessage(cause));
+    } finally {
+      setWeatherSettingsSaving(false);
+    }
+  }
+
   if (state === undefined || activeThread === undefined) {
     return (
       <main className="loading-shell">
@@ -717,6 +767,26 @@ export function DesktopApp() {
 
             <section className="inspector-section">
               <div className="section-heading">
+                <span>Apps</span>
+              </div>
+              <button
+                className="app-readiness-row"
+                type="button"
+                onClick={openWeatherSettings}
+              >
+                <span className="app-readiness-copy">
+                  <strong>Weather</strong>
+                  <small>Open-Meteo + Visual Crossing fallback</small>
+                </span>
+                <span className={`provider-status ${weatherCredential?.configured ? "" : "needs-credential"}`}>
+                  <span aria-hidden="true" />
+                  {weatherCredential?.configured ? "Fallback ready" : "Free provider only"}
+                </span>
+              </button>
+            </section>
+
+            <section className="inspector-section">
+              <div className="section-heading">
                 <span>Projects</span>
                 <button
                   className="icon-button"
@@ -905,6 +975,114 @@ export function DesktopApp() {
           </form>
         </div>
       ) : null}
+
+      {weatherSettingsOpen ? (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && weatherSettingsSaving === false) {
+              setWeatherSettingsOpen(false);
+            }
+          }}
+        >
+          <form
+            className="provider-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="weather-dialog-title"
+            onSubmit={(event) => void saveWeatherCredential(event)}
+          >
+            <div className="provider-dialog-header">
+              <div>
+                <h2 id="weather-dialog-title">Weather providers</h2>
+                <p>Open-Meteo is always available. Add Visual Crossing as a verified fallback.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                title="Close Weather settings"
+                aria-label="Close Weather settings"
+                disabled={weatherSettingsSaving}
+                onClick={() => setWeatherSettingsOpen(false)}
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="credential-readiness-card">
+              <div>
+                <strong>Open-Meteo</strong>
+                <span>Primary provider · no key required</span>
+              </div>
+              <span className="credential-state ready">Ready</span>
+            </div>
+            <div className="credential-readiness-card">
+              <div>
+                <strong>Visual Crossing</strong>
+                <span>Fallback provider · stored in macOS Keychain</span>
+              </div>
+              <span className={`credential-state ${weatherCredential?.configured ? "ready" : "optional"}`}>
+                {weatherCredential?.configured ? "Ready" : "Optional"}
+              </span>
+            </div>
+
+            {weatherCredential?.available === false ? (
+              <div className="provider-dialog-error" role="alert">
+                Secure credential storage is unavailable on this system.
+              </div>
+            ) : (
+              <label className="provider-dialog-field">
+                <span>Visual Crossing API key</span>
+                <input
+                  aria-label="Visual Crossing API key"
+                  autoComplete="off"
+                  type="password"
+                  value={weatherApiKey}
+                  onChange={(event) => setWeatherApiKey(event.target.value)}
+                  placeholder={weatherCredential?.configured ? "Enter a new key to replace the saved key" : "Paste your Visual Crossing API key"}
+                />
+              </label>
+            )}
+
+            <p className="provider-dialog-note">
+              Kestrel tests the key before saving it. The key is never returned to this window.
+            </p>
+
+            {weatherSettingsError !== undefined ? (
+              <div className="provider-dialog-error" role="alert">{weatherSettingsError}</div>
+            ) : null}
+
+            <div className="provider-dialog-actions provider-dialog-actions-split">
+              {weatherCredential?.configured ? (
+                <button
+                  className="provider-dialog-remove"
+                  type="button"
+                  disabled={weatherSettingsSaving}
+                  onClick={() => void removeWeatherCredential()}
+                >
+                  Remove fallback
+                </button>
+              ) : <span />}
+              <div>
+                <button
+                  type="button"
+                  disabled={weatherSettingsSaving}
+                  onClick={() => setWeatherSettingsOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="provider-dialog-save"
+                  type="submit"
+                  disabled={weatherSettingsSaving || weatherCredential?.available === false || weatherApiKey.trim().length === 0}
+                >
+                  {weatherSettingsSaving ? "Verifying…" : weatherCredential?.configured ? "Verify and replace" : "Verify and save"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -914,12 +1092,24 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
     return "Running";
   }
   if (event.type === "run.progress") {
-    const update = asRecord(event.payload.update);
-    return readString(update?.message) ?? readString(update?.summary) ?? "Working";
+    return "Runtime active";
   }
-  if (event.type === "run.reasoning") {
+  if (event.type === "run.agent_progress") {
     const update = asRecord(event.payload.update);
-    return readString(update?.message) ?? readString(update?.summary) ?? "Thinking";
+    return `Agent progress: ${readString(update?.message) ?? "Working"}`;
+  }
+  if (event.type === "run.model.reasoning.delta") {
+    const update = asRecord(event.payload.update);
+    if (update?.contentState === "not_retained") return "Provider reasoning was not retained";
+    const label = update?.format === "summary"
+      ? "Provider reasoning summary"
+      : update?.format === "provider_thinking"
+        ? "Provider-visible thinking"
+        : "Provider reasoning";
+    return `${label} (attempt ${String(update?.attempt ?? 1)}): ${readString(update?.delta) ?? "Thinking"}`;
+  }
+  if (event.type === "run.model.reasoning.unavailable") {
+    return "Provider reasoning unavailable for this model";
   }
   if (
     event.type === "run.tool.started"

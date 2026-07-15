@@ -50,7 +50,15 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
     const input = record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
       ? record.input as Record<string, unknown>
       : {};
-    return name !== undefined ? [{ name: name.replace(/[^A-Za-z0-9_]/gu, "_"), input }] : [];
+    return name !== undefined
+      ? [{
+          name: name.replace(/[^A-Za-z0-9_]/gu, "_"),
+          input: {
+            ...input,
+            assistantProgress: `I am using ${name} to continue the requested work.`,
+          },
+        }]
+      : [];
   }
   if (kind === "finalize") {
     return [{
@@ -58,6 +66,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
       input: {
         status: typeof record?.status === "string" ? record.status : "goal_satisfied",
         message: typeof record?.message === "string" ? record.message : "Done.",
+        assistantProgress: "I have completed the requested work.",
       },
     }];
   }
@@ -66,6 +75,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
       name: "kestrel_ask_user",
       input: {
         prompt: typeof record?.prompt === "string" ? record.prompt : "Please clarify.",
+        assistantProgress: "I need one detail from you before I can continue.",
       },
     }];
   }
