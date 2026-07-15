@@ -158,6 +158,17 @@ test("workspace runtime image builds the public protocol dependency before the r
   assert.doesNotMatch(dockerfile, /RUN pnpm run build/u);
 });
 
+test("hosted runner keeps its Local Core execution authority alive", async () => {
+  const flyConfig = await readFile(
+    path.join(ROOT, "deploy", "fly", "kestrel-one-runner", "fly.toml"),
+    "utf8",
+  );
+
+  assert.match(flyConfig, /^\s*KESTREL_CORE_IDLE_TIMEOUT_MS = "0"$/mu);
+  assert.match(flyConfig, /^\s*auto_stop_machines = "off"$/mu);
+  assert.match(flyConfig, /^\s*min_machines_running = 1$/mu);
+});
+
 test("CLI install script fails loudly when fallback shim creation fails", async () => {
   const script = await readFile(path.join(ROOT, "scripts", "install-cli.sh"), "utf8");
 

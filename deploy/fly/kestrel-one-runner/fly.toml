@@ -11,6 +11,7 @@ primary_region = "iad"
   KESTREL_HOME = "/data/.kestrel"
   KESTREL_STORE_DRIVER = "sqlite"
   KESTREL_SQLITE_PATH = "/data/runtime.db"
+  KESTREL_CORE_IDLE_TIMEOUT_MS = "0"
 
 [mounts]
   source = "kestrel_runner_data"
