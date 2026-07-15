@@ -29,8 +29,8 @@ test("runner event shaping removes blank session timestamps before protocol vali
     version: 1,
     graph: {
       version: 1,
-      nodes: [],
-      edges: [],
+      rootTaskIds: [],
+      tasks: {},
     },
   });
   assert.equal("updatedAt" in state.session, false);
