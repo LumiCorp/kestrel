@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { readRequestedModelProvider } from "../../src/engine/ExecutionEngineSupport.js";
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import type { CommitStepInput, CommitStepResult, OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
@@ -29,6 +30,25 @@ class RecordingCommitStore extends InMemorySessionStore {
     return result;
   }
 }
+
+test("model provider identity prefers explicit metadata over multi-provider option bags", () => {
+  assert.equal(readRequestedModelProvider({
+    input: "decide",
+    metadata: { requestedProvider: "anthropic" },
+    providerOptions: {
+      openrouter: {},
+      openai: {},
+      anthropic: {},
+    },
+  }), "anthropic");
+  assert.equal(readRequestedModelProvider({
+    input: "decide",
+    providerOptions: {
+      openrouter: {},
+      openai: {},
+    },
+  }), undefined);
+});
 
 test("runtime simplification characterization pins run lifecycle ordering", async () => {
   const store = new RecordingCommitStore();

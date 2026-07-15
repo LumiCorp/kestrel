@@ -9,6 +9,8 @@ import type {
   DesktopProjectAction,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopToolCredentialInput,
+  DesktopToolCredentialProvider,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunnerEvent,
@@ -17,6 +19,7 @@ import type {
   DesktopRuntimeRunInspection,
   DesktopRuntimeThreadInspection,
 } from "../../src/contracts";
+import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 
 type PreviewSnapshot = DesktopProjectSnapshotResponse["snapshot"];
 type PreviewTaskAction = Extract<DesktopProjectAction, { type: `task.${string}` }>;
@@ -44,6 +47,14 @@ export function ensureBrowserPreviewBridge(): void {
     setupCompletedAt: new Date().toISOString(),
   };
   let entries: DesktopLegacyUiStateEntries = {};
+  let modelPolicy: ModelPolicyV1 = {
+    version: 1,
+    provider: "openrouter",
+    model: "openai/gpt-5.2",
+    modelByStage: {},
+    modelCapabilities: { visionInputEnabled: false },
+  };
+  let weatherCredentialConfigured = false;
   let previewProjectSnapshot = createPreviewProjectSnapshot();
   let previewFileContent = [
     "import { createKestrelClient } from \"@kestrel/sdk\";",
@@ -175,6 +186,40 @@ export function ensureBrowserPreviewBridge(): void {
         providerCredentialConfigured: true,
       };
       return settings;
+    },
+    async getModelPolicy() {
+      return modelPolicy;
+    },
+    async saveModelPolicy(nextPolicy: ModelPolicyV1) {
+      modelPolicy = nextPolicy;
+      settings = { ...settings, selectedProvider: nextPolicy.provider };
+      return modelPolicy;
+    },
+    async getToolCredentialStatus(provider: DesktopToolCredentialProvider) {
+      return {
+        provider,
+        configured: weatherCredentialConfigured,
+        available: true,
+        backend: "macos_keychain" as const,
+      };
+    },
+    async saveToolCredential(input: DesktopToolCredentialInput) {
+      weatherCredentialConfigured = input.apiKey.trim().length > 0;
+      return {
+        provider: input.provider,
+        configured: weatherCredentialConfigured,
+        available: true,
+        backend: "macos_keychain" as const,
+      };
+    },
+    async deleteToolCredential(provider: DesktopToolCredentialProvider) {
+      weatherCredentialConfigured = false;
+      return {
+        provider,
+        configured: false,
+        available: true,
+        backend: "macos_keychain" as const,
+      };
     },
     async getRuntimeHealth() {
       return {

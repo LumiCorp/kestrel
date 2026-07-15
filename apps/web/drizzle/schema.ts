@@ -1123,6 +1123,16 @@ export const environments = pgTable(
       .default("kestrel-standard-v1"),
     runtimeImage: text("runtime_image"),
     idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(15),
+    reasoningRequestMode: text("reasoning_request_mode", {
+      enum: ["off", "summary", "provider_visible"],
+    }).notNull().default("provider_visible"),
+    reasoningEffort: text("reasoning_effort", {
+      enum: ["low", "medium", "high"],
+    }),
+    reasoningRetentionMode: text("reasoning_retention_mode", {
+      enum: ["live_only", "provider_visible"],
+    }).notNull().default("live_only"),
+    reasoningRetentionDays: integer("reasoning_retention_days").notNull().default(7),
     lastHealthAt: timestamp("last_health_at", { withTimezone: true }),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
@@ -1150,6 +1160,10 @@ export const environments = pgTable(
     check(
       "environments_idle_timeout_check",
       sql`${table.idleTimeoutMinutes} > 0`
+    ),
+    check(
+      "environments_reasoning_retention_days_check",
+      sql`${table.reasoningRetentionDays} between 1 and 30`
     ),
   ]
 );
@@ -1352,6 +1366,12 @@ export const environmentRunExecutions = pgTable(
     effectiveCapabilities: jsonb("effective_capabilities")
       .$type<string[]>()
       .notNull(),
+    runtimeRunId: text("runtime_run_id"),
+    reasoningPolicySnapshot: jsonb("reasoning_policy_snapshot").$type<{
+      request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" };
+      retention: { mode: "live_only" | "provider_visible"; days: number };
+    }>(),
+    reasoningKeyReady: boolean("reasoning_key_ready").notNull().default(false),
     status: text("status", {
       enum: ["routed", "running", "completed", "failed", "cancelled"],
     })
@@ -1405,7 +1425,7 @@ export const githubActionApprovals = pgTable(
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     consumedExecutionId: text("consumed_execution_id").references(
       () => environmentRunExecutions.id,
-      { onDelete: "set null" }
+      { onDelete: "restrict" }
     ),
     actorUserId: text("actor_user_id")
       .notNull()
@@ -1871,8 +1891,13 @@ export const appDefinitions = pgTable(
       enum: ["built_in", "external", "custom"],
     }).notNull(),
     connectionModel: text("connection_model", {
-      enum: ["none", "personal", "environment"],
+      enum: ["none", "personal", "environment", "hybrid"],
     }).notNull(),
+    connectionRequirement: text("connection_requirement", {
+      enum: ["none", "optional", "required"],
+    })
+      .notNull()
+      .default("required"),
     delivery: text("delivery", {
       enum: ["native", "oauth", "api_key", "mcp", "webhook", "source"],
     }).notNull(),
@@ -1891,6 +1916,18 @@ export const appDefinitions = pgTable(
     uniqueIndex("app_definitions_slug_idx").on(table.slug),
     index("app_definitions_category_idx").on(table.category),
     index("app_definitions_published_idx").on(table.published),
+    check(
+      "app_definitions_connection_model_check",
+      sql`${table.connectionModel} in ('none', 'personal', 'environment', 'hybrid')`
+    ),
+    check(
+      "app_definitions_connection_requirement_check",
+      sql`${table.connectionRequirement} in ('none', 'optional', 'required')`
+    ),
+    check(
+      "app_definitions_connection_contract_check",
+      sql`(${table.connectionModel} = 'none') = (${table.connectionRequirement} = 'none')`
+    ),
   ]
 );
 
@@ -2133,6 +2170,108 @@ export const appConnectionResources = pgTable(
       table.externalId
     ),
     index("app_connection_resources_connection_idx").on(table.connectionId),
+  ]
+);
+
+export const appOperationApprovals = pgTable(
+  "app_operation_approvals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => environmentWorkspaces.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    requestedExecutionId: text("requested_execution_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    consumedExecutionId: text("consumed_execution_id").references(
+      () => environmentRunExecutions.id,
+      { onDelete: "restrict" }
+    ),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    agentId: text("agent_id").notNull(),
+    appKey: text("app_key").notNull(),
+    capabilityKey: text("capability_key").notNull(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => appConnections.id, { onDelete: "restrict" }),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => appConnectionResources.id, { onDelete: "restrict" }),
+    resourceType: text("resource_type").notNull(),
+    operationKey: text("operation_key").notNull(),
+    runtimeApprovalId: text("runtime_approval_id").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "denied", "consumed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    decidedByUserId: text("decided_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.appKey, table.capabilityKey],
+      foreignColumns: [appCapabilities.appKey, appCapabilities.key],
+      name: "app_operation_approvals_capability_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("app_operation_approvals_runtime_idx").on(
+      table.organizationId,
+      table.runtimeApprovalId
+    ),
+    index("app_operation_approvals_thread_status_idx").on(
+      table.organizationId,
+      table.threadId,
+      table.status
+    ),
+    index("app_operation_approvals_expiry_idx").on(
+      table.status,
+      table.expiresAt
+    ),
+    index("app_operation_approvals_execution_idx").on(
+      table.requestedExecutionId
+    ),
+    check(
+      "app_operation_approvals_payload_hash_check",
+      sql`length(${table.payloadHash}) = 64`
+    ),
+    check(
+      "app_operation_approvals_status_check",
+      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`
+    ),
+    check(
+      "app_operation_approvals_lifecycle_check",
+      sql`(
+        (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+        or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+      )`
+    ),
   ]
 );
 
@@ -3051,6 +3190,90 @@ export const mcpInteractionCheckpoints = pgTable(
     index("mcp_interaction_checkpoints_processing_expiry_idx")
       .on(table.processingExpiresAt)
       .where(sql`${table.status} = 'processing'`),
+  ]
+);
+
+/**
+ * User-visible interaction ledger shared by runtime waits and hosted MCP.
+ * Source-specific checkpoints remain the execution authority; this table is
+ * the durable Thread presentation and response contract keyed by request ID.
+ */
+export const threadInteractions = pgTable(
+  "thread_interactions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    requestId: text("request_id").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id").references(() => threadTurns.id, {
+      onDelete: "cascade",
+    }),
+    assistantMessageId: text("assistant_message_id").references(
+      () => threadMessages.id,
+      { onDelete: "set null" }
+    ),
+    source: text("source", { enum: ["runtime", "mcp"] }).notNull(),
+    sourceCheckpointId: text("source_checkpoint_id").references(
+      () => mcpInteractionCheckpoints.id,
+      { onDelete: "cascade" }
+    ),
+    kind: text("kind", {
+      enum: [
+        "user_input",
+        "approval",
+        "mcp_sampling",
+        "mcp_elicitation",
+      ],
+    }).notNull(),
+    eventType: text("event_type").notNull(),
+    prompt: text("prompt").notNull(),
+    status: text("status", {
+      enum: ["pending", "processing", "resolved", "cancelled", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    requestEnvelope: jsonb("request_envelope")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    responseEnvelope: jsonb("response_envelope").$type<
+      Record<string, unknown>
+    >(),
+    resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resumedAt: timestamp("resumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("thread_interactions_request_idx").on(table.requestId),
+    uniqueIndex("thread_interactions_source_checkpoint_idx").on(
+      table.sourceCheckpointId
+    ),
+    index("thread_interactions_thread_status_idx").on(
+      table.threadId,
+      table.status
+    ),
+    index("thread_interactions_turn_idx").on(table.turnId),
+    check(
+      "thread_interactions_source_contract_check",
+      sql`(
+        (${table.source} = 'runtime' AND ${table.turnId} IS NOT NULL AND ${table.sourceCheckpointId} IS NULL)
+        OR
+        (${table.source} = 'mcp' AND ${table.sourceCheckpointId} IS NOT NULL)
+      )`
+    ),
   ]
 );
 

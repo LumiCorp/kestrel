@@ -23,8 +23,15 @@ Never expose the runner token through a public environment variable or browser b
 | --- | --- |
 | `OPENROUTER_API_KEY` | Authenticates an OpenRouter provider configuration |
 | `TAVILY_API_KEY` | Authenticates internet-backed search tools when enabled |
+| `KESTREL_REASONING_MASTER_KEY` | Required in hosted runtimes; a base64 or hex value that decodes to exactly 32 bytes and encrypts provider continuation and opted-in visible reasoning with separate derived keys |
+| `KESTREL_REASONING_KEY_FILE` | Optional local-runtime path for the generated `0600` reasoning key file |
 
 Desktop stores provider choices through its settings interface. Kestrel One administrators configure organization-approved gateways through trusted administrative controls.
+
+Hosted runtime startup fails closed when `KESTREL_REASONING_MASTER_KEY` is
+missing or invalid. Do not log, expose, or reuse this key as provider
+credentials. Local runtimes generate a private key file when no environment
+key is configured.
 
 ## Kestrel One services
 

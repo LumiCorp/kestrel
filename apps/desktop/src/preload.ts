@@ -11,6 +11,8 @@ import type {
   DesktopProjectLauncherDescriptor,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopToolCredentialInput,
+  DesktopToolCredentialProvider,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
   DesktopRunnerEvent,
@@ -41,6 +43,15 @@ const desktopBridge: DesktopBridge = {
   },
   saveProviderCredential(input: DesktopProviderCredentialInput) {
     return ipcRenderer.invoke("desktop:save-provider-credential", input);
+  },
+  getToolCredentialStatus(provider: DesktopToolCredentialProvider) {
+    return ipcRenderer.invoke("desktop:get-tool-credential-status", provider);
+  },
+  saveToolCredential(input: DesktopToolCredentialInput) {
+    return ipcRenderer.invoke("desktop:save-tool-credential", input);
+  },
+  deleteToolCredential(provider: DesktopToolCredentialProvider) {
+    return ipcRenderer.invoke("desktop:delete-tool-credential", provider);
   },
   getUiState(): Promise<DesktopUiStateV1 | null> {
     return ipcRenderer.invoke("desktop:get-ui-state");

@@ -513,3 +513,31 @@ test("OpenRouter request builder fails fast on unsupported schema keywords", () 
     },
   );
 });
+
+test("OpenRouter preserves typed reasoning details outside assistant answer text", () => {
+  const details = [
+    { type: "reasoning.summary", summary: "Checked the evidence." },
+    { type: "reasoning.encrypted", data: "opaque" },
+  ];
+  const mapped = mapOpenRouterResponse({
+    model: "openai/gpt-5.2",
+    choices: [{ message: { content: "Answer only.", reasoning_details: details } }],
+  }, { endpoint: "chat", requestedModel: "openai/gpt-5.2" });
+
+  assert.equal(mapped.text, "Answer only.");
+  assert.deepEqual(mapped.reasoning?.visible, [
+    { format: "summary", text: "Checked the evidence." },
+  ]);
+  assert.deepEqual(mapped.reasoning?.continuation, [
+    { provider: "openrouter", kind: "reasoning_details", value: details },
+  ]);
+
+  const request = buildOpenRouterHttpRequest({
+    model: "openai/gpt-5.2",
+    input: "continue",
+    messages: [{ role: "assistant", content: "Answer only." }, { role: "user", content: "Continue." }],
+    reasoning: { mode: "provider_visible", continuation: mapped.reasoning?.continuation },
+  }, { apiKey: "key", model: "openai/gpt-5.2", baseUrl: "https://openrouter.ai" });
+  const messages = request.body.messages as Array<Record<string, unknown>>;
+  assert.deepEqual(messages[0]?.reasoning_details, details);
+});

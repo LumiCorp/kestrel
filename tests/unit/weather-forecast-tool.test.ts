@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
+import {
+  createToolProviderConfigurationResolver,
+  createToolProviderRuntimeConfiguration,
+} from "../../tools/providers/runtimeConfiguration.js";
 
 test("weather forecast resolves target hour from city + local date/hour and returns daily forecast", async () => {
   const requestedUrls: string[] = [];
@@ -69,7 +73,15 @@ test("weather forecast resolves target hour from city + local date/hour and retu
   assert.equal(output.timezone, "America/Los_Angeles");
   assert.equal(output.requestedDays, 4);
   assert.equal(output.granularity, "daily");
-  assert.equal(requestedUrls.some((url) => url.includes("forecast_days=4")), true);
+  assert.equal(
+    (output.attempts as Array<Record<string, unknown>>)[0]?.provider,
+    "open-meteo",
+  );
+  assert.equal(output.fallbackUsed, false);
+  assert.equal(
+    requestedUrls.some((url) => url.includes("forecast_days=4")),
+    true,
+  );
 
   const daily = output.daily as Array<Record<string, unknown>>;
   assert.equal(daily.length, 4);
@@ -97,10 +109,120 @@ test("weather forecast throws when no location is provided", async () => {
 });
 
 test("weather forecast describes days as the date-range control", () => {
-  assert.match(weatherForecastTool.definition.description, /Use days for date ranges/u);
-  const properties = weatherForecastTool.definition.inputSchema.properties as Record<string, Record<string, unknown>>;
+  assert.match(
+    weatherForecastTool.definition.description,
+    /Use days for date ranges/u,
+  );
+  const properties = weatherForecastTool.definition.inputSchema
+    .properties as Record<string, Record<string, unknown>>;
   assert.match(String(properties.days?.description), /date range/u);
-  assert.match(String(properties.localHour?.description), /exactly one of localDate or dayOffset/u);
+  assert.match(
+    String(properties.localHour?.description),
+    /exactly one of localDate or dayOffset/u,
+  );
+});
+
+test("weather forecast publishes its normalized output contract", () => {
+  assert.deepEqual(weatherForecastTool.definition.outputContract?.required, [
+    "source",
+    "latitude",
+    "longitude",
+    "timezone",
+    "requestedDays",
+    "granularity",
+    "daily",
+  ]);
+});
+
+test("weather forecast reports invalid daily evidence and an unavailable fallback", async () => {
+  const handler = weatherForecastTool.createHandler({
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          timezone: "America/New_York",
+          hourly: { time: ["2026-07-15T09:00"], temperature_2m: [22] },
+          daily: {},
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () => handler({ latitude: 40.7128, longitude: -74.006 }),
+    (error: unknown) => {
+      const failure = error as {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(failure.code, "WEATHER_FALLBACK_NOT_CONFIGURED");
+      const attempts = failure.details?.attempts as Array<Record<string, unknown>>;
+      assert.equal(attempts[0]?.failureCode, "TOOL_PROVIDER_PAYLOAD_INVALID");
+      assert.equal(attempts[0]?.failureClassification, "invalid_payload");
+      assert.equal(attempts[1]?.failureCode, "WEATHER_FALLBACK_NOT_CONFIGURED");
+      return true;
+    },
+  );
+});
+
+test("weather forecast normalizes Visual Crossing after an Open-Meteo payload failure", async () => {
+  const handler = weatherForecastTool.createHandler({
+    providerConfigurations: createToolProviderConfigurationResolver([
+      createToolProviderRuntimeConfiguration({
+        providerKey: "visual-crossing",
+        credential: "visual-secret",
+      }),
+    ]),
+    fetchImpl: async (url) => {
+      const target = typeof url === "string" ? url : String(url);
+      if (target.includes("api.open-meteo.com")) {
+        return new Response(JSON.stringify({ daily: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          latitude: 47.6062,
+          longitude: -122.3321,
+          timezone: "America/Los_Angeles",
+          currentConditions: { datetime: "07:15:00" },
+          days: [
+            {
+              datetime: "2026-07-15",
+              tempmax: 24,
+              tempmin: 15,
+              precipprob: 20,
+              precip: 0.4,
+              windspeed: 11,
+              hours: [
+                {
+                  datetime: "07:00:00",
+                  temp: 16,
+                  feelslike: 16,
+                  precipprob: 10,
+                  precip: 0,
+                  windspeed: 5,
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const output = (await handler({
+    latitude: 47.6062,
+    longitude: -122.3321,
+    days: 1,
+  })) as Record<string, unknown>;
+  const attempts = output.attempts as Array<Record<string, unknown>>;
+  assert.equal(output.source, "visual-crossing");
+  assert.equal(output.fallbackUsed, true);
+  assert.equal(attempts[0]?.failureClassification, "invalid_payload");
+  assert.equal(attempts[1]?.outcome, "succeeded");
+  assert.equal((output.daily as Array<unknown>).length, 1);
 });
 
 test("weather forecast starts unselected hourly evidence at the provider's current local hour", async () => {
@@ -140,11 +262,11 @@ test("weather forecast starts unselected hourly evidence at the provider's curre
     },
   });
 
-  const output = await handler({
+  const output = (await handler({
     latitude: 39.1031,
     longitude: -84.512,
     days: 2,
-  }) as Record<string, unknown>;
+  })) as Record<string, unknown>;
   const target = output.target as Record<string, unknown>;
   const nextHours = output.nextHours as Array<Record<string, unknown>>;
 
@@ -168,14 +290,23 @@ test("weather forecast rejects incomplete or conflicting target selectors before
     { latitude: 39.1031, longitude: -84.512, localDate: "2026-07-15" },
     { latitude: 39.1031, longitude: -84.512, dayOffset: 3 },
     { latitude: 39.1031, longitude: -84.512, localHour: 9 },
-    { latitude: 39.1031, longitude: -84.512, localDate: "2026-07-15", dayOffset: 3, localHour: 9 },
+    {
+      latitude: 39.1031,
+      longitude: -84.512,
+      localDate: "2026-07-15",
+      dayOffset: 3,
+      localHour: 9,
+    },
   ];
 
   for (const input of invalidInputs) {
     await assert.rejects(
       () => handler(input),
       (error: unknown) => {
-        const runtimeError = error as { code?: string; details?: Record<string, unknown> };
+        const runtimeError = error as {
+          code?: string;
+          details?: Record<string, unknown>;
+        };
         assert.equal(runtimeError.code, "TOOL_INPUT_INVALID");
         assert.match(String(runtimeError.details?.reason), /target_selector/u);
         return true;
@@ -214,15 +345,19 @@ test("weather forecast reports an explicit out-of-range target instead of select
   });
 
   await assert.rejects(
-    () => handler({
-      latitude: 39.1031,
-      longitude: -84.512,
-      localDate: "2026-07-15",
-      localHour: 9,
-      days: 2,
-    }),
+    () =>
+      handler({
+        latitude: 39.1031,
+        longitude: -84.512,
+        localDate: "2026-07-15",
+        localHour: 9,
+        days: 2,
+      }),
     (error: unknown) => {
-      const runtimeError = error as { code?: string; details?: Record<string, unknown> };
+      const runtimeError = error as {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
       assert.equal(runtimeError.code, "TOOL_INPUT_INVALID");
       assert.equal(runtimeError.details?.reason, "hourly_target_out_of_range");
       assert.equal(runtimeError.details?.requestedDays, 2);

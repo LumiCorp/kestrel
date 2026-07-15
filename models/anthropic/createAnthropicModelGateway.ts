@@ -1,6 +1,7 @@
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type {
   ModelGateway,
+  ModelGatewayCallOptions,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
 import type { AnthropicEnvConfig } from "../contracts.js";
@@ -41,8 +42,8 @@ export function createAnthropicModelGatewayFromEnv(
   });
 
   return new RetryingModelGateway(
-    async <T>(request: ModelRequest) =>
-      (await invoker(request)) as unknown as T,
+    async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>
+      (await invoker(request, callOptions)) as unknown as T,
     {
       ...(options.timeoutMs !== undefined
         ? { timeoutMs: options.timeoutMs }

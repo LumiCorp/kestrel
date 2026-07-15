@@ -19,6 +19,8 @@ const DEFAULT_OPTIONS: Required<
     | "effectResultLookupTool"
     | "finalizeToolName"
     | "defaultGoal"
+    | "reasoningRequest"
+    | "reasoningRetention"
   >
 > = {
   decisionModel: "z-ai/glm-5.2",
@@ -26,6 +28,8 @@ const DEFAULT_OPTIONS: Required<
   effectResultLookupTool: "effect_result_lookup",
   finalizeToolName: "FinalizeAnswer",
   defaultGoal: "Resolve the request successfully.",
+  reasoningRequest: { mode: "provider_visible" },
+  reasoningRetention: { mode: "live_only", days: 7 },
 };
 
 export const DEFAULT_AGENT_TOOL_NAMES = [
@@ -78,6 +82,7 @@ export function resolveAgentOptions(
     options?.capabilityManifestProvider ?? ((_ctx) => capabilityManifest);
 
   return {
+    ...(options?.agentProvider !== undefined ? { agentProvider: options.agentProvider } : {}),
     agentModel:
       options?.agentModel ??
       options?.deliberatorModel ??
@@ -90,5 +95,8 @@ export function resolveAgentOptions(
     effectResultLookupTool: config.effectResultLookupTool,
     finalizeToolName: config.finalizeToolName,
     defaultGoal: config.defaultGoal,
+    reasoningRequest: options?.reasoningRequest ?? { mode: "provider_visible" },
+    reasoningRetention: options?.reasoningRetention ?? { mode: "live_only", days: 7 },
+    reasoningRetentionScope: options?.reasoningRetentionScope?.trim() || "default",
   };
 }

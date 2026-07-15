@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 import { and, eq, gt, lte } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -38,7 +39,7 @@ export class GitHubActionApprovalError extends Error {
 export async function recordGitHubActionApprovalRequest(input: {
   identity: ApprovalIdentity;
   requestedExecutionId: string;
-  event: { type: string; payload?: unknown };
+  event: RunnerRunTerminalEvent;
 }) {
   const request = readGitHubApprovalRequest(input.event);
   if (!request) return null;
@@ -55,7 +56,7 @@ export async function recordGitHubActionApprovalRequest(input: {
   const payload = { ...request.toolInput, operation: request.operation };
   const payloadHash = hashGitHubActionPayload(payload);
   const expiresAt = new Date(
-    Math.min(request.expiresAt.getTime(), Date.now() + APPROVAL_TTL_MS)
+    Date.now() + APPROVAL_TTL_MS
   );
   const [created] = await knowledgeDb
     .insert(schema.githubActionApprovals)

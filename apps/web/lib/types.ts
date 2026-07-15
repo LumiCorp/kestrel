@@ -1,4 +1,5 @@
 import type { InferUITool, UIMessage } from "ai";
+import type { KestrelPresentationDataParts } from "@kestrel-agents/ai-sdk";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/artifact";
 import type { createDocument } from "./ai/tools/create-document";
@@ -53,8 +54,8 @@ const kestrelTerminalStatusSchema = z.enum([
   "waiting",
   "failed",
   "cancelled",
-  "runner_error",
-  "empty",
+  "working",
+  "contract_failure",
 ]);
 
 export const messageMetadataSchema = z.object({
@@ -112,7 +113,7 @@ export type CustomUIDataTypes = {
   "resume-warning": { message: string };
   "stream-resumed": null;
   "stream-warning": { droppedChunkCount: number };
-};
+} & KestrelPresentationDataParts;
 
 export type ChatMessage = UIMessage<
   MessageMetadata,

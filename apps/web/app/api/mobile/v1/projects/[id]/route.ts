@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileProjectDto, mobileThreadDtos } from "@/lib/mobile/dto";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 import { requireProjectRole } from "@/lib/projects/access";
 import { listThreadsForUser } from "@/lib/threads/store";
 
@@ -30,6 +30,6 @@ export async function GET(
       threads: await mobileThreadDtos(threads),
     });
   } catch (error) {
-    return errorResponse(error, 404);
+    return mobileErrorResponse(error, 404);
   }
 }

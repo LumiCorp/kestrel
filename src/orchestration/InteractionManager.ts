@@ -28,6 +28,12 @@ export class InteractionManager {
       kind?: string | undefined;
       eventType?: string | undefined;
       metadata?: Record<string, unknown> | undefined;
+      interaction?: {
+        requestId?: string | undefined;
+        kind?: string | undefined;
+        eventType?: string | undefined;
+        prompt?: string | undefined;
+      } | undefined;
     } | undefined;
   }): Promise<InteractionRequestRecord | undefined> {
     const pending = await this.store.listInteractionRequests({
@@ -51,6 +57,7 @@ export class InteractionManager {
         kind: requestKind,
         eventType,
         metadata: waitFor.metadata ?? {},
+        interaction: waitFor.interaction,
       })
     );
     await this.cancelPendingRequests(pending.filter((request) => request.requestId !== existing?.requestId));
@@ -59,10 +66,13 @@ export class InteractionManager {
     }
 
     const metadata = waitFor.metadata ?? {};
+    const interaction = waitFor.interaction;
     const request: InteractionRequestRecord = {
       requestId:
-        typeof metadata.requestId === "string" && metadata.requestId.length > 0
-          ? metadata.requestId
+        typeof interaction?.requestId === "string" && interaction.requestId.length > 0
+          ? interaction.requestId
+          : typeof metadata.requestId === "string" && metadata.requestId.length > 0
+            ? metadata.requestId
           : `request-${randomUUID()}`,
       threadId: input.threadId,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
@@ -71,7 +81,11 @@ export class InteractionManager {
       eventType,
       ...(input.delegationId !== undefined ? { delegationId: input.delegationId } : {}),
       waitKind: waitFor.kind,
-      ...(typeof metadata.prompt === "string" ? { prompt: metadata.prompt } : {}),
+      ...(typeof interaction?.prompt === "string"
+        ? { prompt: interaction.prompt }
+        : typeof metadata.prompt === "string"
+          ? { prompt: metadata.prompt }
+          : {}),
       metadata,
       createdAt: new Date().toISOString(),
     };
@@ -191,13 +205,19 @@ function requestMatchesWaitFor(
     kind: InteractionRequestRecord["kind"];
     eventType: string;
     metadata: Record<string, unknown>;
+    interaction?: {
+      requestId?: string | undefined;
+      prompt?: string | undefined;
+    } | undefined;
   },
 ): boolean {
   if (request.eventType !== waitFor.eventType || request.kind !== waitFor.kind) {
     return false;
   }
 
-  const requestId = readNonEmptyString(waitFor.metadata.requestId);
+  const requestId =
+    readNonEmptyString(waitFor.interaction?.requestId) ??
+    readNonEmptyString(waitFor.metadata.requestId);
   if (requestId !== undefined) {
     return request.requestId === requestId;
   }
@@ -209,7 +229,9 @@ function requestMatchesWaitFor(
     return blockedActionId !== undefined && blockedActionId === requestBlockedActionId;
   }
 
-  const prompt = readNonEmptyString(waitFor.metadata.prompt);
+  const prompt =
+    readNonEmptyString(waitFor.interaction?.prompt) ??
+    readNonEmptyString(waitFor.metadata.prompt);
   const requestPrompt = request.prompt ?? readNonEmptyString(requestMetadata.prompt);
   const reason = readNonEmptyString(waitFor.metadata.reason);
   const requestReason = readNonEmptyString(requestMetadata.reason);

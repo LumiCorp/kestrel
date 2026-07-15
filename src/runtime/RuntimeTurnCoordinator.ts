@@ -22,6 +22,7 @@ import {
   toOperatorAssemblySummary,
 } from "../orchestration/OperatorSessionProjection.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
+import { finalizeRuntimeAssistantResponse } from "./assistantResponseContract.js";
 import {
   materializeCompiledRuntimeTurn,
   prepareRuntimeTurn,
@@ -108,18 +109,23 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
         ? await this.readFinalizedPayload?.(input.sessionId)
         : undefined;
     const session = result.session ?? await this.getSession?.(input.sessionId);
-    const assistantText = result.output.status === "COMPLETED"
-      ? result.assistantText !== undefined
-        ? result.assistantText
-        : readAssistantText(asRecord(session?.state.agent)?.assistantText)
-      : null;
+    const canonicalResponse = finalizeRuntimeAssistantResponse({
+      output: result.output,
+      assistantText:
+        result.assistantText !== undefined
+          ? result.assistantText
+          : readAssistantText(asRecord(session?.state.agent)?.assistantText),
+      request: selectCurrentInteractionRequest(result.threadStatus),
+    });
+    const output = canonicalResponse.output;
+    const assistantText = canonicalResponse.assistantText;
     const affordanceInput = {
       session,
       turn: {
         ...result.prepared.input,
         manualCompaction: result.prepared.compaction.apply,
       },
-      output: result.output,
+      output,
       threadStatus: result.threadStatus,
     };
     const operatorAffordance =
@@ -131,7 +137,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
         await syncRuntimeWorkspaceScratchpad({
           workspace: result.prepared.input.workspace,
           session,
-          output: result.output,
+          output,
           operatorAffordance,
         });
       } catch {
@@ -140,7 +146,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     }
 
     return {
-      output: result.output,
+      output,
       assistantText,
       ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
       ...(operatorAffordance !== undefined ? { operatorAffordance } : {}),
@@ -198,6 +204,7 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   ): ResumeBlockedTurnInput {
     return {
       threadId: mainThread.threadId,
+      requestId: requireResumeRequestId(prepared.input),
       message: prepared.input.message,
       interactionMode: prepared.resolvedMode.interactionMode,
       actSubmode: prepared.resolvedMode.actSubmode,
@@ -238,6 +245,18 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   }
 }
 
+function requireResumeRequestId(input: RuntimeTurnInput): string {
+  const requestId = input.resumeRequestId?.trim();
+  if (requestId === undefined || requestId.length === 0) {
+    throw createRuntimeFailure(
+      "THREAD_RESUME_REQUEST_NOT_FOUND",
+      "A blocked runtime resume requires the exact pending request ID.",
+      { sessionId: input.sessionId },
+    );
+  }
+  return requestId;
+}
+
 interface RuntimeTurnExecutionResult {
   prepared: PreparedRuntimeTurn;
   output: NormalizedOutput;
@@ -276,4 +295,22 @@ function readAssistantText(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function selectCurrentInteractionRequest(
+  status: ThreadStatusSnapshot | null | undefined,
+): ThreadStatusSnapshot["openRequests"][number] | undefined {
+  if (status === null || status === undefined) {
+    return undefined;
+  }
+  const currentRequestId = status.thread.currentRequestId;
+  if (typeof currentRequestId === "string") {
+    const current = status.openRequests.find(
+      (request) => request.requestId === currentRequestId,
+    );
+    if (current !== undefined) {
+      return current;
+    }
+  }
+  return status.openRequests[0];
 }

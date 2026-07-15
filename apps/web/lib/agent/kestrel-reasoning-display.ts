@@ -1,4 +1,4 @@
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
+import type { KestrelTerminalStatus } from "@kestrel-agents/ai-sdk";
 
 export function getReasoningTriggerLabel(input: {
   isStreaming: boolean;
@@ -11,7 +11,7 @@ export function getReasoningTriggerLabel(input: {
   if (input.terminalStatus === "cancelled") {
     return "Cancelled";
   }
-  if (input.terminalStatus === "runner_error") {
+  if (input.terminalStatus === "contract_failure") {
     return "Interrupted";
   }
   if (input.terminalStatus === "waiting") {
@@ -29,6 +29,6 @@ export function shouldAutoCloseReasoning(
   return !(
     terminalStatus === "failed" ||
     terminalStatus === "cancelled" ||
-    terminalStatus === "runner_error"
+    terminalStatus === "contract_failure"
   );
 }

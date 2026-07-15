@@ -500,7 +500,7 @@ test("runner service http serves unary commands over /commands", async (t) => {
 test("runner service http streams run.start over /commands/stream", async (t) => {
   const runtimeFactory = (): RunnerRuntime => ({
     runTurn: async () => ({
-      assistantText: null,
+      assistantText: "The HTTP runner turn completed.",
       output: {
         status: "COMPLETED",
         sessionId: "session-http",

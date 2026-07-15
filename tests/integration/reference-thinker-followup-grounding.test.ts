@@ -50,6 +50,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
       input: {
         status: typeof record?.status === "string" ? record.status : "goal_satisfied",
         message: typeof record?.message === "string" ? record.message : "Done.",
+        assistantProgress: "I have completed the requested work.",
       },
     }];
   }

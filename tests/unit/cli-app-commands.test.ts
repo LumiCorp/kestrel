@@ -15,6 +15,7 @@ import {
   runSplashDatabasePreflight,
 } from "../../cli/app/TuiBootstrap.js";
 import { applyLocalCoreShellEnvironment, formatCliLocalCoreStatus } from "../../cli/localCoreShell.js";
+import { parseLocalCorePlatform } from "../../src/localCore/platform.js";
 import { createConfiguredCliProtocolClient } from "../../cli/client/configuredClient.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
 import { writeRuntimeSettings } from "../../cli/config/RuntimeSettings.js";
@@ -36,6 +37,13 @@ import type { TuiSessionMeta } from "../../cli/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
+
+test("Local Core platform parsing accepts exact Node platform values", () => {
+  assert.equal(parseLocalCorePlatform("linux"), "linux");
+  assert.equal(parseLocalCorePlatform("darwin"), "darwin");
+  assert.equal(parseLocalCorePlatform("LINUX"), undefined);
+  assert.equal(parseLocalCorePlatform(""), undefined);
+});
 
 async function createAppHarness(input: {
   activeProfileId?: string;
@@ -4285,13 +4293,13 @@ test("continuation-like replies do not synthesize a grant line without runtime c
   assert.doesNotMatch(rawHistory, /Granted(?: \d+)? more steps\. Resuming run\./u);
 });
 
-test("run.reasoning appends assistant transcript lines with reasoning metadata", async () => {
+test("run.agent_progress appends durable assistant progress transcript lines", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
 
   (appState.onRunnerEvent as (event: unknown) => void)({
-    type: "run.reasoning",
+    type: "run.agent_progress",
     payload: {
       update: {
         version: "v1",
@@ -4299,7 +4307,6 @@ test("run.reasoning appends assistant transcript lines with reasoning metadata",
         sessionId: "session-1",
         ts: new Date().toISOString(),
         seq: 7,
-        milestone: "phase_changed",
         message: "Evaluating whether context compaction is needed before tool execution.",
         stepIndex: 2,
         stepAgent: "acter",
@@ -4312,7 +4319,8 @@ test("run.reasoning appends assistant transcript lines with reasoning metadata",
     const last = state.transcript[state.transcript.length - 1];
     if (last?.text === "Evaluating whether context compaction is needed before tool execution.") {
       assert.equal(last.role, "assistant");
-      assert.equal(last.data?.reasoning, true);
+      assert.equal(last.data?.agentProgress, true);
+      assert.equal(last.data?.label, "Agent progress");
       assert.equal(last.data?.runId, "run-reasoning-1");
       assert.equal(last.data?.seq, 7);
       return;
@@ -4323,7 +4331,7 @@ test("run.reasoning appends assistant transcript lines with reasoning metadata",
   assert.fail("expected reasoning line to be appended to transcript");
 });
 
-test("run.reasoning coalesces bursty transcript updates while preserving run logs", async () => {
+test("run.agent_progress coalesces bursty durable transcript updates", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4355,7 +4363,7 @@ test("run.reasoning coalesces bursty transcript updates while preserving run log
 
   for (let index = 0; index < 40; index += 1) {
     (appState.onRunnerEvent as (event: unknown) => void)({
-      type: "run.reasoning",
+      type: "run.agent_progress",
       payload: {
         update: {
           version: "v1",
@@ -4363,7 +4371,6 @@ test("run.reasoning coalesces bursty transcript updates while preserving run log
           sessionId: "session-1",
           ts: new Date().toISOString(),
           seq: index + 1,
-          milestone: "tool_activity",
           message: `Reasoning update ${index + 1}`,
           stepIndex: index,
           stepAgent: "agent.exec.collect",
@@ -4384,8 +4391,8 @@ test("run.reasoning coalesces bursty transcript updates while preserving run log
   }
 
   const state = uiStore.getState();
-  const reasoningLines = state.transcript.filter((line) => line.data?.reasoning === true);
-  assert.equal(state.runLogs.filter((line) => line.eventName === "reasoning_update").length, 40);
+  const reasoningLines = state.transcript.filter((line) => line.data?.agentProgress === true);
+  assert.equal(state.runLogs.filter((line) => line.eventName === "reasoning_update").length, 0);
   assert.equal(reasoningLines.length, 2);
   assert.equal(reasoningLines[0]?.text, "Reasoning update 1");
   assert.equal(reasoningLines[1]?.text, "Reasoning update 40");

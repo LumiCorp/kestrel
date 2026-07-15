@@ -178,7 +178,8 @@ test(
     const environmentWeather = environmentApps.find(
       (configuration) => configuration.app.key === "built_in.weather"
     );
-    assert.equal(environmentWeather?.app.connectionModel, "none");
+    assert.equal(environmentWeather?.app.connectionModel, "environment");
+    assert.equal(environmentWeather?.app.connectionRequirement, "optional");
     assert.equal(environmentWeather?.connections.length, 0);
     assert.equal(
       environmentWeather?.capabilities.find(
@@ -212,7 +213,10 @@ test(
         key: capability.key,
         approvalMode: capability.approvalMode,
       })),
-      [{ key: "getWeather", approvalMode: "auto" }]
+      [
+        { key: "getWeather", approvalMode: "auto" },
+        { key: "forecast", approvalMode: "auto" },
+      ]
     );
     await projectAppService.saveProjectAppCapabilityPolicy({
       organizationId,

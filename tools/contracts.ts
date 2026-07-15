@@ -28,6 +28,7 @@ import type {
 } from "../src/project/contracts.js";
 import type { ManagedTaskWorktreeService } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { TavilyInternetProvider } from "./internet/contracts.js";
+import type { ToolProviderConfigurationResolver } from "./providers/runtimeConfiguration.js";
 
 export type ToolFreshnessClass = "live" | "volatile" | "static" | "runtime";
 export type ToolLatencyClass = "low" | "medium" | "high";
@@ -153,6 +154,8 @@ export interface SharedToolContext {
   onFinalize?: ((payload: unknown) => unknown | Promise<unknown>) | undefined;
   fetchImpl?: typeof fetch | undefined;
   internetProvider?: TavilyInternetProvider | undefined;
+  providerConfigurations?: ToolProviderConfigurationResolver | undefined;
+  /** @deprecated Transitional compatibility for callers not yet using providerConfigurations. */
   internetEnv?: NodeJS.ProcessEnv | undefined;
   strictFinalizeProvenance?: boolean | undefined;
   codeMode?: CodeModeProfileConfig | undefined;

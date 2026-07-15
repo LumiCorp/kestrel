@@ -12,7 +12,12 @@ test("Environment connection input accepts named Tavily connections", () => {
       apiKey: "tvly-secret",
       projectId: "research",
     }),
-    { name: "Primary", apiKey: "tvly-secret", projectId: "research" }
+    {
+      kind: "api_key",
+      name: "Primary",
+      apiKey: "tvly-secret",
+      projectId: "research",
+    }
   );
 });
 

@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { parseProfilesFile, ProfileStore } from "../../cli/config/ProfileStore.js";
+import { applyProfileDefaults, parseProfilesFile, ProfileStore } from "../../cli/config/ProfileStore.js";
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 
@@ -513,4 +513,56 @@ test("parseProfilesFile validates codeMode schema in version 3", () => {
       }),
     );
   }, /approvalMode/);
+});
+
+test("version 3 profiles migrate to live-only provider reasoning defaults", () => {
+  const parsed = parseProfilesFile(JSON.stringify({
+    version: 3,
+    profiles: [{
+      id: "reference",
+      label: "Reference React",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+    }],
+  }));
+  assert.equal(parsed.migrated, true);
+  assert.deepEqual(applyProfileDefaults(parsed.profiles[0]!).reasoning, {
+    request: { mode: "provider_visible" },
+    retention: { mode: "live_only", days: 7 },
+  });
+});
+
+test("version 4 profiles accept explicit retention and enforce the 1 to 30 day range", () => {
+  const valid = parseProfilesFile(JSON.stringify({
+    version: 4,
+    profiles: [{
+      id: "reference",
+      label: "Reference React",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+      reasoning: {
+        request: { mode: "summary", effort: "high" },
+        retention: { mode: "provider_visible", days: 30 },
+      },
+    }],
+  }));
+  assert.deepEqual(valid.profiles[0]?.reasoning, {
+    request: { mode: "summary", effort: "high" },
+    retention: { mode: "provider_visible", days: 30 },
+  });
+  for (const days of [0, 31]) {
+    assert.throws(() => parseProfilesFile(JSON.stringify({
+      version: 4,
+      profiles: [{
+        id: "reference",
+        label: "Reference React",
+        agent: "reference-react",
+        sessionPrefix: "reference",
+        reasoning: {
+          request: { mode: "summary" },
+          retention: { mode: "provider_visible", days },
+        },
+      }],
+    })), /integer from 1 to 30/u);
+  }
 });

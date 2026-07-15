@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { getKestrelToolApprovalRequest } from "@/lib/agent/kestrel-stream-events";
+import { readKestrelTerminalInteraction } from "@kestrel-agents/ai-sdk";
+import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 
 export const githubMutationOperations = [
   "issue.create",
@@ -11,24 +12,22 @@ export const githubMutationOperations = [
 
 export type GitHubMutationOperation = (typeof githubMutationOperations)[number];
 
-export function readGitHubApprovalRequest(event: {
-  type: string;
-  payload?: unknown;
-}) {
-  const approval = getKestrelToolApprovalRequest(event);
-  if (!approval) return null;
+export function readGitHubApprovalRequest(event: RunnerRunTerminalEvent) {
+  const interaction = readKestrelTerminalInteraction(event);
+  const approval = interaction?.approval;
+  if (!(interaction?.kind === "approval" && approval)) return null;
   const operation = operationForToolName(approval.toolName);
-  const expiresAt = readExpiry(approval.expiresAt);
-  if (!(expiresAt && operation)) return null;
-  const repository = readString(approval.input.repository);
+  if (!operation) return null;
+  const input = asRecord(approval.input);
+  if (!input) return null;
+  const repository = readString(input.repository);
   if (!repository) return null;
   return {
-    runtimeApprovalId: approval.approvalId,
+    runtimeApprovalId: interaction.requestId,
     toolName: approval.toolName,
-    toolInput: approval.input,
+    toolInput: input,
     operation,
     repository,
-    expiresAt,
   };
 }
 
@@ -67,15 +66,12 @@ function stableStringify(value: unknown): string {
     .join(",")}}`;
 }
 
-function readExpiry(value: unknown) {
-  const raw = readString(value);
-  if (!raw) return null;
-  const date = new Date(raw);
-  return Number.isFinite(date.getTime()) && date.getTime() > Date.now()
-    ? date
-    : null;
-}
-
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

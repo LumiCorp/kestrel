@@ -5,6 +5,7 @@ import {
   createOllamaModelGatewayFromEnv,
   createOpenRouterModelGatewayFromEnv,
   createSessionStoreFromEnv,
+  createProviderReasoningVaultFromEnv,
   DEFAULT_ACT_SUBMODE,
   LocalDevShellService,
   DEFAULT_INTERACTION_MODE,
@@ -23,6 +24,7 @@ import {
   type RuntimeTurnResult,
   type ProgressUpdateV1,
   type ReasoningUpdateV1,
+  type ModelReasoningUpdateV1,
   type RunConsoleUpdateV1,
   type RunLogEntry,
   ThreadRuntime,
@@ -70,7 +72,10 @@ import type {
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 
-import type { SharedToolContext } from "../../tools/index.js";
+import {
+  createToolProviderConfigurationResolverFromEnvironment,
+  type SharedToolContext,
+} from "../../tools/index.js";
 import { registerAgent } from "./AgentFactory.js";
 import type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
 import { getSkillPackById } from "./skillPacks.js";
@@ -131,6 +136,7 @@ interface RuntimeBootstrap {
   prepareHostedMcpRuntime?:
     | ((input: Pick<RunTurnInput, "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
     | undefined;
+  reasoningPolicyReady?: Promise<unknown> | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -143,24 +149,6 @@ const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
 };
 const LOCAL_OPENAI_COMPATIBLE_MODEL_TIMEOUT_MS = 45_000;
 const LOCAL_OPENAI_COMPATIBLE_MODEL_RETRY_COUNT = 0;
-const DEFAULT_REASONING_MODEL_BY_PROVIDER: Record<NonNullable<TuiProfile["modelProvider"]>, string> = {
-  openrouter: "openai/gpt-4.1-nano",
-  openai: "gpt-5.4-2026-03-05",
-  anthropic: "claude-3-5-haiku-latest",
-  ollama: "llama3.2:3b",
-  lmstudio: "local-model",
-};
-
-export function resolveReasoningModelForProfile(
-  profile: TuiProfile,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const provider = profile.modelProvider ?? "openrouter";
-  return parseEnvString("KCHAT_REASONING_MODEL", env) ??
-    profile.model ??
-    DEFAULT_REASONING_MODEL_BY_PROVIDER[provider];
-}
-
 export interface RuntimeFactory {
   create(
     profile: TuiProfile,
@@ -168,7 +156,7 @@ export interface RuntimeFactory {
     onRunLog?: ((entry: RunLogEntry) => void) | undefined,
     onProgress?: ((update: ProgressUpdateV1) => void) | undefined,
     onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined,
-    onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined,
+    onReasoning?: ((update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void) | undefined,
     onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
     onRunEvent?: ((event: RunEvent) => void) | undefined,
   ): RuntimeBootstrap;
@@ -189,7 +177,7 @@ export interface KestrelChatRuntimeOptions {
   onRunLog?: ((entry: RunLogEntry) => void) | undefined;
   onProgress?: ((update: ProgressUpdateV1) => void) | undefined;
   onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined;
-  onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined;
+  onReasoning?: ((update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void) | undefined;
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
   onRunEvent?: ((event: RunEvent) => void) | undefined;
 }
@@ -215,6 +203,7 @@ export class KestrelChatRuntime {
     | undefined;
   private readonly turnCoordinator: RuntimeTurnCoordinatorService;
   private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
+  private readonly reasoningPolicyReady: Promise<unknown>;
 
   private finalizedPayload: unknown;
 
@@ -262,6 +251,7 @@ export class KestrelChatRuntime {
     this.closePool = bootstrap.close;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
     this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
+    this.reasoningPolicyReady = bootstrap.reasoningPolicyReady ?? Promise.resolve();
     this.forceModeSystemV2 = profile.agent === "reference-react";
     this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
     this.defaultExecutionPolicy = buildExecutionPolicyFromPack(profile.approvalPolicyPackId);
@@ -307,6 +297,7 @@ export class KestrelChatRuntime {
     input: RunTurnInput,
     options: { signal?: AbortSignal | undefined } = {},
   ): Promise<RunTurnResult> {
+    await this.reasoningPolicyReady;
     this.finalizedPayload = undefined;
     const normalizedInput: RunTurnInput = {
       ...input,
@@ -899,6 +890,20 @@ export class KestrelChatRuntime {
     return this.kestrel.cancelActiveRun(sessionId);
   }
 
+  async getRetainedProviderReasoning(input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) {
+    await this.reasoningPolicyReady;
+    return this.kestrel.getRetainedProviderReasoning(input);
+  }
+
+  async deleteRetainedProviderReasoning(input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) {
+    await this.reasoningPolicyReady;
+    return this.kestrel.deleteRetainedProviderReasoning(input);
+  }
+
+  getProviderReasoningVaultStatus() {
+    return this.kestrel.getProviderReasoningVaultStatus();
+  }
+
   async close(): Promise<void> {
     await this.closePool();
   }
@@ -939,7 +944,7 @@ function createDefaultRuntime(
   onRunLog?: ((entry: RunLogEntry) => void) | undefined,
   onProgress?: ((update: ProgressUpdateV1) => void) | undefined,
   onConsole?: ((update: RunConsoleUpdateV1) => void) | undefined,
-  onReasoning?: ((update: ReasoningUpdateV1) => void) | undefined,
+  onReasoning?: ((update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void) | undefined,
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent?: ((event: RunEvent) => void) | undefined,
 ): RuntimeBootstrap {
@@ -1005,7 +1010,7 @@ function createRuntimeWithStore(
   onRunLog: ((entry: RunLogEntry) => void) | undefined,
   onProgress: ((update: ProgressUpdateV1) => void) | undefined,
   onConsole: ((update: RunConsoleUpdateV1) => void) | undefined,
-  onReasoning: ((update: ReasoningUpdateV1) => void) | undefined,
+  onReasoning: ((update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void) | undefined,
   onTaskUpdate: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent: ((event: RunEvent) => void) | undefined,
   store: SessionStore,
@@ -1034,7 +1039,9 @@ function createRuntimeWithStore(
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,
     },
-    ...(internetEnv !== undefined ? { internetEnv } : {}),
+    providerConfigurations: createToolProviderConfigurationResolverFromEnvironment(
+      internetEnv ?? process.env,
+    ),
     ...(devShellService !== undefined ? { devShellService } : {}),
     ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
     projectActions: createProductProjectActionToolAdapter({ taskGraphStore, projectStore }),
@@ -1048,15 +1055,25 @@ function createRuntimeWithStore(
     env: mcpEnv,
   });
 
-  const reasoningEnabled = parseEnvBoolean("KCHAT_REASONING_ENABLED", runtimeEnv);
-  const reasoningModel = resolveReasoningModelForProfile(profile, runtimeEnv);
-  const reasoningTimeoutMs = parseEnvInt("KCHAT_REASONING_TIMEOUT_MS", runtimeEnv);
-  const reasoningMaxTokens = parseEnvInt("KCHAT_REASONING_MAX_TOKENS", runtimeEnv);
   const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
+  const providerReasoningVault = createProviderReasoningVaultFromEnv(store, runtimeEnv);
+  const reasoningPolicyReady = Promise.all([
+    providerReasoningVault.purgeExpired(),
+    providerReasoningVault.applyRetentionPolicy(
+      profile.id,
+      profile.reasoning?.retention ?? { mode: "live_only", days: 7 },
+    ),
+  ]);
+  void reasoningPolicyReady.catch(() => {});
+  const providerReasoningPurgeTimer = setInterval(() => {
+    void providerReasoningVault.purgeExpired().catch(() => {});
+  }, 60 * 60 * 1_000);
+  providerReasoningPurgeTimer.unref();
 
   const kestrel = new Kestrel({
     store,
     modelGateway,
+    providerReasoningVault,
     toolGateway: toolRegistry,
     workspaceCheckpointService,
     ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
@@ -1087,16 +1104,10 @@ function createRuntimeWithStore(
     heapDiagnostics: createRuntimeHeapDiagnosticsFromEnv(runtimeEnv, {
       processRole: runtimeEnv.KESTREL_RUNNER_PROCESS_ROLE ?? "ks-runtime",
     }),
-    reasoningSidecar: {
-      ...(environment !== undefined ? { inheritProcessEnv: false } : {}),
-      ...(reasoningEnabled !== undefined ? { enabled: reasoningEnabled } : {}),
-      ...(reasoningModel !== undefined ? { model: reasoningModel } : {}),
-      ...(reasoningTimeoutMs !== undefined ? { timeoutMs: reasoningTimeoutMs } : {}),
-      ...(reasoningMaxTokens !== undefined ? { maxTokens: reasoningMaxTokens } : {}),
-    },
   });
 
   const registration = registerAgent(kestrel, profile.agent, {
+    ...(profile.modelProvider !== undefined ? { agentProvider: profile.modelProvider } : {}),
     thinkerToolsProvider: (ctx) =>
       toolRegistry.getModelTools({
         runContext: {
@@ -1122,6 +1133,9 @@ function createRuntimeWithStore(
         }
       : {}),
     agentStageModelByStage: profile.agentStageConfig?.modelByStage,
+    reasoningRequest: profile.reasoning?.request ?? { mode: "provider_visible" },
+    reasoningRetention: profile.reasoning?.retention ?? { mode: "live_only", days: 7 },
+    reasoningRetentionScope: profile.id,
   });
   let threadRuntime: ThreadRuntime | undefined;
   const threadedTurnExecutor = new RuntimeThreadedTurnExecutor({
@@ -1188,18 +1202,21 @@ function createRuntimeWithStore(
       ? { managedTaskWorktreeService }
       : {}),
     entryStepAgent: registration.entryStepAgent,
+    reasoningPolicyReady,
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;
     },
     prepareHostedMcpRuntime: (input) =>
       toolRegistry.refreshForRuntimeTurn(input),
-    close: async () =>
-      closeRuntimeResources(
+    close: async () => {
+      clearInterval(providerReasoningPurgeTimer);
+      await closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
         closeStore,
         devShellService instanceof LocalDevShellService ? devShellService.close.bind(devShellService) : undefined,
-      ),
+      );
+    },
   };
 }
 

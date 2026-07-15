@@ -25,6 +25,7 @@ import type {
 } from "./RunnerServiceEventJournal.js";
 
 const MAX_REPLAY_HISTORY = 1000;
+const MAX_LIVE_OVERLAY_HISTORY = 2000;
 
 type RunnerEventListener = (event: RunnerEvent) => void;
 
@@ -58,6 +59,7 @@ export class RunnerServiceEventBus implements RunnerEventSink {
   private readonly listenersByCommandId = new Map<string, Set<RunnerEventListener>>();
   private readonly subscriptionListeners = new Set<FilteredRunnerEventListener>();
   private readonly history: RunnerEvent[] = [];
+  private readonly liveOverlay = new Map<string, RunnerEvent>();
   private readonly journal: RunnerServiceEventJournal | undefined;
   private readonly readiness: Promise<void>;
   private readonly activeReplayControllers = new Set<AbortController>();
@@ -103,6 +105,7 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       sessionId?: string | undefined;
       threadId?: string | undefined;
       commandId?: string | undefined;
+      durability?: "durable" | "live_only" | undefined;
     } = {},
   ): void {
     const eventId = randomUUID();
@@ -147,9 +150,20 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       return;
     }
 
+    const journalEvent = options.durability === "live_only"
+      ? redactLiveOnlyProtocolEvent(event)
+      : event;
+    if (options.durability === "live_only") {
+      this.liveOverlay.set(event.id, event);
+      while (this.liveOverlay.size > MAX_LIVE_OVERLAY_HISTORY) {
+        const oldest = this.liveOverlay.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.liveOverlay.delete(oldest);
+      }
+    }
     this.publicationTail = this.publicationTail.then(async () => {
       try {
-        await this.journal?.append(event);
+        await this.journal?.append(journalEvent);
       } catch (error) {
         this.publishJournalFailure(event, error);
         return;
@@ -318,7 +332,7 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       filter,
       (event) => {
         if (matchesSubscriptionFilter(event, filter)) {
-          listener(event);
+          listener(this.liveOverlay.get(event.id) ?? event);
         }
       },
       options,
@@ -443,6 +457,24 @@ export class RunnerServiceEventBus implements RunnerEventSink {
       // A failed subscriber shutdown callback must not block event publication or service shutdown.
     }
   }
+}
+
+function redactLiveOnlyProtocolEvent(event: RunnerEvent): RunnerEvent {
+  if (!event.type.startsWith("run.model.reasoning.")) return event;
+  const payload = event.payload as unknown as Record<string, unknown>;
+  const update = typeof payload.update === "object" && payload.update !== null && !Array.isArray(payload.update)
+    ? payload.update as Record<string, unknown>
+    : {};
+  const { delta: _delta, ...metadata } = update;
+  return {
+    ...event,
+    payload: {
+      update: {
+        ...metadata,
+        contentState: "not_retained",
+      },
+    },
+  } as RunnerEvent;
 }
 
 function normalizeRunnerEventScope(options: {

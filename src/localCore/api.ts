@@ -54,6 +54,8 @@ import { DesktopUiStateStore } from "./desktopUiState.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
+  parseLocalCoreCredentialId,
+  parseLocalCoreCredentialSecret,
   readLocalCoreCredentialStoreStatus,
   UnavailableLocalCoreCredentialStore,
   type LocalCoreCredentialStore,
@@ -976,6 +978,30 @@ async function handleRequest(input: {
       });
       return;
     }
+    const credentialId = parseCredentialPath(url.pathname);
+    if (credentialId !== undefined && method === "PUT") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const body = await readJsonBody(input.request);
+      const secret = parseCredentialMutationBody(body);
+      await credentialStore.set(credentialId, secret);
+      writeJson(input.response, 200, {
+        ok: true,
+        credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
+      });
+      return;
+    }
+    if (credentialId !== undefined && method === "DELETE") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const deleted = await credentialStore.delete(credentialId);
+      writeJson(input.response, 200, {
+        ok: true,
+        deleted,
+        credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
+      });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
       const runtimeConfiguration = await input.runtimeConfigurationStore.read();
       writeJson(input.response, 200, {
@@ -1357,6 +1383,33 @@ async function handleRequest(input: {
       error instanceof Error ? error.message : String(error),
     ));
   }
+}
+
+function parseCredentialPath(pathname: string) {
+  const match = /^\/v1\/credentials\/([^/]+)$/u.exec(pathname);
+  if (match === null) return undefined;
+  try {
+    return parseLocalCoreCredentialId(decodeURIComponent(match[1] ?? ""));
+  } catch (error) {
+    if (error instanceof URIError) {
+      throw new Error("Local Core credential id encoding is invalid.");
+    }
+    throw error;
+  }
+}
+
+function parseCredentialMutationBody(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Local Core credential request body must be an object.");
+  }
+  const body = value as Record<string, unknown>;
+  const unsupportedKey = Object.keys(body).find((key) => key !== "secret");
+  if (unsupportedKey !== undefined) {
+    throw new Error(
+      `Local Core credential request includes unsupported field '${unsupportedKey}'.`,
+    );
+  }
+  return parseLocalCoreCredentialSecret(body.secret);
 }
 
 function normalizeObjectField<T extends object = Record<string, unknown>>(value: unknown, field: string): T {

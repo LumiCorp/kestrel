@@ -28,13 +28,21 @@ test("Kestrel-One knowledge tool sends bearer auth and tenant headers", async ()
     },
   });
 
-  const result = await handler({ query: "docs", limit: 3 });
+  const result = await handler({ query: "docs", limit: 3 }) as {
+    toolName: string;
+    status: string;
+    auditRecord: { output: unknown };
+    presentation: { citations: unknown[] };
+  };
 
-  assert.deepEqual(result, {
+  assert.deepEqual(result.auditRecord.output, {
     query: "docs",
     count: 1,
     results: [{ title: "Doc" }],
   });
+  assert.equal(result.toolName, TOOL_NAME);
+  assert.equal(result.status, "OK");
+  assert.deepEqual(result.presentation.citations, []);
   assert.equal(
     capturedUrl,
     "https://one.example.test/api/kestrel/tools/search-knowledge-documents",

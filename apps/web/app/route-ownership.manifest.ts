@@ -589,6 +589,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/apps/[appKey]/[capability]/[approval]/[...path]/route.ts",
+    "/api/runtime/apps/:appKey/:capability/:approval/[...path]",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/admin/api-keys/route.ts",
     "/api/admin/api-keys",
     ADMIN_API.owner,
@@ -766,6 +773,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/runpod/connection/route.ts",
     "/api/admin/runpod/connection",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
+    "app/api/admin/runs/[runId]/reasoning/route.ts",
+    "/api/admin/runs/:runId/reasoning",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
@@ -1075,13 +1089,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/mobile/v1/threads/[id]/interactions/route.ts",
-    "/api/mobile/v1/threads/:id/interactions",
-    "mobile",
-    AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
-  ),
-  api(
     "app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts",
     "/api/mobile/v1/threads/:id/interactions/:checkpointId",
     "mobile",
@@ -1140,6 +1147,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/threads/[id]/turns/route.ts",
     "/api/threads/:id/turns",
+    "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/threads/[id]/turns/[turnId]/interrupt/route.ts",
+    "/api/threads/:id/turns/:turnId/interrupt",
     "threads",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized

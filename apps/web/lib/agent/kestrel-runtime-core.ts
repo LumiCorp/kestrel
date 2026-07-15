@@ -1,26 +1,35 @@
 import type {
   KestrelAgent,
+  KestrelAgentResumeInput,
   KestrelAgentTurnInput,
   KestrelRequestContext,
   RunnerHistoryEntry,
   RunnerStream,
-  RunnerStreamEvent,
+  RunnerRunStreamEvent,
+  RunnerRunTerminalEvent,
 } from "@kestrel-agents/sdk";
+import {
+  writeKestrelFailureToUIMessage,
+  writeKestrelRunnerStreamToUIMessage,
+  type KestrelPresentationSnapshot,
+  type KestrelInteractionPresentation,
+  type KestrelTerminalStatus,
+  type KestrelUIMessage,
+} from "@kestrel-agents/ai-sdk";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
+  type InferUIMessageChunk,
+  type UIMessageStreamWriter,
   type UIMessage,
 } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
-import {
-  type KestrelUiStreamChunk,
-  writeKestrelRunnerEventsToUi,
-} from "@/lib/agent/kestrel-ui-stream";
+import type { ChatMessage } from "@/lib/types";
 import type { Session } from "@/lib/auth-types";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
+type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 export type KestrelOneRequestCorrelation = {
   requestId: string;
@@ -39,35 +48,23 @@ export type KestrelOneHistoryEntry = RunnerHistoryEntry;
 
 export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   signal?: AbortSignal;
+  resumeRequestId?: string | undefined;
 };
 
-export type KestrelOneRunnerStreamEvent = {
-  type: RunnerStreamEvent["type"];
-  payload?: unknown;
-  id?: RunnerStreamEvent["id"];
-  ts?: RunnerStreamEvent["ts"];
-  runId?: RunnerStreamEvent["runId"];
-  sessionId?: RunnerStreamEvent["sessionId"];
-  threadId?: RunnerStreamEvent["threadId"];
-  commandId?: RunnerStreamEvent["commandId"];
-};
-
-export type KestrelOneRunnerCompletedEvent = KestrelOneRunnerStreamEvent & {
-  type: "run.completed";
-};
-
-export type KestrelOneRunnerFailedEvent = KestrelOneRunnerStreamEvent & {
-  type: "run.failed";
-};
-
-export type KestrelOneRunnerCancelledEvent = KestrelOneRunnerStreamEvent & {
-  type: "run.cancelled";
-};
-
-export type KestrelOneRunnerTerminalEvent =
-  | KestrelOneRunnerCompletedEvent
-  | KestrelOneRunnerFailedEvent
-  | KestrelOneRunnerCancelledEvent;
+export type KestrelOneRunnerStreamEvent = RunnerRunStreamEvent;
+export type KestrelOneRunnerTerminalEvent = RunnerRunTerminalEvent;
+export type KestrelOneRunnerCompletedEvent = Extract<
+  RunnerRunTerminalEvent,
+  { type: "run.completed" }
+>;
+export type KestrelOneRunnerFailedEvent = Extract<
+  RunnerRunTerminalEvent,
+  { type: "run.failed" }
+>;
+export type KestrelOneRunnerCancelledEvent = Extract<
+  RunnerRunTerminalEvent,
+  { type: "run.cancelled" }
+>;
 
 export type KestrelOneRunnerStream = RunnerStream<
   KestrelOneRunnerStreamEvent,
@@ -88,6 +85,16 @@ export function adaptKestrelAgentForKestrelOne(
 ): KestrelOneAgent {
   return {
     stream(input, context) {
+      if (input.resumeRequestId !== undefined) {
+        const { resumeRequestId, ...turn } = input;
+        return agent.resumeStream(
+          {
+            ...(turn as KestrelAgentResumeInput),
+            requestId: resumeRequestId,
+          },
+          context,
+        );
+      }
       return agent.stream(input, context);
     },
     close() {
@@ -96,30 +103,15 @@ export function adaptKestrelAgentForKestrelOne(
   };
 }
 
-export function resolveKestrelOneTurnEventType(input: {
-  requestedEventType: string;
-  waitFor: unknown;
-}) {
-  if (input.requestedEventType !== "user.message") {
-    return input.requestedEventType;
-  }
-  const waitFor =
-    typeof input.waitFor === "object" &&
-    input.waitFor !== null &&
-    !Array.isArray(input.waitFor)
-      ? (input.waitFor as Record<string, unknown>)
-      : undefined;
-  return waitFor?.eventType === "user.reply"
-    ? "user.reply"
-    : input.requestedEventType;
-}
-
 export type KestrelOneAgentResponsePersistMeta = {
   model: string;
   title: string | null;
   errorMessage: string | null;
   failureVisible: boolean;
   terminalStatus: KestrelTerminalStatus;
+  interaction: KestrelInteractionPresentation | null;
+  assistantMessageId: string;
+  runId: string | null;
 };
 
 export type KestrelOneAgentResponseInput = {
@@ -138,6 +130,15 @@ export type KestrelOneAgentResponseInput = {
         reason?: string | undefined;
       }
     | undefined;
+  interactionResponse?:
+    | {
+        requestId: string;
+        eventType: string;
+        message: string;
+        approved?: boolean | undefined;
+        reason?: string | undefined;
+      }
+    | undefined;
   modelId?: string;
   runtimeModel?: KestrelOneRuntimeModelSelection;
   projectContext?: {
@@ -150,6 +151,7 @@ export type KestrelOneAgentResponseInput = {
   transientTitle?: Promise<string | null> | null;
   signal?: AbortSignal;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
+  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta
@@ -185,15 +187,24 @@ export function createKestrelOneAgentResponseFromAgent(
     organizationId: input.organizationId,
     correlation: input.correlation,
   });
-  const latestUserMessage = input.approvalDecision
-    ? input.approvalDecision.approved
-      ? "approve"
-      : "deny"
-    : getLatestUserText(input.messages);
+  const interactionResponse =
+    input.interactionResponse ??
+    (input.approvalDecision !== undefined
+      ? {
+          requestId: input.approvalDecision.approvalId,
+          eventType: "user.approval" as const,
+          message: input.approvalDecision.approved ? "approve" : "deny",
+          approved: input.approvalDecision.approved,
+          ...(input.approvalDecision.reason !== undefined
+            ? { reason: input.approvalDecision.reason }
+            : {}),
+        }
+      : undefined);
+  const latestUserMessage =
+    interactionResponse?.message ?? getLatestUserText(input.messages);
   const history = toKestrelHistory(input.messages.slice(0, -1));
   const assistantMessageId = crypto.randomUUID();
   const textPartId = crypto.randomUUID();
-  const reasoningPartId = crypto.randomUUID();
   let streamErrorMessage: string | null = null;
   const transientTitle =
     input.transientTitle?.catch((error: unknown) => {
@@ -218,27 +229,18 @@ export function createKestrelOneAgentResponseFromAgent(
             },
           }
         : writer;
-      let streamResult = {
-        finalText: "",
-        errorMessage: null as string | null,
-        failureVisible: false,
-        terminalStatus: "empty" as KestrelTerminalStatus,
-        approvalRequests: [] as Array<{
-          approvalId: string;
-          toolCallId: string;
-          toolName: string;
-          input: Record<string, unknown>;
-        }>,
-      };
+      let streamResult: KestrelPresentationSnapshot;
 
       try {
-        const runStream = await input.agent.stream(
+        try {
+          const runStream = await input.agent.stream(
           {
             sessionId: input.threadId,
             message: latestUserMessage,
-            eventType: input.approvalDecision
-              ? "user.approval"
-              : "user.message",
+            eventType: interactionResponse?.eventType ?? "user.message",
+            ...(interactionResponse !== undefined
+              ? { resumeRequestId: interactionResponse.requestId }
+              : {}),
             history,
             ...(input.projectContext
               ? {
@@ -274,14 +276,22 @@ export function createKestrelOneAgentResponseFromAgent(
           input.runtimeModel
         );
 
-        streamResult = await writeKestrelRunnerEventsToUi({
-          writer: mirroredWriter,
-          events: runStream,
-          terminalEvent: runStream.result,
-          assistantMessageId,
-          textPartId,
-          reasoningPartId,
-        });
+          streamResult = await writeKestrelRunnerStreamToUIMessage({
+            writer: mirroredWriter as UIMessageStreamWriter<KestrelUIMessage>,
+            events: runStream,
+            terminalEvent: runStream.result,
+            assistantMessageId,
+            textPartId,
+            onEvent: input.onRuntimeEvent,
+          });
+        } catch (error) {
+          streamResult = await writeKestrelFailureToUIMessage({
+            writer: mirroredWriter as UIMessageStreamWriter<KestrelUIMessage>,
+            error,
+            assistantMessageId,
+            textPartId,
+          });
+        }
       } finally {
         if (input.ownsAgent) {
           await input.agent.close();
@@ -302,25 +312,7 @@ export function createKestrelOneAgentResponseFromAgent(
       mirroredWriter.write({ type: "finish", finishReason: "stop" });
 
       await input.onFinishPersist?.(
-        [
-          {
-            id: assistantMessageId,
-            role: "assistant",
-            parts: [
-              ...(streamResult.finalText
-                ? [{ type: "text" as const, text: streamResult.finalText }]
-                : []),
-              ...streamResult.approvalRequests.map((approval) => ({
-                type: "dynamic-tool" as const,
-                toolName: approval.toolName,
-                toolCallId: approval.toolCallId,
-                state: "approval-requested" as const,
-                approval: { id: approval.approvalId },
-                input: approval.input,
-              })),
-            ],
-          },
-        ],
+        [streamResult.message],
         {
           model:
             input.modelId ||
@@ -330,6 +322,9 @@ export function createKestrelOneAgentResponseFromAgent(
           errorMessage: streamResult.errorMessage,
           failureVisible: streamResult.failureVisible,
           terminalStatus: streamResult.terminalStatus,
+          interaction: streamResult.interaction,
+          assistantMessageId: streamResult.message.id,
+          runId: streamResult.message.metadata?.kestrelRunId ?? null,
         }
       );
     },

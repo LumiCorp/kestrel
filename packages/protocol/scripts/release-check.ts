@@ -64,8 +64,8 @@ try {
   );
   assert.equal(typeof entryModule.createRunnerHealthV1, "function");
   assert.equal(typeof entryModule.parseRunnerHealthV1, "function");
-  assert.equal(entryModule.EXECUTION_PROTOCOL_VERSION, "execution-protocol-v2");
-  assert.equal(entryModule.RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v2");
+  assert.equal(entryModule.EXECUTION_PROTOCOL_VERSION, "execution-protocol-v3");
+  assert.equal(entryModule.RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v3");
   assert.equal(typeof entryModule.parseRunnerCommandV2, "function");
   assert.equal(typeof entryModule.parseRunnerEventV2, "function");
   assert.ok(Array.isArray(entryModule.RUNNER_COMMAND_TYPES));
@@ -79,7 +79,7 @@ try {
   assert.equal(entryModule.RUNNER_JOB_STREAM_EVENT_TYPES.includes("run.progress"), true);
   assert.equal(typeof entryModule.isRunnerEventAllowedForCommand, "function");
   const health = entryModule.createRunnerHealthV1({ serviceVersion: "0.6.0" });
-  assert.equal(health.contracts.execution, "execution-protocol-v2");
+  assert.equal(health.contracts.execution, "execution-protocol-v3");
   assert.equal(health.capabilities.includes("events.cursor"), true);
   assert.equal(health.capabilities.includes("run.continue_on_disconnect"), true);
 

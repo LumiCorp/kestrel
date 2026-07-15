@@ -863,6 +863,7 @@ function buildRunStartPayload(
       ...(request.workspace !== undefined ? { workspace: request.workspace } : {}),
       ...(request.attachments !== undefined ? { attachments: request.attachments } : {}),
       ...(request.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
+      ...(request.resumeRequestId !== undefined ? { resumeRequestId: request.resumeRequestId } : {}),
       ...(actor !== undefined ? { actor } : {}),
       history: normalizeSubmittedHistory(request.history),
       ...(request.resumeFromWait === true ? {} : { stepAgent: getEntryStepAgent(profile) }),

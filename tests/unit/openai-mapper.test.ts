@@ -42,6 +42,7 @@ test("OpenAI request builder enables native parallel tool calls", () => {
     ],
     providerOptions: {
       openai: {
+        endpoint: "chat",
         toolChoice: "auto",
       },
     },
@@ -297,4 +298,44 @@ test("LM Studio OpenAI-compatible response mapper returns native tool intents", 
     },
   ]);
   assert.equal(mapped.provider.name, "lmstudio");
+});
+
+test("OpenAI Responses requests provider summaries without storing raw reasoning", () => {
+  const mapped = buildOpenAiHttpRequest({
+    model: "gpt-5.2",
+    input: "decide",
+    reasoning: { mode: "summary", effort: "medium" },
+  }, env);
+
+  assert.equal(mapped.endpoint, "responses");
+  assert.equal(mapped.body.store, false);
+  assert.deepEqual(mapped.body.reasoning, { summary: "auto", effort: "medium" });
+  assert.deepEqual(mapped.body.include, ["reasoning.encrypted_content"]);
+});
+
+test("OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
+  const encryptedItem = {
+    type: "reasoning",
+    summary: [{ type: "summary_text", text: "Checked the constraints." }],
+    encrypted_content: "opaque-ciphertext",
+  };
+  const mapped = mapOpenAiResponse({
+    model: "gpt-5.2",
+    output: [
+      encryptedItem,
+      { type: "message", content: [{ type: "output_text", text: "Done." }] },
+    ],
+  }, {
+    providerName: "openai",
+    endpoint: "responses",
+    requestedModel: "gpt-5.2",
+  });
+
+  assert.equal(mapped.text, "Done.");
+  assert.deepEqual(mapped.reasoning?.visible, [
+    { format: "summary", text: "Checked the constraints." },
+  ]);
+  assert.deepEqual(mapped.reasoning?.continuation, [
+    { provider: "openai", kind: "encrypted_content", value: encryptedItem },
+  ]);
 });

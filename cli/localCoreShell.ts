@@ -4,6 +4,7 @@ import path from "node:path";
 import { ensureLocalCoreDaemonReady } from "../src/localCore/daemon.js";
 import type { LocalCoreClient } from "../src/localCore/client.js";
 import type { LocalCoreStatus } from "../src/localCore/contracts.js";
+import { parseLocalCorePlatform } from "../src/localCore/platform.js";
 import { shouldKeepEnvironmentDatabaseUrl } from "./localCoreEnv.js";
 
 export type CliLocalCoreStatus = LocalCoreStatus & {
@@ -18,7 +19,10 @@ export async function ensureCliLocalCoreReady(input: {
   const env = input.env ?? process.env;
   const ready = await ensureLocalCoreDaemonReady({
     env,
-    platform: input.platform ?? process.platform,
+    platform:
+      input.platform
+      ?? parseLocalCorePlatform(env.KESTREL_CORE_PLATFORM)
+      ?? process.platform,
     coreVersion: readCliSuiteVersion(),
     ownerExecutable: input.ownerExecutable ?? process.argv[1] ?? process.execPath,
     runMigrations: true,

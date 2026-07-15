@@ -118,6 +118,10 @@ export async function resolveEnvironmentExecutionRoute(input: {
     actorId: input.actorUserId,
     agentId: input.agentId ?? "kestrel-one-ui",
   });
+  const reasoningPolicy = await readEnvironmentReasoningPolicy({
+    organizationId: input.organizationId,
+    environmentId: environment.id,
+  });
   let mcpContext;
   if (input.recordExecution) {
     const projectId = await recordEnvironmentExecution({
@@ -130,6 +134,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
       runtimeImage: workspace.runtimeImage,
       routeCapabilities: [...ROUTE_CAPABILITIES],
       effectiveCapabilities,
+      reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
     });
     mcpContext = await issueHostedMcpRunContext({
@@ -174,6 +179,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     environmentId: environment.id,
     workspaceId: workspace.id,
     effectiveCapabilities,
+    reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),
   };
 }
@@ -215,6 +221,10 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     actorId: input.actorUserId,
     agentId: input.agentId ?? "kestrel-one-ui",
   });
+  const reasoningPolicy = await readEnvironmentReasoningPolicy({
+    organizationId: input.organizationId,
+    environmentId: resolved.binding.environmentId,
+  });
   let mcpContext;
   if (input.recordExecution) {
     const projectId = await recordEnvironmentExecution({
@@ -227,6 +237,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
       runtimeImage: "local-runner",
       routeCapabilities: [...ROUTE_CAPABILITIES],
       effectiveCapabilities,
+      reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
     });
     mcpContext = await issueHostedMcpRunContext({
@@ -250,6 +261,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
     effectiveCapabilities,
+    reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),
   };
 }
@@ -368,6 +380,25 @@ export async function updateEnvironmentExecutionStatus(input: {
     );
 }
 
+export async function updateEnvironmentExecutionRuntimeIdentity(input: {
+  organizationId: string;
+  executionId: string;
+  runtimeRunId: string;
+  reasoningKeyReady?: boolean | undefined;
+}) {
+  await knowledgeDb
+    .update(schema.environmentRunExecutions)
+    .set({
+      runtimeRunId: input.runtimeRunId,
+      ...(input.reasoningKeyReady !== undefined ? { reasoningKeyReady: input.reasoningKeyReady } : {}),
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(schema.environmentRunExecutions.id, input.executionId),
+      eq(schema.environmentRunExecutions.organizationId, input.organizationId),
+    ));
+}
+
 export function createEnvironmentMachineRoute(input: {
   organizationId: string;
   environmentId: string;
@@ -416,15 +447,19 @@ async function recordEnvironmentExecution(input: {
   routeCapabilities: string[];
   effectiveCapabilities: string[];
   projectContextRevisionId?: string | undefined;
+  reasoningPolicy: {
+    request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" | undefined };
+    retention: { mode: "live_only" | "provider_visible"; days: number };
+  };
 }) {
   const thread = await knowledgeDb.query.threads.findFirst({
-    where: (table, { and, eq }) =>
-      and(
-        eq(table.id, input.threadId),
-        eq(table.organizationId, input.organizationId)
-      ),
-    columns: { projectId: true },
-  });
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.threadId),
+          eq(table.organizationId, input.organizationId)
+        ),
+      columns: { projectId: true },
+    });
   if (!thread) throw new Error("Environment execution Thread is unavailable.");
   if (input.projectContextRevisionId) {
     const revision = thread.projectId
@@ -455,8 +490,39 @@ async function recordEnvironmentExecution(input: {
       ...input.routeCapabilities.map((capability) => `route:${capability}`),
       ...input.effectiveCapabilities,
     ].sort(),
+    reasoningPolicySnapshot: input.reasoningPolicy,
+    reasoningKeyReady: false,
   });
   return thread.projectId;
+}
+
+async function readEnvironmentReasoningPolicy(input: {
+  organizationId: string;
+  environmentId: string;
+}) {
+  const environment = await knowledgeDb.query.environments.findFirst({
+    where: (table, { and, eq }) => and(
+      eq(table.id, input.environmentId),
+      eq(table.organizationId, input.organizationId),
+    ),
+    columns: {
+      reasoningRequestMode: true,
+      reasoningEffort: true,
+      reasoningRetentionMode: true,
+      reasoningRetentionDays: true,
+    },
+  });
+  if (!environment) throw new Error("Environment reasoning policy is unavailable.");
+  return {
+    request: {
+      mode: environment.reasoningRequestMode,
+      ...(environment.reasoningEffort ? { effort: environment.reasoningEffort } : {}),
+    },
+    retention: {
+      mode: environment.reasoningRetentionMode,
+      days: environment.reasoningRetentionDays,
+    },
+  };
 }
 
 async function snapshotEffectiveCapabilities(input: {

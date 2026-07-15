@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { RetainedReasoningInspector } from "./retained-reasoning-inspector";
 
 export default async function EnvironmentActivityPage({
   params,
@@ -19,7 +20,16 @@ export default async function EnvironmentActivityPage({
     orderBy: [desc(schema.environmentOperations.createdAt)],
     limit: 50,
   });
+  const runs = await knowledgeDb.query.environmentRunExecutions.findMany({
+    where: and(
+      eq(schema.environmentRunExecutions.organizationId, organizationId),
+      eq(schema.environmentRunExecutions.environmentId, id),
+    ),
+    orderBy: [desc(schema.environmentRunExecutions.createdAt)],
+    limit: 20,
+  });
   return (
+    <div className="grid gap-6">
     <Card>
       <CardHeader>
         <CardTitle>Activity</CardTitle>
@@ -47,5 +57,33 @@ export default async function EnvironmentActivityPage({
         )}
       </CardContent>
     </Card>
+    <Card>
+      <CardHeader>
+        <CardTitle>Run inspection</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {runs.length === 0 ? <p className="text-sm text-muted-foreground">No Environment runs yet.</p> : runs.map((run) => (
+          <div className="grid gap-3 rounded-md border p-3" key={run.id}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-mono text-xs">{run.id}</div>
+                <div className="text-xs text-muted-foreground">{run.status}</div>
+              </div>
+              <Badge variant="outline">
+                {run.reasoningPolicySnapshot?.retention.mode !== "provider_visible"
+                  ? "Live only"
+                  : run.reasoningKeyReady
+                    ? "Encrypted retention ready"
+                    : "Retention unavailable"}
+              </Badge>
+            </div>
+            {run.reasoningPolicySnapshot?.retention.mode === "provider_visible" && run.reasoningKeyReady ? (
+              <RetainedReasoningInspector runId={run.id} />
+            ) : null}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+    </div>
   );
 }

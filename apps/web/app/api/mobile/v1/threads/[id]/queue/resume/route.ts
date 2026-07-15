@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import { mobileErrorResponse } from "@/lib/mobile/http";
+import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { resumeDurableThreadQueue } from "@/lib/turns/store";
 
@@ -23,8 +24,14 @@ export async function POST(
     if (result.nextTurnId) {
       await enqueueDurableThreadTurn(result.nextTurnId);
     }
-    return NextResponse.json({ resumed: true, turnId: result.nextTurnId });
+    const snapshot = await getMobileThreadSnapshot({
+      threadId: id,
+      organizationId,
+      userId: session.user.id,
+    });
+    if (!snapshot) throw new Error("Thread snapshot unavailable.");
+    return NextResponse.json({ snapshot });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

@@ -115,7 +115,7 @@ async function listSourceRowsByType(
     );
 }
 
-const weatherAdapter: ToolProviderAdapter = {
+const builtInSystemAdapter: ToolProviderAdapter = {
   async getConnectionStatus() {
     return createSystemConnection();
   },
@@ -299,7 +299,12 @@ const googleWorkspaceAdapter: ToolProviderAdapter = {
     );
     return {
       authSource: "oauth",
-      status: connectedCount > 0 ? "connected" : degradedCount > 0 ? "degraded" : "not_configured",
+      status:
+        connectedCount > 0
+          ? "connected"
+          : degradedCount > 0
+            ? "degraded"
+            : "not_configured",
       isReady: configured && connectedCount > 0,
       label:
         connectedCount > 0
@@ -458,7 +463,11 @@ const youtubeSourceAdapter: ToolProviderAdapter = {
 };
 
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
-  ["built_in.weather", weatherAdapter],
+  ["built_in.weather", builtInSystemAdapter],
+  ["built_in.time", builtInSystemAdapter],
+  ["built_in.geocoding", builtInSystemAdapter],
+  ["built_in.exchange_rates", builtInSystemAdapter],
+  ["built_in.hacker_news", builtInSystemAdapter],
   ["built_in.knowledge_search", knowledgeSearchAdapter],
   ["built_in.sandbox", sandboxAdapter],
   ["built_in.artifacts", artifactsAdapter],

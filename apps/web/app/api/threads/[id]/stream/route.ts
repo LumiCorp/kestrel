@@ -9,6 +9,7 @@ import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
 import {
   getActiveDurableTurnForThread,
   getDurableTurnForUser,
+  getDurableTurnReplayBoundary,
 } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
@@ -58,7 +59,10 @@ export async function GET(
       request.headers.get("last-event-id") ??
         request.nextUrl.searchParams.get("cursor")
     );
-    const afterSequence = cursor?.turnId === turn.id ? cursor.sequence : 0;
+    const afterSequence =
+      cursor?.turnId === turn.id
+        ? cursor.sequence
+        : await getDurableTurnReplayBoundary(turn.id);
     return createDurableTurnReplayResponse({
       turnId: turn.id,
       signal: request.signal,

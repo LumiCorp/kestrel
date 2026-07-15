@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
-import { mobileTurnDto } from "@/lib/mobile/dto";
+import { mobileErrorResponse } from "@/lib/mobile/http";
+import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
 import { requestDurableTurnStop } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ turnId: routeIdSchema });
@@ -20,8 +20,14 @@ export async function POST(
       organizationId,
       userId: session.user.id,
     });
-    return NextResponse.json({ turn: mobileTurnDto(turn) }, { status: 202 });
+    const snapshot = await getMobileThreadSnapshot({
+      threadId: turn.threadId,
+      organizationId,
+      userId: session.user.id,
+    });
+    if (!snapshot) throw new Error("Thread snapshot unavailable.");
+    return NextResponse.json({ snapshot }, { status: 202 });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

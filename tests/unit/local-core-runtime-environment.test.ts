@@ -66,6 +66,9 @@ function configuredRuntime(): LocalCoreRuntimeConfigurationV1 {
         httpProxyUrl: "http://proxy.core.example:8080",
         httpsProxyUrl: "https://proxy.core.example:8443",
       },
+      visualCrossing: {
+        baseUrl: "https://weather.visualcrossing.core.example",
+      },
     },
   };
 }
@@ -132,6 +135,7 @@ test("Core credential values replace conflicting inherited provider and tool key
     OPENAI_API_KEY: "inherited-openai",
     ANTHROPIC_API_KEY: "inherited-anthropic",
     TAVILY_API_KEY: "inherited-tavily",
+    VISUAL_CROSSING_API_KEY: "inherited-visual-crossing",
   };
 
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
@@ -144,6 +148,7 @@ test("Core credential values replace conflicting inherited provider and tool key
     credentialStore: credentialReader({
       "provider.openrouter.default": "core-openrouter",
       "tool.tavily.default": "core-tavily",
+      "tool.visual-crossing.default": "core-visual-crossing",
     }),
   });
 
@@ -153,6 +158,10 @@ test("Core credential values replace conflicting inherited provider and tool key
   assert.equal(snapshot.modelEnv.ANTHROPIC_API_KEY, undefined);
   assert.equal(snapshot.modelEnv.TAVILY_API_KEY, undefined);
   assert.equal(snapshot.internetEnv.TAVILY_API_KEY, "core-tavily");
+  assert.equal(
+    snapshot.internetEnv.VISUAL_CROSSING_API_KEY,
+    "core-visual-crossing",
+  );
   assert.equal(snapshot.internetEnv.OPENROUTER_API_KEY, undefined);
   for (const key of LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS) {
     assert.equal(snapshot.runtimeEnv[key], undefined);
@@ -164,6 +173,7 @@ test("Core credential values replace conflicting inherited provider and tool key
     OPENAI_API_KEY: "inherited-openai",
     ANTHROPIC_API_KEY: "inherited-anthropic",
     TAVILY_API_KEY: "inherited-tavily",
+    VISUAL_CROSSING_API_KEY: "inherited-visual-crossing",
   });
 });
 
@@ -273,6 +283,7 @@ test("credential authority scrubs ambient secrets while retaining scoped canonic
       "provider.openai.default": "core-openai",
       "provider.anthropic.default": "core-anthropic",
       "tool.tavily.default": "core-tavily",
+      "tool.visual-crossing.default": "core-visual-crossing",
     }),
   });
 
@@ -289,11 +300,19 @@ test("credential authority scrubs ambient secrets while retaining scoped canonic
   assert.equal(snapshot.modelEnv.TAVILY_BASE_URL, undefined);
 
   assert.equal(snapshot.internetEnv.TAVILY_API_KEY, "core-tavily");
+  assert.equal(
+    snapshot.internetEnv.VISUAL_CROSSING_API_KEY,
+    "core-visual-crossing",
+  );
   assert.equal(snapshot.internetEnv.OPENROUTER_API_KEY, undefined);
   assert.equal(snapshot.internetEnv.OPENAI_API_KEY, undefined);
   assert.equal(
     snapshot.internetEnv.TAVILY_BASE_URL,
     "https://tavily.core.example",
+  );
+  assert.equal(
+    snapshot.internetEnv.VISUAL_CROSSING_BASE_URL,
+    "https://weather.visualcrossing.core.example",
   );
   assert.equal(snapshot.internetEnv.OPENROUTER_BASE_URL, undefined);
 
@@ -517,6 +536,7 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
     credentialStore: credentialReader({
       "provider.openrouter.default": "core-openrouter",
       "tool.tavily.default": "core-tavily",
+      "tool.visual-crossing.default": "core-visual-crossing",
     }),
   });
 
@@ -544,7 +564,9 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
     "TAVILY_PROJECT",
     "TAVILY_HTTP_PROXY",
     "TAVILY_HTTPS_PROXY",
+    "VISUAL_CROSSING_BASE_URL",
     "TAVILY_API_KEY",
+    "VISUAL_CROSSING_API_KEY",
   ]);
   assert.deepEqual(Object.keys(snapshot.runtimeEnv), ["ALPHA", "ZED"]);
   assert.deepEqual(Object.keys(snapshot.mcpEnv), ["ALPHA", "ZED"]);
@@ -569,6 +591,10 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
   assert.equal({ ...snapshot.modelEnv }.OPENROUTER_API_KEY, "core-openrouter");
   assert.equal({ ...snapshot.internetEnv }.TAVILY_API_KEY, "core-tavily");
   assert.equal(
+    { ...snapshot.internetEnv }.VISUAL_CROSSING_API_KEY,
+    "core-visual-crossing",
+  );
+  assert.equal(
     JSON.stringify(snapshot),
     '{"modelProvider":"openrouter","model":"z-ai/glm-5.2"}',
   );
@@ -580,6 +606,10 @@ test("Core runtime snapshots are canonical, frozen, and redaction-aware", async 
   assert.equal(JSON.stringify(snapshot.modelEnv).includes("[REDACTED]"), true);
   assert.equal(
     JSON.stringify(snapshot.internetEnv).includes("core-tavily"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(snapshot.internetEnv).includes("core-visual-crossing"),
     false,
   );
   assert.equal(

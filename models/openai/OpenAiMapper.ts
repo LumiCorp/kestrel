@@ -10,6 +10,7 @@ export function buildOpenAiHttpRequest(
   model: string;
   path: string;
   body: Record<string, unknown>;
+  endpoint: "chat" | "responses";
   structuredOutput?:
     | {
         mode: "constrained" | "json_object";
@@ -20,6 +21,10 @@ export function buildOpenAiHttpRequest(
   const openai = request.providerOptions?.openai;
   const openrouterFallback = request.providerOptions?.openrouter;
   const model = request.model ?? env.model;
+  const endpoint = openai?.endpoint ?? (env.providerName === "openai" ? "responses" : "chat");
+  if (endpoint === "responses") {
+    return buildOpenAiResponsesRequest(request, env, model);
+  }
   const tools = toOpenAiTools(request.tools);
   const body: Record<string, unknown> = {
     model,
@@ -54,6 +59,7 @@ export function buildOpenAiHttpRequest(
 
   return {
     model,
+    endpoint: "chat",
     path: "/v1/chat/completions",
     body,
     ...(responseFormat.structuredOutput !== undefined
@@ -66,6 +72,7 @@ export function mapOpenAiResponse<TOutput>(
   payload: unknown,
   context: {
     providerName: OpenAiEnvConfig["providerName"];
+    endpoint?: "chat" | "responses" | undefined;
     requestedModel: string;
     requestId?: string | undefined;
     structuredOutput?:
@@ -76,6 +83,9 @@ export function mapOpenAiResponse<TOutput>(
       | undefined;
   },
 ): ModelResponse<TOutput> {
+  if (context.endpoint === "responses") {
+    return mapOpenAiResponsesPayload<TOutput>(payload, context);
+  }
   const root = asRecord(payload);
   const choices = asArray(root?.choices);
   const firstChoice = asRecord(choices[0]);
@@ -107,6 +117,191 @@ export function mapOpenAiResponse<TOutput>(
           }
         : {}),
     },
+  };
+}
+
+function buildOpenAiResponsesRequest(
+  request: ModelRequest,
+  env: OpenAiEnvConfig,
+  model: string,
+): ReturnType<typeof buildOpenAiHttpRequest> {
+  const openai = request.providerOptions?.openai;
+  const fallback = request.providerOptions?.openrouter;
+  const body: Record<string, unknown> = {
+    model,
+    input: toResponsesInput(request),
+    store: false,
+  };
+  const maxTokens = openai?.maxTokens ?? fallback?.maxTokens;
+  if (typeof maxTokens === "number") {
+    body.max_output_tokens = maxTokens;
+  }
+  const tools = toResponsesTools(request.tools);
+  if (tools.length > 0) {
+    body.tools = tools;
+    const toolChoice = openai?.toolChoice ?? fallback?.toolChoice;
+    if (toolChoice !== undefined) {
+      body.tool_choice = toolChoice;
+    }
+  }
+  if (request.reasoning !== undefined && request.reasoning.mode !== "off") {
+    body.reasoning = {
+      summary: "auto",
+      ...(request.reasoning.effort !== undefined ? { effort: request.reasoning.effort } : {}),
+    };
+    body.include = ["reasoning.encrypted_content"];
+  }
+  const responseFormat = toResponseFormat(request, env);
+  if (responseFormat.value !== undefined) {
+    body.text = { format: responseFormat.value };
+  }
+  return {
+    model,
+    endpoint: "responses",
+    path: "/v1/responses",
+    body,
+    ...(responseFormat.structuredOutput !== undefined
+      ? { structuredOutput: responseFormat.structuredOutput }
+      : {}),
+  };
+}
+
+function toResponsesInput(request: ModelRequest): unknown {
+  const mapped = Array.isArray(request.messages) && request.messages.length > 0
+    ? request.messages.flatMap((message) => {
+        if (message.role === "tool") {
+          return [{
+            type: "function_call_output",
+            ...(message.toolCallId !== undefined ? { call_id: message.toolCallId } : {}),
+            output: typeof message.content === "string" ? message.content : safeJsonStringify(message.content),
+          }];
+        }
+        const items: Array<Record<string, unknown>> = [{
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : message.content.map((part) => part.type === "text"
+              ? { type: "input_text", text: part.text }
+              : { type: "input_image", image_url: `data:${part.mimeType};base64,${part.data}` }),
+        }];
+        for (const toolCall of message.toolCalls ?? []) {
+          items.push({
+            type: "function_call",
+            call_id: toolCall.id,
+            name: toProviderToolName(toolCall.name),
+            arguments: safeJsonStringify(toolCall.input),
+          });
+        }
+        return items;
+      })
+    : [typeof request.input === "string" ? { role: "user", content: request.input } : { role: "user", content: safeJsonStringify(request.input) }];
+  for (const continuation of request.reasoning?.continuation ?? []) {
+    if (continuation.provider !== "openai" || continuation.kind !== "encrypted_content") {
+      continue;
+    }
+    const value = asRecord(continuation.value);
+    mapped.push(value?.type === "reasoning"
+      ? value
+      : { type: "reasoning", encrypted_content: continuation.value });
+  }
+  return mapped;
+}
+
+function toResponsesTools(tools: ModelToolSpec[] | undefined): Array<Record<string, unknown>> {
+  return (tools ?? []).map((tool) => ({
+    type: "function",
+    name: toProviderToolName(tool.name),
+    description: tool.description,
+    parameters: toOpenAiFunctionParameters(tool.inputSchema),
+    strict: isOpenAiStrictSchema(toOpenAiFunctionParameters(tool.inputSchema)),
+  }));
+}
+
+function mapOpenAiResponsesPayload<TOutput>(
+  payload: unknown,
+  context: Parameters<typeof mapOpenAiResponse>[1],
+): ModelResponse<TOutput> {
+  const root = asRecord(payload);
+  const outputItems = asArray(root?.output);
+  const textParts: string[] = [];
+  const toolIntents: ModelToolIntent[] = [];
+  const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
+  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] = [];
+  for (const item of outputItems) {
+    const record = asRecord(item);
+    const type = asString(record?.type);
+    if (type === "message") {
+      for (const part of asArray(record?.content)) {
+        const content = asRecord(part);
+        if (asString(content?.type) === "output_text" && asString(content?.text) !== undefined) {
+          textParts.push(asString(content?.text) as string);
+        }
+      }
+    } else if (type === "function_call") {
+      const name = asString(record?.name);
+      if (name !== undefined) {
+        toolIntents.push({
+          name,
+          input: parseToolArguments(asString(record?.arguments)),
+          ...(asString(record?.call_id) !== undefined ? { id: asString(record?.call_id) } : {}),
+        });
+      }
+    } else if (type === "reasoning") {
+      const summaryText = asArray(record?.summary)
+        .map((part) => asString(asRecord(part)?.text) ?? asString(part))
+        .filter((part): part is string => part !== undefined && part.length > 0)
+        .join("\n");
+      if (summaryText.length > 0) {
+        visible.push({ format: "summary", text: summaryText });
+      }
+      if (record?.encrypted_content !== undefined) {
+        continuation.push({ provider: "openai", kind: "encrypted_content", value: record });
+      }
+    }
+  }
+  const text = textParts.length > 0 ? textParts.join("") : asString(root?.output_text);
+  return {
+    output: parseOutput<TOutput>(text),
+    ...(text !== undefined ? { text } : {}),
+    toolIntents: dedupeToolIntents(toolIntents),
+    usage: mapResponsesUsage(asRecord(root?.usage)),
+    ...(visible.length > 0 || continuation.length > 0 ? { reasoning: { visible, continuation } } : {}),
+    provider: {
+      name: context.providerName,
+      model: asString(root?.model) ?? context.requestedModel,
+      endpoint: "responses",
+      ...(context.requestId !== undefined ? { requestId: context.requestId } : {}),
+      ...(context.structuredOutput !== undefined ? {
+        structuredOutput: {
+          mode: context.structuredOutput.mode,
+          outcome: text !== undefined && parseOutput<TOutput>(text) !== undefined ? "text_fallback_parsed" : "parse_failed",
+          source: text !== undefined ? "text_fallback" : "none",
+          schemaRequested: true,
+          ...(context.structuredOutput.schemaName !== undefined ? { schemaName: context.structuredOutput.schemaName } : {}),
+        },
+      } : {}),
+    },
+  };
+}
+
+function parseToolArguments(value: string | undefined): Record<string, unknown> {
+  if (value === undefined) return {};
+  try {
+    return asRecord(JSON.parse(value)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function mapResponsesUsage(value: Record<string, unknown> | undefined) {
+  if (value === undefined) return undefined;
+  const inputTokens = asNumber(value.input_tokens);
+  const outputTokens = asNumber(value.output_tokens);
+  const totalTokens = asNumber(value.total_tokens);
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
   };
 }
 

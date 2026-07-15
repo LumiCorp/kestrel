@@ -8,6 +8,7 @@ import {
 import type { SupportedAgent } from "../contracts.js";
 
 export interface RegisterAgentOptions {
+  agentProvider?: AgentRegistrationOptions["agentProvider"] | undefined;
   thinkerTools?: ModelToolSpec[] | undefined;
   thinkerToolsProvider?: AgentRegistrationOptions["thinkerToolsProvider"] | undefined;
   resolverTools?: ModelToolSpec[] | undefined;
@@ -20,6 +21,9 @@ export interface RegisterAgentOptions {
     | AgentRegistrationOptions["managedWorktreeProposalProvider"]
     | undefined;
   agentStageModelByStage?: Record<string, string> | undefined;
+  reasoningRequest?: AgentRegistrationOptions["reasoningRequest"] | undefined;
+  reasoningRetention?: AgentRegistrationOptions["reasoningRetention"] | undefined;
+  reasoningRetentionScope?: AgentRegistrationOptions["reasoningRetentionScope"] | undefined;
 }
 
 export function registerAgent(
@@ -29,6 +33,7 @@ export function registerAgent(
 ): { entryStepAgent: string } {
   if (agent === "reference-react") {
     return registerAgentReferenceRuntime(kestrel, {
+      ...(options?.agentProvider !== undefined ? { agentProvider: options.agentProvider } : {}),
       ...(options?.thinkerTools !== undefined ? { thinkerTools: options.thinkerTools } : {}),
       ...(options?.thinkerToolsProvider !== undefined
         ? { thinkerToolsProvider: options.thinkerToolsProvider }
@@ -45,6 +50,15 @@ export function registerAgent(
         : {}),
       ...(options?.managedWorktreeProposalProvider !== undefined
         ? { managedWorktreeProposalProvider: options.managedWorktreeProposalProvider }
+        : {}),
+      ...(options?.reasoningRequest !== undefined
+        ? { reasoningRequest: options.reasoningRequest }
+        : {}),
+      ...(options?.reasoningRetention !== undefined
+        ? { reasoningRetention: options.reasoningRetention }
+        : {}),
+      ...(options?.reasoningRetentionScope !== undefined
+        ? { reasoningRetentionScope: options.reasoningRetentionScope }
         : {}),
       ...applyStageModelOverridesToAgentOptions(options?.agentStageModelByStage),
     });

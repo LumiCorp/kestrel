@@ -1034,6 +1034,48 @@ test("Local Core provider readiness follows the authoritative credential store",
   }
 });
 
+test("Local Core credential mutations are write-only and return sanitized status", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kccrud-"));
+  const credentialStore = new MemoryLocalCoreCredentialStore();
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    credentialStore,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+
+  try {
+    const saved = await client.setCredential(
+      "tool.visual-crossing.default",
+      "visual-crossing-secret",
+    );
+    assert.equal(
+      saved.credentials.find((entry) => entry.id === "tool.visual-crossing.default")
+        ?.configured,
+      true,
+    );
+    assert.equal(JSON.stringify(saved).includes("visual-crossing-secret"), false);
+    assert.equal(
+      await credentialStore.get("tool.visual-crossing.default"),
+      "visual-crossing-secret",
+    );
+
+    const deleted = await client.deleteCredential("tool.visual-crossing.default");
+    assert.equal(deleted.deleted, true);
+    assert.equal(
+      deleted.credentials.credentials.find(
+        (entry) => entry.id === "tool.visual-crossing.default",
+      )?.configured,
+      false,
+    );
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("Local Core rejects an ambiguous credential store and custom runtime factory", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcambiguous-"));
   try {

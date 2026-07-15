@@ -11,6 +11,29 @@ export type ToolProviderType =
 
 export type ToolAuthType = "system" | "oauth" | "api_key" | "env" | "none";
 
+export type ToolProviderAppContract = {
+  category:
+    | "kestrel"
+    | "communication"
+    | "productivity"
+    | "engineering"
+    | "search_research"
+    | "knowledge_sources"
+    | "custom";
+  connectionModel: "none" | "personal" | "environment" | "hybrid";
+  connectionRequirement: "none" | "optional" | "required";
+  authMethods: Array<
+    | "none"
+    | "api_key"
+    | "oauth_personal"
+    | "oauth_environment"
+    | "deployment_managed"
+  >;
+  delivery: "native" | "oauth" | "api_key" | "mcp" | "webhook" | "source";
+  installMode: "inherited" | "explicit";
+  icon: string | null;
+};
+
 export type ToolApprovalMode = "auto" | "ask" | "deny";
 
 export type ToolRateLimitMode = "default" | "strict" | "off";
@@ -55,6 +78,7 @@ export type ToolProviderDefinition = {
   description: string;
   type: ToolProviderType;
   authType: ToolAuthType;
+  app: ToolProviderAppContract;
   metadata?: Record<string, unknown>;
   capabilities: ToolCapabilityDefinition[];
 };

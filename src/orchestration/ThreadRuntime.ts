@@ -703,13 +703,16 @@ export class ThreadRuntime implements ThreadRuntimePort {
 
   async resumeBlockedTurn(input: ResumeBlockedTurnInput): Promise<SubmitTurnResult> {
     const status = await this.getThreadStatus(input.threadId);
-    const request = selectRequestForResume(status);
+    const request = status?.openRequests.find(
+      (candidate) => candidate.requestId === input.requestId,
+    );
     if (request === undefined) {
       throw createRuntimeFailure(
         "THREAD_RESUME_REQUEST_NOT_FOUND",
-        `No pending request found for thread '${input.threadId}'.`,
+        `Pending request '${input.requestId}' was not found for thread '${input.threadId}'.`,
         {
           threadId: input.threadId,
+          requestId: input.requestId,
         },
       );
     }
@@ -1593,22 +1596,6 @@ function resolveTurnSegmentKind(
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function selectRequestForResume(
-  status: ThreadStatusSnapshot | null,
-): ThreadStatusSnapshot["openRequests"][number] | undefined {
-  if (status === null) {
-    return undefined;
-  }
-  const currentRequestId = status.thread.currentRequestId;
-  if (typeof currentRequestId === "string") {
-    const current = status.openRequests.find((request) => request.requestId === currentRequestId);
-    if (current !== undefined) {
-      return current;
-    }
-  }
-  return status.openRequests[0];
 }
 
 function extractAllowedCapabilities(

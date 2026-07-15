@@ -108,16 +108,7 @@ test("OpenRouter invoker reports text fallback parse separately from schema requ
 
   assert.equal(calls, 1);
   assert.equal(response.output?.ok, true);
-  assert.deepEqual(response.rawResponse, {
-    model: "openai/gpt-5.2-chat",
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({ ok: true }),
-        },
-      },
-    ],
-  });
+  assert.equal(response.rawResponse, undefined);
   assert.equal(response.provider.structuredOutput?.mode, "constrained");
   assert.equal(response.provider.structuredOutput?.outcome, "text_fallback_parsed");
   assert.equal(response.provider.structuredOutput?.source, "text_fallback");

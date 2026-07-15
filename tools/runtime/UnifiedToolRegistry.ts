@@ -162,7 +162,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       await this.refresh();
     }
     if (input.mcpContext === undefined) {
-      return toToolRuntimeStatus(this.getMcpStatus());
+      return toToolRuntimeStatus(this.getMcpStatus(), this.builtInContext);
     }
     const context = parseHostedMcpContext(input.mcpContext);
     const grantId = context.grantId;
@@ -170,7 +170,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (existing && input.mcpAuthorization === undefined) {
       existing.lastUsedAt = Date.now();
       return toToolRuntimeStatus(
-        combineMcpSnapshots(this.mcpStatus, existing.snapshot)
+        combineMcpSnapshots(this.mcpStatus, existing.snapshot),
+        this.builtInContext,
       );
     }
     const connection = parseHostedMcpRuntimeConnection({
@@ -180,7 +181,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (existing?.executionTicket === connection.executionTicket) {
       existing.lastUsedAt = Date.now();
       return toToolRuntimeStatus(
-        combineMcpSnapshots(this.mcpStatus, existing.snapshot)
+        combineMcpSnapshots(this.mcpStatus, existing.snapshot),
+        this.builtInContext,
       );
     }
     const manager = new McpClientManager({
@@ -197,7 +199,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     });
     await existing?.manager.close().catch(() => {});
     await this.pruneHostedMcpScopes(grantId);
-    return toToolRuntimeStatus(combineMcpSnapshots(this.mcpStatus, snapshot));
+    return toToolRuntimeStatus(
+      combineMcpSnapshots(this.mcpStatus, snapshot),
+      this.builtInContext,
+    );
   }
 
   resolveAvailableAllowlistForRuntimeTurn(
@@ -238,12 +243,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (this.initialized === false) {
       await this.refresh();
     }
-    return toToolRuntimeStatus(this.getMcpStatus());
+    return toToolRuntimeStatus(this.getMcpStatus(), this.builtInContext);
   }
 
   async refreshRuntime(): Promise<ToolRuntimeStatus> {
     const status = await this.refresh();
-    return toToolRuntimeStatus(status);
+    return toToolRuntimeStatus(status, this.builtInContext);
   }
 
   async ensureReadyForRun(): Promise<void> {
@@ -1319,12 +1324,16 @@ function isBuiltInToolDisabledByContext(
   return false;
 }
 
-function toToolRuntimeStatus(status: McpStatusSnapshot): ToolRuntimeStatus {
+function toToolRuntimeStatus(
+  status: McpStatusSnapshot,
+  context: SharedToolContext,
+): ToolRuntimeStatus {
   return {
     healthy: status.healthy,
     checkedAt: status.checkedAt,
     providers: {
       mcp: status,
+      tools: context.providerConfigurations?.list() ?? [],
     },
   };
 }

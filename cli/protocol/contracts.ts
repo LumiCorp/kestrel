@@ -13,7 +13,8 @@ import type {
   ProductReviewTarget,
   ProductTaskGraph,
   ProgressUpdateV1,
-  ReasoningUpdateV1,
+  AgentProgressUpdateV1,
+  ModelReasoningUpdateV1,
   RunConsoleUpdateV1,
   RunLogEntry,
   RunToolUpdateV1,
@@ -68,6 +69,7 @@ export interface RunnerActorMetadata {
   actorType: RunnerActorType;
   displayName?: string | undefined;
   tenantId?: string | undefined;
+  orgRole?: "member" | "org_admin" | undefined;
 }
 
 export interface RunnerCommandMetadata {
@@ -173,6 +175,12 @@ export interface OperatorRunsCommandPayload {
 
 export interface OperatorRunCommandPayload {
   runId: string;
+}
+
+export interface OperatorRunReasoningCommandPayload {
+  runId: string;
+  sessionId: string;
+  action?: "read" | "delete" | undefined;
 }
 
 export interface OperatorControlCommandPayload {
@@ -343,6 +351,7 @@ export interface RunnerCommandPayloadByType {
   "operator.thread": OperatorThreadCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
+  "operator.run.reasoning": OperatorRunReasoningCommandPayload;
   "operator.control": OperatorControlCommandPayload;
   "task.graph.get": TaskGraphGetCommandPayload;
   "task.graph.update": TaskGraphUpdateCommandPayload;
@@ -427,6 +436,8 @@ export interface RunStartedEventPayload {
           | undefined;
       }
     | undefined;
+  reasoningKeyReady?: boolean | undefined;
+  reasoningKeyVersion?: number | undefined;
 }
 
 export interface JobStartedEventPayload {
@@ -471,8 +482,12 @@ export interface RunProgressEventPayload {
   update: ProgressUpdateV1;
 }
 
-export interface RunReasoningEventPayload {
-  update: ReasoningUpdateV1;
+export interface RunModelReasoningEventPayload {
+  update: ModelReasoningUpdateV1;
+}
+
+export interface RunAgentProgressEventPayload {
+  update: AgentProgressUpdateV1;
 }
 
 export interface RunToolEventPayload {
@@ -566,6 +581,22 @@ export interface OperatorRunEventPayload {
   view: OperatorRunView;
 }
 
+export interface OperatorRunReasoningEventPayload {
+  runId: string;
+  entries: Array<{
+    provider: string;
+    model: string;
+    format: string;
+    text: string;
+    createdAt: string;
+    expiresAt: string;
+  }>;
+  action: "read" | "delete";
+  deletedCount?: number | undefined;
+  retention: "provider_visible";
+  access: "org_admin";
+}
+
 export interface OperatorControlledEventPayload {
   sessionId?: string | undefined;
   threadId: string;
@@ -654,7 +685,12 @@ export interface RunnerEventPayloadByType {
   "run.log": RunLogEventPayload;
   "run.console": RunConsoleEventPayload;
   "run.progress": RunProgressEventPayload;
-  "run.reasoning": RunReasoningEventPayload;
+  "run.model.reasoning.started": RunModelReasoningEventPayload;
+  "run.model.reasoning.delta": RunModelReasoningEventPayload;
+  "run.model.reasoning.completed": RunModelReasoningEventPayload;
+  "run.model.reasoning.failed": RunModelReasoningEventPayload;
+  "run.model.reasoning.unavailable": RunModelReasoningEventPayload;
+  "run.agent_progress": RunAgentProgressEventPayload;
   "run.completed": RunCompletedEventPayload;
   "run.failed": RunFailedEventPayload;
   "runner.error": RunnerErrorEventPayload;
@@ -665,6 +701,7 @@ export interface RunnerEventPayloadByType {
   "operator.thread": OperatorThreadEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;
+  "operator.run.reasoning": OperatorRunReasoningEventPayload;
   "operator.controlled": OperatorControlledEventPayload;
   "task.updated": TaskUpdatedEventPayload;
   "task.graph": TaskGraphEventPayload;

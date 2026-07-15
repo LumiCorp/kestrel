@@ -14,6 +14,7 @@ export const LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS = Object.freeze([
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "TAVILY_API_KEY",
+  "VISUAL_CROSSING_API_KEY",
 ] as const);
 
 export type LocalCoreManagedRuntimeEnvKey =
@@ -39,6 +40,7 @@ export const LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS = Object.freeze([
   "TAVILY_PROJECT",
   "TAVILY_HTTP_PROXY",
   "TAVILY_HTTPS_PROXY",
+  "VISUAL_CROSSING_BASE_URL",
 ] as const);
 
 export type LocalCoreManagedRuntimeOptionEnvKey =
@@ -126,6 +128,8 @@ const PROVIDER_CREDENTIAL_BINDINGS: Readonly<
 });
 
 const TAVILY_CREDENTIAL_ID: LocalCoreCredentialId = "tool.tavily.default";
+const VISUAL_CROSSING_CREDENTIAL_ID: LocalCoreCredentialId =
+  "tool.visual-crossing.default";
 
 /**
  * Resolve the exact model/tool environment for one Core-owned runtime.
@@ -218,6 +222,8 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
       ? undefined
       : input.credentials[providerBinding.credentialId];
   const tavilyCredential = input.credentials[TAVILY_CREDENTIAL_ID];
+  const visualCrossingCredential =
+    input.credentials[VISUAL_CROSSING_CREDENTIAL_ID];
 
   const modelOptions = createModelEnvironmentOptions({
     modelProvider,
@@ -232,15 +238,25 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
     input.baseEnv,
     modelOptions,
     providerBinding !== undefined && providerCredential !== undefined
-      ? { key: providerBinding.envKey, value: providerCredential }
-      : undefined,
+      ? [{ key: providerBinding.envKey, value: providerCredential }]
+      : [],
   );
   const internetEnv = createSecretBearingEnvironmentView(
     input.baseEnv,
     internetOptions,
-    tavilyCredential !== undefined
-      ? { key: "TAVILY_API_KEY", value: tavilyCredential }
-      : undefined,
+    [
+      ...(tavilyCredential !== undefined
+        ? [{ key: "TAVILY_API_KEY" as const, value: tavilyCredential }]
+        : []),
+      ...(visualCrossingCredential !== undefined
+        ? [
+            {
+              key: "VISUAL_CROSSING_API_KEY" as const,
+              value: visualCrossingCredential,
+            },
+          ]
+        : []),
+    ],
   );
   const runtimeEnv = createRuntimeEnvironmentView(
     input.baseEnv,
@@ -278,12 +294,10 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
 function createSecretBearingEnvironmentView(
   baseEnv: Readonly<NodeJS.ProcessEnv>,
   options: LocalCoreRuntimeEnvironmentOptions,
-  credential:
-    | {
-        readonly key: LocalCoreManagedRuntimeEnvKey;
-        readonly value: string;
-      }
-    | undefined,
+  credentials: readonly {
+    readonly key: LocalCoreManagedRuntimeEnvKey;
+    readonly value: string;
+  }[],
 ): Readonly<NodeJS.ProcessEnv> {
   const env = copyEnvironment(baseEnv);
   for (const [key, value] of Object.entries(options)) {
@@ -291,7 +305,7 @@ function createSecretBearingEnvironmentView(
       env[key] = value;
     }
   }
-  if (credential !== undefined) {
+  for (const credential of credentials) {
     env[credential.key] = credential.value;
   }
   installEnvironmentRedactionHooks(env);
@@ -387,11 +401,13 @@ function createInternetEnvironmentOptions(
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
 ): LocalCoreRuntimeEnvironmentOptions {
   const tavily = runtimeConfiguration.tools.tavily;
+  const visualCrossing = runtimeConfiguration.tools.visualCrossing;
   return Object.freeze({
     TAVILY_BASE_URL: tavily.baseUrl,
     TAVILY_PROJECT: tavily.projectId,
     TAVILY_HTTP_PROXY: tavily.httpProxyUrl,
     TAVILY_HTTPS_PROXY: tavily.httpsProxyUrl,
+    VISUAL_CROSSING_BASE_URL: visualCrossing.baseUrl,
   });
 }
 

@@ -121,7 +121,7 @@ import {
   type ModelProviderId,
   type McpStatusSnapshot,
   type ProgressUpdateV1,
-  type ReasoningUpdateV1,
+  type AgentProgressUpdateV1,
 } from "../../src/index.js";
 import type { ResolvedModelPolicy } from "../../src/profile/modelPolicy.js";
 import {
@@ -270,8 +270,8 @@ export class App {
   };
   private bootstrapHintShown = false;
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
-  private readonly pendingReasoningTranscriptUpdates = new Map<string, ReasoningUpdateV1>();
-  private readonly activeReasoningTranscriptDrains = new Set<string>();
+  private readonly pendingAgentProgressTranscriptUpdates = new Map<string, AgentProgressUpdateV1>();
+  private readonly activeAgentProgressTranscriptDrains = new Set<string>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
   private scriptedInputsEnqueued = false;
@@ -1607,8 +1607,8 @@ export class App {
         pushRunLog: (line) => {
           this.pushRunLog(line);
         },
-        enqueueReasoningTranscriptUpdate: (update) => {
-          this.enqueueReasoningTranscriptUpdate(update);
+        enqueueAgentProgressTranscriptUpdate: (update) => {
+          this.enqueueAgentProgressTranscriptUpdate(update);
         },
       });
     }
@@ -4505,13 +4505,13 @@ export class App {
     });
   }
 
-  private async appendReasoningTranscriptLine(update: ReasoningUpdateV1): Promise<void> {
+  private async appendAgentProgressTranscriptLine(update: AgentProgressUpdateV1): Promise<void> {
     const state = this.uiStore.getState();
     if (state.activeSession.sessionId === update.sessionId) {
-      if (this.isDuplicateReasoningTranscriptLine(state.transcript, update)) {
+      if (this.isDuplicateAgentProgressTranscriptLine(state.transcript, update)) {
         return;
       }
-      await this.appendHistoryLine("assistant", update.message, this.buildReasoningTranscriptData(update));
+      await this.appendHistoryLine("assistant", update.message, this.buildAgentProgressTranscriptData(update));
       return;
     }
 
@@ -4524,62 +4524,61 @@ export class App {
       session,
       "assistant",
       update.message,
-      this.buildReasoningTranscriptData(update),
+      this.buildAgentProgressTranscriptData(update),
     );
   }
 
-  private enqueueReasoningTranscriptUpdate(update: ReasoningUpdateV1): void {
-    const key = this.getReasoningTranscriptKey(update);
-    const pending = this.pendingReasoningTranscriptUpdates.get(key);
+  private enqueueAgentProgressTranscriptUpdate(update: AgentProgressUpdateV1): void {
+    const key = this.getAgentProgressTranscriptKey(update);
+    const pending = this.pendingAgentProgressTranscriptUpdates.get(key);
     if (pending !== undefined && pending.seq >= update.seq) {
       return;
     }
-    this.pendingReasoningTranscriptUpdates.set(key, update);
-    if (this.activeReasoningTranscriptDrains.has(key)) {
+    this.pendingAgentProgressTranscriptUpdates.set(key, update);
+    if (this.activeAgentProgressTranscriptDrains.has(key)) {
       return;
     }
-    this.activeReasoningTranscriptDrains.add(key);
-    void this.drainReasoningTranscriptUpdates(key);
+    this.activeAgentProgressTranscriptDrains.add(key);
+    void this.drainAgentProgressTranscriptUpdates(key);
   }
 
-  private async drainReasoningTranscriptUpdates(key: string): Promise<void> {
+  private async drainAgentProgressTranscriptUpdates(key: string): Promise<void> {
     try {
       while (true) {
-        const update = this.pendingReasoningTranscriptUpdates.get(key);
+        const update = this.pendingAgentProgressTranscriptUpdates.get(key);
         if (update === undefined) {
           break;
         }
-        this.pendingReasoningTranscriptUpdates.delete(key);
-        await this.appendReasoningTranscriptLine(update);
+        this.pendingAgentProgressTranscriptUpdates.delete(key);
+        await this.appendAgentProgressTranscriptLine(update);
       }
     } finally {
-      this.activeReasoningTranscriptDrains.delete(key);
-      if (this.pendingReasoningTranscriptUpdates.has(key)) {
-        this.activeReasoningTranscriptDrains.add(key);
-        void this.drainReasoningTranscriptUpdates(key);
+      this.activeAgentProgressTranscriptDrains.delete(key);
+      if (this.pendingAgentProgressTranscriptUpdates.has(key)) {
+        this.activeAgentProgressTranscriptDrains.add(key);
+        void this.drainAgentProgressTranscriptUpdates(key);
       }
     }
   }
 
-  private getReasoningTranscriptKey(update: Pick<ReasoningUpdateV1, "sessionId" | "runId">): string {
+  private getAgentProgressTranscriptKey(update: Pick<AgentProgressUpdateV1, "sessionId" | "runId">): string {
     return `${update.sessionId}:${update.runId}`;
   }
 
-  private buildReasoningTranscriptData(update: ReasoningUpdateV1): Record<string, unknown> {
+  private buildAgentProgressTranscriptData(update: AgentProgressUpdateV1): Record<string, unknown> {
     return {
-      reasoning: true,
-      milestone: update.milestone,
+      agentProgress: true,
+      label: "Agent progress",
       runId: update.runId,
       seq: update.seq,
       ...(update.stepIndex !== undefined ? { stepIndex: update.stepIndex } : {}),
       ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
-      ...(update.model !== undefined ? { model: update.model } : {}),
     };
   }
 
-  private isDuplicateReasoningTranscriptLine(
+  private isDuplicateAgentProgressTranscriptLine(
     transcript: TranscriptLine[],
-    update: ReasoningUpdateV1,
+    update: AgentProgressUpdateV1,
   ): boolean {
     const previous = transcript[transcript.length - 1];
     if (previous === undefined || previous.role !== "assistant" || previous.text !== update.message) {
@@ -4587,7 +4586,7 @@ export class App {
     }
 
     return (
-      previous.data?.reasoning === true &&
+      previous.data?.agentProgress === true &&
       previous.data.runId === update.runId &&
       previous.data.seq === update.seq
     );

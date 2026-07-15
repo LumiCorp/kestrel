@@ -137,7 +137,12 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
       await dispatchTurnOrFail(boss, turn.turnId);
       continue;
     }
-    if (turn.status === "running" || turn.status === "waiting_for_input") {
+    // A waiting turn is intentionally quiescent: its next worker job is only
+    // created after the exact durable interaction request is resolved.
+    if (turn.status === "waiting_for_input") {
+      continue;
+    }
+    if (turn.status === "running") {
       await completeDurableThreadTurn({
         turnId: turn.turnId,
         status: "failed",

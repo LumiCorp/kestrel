@@ -62,16 +62,16 @@ test("mobile Thread responses pin Project context and Environment before durable
   assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
 });
 
-test("durable approvals preserve the approval contract through runtime dispatch", () => {
+test("durable interactions preserve exact request identity through runtime resume", () => {
   const store = readAppSource("lib/turns/store.ts");
   const worker = readAppSource("lib/turns/process-runtime.ts");
   const runtime = readAppSource("lib/agent/kestrel-runtime-core.ts");
 
-  assert.match(store, /approvalDecision:[\s\S]*approvalId: string/u);
-  assert.match(store, /approvalId: input\.approvalDecision\?\.approvalId/u);
-  assert.match(worker, /approvalDecision:[\s\S]*turn\.approvalId/u);
-  assert.match(runtime, /eventType: input\.approvalDecision/u);
-  assert.match(runtime, /"user\.approval"/u);
+  assert.match(store, /requestId: input\.requestId/u);
+  assert.match(store, /interaction\.eventType !== input\.eventType/u);
+  assert.match(worker, /interactionResponse: turn\.interactionResponse/u);
+  assert.match(runtime, /resumeRequestId: interactionResponse\.requestId/u);
+  assert.match(runtime, /eventType: interactionResponse\?\.eventType/u);
 });
 
 test("durable turn creation never rebinds an existing message ID", () => {

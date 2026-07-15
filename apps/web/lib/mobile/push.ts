@@ -176,7 +176,6 @@ export async function syncPendingMobileInteractions() {
   const activeTurns = await knowledgeDb
     .select({
       id: schema.threadTurns.id,
-      executionId: schema.threadTurns.environmentExecutionId,
       status: schema.threadTurns.status,
     })
     .from(schema.threadTurnQueueState)
@@ -187,43 +186,40 @@ export async function syncPendingMobileInteractions() {
     .where(
       inArray(schema.threadTurns.status, ["running", "waiting_for_input"])
     );
-  const executionIds = activeTurns
-    .map((turn) => turn.executionId)
-    .filter((id): id is string => Boolean(id));
-  const pendingExecutions =
-    executionIds.length > 0
+  const turnIds = activeTurns.map((turn) => turn.id);
+  const mcpInteractions =
+    turnIds.length > 0
       ? await knowledgeDb
-          .select({ executionId: schema.mcpRunGrants.runExecutionId })
-          .from(schema.mcpInteractionCheckpoints)
-          .innerJoin(
-            schema.mcpInvocations,
-            eq(
-              schema.mcpInvocations.id,
-              schema.mcpInteractionCheckpoints.invocationId
-            )
-          )
-          .innerJoin(
-            schema.mcpRunGrants,
-            eq(schema.mcpRunGrants.id, schema.mcpInvocations.grantId)
-          )
+          .select({
+            turnId: schema.threadInteractions.turnId,
+            status: schema.threadInteractions.status,
+          })
+          .from(schema.threadInteractions)
           .where(
             and(
-              inArray(schema.mcpRunGrants.runExecutionId, executionIds),
-              inArray(schema.mcpInteractionCheckpoints.status, [
-                "requested",
-                "processing",
-              ])
+              inArray(schema.threadInteractions.turnId, turnIds),
+              eq(schema.threadInteractions.source, "mcp")
             )
           )
       : [];
-  const waitingExecutionIds = new Set(
-    pendingExecutions.map((row) => row.executionId)
+  const mcpTurnIds = new Set(
+    mcpInteractions
+      .map((row) => row.turnId)
+      .filter((turnId): turnId is string => Boolean(turnId))
+  );
+  const waitingTurnIds = new Set(
+    mcpInteractions
+      .filter(
+        (row) => row.status === "pending" || row.status === "processing"
+      )
+      .map((row) => row.turnId)
+      .filter((turnId): turnId is string => Boolean(turnId))
   );
   for (const turn of activeTurns) {
+    if (!mcpTurnIds.has(turn.id)) continue;
     await syncDurableTurnInteractionState({
       turnId: turn.id,
-      waiting:
-        turn.executionId !== null && waitingExecutionIds.has(turn.executionId),
+      waiting: waitingTurnIds.has(turn.id),
     });
   }
   return { synced: activeTurns.length };

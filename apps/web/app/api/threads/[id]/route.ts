@@ -1,6 +1,7 @@
 import type { UIMessage } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { decideAppOperationApprovalIfPresent } from "@/lib/apps/app-operation-approvals";
 import {
   findNewToolApprovalResponse,
   hasToolApprovalResponse,
@@ -22,18 +23,40 @@ import {
 } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
-import { createDurableThreadTurn } from "@/lib/turns/store";
+import {
+  createDurableThreadTurn,
+  listDurableThreadQueueForUser,
+  listThreadInteractionsForUser,
+  resolveDurableRuntimeInteraction,
+} from "@/lib/turns/store";
 import { convertToUIMessages } from "@/lib/utils";
 
 const paramsSchema = z.object({ id: routeIdSchema });
-const turnBodySchema = z.object({
-  model: z.string().min(1).max(200).optional(),
-  projectId: routeIdSchema.nullable().optional(),
-  messages: z
-    .array(uiMessageSchema as z.ZodType<UIMessage>)
-    .min(1)
-    .max(200),
-});
+const turnBodySchema = z
+  .object({
+    model: z.string().min(1).max(200).optional(),
+    projectId: routeIdSchema.nullable().optional(),
+    messages: z
+      .array(uiMessageSchema as z.ZodType<UIMessage>)
+      .max(200)
+      .default([]),
+    interactionResponse: z
+      .object({
+        // Runtime request IDs are opaque protocol identities, not database IDs.
+        requestId: z.string().trim().min(1).max(200),
+        eventType: z.string().trim().min(1).max(200),
+        message: z.string().trim().min(1).max(20_000),
+        approved: z.boolean().optional(),
+        reason: z.string().trim().max(2000).optional(),
+        messageId: routeIdSchema.optional(),
+      })
+      .optional(),
+  })
+  .refine(
+    (body) =>
+      body.messages.length > 0 || body.interactionResponse !== undefined,
+    { message: "A user message or interaction response is required." }
+  );
 const patchBodySchema = z
   .object({
     title: z.string().trim().min(1).max(200).optional(),
@@ -64,6 +87,18 @@ export async function GET(
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
+    const [interactionLedger, durableQueue] = await Promise.all([
+      listThreadInteractionsForUser({
+        threadId: thread.id,
+        organizationId,
+        userId: session.user.id,
+      }),
+      listDurableThreadQueueForUser({
+        threadId: thread.id,
+        organizationId,
+        userId: session.user.id,
+      }),
+    ]);
     return NextResponse.json({
       id: thread.id,
       title: thread.title || "New thread",
@@ -83,6 +118,9 @@ export async function GET(
         projectRole: thread.access.projectRole,
       },
       messages: convertToUIMessages(thread.messages),
+      interactions: interactionLedger,
+      turns: durableQueue.turns,
+      queue: durableQueue.queue,
     });
   } catch (error) {
     return errorResponse(error);
@@ -101,7 +139,13 @@ export async function POST(
     const submittedUserMessage = [...body.messages]
       .reverse()
       .find((message) => message.role === "user");
-    if (!(submittedUserMessage || hasToolApprovalResponse(body.messages))) {
+    if (
+      !(
+        submittedUserMessage ||
+        hasToolApprovalResponse(body.messages) ||
+        body.interactionResponse
+      )
+    ) {
       return NextResponse.json(
         { error: "A user message is required." },
         { status: 400 }
@@ -141,6 +185,29 @@ export async function POST(
       );
     }
 
+    if (body.interactionResponse) {
+      const resumed = await resolveDurableRuntimeInteraction({
+        threadId: thread.id,
+        organizationId,
+        userId: user.id,
+        requestId: body.interactionResponse.requestId,
+        eventType: body.interactionResponse.eventType,
+        message: body.interactionResponse.message,
+        approved: body.interactionResponse.approved,
+        reason: body.interactionResponse.reason,
+        messageId: body.interactionResponse.messageId ?? crypto.randomUUID(),
+        source: "web",
+      });
+      if (resumed.shouldDispatch) {
+        await enqueueDurableThreadTurn(resumed.turnId);
+      }
+      return createDurableTurnReplayResponse({
+        turnId: resumed.turnId,
+        signal: request.signal,
+        afterSequence: resumed.replayAfterSequence,
+      });
+    }
+
     const persistedMessages = convertToUIMessages(thread.messages);
     const approvalResponse = findNewToolApprovalResponse({
       submittedMessages: body.messages,
@@ -166,13 +233,22 @@ export async function POST(
       throw new Error("No Environment is available for this Thread.");
     }
     if (approvalResponse) {
-      await decideGitHubActionApproval({
+      const decidedAppOperation = await decideAppOperationApprovalIfPresent({
         organizationId,
         threadId: thread.id,
         userId: user.id,
         runtimeApprovalId: approvalResponse.approvalId,
         approved: approvalResponse.approved,
       });
+      if (!decidedAppOperation) {
+        await decideGitHubActionApproval({
+          organizationId,
+          threadId: thread.id,
+          userId: user.id,
+          runtimeApprovalId: approvalResponse.approvalId,
+          approved: approvalResponse.approved,
+        });
+      }
       await saveThreadMessages([
         {
           id: approvalResponse.assistantMessage.id,

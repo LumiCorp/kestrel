@@ -6,7 +6,6 @@ import {
   applyRequiredManagedWorkspacePolicy,
   createModelGatewayForProfile,
   resolveManagedWorktreesEnabledForRuntime,
-  resolveReasoningModelForProfile,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 
@@ -16,76 +15,6 @@ const BASE_PROFILE: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
-
-test("resolveReasoningModelForProfile falls back to the selected run model before weaker provider defaults", () => {
-  const original = process.env.KCHAT_REASONING_MODEL;
-  delete process.env.KCHAT_REASONING_MODEL;
-  try {
-    assert.equal(
-      resolveReasoningModelForProfile({
-        ...BASE_PROFILE,
-        modelProvider: "openrouter",
-        model: "z-ai/glm-5.2",
-      }),
-      "z-ai/glm-5.2",
-    );
-    assert.equal(
-      resolveReasoningModelForProfile({
-        ...BASE_PROFILE,
-        modelProvider: "openrouter",
-      }),
-      "openai/gpt-4.1-nano",
-    );
-  } finally {
-    if (original === undefined) {
-      delete process.env.KCHAT_REASONING_MODEL;
-    } else {
-      process.env.KCHAT_REASONING_MODEL = original;
-    }
-  }
-});
-
-test("resolveReasoningModelForProfile honors explicit reasoning model overrides", () => {
-  const original = process.env.KCHAT_REASONING_MODEL;
-  process.env.KCHAT_REASONING_MODEL = "openai/gpt-4.1";
-  try {
-    assert.equal(
-      resolveReasoningModelForProfile({
-        ...BASE_PROFILE,
-        modelProvider: "openrouter",
-        model: "z-ai/glm-5.2",
-      }),
-      "openai/gpt-4.1",
-    );
-  } finally {
-    if (original === undefined) {
-      delete process.env.KCHAT_REASONING_MODEL;
-    } else {
-      process.env.KCHAT_REASONING_MODEL = original;
-    }
-  }
-});
-
-test("resolveReasoningModelForProfile treats an explicit environment as authoritative", () => {
-  const original = process.env.KCHAT_REASONING_MODEL;
-  process.env.KCHAT_REASONING_MODEL = "ambient-model";
-  try {
-    assert.equal(
-      resolveReasoningModelForProfile({
-        ...BASE_PROFILE,
-        modelProvider: "openrouter",
-        model: "profile-model",
-      }, {}),
-      "profile-model",
-    );
-  } finally {
-    if (original === undefined) {
-      delete process.env.KCHAT_REASONING_MODEL;
-    } else {
-      process.env.KCHAT_REASONING_MODEL = original;
-    }
-  }
-});
 
 test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);

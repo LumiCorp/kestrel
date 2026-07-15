@@ -1104,6 +1104,7 @@ test("web adapter forwards explicit blocked-run resumes", async () => {
       eventType: "user.reply",
       resumeFromWait: true,
       resumeBlockedRun: true,
+      resumeRequestId: "request-session-3",
     },
     {
       onEvent: () => {
@@ -1118,11 +1119,13 @@ test("web adapter forwards explicit blocked-run resumes", async () => {
     turn: {
       stepAgent?: string | undefined;
       resumeBlockedRun?: boolean | undefined;
+      resumeRequestId?: string | undefined;
     };
   };
 
   assert.equal(payload.turn.stepAgent, undefined);
   assert.equal(payload.turn.resumeBlockedRun, true);
+  assert.equal(payload.turn.resumeRequestId, "request-session-3");
   await adapter.close();
 });
 

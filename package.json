@@ -37,7 +37,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run test:core && pnpm run web:test && pnpm run desktop:test && pnpm run evals:validate && pnpm run docs:test && pnpm run protocol:test && pnpm run sdk:test && pnpm run next:test && pnpm run observability:test",
-    "test:core": "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test tests/**/*.test.ts agents/**/*.test.ts",
+    "test:core": "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test --test-concurrency=4 tests/**/*.test.ts agents/**/*.test.ts",
     "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run sdk:build && pnpm run next:build",
     "web:dev": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one dev",
     "web:build": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one build",

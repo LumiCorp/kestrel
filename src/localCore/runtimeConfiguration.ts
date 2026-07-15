@@ -63,6 +63,9 @@ export interface LocalCoreRuntimeConfigurationV1 {
       readonly httpProxyUrl?: string | undefined;
       readonly httpsProxyUrl?: string | undefined;
     };
+    readonly visualCrossing: {
+      readonly baseUrl?: string | undefined;
+    };
   };
 }
 
@@ -114,6 +117,7 @@ export function createDefaultLocalCoreRuntimeConfiguration(
     },
     tools: {
       tavily: {},
+      visualCrossing: {},
     },
   });
 }
@@ -171,6 +175,10 @@ export function parseLocalCoreRuntimeConfiguration(
   const tools = requireRecord(record.tools, "Runtime configuration tools");
   rejectFields(tools, TOOL_FIELDS, "Runtime configuration tools");
   const tavily = parseTavilyConfiguration(tools.tavily);
+  const visualCrossing = parseBaseUrlConfiguration(
+    tools.visualCrossing ?? {},
+    "Runtime configuration tools.visualCrossing",
+  );
 
   return deepFreeze({
     version: LOCAL_CORE_RUNTIME_CONFIGURATION_VERSION,
@@ -186,6 +194,7 @@ export function parseLocalCoreRuntimeConfiguration(
     },
     tools: {
       tavily,
+      visualCrossing,
     },
   });
 }
@@ -428,7 +437,7 @@ const PROVIDER_FIELDS = new Set([
   "ollama",
   "lmstudio",
 ]);
-const TOOL_FIELDS = new Set(["tavily"]);
+const TOOL_FIELDS = new Set(["tavily", "visualCrossing"]);
 const OPENROUTER_FIELDS = new Set(["baseUrl", "siteUrl", "appName"]);
 const OPENAI_FIELDS = new Set(["baseUrl", "organizationId", "projectId"]);
 const ANTHROPIC_FIELDS = new Set(["baseUrl", "version"]);

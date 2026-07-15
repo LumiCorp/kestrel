@@ -7,7 +7,11 @@ import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import { createDurableThreadTurn } from "@/lib/turns/store";
+import {
+  createDurableThreadTurn,
+  listDurableThreadQueueForUser,
+  listThreadInteractionsForUser,
+} from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const bodySchema = z.object({
@@ -17,6 +21,31 @@ const bodySchema = z.object({
   }),
   model: z.string().min(1).max(200).optional(),
 });
+
+export async function GET(
+  _request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { session, organizationId } = await requireActiveOrganization();
+    const { id } = paramsSchema.parse(await context.params);
+    const [durable, interactions] = await Promise.all([
+      listDurableThreadQueueForUser({
+        threadId: id,
+        organizationId,
+        userId: session.user.id,
+      }),
+      listThreadInteractionsForUser({
+        threadId: id,
+        organizationId,
+        userId: session.user.id,
+      }),
+    ]);
+    return NextResponse.json({ ...durable, interactions });
+  } catch (error) {
+    return errorResponse(error, 400);
+  }
+}
 
 export async function POST(
   request: NextRequest,

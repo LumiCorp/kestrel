@@ -36,7 +36,7 @@ test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns",
       submitTurn: async (input) => {
         submitted.push(input);
         return {
-          assistantText: null,
+          assistantText: "Completed test turn.",
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -49,7 +49,7 @@ test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns",
     directRun: async () => {
       throw new Error("not used");
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -103,7 +103,7 @@ test("RuntimeTurnCoordinatorService forwards attachments on ordinary thread turn
       submitTurn: async (input) => {
         submitted.push(input);
         return {
-          assistantText: null,
+          assistantText: "Completed test turn.",
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -116,7 +116,7 @@ test("RuntimeTurnCoordinatorService forwards attachments on ordinary thread turn
     directRun: async () => {
       throw new Error("not used");
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -171,7 +171,7 @@ test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and att
         resumedAttachments = input.attachments;
         resumedRuntimeTurn = input.runtimeTurn;
         return {
-          assistantText: null,
+          assistantText: "Completed resumed test turn.",
           thread: threadRecord(input.threadId),
           output: output("COMPLETED"),
         };
@@ -181,7 +181,7 @@ test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and att
     directRun: async () => {
       throw new Error("not used");
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -190,6 +190,7 @@ test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and att
     message: "approved",
     eventType: "user.message",
     resumeBlockedRun: true,
+    resumeRequestId: "request-approval",
     attachments: [
       {
         attachmentId: "attachment-1",
@@ -255,7 +256,7 @@ test("RuntimeTurnCoordinatorService performs exactly one supported recovery cont
         runId: "run-recovered",
       });
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -293,7 +294,7 @@ test("RuntimeTurnCoordinatorService preserves turn context for recovery continua
           })
         : output("COMPLETED");
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -349,11 +350,12 @@ test("RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () 
           eventType: "user.approval",
           metadata: {
             reason: "observer_timeout_resume",
+            prompt: "Approve resuming this run?",
           },
         },
       });
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Approve resuming this run?"),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -380,7 +382,7 @@ test("RuntimeTurnCoordinatorService uses direct run when no thread runtime is co
       directEvent = event;
       return output("COMPLETED");
     },
-    getSession: async () => undefined,
+    getSession: async () => sessionRecord("session-coordinator", "Completed direct test turn."),
     buildOperatorAffordance: () => undefined,
   });
 
@@ -413,7 +415,7 @@ test("RuntimeTurnCoordinatorService reads finalized payload and builds operator 
     threadRuntime: {
       ensureMainThreadForSession: async () => threadRecord("thread-main"),
       submitTurn: async (input) => ({
-        assistantText: null,
+        assistantText: "Completed test turn.",
         thread: threadRecord(input.threadId),
         output: output("COMPLETED"),
       }),
@@ -517,7 +519,7 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
     threadRuntime: {
       ensureMainThreadForSession: async () => threadRecord("thread-main"),
       submitTurn: async (input) => ({
-        assistantText: null,
+        assistantText: "Approve the checkpoint?",
         thread: threadRecord(input.threadId),
         output: output("WAITING", {
           waitFor: {
@@ -548,6 +550,7 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
       state: {
         agent: {
           interactionMode: "build",
+          assistantText: "Completed test turn.",
           actSubmode: "safe",
         },
         tools: {},
@@ -588,6 +591,7 @@ test("RuntimeTurnCoordinatorService lets an explicit affordance hook suppress th
       state: {
         agent: {
           interactionMode: "build",
+          assistantText: "Completed test turn.",
         },
         tools: {},
         scratch: {},
@@ -642,6 +646,7 @@ test("RuntimeTurnCoordinatorService syncs workspace scratchpad after a turn", as
             intent: "Verify and answer",
             successCriteria: ["Confirm the source."],
           },
+          assistantText: "Should I continue this run with 10 more steps?",
           wait: {
             kind: "user",
             eventType: "user.reply",
@@ -695,7 +700,7 @@ test("RuntimeTurnCoordinatorService stores default workspace scratchpad under Ke
         toolBatchCheckpointSize: 5,
       },
       directRun: async () => output("COMPLETED"),
-      getSession: async () => sessionRecord("session-coordinator"),
+      getSession: async () => sessionRecord("session-coordinator", "Completed test turn."),
     });
 
     await coordinator.runTurn({
@@ -756,12 +761,12 @@ function threadRecord(threadId: string): ThreadRecord {
   };
 }
 
-function sessionRecord(sessionId: string): SessionRecord {
+function sessionRecord(sessionId: string, assistantText?: string): SessionRecord {
   return {
     sessionId,
     version: 1,
     state: {
-      agent: {},
+      agent: assistantText === undefined ? {} : { assistantText },
       tools: {},
       scratch: {},
     },

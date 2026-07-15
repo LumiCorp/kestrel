@@ -13,7 +13,7 @@ import {
   getReasoningTriggerLabel,
   shouldAutoCloseReasoning,
 } from "@/lib/agent/kestrel-reasoning-display";
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
+import type { KestrelTerminalStatus } from "@kestrel-agents/ai-sdk";
 import { cn } from "@/lib/utils";
 import { Response } from "./response";
 

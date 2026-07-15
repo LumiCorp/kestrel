@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   KestrelAgent,
+  KestrelAgentResumeInput,
   KestrelAgentTurnInput,
   KestrelRequestContext,
   RunnerEventSubscriptionFilter,
@@ -109,7 +110,7 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
           });
         },
 
-        async resume(input: KestrelAgentTurnInput, context: KestrelRequestContext) {
+        async resume(input: KestrelAgentResumeInput, context: KestrelRequestContext) {
           const trace = createTrace(agent, "resume", input, context);
           const span = createSpan(trace, "agent.resume", "resume");
           try {
@@ -192,6 +193,7 @@ function createTrace(
     sessionId: input.sessionId,
     metadata: {
       "kestrel.kind": kind,
+      "kestrel.reasoning.sidecar_model_calls": 0,
       "kestrel.actor_id": context.actor.actorId,
       "kestrel.actor_type": context.actor.actorType,
       ...(context.tenantId !== undefined ? { "kestrel.tenant_id": context.tenantId } : {}),
@@ -218,6 +220,7 @@ function createSubscriptionTrace(
     ...(filter.runId !== undefined ? { runId: filter.runId } : {}),
     metadata: {
       "kestrel.kind": "subscription",
+      "kestrel.reasoning.sidecar_model_calls": 0,
       "kestrel.actor_id": context.actor.actorId,
       "kestrel.actor_type": context.actor.actorType,
       ...(context.tenantId !== undefined ? { "kestrel.tenant_id": context.tenantId } : {}),
@@ -242,6 +245,11 @@ function createSpan(trace: RunTrace, name: string, kind: Span["kind"]): Span {
 }
 
 function recordRunnerEvent(trace: RunTrace, span: Span, event: RunnerEventEnvelope): void {
+  const priorModelCompletion = findLastProgressEventTimestamp(span, "MODEL_CALL_DONE");
+  const priorTerminalization =
+    findLastProgressEventTimestamp(span, "RUN_COMPLETED") ??
+    findLastProgressEventTimestamp(span, "RUN_TERMINAL");
+  const progressCode = readProgressCode(event);
   span.events.push({
     id: event.id,
     name: event.type,
@@ -251,6 +259,7 @@ function recordRunnerEvent(trace: RunTrace, span: Span, event: RunnerEventEnvelo
       ...(event.threadId !== undefined ? { "kestrel.thread_id": event.threadId } : {}),
       ...(event.runId !== undefined ? { "kestrel.run_id": event.runId } : {}),
       ...(event.commandId !== undefined ? { "kestrel.command_id": event.commandId } : {}),
+      ...(progressCode !== undefined ? { "kestrel.progress_code": progressCode } : {}),
     }),
   });
   if (event.sessionId !== undefined) {
@@ -266,6 +275,43 @@ function recordRunnerEvent(trace: RunTrace, span: Span, event: RunnerEventEnvelo
     trace.status = "cancelled";
     span.status = "cancelled";
   }
+  if (
+    span.attributes["kestrel.latency.time_to_first_reasoning_ms"] === undefined &&
+    (event.type === "run.model.reasoning.started" || event.type === "run.model.reasoning.delta")
+  ) {
+    span.attributes["kestrel.latency.time_to_first_reasoning_ms"] = elapsedMs(span.startedAt, event.ts);
+  }
+  if (progressCode === "STEP_COMMITTED" && priorModelCompletion !== undefined) {
+    span.attributes["kestrel.latency.model_completion_to_dispatch_ms"] = elapsedMs(
+      priorModelCompletion,
+      event.ts,
+    );
+  }
+  if (event.type === "run.completed" && priorTerminalization !== undefined) {
+    span.attributes["kestrel.latency.finalize_to_first_byte_ms"] = elapsedMs(
+      priorTerminalization,
+      event.ts,
+    );
+  }
+}
+
+function findLastProgressEventTimestamp(span: Span, code: string): string | undefined {
+  for (let index = span.events.length - 1; index >= 0; index -= 1) {
+    const event = span.events[index];
+    if (event?.attributes?.["kestrel.progress_code"] === code) return event.ts;
+  }
+  return undefined;
+}
+
+function readProgressCode(event: RunnerEventEnvelope): string | undefined {
+  if (event.type !== "run.progress") return undefined;
+  const payload = event.payload as { update?: { code?: unknown } | undefined };
+  return typeof payload.update?.code === "string" ? payload.update.code : undefined;
+}
+
+function elapsedMs(start: string, end: string): number {
+  const value = Date.parse(end) - Date.parse(start);
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 function annotateRunTerminal(trace: RunTrace, span: Span, terminal: RunnerRunTerminalEvent): void {

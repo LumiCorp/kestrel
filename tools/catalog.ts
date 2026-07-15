@@ -1,4 +1,5 @@
 import type { ModelToolSpec } from "../src/kestrel/contracts/model-io.js";
+import { RUNNER_BUILT_IN_TOOL_NAMES } from "@kestrel-agents/protocol";
 
 import { isApprovalCapabilityClass } from "../src/mode/contracts.js";
 import type {
@@ -137,12 +138,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
 ];
 
 export const BALANCED_STARTER_TOOL_NAMES = [
-  "free.weather.current",
-  "free.weather.forecast",
-  "free.time.current",
-  "free.geocode.lookup",
-  "free.exchange.rate",
-  "free.hn.top",
+  ...RUNNER_BUILT_IN_TOOL_NAMES,
   "internet.search",
   "internet.search_advanced",
   "internet.news",

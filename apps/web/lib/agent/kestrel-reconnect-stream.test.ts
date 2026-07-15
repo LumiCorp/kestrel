@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { RunnerRunStreamEvent } from "@kestrel-agents/sdk";
 import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
-import type { KestrelStreamEventForUi } from "@/lib/agent/kestrel-stream-events";
 
 test("writeKestrelReconnectStreamToUi keeps runner error as fallback until terminal text arrives", async () => {
   const writer = createChunkWriter();
@@ -13,13 +13,12 @@ test("writeKestrelReconnectStreamToUi keeps runner error as fallback until termi
     reasoningPartId: "reasoning_part",
     events: streamFromEvents([
       {
+        id: "runner-error-1",
         type: "runner.error",
-        payload: { message: "Runner boundary failed." },
+        ts: "2026-05-06T00:00:00.000Z",
+        payload: { code: "RUNNER_ERROR", message: "Runner boundary failed." },
       },
-      {
-        type: "run.completed",
-        payload: { result: { assistantText: "Final answer", finalizedPayload: { message: "ignored" } } },
-      },
+      completedEvent("Final answer"),
     ]),
   });
 
@@ -46,8 +45,10 @@ test("writeKestrelReconnectStreamToUi emits runner error fallback when no termin
     reasoningPartId: "reasoning_part",
     events: streamFromEvents([
       {
+        id: "runner-error-2",
         type: "runner.error",
-        payload: { message: "Runner boundary failed." },
+        ts: "2026-05-06T00:00:00.000Z",
+        payload: { code: "RUNNER_ERROR", message: "Runner boundary failed." },
       },
     ]),
   });
@@ -67,10 +68,32 @@ function createChunkWriter() {
   };
 }
 
-async function* streamFromEvents(events: KestrelStreamEventForUi[]) {
+async function* streamFromEvents(events: RunnerRunStreamEvent[]) {
   for (const event of events) {
     yield event;
   }
+}
+
+function completedEvent(assistantText: string): RunnerRunStreamEvent {
+  return {
+    id: "run-completed",
+    type: "run.completed",
+    ts: "2026-05-06T00:00:01.000Z",
+    runId: "run-1",
+    sessionId: "session-1",
+    payload: {
+      result: {
+        assistantText,
+        finalizedPayload: { message: "ignored" },
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-1",
+          runId: "run-1",
+          errors: [],
+        },
+      },
+    },
+  };
 }
 
 function countOccurrences(input: string, needle: string) {

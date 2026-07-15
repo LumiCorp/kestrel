@@ -1,4 +1,5 @@
 import type { FilesystemResumeReadBudgetDetail } from "../../runtime/filesystemResumeBudget.js";
+import type { ProviderReasoningVault } from "../../runtime/ProviderReasoningVault.js";
 import type {
   ManagedTaskWorktreeBinding,
   ManagedTaskWorktreeService,
@@ -16,8 +17,8 @@ import type {
   CheckpointInfo,
   MemorySnapshot,
   ProgressUpdateV1,
+  ModelReasoningUpdateV1,
   QualityMetrics,
-  ReasoningSidecarConfig,
   ReasoningUpdateV1,
   RunConsoleUpdateV1,
   RunEvent,
@@ -47,11 +48,26 @@ export interface UserReplyWaitMetadata extends Record<string, unknown> {
   resumeCommand?: string | undefined;
 }
 
+export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
+  version: "v1";
+  requestId?: string | undefined;
+  kind: "user_input" | "approval";
+  eventType: string;
+  prompt: string;
+  inputSchema?: Record<string, unknown> | undefined;
+  approval?: {
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+  } | undefined;
+}
+
 export interface UserWaitForMatcher {
   kind: "user";
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: UserReplyWaitMetadata | undefined;
+  interaction?: RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface NonUserWaitForMatcher {
@@ -59,6 +75,7 @@ export interface NonUserWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface RuntimeWaitForMatcher {
@@ -66,6 +83,7 @@ export interface RuntimeWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: RuntimeInteractionRequestV1 | undefined;
 }
 
 export interface LegacyWaitForMatcher {
@@ -74,6 +92,7 @@ export interface LegacyWaitForMatcher {
   reason?: string | undefined;
   timeoutMs?: number;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: RuntimeInteractionRequestV1 | undefined;
 }
 
 export type WaitForMatcher = UserWaitForMatcher | NonUserWaitForMatcher | RuntimeWaitForMatcher | LegacyWaitForMatcher;
@@ -164,6 +183,8 @@ export interface Transition {
     | undefined;
   artifacts?: ArtifactIntent[] | undefined;
   claims?: ClaimIntent[] | undefined;
+  /** Primary-model authored progress, published only after this transition commits. */
+  agentProgress?: string | undefined;
 }
 
 export interface StepTransition extends Transition {}
@@ -272,13 +293,13 @@ export interface RuntimeDependencies {
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   modelGateway: ModelGateway;
+  providerReasoningVault?: ProviderReasoningVault | undefined;
   effectRunner: EffectRunner;
   outbox: Outbox;
   runLogger: RunLogger;
   progressReporter: ProgressReporter;
   consoleReporter?: ConsoleReporter | undefined;
   reasoningReporter: ReasoningReporter;
-  reasoningSidecar?: ReasoningSidecarConfig | undefined;
   outputNormalizer: OutputNormalizer;
   runEventListener?: ((event: PersistedRuntimeEvent) => void | Promise<void>) | undefined;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
@@ -341,7 +362,7 @@ export interface ConsoleReporter {
 }
 
 export interface ReasoningReporter {
-  emit(update: ReasoningUpdateV1): Promise<void>;
+  emit(update: ReasoningUpdateV1 | ModelReasoningUpdateV1): Promise<void>;
 }
 
 export interface OutputNormalizer {

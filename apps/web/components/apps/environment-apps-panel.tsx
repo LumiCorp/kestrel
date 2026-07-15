@@ -55,8 +55,11 @@ function ConnectionDialog({
   app: EnvironmentAppConfiguration["app"];
   onSaved: (connection: AppConnectionSummary) => void;
 }) {
+  const isWeather = app.key === "built_in.weather";
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("Primary");
+  const [name, setName] = useState(
+    isWeather ? "Visual Crossing fallback" : "Primary"
+  );
   const [apiKey, setApiKey] = useState("");
   const [projectId, setProjectId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -70,6 +73,7 @@ function ConnectionDialog({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            kind: "api_key",
             name,
             apiKey,
             ...(projectId.trim() ? { projectId } : {}),
@@ -87,7 +91,15 @@ function ConnectionDialog({
       setApiKey("");
       setProjectId("");
       setOpen(false);
-      toast.success(`${app.displayName} is connected to this Environment.`);
+      toast.success(
+        isWeather
+          ? "Visual Crossing fallback is ready for this Environment."
+          : `${app.displayName} is connected to this Environment.`,
+        {
+          description:
+            "Projects can now attach this connection from Project → Apps.",
+        }
+      );
     } catch (error) {
       toast.error(message(error, "Connection could not be saved."));
     } finally {
@@ -95,7 +107,12 @@ function ConnectionDialog({
     }
   }
 
-  if (app.key !== "tavily") return null;
+  if (
+    !app.authMethods.includes("api_key") ||
+    (app.connectionModel !== "environment" && app.connectionModel !== "hybrid")
+  ) {
+    return null;
+  }
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
@@ -106,10 +123,15 @@ function ConnectionDialog({
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Connect {app.displayName}</DialogTitle>
+          <DialogTitle>
+            {isWeather
+              ? "Add Visual Crossing fallback"
+              : `Connect ${app.displayName}`}
+          </DialogTitle>
           <DialogDescription>
-            This shared connection can be attached to Projects in this
-            Environment. Kestrel encrypts the key before it is stored.
+            {isWeather
+              ? "Open-Meteo remains the free primary provider. Kestrel verifies and encrypts this key, then makes the fallback available to Projects in this Environment."
+              : "This shared connection can be attached to Projects in this Environment. Kestrel encrypts the key before it is stored."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
@@ -125,30 +147,40 @@ function ConnectionDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor={`${app.key}-connection-key`}>Connection key</Label>
+            <Label htmlFor={`${app.key}-connection-key`}>
+              {isWeather ? "Visual Crossing API key" : "Connection key"}
+            </Label>
             <Input
               autoComplete="off"
               id={`${app.key}-connection-key`}
               onChange={(event) => setApiKey(event.target.value)}
-              placeholder="Paste the key from Tavily"
+              placeholder={
+                isWeather
+                  ? "Paste your Visual Crossing API key"
+                  : `Paste the key from ${app.displayName}`
+              }
               type="password"
               value={apiKey}
             />
           </div>
-          <details className="rounded-lg border px-4 py-3">
-            <summary className="cursor-pointer font-medium text-sm">
-              Advanced
-            </summary>
-            <div className="mt-4 space-y-2">
-              <Label htmlFor={`${app.key}-project-id`}>Tavily Project ID</Label>
-              <Input
-                id={`${app.key}-project-id`}
-                onChange={(event) => setProjectId(event.target.value)}
-                placeholder="Optional"
-                value={projectId}
-              />
-            </div>
-          </details>
+          {app.key === "tavily" ? (
+            <details className="rounded-lg border px-4 py-3">
+              <summary className="cursor-pointer font-medium text-sm">
+                Advanced
+              </summary>
+              <div className="mt-4 space-y-2">
+                <Label htmlFor={`${app.key}-project-id`}>
+                  Tavily Project ID
+                </Label>
+                <Input
+                  id={`${app.key}-project-id`}
+                  onChange={(event) => setProjectId(event.target.value)}
+                  placeholder="Optional"
+                  value={projectId}
+                />
+              </div>
+            </details>
+          ) : null}
         </div>
         <DialogFooter>
           <Button onClick={() => setOpen(false)} variant="outline">
@@ -158,7 +190,11 @@ function ConnectionDialog({
             disabled={saving || !name.trim() || !apiKey.trim()}
             onClick={() => void save()}
           >
-            {saving ? "Verifying…" : "Verify and connect"}
+            {saving
+              ? "Verifying…"
+              : isWeather
+                ? "Verify and add fallback"
+                : "Verify and connect"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -277,11 +313,7 @@ export function EnvironmentAppsPanel({
   const configuredCount = useMemo(
     () =>
       configurations.filter(
-        (configuration) =>
-          configuration.app.connectionModel !== "environment" ||
-          configuration.connections.some(
-            (connection) => connection.status === "connected"
-          )
+        (configuration) => configuration.app.readiness === "ready"
       ).length,
     [configurations]
   );
@@ -375,7 +407,20 @@ export function EnvironmentAppsPanel({
                 icon={configuration.app.icon}
               />
               <div>
-                <CardTitle>{configuration.app.displayName}</CardTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle>{configuration.app.displayName}</CardTitle>
+                  <Badge
+                    variant={
+                      configuration.app.readiness === "ready"
+                        ? "default"
+                        : "outline"
+                    }
+                  >
+                    {configuration.app.readiness === "ready"
+                      ? "Ready"
+                      : configuration.app.readiness.replaceAll("_", " ")}
+                  </Badge>
+                </div>
                 <p className="mt-1 text-muted-foreground text-sm">
                   {configuration.app.description}
                 </p>
@@ -398,6 +443,35 @@ export function EnvironmentAppsPanel({
             />
           </CardHeader>
           <CardContent className="space-y-6">
+            {configuration.app.key === "built_in.weather" ? (
+              <section className="grid gap-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2">
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-sm">Open-Meteo</p>
+                    <Badge variant="outline">Primary · ready</Badge>
+                  </div>
+                  <p className="mt-2 text-muted-foreground text-xs">
+                    Free provider. No Environment credential is required.
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-sm">Visual Crossing</p>
+                    <Badge variant="outline">
+                      {configuration.connections.some(
+                        (connection) => connection.status === "connected"
+                      )
+                        ? "Fallback · ready"
+                        : "Fallback · optional"}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-muted-foreground text-xs">
+                    Used only when the primary provider fails under the Weather
+                    policy.
+                  </p>
+                </div>
+              </section>
+            ) : null}
             <section>
               <div className="flex items-center gap-2">
                 <KeyRound className="size-4 text-muted-foreground" />
@@ -406,7 +480,9 @@ export function EnvironmentAppsPanel({
                     ? "Connection"
                     : configuration.app.connectionModel === "personal"
                       ? "Personal connections"
-                      : "Connections"}
+                      : configuration.app.connectionModel === "hybrid"
+                        ? "Shared and personal connections"
+                        : "Connections"}
                 </h3>
               </div>
               <div className="mt-3 divide-y rounded-lg border">
@@ -432,7 +508,9 @@ export function EnvironmentAppsPanel({
                           {connection.name}
                         </p>
                         <p className="mt-1 text-muted-foreground text-xs">
-                          Shared with Projects in this Environment
+                          {configuration.app.key === "built_in.weather"
+                            ? "Verified Visual Crossing fallback · available to attach to Projects"
+                            : "Shared with Projects in this Environment"}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -467,7 +545,11 @@ export function EnvironmentAppsPanel({
                   ))
                 ) : (
                   <p className="px-4 py-3 text-muted-foreground text-sm">
-                    Add a connection to make this App available to Projects.
+                    {configuration.app.connectionRequirement === "optional"
+                      ? "No shared connection is required. Add one to enable the optional provider path."
+                      : configuration.app.connectionModel === "hybrid"
+                        ? "Add a shared connection, or let members attach personal connections inside Projects."
+                        : "Add a connection to make this App available to Projects."}
                   </p>
                 )}
               </div>

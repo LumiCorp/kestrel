@@ -875,21 +875,24 @@ export function resolveTerminalReasonCode(
 }
 
 export function readRequestedModelProvider(request: ModelRequest): string | undefined {
+  const metadata = asPlainRecord(request.metadata);
+  if (typeof metadata?.requestedProvider === "string" && metadata.requestedProvider.trim().length > 0) {
+    return metadata.requestedProvider.trim();
+  }
   const providerOptions = asPlainRecord(request.providerOptions);
-  const explicitProvider = providerOptions !== undefined
-    ? Object.keys(providerOptions).find((key) => asPlainRecord(providerOptions[key]) !== undefined)
-    : undefined;
-  if (explicitProvider !== undefined) {
-    return explicitProvider;
+  const configuredProviders = providerOptions === undefined
+    ? []
+    : Object.keys(providerOptions).filter((key) => asPlainRecord(providerOptions[key]) !== undefined);
+  if (configuredProviders.length === 1) {
+    return configuredProviders[0];
   }
-  if (typeof request.model !== "string") {
-    return undefined;
+  if (typeof request.model === "string") {
+    const separatorIndex = request.model.indexOf("/");
+    if (separatorIndex > 0) {
+      return request.model.slice(0, separatorIndex);
+    }
   }
-  const separatorIndex = request.model.indexOf("/");
-  if (separatorIndex <= 0) {
-    return undefined;
-  }
-  return request.model.slice(0, separatorIndex);
+  return undefined;
 }
 
 export function assertModelCallAdmission(input: {

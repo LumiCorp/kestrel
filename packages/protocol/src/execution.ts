@@ -9,10 +9,11 @@ export type {
   RunnerProjectActionType,
 } from "./projectActions.js";
 
-export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v2" as const;
-export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v2" as const;
-export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v2" as const;
+export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v3" as const;
+export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
+export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
+export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
 export const RUNNER_COMMAND_TYPES = [
   "profile.list",
@@ -26,6 +27,7 @@ export const RUNNER_COMMAND_TYPES = [
   "operator.thread",
   "operator.runs",
   "operator.run",
+  "operator.run.reasoning",
   "operator.control",
   "task.graph.get",
   "task.graph.update",
@@ -66,7 +68,12 @@ export const RUNNER_RUNTIME_ACTIVITY_EVENT_TYPES = [
   "run.log",
   "run.console",
   "run.progress",
-  "run.reasoning",
+  "run.model.reasoning.started",
+  "run.model.reasoning.delta",
+  "run.model.reasoning.completed",
+  "run.model.reasoning.failed",
+  "run.model.reasoning.unavailable",
+  "run.agent_progress",
 ] as const;
 
 export type RunnerRuntimeActivityEventType =
@@ -112,7 +119,12 @@ export const RUNNER_EVENT_TYPES = [
   "run.log",
   "run.console",
   "run.progress",
-  "run.reasoning",
+  "run.model.reasoning.started",
+  "run.model.reasoning.delta",
+  "run.model.reasoning.completed",
+  "run.model.reasoning.failed",
+  "run.model.reasoning.unavailable",
+  "run.agent_progress",
   "run.completed",
   "run.failed",
   "runner.error",
@@ -123,6 +135,7 @@ export const RUNNER_EVENT_TYPES = [
   "operator.thread",
   "operator.runs",
   "operator.run",
+  "operator.run.reasoning",
   "operator.controlled",
   "task.updated",
   "task.graph",
@@ -144,7 +157,7 @@ export const RUNNER_RUN_TERMINAL_EVENT_TYPES = [
 export type RunnerRunTerminalEventType =
   (typeof RUNNER_RUN_TERMINAL_EVENT_TYPES)[number];
 
-export interface ExecutionProtocolDescriptorV2 {
+export interface ExecutionProtocolDescriptorV3 {
   version: typeof EXECUTION_PROTOCOL_VERSION;
   contracts: {
     command: typeof RUNNER_COMMAND_CONTRACT_VERSION;
@@ -162,7 +175,7 @@ export interface ExecutionProtocolDescriptorV2 {
   };
 }
 
-export const EXECUTION_PROTOCOL_V2: ExecutionProtocolDescriptorV2 = {
+export const EXECUTION_PROTOCOL_V3: ExecutionProtocolDescriptorV3 = {
   version: EXECUTION_PROTOCOL_VERSION,
   contracts: {
     command: RUNNER_COMMAND_CONTRACT_VERSION,
@@ -180,10 +193,24 @@ export const EXECUTION_PROTOCOL_V2: ExecutionProtocolDescriptorV2 = {
   },
 };
 
+/** @deprecated Use EXECUTION_PROTOCOL_V3. */
+export const EXECUTION_PROTOCOL_V2 = EXECUTION_PROTOCOL_V3;
+/** @deprecated Use ExecutionProtocolDescriptorV3. */
+export type ExecutionProtocolDescriptorV2 = ExecutionProtocolDescriptorV3;
+
 export interface RunnerWaitingPromptHistoryDataV2 {
   kind: typeof RUNNER_WAITING_PROMPT_HISTORY_KIND;
   runId?: string | undefined;
 }
+
+export interface RunnerAssistantTextHistoryDataV2 {
+  kind: typeof RUNNER_ASSISTANT_TEXT_HISTORY_KIND;
+  runId: string;
+}
+
+export type RunnerAssistantHistoryDataV2 =
+  | RunnerAssistantTextHistoryDataV2
+  | RunnerWaitingPromptHistoryDataV2;
 
 export type RunnerActorType = "end_user" | "operator" | "service";
 export type RunnerDurability =
@@ -208,6 +235,7 @@ export interface RunnerActorMetadata {
   actorType: RunnerActorType;
   displayName?: string | undefined;
   tenantId?: string | undefined;
+  orgRole?: "member" | "org_admin" | undefined;
 }
 
 export interface RunnerMcpServerConfig {
@@ -253,6 +281,16 @@ export interface RunnerProfile {
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
   codeMode?: RunnerCodeModeConfig | undefined;
+  reasoning?: {
+    request: {
+      mode: "off" | "summary" | "provider_visible";
+      effort?: "low" | "medium" | "high" | undefined;
+    };
+    retention: {
+      mode: "live_only" | "provider_visible";
+      days: number;
+    };
+  } | undefined;
   default?: boolean | undefined;
   [key: string]: unknown;
 }
@@ -284,8 +322,12 @@ export interface RunnerHistoryEntryBase {
 
 export type RunnerHistoryEntry = RunnerHistoryEntryBase & (
   | {
-      role: "user" | "assistant";
+      role: "user";
       data?: undefined;
+    }
+  | {
+      role: "assistant";
+      data?: RunnerAssistantTextHistoryDataV2 | undefined;
     }
   | {
       role: "system";
@@ -346,6 +388,7 @@ export interface RunnerTurnInput {
   eventType: string;
   attachments?: RunnerTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
+  resumeRequestId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -354,6 +397,8 @@ export interface RunnerTurnInput {
   mcpAuthorization?: RunnerMcpAuthorization | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
+  reasoningKeyReady?: boolean | undefined;
+  reasoningKeyVersion?: number | undefined;
   systemInstructions?: string[] | undefined;
   history?: RunnerHistoryEntry[] | undefined;
   projectContext?: RunnerProjectContext | undefined;
@@ -406,8 +451,24 @@ export interface RunnerReadBudgets {
   [key: string]: unknown;
 }
 
+export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
+  version: "v1";
+  requestId: string;
+  kind: "user_input" | "approval";
+  eventType: string;
+  prompt: string;
+  inputSchema?: Record<string, unknown> | undefined;
+  approval?: {
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+  } | undefined;
+}
+
 export interface RunnerWaitFor extends Record<string, unknown> {
-  eventType?: string | undefined;
+  kind?: "user" | "approval" | "effect" | "tool" | "region_merge" | undefined;
+  eventType: string;
+  interaction?: RunnerInteractionRequestV1 | undefined;
 }
 
 export interface RunnerRunOutput {
@@ -621,6 +682,12 @@ export interface OperatorRunCommandPayload {
   runId: string;
 }
 
+export interface OperatorRunReasoningCommandPayload {
+  runId: string;
+  sessionId: string;
+  action?: "read" | "delete" | undefined;
+}
+
 export type RunnerOperatorControlAction =
   | "approve"
   | "reject"
@@ -788,6 +855,7 @@ export interface RunnerCommandPayloadByType {
   "operator.thread": OperatorThreadCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
+  "operator.run.reasoning": OperatorRunReasoningCommandPayload;
   "operator.control": OperatorControlCommandPayload;
   "task.graph.get": TaskGraphGetCommandPayload;
   "task.graph.update": TaskGraphUpdateCommandPayload;
@@ -869,6 +937,8 @@ export interface RunStartedEventPayload {
   mcpContext?: RunnerMcpContext | undefined;
   clientCapabilities?: Record<string, unknown> | undefined;
   executionPolicy?: Record<string, unknown> | undefined;
+  reasoningKeyReady?: boolean | undefined;
+  reasoningKeyVersion?: number | undefined;
 }
 
 export interface RunLogEventPayload {
@@ -879,16 +949,136 @@ export interface RunConsoleEventPayload {
   update: Record<string, unknown>;
 }
 
-export interface RunProgressEventPayload {
-  update: Record<string, unknown>;
+export type RunnerProgressKind = "stage" | "tool" | "waiting" | "heartbeat";
+export type RunnerProgressPhase =
+  | "engine"
+  | "agent"
+  | "route"
+  | "chat"
+  | "thinker"
+  | "resolver"
+  | "acter";
+export type RunnerProgressCode =
+  | "RUN_STARTED"
+  | "RUN_RESUMED"
+  | "RESUMED_FROM_WAIT"
+  | "STEP_SELECTED"
+  | "STEP_STARTED"
+  | "STEP_COMMITTED"
+  | "RUN_TERMINAL"
+  | "RUN_COMPLETED"
+  | "RUN_FAILED"
+  | "MODEL_CALL_STARTED"
+  | "MODEL_CALL_DONE"
+  | "MODEL_CALL_FAILED"
+  | "TOOL_CALL_STARTED"
+  | "TOOL_CALL_DONE"
+  | "TOOL_CALL_FAILED"
+  | "WAITING_FOR_EVENT"
+  | "RUN_STILL_ACTIVE";
+
+export interface RunnerProgressUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  kind: RunnerProgressKind;
+  phase: RunnerProgressPhase;
+  code: RunnerProgressCode;
+  message: string;
+  persist: boolean;
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
 }
 
-export interface RunReasoningEventPayload {
-  update: Record<string, unknown>;
+export interface RunnerAgentProgressUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  message: string;
+  stepIndex: number;
+  stepAgent: string;
+}
+
+export interface RunnerModelReasoningUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  event: "started" | "delta" | "completed" | "failed" | "unavailable";
+  attempt: number;
+  format: "summary" | "provider_thinking" | "provider_reasoning_text";
+  delta?: string | undefined;
+  contentState: "live" | "not_retained";
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
+  model?: {
+    provider?: string | undefined;
+    model?: string | undefined;
+  } | undefined;
+}
+
+export interface RunnerCitationPresentationV1 {
+  id: string;
+  title: string;
+  url?: string | undefined;
+  documentId?: string | undefined;
+  excerpt?: string | undefined;
+}
+
+export interface RunnerArtifactPresentationV1 {
+  id: string;
+  title: string;
+  kind: string;
+  url?: string | undefined;
+  mediaType?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+export interface RunnerToolPresentationV1 {
+  citations?: RunnerCitationPresentationV1[] | undefined;
+  artifacts?: RunnerArtifactPresentationV1[] | undefined;
+}
+
+export interface RunnerToolUpdateV1 {
+  version: "v1";
+  runId: string;
+  sessionId: string;
+  ts: string;
+  seq: number;
+  toolCallId: string;
+  toolName: string;
+  phase: "started" | "completed" | "failed";
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
+  displayName?: string | undefined;
+  toolFamily?: string | undefined;
+  provider?: string | undefined;
+  input?: unknown;
+  output?: unknown;
+  error?: { code?: string | undefined; message: string } | undefined;
+  durationMs?: number | undefined;
+  presentation?: RunnerToolPresentationV1 | undefined;
+}
+
+export interface RunProgressEventPayload {
+  update: RunnerProgressUpdateV1;
+}
+
+export interface RunModelReasoningEventPayload {
+  update: RunnerModelReasoningUpdateV1;
+}
+
+export interface RunAgentProgressEventPayload {
+  update: RunnerAgentProgressUpdateV1;
 }
 
 export interface RunToolEventPayload {
-  update: Record<string, unknown>;
+  update: RunnerToolUpdateV1;
 }
 
 export interface RunCancelledEventPayload {
@@ -958,6 +1148,15 @@ export interface OperatorRunsEventPayload {
 
 export interface OperatorRunEventPayload {
   view: RunnerOperatorRunView;
+}
+
+export interface OperatorRunReasoningEventPayload {
+  runId: string;
+  entries: Array<Record<string, unknown>>;
+  action: "read" | "delete";
+  deletedCount?: number | undefined;
+  retention: "provider_visible";
+  access: "org_admin";
 }
 
 export interface OperatorControlledEventPayload {
@@ -1040,7 +1239,12 @@ export interface RunnerEventPayloadByType {
   "run.log": RunLogEventPayload;
   "run.console": RunConsoleEventPayload;
   "run.progress": RunProgressEventPayload;
-  "run.reasoning": RunReasoningEventPayload;
+  "run.model.reasoning.started": RunModelReasoningEventPayload;
+  "run.model.reasoning.delta": RunModelReasoningEventPayload;
+  "run.model.reasoning.completed": RunModelReasoningEventPayload;
+  "run.model.reasoning.failed": RunModelReasoningEventPayload;
+  "run.model.reasoning.unavailable": RunModelReasoningEventPayload;
+  "run.agent_progress": RunAgentProgressEventPayload;
   "run.completed": RunCompletedEventPayload;
   "run.failed": RunFailedEventPayload;
   "runner.error": RunnerErrorEventPayload;
@@ -1051,6 +1255,7 @@ export interface RunnerEventPayloadByType {
   "operator.thread": OperatorThreadEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;
+  "operator.run.reasoning": OperatorRunReasoningEventPayload;
   "operator.controlled": OperatorControlledEventPayload;
   "task.updated": TaskUpdatedEventPayload;
   "task.graph": TaskGraphEventPayload;
@@ -1099,6 +1304,7 @@ export interface RunnerResponseByCommandType {
   "operator.thread": RunnerEventEnvelope<"operator.thread">;
   "operator.runs": RunnerEventEnvelope<"operator.runs">;
   "operator.run": RunnerEventEnvelope<"operator.run">;
+  "operator.run.reasoning": RunnerEventEnvelope<"operator.run.reasoning">;
   "operator.control": RunnerEventEnvelope<"operator.controlled">;
   "task.graph.get": RunnerEventEnvelope<"task.graph">;
   "task.graph.update": RunnerEventEnvelope<"task.graph">;
@@ -1134,6 +1340,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "operator.thread": ["operator.thread"],
   "operator.runs": ["operator.runs"],
   "operator.run": ["operator.run"],
+  "operator.run.reasoning": ["operator.run.reasoning"],
   "operator.control": ["operator.controlled"],
   "task.graph.get": ["task.graph"],
   "task.graph.update": ["task.graph"],
@@ -1274,7 +1481,7 @@ export function parseRunnerCommandV2(value: unknown): RunnerCommand {
   const id = requireNonEmptyString(command.id, "runner command.id");
   if (!isRunnerCommandType(command.type)) {
     throw new RunnerProtocolContractError(
-      `runner command.type must be a supported Execution Protocol v2 command, received '${String(command.type)}'`,
+      `runner command.type must be a supported Execution Protocol v3 command, received '${String(command.type)}'`,
     );
   }
   const payload = parseRunnerCommandPayloadV2(
@@ -1298,7 +1505,7 @@ export function parseRunnerEventV2(value: unknown): RunnerEvent {
   const id = requireNonEmptyString(event.id, "runner event.id");
   if (!isRunnerEventType(event.type)) {
     throw new RunnerProtocolContractError(
-      `runner event.type must be a supported Execution Protocol v2 event, received '${String(event.type)}'`,
+      `runner event.type must be a supported Execution Protocol v3 event, received '${String(event.type)}'`,
     );
   }
   const ts = requireNonEmptyString(event.ts, "runner event.ts");
@@ -1436,6 +1643,12 @@ function parseRunnerCommandPayloadV2(
       break;
     case "operator.run":
       requireNonEmptyString(payload.runId, `${label}.runId`);
+      break;
+    case "operator.run.reasoning":
+      rejectUnknownFields(payload, label, ["runId", "sessionId", "action"]);
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      validateOptionalEnum(payload.action, `${label}.action`, ["read", "delete"]);
       break;
     case "operator.control":
       validateEnum(payload.action, `${label}.action`, [
@@ -1650,19 +1863,42 @@ function parseRunnerEventPayloadV2(
       validateOptionalRecord(payload.mcpContext, `${label}.mcpContext`);
       validateOptionalRecord(payload.clientCapabilities, `${label}.clientCapabilities`);
       validateOptionalRecord(payload.executionPolicy, `${label}.executionPolicy`);
+      validateOptionalBoolean(payload.reasoningKeyReady, `${label}.reasoningKeyReady`);
+      validateOptionalIntegerRange(payload.reasoningKeyVersion, `${label}.reasoningKeyVersion`, 0, 1000);
       break;
     case "run.cancelled":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
       requireRecord(payload.result, `${label}.result`);
       break;
+    case "run.console":
+      requireRecord(payload.update, `${label}.update`);
+      break;
+    case "run.progress":
+      validateRunnerProgressUpdate(payload.update, `${label}.update`);
+      break;
+    case "run.agent_progress":
+      validateRunnerAgentProgressUpdate(payload.update, `${label}.update`);
+      break;
+    case "run.model.reasoning.started":
+    case "run.model.reasoning.delta":
+    case "run.model.reasoning.completed":
+    case "run.model.reasoning.failed":
+    case "run.model.reasoning.unavailable":
+      validateRunnerModelReasoningUpdate(
+        payload.update,
+        `${label}.update`,
+        type.slice("run.model.reasoning.".length),
+      );
+      break;
     case "run.tool.started":
     case "run.tool.completed":
     case "run.tool.failed":
-    case "run.console":
-    case "run.progress":
-    case "run.reasoning":
-      requireRecord(payload.update, `${label}.update`);
+      validateRunnerToolUpdate(
+        payload.update,
+        `${label}.update`,
+        type.slice("run.tool.".length),
+      );
       break;
     case "run.log":
       requireRecord(payload.entry, `${label}.entry`);
@@ -1704,6 +1940,16 @@ function parseRunnerEventPayloadV2(
     case "operator.runs":
     case "operator.run":
       requireRecord(payload.view, `${label}.view`);
+      break;
+    case "operator.run.reasoning":
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      if (!Array.isArray(payload.entries)) {
+        throw new RunnerProtocolContractError(`${label}.entries must be an array`);
+      }
+      validateEnum(payload.retention, `${label}.retention`, ["provider_visible"]);
+      validateEnum(payload.access, `${label}.access`, ["org_admin"]);
+      validateEnum(payload.action, `${label}.action`, ["read", "delete"]);
+      validateOptionalIntegerRange(payload.deletedCount, `${label}.deletedCount`, 0, Number.MAX_SAFE_INTEGER);
       break;
     case "operator.controlled":
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
@@ -1818,6 +2064,12 @@ function validateRunTurn(value: unknown, label: string): void {
   requireNonEmptyString(turn.eventType, `${label}.eventType`);
   validateOptionalAttachments(turn.attachments, `${label}.attachments`);
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
+  validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
+  if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.resumeRequestId is required when resumeBlockedRun is true`,
+    );
+  }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);
   validateOptionalBoolean(turn.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
   validateOptionalEnum(turn.interactionMode, `${label}.interactionMode`, [
@@ -1972,6 +2224,7 @@ function validateRunError(value: unknown, label: string): void {
 function parseRunnerRunResultV2(value: unknown): RunnerResultV2<RunnerRunOutput> {
   const result = parseRunnerResultV2<RunnerRunOutput>(value);
   validateRunnerRunOutput(result.output, "runner result.output");
+  validateRunnerAssistantTextContract(result);
   return result;
 }
 
@@ -2059,7 +2312,88 @@ function validateFilesystemResumeBudgetCounts(
 
 function validateRunnerWaitFor(value: unknown, label: string): void {
   const waitFor = requireRecord(value, label);
-  validateOptionalString(waitFor.eventType, `${label}.eventType`);
+  const eventType = requireNonEmptyString(waitFor.eventType, `${label}.eventType`);
+  validateOptionalEnum(waitFor.kind, `${label}.kind`, [
+    "user",
+    "approval",
+    "effect",
+    "tool",
+    "region_merge",
+  ]);
+  if (waitFor.interaction !== undefined) {
+    validateRunnerInteractionRequest(waitFor.interaction, `${label}.interaction`, eventType);
+  }
+  if (
+    (waitFor.kind === "user" || waitFor.kind === "approval") &&
+    waitFor.interaction === undefined
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.interaction is required for user-facing waits`,
+    );
+  }
+}
+
+function validateRunnerInteractionRequest(
+  value: unknown,
+  label: string,
+  waitEventType: string,
+): void {
+  const interaction = requireRecord(value, label);
+  if (interaction.version !== "v1") {
+    throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
+  }
+  requireNonEmptyString(interaction.requestId, `${label}.requestId`);
+  validateEnum(interaction.kind, `${label}.kind`, ["user_input", "approval"]);
+  const eventType = requireNonEmptyString(interaction.eventType, `${label}.eventType`);
+  if (eventType !== waitEventType) {
+    throw new RunnerProtocolContractError(
+      `${label}.eventType must match ${label.replace(/\.interaction$/u, "")}.eventType`,
+    );
+  }
+  requireNonEmptyString(interaction.prompt, `${label}.prompt`);
+  validateOptionalRecord(interaction.inputSchema, `${label}.inputSchema`);
+  if (interaction.approval !== undefined) {
+    const approval = requireRecord(interaction.approval, `${label}.approval`);
+    requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
+    requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+    if (Object.prototype.hasOwnProperty.call(approval, "input") === false) {
+      throw new RunnerProtocolContractError(`${label}.approval.input is required`);
+    }
+  }
+}
+
+function validateRunnerAssistantTextContract(
+  result: RunnerResultV2<RunnerRunOutput>,
+): void {
+  const status = result.output.status.toUpperCase();
+  if (status === "COMPLETED" && result.assistantText === null) {
+    throw new RunnerProtocolContractError(
+      "runner result.assistantText is required when output.status is COMPLETED",
+    );
+  }
+  if (status !== "WAITING") {
+    return;
+  }
+  const waitFor = result.output.waitFor;
+  if (waitFor === undefined) {
+    throw new RunnerProtocolContractError(
+      "runner result.output.waitFor is required when output.status is WAITING",
+    );
+  }
+  const interaction = waitFor.interaction;
+  if (interaction === undefined) {
+    if (waitFor.kind === "user" || waitFor.kind === "approval") {
+      throw new RunnerProtocolContractError(
+        "runner result.output.waitFor.interaction is required for user-facing waits",
+      );
+    }
+    return;
+  }
+  if (result.assistantText !== interaction.prompt.trim()) {
+    throw new RunnerProtocolContractError(
+      "runner result.assistantText must equal output.waitFor.interaction.prompt for user-facing waits",
+    );
+  }
 }
 
 function validateWorkspaceDiffTarget(value: unknown, label: string): void {
@@ -2147,6 +2481,18 @@ function validateRunnerProfile(
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);
   validateOptionalRecord(profile.guardrails, `${label}.guardrails`);
   validateOptionalRecord(profile.codeMode, `${label}.codeMode`);
+  if (profile.reasoning !== undefined) {
+    const reasoning = requireRecord(profile.reasoning, `${label}.reasoning`);
+    const request = requireRecord(reasoning.request, `${label}.reasoning.request`);
+    const retention = requireRecord(reasoning.retention, `${label}.reasoning.retention`);
+    validateEnum(request.mode, `${label}.reasoning.request.mode`, ["off", "summary", "provider_visible"]);
+    validateOptionalEnum(request.effort, `${label}.reasoning.request.effort`, ["low", "medium", "high"]);
+    validateEnum(retention.mode, `${label}.reasoning.retention.mode`, ["live_only", "provider_visible"]);
+    const retentionDays = requireNonNegativeInteger(retention.days, `${label}.reasoning.retention.days`);
+    if (retentionDays < 1 || retentionDays > 30) {
+      throw new RunnerProtocolContractError(`${label}.reasoning.retention.days must be from 1 to 30`);
+    }
+  }
   validateOptionalBoolean(profile.default, `${label}.default`);
 }
 
@@ -2286,9 +2632,17 @@ function validateOptionalHistory(value: unknown, label: string): void {
         );
       }
       validateOptionalNonEmptyString(data.runId, `${entryLabel}.data.runId`);
+    } else if (entry.role === "assistant" && entry.data !== undefined) {
+      const data = requireRecord(entry.data, `${entryLabel}.data`);
+      if (data.kind !== RUNNER_ASSISTANT_TEXT_HISTORY_KIND) {
+        throw new RunnerProtocolContractError(
+          `${entryLabel}.data.kind must be '${RUNNER_ASSISTANT_TEXT_HISTORY_KIND}'`,
+        );
+      }
+      requireNonEmptyString(data.runId, `${entryLabel}.data.runId`);
     } else if (entry.data !== undefined) {
       throw new RunnerProtocolContractError(
-        `${entryLabel}.data is only valid for system waiting prompts`,
+        `${entryLabel}.data is only valid for runtime-authored assistant text or legacy system waiting prompts`,
       );
     }
   });
@@ -2355,11 +2709,17 @@ function parseRunnerActorMetadata(value: unknown): RunnerActorMetadata {
     actor.tenantId,
     "runner command.metadata.actor.tenantId",
   );
+  if (actor.orgRole !== undefined && actor.orgRole !== "member" && actor.orgRole !== "org_admin") {
+    throw new RunnerProtocolContractError(
+      "runner command.metadata.actor.orgRole must be 'member' or 'org_admin'",
+    );
+  }
   return {
     actorId,
     actorType: actor.actorType,
     ...(displayName !== undefined ? { displayName } : {}),
     ...(tenantId !== undefined ? { tenantId } : {}),
+    ...(actor.orgRole !== undefined ? { orgRole: actor.orgRole } : {}),
   };
 }
 
@@ -2439,6 +2799,147 @@ function validateRecordArray(
 function validateOptionalRecordArray(value: unknown, label: string): void {
   if (value !== undefined) {
     validateRecordArray(value, label);
+  }
+}
+
+function validatePresentationUpdateIdentity(value: unknown, label: string) {
+  const update = requireRecord(value, label);
+  if (update.version !== "v1") {
+    throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
+  }
+  requireNonEmptyString(update.runId, `${label}.runId`);
+  requireNonEmptyString(update.sessionId, `${label}.sessionId`);
+  requireNonEmptyString(update.ts, `${label}.ts`);
+  requireNonNegativeInteger(update.seq, `${label}.seq`);
+  return update;
+}
+
+function validateRunnerProgressUpdate(value: unknown, label: string): void {
+  const update = validatePresentationUpdateIdentity(value, label);
+  validateEnum(update.kind, `${label}.kind`, ["stage", "tool", "waiting", "heartbeat"]);
+  validateEnum(update.phase, `${label}.phase`, [
+    "engine", "agent", "route", "chat", "thinker", "resolver", "acter",
+  ]);
+  validateEnum(update.code, `${label}.code`, [
+    "RUN_STARTED", "RUN_RESUMED", "RESUMED_FROM_WAIT", "STEP_SELECTED",
+    "STEP_STARTED", "STEP_COMMITTED", "RUN_TERMINAL", "RUN_COMPLETED",
+    "RUN_FAILED", "MODEL_CALL_STARTED", "MODEL_CALL_DONE", "MODEL_CALL_FAILED",
+    "TOOL_CALL_STARTED", "TOOL_CALL_DONE", "TOOL_CALL_FAILED",
+    "WAITING_FOR_EVENT", "RUN_STILL_ACTIVE",
+  ]);
+  requireNonEmptyString(update.message, `${label}.message`);
+  requireBoolean(update.persist, `${label}.persist`);
+  validateOptionalNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
+  validateOptionalNonEmptyString(update.stepAgent, `${label}.stepAgent`);
+}
+
+function validateRunnerAgentProgressUpdate(value: unknown, label: string): void {
+  const update = validatePresentationUpdateIdentity(value, label);
+  rejectUnknownFields(update, label, [
+    "version", "runId", "sessionId", "ts", "seq", "message", "stepIndex", "stepAgent",
+  ]);
+  requireNonEmptyString(update.message, `${label}.message`);
+  requireNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
+  requireNonEmptyString(update.stepAgent, `${label}.stepAgent`);
+}
+
+function validateRunnerModelReasoningUpdate(
+  value: unknown,
+  label: string,
+  expectedEvent: string,
+): void {
+  const update = validatePresentationUpdateIdentity(value, label);
+  rejectUnknownFields(update, label, [
+    "version", "runId", "sessionId", "ts", "seq", "event", "attempt", "format", "delta",
+    "contentState", "stepIndex", "stepAgent", "model",
+  ]);
+  validateEnum(update.event, `${label}.event`, [
+    "started", "delta", "completed", "failed", "unavailable",
+  ]);
+  if (update.event !== expectedEvent) {
+    throw new RunnerProtocolContractError(
+      `${label}.event must match the runner event type '${expectedEvent}'`,
+    );
+  }
+  requireNonNegativeInteger(update.attempt, `${label}.attempt`);
+  validateEnum(update.format, `${label}.format`, [
+    "summary", "provider_thinking", "provider_reasoning_text",
+  ]);
+  validateEnum(update.contentState, `${label}.contentState`, ["live", "not_retained"]);
+  validateOptionalString(update.delta, `${label}.delta`);
+  if (update.contentState === "not_retained" && update.delta !== undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.delta must be omitted when contentState is 'not_retained'`,
+    );
+  }
+  validateOptionalNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
+  validateOptionalNonEmptyString(update.stepAgent, `${label}.stepAgent`);
+  if (update.model !== undefined) {
+    const model = requireRecord(update.model, `${label}.model`);
+    rejectUnknownFields(model, `${label}.model`, ["provider", "model"]);
+    validateOptionalNonEmptyString(model.provider, `${label}.model.provider`);
+    validateOptionalNonEmptyString(model.model, `${label}.model.model`);
+  }
+}
+
+function validateRunnerToolUpdate(
+  value: unknown,
+  label: string,
+  expectedPhase: string,
+): void {
+  const update = validatePresentationUpdateIdentity(value, label);
+  requireNonEmptyString(update.toolCallId, `${label}.toolCallId`);
+  requireNonEmptyString(update.toolName, `${label}.toolName`);
+  validateEnum(update.phase, `${label}.phase`, ["started", "completed", "failed"]);
+  if (update.phase !== expectedPhase) {
+    throw new RunnerProtocolContractError(
+      `${label}.phase must match the runner event type '${expectedPhase}'`,
+    );
+  }
+  validateOptionalNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
+  validateOptionalNonEmptyString(update.stepAgent, `${label}.stepAgent`);
+  validateOptionalNonEmptyString(update.displayName, `${label}.displayName`);
+  validateOptionalNonEmptyString(update.toolFamily, `${label}.toolFamily`);
+  validateOptionalNonEmptyString(update.provider, `${label}.provider`);
+  validateOptionalNonNegativeNumber(update.durationMs, `${label}.durationMs`);
+  if (update.error !== undefined) {
+    const error = requireRecord(update.error, `${label}.error`);
+    validateOptionalNonEmptyString(error.code, `${label}.error.code`);
+    requireNonEmptyString(error.message, `${label}.error.message`);
+  }
+  if (update.presentation !== undefined) {
+    const presentation = requireRecord(update.presentation, `${label}.presentation`);
+    validateOptionalPresentationItems(
+      presentation.citations,
+      `${label}.presentation.citations`,
+      ["id", "title"],
+    );
+    validateOptionalPresentationItems(
+      presentation.artifacts,
+      `${label}.presentation.artifacts`,
+      ["id", "title", "kind"],
+    );
+  }
+}
+
+function validateOptionalPresentationItems(
+  value: unknown,
+  label: string,
+  required: readonly string[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new RunnerProtocolContractError(`${label} must be an array`);
+  }
+  for (const [index, item] of value.entries()) {
+    const record = requireRecord(item, `${label}[${index}]`);
+    for (const field of required) {
+      requireNonEmptyString(record[field], `${label}[${index}].${field}`);
+    }
+    for (const field of ["url", "documentId", "excerpt", "mediaType"]) {
+      validateOptionalNonEmptyString(record[field], `${label}[${index}].${field}`);
+    }
+    validateOptionalRecord(record.metadata, `${label}[${index}].metadata`);
   }
 }
 

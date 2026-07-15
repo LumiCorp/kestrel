@@ -20,6 +20,7 @@ import type {
   ProjectAppCapability,
   ProjectAppConfiguration,
 } from "@/lib/apps/project-service";
+import type { AppConnectionSummary } from "@/lib/apps/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -71,9 +72,12 @@ export function ProjectSharedAppSheet({
   const [busy, setBusy] = useState<string | null>(null);
   const appKey = configuration?.app.key ?? "custom-app";
   const appName = configuration?.app.displayName ?? "App";
-  const isPersonal = configuration?.app.connectionModel === "personal";
-  const needsConnection = configuration?.app.connectionModel !== "none";
-  const canManageConnection = isPersonal ? canAttachPersonal : canEdit;
+  const isPersonalOnly = configuration?.app.connectionModel === "personal";
+  const isHybrid = configuration?.app.connectionModel === "hybrid";
+  const supportsConnection = configuration?.app.connectionModel !== "none";
+  const isWeather = appKey === "built_in.weather";
+  const needsConnection =
+    configuration?.app.connectionRequirement === "required";
 
   async function updateApp(enabled: boolean) {
     setBusy("app");
@@ -86,7 +90,7 @@ export function ProjectSharedAppSheet({
       await onChanged();
       toast.success(enabled ? "App enabled for this Project" : "App disabled", {
         description: enabled
-          ? isPersonal
+          ? isPersonalOnly
             ? "Choose your account and review the Project access settings."
             : needsConnection
               ? "Choose a shared connection and review the Project access settings."
@@ -100,23 +104,24 @@ export function ProjectSharedAppSheet({
     }
   }
 
-  async function selectConnection(connectionId: string) {
-    setBusy(`connection:${connectionId}`);
+  async function selectConnection(connection: AppConnectionSummary) {
+    const scope = connection.ownerType === "personal" ? "personal" : "shared";
+    setBusy(`connection:${connection.id}`);
     try {
       await requestJson(
-        `/api/projects/${projectId}/apps/${appKey}/connections/${connectionId}`,
+        `/api/projects/${projectId}/apps/${appKey}/connections/${connection.id}`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            scope: isPersonal ? "personal" : "shared",
+            scope,
             isDefault: true,
           }),
         }
       );
       await onChanged();
       toast.success(
-        isPersonal
+        scope === "personal"
           ? "Your Project default connection was updated"
           : "Project default connection updated"
       );
@@ -184,7 +189,7 @@ export function ProjectSharedAppSheet({
                 {appName}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-muted-foreground text-sm">
-                {needsConnection
+                {supportsConnection
                   ? "Choose what this Project can use and which connection applies."
                   : "Choose which capabilities this Project can use."}
               </Dialog.Description>
@@ -228,21 +233,35 @@ export function ProjectSharedAppSheet({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h3 className="font-semibold text-base">
-                        {needsConnection
-                          ? isPersonal
-                            ? "Your connection"
-                            : "Shared connection"
+                        {supportsConnection
+                          ? isWeather
+                            ? "Optional Weather fallback"
+                            : isPersonalOnly
+                              ? "Your connection"
+                              : isHybrid
+                                ? "Personal and shared connections"
+                                : configuration.app.connectionRequirement ===
+                                    "optional"
+                                  ? "Optional shared connection"
+                                  : "Shared connection"
                           : "Connection"}
                       </h3>
                       <p className="mt-1 text-muted-foreground text-sm">
-                        {needsConnection
-                          ? isPersonal
-                            ? "Your agents use your Project default. Teammates connect their own accounts."
-                            : "Agents use the Project default. They never choose or see credentials."
+                        {supportsConnection
+                          ? isWeather
+                            ? "Weather always uses Open-Meteo first. Attach the Environment's Visual Crossing connection to enable the verified fallback for this Project."
+                            : isPersonalOnly
+                              ? "Your agents use your Project default. Teammates connect their own accounts."
+                              : isHybrid
+                                ? "Your personal default is used first. The Project shared default is used when you have none."
+                                : configuration.app.connectionRequirement ===
+                                    "optional"
+                                  ? "The App works without this connection; attaching one enables its optional provider path."
+                                  : "Agents use the Project default. They never choose or see credentials."
                           : "No connection is required. Kestrel provides this App directly."}
                       </p>
                     </div>
-                    {needsConnection ? (
+                    {supportsConnection ? (
                       <Badge variant="outline">
                         {configuration.attachedConnections.length} attached
                       </Badge>
@@ -251,9 +270,14 @@ export function ProjectSharedAppSheet({
                     )}
                   </div>
                   <div className="mt-5 divide-y overflow-hidden rounded-xl border">
-                    {needsConnection ? (
+                    {supportsConnection ? (
                       configuration.availableConnections.length ? (
                         configuration.availableConnections.map((connection) => {
+                          const connectionIsPersonal =
+                            connection.ownerType === "personal";
+                          const canManageConnection = connectionIsPersonal
+                            ? canAttachPersonal
+                            : canEdit;
                           const attachment =
                             configuration.attachedConnections.find(
                               (item) => item.id === connection.id
@@ -283,7 +307,7 @@ export function ProjectSharedAppSheet({
                                     ? "Project default"
                                     : attachment
                                       ? "Attached"
-                                      : isPersonal
+                                      : connectionIsPersonal
                                         ? "Available to you"
                                         : "Available in this Environment"}
                                 </p>
@@ -310,7 +334,7 @@ export function ProjectSharedAppSheet({
                                   busy === `connection:${connection.id}`
                                 }
                                 onClick={() =>
-                                  void selectConnection(connection.id)
+                                  void selectConnection(connection)
                                 }
                                 size="sm"
                                 variant={
@@ -333,14 +357,26 @@ export function ProjectSharedAppSheet({
                       ) : (
                         <div className="px-4 py-5">
                           <p className="font-medium text-sm">
-                            {isPersonal
+                            {isPersonalOnly
                               ? "No personal connection"
-                              : "No shared connection"}
+                              : isHybrid
+                                ? "No personal or shared connection"
+                                : configuration.app.connectionRequirement ===
+                                    "optional"
+                                  ? "No optional connection"
+                                  : "No shared connection"}
                           </p>
                           <p className="mt-1 text-muted-foreground text-sm">
-                            {isPersonal
+                            {isPersonalOnly
                               ? "Connect this App from Apps before adding it to this Project."
-                              : "An organization admin must add a connection for this App in the Project's Environment."}
+                              : isHybrid
+                                ? "Connect a personal account from Apps, or ask an organization admin to add a shared Environment connection."
+                                : isWeather
+                                  ? "Weather remains ready with Open-Meteo. Ask an organization admin to add a Visual Crossing fallback in Environment Apps if this Project needs failover."
+                                  : configuration.app.connectionRequirement ===
+                                      "optional"
+                                    ? "The App remains available without this optional provider connection."
+                                    : "An organization admin must add a connection for this App in the Project's Environment."}
                           </p>
                           <Button
                             asChild
@@ -350,12 +386,12 @@ export function ProjectSharedAppSheet({
                           >
                             <Link
                               href={
-                                isPersonal
+                                isPersonalOnly
                                   ? `/apps/${encodeURIComponent(appKey)}`
                                   : `/settings/environments/${configuration.environmentId}/apps`
                               }
                             >
-                              {isPersonal
+                              {isPersonalOnly
                                 ? "Open App"
                                 : "Open Environment Apps"}
                             </Link>

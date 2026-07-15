@@ -23,6 +23,8 @@ import {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
   parseDesktopProviderCredentialInput,
+  parseDesktopToolCredentialInput,
+  parseDesktopToolCredentialProvider,
   parseDesktopRendererSettingsUpdate,
   parseDesktopRunCancelRequest,
   parseDesktopRunTurnRequest,
@@ -36,6 +38,11 @@ import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import { LocalCoreClient } from "../../../src/localCore/client.js";
 import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
+import type {
+  LocalCoreCredentialId,
+  LocalCoreCredentialStoreStatus,
+} from "../../../src/localCore/credentialStore.js";
+import { verifyVisualCrossingCredential } from "../../../tools/free/visualCrossingWeather.js";
 import {
   createWebRunnerAdapter,
   type WebRunnerAdapter,
@@ -72,6 +79,9 @@ import type {
   DesktopProjectRegistration,
   DesktopProjectFilesChangedEvent,
   DesktopProviderCredentialInput,
+  DesktopToolCredentialInput,
+  DesktopToolCredentialProvider,
+  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopProtocolTransport,
@@ -218,6 +228,9 @@ async function main(): Promise<void> {
   if (process.env.KESTREL_HOME === undefined || process.env.KESTREL_HOME.trim().length === 0) {
     process.env.KESTREL_HOME = localCoreHome.homePath;
   }
+  if (process.platform === "darwin") {
+    process.env.KESTREL_CORE_CREDENTIAL_STORE = "macos_keychain";
+  }
   desktopConfig = resolveDesktopPathConfig({
     cwd: process.cwd(),
     resourcesPath: process.resourcesPath,
@@ -246,6 +259,7 @@ async function main(): Promise<void> {
     },
   });
   await refreshDesktopCoreState();
+  await migrateDesktopCredentialsToLocalCore();
   if (desktopSettings.selectedProvider !== desktopModelPolicy.provider) {
     await saveDesktopCoreSettings({
       ...desktopSettings,
@@ -571,7 +585,7 @@ function registerIpcHandlers(
       coreSupportBundle: coreBundle,
     });
   });
-  ipcMain.handle("desktop:get-settings", async () => toDesktopRendererSettings(desktopSettings));
+  ipcMain.handle("desktop:get-settings", async () => await readDesktopRendererSettings());
   ipcMain.handle("desktop:get-ui-state", async () => {
     return await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.getDesktopUiState(),
@@ -774,15 +788,14 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    const credentialField: Partial<DesktopSettings> =
-      credential.provider === "openai"
-        ? { openaiApiKey: credential.apiKey }
-        : credential.provider === "anthropic"
-          ? { anthropicApiKey: credential.apiKey }
-          : { openrouterApiKey: credential.apiKey };
+    await requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.setCredential(
+        modelProviderCredentialId(credential.provider),
+        credential.apiKey,
+      ),
+    );
     const normalized = normalizeDesktopSettings({
       ...desktopSettings,
-      ...credentialField,
       selectedProvider: credential.provider,
       providerSelectionCompletedAt:
         desktopSettings.providerSelectionCompletedAt ?? new Date().toISOString(),
@@ -805,6 +818,52 @@ function registerIpcHandlers(
       resetRunnerProfile: true,
       restartMessage: "Applying provider credential…",
     });
+  });
+  ipcMain.handle("desktop:get-tool-credential-status", async (_event, input: unknown) => {
+    const provider = parseDesktopToolCredentialProvider(input);
+    const status = await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.credentialStatus(),
+    );
+    return toDesktopToolCredentialStatus(provider, status);
+  });
+  ipcMain.handle("desktop:save-tool-credential", async (_event, input: unknown) => {
+    let credential: DesktopToolCredentialInput;
+    try {
+      credential = parseDesktopToolCredentialInput(input);
+    } catch (error) {
+      throw createDesktopError({
+        code: "desktop.invalid_tool_credential",
+        message: "Desktop tool credential is invalid.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      await verifyVisualCrossingCredential({ apiKey: credential.apiKey });
+    } catch {
+      throw createDesktopError({
+        code: "desktop.tool_credential_verification_failed",
+        message: "Visual Crossing could not verify this API key.",
+        details: "Check the key and your network connection, then try again.",
+      });
+    }
+    const status = await requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.setCredential(
+        desktopToolCredentialId(credential.provider),
+        credential.apiKey,
+      ),
+    );
+    await runnerTransport.restart();
+    return toDesktopToolCredentialStatus(credential.provider, status);
+  });
+  ipcMain.handle("desktop:delete-tool-credential", async (_event, input: unknown) => {
+    const provider = parseDesktopToolCredentialProvider(input);
+    const result = await requireLocalCoreConnectionManager().executeOnce(
+      async (client) => await client.deleteCredential(
+        desktopToolCredentialId(provider),
+      ),
+    );
+    await runnerTransport.restart();
+    return toDesktopToolCredentialStatus(provider, result.credentials);
   });
   ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle("desktop:pick-workspace", async () => {
@@ -2129,6 +2188,39 @@ function requireLocalCoreStatus(): LocalCoreStatus {
   return localCoreStatus;
 }
 
+function desktopToolCredentialId(
+  provider: DesktopToolCredentialProvider,
+): LocalCoreCredentialId {
+  if (provider === "visual-crossing") {
+    return "tool.visual-crossing.default";
+  }
+  throw new Error("Desktop tool credential provider is not supported.");
+}
+
+function modelProviderCredentialId(
+  provider: "openrouter" | "openai" | "anthropic",
+): LocalCoreCredentialId {
+  if (provider === "openai") return "provider.openai.default";
+  if (provider === "anthropic") return "provider.anthropic.default";
+  return "provider.openrouter.default";
+}
+
+function toDesktopToolCredentialStatus(
+  provider: DesktopToolCredentialProvider,
+  status: LocalCoreCredentialStoreStatus,
+): DesktopToolCredentialStatus {
+  const credentialId = desktopToolCredentialId(provider);
+  return {
+    provider,
+    configured:
+      status.credentials.find((credential) => credential.id === credentialId)
+        ?.configured ?? false,
+    available: status.available,
+    backend:
+      status.backend === "macos_keychain" ? "macos_keychain" : "unavailable",
+  };
+}
+
 function requireDesktopRunnerAdapter(
   transport: DesktopRunnerControlTransport,
 ): WebRunnerAdapter {
@@ -2154,6 +2246,48 @@ async function refreshDesktopCoreState(): Promise<void> {
   desktopSettings = normalizeDesktopSettings(response.settings);
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
+}
+
+async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
+  const legacyCredentials: Array<{
+    id: LocalCoreCredentialId;
+    value: string | undefined;
+  }> = [
+    { id: "provider.openrouter.default", value: desktopSettings.openrouterApiKey },
+    { id: "provider.openai.default", value: desktopSettings.openaiApiKey },
+    { id: "provider.anthropic.default", value: desktopSettings.anthropicApiKey },
+    { id: "tool.tavily.default", value: desktopSettings.tavilyApiKey },
+  ];
+  if (legacyCredentials.every((credential) => credential.value === undefined)) {
+    return;
+  }
+  const manager = requireLocalCoreConnectionManager();
+  const currentStatus = await manager.executeIdempotent(
+    async (client) => await client.credentialStatus(),
+  );
+  if (currentStatus.available === false) {
+    return;
+  }
+  for (const credential of legacyCredentials) {
+    const legacyValue = credential.value;
+    if (
+      legacyValue !== undefined
+      && currentStatus.credentials.some(
+        (status) => status.id === credential.id && status.configured,
+      ) === false
+    ) {
+      await manager.executeOnce(
+        async (client) => await client.setCredential(credential.id, legacyValue),
+      );
+    }
+  }
+  await manager.executeOnce(async (client) => await client.patchSettings({
+    openrouterApiKey: null,
+    openaiApiKey: null,
+    anthropicApiKey: null,
+    tavilyApiKey: null,
+  }));
+  await refreshDesktopCoreState();
 }
 
 async function saveDesktopCoreSettings(
@@ -2207,7 +2341,28 @@ async function persistDesktopRendererConfiguration(
   }
   runtimeHealth = deriveRuntimeHealth(bootState);
   mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
-  return toDesktopRendererSettings(desktopSettings);
+  return await readDesktopRendererSettings();
+}
+
+async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
+  const selectedProvider = desktopSettings.selectedProvider;
+  if (
+    selectedProvider === "ollama"
+    || selectedProvider === "lmstudio"
+  ) {
+    return toDesktopRendererSettings(desktopSettings, true);
+  }
+  const status = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.credentialStatus(),
+  );
+  return toDesktopRendererSettings(
+    desktopSettings,
+    status.credentials.some(
+      (credential) => credential.id === modelProviderCredentialId(
+        selectedProvider,
+      ) && credential.configured,
+    ),
+  );
 }
 
 function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {

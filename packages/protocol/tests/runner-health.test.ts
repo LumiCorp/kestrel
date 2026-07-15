@@ -58,11 +58,11 @@ test("runner health rejects the v1 event contract", () => {
       ...health,
       contracts: { ...health.contracts, events: "dotted-runtime-events-v1" },
     }),
-    /dotted-runtime-events-v2/u,
+    /dotted-runtime-events-v3/u,
   );
 });
 
-test("runner health requires the aggregate Execution Protocol v2 contract", () => {
+test("runner health requires the aggregate Execution Protocol v3 contract", () => {
   const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
   const { execution: _execution, ...withoutExecution } = health.contracts;
   assert.throws(
@@ -70,7 +70,7 @@ test("runner health requires the aggregate Execution Protocol v2 contract", () =
       ...health,
       contracts: withoutExecution,
     }),
-    /execution-protocol-v2/u,
+    /execution-protocol-v3/u,
   );
   assert.throws(
     () => parseRunnerHealthV1({
@@ -80,7 +80,7 @@ test("runner health requires the aggregate Execution Protocol v2 contract", () =
         execution: "execution-protocol-v1",
       },
     }),
-    /execution-protocol-v2/u,
+    /execution-protocol-v3/u,
   );
 });
 
@@ -131,7 +131,7 @@ test("every v2 terminal payload requires a result while operator results are val
   );
 });
 
-test("public run stream event names include tool and console activity", () => {
+test("public run stream event names separate operational, provider, and agent activity", () => {
   assert.equal(RUNNER_WAITING_PROMPT_HISTORY_KIND, "runtime.waiting_prompt");
   assert.deepEqual(RUNNER_RUN_STREAM_EVENT_TYPES, [
     "run.started",
@@ -142,7 +142,12 @@ test("public run stream event names include tool and console activity", () => {
     "run.log",
     "run.console",
     "run.progress",
-    "run.reasoning",
+    "run.model.reasoning.started",
+    "run.model.reasoning.delta",
+    "run.model.reasoning.completed",
+    "run.model.reasoning.failed",
+    "run.model.reasoning.unavailable",
+    "run.agent_progress",
     "run.completed",
     "run.failed",
     "runner.error",

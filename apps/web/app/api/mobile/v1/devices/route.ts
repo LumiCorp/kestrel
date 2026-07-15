@@ -3,8 +3,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 
 const bodySchema = z.object({
   id: routeIdSchema,
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       .returning({ id: schema.mobileDeviceRegistrations.id });
     return NextResponse.json({ deviceId: device?.id ?? body.id });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }
 
@@ -70,10 +70,10 @@ export async function DELETE(request: NextRequest) {
         userId: schema.mobileDeviceRegistrations.userId,
       });
     if (!device) {
-      return NextResponse.json({ error: "Device not found" }, { status: 404 });
+      return mobileErrorResponse(new Error("Device not found"), 404);
     }
     return new Response(null, { status: 204 });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

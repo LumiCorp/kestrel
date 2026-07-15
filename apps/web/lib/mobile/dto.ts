@@ -103,22 +103,42 @@ export async function mobileThreadDtos(threads: DbThread[]) {
 }
 
 export function mobileTurnDto(turn: typeof schema.threadTurns.$inferSelect) {
+  const failure = mobileTurnFailure(turn.status, turn.failureCode);
   return {
     id: turn.id,
     threadId: turn.threadId,
     inputMessageId: turn.inputMessageId,
     sequence: turn.sequence,
     status: turn.status,
-    failure:
-      turn.failureCode || turn.failureMessage
-        ? { code: turn.failureCode, message: turn.failureMessage }
-        : null,
+    failure,
     cancelRequestedAt: turn.cancelRequestedAt?.toISOString() ?? null,
     startedAt: turn.startedAt?.toISOString() ?? null,
     finishedAt: turn.finishedAt?.toISOString() ?? null,
     createdAt: turn.createdAt.toISOString(),
     updatedAt: turn.updatedAt.toISOString(),
   };
+}
+
+function mobileTurnFailure(
+  status: typeof schema.threadTurns.$inferSelect.status,
+  internalCode: string | null
+) {
+  if (internalCode === "TURN_REMOVED" || status === "completed") return null;
+  if (status === "failed") {
+    return {
+      code: "AGENT_RUN_FAILED" as const,
+      message: "The Kestrel agent could not complete this message.",
+      retryable: true,
+    };
+  }
+  if (status === "cancelled") {
+    return {
+      code: "AGENT_RUN_CANCELLED" as const,
+      message: "This message was stopped before it finished.",
+      retryable: true,
+    };
+  }
+  return null;
 }
 
 const elicitationSchema = z.object({
@@ -141,23 +161,41 @@ const elicitationSchema = z.object({
 });
 
 export function mobileInteractionDto(
-  interaction: typeof schema.mcpInteractionCheckpoints.$inferSelect
+  interaction:
+    | typeof schema.mcpInteractionCheckpoints.$inferSelect
+    | typeof schema.threadInteractions.$inferSelect
 ) {
-  if (interaction.kind === "sampling") {
+  const isShared = "source" in interaction;
+  const id = isShared ? interaction.requestId : interaction.id;
+  const kind = interaction.kind;
+  const prompt = isShared ? interaction.prompt : null;
+  if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
     return {
-      id: interaction.id,
+      id,
       kind: "approval" as const,
       title: "Allow this agent request?",
       prompt:
-        "The agent requested a protected model operation. Review and allow or deny it.",
+        prompt ??
+        "The agent requested a protected operation. Review and allow or deny it.",
       fields: [],
+      createdAt: interaction.createdAt.toISOString(),
+    };
+  }
+  if (kind === "user_input") {
+    const inputSchema = asRecord(interaction.requestEnvelope.inputSchema);
+    return {
+      id,
+      kind: "question" as const,
+      title: "Your agent needs an answer",
+      prompt: interaction.prompt,
+      fields: fieldsFromJsonSchema(inputSchema),
       createdAt: interaction.createdAt.toISOString(),
     };
   }
   const urlRequest = parseUrlElicitation(interaction.requestEnvelope);
   if (urlRequest) {
     return {
-      id: interaction.id,
+      id,
       kind: "approval" as const,
       title: "Allow this external step?",
       prompt: urlRequest.message,
@@ -168,7 +206,7 @@ export function mobileInteractionDto(
   const request = elicitationSchema.safeParse(interaction.requestEnvelope);
   if (!request.success) {
     return {
-      id: interaction.id,
+      id,
       kind: "question" as const,
       title: "Your agent needs an answer",
       prompt: "Review this request in Kestrel One on the web.",
@@ -178,7 +216,7 @@ export function mobileInteractionDto(
   }
   const required = new Set(request.data.requestedSchema.required ?? []);
   return {
-    id: interaction.id,
+    id,
     kind: "question" as const,
     title: "Your agent needs an answer",
     prompt: request.data.message,
@@ -203,4 +241,51 @@ export function mobileInteractionDto(
     ),
     createdAt: interaction.createdAt.toISOString(),
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function fieldsFromJsonSchema(schema: Record<string, unknown> | null) {
+  const properties = asRecord(schema?.properties);
+  if (!properties) {
+    return [
+      {
+        name: "answer",
+        label: "Response",
+        type: "text" as const,
+        required: true,
+      },
+    ];
+  }
+  const required = new Set(
+    Array.isArray(schema?.required)
+      ? schema.required.filter((value): value is string => typeof value === "string")
+      : []
+  );
+  return Object.entries(properties).map(([name, raw]) => {
+    const field = asRecord(raw);
+    const options = Array.isArray(field?.enum)
+      ? field.enum.filter((value): value is string => typeof value === "string")
+      : undefined;
+    return {
+      name,
+      label:
+        (typeof field?.title === "string" && field.title) ||
+        (typeof field?.description === "string" && field.description) ||
+        name,
+      type: options
+        ? ("select" as const)
+        : field?.type === "number" || field?.type === "integer"
+          ? ("number" as const)
+          : field?.type === "boolean"
+            ? ("boolean" as const)
+            : ("text" as const),
+      required: required.has(name),
+      ...(options ? { options } : {}),
+    };
+  });
 }

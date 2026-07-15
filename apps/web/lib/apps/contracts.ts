@@ -15,6 +15,7 @@ const httpsUrl = z
   });
 
 export const createEnvironmentAppConnectionSchema = z.object({
+  kind: z.literal("api_key").default("api_key"),
   name: z.string().trim().min(1).max(120),
   apiKey: z.string().trim().min(1).max(16_384),
   projectId: z.string().trim().min(1).max(256).optional(),
@@ -48,7 +49,7 @@ export const projectAppCapabilityPolicySchema = z
     value.enabled ? value : { ...value, approvalMode: "deny" as const }
   );
 
-export type CreateEnvironmentAppConnectionInput = z.infer<
+export type CreateEnvironmentAppConnectionInput = z.input<
   typeof createEnvironmentAppConnectionSchema
 >;
 

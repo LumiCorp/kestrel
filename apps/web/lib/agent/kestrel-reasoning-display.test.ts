@@ -26,7 +26,7 @@ test("getReasoningTriggerLabel reflects terminal failure statuses", () => {
     getReasoningTriggerLabel({
       duration: 4,
       isStreaming: false,
-      terminalStatus: "runner_error",
+      terminalStatus: "contract_failure",
     }),
     "Interrupted"
   );
@@ -65,8 +65,7 @@ test("getReasoningTriggerLabel identifies a run waiting for the user", () => {
 
 test("shouldAutoCloseReasoning keeps terminal failures open", () => {
   assert.equal(shouldAutoCloseReasoning("completed"), true);
-  assert.equal(shouldAutoCloseReasoning("empty"), true);
   assert.equal(shouldAutoCloseReasoning("failed"), false);
   assert.equal(shouldAutoCloseReasoning("cancelled"), false);
-  assert.equal(shouldAutoCloseReasoning("runner_error"), false);
+  assert.equal(shouldAutoCloseReasoning("contract_failure"), false);
 });

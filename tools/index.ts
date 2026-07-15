@@ -18,6 +18,16 @@ export type {
   ToolCatalog,
   ToolPresentationMetadata,
 } from "./contracts.js";
+export type {
+  CreateToolProviderRuntimeConfigurationInput,
+  ToolProviderConfigurationResolver,
+  ToolProviderRuntimeConfiguration,
+} from "./providers/runtimeConfiguration.js";
+export {
+  createToolProviderConfigurationResolver,
+  createToolProviderRuntimeConfiguration,
+} from "./providers/runtimeConfiguration.js";
+export { createToolProviderConfigurationResolverFromEnvironment } from "./providers/fromEnvironment.js";
 export {
   BALANCED_STARTER_TOOL_NAMES,
   createToolCatalog,
@@ -30,6 +40,47 @@ export {
 } from "./createDefaultToolGateway.js";
 export { weatherCurrentTool } from "./free/weatherCurrent.js";
 export { weatherForecastTool } from "./free/weatherForecast.js";
+export { createOpenMeteoWeatherAdapter } from "./free/openMeteoWeather.js";
+export {
+  createKestrelOneVisualCrossingWeatherAdapter,
+  hasKestrelOneWeatherContext,
+} from "./free/kestrelOneWeatherProvider.js";
+export {
+  createVisualCrossingWeatherAdapter,
+  createVisualCrossingWeatherAdapterFromTransport,
+  type VisualCrossingWeatherAdapter,
+  type VisualCrossingWeatherRequest,
+  type VisualCrossingWeatherTransport,
+} from "./free/visualCrossingWeather.js";
+export type {
+  NormalizedWeatherCurrent,
+  NormalizedWeatherForecast,
+  WeatherCurrentProviderInput,
+  WeatherForecastProviderInput,
+  WeatherProviderAdapter,
+} from "./free/weatherProvider.js";
+export {
+  resolveWeatherProviderSet,
+  type WeatherProviderSet,
+} from "./free/weatherProviderResolver.js";
+export {
+  executeObservedWeatherProviderAttempt,
+  type WeatherProviderAttemptEvidence,
+  type WeatherProviderAttemptOutcome,
+} from "./free/weatherObservability.js";
+export {
+  executeWeatherFailover,
+  type WeatherFailureDecision,
+  type WeatherFailoverPolicy,
+  type WeatherFailoverResult,
+} from "./free/weatherFailover.js";
+export {
+  classifyWeatherProviderFailure,
+  OPEN_METEO_ATTEMPT_TIMEOUT_MS,
+  VISUAL_CROSSING_ATTEMPT_TIMEOUT_MS,
+  WEATHER_FAILOVER_POLICY,
+  WEATHER_TOTAL_PROVIDER_BUDGET_MS,
+} from "./free/weatherPolicy.js";
 export { timeCurrentTool } from "./free/timeCurrent.js";
 export { geocodeLookupTool } from "./free/geocodeLookup.js";
 export { exchangeRateTool } from "./free/exchangeRate.js";

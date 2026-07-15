@@ -171,7 +171,7 @@ export function buildKestrelAgentToolSurface(
     ...controlTools
       .filter((tool) => allowedControlToolNames === undefined || allowedControlToolNames.has(tool.name))
       .map((tool) => toToolAliasEntry(tool, "control" as const)),
-  ];
+  ].map(withAgentProgressContract);
   const byProviderName = new Map<string, KestrelAgentToolAliasEntry>();
   for (const entry of entries) {
     const existing = byProviderName.get(entry.providerName);
@@ -193,6 +193,34 @@ export function buildKestrelAgentToolSurface(
       description: entry.description,
       inputSchema: entry.inputSchema,
     })),
+  };
+}
+
+function withAgentProgressContract(
+  entry: KestrelAgentToolAliasEntry,
+): KestrelAgentToolAliasEntry {
+  const schema = entry.inputSchema;
+  const properties = asRecord(schema.properties) ?? {};
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === "string")
+    : [];
+  return {
+    ...entry,
+    description: `${entry.description} Include assistantProgress: one concise sentence describing the accepted action to the user; do not mention internal steps, routing, commits, or model calls.`,
+    inputSchema: {
+      ...schema,
+      type: "object",
+      properties: {
+        ...properties,
+        assistantProgress: {
+          type: "string",
+          minLength: 1,
+          maxLength: 600,
+          description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
+        },
+      },
+      required: [...new Set([...required, "assistantProgress"])],
+    },
   };
 }
 

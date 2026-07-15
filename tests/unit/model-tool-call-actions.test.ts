@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildModelToolAliasRegistry,
-  normalizeModelToolCallsToAgentTurn,
+  normalizeModelToolCallsToAgentTurn as normalizeModelToolCallsToAgentTurnRaw,
   providerToolAliasForCanonicalName,
 } from "../../agents/reference-react/src/modelToolCallActions.js";
 import type { ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
@@ -44,12 +44,30 @@ const workspaceTools: ModelToolSpec[] = [
   },
 ];
 
+function normalizeModelToolCallsToAgentTurn(
+  input: Parameters<typeof normalizeModelToolCallsToAgentTurnRaw>[0],
+): ReturnType<typeof normalizeModelToolCallsToAgentTurnRaw> {
+  return normalizeModelToolCallsToAgentTurnRaw({
+    ...input,
+    toolIntents: input.toolIntents.map((intent) => ({
+      ...intent,
+      input: {
+        assistantProgress: "I am continuing the requested work.",
+        ...intent.input,
+      },
+    })),
+  });
+}
+
 test("provider aliases are transport-only and canonical tool names stay dotted", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   assert.equal(providerToolAliasForCanonicalName("exec_command"), "exec_command");
   assert.equal(registry.byProviderName.get("exec_command")?.canonicalName, "exec_command");
-  assert.equal(registry.requestTools.find((tool) => tool.name === "exec_command")?.description, "Run terminal work.");
+  assert.match(
+    registry.requestTools.find((tool) => tool.name === "exec_command")?.description ?? "",
+    /^Run terminal work\. Include assistantProgress:/u,
+  );
   assert.equal(registry.byProviderName.has("dev_shell_run"), false);
   assert.equal(registry.requestTools.some((tool) => tool.name === "dev_shell_run"), false);
 

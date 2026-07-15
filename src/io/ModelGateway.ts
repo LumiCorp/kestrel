@@ -1,5 +1,7 @@
 import type {
   ModelGateway,
+  ModelGatewayCallOptions,
+  ModelGatewayEventSink,
   ModelRequest,
 } from "../kestrel/contracts/model-io.js";
 import {
@@ -9,7 +11,7 @@ import {
 } from "./ModelTimingPolicy.js";
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
-export type ModelInvoker = <T>(request: ModelRequest) => Promise<T>;
+export type ModelInvoker = <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => Promise<T>;
 
 interface ModelGatewayConfig {
   timeoutMs: number;
@@ -37,7 +39,7 @@ export class RetryingModelGateway implements ModelGateway {
 
   async call<T>(
     request: ModelRequest,
-    options: { signal?: AbortSignal | undefined } = {},
+    options: ModelGatewayCallOptions = {},
   ): Promise<T> {
     let lastError: unknown;
     let attemptsMade = 0;
@@ -47,6 +49,24 @@ export class RetryingModelGateway implements ModelGateway {
     const maxAttempts = this.config.retryCount + 1;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       throwIfAborted(options.signal);
+      let visibleOutputStarted = false;
+      const startedReasoningFormats = new Set<"summary" | "provider_thinking" | "provider_reasoning_text">();
+      const attemptNumber = attempt + 1;
+      await options.onEvent?.({ type: "attempt.started", attempt: attemptNumber });
+      const onEvent: ModelGatewayEventSink | undefined = options.onEvent === undefined
+        ? undefined
+        : async (event) => {
+            if (event.type === "reasoning.started" || event.type === "reasoning.delta" || event.type === "output.delta") {
+              visibleOutputStarted = true;
+            }
+            if (event.type === "reasoning.started" || event.type === "reasoning.delta") {
+              startedReasoningFormats.add(event.format);
+            }
+            if (event.type === "reasoning.completed" || event.type === "reasoning.failed") {
+              startedReasoningFormats.delete(event.format);
+            }
+            await options.onEvent?.({ ...event, attempt: attemptNumber });
+          };
       try {
         const elapsedMs = Date.now() - startedAtMs;
         const timeoutMetadata = withAttemptBudgetMetadata(
@@ -68,18 +88,32 @@ export class RetryingModelGateway implements ModelGateway {
           this.invoke<T>({
             ...request,
             metadata: timeoutMetadata,
+          }, {
+            signal: options.signal,
+            ...(onEvent !== undefined ? { onEvent } : {}),
           }),
           timeoutMs,
           attempt + 1,
           maxAttempts,
           options.signal,
           timeoutMetadata,
-        );
+        ).then(async (result) => {
+          await options.onEvent?.({ type: "attempt.completed", attempt: attemptNumber });
+          return result;
+        });
       } catch (error) {
         lastError = error;
         attemptsMade = attempt + 1;
+        for (const format of startedReasoningFormats) {
+          await options.onEvent?.({
+            type: "reasoning.failed",
+            attempt: attemptNumber,
+            format,
+          });
+        }
         if (
           attempt < maxAttempts - 1 &&
+          visibleOutputStarted === false &&
           isRetryableModelError(error) &&
           hasBudgetForAnotherAttempt(
             request.metadata,

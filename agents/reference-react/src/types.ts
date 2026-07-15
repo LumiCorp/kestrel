@@ -1,5 +1,5 @@
 import type { StepContext, UserWaitForMatcher, WaitForMatcher } from "../../../src/kestrel/contracts/execution.js";
-import type { ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
+import type { ModelReasoningRequest, ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
 
 import type { DevShellSourceWriteGuardResult } from "../../../src/devshell/contracts.js";
 import type {
@@ -11,6 +11,7 @@ import type { ContinuationOfferV1 } from "../../../src/runtime/continuationOffer
 
 export interface AgentRegistrationOptions {
   decisionModel?: string;
+  agentProvider?: string;
   agentModel?: string;
   agentToolNames?: string[];
   agentTools?: ModelToolSpec[] | undefined;
@@ -28,9 +29,13 @@ export interface AgentRegistrationOptions {
   thinkerToolNames?: string[];
   thinkerTools?: ModelToolSpec[] | undefined;
   thinkerToolsProvider?: ((ctx: StepContext) => ModelToolSpec[]) | undefined;
+  reasoningRequest?: Omit<ModelReasoningRequest, "continuation"> | undefined;
+  reasoningRetention?: { mode: "live_only" | "provider_visible"; days: number } | undefined;
+  reasoningRetentionScope?: string | undefined;
 }
 
 export interface ResolvedAgentOptions {
+  agentProvider?: string;
   agentModel: string;
   agentToolsProvider: (ctx: StepContext) => ModelToolSpec[];
   capabilityManifestProvider: (ctx: StepContext) => ToolCapabilityManifestItem[];
@@ -38,6 +43,9 @@ export interface ResolvedAgentOptions {
   effectResultLookupTool: string;
   finalizeToolName: string;
   defaultGoal: string;
+  reasoningRequest: Omit<ModelReasoningRequest, "continuation">;
+  reasoningRetention: { mode: "live_only" | "provider_visible"; days: number };
+  reasoningRetentionScope: string;
 }
 
 export type ExecutionLane = "chat" | "tooling";

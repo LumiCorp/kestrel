@@ -1,8 +1,7 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import { mobileErrorResponse } from "@/lib/mobile/http";
 import { createMobileTurnEventResponse } from "@/lib/mobile/turn-events";
 import { getDurableTurnForUser } from "@/lib/turns/store";
 
@@ -21,10 +20,10 @@ export async function GET(
       userId: session.user.id,
     });
     if (!turn) {
-      return NextResponse.json({ error: "Turn not found" }, { status: 404 });
+      return mobileErrorResponse(new Error("Turn not found"), 404);
     }
     return createMobileTurnEventResponse({ turnId, request });
   } catch (error) {
-    return errorResponse(error, 400);
+    return mobileErrorResponse(error, 400);
   }
 }

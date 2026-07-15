@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
-import type { MemorySnapshot, ProgressKind, ProgressPhase, ProgressUpdateV1, ReasoningMilestone, ReasoningUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
+import type { MemorySnapshot, ProgressKind, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { PersistedArtifact, SessionRecord } from "../kestrel/contracts/store.js";
@@ -54,7 +54,6 @@ import {
 } from "./retrievalLoopGuard.js";
 import { isMutationCapableToolName } from "../runtime/mutationTools.js";
 import { RegionScheduler } from "./RegionScheduler.js";
-import { ModelReasoningSidecar, selectReasoningMilestone } from "../reasoning/ReasoningSidecar.js";
 import type { ProductProjectSetupState } from "../project/contracts.js";
 import { WorkspaceLifecycleService } from "../workspace/WorkspaceLifecycleService.js";
 import { WorkspaceLifecycleCoordinator } from "./WorkspaceLifecycleCoordinator.js";
@@ -106,7 +105,6 @@ import { RuntimeIO } from "./RuntimeIO.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
-  buildPersistedRuntimeEventFromReasoningUpdate,
 } from "../events/RuntimeEventProjections.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
@@ -166,7 +164,6 @@ export class ExecutionEngine {
   private readonly stepFrameStore = new AsyncLocalStorage<StepRunnerObservabilityFrame>();
   private readonly runLifecycleFrameStore = new AsyncLocalStorage<RunLifecycleObservabilityFrame>();
   private readonly regionScheduler: RegionScheduler;
-  private readonly reasoningSidecar: ModelReasoningSidecar;
   private readonly workspaceLifecycleService: WorkspaceLifecycleService | undefined;
   private readonly workspaceLifecycleCoordinator: WorkspaceLifecycleCoordinator;
   private readonly waitResumeCoordinator: WaitResumeCoordinator;
@@ -189,10 +186,6 @@ export class ExecutionEngine {
     this.regionScheduler = new RegionScheduler({
       store: this.deps.store,
     });
-    this.reasoningSidecar = new ModelReasoningSidecar(
-      this.deps.modelGateway,
-      this.deps.reasoningSidecar,
-    );
     this.workspaceLifecycleService = this.deps.managedTaskWorktreeService === undefined
       ? undefined
       : new WorkspaceLifecycleService(this.deps.managedTaskWorktreeService);
@@ -364,7 +357,6 @@ export class ExecutionEngine {
         };
         return this.emitProgress(progressInput);
       },
-      maybeEmitReasoningUpdate: (input) => this.maybeEmitReasoningUpdate(input),
       appendRuntimeEventIntents: (input) => this.appendRuntimeEventIntents(input),
       maybeAppendManagedWorktreeApprovalRequested: (runId, sessionId, transition, stepIndex) =>
         this.maybeAppendManagedWorktreeApprovalRequested(runId, sessionId, transition, stepIndex),
@@ -438,8 +430,6 @@ export class ExecutionEngine {
     const errors: RuntimeError[] = [];
     let continuation: NormalizedOutput["continuation"] | undefined;
     let progressSeq = 0;
-    let reasoningSeq = 0;
-    const recentReasoningMessages: string[] = [];
     let lastStepAgent: string | undefined = event.stepAgent;
     let session: SessionRecord | undefined;
     let stepRunnerState: StepRunnerState | undefined;
@@ -613,7 +603,6 @@ export class ExecutionEngine {
         laneCursor,
         stepIndex,
         progressSeq,
-        reasoningSeq,
         continuation,
       };
       while (true) {
@@ -623,7 +612,6 @@ export class ExecutionEngine {
           state: stepRunnerState,
           guardrails,
           errors,
-          recentReasoningMessages,
           signal: options.signal,
         });
         event = stepRunnerState.event;
@@ -633,7 +621,6 @@ export class ExecutionEngine {
         laneCursor = stepRunnerState.laneCursor;
         stepIndex = stepRunnerState.stepIndex;
         progressSeq = stepRunnerState.progressSeq;
-        reasoningSeq = stepRunnerState.reasoningSeq;
         continuation = stepRunnerState.continuation;
         if (stepIndex % 25 === 0) {
           await this.sampleHeap({
@@ -667,7 +654,6 @@ export class ExecutionEngine {
         lastStepAgent = stepRunnerState.lastStepAgent ?? lastStepAgent;
         continuation = stepRunnerState.continuation;
         progressSeq = stepRunnerState.progressSeq;
-        reasoningSeq = stepRunnerState.reasoningSeq;
       }
 
       try {
@@ -858,6 +844,17 @@ export class ExecutionEngine {
         telemetry: guardrails.telemetry(),
       });
       } finally {
+        if (this.deps.providerReasoningVault !== undefined) {
+          const runtimeMetadata = {
+            ...(this.asRecord(event.payload.orchestration) ?? {}),
+            ...(this.asRecord(event.payload.metadata) ?? {}),
+          };
+          const turnId = this.asString(runtimeMetadata.turnId ?? runtimeMetadata.activeTurnId);
+          await this.deps.providerReasoningVault.purgeActiveTurn({
+            sessionId: session?.sessionId ?? event.sessionId,
+            ...(turnId !== undefined ? { turnId } : { runId }),
+          });
+        }
         await this.sampleHeap({
           component: "runtime.run",
           phase: "after",
@@ -1134,7 +1131,11 @@ export class ExecutionEngine {
         store: this.deps.store,
         modelGateway: this.deps.modelGateway,
         toolGateway: this.deps.toolGateway,
+        ...(this.deps.providerReasoningVault !== undefined
+          ? { providerReasoningVault: this.deps.providerReasoningVault }
+          : {}),
         ...(this.deps.consoleReporter !== undefined ? { consoleReporter: this.deps.consoleReporter } : {}),
+        reasoningReporter: this.deps.reasoningReporter,
       },
       guardrailConfig: this.guardrailConfig,
       toolJobQueue: this.toolJobQueue,
@@ -1941,122 +1942,6 @@ export class ExecutionEngine {
       seq,
     });
     return seq;
-  }
-
-  private async maybeEmitReasoningUpdate(input: {
-    runId: string;
-    sessionId: string;
-    seq: number;
-    stepIndex: number;
-    stepAgent: string | undefined;
-    previousState: Record<string, unknown>;
-    currentState: Record<string, unknown>;
-    transition: Transition;
-    recentMessages: string[];
-    runElapsedMs?: number | undefined;
-    stepElapsedMs?: number | undefined;
-    signal?: AbortSignal | undefined;
-  }): Promise<number> {
-    try {
-      const milestone = selectReasoningMilestone({
-        stepAgent: input.stepAgent,
-        previousState: input.previousState,
-        currentState: input.currentState,
-        transition: input.transition,
-      });
-      if (milestone === undefined) {
-        return input.seq;
-      }
-
-      const reasoning = await this.reasoningSidecar.generateWithDiagnostics({
-        runId: input.runId,
-        sessionId: input.sessionId,
-        seq: input.seq + 1,
-        milestone,
-        stepAgent: input.stepAgent,
-        stepIndex: input.stepIndex,
-        previousState: input.previousState,
-        currentState: input.currentState,
-        transition: input.transition,
-        recentMessages: input.recentMessages.slice(-2),
-        runElapsedMs: input.runElapsedMs,
-        stepElapsedMs: input.stepElapsedMs,
-      });
-      if (reasoning.update === undefined) {
-        await this.logWarn({
-          runId: input.runId,
-          sessionId: input.sessionId,
-          stepIndex: input.stepIndex,
-          eventName: "reasoning_update_dropped",
-          metadata: {
-            milestone,
-            ...(reasoning.dropped?.reason !== undefined
-              ? { reason: reasoning.dropped.reason }
-              : {}),
-            ...(reasoning.dropped?.validator !== undefined
-              ? { validator: reasoning.dropped.validator }
-              : {}),
-            ...(reasoning.dropped?.errorCode !== undefined
-              ? { errorCode: reasoning.dropped.errorCode }
-              : {}),
-            ...(reasoning.dropped?.errorMessage !== undefined
-              ? { errorMessage: reasoning.dropped.errorMessage }
-              : {}),
-            ...(reasoning.dropped?.configuredModel !== undefined
-              ? { configuredModel: reasoning.dropped.configuredModel }
-              : {}),
-            ...(reasoning.dropped?.providerName !== undefined
-              ? { providerName: reasoning.dropped.providerName }
-              : {}),
-            ...(reasoning.dropped?.providerModel !== undefined
-              ? { providerModel: reasoning.dropped.providerModel }
-              : {}),
-            ...(reasoning.dropped?.providerEndpoint !== undefined
-              ? { providerEndpoint: reasoning.dropped.providerEndpoint }
-              : {}),
-            ...(reasoning.dropped?.responseKeys !== undefined
-              ? { responseKeys: reasoning.dropped.responseKeys }
-              : {}),
-            ...(reasoning.dropped?.outputKeys !== undefined
-              ? { outputKeys: reasoning.dropped.outputKeys }
-              : {}),
-            ...(reasoning.dropped?.contentShape !== undefined
-              ? { contentShape: reasoning.dropped.contentShape }
-              : {}),
-          },
-        });
-        return input.seq;
-      }
-
-      const update = reasoning.update;
-      await this.deps.reasoningReporter.emit(update);
-      await this.appendReasoningRunEvent(update);
-      input.recentMessages.push(update.message);
-      if (input.recentMessages.length > 2) {
-        input.recentMessages.splice(0, input.recentMessages.length - 2);
-      }
-      return update.seq;
-    } catch {
-      await this.logWarn({
-        runId: input.runId,
-        sessionId: input.sessionId,
-        stepIndex: input.stepIndex,
-        eventName: "reasoning_update_failed",
-      });
-      return input.seq;
-    }
-  }
-
-  private async appendReasoningRunEvent(update: ReasoningUpdateV1): Promise<void> {
-    const event = buildPersistedRuntimeEventFromReasoningUpdate(update);
-    await this.appendRunEvent(
-      event.runId,
-      event.sessionId,
-      event.type,
-      event.level,
-      event.metadata,
-      event.stepIndex,
-    );
   }
 
   private buildProgressUpdate(

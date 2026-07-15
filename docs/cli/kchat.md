@@ -97,7 +97,7 @@ export KESTREL_RUNNER_SERVICE_TOKEN='...'
 - `Ctrl+F` contextual search (sessions/activity screens)
 - `?` still opens help when not focused in composer
 
-## Profiles (v3)
+## Profiles (v4)
 
 Profiles are loaded from `~/.kestrel/profiles.json` and bootstrapped automatically on first run.
 Workspace catalog entries do not override the active profile.
@@ -106,13 +106,23 @@ Schema:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "profiles": [
     {
       "id": "reference",
       "label": "Reference React",
       "agent": "reference-react",
       "sessionPrefix": "reference",
+      "reasoning": {
+        "request": {
+          "mode": "provider_visible",
+          "effort": "medium"
+        },
+        "retention": {
+          "mode": "live_only",
+          "days": 7
+        }
+      },
       "toolAllowlist": ["free.hn.top", "free.time.current", "code.execute"],
       "codeMode": {
         "enabled": true,
@@ -137,6 +147,12 @@ Schema:
   ]
 }
 ```
+
+`request.mode` controls whether the provider is asked for a summary or its
+provider-visible reasoning format. It does not request unavailable raw
+reasoning. `retention.mode` is a separate policy: `live_only` is the default;
+`provider_visible` is an explicit encrypted-retention opt-in for 1–30 days.
+Encrypted continuation state is never shown or placed in transcript history.
 
 ## Sessions and History
 

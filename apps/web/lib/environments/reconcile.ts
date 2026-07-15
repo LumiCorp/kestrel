@@ -3,6 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { createWorkspaceBackup } from "./backups";
+import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
 import { FlyMachinesClient } from "./providers/fly-machines";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
@@ -15,8 +16,11 @@ export async function reconcileHostedEnvironments() {
   });
   const recoverableOperations =
     await knowledgeDb.query.environmentOperations.findMany({
-      where: (table, { inArray }) =>
-        inArray(table.status, ["queued", "running"]),
+      where: (table, { and, inArray }) =>
+        and(
+          inArray(table.status, ["queued", "running"]),
+          inArray(table.type, PROVISIONER_OPERATION_TYPES)
+        ),
       columns: { id: true },
       limit: 100,
     });

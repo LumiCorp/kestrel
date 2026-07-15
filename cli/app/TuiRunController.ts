@@ -26,7 +26,7 @@ import {
   AGENT_STEP_IDS,
   type NormalizedOutput,
   type ProgressUpdateV1,
-  type ReasoningUpdateV1,
+  type AgentProgressUpdateV1,
 } from "../../src/index.js";
 import { buildModelHistoryWindow } from "../../src/runtime/submittedHistory.js";
 
@@ -67,7 +67,7 @@ export interface TuiRunControllerContext extends TuiAppContext {
   syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void>;
   clearProgressForRun(runId: string): void;
   pushRunLog(line: AgentRunLogLine): void;
-  enqueueReasoningTranscriptUpdate(update: ReasoningUpdateV1): void;
+  enqueueAgentProgressTranscriptUpdate(update: AgentProgressUpdateV1): void;
 }
 
 export class TuiRunController {
@@ -673,30 +673,27 @@ export class TuiRunController {
       return;
     }
 
-    if (event.type === "run.reasoning") {
+    if (event.type === "run.agent_progress") {
       const update = event.payload.update;
-      const state = this.context.uiStore.getState();
-      this.context.uiStore.patch({
-        latestReasoningForSession:
-          state.activeSession.sessionId === update.sessionId
-            ? update
-            : state.latestReasoningForSession,
-      });
-      this.context.pushRunLog({
-        timestamp: new Date().toISOString(),
-        level: "INFO",
-        eventName: "reasoning_update",
-        runId: update.runId,
-        ...(update.stepIndex !== undefined ? { stepIndex: update.stepIndex } : {}),
-        metadata: {
-          message: update.message,
-          milestone: update.milestone,
-          seq: update.seq,
-          ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
-          ...(update.model !== undefined ? { model: update.model } : {}),
-        },
-      });
-      this.context.enqueueReasoningTranscriptUpdate(update);
+      this.context.enqueueAgentProgressTranscriptUpdate(update);
+      return;
+    }
+
+    if (event.type === "run.model.reasoning.delta") {
+      const update = event.payload.update;
+      if (update.contentState === "live" && update.delta !== undefined) {
+        const label = update.format === "summary"
+          ? "Provider reasoning summary"
+          : update.format === "provider_thinking"
+            ? "Provider-visible thinking"
+            : "Provider reasoning";
+        this.context.uiStore.patch({ statusLine: `${label} (attempt ${update.attempt}): ${update.delta}` });
+      }
+      return;
+    }
+
+    if (event.type === "run.model.reasoning.unavailable") {
+      this.context.uiStore.patch({ statusLine: "Provider reasoning unavailable for this model" });
       return;
     }
 

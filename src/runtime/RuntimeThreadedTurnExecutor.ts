@@ -24,6 +24,7 @@ import {
   type RuntimeTurnInput,
   type RuntimeTurnSkillPack,
 } from "./RuntimeTurn.js";
+import { isUserFacingWait } from "./assistantResponseContract.js";
 import { readWaitResumeStepAgent } from "./waitState.js";
 
 export interface RuntimeThreadedTurnExecutorOptions {
@@ -166,9 +167,12 @@ export class RuntimeThreadedTurnExecutor {
     const agentState = asRecord(session?.state.agent);
     const finalOutput = agentState?.finalOutput;
     const assistantText = readAssistantText(agentState?.assistantText);
+    const exposesAssistantText =
+      output.status === "COMPLETED" ||
+      (output.status === "WAITING" && isUserFacingWait(output.waitFor));
     return {
       output,
-      assistantText: output.status === "COMPLETED" ? assistantText : null,
+      assistantText: exposesAssistantText ? assistantText : null,
       ...(session !== null ? { session } : {}),
       ...(output.status === "COMPLETED" && finalOutput !== undefined
         ? { finalizedPayload: finalOutput }

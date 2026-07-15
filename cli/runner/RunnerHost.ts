@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
-  buildPersistedRuntimeEventFromReasoningUpdate,
+  readAgentProgressUpdateFromPersistedRuntimeEvent,
   readProgressUpdateFromPersistedRuntimeEvent,
   readReasoningUpdateFromPersistedRuntimeEvent,
   readToolUpdateFromPersistedRuntimeEvent,
@@ -14,6 +14,8 @@ import type {
   ProductTaskGraph,
   ProgressUpdateV1,
   ReasoningUpdateV1,
+  ModelReasoningUpdateV1,
+  AgentProgressUpdateV1,
   RunConsoleUpdateV1,
   RunEvent,
   RunLogEntry,
@@ -44,6 +46,7 @@ import type {
   OperatorControlCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
+  OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
   ProfileGetCommandPayload,
@@ -174,6 +177,18 @@ export interface RunnerRuntime {
         import("../../src/orchestration/contracts.js").OperatorRunView | null
       >)
     | undefined;
+  getRetainedProviderReasoning?:
+    | ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<Array<{
+        provider: string;
+        model: string;
+        format: string;
+        text: string;
+        createdAt: string;
+        expiresAt: string;
+      }>>)
+    | undefined;
+  deleteRetainedProviderReasoning?: ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<number>) | undefined;
+  getProviderReasoningVaultStatus?: (() => { ready: boolean; keyVersion: number; keySource: string }) | undefined;
   performOperatorAction?:
     | ((
         input: OperatorControlCommandPayload & { issuedBy?: string | undefined }
@@ -332,7 +347,7 @@ type RunnerRuntimeFactory = (
   onRunLog: (entry: RunLogEntry) => void,
   onProgress: (update: ProgressUpdateV1) => void,
   onConsole: (update: RunConsoleUpdateV1) => void,
-  onReasoning: (update: ReasoningUpdateV1) => void,
+  onReasoning: (update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void,
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
   onRunEvent: (event: RunEvent) => void
 ) => RunnerRuntime;
@@ -507,6 +522,7 @@ export class RunnerHost {
       return;
     }
     const runtime = this.getRuntime(profile);
+    const reasoningVaultStatus = runtime.getProviderReasoningVaultStatus?.();
     this.commandBySession.set(turn.sessionId, commandId);
     this.commandTypeBySession.set(turn.sessionId, "run.start");
     const abortController = new AbortController();
@@ -541,6 +557,9 @@ export class RunnerHost {
           : {}),
         ...(turn.executionPolicy !== undefined
           ? { executionPolicy: turn.executionPolicy }
+          : {}),
+        ...(reasoningVaultStatus !== undefined
+          ? { reasoningKeyReady: reasoningVaultStatus.ready, reasoningKeyVersion: reasoningVaultStatus.keyVersion }
           : {}),
       },
       {
@@ -582,6 +601,11 @@ export class RunnerHost {
             result: {
               ...terminalResult,
               assistantText: null,
+              output: {
+                ...terminalResult.output,
+                status: "FAILED",
+                errors: [...terminalResult.output.errors, error],
+              },
             },
             error,
           },
@@ -1269,6 +1293,44 @@ export class RunnerHost {
       },
       { commandId, runId: payload.runId }
     );
+  }
+
+  async operatorRunReasoning(
+    commandId: string,
+    payload: OperatorRunReasoningCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    if (metadata?.actor?.orgRole !== "org_admin") {
+      this.writer.emit("runner.error", {
+        code: "RUNNER_FORBIDDEN",
+        message: "Retained provider reasoning is restricted to organization administrators.",
+      }, { commandId, runId: payload.runId });
+      return;
+    }
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const action = payload.action ?? "read";
+      if (action === "read" && typeof runtime.getRetainedProviderReasoning !== "function") continue;
+      if (action === "delete" && typeof runtime.deleteRetainedProviderReasoning !== "function") continue;
+      const deletedCount = action === "delete"
+        ? await runtime.deleteRetainedProviderReasoning!({ runId: payload.runId, sessionId: payload.sessionId, actorRole: metadata.actor.orgRole, actorId: metadata.actor.actorId })
+        : undefined;
+      const entries = action === "read"
+        ? await runtime.getRetainedProviderReasoning!({ runId: payload.runId, sessionId: payload.sessionId, actorRole: metadata.actor.orgRole, actorId: metadata.actor.actorId })
+        : [];
+      this.writer.emit("operator.run.reasoning", {
+        runId: payload.runId,
+        entries,
+        action,
+        ...(deletedCount !== undefined ? { deletedCount } : {}),
+        retention: "provider_visible",
+        access: "org_admin",
+      }, { commandId, runId: payload.runId });
+      return;
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Retained provider reasoning is unavailable.",
+    }, { commandId, runId: payload.runId });
   }
 
   async operatorControl(
@@ -2219,8 +2281,10 @@ export class RunnerHost {
     }
     const reasoning = readReasoningUpdateFromPersistedRuntimeEvent(event);
     if (reasoning !== undefined) {
-      this.emitReasoningUpdate(reasoning);
+      // Legacy persisted reasoning is intentionally no longer emitted.
     }
+    const agentProgress = readAgentProgressUpdateFromPersistedRuntimeEvent(event);
+    if (agentProgress !== undefined) this.emitAgentProgressUpdate(agentProgress);
     const tool = readToolUpdateFromPersistedRuntimeEvent(event);
     if (tool !== undefined) {
       this.emitToolUpdate(tool);
@@ -2345,22 +2409,39 @@ export class RunnerHost {
     );
   }
 
-  private onReasoning(update: ReasoningUpdateV1): void {
-    this.onRunEvent(buildPersistedRuntimeEventFromReasoningUpdate(update));
+  private onReasoning(update: ReasoningUpdateV1 | ModelReasoningUpdateV1): void {
+    if ("event" in update) this.emitModelReasoningUpdate(update);
   }
 
-  private emitReasoningUpdate(update: ReasoningUpdateV1): void {
+  private emitModelReasoningUpdate(update: ModelReasoningUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
     this.writer.emit(
-      "run.reasoning",
+      `run.model.reasoning.${normalizedUpdate.event}` as
+        | "run.model.reasoning.started"
+        | "run.model.reasoning.delta"
+        | "run.model.reasoning.completed"
+        | "run.model.reasoning.failed"
+        | "run.model.reasoning.unavailable",
       { update: normalizedUpdate },
       {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
+        durability: "live_only",
       }
     );
+  }
+
+  private emitAgentProgressUpdate(update: AgentProgressUpdateV1): void {
+    const normalizedUpdate = this.normalizeActiveRunIdentity(update);
+    const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
+    this.writer.emit("run.agent_progress", { update: normalizedUpdate }, {
+      runId: normalizedUpdate.runId,
+      sessionId: normalizedUpdate.sessionId,
+      ...(commandId !== undefined ? { commandId } : {}),
+      durability: "durable",
+    });
   }
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {

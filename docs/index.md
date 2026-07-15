@@ -44,6 +44,7 @@ This index maps the repo-level source-of-truth docs. Use it to find the canonica
 - [CLI terminal client](docs/cli/kchat.md)
 - [Kestrel Workspaces](docs/cli/workspaces.md)
 - [CLI runner protocol](docs/cli/kchat-protocol.md)
+- [Provider reasoning and agent progress](docs/references/provider-reasoning-and-agent-progress.md)
 - [Next.js runner service integration](docs/integrations/nextjs-runner-service.md)
 - [Runner SDK installation](docs/integrations/sdk-installation.md)
 

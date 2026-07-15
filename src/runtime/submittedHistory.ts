@@ -1,4 +1,7 @@
-import type { RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
+import type {
+  RunnerAssistantTextHistoryDataV2,
+  RunnerWaitingPromptHistoryDataV2,
+} from "@kestrel-agents/protocol";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import { normalizeTimestampString } from "./timestamps.js";
 
@@ -12,8 +15,12 @@ interface SubmittedHistoryLineBase {
 
 export type SubmittedHistoryLine = SubmittedHistoryLineBase & (
   | {
-      role: "user" | "assistant";
+      role: "user";
       data?: undefined;
+    }
+  | {
+      role: "assistant";
+      data?: RunnerAssistantTextHistoryDataV2 | undefined;
     }
   | {
       role: "system";
@@ -87,6 +94,18 @@ function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | un
         ...(runId !== undefined ? { runId } : {}),
       },
     };
+  }
+  if (line.role === "assistant" && data?.kind === "runtime.assistant_text") {
+    const runId = typeof data.runId === "string" && data.runId.trim().length > 0
+      ? data.runId.trim()
+      : undefined;
+    if (runId !== undefined) {
+      return {
+        ...normalized,
+        role: "assistant",
+        data: { kind: "runtime.assistant_text", runId },
+      };
+    }
   }
   return {
     ...normalized,

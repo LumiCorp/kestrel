@@ -593,7 +593,7 @@ test("ProtocolClient rejects unknown v2 events instead of publishing them", asyn
     (error: unknown) => {
       const protocolError = error as ProtocolClientRunnerErrorForTest;
       assert.equal(protocolError.code, "RUNNER_PROTOCOL_INVALID");
-      assert.match(protocolError.message, /supported Execution Protocol v2 event/u);
+      assert.match(protocolError.message, /supported Execution Protocol v3 event/u);
       assert.deepEqual(protocolError.details, { eventType: "runner.future_event" });
       return true;
     },

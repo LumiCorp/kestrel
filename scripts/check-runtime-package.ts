@@ -42,6 +42,7 @@ const requiredFiles = [
   "tools/index.ts",
   "db/migrations/001_sessions_runs.sql",
   "db/migrations/023_runner_protocol_events.sql",
+  "db/migrations/024_provider_reasoning_state.sql",
   "cli/runner/RunnerServiceEventJournal.ts",
   "cli/runner/RunnerServiceHost.ts",
   "src/localCore/credentialStore.ts",

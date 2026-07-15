@@ -179,7 +179,11 @@ export function AppsGallery({ initial }: { initial: AppsOverview }) {
                         ? "Built in"
                         : app.connectionModel === "personal"
                           ? "Personal account"
-                          : "Environment connection"}
+                          : app.connectionModel === "hybrid"
+                            ? "Personal or shared"
+                            : app.connectionRequirement === "optional"
+                              ? "Optional connection"
+                              : "Environment connection"}
                     </span>
                   </div>
                 </CardContent>

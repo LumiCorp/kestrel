@@ -39,6 +39,7 @@ test("runtime configuration defaults expose the exact immutable v1 shape", () =>
     },
     tools: {
       tavily: {},
+      visualCrossing: {},
     },
   });
   assert.equal(Object.isFrozen(configuration), true);
@@ -47,6 +48,7 @@ test("runtime configuration defaults expose the exact immutable v1 shape", () =>
   assert.equal(Object.isFrozen(configuration.providers), true);
   assert.equal(Object.isFrozen(configuration.providers.openrouter), true);
   assert.equal(Object.isFrozen(configuration.tools.tavily), true);
+  assert.equal(Object.isFrozen(configuration.tools.visualCrossing), true);
 });
 
 test("runtime configuration parser trims strings and canonicalizes HTTP URLs", () => {
@@ -80,6 +82,9 @@ test("runtime configuration parser trims strings and canonicalizes HTTP URLs", (
         httpProxyUrl: "http://proxy.example:8080",
         httpsProxyUrl: "https://proxy.example:8443/path",
       },
+      visualCrossing: {
+        baseUrl: "https://weather.visualcrossing.example",
+      },
     },
   });
 
@@ -91,6 +96,10 @@ test("runtime configuration parser trims strings and canonicalizes HTTP URLs", (
   assert.equal(configuration.providers.ollama.baseUrl, "http://localhost:11434/");
   assert.equal(configuration.tools.tavily.projectId, "search-project");
   assert.equal(configuration.tools.tavily.httpsProxyUrl, "https://proxy.example:8443/path");
+  assert.equal(
+    configuration.tools.visualCrossing.baseUrl,
+    "https://weather.visualcrossing.example/",
+  );
 });
 
 test("runtime configuration rejects unknown and credential-shaped fields", () => {
@@ -124,6 +133,7 @@ test("runtime configuration rejects unknown and credential-shaped fields", () =>
       ...defaults,
       tools: {
         tavily: { unknown: "value" },
+        visualCrossing: {},
       },
     }),
     /unsupported field/u,

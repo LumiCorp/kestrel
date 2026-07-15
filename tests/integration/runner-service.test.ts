@@ -94,6 +94,42 @@ class MemoryRunnerServiceEventJournal implements RunnerServiceEventJournal {
   }
 }
 
+test("live reasoning reconnects in-process but restarts with redacted metadata", async () => {
+  const journal = new MemoryRunnerServiceEventJournal();
+  const bus = new RunnerServiceEventBus(journal);
+  bus.emit("runner.pong", { nonce: "cursor" }, { runId: "run-reasoning-replay" });
+  await bus.flush();
+  const cursor = journal.events[0]!;
+  bus.emit("run.model.reasoning.delta", {
+    update: {
+      version: "v1",
+      runId: "run-reasoning-replay",
+      sessionId: "session-reasoning-replay",
+      ts: new Date().toISOString(),
+      seq: 2,
+      event: "delta",
+      attempt: 1,
+      format: "summary",
+      delta: "Live provider summary.",
+      contentState: "live",
+    },
+  }, { runId: "run-reasoning-replay", sessionId: "session-reasoning-replay", durability: "live_only" });
+  await bus.flush();
+
+  const sameProcess: RunnerEvent[] = [];
+  await bus.subscribeFiltered({ runId: "run-reasoning-replay", sinceEventId: cursor.id }, (event) => sameProcess.push(event));
+  assert.equal(sameProcess.length, 1);
+  assert.equal((sameProcess[0]?.payload as { update?: { delta?: string } }).update?.delta, "Live provider summary.");
+
+  const restarted = new RunnerServiceEventBus(journal);
+  const afterRestart: RunnerEvent[] = [];
+  await restarted.subscribeFiltered({ runId: "run-reasoning-replay", sinceEventId: cursor.id }, (event) => afterRestart.push(event));
+  assert.equal(afterRestart.length, 1);
+  const update = (afterRestart[0]?.payload as { update?: { delta?: string; contentState?: string } }).update;
+  assert.equal(update?.delta, undefined);
+  assert.equal(update?.contentState, "not_retained");
+});
+
 test("journal-backed replay queries durable history beyond the in-memory history cap", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   for (let index = 0; index < 1002; index += 1) {
@@ -1098,7 +1134,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
         message: "Reasoning in progress.",
       });
       return {
-        assistantText: null,
+        assistantText: "The streamed runner turn completed.",
         output: {
           status: "COMPLETED",
           sessionId: "session-1",
@@ -1637,7 +1673,7 @@ test("runner service keeps durable runs active when a stream disconnects", async
         }, { once: true });
         await finishRunTurn;
         return {
-          assistantText: null,
+          assistantText: "The durable runner turn completed.",
           output: {
             status: "COMPLETED",
             sessionId: "session-durable-disconnect",

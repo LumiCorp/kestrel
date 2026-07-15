@@ -24,7 +24,10 @@ import {
   type LocalCoreStatus,
 } from "./contracts.js";
 import {
+  parseLocalCoreCredentialId,
+  parseLocalCoreCredentialSecret,
   parseLocalCoreCredentialStoreStatus,
+  type LocalCoreCredentialId,
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
 import {
@@ -106,6 +109,43 @@ export class LocalCoreClient {
         "credential status",
       ),
     );
+  }
+
+  async setCredential(
+    id: LocalCoreCredentialId,
+    secret: string,
+  ): Promise<LocalCoreCredentialStoreStatus> {
+    const credentialId = parseLocalCoreCredentialId(id);
+    const response = await this.put(
+      `/v1/credentials/${encodeURIComponent(credentialId)}`,
+      { secret: parseLocalCoreCredentialSecret(secret) },
+    );
+    return parseLocalCoreCredentialStoreStatus(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "credentials",
+        "credential status",
+      ),
+    );
+  }
+
+  async deleteCredential(
+    id: LocalCoreCredentialId,
+  ): Promise<{ deleted: boolean; credentials: LocalCoreCredentialStoreStatus }> {
+    const credentialId = parseLocalCoreCredentialId(id);
+    const response = await this.delete(
+      `/v1/credentials/${encodeURIComponent(credentialId)}`,
+    );
+    return {
+      deleted: readBooleanField(response, "deleted", "credential deletion"),
+      credentials: parseLocalCoreCredentialStoreStatus(
+        readObjectField<Record<string, unknown>>(
+          response,
+          "credentials",
+          "credential status",
+        ),
+      ),
+    };
   }
 
   async desktopExecutionConfig(): Promise<LocalCoreDesktopExecutionConfig> {
@@ -582,6 +622,17 @@ function readObjectField<T extends object>(value: unknown, field: string, label:
     throw new Error(`Local Core ${label} response did not include object field '${field}'.`);
   }
   return candidate as T;
+}
+
+function readBooleanField(value: unknown, field: string, label: string): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Local Core ${label} response must be an object.`);
+  }
+  const candidate = (value as Record<string, unknown>)[field];
+  if (typeof candidate !== "boolean") {
+    throw new Error(`Local Core ${label} response did not include boolean field '${field}'.`);
+  }
+  return candidate;
 }
 
 export class LocalCoreApiError extends Error {

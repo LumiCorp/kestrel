@@ -33,7 +33,85 @@ export interface ModelRequest {
   responseSchema?: Record<string, unknown> | undefined;
   responseFormat?: "json" | "text" | undefined;
   providerOptions?: ProviderOptions | undefined;
+  reasoning?: ModelReasoningRequest | undefined;
   metadata?: Record<string, unknown> | undefined;
+}
+
+export type ModelReasoningMode = "off" | "summary" | "provider_visible";
+
+export interface ModelReasoningRequest {
+  mode: ModelReasoningMode;
+  effort?: "low" | "medium" | "high" | undefined;
+  /** Provider-native opaque state from the immediately preceding active turn only. */
+  continuation?: ModelReasoningContinuation[] | undefined;
+}
+
+export type ModelReasoningFormat =
+  | "summary"
+  | "provider_thinking"
+  | "provider_reasoning_text";
+
+export interface ModelVisibleReasoning {
+  format: ModelReasoningFormat;
+  text: string;
+}
+
+export interface ModelReasoningContinuation {
+  provider: "openai" | "anthropic" | "openrouter";
+  kind: "encrypted_content" | "signature" | "reasoning_details";
+  /** Opaque provider-returned value. This must never be rendered or logged. */
+  value: unknown;
+}
+
+export type ModelGatewayStreamEvent =
+  | {
+      type: "attempt.started";
+      attempt: number;
+    }
+  | {
+      type: "reasoning.started";
+      attempt: number;
+      format: ModelReasoningFormat;
+    }
+  | {
+      type: "reasoning.delta";
+      attempt: number;
+      format: ModelReasoningFormat;
+      delta: string;
+    }
+  | {
+      type: "reasoning.completed";
+      attempt: number;
+      format: ModelReasoningFormat;
+    }
+  | {
+      type: "reasoning.failed";
+      attempt: number;
+      format: ModelReasoningFormat;
+    }
+  | {
+      type: "reasoning.unavailable";
+      attempt: number;
+      format: ModelReasoningFormat;
+    }
+  | {
+      type: "output.delta";
+      attempt: number;
+      delta: string;
+    }
+  | {
+      type: "attempt.completed";
+      attempt: number;
+    };
+
+export type ModelGatewayEventSink = (
+  event: ModelGatewayStreamEvent,
+) => void | Promise<void>;
+
+export interface ModelGatewayCallOptions {
+  signal?: AbortSignal | undefined;
+  /** Awaited only to enqueue the event; consumers must do expensive work asynchronously. */
+  onEvent?: ModelGatewayEventSink | undefined;
 }
 
 export type ModelBudgetClass = "action" | "maintenance";
@@ -90,11 +168,34 @@ export interface AgentToolAuditRecord {
   status: "OK" | "FAILED";
 }
 
+export interface AgentToolCitationPresentation {
+  id: string;
+  title: string;
+  url?: string | undefined;
+  documentId?: string | undefined;
+  excerpt?: string | undefined;
+}
+
+export interface AgentToolArtifactPresentation {
+  id: string;
+  title: string;
+  kind: string;
+  url?: string | undefined;
+  mediaType?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+export interface AgentToolPresentation {
+  citations?: AgentToolCitationPresentation[] | undefined;
+  artifacts?: AgentToolArtifactPresentation[] | undefined;
+}
+
 export interface AgentToolResult {
   toolName: string;
   status: "OK" | "FAILED";
   modelContext: AgentToolModelContext;
   auditRecord: AgentToolAuditRecord;
+  presentation?: AgentToolPresentation | undefined;
 }
 
 export interface ModelToolIntent {
@@ -125,6 +226,7 @@ export interface OpenRouterProviderOptions {
 }
 
 export interface OpenAiProviderOptions {
+  endpoint?: "chat" | "responses" | undefined;
   temperature?: number | undefined;
   maxTokens?: number | undefined;
   topP?: number | undefined;
@@ -145,6 +247,10 @@ export interface ModelResponse<TOutput = unknown> {
   text?: string | undefined;
   toolIntents: ModelToolIntent[];
   usage?: ModelUsage | undefined;
+  reasoning?: {
+    visible: ModelVisibleReasoning[];
+    continuation: ModelReasoningContinuation[];
+  } | undefined;
   rawResponse?: unknown;
   provider: {
     name:
@@ -202,5 +308,5 @@ export interface ToolConsoleEvent {
 }
 
 export interface ModelGateway {
-  call<T>(request: ModelRequest, options?: { signal?: AbortSignal | undefined }): Promise<T>;
+  call<T>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<T>;
 }

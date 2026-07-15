@@ -13,6 +13,10 @@ import {
 import type { TuiProfile } from "../../cli/contracts.js";
 import { defaultSupervisionGroupId, fanInCheckpointId } from "../../src/orchestration/Supervision.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  materializeUserFacingWaitInteraction,
+  readInteractionPrompt,
+} from "../../src/runtime/assistantResponseContract.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 class QueueTurnExecutor implements TurnExecutor {
@@ -31,12 +35,41 @@ class QueueTurnExecutor implements TurnExecutor {
     if (next === undefined) {
       throw new Error("No queued turn result");
     }
-    return next;
+    return materializeFixtureAssistantResponse(next);
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {
     return this.sessionStore.getSession(sessionId);
   }
+}
+
+function materializeFixtureAssistantResponse(
+  result: TurnExecutionResult,
+): TurnExecutionResult {
+  if (result.assistantText !== undefined) {
+    return result;
+  }
+  if (result.output.status === "COMPLETED") {
+    return { ...result, assistantText: "Completed test turn." };
+  }
+  const waitFor = result.output.waitFor;
+  if (
+    result.output.status === "WAITING" &&
+    (waitFor?.kind === "user" || waitFor?.kind === "approval")
+  ) {
+    const canonicalWaitFor = materializeUserFacingWaitInteraction(waitFor, {
+      fallbackRequestId: `request-${result.output.runId}`,
+    });
+    const prompt = readInteractionPrompt(canonicalWaitFor);
+    if (prompt !== undefined) {
+      return {
+        ...result,
+        output: { ...result.output, waitFor: canonicalWaitFor },
+        assistantText: prompt,
+      };
+    }
+  }
+  return { ...result, assistantText: null };
 }
 
 class RunForeignKeyEnforcingStore extends InMemorySessionStore {
@@ -839,7 +872,7 @@ test("ThreadRuntime preserves submitted history and appends the waiting assistan
   assert.deepEqual(persistedHistory.map((line) => (line as { role?: string }).role), [
     "user",
     "user",
-    "system",
+    "assistant",
   ]);
 });
 
@@ -894,16 +927,16 @@ test("ThreadRuntime preserves identical waiting prompts from separate runs", asy
   assert.ok(Array.isArray(history));
   assert.deepEqual(history, [
     {
-      role: "system",
+      role: "assistant",
       text: "Which workspace should I inspect?",
       timestamp: history[0]?.timestamp,
-      data: { kind: "runtime.waiting_prompt", runId: "run-repeated-wait-1" },
+      data: { kind: "runtime.assistant_text", runId: "run-repeated-wait-1" },
     },
     {
-      role: "system",
+      role: "assistant",
       text: "Which workspace should I inspect?",
       timestamp: history[1]?.timestamp,
-      data: { kind: "runtime.waiting_prompt", runId: "run-repeated-wait-2" },
+      data: { kind: "runtime.assistant_text", runId: "run-repeated-wait-2" },
     },
   ]);
 });
@@ -1208,6 +1241,7 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
 
   const resumed = await runtime.resumeBlockedTurn({
     threadId: "thread-resume-active",
+    requestId: "request-current",
     message: "approved",
     interactionMode: "build",
     actSubmode: "full_auto",
@@ -1475,6 +1509,7 @@ test("ThreadRuntime stores completed child result envelope from finalize payload
         runId: "run-child-result-completed",
         status: "COMPLETED",
       }),
+      assistantText: "Child delivered the reviewed implementation.",
       finalizedPayload: {
         status: "completed",
         result: "Child delivered the reviewed implementation.",
@@ -1585,6 +1620,9 @@ test("ThreadRuntime stores blocked child result envelope when child waits", asyn
         waitFor: {
           kind: "user",
           eventType: "user.reply",
+          metadata: {
+            prompt: "What clarification does the child need?",
+          },
         },
       }),
     },
@@ -2518,6 +2556,7 @@ test("ThreadRuntime queues steering during a running turn and drains it after th
             runId: "run-main-1",
             status: "COMPLETED",
           }),
+          assistantText: "Main turn completed.",
         };
       }
       return {
@@ -2525,6 +2564,7 @@ test("ThreadRuntime queues steering during a running turn and drains it after th
           runId: "run-steer-2",
           status: "COMPLETED",
         }),
+        assistantText: "Steering applied.",
       };
     }
   }(sessionStore, []);
@@ -2596,6 +2636,7 @@ test("ThreadRuntime drains queued steering as operator steer when the interrupte
               },
             },
           }),
+          assistantText: "Reply continue to resume.",
         };
       }
       return {
@@ -2603,6 +2644,7 @@ test("ThreadRuntime drains queued steering as operator steer when the interrupte
           runId: "run-steer-after-wait-1",
           status: "COMPLETED",
         }),
+        assistantText: "Steering applied after wait.",
       };
     }
   }(sessionStore, []);
@@ -2930,6 +2972,7 @@ test("ThreadRuntime supervises multiple child launches and selects the dominant 
         waitFor: {
           kind: "user",
           eventType: "user.reply",
+          metadata: { prompt: "What should child one do next?" },
         },
       }),
     },
@@ -2940,6 +2983,7 @@ test("ThreadRuntime supervises multiple child launches and selects the dominant 
         waitFor: {
           kind: "approval",
           eventType: "user.approval",
+          metadata: { prompt: "Approve the parent action?" },
         },
       }),
     },
@@ -3695,6 +3739,7 @@ test("ThreadRuntime persists focused thread across runtime recreation with share
         waitFor: {
           kind: "approval",
           eventType: "user.approval",
+          metadata: { prompt: "Approve the parent focus action?" },
         },
       }),
     },
@@ -3705,6 +3750,7 @@ test("ThreadRuntime persists focused thread across runtime recreation with share
         waitFor: {
           kind: "user",
           eventType: "user.reply",
+          metadata: { prompt: "What should the focused child do next?" },
         },
       }),
     },

@@ -135,6 +135,25 @@ test("OpenTelemetryTraceExporter marks cancelled traces with explicit outcome", 
   assert.equal(spans[0]?.status.code, 0);
 });
 
+test("stream traces expose provider-reasoning and terminal dispatch latency metrics", async () => {
+  const processor = new InMemoryTraceProcessor();
+  const tracer = createTracer({ processors: [processor] });
+  const agent = tracer.wrapAgent(createMetricAgent());
+  const stream = agent.stream({ sessionId: "session-metrics", message: "measure" }, context);
+  for await (const _event of stream) {
+    // Drain the measured stream.
+  }
+  await stream.result;
+  await tracer.flush();
+
+  const trace = processor.traces[0];
+  assert.equal(trace?.metadata["kestrel.reasoning.sidecar_model_calls"], 0);
+  const attributes = trace?.spans[0]?.attributes;
+  assert.equal(attributes?.["kestrel.latency.model_completion_to_dispatch_ms"], 20);
+  assert.equal(attributes?.["kestrel.latency.finalize_to_first_byte_ms"], 15);
+  assert.equal(typeof attributes?.["kestrel.latency.time_to_first_reasoning_ms"], "number");
+});
+
 function createFakeAgent(): KestrelAgent {
   return {
     id: "support-agent",
@@ -274,6 +293,51 @@ function createFakeAgent(): KestrelAgent {
       };
     },
     async close() {},
+  };
+}
+
+function createMetricAgent(): KestrelAgent {
+  const base = Date.now() + 25;
+  const sessionId = "session-metrics";
+  const runId = "run-metrics";
+  const event = (id: string, type: string, offset: number, payload: Record<string, unknown>) => ({
+    id,
+    type,
+    ts: new Date(base + offset).toISOString(),
+    sessionId,
+    runId,
+    payload,
+  }) as RunnerStreamEvent;
+  const terminal = event("evt-completed", "run.completed", 65, {
+    result: { output: { status: "COMPLETED", sessionId, runId, errors: [] } },
+  }) as RunnerRunTerminalEvent;
+  return {
+    ...createFakeAgent(),
+    stream() {
+      const events = [
+        event("evt-started", "run.started", 0, { sessionId, eventType: "user.message" }),
+        event("evt-reasoning", "run.model.reasoning.started", 10, {
+          update: { version: "v1", event: "started" },
+        }),
+        event("evt-model-done", "run.progress", 20, {
+          update: { code: "MODEL_CALL_DONE" },
+        }),
+        event("evt-step-committed", "run.progress", 40, {
+          update: { code: "STEP_COMMITTED" },
+        }),
+        event("evt-terminalized", "run.progress", 50, {
+          update: { code: "RUN_COMPLETED" },
+        }),
+        terminal,
+      ];
+      return {
+        result: Promise.resolve(terminal),
+        async cancel() {},
+        async *[Symbol.asyncIterator]() {
+          for (const item of events) yield item;
+        },
+      };
+    },
   };
 }
 

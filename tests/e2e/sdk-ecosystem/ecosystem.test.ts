@@ -63,6 +63,7 @@ test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory"
     {
       sessionId: "session-e2e",
       message: "continue",
+      requestId: "request-e2e",
     },
     sdkE2eContext,
   );

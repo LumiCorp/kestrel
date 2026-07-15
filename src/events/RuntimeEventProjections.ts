@@ -1,6 +1,7 @@
 import type { RunEventType } from "../kestrel/contracts/base.js";
 import type {
   PersistedRuntimeEvent,
+  AgentProgressUpdateV1,
   ProgressKind,
   ProgressPhase,
   ProgressUpdateV1,
@@ -9,6 +10,47 @@ import type {
   RunToolPhase,
   RunToolUpdateV1,
 } from "../kestrel/contracts/events.js";
+
+export function buildPersistedRuntimeEventFromAgentProgressUpdate(
+  update: AgentProgressUpdateV1,
+): PersistedRuntimeEvent {
+  return {
+    runId: update.runId,
+    sessionId: update.sessionId,
+    stepIndex: update.stepIndex,
+    type: "agent.progress",
+    level: "INFO",
+    timestamp: update.ts,
+    metadata: {
+      version: update.version,
+      seq: update.seq,
+      ts: update.ts,
+      message: update.message,
+      stepAgent: update.stepAgent,
+    },
+  };
+}
+
+export function readAgentProgressUpdateFromPersistedRuntimeEvent(
+  event: PersistedRuntimeEvent,
+): AgentProgressUpdateV1 | undefined {
+  if (event.type !== "agent.progress") return undefined;
+  const metadata = asRecord(event.metadata);
+  const seq = readNumber(metadata?.seq);
+  const message = readString(metadata?.message);
+  const stepAgent = readString(metadata?.stepAgent);
+  if (seq === undefined || message === undefined || stepAgent === undefined || event.stepIndex === undefined) return undefined;
+  return {
+    version: "v1",
+    runId: event.runId,
+    sessionId: event.sessionId,
+    ts: readString(metadata?.ts) ?? event.timestamp,
+    seq,
+    message,
+    stepIndex: event.stepIndex,
+    stepAgent,
+  };
+}
 
 export function buildPersistedRuntimeEventFromProgressUpdate(
   update: ProgressUpdateV1,
@@ -156,6 +198,7 @@ export function buildPersistedRuntimeEventFromToolUpdate(
       ...(update.output !== undefined ? { output: update.output } : {}),
       ...(update.error !== undefined ? { error: update.error } : {}),
       ...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
+      ...(update.presentation !== undefined ? { presentation: update.presentation } : {}),
     },
   };
 }
@@ -195,6 +238,9 @@ export function readToolUpdateFromPersistedRuntimeEvent(
       ? { error: metadata?.error as RunToolUpdateV1["error"] }
       : {}),
     ...(readNumber(metadata?.durationMs) !== undefined ? { durationMs: readNumber(metadata?.durationMs) } : {}),
+    ...(asRecord(metadata?.presentation) !== undefined
+      ? { presentation: metadata?.presentation as RunToolUpdateV1["presentation"] }
+      : {}),
   };
 }
 

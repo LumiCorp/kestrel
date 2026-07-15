@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { createWorkspaceBackup } from "@/lib/environments/backups";
 import {
@@ -176,4 +176,44 @@ export async function updateAdminEnvironmentRuntime(input: {
     },
   });
   return { ...environment, runtimeImage: input.runtimeImage, updatedAt: now };
+}
+
+export async function updateAdminEnvironmentReasoningPolicy(input: {
+  organizationId: string;
+  actorUserId: string;
+  environmentId: string;
+  request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" | undefined };
+  retention: { mode: "live_only" | "provider_visible"; days: number };
+}) {
+  if (!Number.isInteger(input.retention.days) || input.retention.days < 1 || input.retention.days > 30) {
+    throw new Error("Reasoning retention must be from 1 to 30 days.");
+  }
+  const [environment] = await knowledgeDb
+    .update(schema.environments)
+    .set({
+      reasoningRequestMode: input.request.mode,
+      reasoningEffort: input.request.effort ?? null,
+      reasoningRetentionMode: input.retention.mode,
+      reasoningRetentionDays: input.retention.days,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(schema.environments.id, input.environmentId),
+      eq(schema.environments.organizationId, input.organizationId),
+    ))
+    .returning();
+  if (environment === undefined) {
+    throw new Error("Environment not found.");
+  }
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.reasoning_policy.updated",
+    targetType: "environment",
+    targetId: input.environmentId,
+    message: `Updated Environment ${environment.name} provider reasoning policy.`,
+    metadata: { request: input.request, retention: input.retention },
+  });
+  return environment;
 }

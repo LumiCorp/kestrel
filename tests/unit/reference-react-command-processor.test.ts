@@ -265,7 +265,16 @@ test("createReferenceReactWaitCheckpoint records processor-owned user waits and 
   const workingPlan = react.workingPlan as Record<string, unknown>;
 
   assert.equal(transition.status, "WAITING");
-  assert.equal(transition.waitFor, waitFor);
+  assert.deepEqual(transition.waitFor, {
+    ...waitFor,
+    interaction: {
+      version: "v1",
+      kind: "user_input",
+      eventType: "user.reply",
+      prompt: "Switch mode to continue.",
+    },
+  });
+  assert.equal(react.assistantText, "Switch mode to continue.");
   assert.equal((react.waitingFor as Record<string, unknown>)?.eventType, "user.reply");
   assert.equal(exec.substate, "wait_user");
   assert.equal(lastCheckpoint.substate, "wait_user");
@@ -339,7 +348,16 @@ test("createReferenceReactWaitCheckpoint records processor-owned approval waits"
   const workingPlan = react.workingPlan as Record<string, unknown>;
 
   assert.equal(transition.status, "WAITING");
-  assert.equal(transition.waitFor, waitFor);
+  assert.deepEqual(transition.waitFor, {
+    ...waitFor,
+    interaction: {
+      version: "v1",
+      kind: "approval",
+      eventType: "user.approval",
+      prompt: "Approve fs.write_text?",
+    },
+  });
+  assert.equal(react.assistantText, "Approve fs.write_text?");
   assert.deepEqual(exec.pendingApproval, {
     approvalId: "approval-1",
     toolName: "fs.write_text",

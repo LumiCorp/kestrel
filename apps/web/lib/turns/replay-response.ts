@@ -6,8 +6,7 @@ import {
   type UIMessageChunk,
 } from "ai";
 import { getDurableTurn, listDurableTurnEvents } from "@/lib/turns/store";
-
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+import { isDurableTurnReplayComplete } from "@/lib/turns/replay-status";
 
 function waitForEvents(signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -45,7 +44,7 @@ export function createDurableTurnReplayResponse(input: {
           }
         }
         const turn = await getDurableTurn(input.turnId);
-        if (!turn || TERMINAL_STATUSES.has(turn.status)) {
+        if (!turn || isDurableTurnReplayComplete(turn.status)) {
           return;
         }
         await waitForEvents(input.signal);

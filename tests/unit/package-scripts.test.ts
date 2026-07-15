@@ -11,7 +11,7 @@ test("root package exposes public product scripts and a broad monorepo test gate
 
   assert.equal(
     scripts["test:core"],
-    "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test tests/**/*.test.ts agents/**/*.test.ts",
+    "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test --test-concurrency=4 tests/**/*.test.ts agents/**/*.test.ts",
   );
   assert.equal(
     scripts.build,
@@ -133,6 +133,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
     appPackage.scripts?.["check:kestrel-boundary"],
     "node --import tsx scripts/check-kestrel-boundary.ts",
   );
+  assert.equal(appPackage.scripts?.build, "pnpm run clean && next build --webpack");
   assert.equal(appPackage.scripts?.["runtime:build"], undefined);
   assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.6.0");
   assert.equal(appPackage.dependencies?.["@kestrel-agents/sdk"], "0.6.0");

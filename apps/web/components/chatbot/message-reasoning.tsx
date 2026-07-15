@@ -3,7 +3,7 @@
 import { ActivityIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { shouldAutoCloseReasoning } from "@/lib/agent/kestrel-reasoning-display";
-import type { KestrelTerminalStatus } from "@/lib/agent/kestrel-stream-events";
+import type { KestrelTerminalStatus } from "@kestrel-agents/ai-sdk";
 import {
   Reasoning,
   ReasoningContent,
@@ -40,7 +40,7 @@ export function MessageReasoning({
     >
       <ReasoningTrigger className="px-2 py-1 text-xs">
         <ActivityIcon className="size-3.5" />
-        <span>{isLoading ? "Agent progress — live" : "Agent progress"}</span>
+        <span>{isLoading ? "Model reasoning — live" : "Model reasoning"}</span>
         {isLoading ? (
           <span
             aria-label="Agent is working"
