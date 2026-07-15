@@ -17,7 +17,10 @@ COPY models models
 COPY src src
 COPY tools tools
 COPY db db
-RUN pnpm run build && pnpm --filter @kestrel/workspace-runtime build
+RUN pnpm --filter @kestrel-agents/sdk build \
+    && pnpm run clean \
+    && pnpm exec tsc -p tsconfig.json \
+    && pnpm --filter @kestrel/workspace-runtime build
 
 FROM node:22-bookworm-slim
 WORKDIR /app

@@ -145,6 +145,19 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
   }
 });
 
+test("workspace runtime image builds the public protocol dependency before the root runtime", async () => {
+  const dockerfile = await readFile(path.join(ROOT, "apps", "workspace-runtime", "Dockerfile"), "utf8");
+
+  const sdkBuild = dockerfile.indexOf("pnpm --filter @kestrel-agents/sdk build");
+  const rootBuild = dockerfile.indexOf("pnpm exec tsc -p tsconfig.json");
+  const workspaceBuild = dockerfile.indexOf("pnpm --filter @kestrel/workspace-runtime build");
+
+  assert.ok(sdkBuild >= 0, "workspace image must build the SDK and its protocol dependency");
+  assert.ok(rootBuild > sdkBuild, "workspace image must compile the root runtime after public packages");
+  assert.ok(workspaceBuild > rootBuild, "workspace service must build after the root runtime");
+  assert.doesNotMatch(dockerfile, /RUN pnpm run build/u);
+});
+
 test("CLI install script fails loudly when fallback shim creation fails", async () => {
   const script = await readFile(path.join(ROOT, "scripts", "install-cli.sh"), "utf8");
 

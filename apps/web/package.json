@@ -214,6 +214,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "baseline-browser-mapping": "^2.10.43",
     "bun-types": "latest",
     "drizzle-kit": "^0.31.4",
     "postcss": "^8.5.6",
