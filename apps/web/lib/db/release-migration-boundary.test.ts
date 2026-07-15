@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { resolveMigrationDatabaseConnection } from "./migration-connection";
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -15,7 +16,10 @@ test("Vercel compilation never mutates the database", () => {
   const packageJson = JSON.parse(read("package.json")) as {
     scripts: Record<string, string>;
   };
-  assert.equal(packageJson.scripts.build, "pnpm run clean && next build --webpack");
+  assert.equal(
+    packageJson.scripts.build,
+    "pnpm run clean && next build --webpack"
+  );
   assert.equal(
     packageJson.scripts["db:migrate:deploy"],
     "tsx lib/db/migrate.ts"
@@ -64,4 +68,41 @@ test("production migrations serialize and repair known skipped schema", () => {
   ]) {
     assert.match(reconciliation, new RegExp(tag, "u"));
   }
+});
+
+test("production migrations prefer a direct database connection", () => {
+  assert.deepEqual(
+    resolveMigrationDatabaseConnection({
+      POSTGRES_URL_NON_POOLING: "postgres://direct-postgres",
+      DATABASE_URL_UNPOOLED: "postgres://direct-database",
+      POSTGRES_URL: "postgres://pooled-postgres",
+      DATABASE_URL: "postgres://pooled-database",
+    }),
+    {
+      key: "POSTGRES_URL_NON_POOLING",
+      url: "postgres://direct-postgres",
+    }
+  );
+  assert.deepEqual(
+    resolveMigrationDatabaseConnection({
+      DATABASE_URL_UNPOOLED: "postgres://direct-database",
+      POSTGRES_URL: "postgres://pooled-postgres",
+      DATABASE_URL: "postgres://pooled-database",
+    }),
+    {
+      key: "DATABASE_URL_UNPOOLED",
+      url: "postgres://direct-database",
+    }
+  );
+  assert.deepEqual(
+    resolveMigrationDatabaseConnection({
+      POSTGRES_URL: "postgres://pooled-postgres",
+      DATABASE_URL: "postgres://pooled-database",
+    }),
+    {
+      key: "POSTGRES_URL",
+      url: "postgres://pooled-postgres",
+    }
+  );
+  assert.equal(resolveMigrationDatabaseConnection({}), null);
 });
