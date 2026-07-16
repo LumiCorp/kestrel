@@ -27,6 +27,7 @@ import {
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
 } from "@/lib/turns/store";
+import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
 import {
   convertToUIMessages,
   isPersistableAssistantMessage,
@@ -152,6 +153,7 @@ export async function processDurableThreadTurn(turnId: string) {
   let projectContext: Awaited<ReturnType<typeof loadBoundProjectContext>> =
     null;
   let eventWrites = Promise.resolve();
+  let persistedAssistantMessageCount = 0;
   const cancellation = new AbortController();
   let cancellationRequested = false;
   const cancellationPoll = setInterval(() => {
@@ -250,6 +252,7 @@ export async function processDurableThreadTurn(turnId: string) {
             message.role === "assistant" &&
             isPersistableAssistantMessage(message)
         );
+        persistedAssistantMessageCount = assistantMessages.length;
         await persistDurableAssistantOutcome({
           turnId: turn.id,
           interaction: meta.interaction,
@@ -273,6 +276,10 @@ export async function processDurableThreadTurn(turnId: string) {
     });
     await drainResponse(response);
     await eventWrites;
+    assertVisibleCompletedOutcome(
+      terminal.status,
+      persistedAssistantMessageCount
+    );
     if (terminal.status === "waiting" && terminal.interaction) {
       return { processed: true, nextTurnId: null };
     }
