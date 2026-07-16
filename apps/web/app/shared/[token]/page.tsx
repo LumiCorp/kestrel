@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createMetadata } from "@/lib/metadata";
 import { publicAppUrl } from "@/lib/public-config";
 import { getPublicThreadByShareToken } from "@/lib/threads/store";
+import { projectThreadConversation } from "@/lib/turns/conversation-projector";
+import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages } from "@/lib/utils";
 
 const getSharedThread = cache(getPublicThreadByShareToken);
@@ -16,6 +18,43 @@ const getSharedThread = cache(getPublicThreadByShareToken);
 type SharedThreadPageProps = {
   params: Promise<{ token: string }>;
 };
+
+function SharedMessageCard({ message }: { message: ChatMessage }) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base capitalize">{message.role}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {message.parts?.map((part, index) => {
+          if (part.type === "text") {
+            return (
+              <Response key={`${message.id}-${index}`}>{part.text}</Response>
+            );
+          }
+
+          if (part.type === "file") {
+            return (
+              <div className="text-sm" key={`${message.id}-${index}`}>
+                Attachment:{" "}
+                <a
+                  className="text-primary underline"
+                  href={part.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {part.filename || "file"}
+                </a>
+              </div>
+            );
+          }
+
+          return null;
+        })}
+      </CardContent>
+    </Card>
+  );
+}
 
 export async function generateMetadata({
   params,
@@ -50,6 +89,28 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
   }
 
   const messages = convertToUIMessages(thread.messages);
+  const projection = projectThreadConversation({
+    messages,
+    conversationState: {
+      interactions: [],
+      turns: thread.turns.map((turn) => ({
+        ...turn,
+        failureCode: null,
+        failureMessage: null,
+        cancelRequestedAt: null,
+        startedAt: turn.startedAt?.toISOString() ?? null,
+        finishedAt: turn.finishedAt?.toISOString() ?? null,
+        createdAt: turn.createdAt.toISOString(),
+        updatedAt: turn.updatedAt.toISOString(),
+      })),
+      queue: {
+        state: "running",
+        pauseReason: null,
+        activeTurnId: null,
+        version: 0,
+      },
+    },
+  });
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-8">
@@ -69,56 +130,25 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
       </div>
 
       <div className="space-y-4">
-        {messages.map((message) => (
-          <Card key={message.id}>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base capitalize">
-                {message.role}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {message.parts?.map((part, index) => {
-                if (part.type === "text") {
-                  return (
-                    <Response key={`${message.id}-${index}`}>
-                      {part.text}
-                    </Response>
-                  );
-                }
-
-                if (part.type === "reasoning" && part.text?.trim()) {
-                  return (
-                    <div
-                      className="rounded-lg border bg-muted/30 p-3 text-sm"
-                      key={`${message.id}-${index}`}
-                    >
-                      <div className="mb-1 font-medium">Reasoning</div>
-                      <Response>{part.text}</Response>
-                    </div>
-                  );
-                }
-
-                if (part.type === "file") {
-                  return (
-                    <div className="text-sm" key={`${message.id}-${index}`}>
-                      Attachment:{" "}
-                      <a
-                        className="text-primary underline"
-                        href={part.url}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        {part.filename || "file"}
-                      </a>
-                    </div>
-                  );
-                }
-
-                return null;
-              })}
-            </CardContent>
-          </Card>
-        ))}
+        {projection.items.map((item) =>
+          item.kind === "standalone_message" ? (
+            <SharedMessageCard key={item.id} message={item.message} />
+          ) : (
+            <section
+              aria-label={`Conversation turn ${item.turn?.sequence ?? ""}`.trim()}
+              className="space-y-3 rounded-xl border border-border/60 p-3"
+              data-turn-id={item.turnId}
+              key={item.id}
+            >
+              <div className="text-muted-foreground text-xs capitalize">
+                Turn {item.turn?.status.replaceAll("_", " ") ?? "recorded"}
+              </div>
+              {item.messages.map((message) => (
+                <SharedMessageCard key={message.id} message={message} />
+              ))}
+            </section>
+          )
+        )}
       </div>
     </div>
   );

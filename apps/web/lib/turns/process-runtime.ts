@@ -1,10 +1,10 @@
 import "server-only";
 
-import type { UIMessage } from "ai";
 import type {
   KestrelInteractionPresentation,
   KestrelTerminalStatus,
 } from "@kestrel-agents/ai-sdk";
+import type { UIMessage } from "ai";
 import { eq } from "drizzle-orm";
 import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
@@ -189,6 +189,7 @@ export async function processDurableThreadTurn(turnId: string) {
       organizationId: turn.organizationId,
       environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
+      durableTurnId: turn.id,
       messages,
       modelId: turn.requestedModelId ?? undefined,
       approvalDecision:
@@ -252,8 +253,7 @@ export async function processDurableThreadTurn(turnId: string) {
         await persistDurableAssistantOutcome({
           turnId: turn.id,
           interaction: meta.interaction,
-          messages:
-          assistantMessages.map((message) => ({
+          messages: assistantMessages.map((message) => ({
             id: message.id,
             projectContextRevisionId: turn.projectContextRevisionId,
             parts: message.parts,
@@ -281,7 +281,9 @@ export async function processDurableThreadTurn(turnId: string) {
       status: terminalTurnStatus(terminal.status),
       failureCode:
         terminalTurnStatus(terminal.status) === "failed"
-          ? "RUNTIME_FAILED"
+          ? terminal.status === "contract_failure"
+            ? "PRESENTATION_CONTRACT_FAILURE"
+            : "RUNTIME_FAILED"
           : null,
       failureMessage: terminal.error,
     });

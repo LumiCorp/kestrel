@@ -397,11 +397,14 @@ function ChatShell({
 
         <Messages
           addToolApprovalResponse={addToolApprovalResponse}
+          conversationState={conversationState}
           feedbackByMessageId={feedbackByMessageId}
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
           messages={messages}
           onFeedbackChange={onFeedbackChange}
+          onRefreshConversationState={onRefreshConversationState}
+          onRuntimeInteractionResponse={onRuntimeInteractionResponse}
           regenerate={regenerate}
           selectedModelId={currentModelId}
           setMessages={setMessages}
@@ -413,7 +416,8 @@ function ChatShell({
         {isReadonly || !threadExists ? null : (
           <InteractionPanel
             interactions={conversationState.interactions.filter(
-              (interaction) => interaction.status === "pending"
+              (interaction) =>
+                interaction.status === "pending" && interaction.turnId === null
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}
@@ -433,6 +437,7 @@ function ChatShell({
               modelScopeQuery={modelScopeQuery}
               onInterrupt={onInterrupt}
               onModelChange={onModelChange}
+              onRuntimeInteractionResponse={onRuntimeInteractionResponse}
               queueMessage={queueMessage}
               selectedModelId={currentModelId}
               selectedVisibilityType={selectedVisibilityType}
@@ -648,7 +653,6 @@ export function Chat({
   project?: { id: string; name: string } | null;
   threadTitle?: string;
 }) {
-  const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
   const { setDataStream } = useDataStream(id);
   const { visibilityType } = useChatVisibility({
@@ -792,6 +796,7 @@ export function Chat({
           id: messageId,
           role: "user",
           parts: [{ type: "text", text: interaction.message }],
+          metadata: turnId ? { kestrelTurnId: turnId } : undefined,
         },
         {
           body: {
@@ -866,6 +871,7 @@ export function Chat({
                       metadata: {
                         ...item.message.metadata,
                         deliveryState: "queued",
+                        kestrelTurnId: payload.turn.id,
                       },
                     },
                     turnId: payload.turn.id,
@@ -873,6 +879,7 @@ export function Chat({
                 : item
             )
           );
+          void refreshConversationState().catch(() => {});
         })
         .catch((error) => {
           setQueuedMessages((current) =>
@@ -887,7 +894,7 @@ export function Chat({
           });
         });
     },
-    [id, shared.currentModelIdRef]
+    [id, refreshConversationState, shared.currentModelIdRef]
   );
 
   useEffect(() => {
@@ -1022,36 +1029,6 @@ export function Chat({
     handoffMessage,
   ]);
 
-  useEffect(() => {
-    if (chatExists || handoff !== null) {
-      return;
-    }
-
-    if (
-      hasStartedHandoffRequestRef.current ||
-      controller.status !== "ready" ||
-      controller.messages.length > 0
-    ) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      if (!hasStartedHandoffRequestRef.current) {
-        router.replace("/threads/new");
-      }
-    }, 400);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    controller.messages.length,
-    controller.status,
-    chatExists,
-    handoff,
-    router,
-  ]);
-
   const feedbackByMessageId = useMemo(
     () =>
       buildFeedbackByMessageId({
@@ -1084,7 +1061,17 @@ export function Chat({
   }
 
   if (!(chatExists || handoff)) {
-    return null;
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-4">
+        <div
+          className="max-w-md rounded-lg border bg-muted/20 px-4 py-3 text-sm"
+          role="alert"
+        >
+          This Thread could not be opened. Start a new Thread or return to your
+          Project and try again.
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -1190,6 +1190,7 @@ export async function resolveDurableRuntimeInteraction(input: {
       requestId: input.requestId,
       eventType: input.eventType,
       message: input.message,
+      messageId: input.messageId,
       ...(typeof input.approved === "boolean"
         ? { approved: input.approved }
         : {}),
@@ -1355,9 +1356,53 @@ export async function listThreadInteractionsForUser(input: {
 }) {
   return knowledgeDb.transaction(async (tx) => {
     await lockAccessibleThread(tx, input);
-    return tx.query.threadInteractions.findMany({
+    const interactions = await tx.query.threadInteractions.findMany({
       where: eq(schema.threadInteractions.threadId, input.threadId),
       orderBy: (table, { asc }) => [asc(table.createdAt)],
+    });
+    const turnIds = [
+      ...new Set(
+        interactions
+          .map((interaction) => interaction.turnId)
+          .filter((turnId): turnId is string => Boolean(turnId))
+      ),
+    ];
+    const resolvedEvents =
+      turnIds.length === 0
+        ? []
+        : await tx
+            .select({ data: schema.threadTurnEvents.data })
+            .from(schema.threadTurnEvents)
+            .where(
+              and(
+                inArray(schema.threadTurnEvents.turnId, turnIds),
+                eq(schema.threadTurnEvents.type, "interaction.resolved")
+              )
+            );
+    const responseMessageIds = new Map<string, string>();
+    for (const event of resolvedEvents) {
+      if (!(event.data && typeof event.data === "object")) continue;
+      const data = event.data as Record<string, unknown>;
+      if (
+        typeof data.requestId === "string" &&
+        typeof data.messageId === "string"
+      ) {
+        responseMessageIds.set(data.requestId, data.messageId);
+      }
+    }
+    return interactions.map((interaction) => {
+      const responseEnvelope = interaction.responseEnvelope;
+      const envelopeMessageId =
+        responseEnvelope && typeof responseEnvelope.messageId === "string"
+          ? responseEnvelope.messageId
+          : null;
+      return {
+        ...interaction,
+        responseMessageId:
+          envelopeMessageId ??
+          responseMessageIds.get(interaction.requestId) ??
+          null,
+      };
     });
   });
 }

@@ -2,6 +2,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import type { ThreadTurnView } from "@/lib/turns/client-contract";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
@@ -57,27 +58,49 @@ function renderStructuredData(value: unknown) {
   );
 }
 
-const isKestrelPresentationPart = (
-  part: ChatMessage["parts"][number]
-) => part.type.startsWith("data-kestrel-");
+const isKestrelPresentationPart = (part: ChatMessage["parts"][number]) =>
+  part.type.startsWith("data-kestrel-");
 
-function KestrelActivityTimeline({
+function turnActivityLabel(status: ThreadTurnView["status"] | undefined) {
+  if (status === "queued") return "Agent activity · Queued";
+  if (status === "running") return "Agent activity · Working";
+  if (status === "waiting_for_input") return "Agent activity · Needs response";
+  if (status === "completed") return "Agent activity · Completed";
+  if (status === "failed") return "Agent activity · Failed";
+  if (status === "cancelled") return "Agent activity · Interrupted";
+  return "Agent activity";
+}
+
+export function KestrelActivityTimeline({
   parts,
   isLoading,
+  turnStatus,
 }: {
   parts: ChatMessage["parts"];
   isLoading: boolean;
+  turnStatus?: ThreadTurnView["status"];
 }) {
-  if (parts.length === 0) return null;
-  const failure = [...parts].reverse().find(
-    (part) =>
-      part.type === "data-kestrel-status" &&
-      ["failed", "cancelled", "contract_failure"].includes(part.data.status)
-  );
+  const failure = [...parts]
+    .reverse()
+    .find(
+      (part) =>
+        part.type === "data-kestrel-status" &&
+        ["failed", "cancelled", "contract_failure"].includes(part.data.status)
+    );
   const [isOpen, setIsOpen] = useState(isLoading || Boolean(failure));
   useEffect(() => {
-    if (isLoading || failure) setIsOpen(true);
-  }, [failure, isLoading]);
+    if (
+      isLoading ||
+      failure ||
+      turnStatus === "waiting_for_input" ||
+      turnStatus === "failed"
+    ) {
+      setIsOpen(true);
+    } else if (turnStatus === "completed") {
+      setIsOpen(false);
+    }
+  }, [failure, isLoading, turnStatus]);
+  if (parts.length === 0) return null;
   return (
     <details
       className="rounded-lg border bg-muted/20"
@@ -86,7 +109,7 @@ function KestrelActivityTimeline({
       open={isOpen}
     >
       <summary className="cursor-pointer px-3 py-2 font-medium text-sm">
-        Agent activity
+        {turnActivityLabel(turnStatus)}
       </summary>
       <ol className="space-y-2 border-t px-3 py-3 text-xs">
         {parts.map((part, index) => {
@@ -116,7 +139,9 @@ function KestrelActivityTimeline({
               return (
                 <li key={key}>
                   <span className="font-medium">Provider reasoning</span>
-                  <span className="ml-2 text-muted-foreground">Unavailable for this model</span>
+                  <span className="ml-2 text-muted-foreground">
+                    Unavailable for this model
+                  </span>
                 </li>
               );
             }
@@ -147,48 +172,16 @@ function KestrelActivityTimeline({
                     ? "Started"
                     : part.data.phase === "completed"
                       ? "Completed"
-                      : part.data.error?.message ?? "Failed"}
+                      : (part.data.error?.message ?? "Failed")}
                 </span>
               </li>
             );
           }
           if (part.type === "data-kestrel-citation") {
-            return (
-              <li key={key}>
-                <span className="font-medium">Knowledge source</span>{" "}
-                {part.data.url ? (
-                  <a
-                    className="underline underline-offset-2"
-                    href={part.data.url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {part.data.title}
-                  </a>
-                ) : (
-                  <span>{part.data.title}</span>
-                )}
-              </li>
-            );
+            return null;
           }
           if (part.type === "data-kestrel-artifact") {
-            return (
-              <li key={key}>
-                <span className="font-medium">Artifact</span>{" "}
-                {part.data.url ? (
-                  <a
-                    className="underline underline-offset-2"
-                    href={part.data.url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {part.data.title}
-                  </a>
-                ) : (
-                  <span>{part.data.title}</span>
-                )}
-              </li>
-            );
+            return null;
           }
           if (part.type === "data-kestrel-interaction") {
             return (
@@ -197,7 +190,9 @@ function KestrelActivityTimeline({
                 <span className="ml-2 text-muted-foreground">
                   {part.data.status === "pending"
                     ? "Waiting for you"
-                    : part.data.status}
+                    : part.data.status === "resolved"
+                      ? "Response received"
+                      : "Cancelled"}
                 </span>
               </li>
             );
@@ -208,13 +203,19 @@ function KestrelActivityTimeline({
             );
             return (
               <li
-                className={failed ? "text-destructive" : "text-muted-foreground"}
+                className={
+                  failed ? "text-destructive" : "text-muted-foreground"
+                }
                 key={key}
                 role={failed ? "alert" : undefined}
               >
                 {part.data.status === "contract_failure"
                   ? "Response contract failed"
-                  : part.data.status.replaceAll("_", " ")}
+                  : part.data.status === "waiting"
+                    ? "Paused for your response"
+                    : part.data.status === "completed"
+                      ? "Run segment completed"
+                      : part.data.status.replaceAll("_", " ")}
                 {part.data.errorMessage ? `: ${part.data.errorMessage}` : ""}
               </li>
             );
@@ -348,6 +349,7 @@ const PurePreviewMessage = ({
   regenerate,
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
+  hideKestrelActivity = false,
   shouldAutoplaySpeech = false,
   selectedLanguageModelId,
   ttsAvailable = true,
@@ -365,6 +367,7 @@ const PurePreviewMessage = ({
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   isReadonly: boolean;
   requiresScrollPadding: boolean;
+  hideKestrelActivity?: boolean;
   shouldAutoplaySpeech?: boolean;
   selectedLanguageModelId?: string;
   ttsAvailable?: boolean;
@@ -409,9 +412,7 @@ const PurePreviewMessage = ({
                   (p) => p.type === "text" && p.text?.trim()
                 ) ||
                   message.parts?.some((p) => isToolLikePart(p)) ||
-                  message.parts?.some((p) =>
-                    isKestrelPresentationPart(p)
-                  ))) ||
+                  message.parts?.some((p) => isKestrelPresentationPart(p)))) ||
               mode === "edit",
             "max-w-[calc(100%-2.5rem)] sm:max-w-[min(fit-content,80%)]":
               message.role === "user" && mode !== "edit",
@@ -452,7 +453,7 @@ const PurePreviewMessage = ({
             </div>
           )}
 
-          {message.role === "assistant" ? (
+          {message.role === "assistant" && !hideKestrelActivity ? (
             <KestrelActivityTimeline
               isLoading={isLoading}
               parts={kestrelPresentationParts}
@@ -462,6 +463,52 @@ const PurePreviewMessage = ({
           {message.parts?.map((part, index) => {
             const { type } = part;
             const key = `message-${message.id}-part-${index}`;
+
+            if (part.type === "data-kestrel-citation") {
+              return (
+                <aside
+                  className="rounded-lg border bg-muted/20 px-3 py-2 text-sm"
+                  key={key}
+                >
+                  <span className="font-medium">Knowledge source</span>{" "}
+                  {part.data.url ? (
+                    <a
+                      className="underline underline-offset-2"
+                      href={part.data.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {part.data.title}
+                    </a>
+                  ) : (
+                    <span>{part.data.title}</span>
+                  )}
+                </aside>
+              );
+            }
+
+            if (part.type === "data-kestrel-artifact") {
+              return (
+                <aside
+                  className="rounded-lg border bg-muted/20 px-3 py-2 text-sm"
+                  key={key}
+                >
+                  <span className="font-medium">Artifact</span>{" "}
+                  {part.data.url ? (
+                    <a
+                      className="underline underline-offset-2"
+                      href={part.data.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {part.data.title}
+                    </a>
+                  ) : (
+                    <span>{part.data.title}</span>
+                  )}
+                </aside>
+              );
+            }
 
             if (isKestrelPresentationPart(part)) {
               return null;

@@ -30,23 +30,32 @@ import {
   toKestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
 import { restrictKestrelOneProfileTools } from "@/lib/agent/kestrel-tool-profile";
-import type { ChatMessage } from "@/lib/types";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import {
   resolveEnvironmentExecutionRoute,
-  updateEnvironmentExecutionStatus,
   updateEnvironmentExecutionRuntimeIdentity,
+  updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
 import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
+import type { ChatMessage } from "@/lib/types";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 class KestrelOneRunnerClient extends KestrelClient {
-  readRetainedReasoning(runId: string, sessionId: string, action: "read" | "delete", context: KestrelRequestContext) {
-    return this.sendCommand("operator.run.reasoning", { runId, sessionId, action }, context);
+  readRetainedReasoning(
+    runId: string,
+    sessionId: string,
+    action: "read" | "delete",
+    context: KestrelRequestContext
+  ) {
+    return this.sendCommand(
+      "operator.run.reasoning",
+      { runId, sessionId, action },
+      context
+    );
   }
   runWithProfile(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
@@ -62,7 +71,9 @@ class KestrelOneRunnerClient extends KestrelClient {
   async runWithProfileObservingStart(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
     context: KestrelRequestContext,
-    onStarted: (event: Extract<RunnerRunStreamEvent, { type: "run.started" }>) => void | Promise<void>,
+    onStarted: (
+      event: Extract<RunnerRunStreamEvent, { type: "run.started" }>
+    ) => void | Promise<void>
   ): Promise<RunnerRunTerminalEvent> {
     const stream = this.streamRunWithProfile(input, context);
     for await (const event of stream) {
@@ -116,7 +127,11 @@ export async function readKestrelOneRetainedReasoning(input: {
   action?: "read" | "delete" | undefined;
 }) {
   const client = new KestrelOneRunnerClient({
-    target: { kind: "remote", baseUrl: input.baseUrl, authToken: input.authToken },
+    target: {
+      kind: "remote",
+      baseUrl: input.baseUrl,
+      authToken: input.authToken,
+    },
   });
   try {
     const baseContext: KestrelRequestContext = {
@@ -128,14 +143,22 @@ export async function readKestrelOneRetainedReasoning(input: {
         orgRole: "org_admin",
       },
     };
-    const baseProfile = await client.getProfile(getKestrelOneProfileId(), baseContext);
-    const event = await client.readRetainedReasoning(input.runtimeRunId, input.sessionId, input.action ?? "read", {
-      ...baseContext,
-      profile: {
-        ...baseProfile,
-        reasoning: input.reasoningPolicy,
-      },
-    });
+    const baseProfile = await client.getProfile(
+      getKestrelOneProfileId(),
+      baseContext
+    );
+    const event = await client.readRetainedReasoning(
+      input.runtimeRunId,
+      input.sessionId,
+      input.action ?? "read",
+      {
+        ...baseContext,
+        profile: {
+          ...baseProfile,
+          reasoning: input.reasoningPolicy,
+        },
+      }
+    );
     return event.payload;
   } finally {
     await client.close();
@@ -153,6 +176,7 @@ export type KestrelOneAgentResponseInput = {
   organizationId: string;
   environmentId: string;
   threadId: string;
+  durableTurnId?: string | undefined;
   messages: UIMessage[];
   approvalDecision?:
     | {
@@ -281,7 +305,10 @@ function createModelAwareKestrelOneAgent(input: {
           const downstream = client.streamRunWithProfile(
             {
               profile: restrictKestrelOneProfileTools({
-                profile: { ...selectedProfile, reasoning: route.reasoningPolicy },
+                profile: {
+                  ...selectedProfile,
+                  reasoning: route.reasoningPolicy,
+                },
                 effectiveCapabilities: route.effectiveCapabilities,
               }),
               turn: normalizedTurn,
@@ -479,17 +506,21 @@ export async function generateKestrelOneExternalReply(input: {
       agent: createProfileBoundExternalReplyAgent({
         profile,
         run: (request, requestContext) =>
-          client.runWithProfileObservingStart(request, requestContext, async (event) => {
-            if (!event.runId) return;
-            await updateEnvironmentExecutionRuntimeIdentity({
-              organizationId: input.organizationId,
-              executionId: route.runId,
-              runtimeRunId: event.runId,
-              ...(event.payload.reasoningKeyReady !== undefined
-                ? { reasoningKeyReady: event.payload.reasoningKeyReady }
-                : {}),
-            });
-          }),
+          client.runWithProfileObservingStart(
+            request,
+            requestContext,
+            async (event) => {
+              if (!event.runId) return;
+              await updateEnvironmentExecutionRuntimeIdentity({
+                organizationId: input.organizationId,
+                executionId: route.runId,
+                runtimeRunId: event.runId,
+                ...(event.payload.reasoningKeyReady !== undefined
+                  ? { reasoningKeyReady: event.payload.reasoningKeyReady }
+                  : {}),
+              });
+            }
+          ),
       }),
       sessionId: input.sessionId,
       prompt: input.prompt,
@@ -571,6 +602,7 @@ export async function createKestrelOneAgentResponse(
     organizationId: input.organizationId,
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
+    durableTurnId: input.durableTurnId,
     messages: input.messages,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,

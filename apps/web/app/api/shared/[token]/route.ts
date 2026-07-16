@@ -29,6 +29,7 @@ export async function GET(
         title: thread.title || "Shared Thread",
         createdAt: thread.createdAt,
         messages: convertToUIMessages(thread.messages),
+        turns: thread.turns,
       },
       {
         headers: {

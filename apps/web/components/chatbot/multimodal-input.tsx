@@ -52,6 +52,7 @@ import {
 } from "@/lib/ai/models";
 import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
+import { getComposerSubmissionPolicy } from "@/lib/turns/composer-policy";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
@@ -63,6 +64,7 @@ import {
   PromptInputTools,
 } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
+import type { RuntimeInteractionResponse } from "./interaction-panel";
 import { PreviewAttachment } from "./preview-attachment";
 import { SuggestedActions } from "./suggested-actions";
 import { Button } from "./ui/button";
@@ -368,6 +370,7 @@ function PureMultimodalInput({
   queueMessage,
   conversationState,
   onInterrupt,
+  onRuntimeInteractionResponse,
   className,
   selectedVisibilityType,
   selectedModelId,
@@ -388,6 +391,9 @@ function PureMultimodalInput({
   queueMessage?: (message: ChatMessage) => void;
   conversationState: ThreadConversationState;
   onInterrupt?: () => Promise<void>;
+  onRuntimeInteractionResponse?: (
+    response: RuntimeInteractionResponse
+  ) => Promise<void>;
   className?: string;
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
@@ -630,11 +636,33 @@ function PureMultimodalInput({
       }),
     [conversationState, messages, status]
   );
+  const composerPolicy = getComposerSubmissionPolicy({
+    conversationState,
+    transportStatus: status,
+  });
   const activeTurn = conversationState.turns.find(
     (turn) => turn.id === conversationState.queue.activeTurnId
   );
+  const composerRuntimeQuestion =
+    composerPolicy.mode === "answer_interaction"
+      ? composerPolicy.interaction
+      : null;
+  const composerBlockedByInteraction =
+    composerPolicy.mode === "blocked_interaction";
+  const shouldQueueSubmission = composerPolicy.mode === "queue_turn";
+  const pendingInteraction =
+    composerPolicy.mode === "answer_interaction" ||
+    composerPolicy.mode === "blocked_interaction"
+      ? composerPolicy.interaction
+      : null;
 
-  const submitForm = useCallback(() => {
+  useEffect(() => {
+    if (composerRuntimeQuestion) {
+      textareaRef.current?.focus();
+    }
+  }, [composerRuntimeQuestion?.requestId]);
+
+  const submitForm = useCallback(async () => {
     const liveInputValue = textareaRef.current?.value ?? input;
 
     if (!liveInputValue.trim() && attachments.length === 0) {
@@ -643,6 +671,39 @@ function PureMultimodalInput({
 
     if (status === "error") {
       clearError();
+      return;
+    }
+
+    if (composerBlockedByInteraction) {
+      return;
+    }
+
+    if (composerRuntimeQuestion) {
+      if (!onRuntimeInteractionResponse) return;
+      if (attachments.length > 0) {
+        toast.error(
+          "Attachments cannot be included in an interaction response."
+        );
+        return;
+      }
+      setLocalStorageInput("");
+      resetHeight();
+      setInput("");
+      try {
+        await onRuntimeInteractionResponse({
+          requestId: composerRuntimeQuestion.requestId,
+          eventType: composerRuntimeQuestion.eventType,
+          message: liveInputValue.trim(),
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The response could not be sent."
+        );
+        setInput(liveInputValue);
+        return;
+      }
       return;
     }
 
@@ -663,13 +724,13 @@ function PureMultimodalInput({
       ],
     };
 
-    if (status === "submitted" || status === "streaming") {
+    if (shouldQueueSubmission) {
       if (!queueMessage) {
         return;
       }
       queueMessage(message);
     } else {
-      sendMessage(message);
+      void sendMessage(message);
     }
 
     setAttachments([]);
@@ -692,6 +753,10 @@ function PureMultimodalInput({
     width,
     resetHeight,
     clearError,
+    composerBlockedByInteraction,
+    composerRuntimeQuestion,
+    onRuntimeInteractionResponse,
+    shouldQueueSubmission,
   ]);
 
   const uploadFile = useCallback(
@@ -938,7 +1003,7 @@ function PureMultimodalInput({
         className="relative overflow-hidden rounded-xl border border-border bg-background p-3 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50"
         onSubmit={(event) => {
           event.preventDefault();
-          submitForm();
+          void submitForm();
         }}
       >
         <ComposerActivityRibbon
@@ -984,11 +1049,18 @@ function PureMultimodalInput({
             className="grow resize-none border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
             data-testid="multimodal-input"
             disableAutoResize={true}
+            disabled={composerBlockedByInteraction}
             maxHeight={200}
             minHeight={44}
             onChange={handleInput}
-            onSubmitOnEnter={submitForm}
-            placeholder="Send a message..."
+            onSubmitOnEnter={() => void submitForm()}
+            placeholder={
+              composerRuntimeQuestion
+                ? "Reply to the agent..."
+                : composerBlockedByInteraction
+                  ? "Respond to the request above..."
+                  : "Send a message..."
+            }
             ref={textareaRef}
             rows={1}
             value={input}
@@ -1004,7 +1076,7 @@ function PureMultimodalInput({
             <AttachmentsButton
               fileInputRef={fileInputRef}
               selectedModelId={selectedModelId}
-              status={status}
+              status={pendingInteraction ? "streaming" : status}
             />
             <PromptInputSpeechButton
               className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
@@ -1088,12 +1160,12 @@ function PureMultimodalInput({
                 className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
                 data-testid="send-button"
                 disabled={
+                  composerBlockedByInteraction ||
                   (!input.trim() && attachments.length === 0) ||
                   uploadQueue.length > 0 ||
-                  ((status === "submitted" || status === "streaming") &&
-                    !queueMessage)
+                  (shouldQueueSubmission && !queueMessage)
                 }
-                onClick={submitForm}
+                onClick={() => void submitForm()}
                 status={status}
               >
                 <ArrowUpIcon size={14} />

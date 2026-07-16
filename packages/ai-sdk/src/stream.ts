@@ -16,11 +16,13 @@ export async function writeKestrelRunnerStreamToUIMessage(input: {
   terminalEvent: Promise<RunnerRunTerminalEvent>;
   assistantMessageId: string;
   textPartId: string;
+  turnId?: string | undefined;
   onPart?: ((part: KestrelPresentationPart) => void) | undefined;
   onEvent?: ((event: RunnerRunStreamEvent) => void) | undefined;
 }): Promise<KestrelPresentationSnapshot> {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: input.assistantMessageId,
+    ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
   });
   input.writer.write({ type: "start", messageId: input.assistantMessageId });
   input.writer.write({ type: "text-start", id: input.textPartId });
@@ -88,6 +90,7 @@ export function writeKestrelFailureToUIMessage(input: {
   error: unknown;
   assistantMessageId: string;
   textPartId: string;
+  turnId?: string | undefined;
   onPart?: ((part: KestrelPresentationPart) => void) | undefined;
 }): Promise<KestrelPresentationSnapshot> {
   return writeKestrelRunnerStreamToUIMessage({
@@ -96,6 +99,7 @@ export function writeKestrelFailureToUIMessage(input: {
     terminalEvent: Promise.reject(input.error),
     assistantMessageId: input.assistantMessageId,
     textPartId: input.textPartId,
+    ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
     ...(input.onPart !== undefined ? { onPart: input.onPart } : {}),
   });
 }

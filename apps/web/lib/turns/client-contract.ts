@@ -5,23 +5,13 @@ export const threadInteractionViewSchema = z.object({
   requestId: z.string(),
   source: z.enum(["runtime", "mcp"]),
   sourceCheckpointId: z.string().nullable(),
-  kind: z.enum([
-    "user_input",
-    "approval",
-    "mcp_sampling",
-    "mcp_elicitation",
-  ]),
+  kind: z.enum(["user_input", "approval", "mcp_sampling", "mcp_elicitation"]),
   eventType: z.string(),
   prompt: z.string(),
-  status: z.enum([
-    "pending",
-    "processing",
-    "resolved",
-    "cancelled",
-    "failed",
-  ]),
+  status: z.enum(["pending", "processing", "resolved", "cancelled", "failed"]),
   requestEnvelope: z.record(z.string(), z.unknown()),
   responseEnvelope: z.record(z.string(), z.unknown()).nullable(),
+  responseMessageId: z.string().nullable(),
   turnId: z.string().nullable(),
   assistantMessageId: z.string().nullable(),
   createdAt: z.coerce.string(),
@@ -31,6 +21,7 @@ export const threadInteractionViewSchema = z.object({
 export const threadTurnViewSchema = z.object({
   id: z.string(),
   sequence: z.number(),
+  inputMessageId: z.string().nullable(),
   status: z.enum([
     "queued",
     "running",
@@ -42,6 +33,10 @@ export const threadTurnViewSchema = z.object({
   failureCode: z.string().nullable(),
   failureMessage: z.string().nullable(),
   cancelRequestedAt: z.coerce.string().nullable(),
+  startedAt: z.coerce.string().nullable(),
+  finishedAt: z.coerce.string().nullable(),
+  createdAt: z.coerce.string(),
+  updatedAt: z.coerce.string(),
 });
 
 export const threadConversationStateSchema = z.object({
@@ -57,9 +52,7 @@ export const threadConversationStateSchema = z.object({
   }),
 });
 
-export type ThreadInteractionView = z.infer<
-  typeof threadInteractionViewSchema
->;
+export type ThreadInteractionView = z.infer<typeof threadInteractionViewSchema>;
 export type ThreadTurnView = z.infer<typeof threadTurnViewSchema>;
 export type ThreadConversationState = z.infer<
   typeof threadConversationStateSchema
