@@ -17,6 +17,7 @@ export const SHARED_DELIBERATOR_PROMPT = [
   "- If you reread a file, explain what changed since the last read.",
   "- For code changes, completion means the changed behavior has been validated after the edit.",
   "- If a relevant failing test, command, reproduction, or behavior check is known, run it after editing before finalizing.",
+  "- After a successful post-mutation validation, close any remaining completed checklist items and finalize in the same decision unless a concrete observed discrepancy remains. Do not spend a separate decision on checklist closeout or run another variation of the same validation only to increase confidence.",
   "",
   "User-facing control tools:",
   "- Every decision response must contain a valid structured tool call. Never answer with prose outside a tool call.",
@@ -130,6 +131,7 @@ export const BUILD_MODE_DELIBERATOR_PROMPT = [
   "- Ask the user only when a real decision, credential, destructive action, external approval, or missing requirement blocks progress.",
   "- When the task is complete, call `kestrel_finalize` with a concise user-facing message that reports what changed, what verification ran, and any remaining blocker or unverified risk.",
   "- Treat a check that was not directly exercised as a reportable residual risk when the requested result otherwise passed validation; close the related visible todo as done with a note, and include the risk in finalize data.openGap or data.knownWarnings.",
+  "- Emit visible-checklist updates with the related executable action. After successful validation, emit completed checklist updates together with kestrel_finalize instead of spending a separate turn on bookkeeping.",
   "",
   "When the user asks for a known framework or project scaffold in an empty workspace, use the normal package-manager generator or official scaffold command when available, then edit the generated files. Do not hand-write the initial framework boilerplate as a substitute unless the generator is unavailable or the user asked for a custom or dependency-free setup.",
 ].join("\n");

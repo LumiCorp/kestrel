@@ -54,12 +54,39 @@ export function buildRecentFilesystemEvidence(reactState: Record<string, unknown
   return evidence.length > 0 ? evidence : undefined;
 }
 
-export function buildRecentToolResultEvidence(transcript: ModelTranscript | undefined): string[] | undefined {
-  const evidence = [...(transcript?.items ?? [])]
-    .reverse()
-    .map(describeFailedTranscriptToolResult)
-    .filter((item): item is string => item !== undefined)
-    .slice(0, MAX_RECENT_TOOL_RESULT_EVIDENCE_ITEMS);
+export function buildRecentToolResultEvidence(input: {
+  lastActionResult?: unknown;
+  transcript?: ModelTranscript | undefined;
+}): string[] | undefined {
+  const lastAction = asRecord(input.lastActionResult);
+  const lastToolName = asString(lastAction?.toolName) ?? asString(lastAction?.name);
+  const lastToolInput = asRecord(lastAction?.input);
+  const transcriptItems = [...(input.transcript?.items ?? [])].reverse();
+  const latestTranscriptCopy = transcriptItems.find((item) =>
+    isSameToolAction(item, lastToolName, lastToolInput)
+  );
+  const latest = describeLastActionToolResult(
+    input.lastActionResult,
+    latestTranscriptCopy?.rawOutputRef ?? asString(asRecord(latestTranscriptCopy?.toolOutput)?.rawOutputRef),
+  );
+  let skippedLatestTranscriptCopy = false;
+  const historical = transcriptItems
+    .map((item) => {
+      if (
+        skippedLatestTranscriptCopy === false &&
+        latest !== undefined &&
+        isSameToolAction(item, lastToolName, lastToolInput)
+      ) {
+        skippedLatestTranscriptCopy = true;
+        return undefined;
+      }
+      return describeTranscriptToolResult(item);
+    })
+    .filter((item): item is string => item !== undefined);
+  const evidence = uniqueStrings([
+    ...(latest !== undefined ? [`latest: ${latest}`] : []),
+    ...historical.map((item) => `historical: ${item}`),
+  ]).slice(0, MAX_RECENT_TOOL_RESULT_EVIDENCE_ITEMS);
   return evidence.length > 0 ? evidence : undefined;
 }
 
@@ -366,7 +393,47 @@ function isRunningStatus(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "running";
 }
 
-function describeFailedTranscriptToolResult(item: ModelTranscriptItem): string | undefined {
+function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: string): string | undefined {
+  const result = asRecord(value);
+  if (result === undefined || asString(result.kind) !== "tool") {
+    return undefined;
+  }
+  const toolName = asString(result.toolName) ?? asString(result.name);
+  if (toolName === undefined) {
+    return undefined;
+  }
+  const input = asRecord(result.input);
+  const output = asRecord(result.output);
+  const status = normalizeObservedToolStatus(
+    asString(result.status) ?? asString(output?.status),
+    result.ok,
+  );
+  const command = asString(output?.command) ?? asString(input?.command);
+  const cwd = asString(output?.cwd) ?? asString(input?.cwd);
+  const path = asString(output?.path) ?? asString(input?.path);
+  const exitCode = readFiniteNumber(output?.exitCode);
+  const error = asRecord(result.error);
+  const errorCode = asString(output?.errorCode) ?? asString(error?.code);
+  const failureReason = asString(output?.failureReason) ?? asString(error?.message);
+  const stdout = firstString(output?.stdout, output?.output, output?.text, result.outputSummary);
+  const stderr = firstString(output?.stderr);
+  const rawOutputRef = asString(result.rawOutputRef) ?? asString(output?.rawOutputRef) ?? transcriptRawOutputRef;
+  return renderObservedToolResult({
+    toolName,
+    status,
+    command,
+    cwd,
+    path,
+    ...(exitCode !== undefined ? { exitCode: String(exitCode) } : {}),
+    errorCode,
+    failureReason,
+    stdout,
+    stderr,
+    rawOutputRef,
+  });
+}
+
+function describeTranscriptToolResult(item: ModelTranscriptItem): string | undefined {
   if (item.kind !== "tool_result") {
     return undefined;
   }
@@ -376,9 +443,6 @@ function describeFailedTranscriptToolResult(item: ModelTranscriptItem): string |
     return undefined;
   }
   const status = readRenderedToolFact(text, "status");
-  if (status !== "FAILED") {
-    return undefined;
-  }
   const toolInput = asRecord(item.toolInput);
   const command = asString(toolInput?.command) ?? readRenderedToolFact(text, "command");
   const cwd = asString(toolInput?.cwd) ?? readRenderedToolFact(text, "cwd");
@@ -386,22 +450,85 @@ function describeFailedTranscriptToolResult(item: ModelTranscriptItem): string |
   const exitCode = readRenderedToolFact(text, "exitCode");
   const errorCode = readRenderedToolFact(text, "errorCode");
   const failureReason = readRenderedToolFact(text, "failureReason");
+  const stdout = readRenderedToolBlock(text, "stdout");
   const stderr = readRenderedToolBlock(text, "stderr");
   const resultText = readRenderedToolBlock(text, "text");
   const rawOutputRef = item.rawOutputRef ?? asString(toolOutput?.rawOutputRef);
+  return renderObservedToolResult({
+    toolName: item.toolName ?? "unknown",
+    status: normalizeObservedToolStatus(status),
+    command,
+    cwd,
+    path,
+    exitCode,
+    errorCode,
+    failureReason,
+    stdout: stdout ?? resultText,
+    stderr,
+    rawOutputRef,
+  });
+}
+
+function renderObservedToolResult(input: {
+  toolName: string;
+  status: string;
+  command?: string | undefined;
+  cwd?: string | undefined;
+  path?: string | undefined;
+  exitCode?: string | undefined;
+  errorCode?: string | undefined;
+  failureReason?: string | undefined;
+  stdout?: string | undefined;
+  stderr?: string | undefined;
+  rawOutputRef?: string | undefined;
+}): string {
   return [
-    `${item.toolName ?? "unknown"} failed`,
-    command !== undefined ? `command=${quoteEvidenceValue(command)}` : undefined,
-    cwd !== undefined ? `cwd=${quoteEvidenceValue(cwd)}` : undefined,
-    path !== undefined ? `path=${quoteEvidenceValue(path)}` : undefined,
-    `status=${status}`,
-    exitCode !== undefined ? `exitCode=${exitCode}` : undefined,
-    errorCode !== undefined ? `errorCode=${quoteEvidenceValue(errorCode)}` : undefined,
-    failureReason !== undefined ? `failureReason=${quoteEvidenceValue(failureReason)}` : undefined,
-    stderr !== undefined ? `stderr=${quoteEvidenceValue(stderr)}` : undefined,
-    stderr === undefined && resultText !== undefined ? `text=${quoteEvidenceValue(resultText)}` : undefined,
-    rawOutputRef !== undefined ? `rawOutputRef=${rawOutputRef}` : undefined,
+    `${input.toolName} ${input.status}`,
+    input.command !== undefined ? `command=${quoteEvidenceValue(input.command)}` : undefined,
+    input.cwd !== undefined ? `cwd=${quoteEvidenceValue(input.cwd)}` : undefined,
+    input.path !== undefined ? `path=${quoteEvidenceValue(input.path)}` : undefined,
+    input.exitCode !== undefined ? `exitCode=${input.exitCode}` : undefined,
+    input.errorCode !== undefined ? `errorCode=${quoteEvidenceValue(input.errorCode)}` : undefined,
+    input.failureReason !== undefined ? `failureReason=${quoteEvidenceValue(input.failureReason)}` : undefined,
+    input.stdout !== undefined ? `stdout=${quoteEvidenceValue(input.stdout)}` : undefined,
+    input.stderr !== undefined ? `stderr=${quoteEvidenceValue(input.stderr)}` : undefined,
+    input.rawOutputRef !== undefined ? `rawOutputRef=${input.rawOutputRef}` : undefined,
   ].filter((part): part is string => part !== undefined).join(" ");
+}
+
+function normalizeObservedToolStatus(value: string | undefined, ok?: unknown): string {
+  const normalized = value?.trim().toLowerCase();
+  if (ok === false || normalized === "failed" || normalized === "error") {
+    return "failed";
+  }
+  if (normalized === "running") {
+    return "running";
+  }
+  if (normalized === "partial") {
+    return "partial";
+  }
+  if (
+    ok === true ||
+    normalized === "ok" ||
+    normalized === "completed" ||
+    normalized === "passed" ||
+    normalized === "succeeded" ||
+    normalized === "success"
+  ) {
+    return "succeeded";
+  }
+  return normalized ?? "observed";
+}
+
+function isSameToolAction(
+  item: ModelTranscriptItem,
+  toolName: string | undefined,
+  toolInput: Record<string, unknown> | undefined,
+): boolean {
+  return item.kind === "tool_result" &&
+    toolName !== undefined &&
+    item.toolName === toolName &&
+    JSON.stringify(item.toolInput ?? {}) === JSON.stringify(toolInput ?? {});
 }
 
 function readRenderedToolFact(text: string, fieldName: string): string | undefined {
@@ -436,6 +563,14 @@ function readRenderedToolBlock(text: string, fieldName: string): string | undefi
 
 function quoteEvidenceValue(value: string): string {
   return JSON.stringify(clampEvidencePreview(value, MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS));
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function uniqueStrings(values: string[]): string[] {

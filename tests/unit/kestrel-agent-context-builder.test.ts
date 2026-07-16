@@ -669,7 +669,7 @@ test("Kestrel agent context builder promotes recent failed tool results as compa
 
   const runtimeContext = String(context.contextMessages[0]?.content ?? "");
   assert.match(runtimeContext, /Evidence:\nRecent tool-result evidence:/u);
-  assert.match(runtimeContext, /dev\.shell\.run failed command="pnpm test report-route" cwd="\/repo\/kestrel-app" status=FAILED exitCode=1/u);
+  assert.match(runtimeContext, /historical: dev\.shell\.run failed command="pnpm test report-route" cwd="\/repo\/kestrel-app" exitCode=1/u);
   assert.match(runtimeContext, /stderr="expected 200 received 500"/u);
   assert.match(runtimeContext, /rawOutputRef=tool-output:test/u);
   const toolMessage = context.messages.find((message) => message.role === "tool" && message.name === "dev.shell.run");
@@ -684,6 +684,151 @@ test("Kestrel agent context builder promotes recent failed tool results as compa
       String(transcriptResult.toolOutput.text).includes("expected 200 received 500"),
     true,
   );
+});
+
+test("Kestrel agent context builder presents the latest successful result before older failures", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {
+      lastActionResult: {
+        ok: true,
+        kind: "tool",
+        status: "ok",
+        name: "exec_command",
+        toolName: "exec_command",
+        input: {
+          command: "validate-newsletter",
+          cwd: "/app",
+        },
+        inputHash: "validation-v1",
+        output: {
+          command: "validate-newsletter",
+          cwd: "/app",
+          status: "completed",
+          exitCode: 0,
+          output: "static checks passed\nHTTP check passed: GET / returned 200\n",
+        },
+      },
+      modelTranscript: {
+        version: 1,
+        windowId: 1,
+        items: [
+          {
+            id: "mt_1_0001_tool_result",
+            createdAt: "2026-07-03T00:00:00.000Z",
+            kind: "tool_result",
+            toolCallId: "call_failed_validation",
+            toolName: "exec_command",
+            toolInput: {
+              command: "validate-newsletter-with-heredoc",
+              cwd: "/app",
+            },
+            toolOutput: {
+              text: [
+                "Tool result: exec_command",
+                "",
+                "- command: validate-newsletter-with-heredoc",
+                "- cwd: /app",
+                "- status: FAILED",
+                "- exitCode: 1",
+                "- stderr:",
+                "  shell syntax error",
+                "",
+                "Raw output ref: tool-output:failed",
+              ].join("\n"),
+              rawOutputRef: "tool-output:failed",
+              truncated: false,
+            },
+            rawOutputRef: "tool-output:failed",
+            truncated: false,
+          },
+          {
+            id: "mt_1_0002_tool_result",
+            createdAt: "2026-07-03T00:00:01.000Z",
+            kind: "tool_result",
+            toolCallId: "call_successful_validation",
+            toolName: "exec_command",
+            toolInput: {
+              command: "validate-newsletter",
+              cwd: "/app",
+            },
+            toolOutput: {
+              text: [
+                "Tool result: exec_command",
+                "",
+                "- command: validate-newsletter",
+                "- cwd: /app",
+                "- status: COMPLETED",
+                "- exitCode: 0",
+                "- text:",
+                "  static checks passed",
+                "  HTTP check passed: GET / returned 200",
+                "",
+                "Raw output ref: tool-output:success",
+              ].join("\n"),
+              rawOutputRef: "tool-output:success",
+              truncated: false,
+            },
+            rawOutputRef: "tool-output:success",
+            truncated: false,
+          },
+        ],
+      },
+    },
+    eventPayload: {
+      message: "Build the newsletter.",
+    },
+    eventType: "job.run",
+    goal: "Build the newsletter.",
+    interactionMode: "build",
+    promptVariant: "reference-react:build",
+  });
+
+  const runtimeContext = String(context.contextMessages[0]?.content ?? "");
+  const latestIndex = runtimeContext.indexOf("latest: exec_command succeeded");
+  const historicalIndex = runtimeContext.indexOf("historical: exec_command failed");
+  assert.ok(latestIndex >= 0);
+  assert.ok(historicalIndex > latestIndex);
+  assert.match(runtimeContext, /exitCode=0/u);
+  assert.match(runtimeContext, /static checks passed HTTP check passed: GET \/ returned 200/u);
+  assert.match(runtimeContext, /rawOutputRef=tool-output:success/u);
+  assert.equal(runtimeContext.match(/command="validate-newsletter"/gu)?.length, 1);
+  assert.match(runtimeContext, /Treat the latest observed result as authoritative/u);
+});
+
+test("Kestrel agent context builder preserves running and partial latest tool results", () => {
+  for (const status of ["running", "partial"] as const) {
+    const context = buildKestrelAgentContext({
+      reactState: {
+        lastActionResult: {
+          kind: "tool",
+          status,
+          name: "dev.process.start",
+          toolName: "dev.process.start",
+          input: {
+            command: "pnpm dev",
+            cwd: "/app",
+          },
+          output: {
+            status,
+            command: "pnpm dev",
+            cwd: "/app",
+            output: `${status} process output`,
+          },
+        },
+      },
+      eventPayload: {
+        message: "Start the app.",
+      },
+      eventType: "job.run",
+      goal: "Start the app.",
+      interactionMode: "build",
+      promptVariant: "reference-react:build",
+    });
+
+    const runtimeContext = String(context.contextMessages[0]?.content ?? "");
+    assert.match(runtimeContext, new RegExp(`latest: dev\\.process\\.start ${status}`, "u"));
+    assert.match(runtimeContext, new RegExp(`stdout="${status} process output"`, "u"));
+  }
 });
 
 test("Kestrel agent context builder renders structured validation and repair prompts", () => {

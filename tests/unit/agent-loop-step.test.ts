@@ -1913,7 +1913,10 @@ test("agent loop compaction prompt preserves constraint-critical tool facts", as
   assert.equal((compactionRequest.input as Record<string, unknown>).taskInstruction, originalTask);
   const systemContent = compactionRequest.messages?.find((message) => message.role === "system")?.content;
   assert.equal(typeof systemContent, "string");
-  assert.match(systemContent as string, /Preserve constraint facts, zero-result searches, failed checks, exact mutation summaries, open todos, and current blockers/u);
+  assert.match(
+    systemContent as string,
+    /Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers/u,
+  );
   const finalRequest = requests.find((request) => request.metadata?.phase === "agent.loop");
   assert.ok(finalRequest);
   assert.match(JSON.stringify(finalRequest.messages), /Retry guidance: call a concrete tool/u);

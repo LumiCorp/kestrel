@@ -4,14 +4,21 @@ import { AppPage } from "@/components/app-page";
 import { ProjectsIndexClient } from "@/components/projects/projects-index-client";
 import { Button } from "@/components/ui/button";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { resolveMobileProjectReturn } from "@/lib/projects/mobile-return";
 import { listProjectsForUser } from "@/lib/projects/store";
 
 export default async function ProjectsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{
+    archived?: string;
+    source?: string;
+    returnTo?: string;
+  }>;
 }) {
-  const showArchived = (await searchParams).archived === "true";
+  const params = await searchParams;
+  const showArchived = params.archived === "true";
+  const mobileReturnTo = resolveMobileProjectReturn(params);
   const { organizationId, session } = await requireActiveOrganization();
   const rows = await listProjectsForUser({
     organizationId,
@@ -40,6 +47,7 @@ export default async function ProjectsPage({
       </div>
       <ProjectsIndexClient
         allowCreate={!showArchived}
+        mobileReturnTo={mobileReturnTo}
         projects={visibleRows.map(({ project, role }) => ({
           id: project.id,
           name: project.name,

@@ -39,7 +39,7 @@ export function buildKestrelAgentCompactionMessages(
       content: [
         "Summarize the older transcript for continuation.",
         "Preserve durable user intent, completed work, current files/results known from the transcript, open todos or blockers, and the next useful handoff.",
-        "Preserve constraint facts, zero-result searches, failed checks, exact mutation summaries, open todos, and current blockers.",
+        "Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers.",
         "Do not invent evidence or hidden state.",
       ].join("\n"),
     },

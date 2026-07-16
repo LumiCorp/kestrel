@@ -159,7 +159,10 @@ export function buildKestrelAgentContext(
   const visibleTodos = normalizeVisibleTodoState(input.reactState.visibleTodos);
   const activeProcessEvidence = buildActiveProcessEvidence(input.reactState, transcript);
   const recentFilesystemEvidence = buildRecentFilesystemEvidence(input.reactState);
-  const recentToolResultEvidence = buildRecentToolResultEvidence(transcript);
+  const recentToolResultEvidence = buildRecentToolResultEvidence({
+    lastActionResult: input.reactState.lastActionResult,
+    transcript,
+  });
   const projectTaskQueueContext = buildProjectTaskQueueContext(input.projectSnapshot);
   const recoveryContext = buildRecoveryContext(input.reactState);
   const runtimeTaskInstruction = transcriptHasUserMessage(transcript, activeTaskGoal)

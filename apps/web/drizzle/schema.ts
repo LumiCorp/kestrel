@@ -245,8 +245,6 @@ export const projects = pgTable(
       .notNull()
       .default(1),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
-    parentThreadId: text("parent_thread_id"),
-    branchAnchorMessageId: text("branch_anchor_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

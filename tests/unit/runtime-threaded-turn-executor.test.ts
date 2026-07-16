@@ -301,6 +301,10 @@ test("resolveRuntimeThreadedStepAgent preserves current resume routing behavior"
     session: waitingSession,
   }), "agent.loop");
   assert.equal(resolveRuntimeThreadedStepAgent({
+    eventType: "job.run",
+    entryStepAgent: "agent.loop",
+  }), "agent.loop");
+  assert.equal(resolveRuntimeThreadedStepAgent({
     eventType: "user.reply",
     entryStepAgent: "agent.loop",
     session: waitingSession,

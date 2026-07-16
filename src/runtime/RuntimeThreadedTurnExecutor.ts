@@ -365,7 +365,7 @@ export function resolveRuntimeThreadedStepAgent(input: {
     }
     return input.inputStepAgent;
   }
-  if (input.eventType === "user.message") {
+  if (input.eventType === "user.message" || input.eventType === "job.run") {
     return input.entryStepAgent;
   }
   return persistedResumeStepAgent;
