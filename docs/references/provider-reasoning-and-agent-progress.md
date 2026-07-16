@@ -8,6 +8,8 @@ depends_on:
   - ../../packages/protocol/src/execution.ts
   - ../../src/runtime/ProviderReasoningVault.ts
   - ../../src/engine/StepRunner.ts
+  - ../../agents/reference-react/src/steps/deliberator.ts
+  - ../../src/mode/contracts.ts
 ---
 
 # Provider Reasoning and Agent Progress
@@ -18,6 +20,33 @@ is concise agent-authored narration emitted only after a nonterminal decision
 has validated and committed. `run.progress`, logs, model timings, Environment
 activation, and tool lifecycle remain diagnostics and must not be relabeled as
 agent speech.
+
+## Structured decision actions
+
+Every `agent.loop` model request requires at least one tool call. A direct
+answer uses `kestrel_finalize`, a clarification uses `kestrel_ask_user`, and
+work uses an authorized evidence or action tool. A response with prose but no
+tool call fails immediately as `MODEL_REQUIRED_TOOL_CALL_MISSING`; Kestrel does
+not infer an action from that prose, retry it through a hidden repair request,
+or persist the prose as a retry payload.
+
+OpenAI and OpenRouter receive required tool choice with parallel tool calls
+enabled when every surfaced action can be executed as a batch. Parallel calls
+are disabled when any surfaced action requires individual approval, or when
+the run policy requires approval per call. Anthropic maps required choice to
+`any`, carries the same parallel-call decision through
+`disable_parallel_tool_use`, and omits extended thinking for that request
+because forced tool use takes precedence. Requests that are not agent
+decisions, including compaction and classification, continue to use their own
+explicit no-tool contracts.
+
+Tool mode availability is capability metadata and a hard ceiling. Read-only
+tools default to Chat, Plan, and Build; planning writes default to Plan; code,
+shell, filesystem mutation, and unclassified external side effects default to
+Build. A trusted app action may explicitly opt into Chat, subject to the
+profile allowlist, resource grant, approval mode, and capability policy. The
+same eligibility check runs when building the model surface and again before
+execution.
 
 ## Provider formats
 

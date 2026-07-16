@@ -1,0 +1,2541 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kestrel One Mobile API v2",
+    "version": "2.0.0",
+    "description": "Authoritative, versioned mobile Thread contract with durable messages, queue order, activity, read state, and branching."
+  },
+  "servers": [
+    {
+      "url": "/api/mobile/v2"
+    }
+  ],
+  "security": [
+    {
+      "sessionCookie": []
+    },
+    {
+      "sessionBearer": []
+    }
+  ],
+  "paths": {
+    "/bootstrap": {
+      "get": {
+        "operationId": "getMobileBootstrap",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Bootstrap"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listMobileProjects",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Projects"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/projects/{id}": {
+      "get": {
+        "operationId": "getMobileProject",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProjectDetail"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads": {
+      "get": {
+        "operationId": "listMobileThreads",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "projectId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Threads"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createMobileThreadWithFirstTurn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateThreadInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "202": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}": {
+      "get": {
+        "operationId": "getMobileThreadSnapshot",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ThreadSnapshot"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/turns": {
+      "post": {
+        "operationId": "createMobileTurn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTurnInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "202": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/queue/resume": {
+      "post": {
+        "operationId": "resumeMobileThreadQueue",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SnapshotEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/interactions/{checkpointId}": {
+      "post": {
+        "operationId": "resolveMobileInteraction",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/CheckpointId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveInteractionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SnapshotEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/turns/{turnId}": {
+      "delete": {
+        "operationId": "removeMobileQueuedTurn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TurnId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SnapshotEnvelope"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/turns/{turnId}/stop": {
+      "post": {
+        "operationId": "stopMobileTurn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TurnId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/SnapshotEnvelope"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/turns/{turnId}/events": {
+      "get": {
+        "operationId": "streamMobileTurnEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TurnId"
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Typed mobile-safe SSE stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/devices": {
+      "post": {
+        "operationId": "registerMobileDevice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDeviceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Device"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disableMobileDevice",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Device disabled."
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/account/deletion-request": {
+      "get": {
+        "operationId": "getMobileAccountDeletionRequest",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DeletionRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "requestMobileAccountDeletion",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "confirmation"
+                ],
+                "properties": {
+                  "confirmation": {
+                    "type": "string",
+                    "const": "DELETE"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DeletionAccepted"
+          },
+          "202": {
+            "$ref": "#/components/responses/DeletionAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/messages": {
+      "get": {
+        "operationId": "getMobileThreadMessages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "around",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MessageWindow"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/outline": {
+      "get": {
+        "operationId": "getMobileThreadOutline",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/OutlinePage"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/read": {
+      "put": {
+        "operationId": "markMobileThreadRead",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ReadState"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/queue": {
+      "put": {
+        "operationId": "reorderMobileThreadQueue",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderQueueInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SnapshotEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/threads/{id}/branches": {
+      "post": {
+        "operationId": "createMobileThreadBranch",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBranchInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "202": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token"
+      },
+      "sessionBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "TurnId": {
+        "name": "turnId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "CheckpointId": {
+        "name": "checkpointId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Stable public failure.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Bootstrap": {
+        "description": "Mobile bootstrap.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileBootstrap"
+            }
+          }
+        }
+      },
+      "Projects": {
+        "description": "Projects.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "projects"
+              ],
+              "properties": {
+                "projects": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MobileProject"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "ProjectDetail": {
+        "description": "Project detail.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "project",
+                "threads"
+              ],
+              "properties": {
+                "project": {
+                  "$ref": "#/components/schemas/MobileProject"
+                },
+                "threads": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MobileThread"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "Threads": {
+        "description": "Thread page.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ThreadPage"
+            }
+          }
+        }
+      },
+      "ThreadSnapshot": {
+        "description": "Authoritative Thread snapshot.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ThreadSnapshot"
+            }
+          }
+        }
+      },
+      "SnapshotEnvelope": {
+        "description": "Current authoritative Thread snapshot.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "snapshot"
+              ],
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/components/schemas/ThreadSnapshot"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "AcceptedTurn": {
+        "description": "Turn accepted with current snapshot.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "snapshot",
+                "acceptedTurnId"
+              ],
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/components/schemas/ThreadSnapshot"
+                },
+                "acceptedTurnId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "Device": {
+        "description": "Device registration.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "deviceId"
+              ],
+              "properties": {
+                "deviceId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "DeletionRequest": {
+        "description": "Deletion request.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "request"
+              ],
+              "properties": {
+                "request": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AccountDeletionRequest"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "DeletionAccepted": {
+        "description": "Deletion accepted.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "requestId",
+                "status"
+              ],
+              "properties": {
+                "requestId": {
+                  "type": "string"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/DeletionStatus"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "MessageWindow": {
+        "description": "A stable message window.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MessageWindow"
+            }
+          }
+        }
+      },
+      "OutlinePage": {
+        "description": "A compact Thread outline.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OutlinePage"
+            }
+          }
+        }
+      },
+      "ReadState": {
+        "description": "Current server read state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "readState"
+              ],
+              "properties": {
+                "readState": {
+                  "$ref": "#/components/schemas/ThreadReadState"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "IsoDate": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "TurnStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "waiting_for_input",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "DeletionStatus": {
+        "type": "string",
+        "enum": [
+          "requested",
+          "confirmed",
+          "processing",
+          "completed",
+          "rejected",
+          "cancelled"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "BAD_REQUEST",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "SERVICE_UNAVAILABLE",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "MobileBootstrap": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "minimumSupportedAppVersion",
+          "user",
+          "activeOrganizationId",
+          "organizations",
+          "capabilities"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "minimumSupportedAppVersion": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "activeOrganizationId": {
+            "type": "string"
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationSummary"
+            }
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "email",
+          "image"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "logo"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "logo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "projects",
+          "threadCreation",
+          "durableTurns",
+          "turnQueue",
+          "interactiveCheckpoints",
+          "pushNotifications",
+          "uploads",
+          "administration",
+          "billing",
+          "queueReordering",
+          "threadBranching",
+          "paginatedMessages",
+          "serverReadState"
+        ],
+        "properties": {
+          "projects": {
+            "type": "string",
+            "const": "read_only"
+          },
+          "threadCreation": {
+            "type": "boolean",
+            "const": true
+          },
+          "durableTurns": {
+            "type": "boolean",
+            "const": true
+          },
+          "turnQueue": {
+            "type": "boolean",
+            "const": true
+          },
+          "interactiveCheckpoints": {
+            "type": "boolean",
+            "const": true
+          },
+          "pushNotifications": {
+            "type": "boolean",
+            "const": true
+          },
+          "uploads": {
+            "type": "boolean",
+            "const": false
+          },
+          "administration": {
+            "type": "boolean",
+            "const": false
+          },
+          "billing": {
+            "type": "boolean",
+            "const": false
+          },
+          "queueReordering": {
+            "type": "boolean",
+            "const": true
+          },
+          "threadBranching": {
+            "type": "boolean",
+            "const": true
+          },
+          "paginatedMessages": {
+            "type": "boolean",
+            "const": true
+          },
+          "serverReadState": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "MobileProject": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MobileThread": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "project",
+          "preview",
+          "runStatus",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "project": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProjectRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview": {
+            "type": "string"
+          },
+          "runStatus": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TurnStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "lineage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadLineage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TextPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SourceUrlPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "sourceId",
+          "url",
+          "title"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "source_url"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SourceDocumentPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "sourceId",
+          "mediaType",
+          "title",
+          "filename"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "source_document"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ToolStatusPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "toolCallId",
+          "toolName",
+          "state"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tool_status"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "waiting_for_approval",
+              "completed",
+              "failed",
+              "denied",
+              "unavailable"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProgressPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "category",
+          "label",
+          "text",
+          "timestamp"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "progress"
+          },
+          "id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "runtime",
+              "agent"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "timestamp": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CitationPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "title",
+          "url",
+          "documentId",
+          "excerpt"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "citation"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "documentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ArtifactPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "title",
+          "kind",
+          "url",
+          "mediaType"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "artifact"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionStatusPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "requestId",
+          "kind",
+          "prompt",
+          "status"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "interaction_status"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "approval"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "resolved",
+              "cancelled"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AssistantStatusPart": {
+        "type": "object",
+        "required": [
+          "type",
+          "status",
+          "errorCode",
+          "message"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "assistant_status"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "working",
+              "completed",
+              "waiting",
+              "failed",
+              "cancelled",
+              "contract_failure"
+            ]
+          },
+          "errorCode": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "AGENT_RUN_FAILED",
+                  "AGENT_RUN_CANCELLED",
+                  "PRESENTATION_CONTRACT_FAILURE"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "MessagePart": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TextPart"
+          },
+          {
+            "$ref": "#/components/schemas/SourceUrlPart"
+          },
+          {
+            "$ref": "#/components/schemas/SourceDocumentPart"
+          },
+          {
+            "$ref": "#/components/schemas/CitationPart"
+          },
+          {
+            "$ref": "#/components/schemas/ArtifactPart"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionStatusPart"
+          }
+        ]
+      },
+      "MobileMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "turnId",
+          "role",
+          "parts",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessagePart"
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TurnFailure": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_FAILED",
+              "AGENT_RUN_CANCELLED"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MobileTurn": {
+        "type": "object",
+        "required": [
+          "id",
+          "threadId",
+          "inputMessageId",
+          "sequence",
+          "status",
+          "failure",
+          "cancelRequestedAt",
+          "startedAt",
+          "finishedAt",
+          "createdAt",
+          "updatedAt",
+          "queueOrdinal",
+          "outputMessageId",
+          "activity"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "inputMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TurnStatus"
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TurnFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelRequestedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finishedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "queueOrdinal": {
+            "type": "integer"
+          },
+          "outputMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activity": {
+            "$ref": "#/components/schemas/TurnActivity"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThreadQueue": {
+        "type": "object",
+        "required": [
+          "state",
+          "pauseReason",
+          "activeTurnId",
+          "version",
+          "orderedQueuedTurnIds"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "paused"
+            ]
+          },
+          "pauseReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activeTurnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "orderedQueuedTurnIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionField": {
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "type",
+          "required"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "number",
+              "boolean",
+              "select",
+              "multi_select"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MobileInteraction": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "prompt",
+          "fields",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "approval"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionField"
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThreadSnapshot": {
+        "type": "object",
+        "required": [
+          "snapshotVersion",
+          "thread",
+          "messageWindow",
+          "turns",
+          "queue",
+          "interactions",
+          "readState"
+        ],
+        "properties": {
+          "snapshotVersion": {
+            "type": "string"
+          },
+          "thread": {
+            "$ref": "#/components/schemas/MobileThread"
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MobileTurn"
+            }
+          },
+          "queue": {
+            "$ref": "#/components/schemas/ThreadQueue"
+          },
+          "interactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MobileInteraction"
+            }
+          },
+          "messageWindow": {
+            "$ref": "#/components/schemas/MessageWindow"
+          },
+          "readState": {
+            "$ref": "#/components/schemas/ThreadReadState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThreadPage": {
+        "type": "object",
+        "required": [
+          "threads",
+          "nextCursor"
+        ],
+        "properties": {
+          "threads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MobileThread"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InputMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "parts"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/TextPart"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateThreadInput": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "message"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "$ref": "#/components/schemas/InputMessage"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateTurnInput": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/InputMessage"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResolveInteractionInput": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "deny"
+            ]
+          },
+          "content": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegisterDeviceInput": {
+        "type": "object",
+        "required": [
+          "id",
+          "platform",
+          "expoPushToken"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "android"
+            ]
+          },
+          "expoPushToken": {
+            "type": "string"
+          },
+          "appVersion": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountDeletionRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "createdAt",
+          "confirmedAt",
+          "completedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeletionStatus"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "confirmedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TurnEvent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/MessageDeltaEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SnapshotChangedEvent"
+          }
+        ]
+      },
+      "MessageDeltaEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "data",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "message.delta"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "textDelta"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string"
+              },
+              "textDelta": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotChangedEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "data",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "snapshot.changed"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "reason"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "message_updated",
+                  "turn_updated",
+                  "interaction_updated"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThreadLineage": {
+        "type": "object",
+        "required": [
+          "parentThreadId",
+          "parentTitle",
+          "anchorMessageId"
+        ],
+        "properties": {
+          "parentThreadId": {
+            "type": "string"
+          },
+          "parentTitle": {
+            "type": "string"
+          },
+          "anchorMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityStage": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "preparing",
+          "reading_context",
+          "working",
+          "using_capability",
+          "finalizing",
+          "waiting",
+          "retrying"
+        ]
+      },
+      "ActivityMilestone": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "started",
+              "context_ready",
+              "capability_used",
+              "response_started",
+              "waiting",
+              "retrying",
+              "completed"
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TurnActivity": {
+        "type": "object",
+        "required": [
+          "stage",
+          "milestones",
+          "updatedAt"
+        ],
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/ActivityStage"
+          },
+          "milestones": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/ActivityMilestone"
+            }
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MessageWindow": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MobileMessage"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThreadReadState": {
+        "type": "object",
+        "required": [
+          "lastReadMessageId",
+          "unreadAnswerCount",
+          "updatedAt"
+        ],
+        "properties": {
+          "lastReadMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unreadAnswerCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OutlineEntry": {
+        "type": "object",
+        "required": [
+          "messageId",
+          "outputMessageId",
+          "label",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "outputMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TurnStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OutlinePage": {
+        "type": "object",
+        "required": [
+          "entries",
+          "nextCursor"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineEntry"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReorderQueueInput": {
+        "type": "object",
+        "required": [
+          "expectedVersion",
+          "orderedQueuedTurnIds"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "orderedQueuedTurnIds": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MarkReadInput": {
+        "type": "object",
+        "required": [
+          "messageId"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateBranchInput": {
+        "type": "object",
+        "required": [
+          "id",
+          "anchorMessageId",
+          "message"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "anchorMessageId": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/InputMessage"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "x-kestrel-product-boundary": {
+    "allowed": [
+      "authentication",
+      "account-deletion-request",
+      "organization-switching",
+      "read-only-projects",
+      "threads",
+      "durable-turns",
+      "interactions",
+      "push-registration",
+      "queue-reordering",
+      "thread-branching",
+      "server-read-state",
+      "message-pagination"
+    ],
+    "forbidden": [
+      "signup",
+      "billing",
+      "administration",
+      "project-mutation",
+      "agent-configuration",
+      "model-management",
+      "uploads",
+      "artifact-editing",
+      "runner-management"
+    ]
+  }
+}

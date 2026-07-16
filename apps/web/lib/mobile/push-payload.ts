@@ -17,6 +17,7 @@ export function buildMobilePushMessage(input: {
   organizationId: string;
   threadId: string;
   turnId: string;
+  targetMessageId?: string | null;
 }) {
   return {
     to: input.token,
@@ -27,6 +28,7 @@ export function buildMobilePushMessage(input: {
       organizationId: input.organizationId,
       threadId: input.threadId,
       turnId: input.turnId,
+      ...(input.targetMessageId ? { targetMessageId: input.targetMessageId } : {}),
     },
   };
 }

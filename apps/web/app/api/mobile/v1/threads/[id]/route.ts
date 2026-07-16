@@ -3,18 +3,18 @@ import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { session, organizationId } = await requireActiveOrganization();
     const { id } = paramsSchema.parse(await context.params);
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: id,
       userId: session.user.id,
       organizationId,

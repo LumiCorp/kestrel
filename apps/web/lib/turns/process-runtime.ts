@@ -19,6 +19,7 @@ import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
 import { updateThreadTitleForUser } from "@/lib/threads/store";
 import {
   appendDurableTurnEvent,
+  recordMobileTurnRuntimeActivity,
   bindDurableTurnExecution,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
@@ -215,6 +216,12 @@ export async function processDurableThreadTurn(turnId: string) {
           () => {}
         ),
       onRuntimeEvent(event) {
+        eventWrites = eventWrites.then(() =>
+          recordMobileTurnRuntimeActivity({
+            turnId: turn.id,
+            eventType: event.type,
+          }).catch(() => {})
+        );
         if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
           cancellation.abort(
             new Error("The user interrupted this turn at a safe boundary.")

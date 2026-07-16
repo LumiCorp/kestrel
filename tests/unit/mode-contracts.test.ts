@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   alignExecutionPolicyWithMode,
+  isToolEligibleForInteractionMode,
   isToolClassAllowed,
   normalizeInteractionMode,
   resolveAllowedToolClasses,
@@ -147,4 +148,47 @@ test("plan mode allows read-only tools and session plan document writes by defau
     false,
   );
   assert.deepEqual(resolveAllowedToolClasses({ interactionMode: "plan" }), ["read_only", "planning_write"]);
+});
+
+test("Chat allows read-only tools and only explicitly Chat-enabled app mutations", () => {
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "read_only",
+    }),
+    true,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "sandboxed_only",
+      executionPolicy: { toolClassPolicy: { sandboxed_only: true } },
+    }),
+    false,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "external_side_effect",
+    }),
+    false,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "build"],
+    }),
+    true,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "build"],
+      executionPolicy: { capabilityPolicy: { "external.confirm": false } },
+      requiredCapabilities: ["external.confirm"],
+    }),
+    false,
+  );
 });

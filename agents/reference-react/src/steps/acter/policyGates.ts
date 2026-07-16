@@ -7,7 +7,7 @@ import { evaluateAutonomyPolicy } from "../../../../../src/governance/autonomy.j
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
 import {
   areApprovalCapabilitiesAllowed,
-  isToolClassAllowed,
+  isToolEligibleForInteractionMode,
   needsPerCallApproval,
   readBlockedApprovalCapability,
 } from "../../../../../src/mode/contracts.js";
@@ -60,6 +60,7 @@ export async function checkToolPolicyGate(input: {
   toolName: string;
   toolInput: unknown;
   toolClass: ToolExecutionClass;
+  allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
@@ -71,22 +72,21 @@ export async function checkToolPolicyGate(input: {
   proposalProvider?: ((request: ManagedTaskWorktreeRequest) => Promise<ManagedTaskWorktreeProposal>) | undefined;
   io: StepIO;
 }): Promise<PolicyGateResult> {
-  if (input.modeSystemV2Enabled) {
-    const modeGate = checkModeAndCapabilityPolicy({
+  const modeGate = checkModeAndCapabilityPolicy({
       reactState: input.reactState,
       activeRegion: input.activeRegion,
       acterStepId: input.acterStepId,
       stepIndex: input.stepIndex,
       toolName: input.toolName,
       toolClass: input.toolClass,
+      allowedInteractionModes: input.allowedInteractionModes,
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
-    });
-    if (modeGate.kind === "blocked") {
-      return modeGate;
-    }
+  });
+  if (modeGate.kind === "blocked") {
+    return modeGate;
   }
 
   if (input.autonomyPolicy !== undefined) {
@@ -179,6 +179,7 @@ export async function checkToolBatchPolicyGate(input: {
   items: Array<{ name: string; input: Record<string, unknown> }>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -216,8 +217,7 @@ export async function checkToolBatchPolicyGate(input: {
     };
   }
 
-  if (input.modeSystemV2Enabled) {
-    const modeGate = checkToolItemsModeAndCapabilityPolicy({
+  const modeGate = checkToolItemsModeAndCapabilityPolicy({
       reactState: input.reactState,
       activeRegion: input.activeRegion,
       acterStepId: input.acterStepId,
@@ -225,13 +225,13 @@ export async function checkToolBatchPolicyGate(input: {
       items: input.items,
       toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
       toolExecutionClassByName: input.toolExecutionClassByName,
+      toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
-    });
-    if (modeGate.kind === "blocked") {
-      return modeGate;
-    }
+  });
+  if (modeGate.kind === "blocked") {
+    return modeGate;
   }
 
   if (input.autonomyPolicy !== undefined) {
@@ -295,16 +295,13 @@ export function checkToolBatchChunkPolicyGate(input: {
   items: Array<{ name: string; input: Record<string, unknown> }>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
 }): PolicyGateResult {
-  if (input.modeSystemV2Enabled === false) {
-    return { kind: "allowed" };
-  }
-
   return checkToolItemsModeAndCapabilityPolicy(input);
 }
 
@@ -316,16 +313,18 @@ function checkToolItemsModeAndCapabilityPolicy(input: {
   items: Array<{ name: string; input: Record<string, unknown> }>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;
 }): PolicyGateResult {
   const disallowedItem = input.items.find((item) => {
     const toolClass = input.toolExecutionClassByName[item.name] ?? "read_only";
-    const classAllowed = isToolClassAllowed({
+    const classAllowed = isToolEligibleForInteractionMode({
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       toolClass,
+      allowedInteractionModes: input.toolAllowedInteractionModesByName[item.name],
       executionPolicy: input.executionPolicy,
     });
     if (classAllowed === false) {
@@ -372,16 +371,18 @@ function checkModeAndCapabilityPolicy(input: {
   stepIndex: number;
   toolName: string;
   toolClass: ToolExecutionClass;
+  allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;
 }): PolicyGateResult {
   if (
-    isToolClassAllowed({
+    isToolEligibleForInteractionMode({
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       toolClass: input.toolClass,
+      allowedInteractionModes: input.allowedInteractionModes,
       executionPolicy: input.executionPolicy,
     }) === false
   ) {

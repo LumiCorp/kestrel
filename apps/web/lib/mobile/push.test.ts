@@ -33,3 +33,16 @@ test("mobile push payloads deep-link without transcript or Project content", () 
     assert.doesNotMatch(serialized, new RegExp(forbidden, "iu"));
   }
 });
+
+test("completed push targets the durable answer without including its content", () => {
+  const message = buildMobilePushMessage({
+    token: "ExponentPushToken[device]",
+    kind: "completed",
+    organizationId: "org_123",
+    threadId: "thread_123",
+    turnId: "turn_123",
+    targetMessageId: "message_answer_123",
+  });
+  assert.equal(message.data.targetMessageId, "message_answer_123");
+  assert.doesNotMatch(JSON.stringify(message), /answer text|prompt|transcript/iu);
+});

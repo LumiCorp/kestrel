@@ -45,6 +45,7 @@ export const projectTaskProposeTool: SharedToolModule = {
       latencyClass: "low",
       costClass: "free",
       executionClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "build"],
       capabilityClasses: ["runtime.project.task_queue"],
       approvalCapabilities: ["project.task_queue.write"],
     },

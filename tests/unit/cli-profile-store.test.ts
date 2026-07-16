@@ -474,6 +474,39 @@ test("parseProfilesFile validates mcpServers schema in version 3", () => {
   }, /header 'Authorization'/);
 });
 
+test("parseProfilesFile preserves MCP tool approval and interaction-mode metadata", () => {
+  const parsed = parseProfilesFile(JSON.stringify({
+    version: 3,
+    profiles: [{
+      id: "reference",
+      label: "Reference React",
+      agent: "reference-react",
+      sessionPrefix: "reference",
+      mcpServers: [{
+        id: "calendar",
+        transport: "http",
+        url: "https://mcp.example.test",
+        toolMetadata: {
+          create_event: {
+            displayName: "Create event",
+            aliases: ["calendar create"],
+            keywords: ["calendar", "event"],
+            provider: "calendar",
+            toolFamily: "calendar.write",
+            capabilityClasses: ["calendar.write"],
+            approvalMode: "ask",
+            allowedInteractionModes: ["chat", "build", "chat"],
+          },
+        },
+      }],
+    }],
+  }));
+
+  const metadata = parsed.profiles[0]?.mcpServers?.[0]?.toolMetadata?.create_event;
+  assert.equal(metadata?.approvalMode, "ask");
+  assert.deepEqual(metadata?.allowedInteractionModes, ["chat", "build"]);
+});
+
 test("parseProfilesFile validates toolQueue schema in version 3", () => {
   assert.throws(() => {
     parseProfilesFile(

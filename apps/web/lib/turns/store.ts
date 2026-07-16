@@ -9,6 +9,7 @@ import {
   gt,
   inArray,
   isNull,
+  lt,
   lte,
   max,
   or,
@@ -40,6 +41,104 @@ export class DurableTurnError extends Error {
     this.name = "DurableTurnError";
     this.code = code;
   }
+}
+
+type MobileActivityStage =
+  | "queued"
+  | "preparing"
+  | "reading_context"
+  | "working"
+  | "using_capability"
+  | "finalizing"
+  | "waiting"
+  | "retrying";
+
+type MobileActivityMilestone = {
+  id: string;
+  kind:
+    | "accepted"
+    | "started"
+    | "context_ready"
+    | "capability_used"
+    | "response_started"
+    | "waiting"
+    | "retrying"
+    | "completed";
+  createdAt: string;
+};
+
+const milestoneForStage: Record<MobileActivityStage, MobileActivityMilestone["kind"]> = {
+  queued: "accepted",
+  preparing: "started",
+  reading_context: "context_ready",
+  working: "response_started",
+  using_capability: "capability_used",
+  finalizing: "completed",
+  waiting: "waiting",
+  retrying: "retrying",
+};
+
+function mobileActivityMilestones(value: unknown): MobileActivityMilestone[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): MobileActivityMilestone[] => {
+    if (!(entry && typeof entry === "object")) return [];
+    const record = entry as Record<string, unknown>;
+    return typeof record.id === "string" &&
+      typeof record.kind === "string" &&
+      typeof record.createdAt === "string"
+      ? [record as MobileActivityMilestone]
+      : [];
+  });
+}
+
+async function updateMobileTurnPresentation(
+  tx: TurnTransaction,
+  input: { turnId: string; stage: MobileActivityStage; now: Date }
+) {
+  const existing = await tx.query.threadTurnPresentations.findFirst({
+    where: eq(schema.threadTurnPresentations.turnId, input.turnId),
+  });
+  const milestone = {
+    id: crypto.randomUUID(),
+    kind: milestoneForStage[input.stage],
+    createdAt: input.now.toISOString(),
+  } satisfies MobileActivityMilestone;
+  const milestones = [
+    ...mobileActivityMilestones(existing?.milestones),
+    milestone,
+  ].slice(-8);
+  await tx
+    .insert(schema.threadTurnPresentations)
+    .values({
+      turnId: input.turnId,
+      stage: input.stage,
+      milestones,
+      startedAt: existing?.startedAt ?? input.now,
+      updatedAt: input.now,
+    })
+    .onConflictDoUpdate({
+      target: schema.threadTurnPresentations.turnId,
+      set: { stage: input.stage, milestones, updatedAt: input.now },
+    });
+}
+
+function mobileStageForRuntimeEvent(type: string): MobileActivityStage | null {
+  if (type === "session.described" || type.startsWith("context.")) return "reading_context";
+  if (type.startsWith("tool.") || type.includes("tool_call")) return "using_capability";
+  if (type.startsWith("agent.") || type.startsWith("model.")) return "working";
+  if (type.includes("final") || type.includes("complete")) return "finalizing";
+  return null;
+}
+
+export async function recordMobileTurnRuntimeActivity(input: {
+  turnId: string;
+  eventType: string;
+}) {
+  const stage = mobileStageForRuntimeEvent(input.eventType);
+  if (!stage) return;
+  await knowledgeDb.transaction((tx) =>
+    updateMobileTurnPresentation(tx, { turnId: input.turnId, stage, now: new Date() })
+  );
 }
 
 function queueLockKey(threadId: string) {
@@ -149,7 +248,7 @@ async function findNextQueuedTurn(
         eq(schema.threadTurns.status, "queued")
       )
     )
-    .orderBy(asc(schema.threadTurns.sequence))
+    .orderBy(asc(schema.threadTurns.queueOrdinal))
     .limit(1);
   return turn ?? null;
 }
@@ -305,6 +404,7 @@ async function createDurableThreadTurnInTransaction(
       requestedEnvironmentId: input.requestedEnvironmentId,
       idempotencyKey: input.idempotencyKey,
       sequence,
+      queueOrdinal: sequence,
       source: input.source,
       requestedModelId: input.requestedModelId ?? null,
       status: "queued",
@@ -315,6 +415,7 @@ async function createDurableThreadTurnInTransaction(
   if (!turn) {
     throw new Error("Durable turn insert failed.");
   }
+  await updateMobileTurnPresentation(tx, { turnId, stage: "queued", now });
   if (input.messageId) {
     await tx
       .update(schema.threadMessages)
@@ -436,6 +537,197 @@ export async function createMobileThreadWithFirstTurn(
   });
 }
 
+function branchMessageParts(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const durableTypes = new Set([
+    "text",
+    "source-url",
+    "source-document",
+    "data-kestrel-citation",
+    "data-kestrel-artifact",
+  ]);
+  return value.filter((part) => {
+    if (!(part && typeof part === "object" && !Array.isArray(part))) return false;
+    const type = (part as Record<string, unknown>).type;
+    return typeof type === "string" && durableTypes.has(type);
+  });
+}
+
+export async function createMobileThreadBranchWithFirstTurn(
+  input: DurableThreadTurnInput & {
+    projectId: string | null;
+    parentThreadId: string;
+    anchorMessageId: string;
+  }
+) {
+  return knowledgeDb.transaction(async (tx) => {
+    const parent = await lockAccessibleThread(tx, {
+      threadId: input.parentThreadId,
+      organizationId: input.organizationId,
+      userId: input.authorUserId,
+    });
+    if (parent.mode !== "chat" || parent.projectId !== input.projectId) {
+      throw new DurableTurnError("TURN_CONFLICT", "Branch context changed.");
+    }
+    const [anchor] = await tx
+      .select()
+      .from(schema.threadMessages)
+      .where(
+        and(
+          eq(schema.threadMessages.id, input.anchorMessageId),
+          eq(schema.threadMessages.threadId, input.parentThreadId)
+        )
+      )
+      .limit(1);
+    if (!anchor) {
+      throw new DurableTurnError("TURN_NOT_FOUND", "Branch anchor not found.");
+    }
+    const existing = await tx.query.threads.findFirst({
+      where: eq(schema.threads.id, input.threadId),
+    });
+    if (existing) {
+      if (
+        existing.origin !== "mobile" ||
+        existing.mode !== "chat" ||
+        existing.parentThreadId !== input.parentThreadId ||
+        existing.branchAnchorMessageId !== input.anchorMessageId
+      ) {
+        throw new DurableTurnError("TURN_CONFLICT", "The Thread ID is already in use.");
+      }
+      return createDurableThreadTurnInTransaction(tx, input);
+    }
+
+    const now = new Date();
+    const [thread] = await tx
+      .insert(schema.threads)
+      .values({
+        id: input.threadId,
+        createdByUserId: input.authorUserId,
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        parentThreadId: input.parentThreadId,
+        branchAnchorMessageId: input.anchorMessageId,
+        mode: "chat",
+        origin: "mobile",
+        activeStreamId: null,
+        title: "",
+        isPublic: false,
+        shareToken: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!thread) throw new Error("Branch creation failed.");
+
+    const prefix = await tx
+      .select()
+      .from(schema.threadMessages)
+      .where(
+        and(
+          eq(schema.threadMessages.threadId, input.parentThreadId),
+          or(
+            lt(schema.threadMessages.createdAt, anchor.createdAt),
+            and(
+              eq(schema.threadMessages.createdAt, anchor.createdAt),
+              lte(schema.threadMessages.id, anchor.id)
+            )
+          )
+        )
+      )
+      .orderBy(asc(schema.threadMessages.createdAt), asc(schema.threadMessages.id));
+    if (prefix.length > 0) {
+      await tx.insert(schema.threadMessages).values(
+        prefix.map((message) => ({
+          id: crypto.randomUUID(),
+          threadId: input.threadId,
+          turnId: null,
+          role: message.role,
+          authorUserId: message.authorUserId,
+          projectContextRevisionId: message.projectContextRevisionId,
+          parts: branchMessageParts(message.parts),
+          searchText: message.searchText,
+          source: "mobile" as const,
+          sourceMessageId: message.id,
+          createdAt: message.createdAt,
+        }))
+      );
+    }
+    if (input.projectId) {
+      await tx.insert(schema.projectAuditEvents).values({
+        id: crypto.randomUUID(),
+        projectId: input.projectId,
+        actorUserId: input.authorUserId,
+        action: "thread.created",
+        targetType: "thread",
+        targetId: input.threadId,
+        createdAt: now,
+      });
+    }
+    return createDurableThreadTurnInTransaction(tx, input);
+  });
+}
+
+export async function reorderDurableThreadQueue(input: {
+  threadId: string;
+  organizationId: string;
+  userId: string;
+  expectedVersion: number;
+  orderedQueuedTurnIds: string[];
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`
+    );
+    await lockAccessibleThread(tx, input);
+    const [queueState] = await tx
+      .select()
+      .from(schema.threadTurnQueueState)
+      .where(eq(schema.threadTurnQueueState.threadId, input.threadId))
+      .limit(1)
+      .for("update");
+    if (!queueState || queueState.version !== input.expectedVersion) {
+      throw new DurableTurnError("TURN_CONFLICT", "Queue version changed.");
+    }
+    const queued = await tx
+      .select()
+      .from(schema.threadTurns)
+      .where(
+        and(
+          eq(schema.threadTurns.threadId, input.threadId),
+          eq(schema.threadTurns.status, "queued")
+        )
+      )
+      .orderBy(asc(schema.threadTurns.queueOrdinal));
+    const currentIds = queued.map((turn) => turn.id);
+    if (
+      currentIds.length !== input.orderedQueuedTurnIds.length ||
+      currentIds.some((id) => !input.orderedQueuedTurnIds.includes(id))
+    ) {
+      throw new DurableTurnError("TURN_CONFLICT", "Queued Turns changed.");
+    }
+    const ordinals = queued.map((turn) => turn.queueOrdinal).sort((a, b) => a - b);
+    for (const [index, turnId] of input.orderedQueuedTurnIds.entries()) {
+      await tx
+        .update(schema.threadTurns)
+        .set({ queueOrdinal: ordinals[index], updatedAt: new Date() })
+        .where(eq(schema.threadTurns.id, turnId));
+    }
+    const now = new Date();
+    await tx
+      .update(schema.threadTurnQueueState)
+      .set({ version: queueState.version + 1, updatedAt: now })
+      .where(eq(schema.threadTurnQueueState.threadId, input.threadId));
+    if (queueState.activeTurnId) {
+      await appendTurnEvent(tx, {
+        turnId: queueState.activeTurnId,
+        type: "queue.reordered",
+        data: { version: queueState.version + 1 },
+      });
+    }
+    return { threadId: input.threadId, version: queueState.version + 1 };
+  });
+}
+
 export async function claimDurableThreadTurn(turnId: string) {
   return knowledgeDb.transaction(async (tx) => {
     const [candidate] = await tx
@@ -507,6 +799,11 @@ export async function claimDurableThreadTurn(turnId: string) {
         status: "running",
         ...(interaction ? { resumedRequestId: interaction.requestId } : {}),
       },
+    });
+    await updateMobileTurnPresentation(tx, {
+      turnId: turn.id,
+      stage: interaction ? "retrying" : "preparing",
+      now,
     });
     if (interaction) {
       await tx
@@ -610,6 +907,10 @@ export async function persistDurableAssistantOutcome(input: {
             turnId: sql`excluded.turn_id`,
           },
         });
+      await tx
+        .update(schema.threadTurns)
+        .set({ outputMessageId: messages.at(-1)?.id ?? null, updatedAt: now })
+        .where(eq(schema.threadTurns.id, turn.id));
     }
     await tx
       .update(schema.threads)
@@ -744,6 +1045,11 @@ export async function persistDurableAssistantOutcome(input: {
         assistantMessageId,
         status: "waiting_for_input",
       },
+    });
+    await updateMobileTurnPresentation(tx, {
+      turnId: turn.id,
+      stage: "waiting",
+      now,
     });
     const devices = await tx
       .select({ id: schema.mobileDeviceRegistrations.id })
@@ -1107,6 +1413,11 @@ export async function completeDurableThreadTurn(input: {
         status: input.status,
         failureCode: input.failureCode ?? null,
       },
+    });
+    await updateMobileTurnPresentation(tx, {
+      turnId: turn.id,
+      stage: input.status === "completed" ? "finalizing" : "working",
+      now,
     });
     const devices = await tx
       .select({ id: schema.mobileDeviceRegistrations.id })
@@ -1663,6 +1974,11 @@ export async function syncDurableTurnInteractionState(input: {
       turnId: turn.id,
       type: input.waiting ? "interaction.required" : "interaction.resolved",
       data: { status: targetStatus },
+    });
+    await updateMobileTurnPresentation(tx, {
+      turnId: turn.id,
+      stage: input.waiting ? "waiting" : "retrying",
+      now,
     });
     if (input.waiting) {
       const devices = await tx

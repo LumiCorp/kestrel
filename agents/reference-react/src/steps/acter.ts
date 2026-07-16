@@ -126,6 +126,9 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
     const toolExecutionClassByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.executionClass ?? "read_only"]),
     );
+    const toolAllowedInteractionModesByName = Object.fromEntries(
+      capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
+    );
     const reactState = getAgentStateFromRuntimeState(ctx.session.state);
     const modeResolution = normalizeInteractionMode({
       interactionMode: ctx.event.payload.interactionMode ?? reactState.interactionMode,
@@ -177,6 +180,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       toolCapabilityClassesByName,
       toolApprovalCapabilitiesByName,
       toolExecutionClassByName,
+      toolAllowedInteractionModesByName,
       reactState,
       activeRegion,
       checkpointSize,
@@ -229,6 +233,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolCapabilityClassesByName: actionContext.toolCapabilityClassesByName,
         toolApprovalCapabilitiesByName: actionContext.toolApprovalCapabilitiesByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
+        toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,
         actSubmode: actionContext.actSubmode,
         modeSystemV2Enabled: actionContext.modeSystemV2Enabled,
@@ -306,6 +311,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolName: actionForDispatch.name,
         toolInput: actionForDispatch.input,
         toolClass,
+        allowedInteractionModes: toolAllowedInteractionModesByName[actionForDispatch.name],
         requiredApprovalCapabilities: toolApprovalCapabilitiesByName[actionForDispatch.name],
         interactionMode: toCanonicalInteractionMode(modeResolution.interactionMode),
         actSubmode: modeResolution.actSubmode,
@@ -821,6 +827,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolCapabilityClassesByName: actionContext.toolCapabilityClassesByName,
         toolApprovalCapabilitiesByName: actionContext.toolApprovalCapabilitiesByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
+        toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,
         actSubmode: actionContext.actSubmode,
         modeSystemV2Enabled: actionContext.modeSystemV2Enabled,
@@ -1719,6 +1726,7 @@ async function executeToolBatchChunk(input: {
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect">;
+  toolAllowedInteractionModesByName: Record<string, Array<"chat" | "plan" | "build"> | undefined>;
   interactionMode: "chat" | "plan" | "build";
   actSubmode: "strict" | "safe" | "full_auto" | undefined;
   modeSystemV2Enabled: boolean;
@@ -1752,6 +1760,7 @@ async function executeToolBatchChunk(input: {
     items: chunk,
     toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
     toolExecutionClassByName: input.toolExecutionClassByName,
+    toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     modeSystemV2Enabled: input.modeSystemV2Enabled,

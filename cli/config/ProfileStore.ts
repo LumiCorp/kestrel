@@ -22,6 +22,7 @@ import type {
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
+  isInteractionMode,
 } from "../../src/mode/contracts.js";
 import {
   ModelPolicyStore,
@@ -1131,6 +1132,28 @@ function parseMcpToolMetadata(
   }
 
   const input = value as Record<string, unknown>;
+  const approvalMode = input.approvalMode;
+  if (approvalMode !== undefined && approvalMode !== "auto" && approvalMode !== "ask") {
+    throw new Error(
+      `Profile '${profileId}' mcpServers[${index}] toolMetadata['${toolName}'].approvalMode must be 'auto' or 'ask'`,
+    );
+  }
+  const allowedInteractionModes = input.allowedInteractionModes === undefined
+    ? undefined
+    : parseMcpToolMetadataStringArray(
+        input.allowedInteractionModes,
+        profileId,
+        index,
+        toolName,
+        "allowedInteractionModes",
+      ).map((mode, modeIndex) => {
+        if (!isInteractionMode(mode)) {
+          throw new Error(
+            `Profile '${profileId}' mcpServers[${index}] toolMetadata['${toolName}'].allowedInteractionModes[${modeIndex}] must be 'chat', 'plan', or 'build'`,
+          );
+        }
+        return mode;
+      });
   return {
     displayName: readRequiredString(input, "displayName"),
     aliases: parseMcpToolMetadataStringArray(input.aliases, profileId, index, toolName, "aliases"),
@@ -1144,6 +1167,10 @@ function parseMcpToolMetadata(
       toolName,
       "capabilityClasses",
     ),
+    ...(approvalMode !== undefined ? { approvalMode } : {}),
+    ...(allowedInteractionModes !== undefined
+      ? { allowedInteractionModes: [...new Set(allowedInteractionModes)] }
+      : {}),
   };
 }
 

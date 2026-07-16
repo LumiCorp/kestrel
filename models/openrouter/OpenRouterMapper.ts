@@ -101,7 +101,7 @@ function buildChatBody(
   }
   if (tools.length > 0) {
     body.tools = tools;
-    body.parallel_tool_calls = toolChoice === "required" ? false : true;
+    body.parallel_tool_calls = openrouter?.parallelToolCalls ?? true;
   }
 
   const responseFormat = toResponseFormat(request);
@@ -158,7 +158,7 @@ function buildResponsesBody(
   }
   if (tools.length > 0) {
     body.tools = tools;
-    body.parallel_tool_calls = toolChoice === "required" ? false : true;
+    body.parallel_tool_calls = openrouter?.parallelToolCalls ?? true;
   }
 
   const responseFormat = toResponseFormat(request);

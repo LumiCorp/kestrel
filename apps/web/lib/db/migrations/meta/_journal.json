@@ -267,6 +267,13 @@
       "when": 1784134800000,
       "tag": "0035_provider_reasoning_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784156400000,
+      "tag": "0036_mobile_v2_thread_experience",
+      "breakpoints": true
     }
   ]
 }

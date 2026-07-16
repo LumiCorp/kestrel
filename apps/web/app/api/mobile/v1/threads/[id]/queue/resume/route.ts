@@ -3,14 +3,14 @@ import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { resumeDurableThreadQueue } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -24,7 +24,7 @@ export async function POST(
     if (result.nextTurnId) {
       await enqueueDurableThreadTurn(result.nextTurnId);
     }
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: id,
       organizationId,
       userId: session.user.id,

@@ -20,6 +20,7 @@ import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestrat
 import type { SessionStore } from "../src/kestrel/contracts/store.js";
 import type {
   ApprovalCapabilityClass,
+  InteractionMode,
   ToolExecutionClass,
 } from "../src/mode/contracts.js";
 import type {
@@ -56,6 +57,7 @@ export interface ToolCapabilityMetadata {
   latencyClass: ToolLatencyClass;
   costClass: ToolCostClass;
   executionClass: ToolExecutionClass;
+  allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
   requires?: string[] | undefined;

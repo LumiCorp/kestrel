@@ -19,9 +19,12 @@ export function buildAnthropicHttpRequest(
 } {
   const provider = request.providerOptions?.anthropic;
   const fallback = request.providerOptions?.openrouter;
+  const requestedToolChoice = provider?.toolChoice ?? fallback?.toolChoice;
+  const parallelToolCalls = provider?.parallelToolCalls ?? fallback?.parallelToolCalls;
+  const forcedToolAction = requestedToolChoice === "required";
   const model = request.model ?? env.model;
   const system = toSystemPrompt(request.messages);
-  const messages = toAnthropicMessages(request);
+  const messages = toAnthropicMessages(request, !forcedToolAction);
   const structuredOutput = resolveStructuredOutput(request);
   const tools = toAnthropicTools(request.tools, structuredOutput);
 
@@ -29,7 +32,11 @@ export function buildAnthropicHttpRequest(
     model,
     messages,
   };
-  if (request.reasoning !== undefined && request.reasoning.mode !== "off") {
+  if (
+    !forcedToolAction &&
+    request.reasoning !== undefined &&
+    request.reasoning.mode !== "off"
+  ) {
     body.thinking = {
       type: "adaptive",
       display: "summarized",
@@ -58,18 +65,23 @@ export function buildAnthropicHttpRequest(
     body.tool_choice = {
       type: "tool",
       name: structuredOutput.schemaName,
+      ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
     };
   } else {
-    const toolChoice = request.reasoning?.mode !== undefined && request.reasoning.mode !== "off"
-      ? "auto"
-      : provider?.toolChoice ?? fallback?.toolChoice;
+    const toolChoice = requestedToolChoice;
     if (typeof toolChoice === "string") {
       body.tool_choice =
         toolChoice === "required"
-          ? { type: "any" }
+          ? {
+              type: "any",
+              ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
+            }
           : toolChoice === "none"
             ? { type: "none" }
-            : { type: "auto" };
+            : {
+                type: "auto",
+                ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
+              };
     }
   }
   if (request.metadata !== undefined) {
@@ -203,7 +215,10 @@ function resolveStructuredOutput(
   };
 }
 
-function toAnthropicMessages(request: ModelRequest): Array<Record<string, unknown>> {
+function toAnthropicMessages(
+  request: ModelRequest,
+  includeThinkingContinuation = true,
+): Array<Record<string, unknown>> {
   const messages = Array.isArray(request.messages) && request.messages.length > 0
     ? request.messages.filter((message) => message.role !== "system")
     : [{
@@ -212,10 +227,12 @@ function toAnthropicMessages(request: ModelRequest): Array<Record<string, unknow
       } satisfies ModelMessage];
 
   const mapped = messages.map(mapAnthropicMessage);
-  const continuation = (request.reasoning?.continuation ?? [])
+  const continuation = includeThinkingContinuation
+    ? (request.reasoning?.continuation ?? [])
     .filter((item) => item.provider === "anthropic" && item.kind === "signature")
     .map((item) => asRecord(item.value))
-    .filter((item): item is Record<string, unknown> => item?.type === "thinking");
+    .filter((item): item is Record<string, unknown> => item?.type === "thinking")
+    : [];
   if (continuation.length === 0) {
     return mapped;
   }

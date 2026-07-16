@@ -32,6 +32,9 @@ function createGitHubActionTool(options: GitHubActionToolOptions): SharedToolMod
       latencyClass: "medium",
       costClass: "free",
       executionClass: options.readOnly ? "read_only" : "external_side_effect",
+      ...(!options.readOnly
+        ? { allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build"> }
+        : {}),
       capabilityClasses: ["github.organization", "network.call"],
       approvalCapabilities: [
         "network.call",

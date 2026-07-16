@@ -38,6 +38,9 @@ function createGoogleCalendarTool(
       latencyClass: "medium",
       costClass: "free",
       executionClass: options.readOnly ? "read_only" : "external_side_effect",
+      ...(!options.readOnly
+        ? { allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build"> }
+        : {}),
       capabilityClasses: ["google.calendar", "network.call"],
       approvalCapabilities: [
         "network.call",

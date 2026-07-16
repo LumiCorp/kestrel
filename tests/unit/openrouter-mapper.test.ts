@@ -303,7 +303,7 @@ test("OpenRouter request builder preserves required tool choice for chat", () =>
 
   assert.equal(body.tool_choice, "required");
   assert.equal(body.tools?.length, 1);
-  assert.equal(body.parallel_tool_calls, false);
+  assert.equal(body.parallel_tool_calls, true);
 });
 
 test("OpenRouter request builder preserves required tool choice for responses", () => {
@@ -340,7 +340,7 @@ test("OpenRouter request builder preserves required tool choice for responses", 
 
   assert.equal(body.tool_choice, "required");
   assert.equal(body.tools?.length, 1);
-  assert.equal(body.parallel_tool_calls, false);
+  assert.equal(body.parallel_tool_calls, true);
 });
 
 test("OpenRouter request builder preserves documented tool choices", () => {

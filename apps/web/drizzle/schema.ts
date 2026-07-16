@@ -245,6 +245,8 @@ export const projects = pgTable(
       .notNull()
       .default(1),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    parentThreadId: text("parent_thread_id"),
+    branchAnchorMessageId: text("branch_anchor_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -482,6 +484,8 @@ export const threads = pgTable(
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
+    parentThreadId: text("parent_thread_id"),
+    branchAnchorMessageId: text("branch_anchor_message_id"),
     origin: text("origin", {
       enum: ["web", "mobile", "github", "discord", "api"],
     })
@@ -510,6 +514,7 @@ export const threads = pgTable(
     index("threads_external_thread_id_idx").on(table.externalThreadId),
     index("threads_updated_at_idx").on(table.updatedAt),
     index("threads_archived_at_idx").on(table.archivedAt),
+    index("threads_parent_thread_id_idx").on(table.parentThreadId),
     uniqueIndex("threads_share_token_idx").on(table.shareToken),
   ]
 );
@@ -545,6 +550,7 @@ export const threadMessages = pgTable(
     })
       .notNull()
       .default("web"),
+    sourceMessageId: text("source_message_id"),
     ...knowledgeTimestamps,
   },
   (table) => [
@@ -555,6 +561,11 @@ export const threadMessages = pgTable(
       table.projectContextRevisionId
     ),
     index("thread_messages_created_at_idx").on(table.createdAt),
+    index("thread_messages_thread_created_id_idx").on(
+      table.threadId,
+      table.createdAt,
+      table.id
+    ),
     uniqueIndex("thread_messages_external_message_idx").on(
       table.threadId,
       table.externalMessageId
@@ -599,6 +610,7 @@ export const threadTurns = pgTable(
     requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sequence: integer("sequence").notNull(),
+    queueOrdinal: integer("queue_ordinal").notNull(),
     source: text("source", { enum: ["web", "mobile", "api"] })
       .notNull()
       .default("web"),
@@ -617,6 +629,7 @@ export const threadTurns = pgTable(
       .default("queued"),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
+    outputMessageId: text("output_message_id"),
     cancelRequestedAt: timestamp("cancel_requested_at", {
       withTimezone: true,
     }),
@@ -641,6 +654,10 @@ export const threadTurns = pgTable(
     uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
     index("thread_turns_org_status_idx").on(table.organizationId, table.status),
     index("thread_turns_thread_status_idx").on(table.threadId, table.status),
+    index("thread_turns_thread_queue_ordinal_idx").on(
+      table.threadId,
+      table.queueOrdinal
+    ),
     index("thread_turns_author_idx").on(table.authorUserId),
     index("thread_turns_context_revision_idx").on(
       table.projectContextRevisionId
@@ -708,6 +725,64 @@ export const threadTurnQueueState = pgTable("thread_turn_queue_state", {
     .notNull()
     .defaultNow(),
 });
+
+export const threadTurnPresentations = pgTable(
+  "thread_turn_presentations",
+  {
+    turnId: text("turn_id")
+      .primaryKey()
+      .references(() => threadTurns.id, { onDelete: "cascade" }),
+    stage: text("stage", {
+      enum: [
+        "queued",
+        "preparing",
+        "reading_context",
+        "working",
+        "using_capability",
+        "finalizing",
+        "waiting",
+        "retrying",
+      ],
+    }).notNull(),
+    milestones: jsonb("milestones").notNull().default([]),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("thread_turn_presentations_stage_idx").on(table.stage)]
+);
+
+export const threadReadStates = pgTable(
+  "thread_read_states",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    lastReadMessageId: text("last_read_message_id").references(
+      () => threadMessages.id,
+      { onDelete: "set null" }
+    ),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.threadId] }),
+    index("thread_read_states_org_user_idx").on(
+      table.organizationId,
+      table.userId
+    ),
+  ]
+);
 
 export const mobileDeviceRegistrations = pgTable(
   "mobile_device_registrations",

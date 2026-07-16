@@ -68,6 +68,50 @@ test("Anthropic request builder serializes assistant tool-call history with prov
   });
 });
 
+test("Anthropic request builder honors direct and OpenRouter fallback parallel-call controls", () => {
+  const baseRequest: ModelRequest = {
+    model: "claude-test",
+    input: "Act now",
+    tools: [{
+      name: "calendar_create_event",
+      description: "Create an event.",
+      inputSchema: {
+        type: "object",
+        properties: { title: { type: "string" } },
+        required: ["title"],
+      },
+    }],
+  };
+  const env = {
+    apiKey: "key",
+    model: "claude-test",
+    baseUrl: "https://api.anthropic.com",
+    version: "2023-06-01",
+  };
+
+  const direct = buildAnthropicHttpRequest({
+    ...baseRequest,
+    providerOptions: {
+      anthropic: { toolChoice: "required", parallelToolCalls: false },
+    },
+  }, env);
+  assert.deepEqual(direct.body.tool_choice, {
+    type: "any",
+    disable_parallel_tool_use: true,
+  });
+
+  const fallback = buildAnthropicHttpRequest({
+    ...baseRequest,
+    providerOptions: {
+      openrouter: { toolChoice: "required", parallelToolCalls: false },
+    },
+  }, env);
+  assert.deepEqual(fallback.body.tool_choice, {
+    type: "any",
+    disable_parallel_tool_use: true,
+  });
+});
+
 test("Anthropic adaptive thinking is visible and its signed block is preserved exactly", () => {
   const signedThinking = {
     type: "thinking",

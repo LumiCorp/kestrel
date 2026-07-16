@@ -159,7 +159,7 @@ test("createOpenRouterModelGatewayFromEnv preserves required tool choice", async
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/api/v1/chat/completions"), true);
   assert.equal(requests[0]?.body.tool_choice, "required");
-  assert.equal(requests[0]?.body.parallel_tool_calls, false);
+  assert.equal(requests[0]?.body.parallel_tool_calls, true);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 
@@ -494,7 +494,7 @@ test("createOpenAiModelGatewayFromEnv preserves required tool choice", async () 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/v1/chat/completions"), true);
   assert.equal(requests[0]?.body.tool_choice, "required");
-  assert.equal(requests[0]?.body.parallel_tool_calls, false);
+  assert.equal(requests[0]?.body.parallel_tool_calls, true);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
   const mappedTools = requests[0]?.body.tools as
     | Array<{ function?: { strict?: boolean } }>
@@ -596,6 +596,7 @@ test("createAnthropicModelGatewayFromEnv maps required tool choice to any", asyn
   await gateway.call<ModelResponse<{ ok: boolean }>>({
     input: "hello",
     tools: [REQUIRED_TOOL],
+    reasoning: { mode: "provider_visible" },
     providerOptions: {
       anthropic: {
         toolChoice: "required",
@@ -606,6 +607,7 @@ test("createAnthropicModelGatewayFromEnv maps required tool choice to any", asyn
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/v1/messages"), true);
   assert.deepEqual(requests[0]?.body.tool_choice, { type: "any" });
+  assert.equal(requests[0]?.body.thinking, undefined);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 

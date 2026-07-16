@@ -349,6 +349,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         latencyClass: MCP_DEFAULT_CAPABILITY.latencyClass,
         costClass: MCP_DEFAULT_CAPABILITY.costClass,
         executionClass: MCP_DEFAULT_CAPABILITY.executionClass,
+        ...(mcpTool.presentation.allowedInteractionModes !== undefined
+          ? { allowedInteractionModes: [...mcpTool.presentation.allowedInteractionModes] }
+          : {}),
         capabilityClasses: [...mcpTool.presentation.capabilityClasses],
         approvalCapabilities:
           mcpTool.presentation.approvalMode === "auto"

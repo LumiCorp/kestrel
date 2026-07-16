@@ -3,14 +3,14 @@ import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { removeQueuedDurableTurn } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ turnId: routeIdSchema });
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ turnId: string }> }
 ) {
   try {
@@ -24,7 +24,7 @@ export async function DELETE(
     if (removed.nextTurnId) {
       await enqueueDurableThreadTurn(removed.nextTurnId).catch(() => {});
     }
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: removed.turn.threadId,
       organizationId,
       userId: session.user.id,
