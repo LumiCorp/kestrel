@@ -260,7 +260,10 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   ];
   provider.updateMachineImage = async (input) => {
     calls.push(`provider:image:${input.machineId}`);
-    return { id: input.machineId, state: "started", region: "iad" };
+    return { id: input.machineId, state: "replacing", region: "iad" };
+  };
+  provider.startMachine = async () => {
+    calls.push("provider:start");
   };
   const provisioner = createProvisioner(repository, provider, async (input) => {
     calls.push(`backup:${input.workspaceId}`);
@@ -271,11 +274,13 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     "backup:workspace-id",
     "operation:stage:environment.update.gateway",
     "provider:image:gateway-machine-id",
+    "provider:wait",
     "provider:health",
     "environment:gateway-updated",
     "operation:stage:environment.update.workspaces",
     "workspace:starting",
     "provider:image:workspace-machine-id",
+    "provider:wait",
     "provider:health",
     "workspace:rebuilt",
     "operation:stage:environment.update.verifying",
