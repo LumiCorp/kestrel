@@ -3,70 +3,137 @@ id: docs-index
 domain: docs
 status: active
 owner: kestrel-quality
-last_verified_at: 2026-07-13
+last_verified_at: 2026-07-16
 depends_on:
   - ../AGENTS.md
   - ../ARCHITECTURE.md
   - ./PLANS.md
 ---
 
-# Documentation Index
+# Kestrel Documentation Map
 
-This index maps the repo-level source-of-truth docs. Use it to find the canonical root docs, the supporting technical references under `docs/`, and the richer published docs site in `apps/docs`.
+Kestrel documentation has three layers. Choose the layer that matches your
+task instead of reading the repository as one long manual.
+
+| Layer | Audience | Purpose |
+| --- | --- | --- |
+| [Public docs site](https://docs.kestrelagents.dev) | People using, adopting, or operating Kestrel | Task-oriented product guides, tutorials, operations, and reference |
+| Root truth docs | Contributors and maintainers | Current product boundaries, architecture, design, reliability, security, and quality policy |
+| `docs/` working record | Maintainers and reviewers | ADRs, plans, runbooks, references, analysis, and historical evidence |
+
+## Start by Goal
+
+### Use Kestrel
+
+- [Choose a first journey](../apps/docs/content/docs/quickstart.mdx)
+- [Kestrel Desktop](../apps/docs/content/apps/desktop.mdx)
+- [Kestrel One](../apps/docs/content/apps/web.mdx)
+- [CLI and TUI](../apps/docs/content/cli/index.mdx)
+- [0.6 Beta release status](../apps/docs/content/start/release-status.mdx)
+
+### Build an Integration
+
+- [Build your first agent](../apps/docs/content/build/building-your-first-agent.mdx)
+- [SDK](../packages/sdk/README.md)
+- [Next.js helpers](../packages/next/README.md)
+- [AI SDK adapter](../packages/ai-sdk/README.md)
+- [Observability](../packages/observability/README.md)
+- [Protocol and terminal results](../apps/docs/content/build/protocol-and-results.mdx)
+
+### Operate Kestrel
+
+- [Operations overview](../apps/docs/content/operations/index.mdx)
+- [Reliability](../RELIABILITY.md)
+- [Security](../SECURITY.md)
+- [Quality gates](../apps/docs/content/operations/quality-gates.mdx)
+- [Deployment troubleshooting](../apps/docs/content/deploy/deployment-troubleshooting.mdx)
+- [Evaluations with Ruhroh](../apps/docs/content/operations/evaluations.mdx)
+
+### Change the Repository
+
+- [Contributing](../CONTRIBUTING.md)
+- [Architecture](../ARCHITECTURE.md)
+- [Design principles](../DESIGN.md)
+- [Plans index](PLANS.md)
+- [Contributor guardrails](../AGENTS.md)
 
 ## Root Truth Docs
 
-- [README.md](README.md)
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [DESIGN.md](DESIGN.md)
-- [RELIABILITY.md](RELIABILITY.md)
-- [SECURITY.md](SECURITY.md)
-- [QUALITY_SCORE.md](QUALITY_SCORE.md)
+These files describe the current system and are checked for freshness:
 
-## Published Docs Site
+- [README](../README.md) — public GitHub entry point
+- [Architecture](../ARCHITECTURE.md) — ownership, authority, data flow, and invariants
+- [Design principles](../DESIGN.md) — decision rules across runtime and product work
+- [Reliability](../RELIABILITY.md) — verification, evidence, incidents, and recovery
+- [Security](../SECURITY.md) — trust boundaries and disclosure
+- [Quality score](../QUALITY_SCORE.md) — health signal and interpretation
 
-- [Docs landing page](apps/docs/content/docs/index.mdx)
-- [Architecture overview](apps/docs/content/docs/architecture-overview.mdx)
-- [Quality gates](apps/docs/content/operations/quality-gates.mdx)
-- [Runtime reference](apps/docs/content/runtime/index.mdx)
+## Working Record
 
-## Supporting Repo References
+### Architecture decisions
 
-- [Plans Index](docs/PLANS.md)
-- [Kestrel One app README](apps/web/README.md)
-- [Kestrel-One production readiness evidence](docs/references/kestrel-one-production-readiness-evidence.md)
-- [Kestrel One Environment canary evidence](docs/references/kestrel-one-environment-canary-evidence.md)
-- [Kestrel One Environment cutover](docs/runbooks/2026-07-13-kestrel-one-environment-cutover.md)
-- [Packaged desktop first-run capability audit](docs/analysis/2026-06-03-packaged-desktop-first-run-capability-audit.md)
-- [Kestrel Local Core shell model](docs/plans/2026-06-17-kestrel-local-core-shell-model.md)
-- [Kestrel local platform architecture](docs/plans/2026-07-13-kestrel-local-platform-architecture.md)
-- [Kestrel Local Core beta migration evidence](docs/runbooks/2026-06-17-local-core-beta-migration-evidence.md)
-- [CLI terminal client](docs/cli/kchat.md)
-- [Kestrel Workspaces](docs/cli/workspaces.md)
-- [CLI runner protocol](docs/cli/kchat-protocol.md)
-- [Provider reasoning and agent progress](docs/references/provider-reasoning-and-agent-progress.md)
-- [Next.js runner service integration](docs/integrations/nextjs-runner-service.md)
-- [Runner SDK installation](docs/integrations/sdk-installation.md)
+ADRs record decisions that should remain understandable after their
+implementation plan is complete.
 
-## External App Evaluations
+- [Runtime simplification boundaries](adr/0004-runtime-simplification-boundaries.md)
+- [Managed RunPod Serverless control plane](adr/0005-managed-runpod-serverless-control-plane.md)
+- [Workspace checkpoints](adr/0002-git-backed-workspace-checkpoints.md)
+- [Project-scoped full-auto threads](adr/0003-project-scoped-full-auto-card-threads.md)
 
-- [Hermes Desktop feature inventory](docs/references/hermes-desktop/feature-inventory.md)
-- [Hermes Desktop UI map](docs/references/hermes-desktop/ui-map.md)
-- [Hermes Desktop UX review](docs/references/hermes-desktop/ux-review.md)
-- [Hermes Desktop fit for Kestrel](docs/references/hermes-desktop/kestrel-fit.md)
+### Active plans
 
-## Reference Contracts
+Use the [Plans index](PLANS.md) as the canonical plan inventory. High-signal
+platform plans include:
 
-- [Runtime simplification boundaries ADR](docs/adr/0004-runtime-simplification-boundaries.md)
-- [Managed RunPod Serverless control plane ADR](adr/0005-managed-runpod-serverless-control-plane.md)
-- [Architecture rules](docs/references/architecture-rules.json)
-- [Artifact evidence recovery contract](docs/references/artifact-evidence-recovery-contract.md)
-- [Heuristic hotspots](docs/references/heuristic-hotspots.md)
-- [Lint invariants](docs/references/lint-invariants.md)
-- [Workspace checkpoint thread ID contract](docs/references/workspace-checkpoint-thread-id-contract.md)
-- [Release tracks](docs/references/release-tracks.json)
+- [Local platform architecture](plans/2026-07-13-kestrel-local-platform-architecture.md)
+- [Kestrel One Threads and Projects](plans/2026-07-12-kestrel-one-threads-projects.md)
+- [Transcript-first agent runtime](plans/2026-07-06-transcript-first-agent-runtime.md)
+- [Runtime simplification baseline](plans/2026-06-08-runtime-simplification-baseline.md)
 
-## Historical Material
+### Runbooks
 
-- [Plans Index](docs/PLANS.md)
-- [v3 migration runbook](docs/runbooks/2026-02-26-v3-migration-runbook.md)
+Runbooks are operational procedures tied to a release, migration, or deployment
+shape. Begin with the runbook that matches the exact version and surface.
+
+- [Desktop 0.6 macOS release](runbooks/2026-07-13-desktop-v0.6-macos-release.md)
+- [Kestrel One Environment cutover](runbooks/2026-07-13-kestrel-one-environment-cutover.md)
+- [Gateway authority rollout](runbooks/2026-07-12-kestrel-one-gateway-authority-rollout.md)
+- [MVP operator runbook](runbooks/2026-02-25-kestrel-mvp-operator-runbook.md)
+
+### Reference contracts
+
+- [Architecture rules](references/architecture-rules.json)
+- [Artifact evidence recovery](references/artifact-evidence-recovery-contract.md)
+- [Heuristic hotspots](references/heuristic-hotspots.md)
+- [Lint invariants](references/lint-invariants.md)
+- [Provider reasoning and agent progress](references/provider-reasoning-and-agent-progress.md)
+- [Release tracks](references/release-tracks.json)
+- [Workspace checkpoint thread identity](references/workspace-checkpoint-thread-id-contract.md)
+
+### Evidence and analysis
+
+Files under [`analysis/`](analysis) and [`references/`](references) may capture
+point-in-time findings. Check their `last_verified_at`, linked revision, and
+superseding plan before treating them as current product guidance.
+
+## Documentation Ownership
+
+- Public pages must be registered by
+  [`apps/docs/lib/content-registry.ts`](../apps/docs/lib/content-registry.ts)
+  before they can enter routes, navigation, search, related links, or static
+  generation.
+- Public editorial rules live in
+  [`apps/docs/EDITORIAL.md`](../apps/docs/EDITORIAL.md).
+- Internal plans, analysis, and archive material stay in the repository but do
+  not enter the public docs automatically.
+- Release-sensitive examples must match
+  [`apps/docs/lib/release.ts`](../apps/docs/lib/release.ts) and exported code.
+
+Validate documentation changes with:
+
+```bash
+pnpm run check:docs
+pnpm run docs:test
+pnpm run docs:build
+pnpm run governance:check
+```

@@ -3,70 +3,149 @@ id: security-root
 domain: ops
 status: active
 owner: kestrel-security
-last_verified_at: 2026-06-30
+last_verified_at: 2026-07-16
 depends_on:
   - ARCHITECTURE.md
   - docs/references/lint-invariants.md
   - docs/references/architecture-rules.json
 ---
 
-# Security
+# Kestrel Security
 
-Kestrel security is expressed as hard runtime and boundary constraints, then reinforced by contributor discipline and operator review. The repo is designed to make risky actions explicit rather than implicit.
+Kestrel runs models that can request real effects against files, shells,
+networks, provider APIs, and connected MCP services. Security therefore depends
+on explicit authority, validated boundaries, least-visible credentials, and a
+durable record of what the system and its operators did.
 
-## Reporting A Vulnerability
+## Report a Vulnerability
 
-For the public open-source repo, use GitHub Security Advisories for private vulnerability disclosure.
+Use [GitHub Security Advisories](https://github.com/LumiCorp/kestrel/security/advisories/new)
+for private vulnerability disclosure.
 
-- Do not file vulnerabilities as public GitHub Issues.
-- Include reproduction details, affected surfaces, and any known impact boundaries.
-- If the report involves Desktop, runner-service, workspace mutation, or tool execution, note that explicitly so triage starts at the right trust boundary.
+Do not open a public issue for a suspected vulnerability. Include:
 
-Normal bugs, usage questions, and feature requests should go through the public support paths in [SUPPORT.md](https://github.com/LumiCorp/kestrel/blob/main/SUPPORT.md).
+- affected version, commit, and product surface
+- reproduction steps or a minimal proof of concept
+- expected and observed trust boundary
+- known data, credential, workspace, or execution impact
+- whether the issue involves Desktop, Local Core, runner service, tool
+  execution, Kestrel One tenancy, or public packages
+
+For normal bugs and usage questions, use [Support](SUPPORT.md).
+
+## Trust Model
+
+```mermaid
+flowchart LR
+    B["Browser or untrusted input"] --> A["Trusted app server or controlled client"]
+    A --> R["Authenticated runner boundary"]
+    R --> K["Runtime policy and lifecycle"]
+    K --> G["Validated model and tool gateways"]
+    G --> F["Files, shell, network, providers, MCP"]
+    K --> E["Audit events, artifacts, and checkpoints"]
+```
+
+The browser is not a trusted runner client. Product servers, Local Core, and
+the Electron main process establish identity and hold sensitive execution
+credentials. Renderer and browser code receive only the data and capabilities
+required for their interface.
 
 ## Hard Constraints
 
-- Unknown external input must be parsed or validated at boundaries before use.
-- Architecture edges are constrained by the approved dependency rules in [docs/references/architecture-rules.json](https://github.com/LumiCorp/kestrel/blob/main/docs/references/architecture-rules.json).
-- Tool execution is exposed through shared tool contracts rather than ad hoc capability access.
-- High-risk policy, migration, or heuristic changes require explicit escalation under [AGENTS.md](https://github.com/LumiCorp/kestrel/blob/main/AGENTS.md).
-- Runtime failures and operator-relevant events should use normalized machine-readable error shapes.
+- Parse and validate unknown external input before use.
+- Keep runner tokens, provider credentials, signing keys, and database secrets
+  out of browser and renderer code.
+- Expose filesystem, shell, internet, code execution, model, and MCP effects
+  only through typed tool contracts and policy-aware runtime handling.
+- Validate lifecycle transitions before state mutation.
+- Keep tenant, organization, actor, project, and session authority explicit at
+  every cross-service boundary.
+- Return normalized machine-readable errors without leaking credentials or
+  internal secrets.
+- Record operator-sensitive actions and retain evidence required for incident
+  reconstruction.
+- Escalate new policy, irreversible migration, or heuristic runtime behavior
+  before shipping it.
+- Enforce approved dependency edges with
+  [`architecture-rules.json`](docs/references/architecture-rules.json).
 
 ## Security-Critical Boundaries
 
-### Runner service and app servers
+### Runner service and Local Core
 
-Browsers should talk to an application server or controlled client surface, not hold runner credentials directly. The runner service is the authenticated boundary between external requests and runtime execution.
+The runner service is the authenticated entrance to execution. Hosted products
+call it from trusted servers. Local clients use Local Core's authenticated Unix
+socket. Requests must be authenticated and validated before runtime mutation or
+tool execution.
 
-### Tool execution and workspace access
+### Desktop IPC
 
-Filesystem, dev shell, internet, and code-execution capabilities must stay behind explicit tool definitions, allowlists, and policy-aware runtime handling. Workspace mutation should remain inspectable through logs, artifacts, and checkpoints.
+Desktop keeps Local Core and provider credentials in the Electron main process.
+The renderer receives a typed, capability-scoped preload bridge and non-secret
+settings projections. Credential setup is write-only where possible.
 
-### Provider credentials
+### Kestrel One tenancy
 
-Model-provider keys and runner-service credentials belong in server-side environment configuration. They should not be embedded in browser code, examples that imply browser ownership, or machine-global defaults without clear intent.
+Kestrel One owns organization, membership, Project, Thread, Knowledge, model,
+and administrative authorization. Application data must be scoped by the
+authoritative organization and resource relationship rather than UI route or
+client-provided labels.
 
-### Replay and audit data
+### Tools, workspaces, and MCP
 
-Run logs, replay artifacts, checkpoints, and operator evidence are part of the security posture because they support incident reconstruction and accountability.
+Tool availability is not permission to execute every request. Inputs are
+validated, capabilities remain explicit, and workspace mutations should be
+inspectable through results, events, artifacts, and checkpoints. Discovered MCP
+credentials must not be projected into UI or logs.
+
+### Provider and deployment credentials
+
+API keys, runner tokens, signing material, and infrastructure credentials
+belong in server-side, Local Core, or operating-system-backed configuration.
+Examples must not imply that secrets belong in browser bundles, source control,
+or machine-global defaults without explicit operator intent.
+
+### Persistence, replay, and shared artifacts
+
+Logs and replay material can contain sensitive prompts, paths, tool output, and
+user data. Access controls and retention must match the product surface.
+Sharing an artifact or Thread must not implicitly grant broader organization or
+workspace access.
+
+## Contributor Checklist
+
+When changing a boundary, ask:
+
+- What input is untrusted, and where is it parsed?
+- Which component authenticates the actor and authorizes the resource?
+- Could a browser, renderer, model, or tool result influence authority?
+- Are credentials readable in a less-trusted process, log, error, or response?
+- Can the action write files, execute code, access the network, or cross tenant
+  boundaries?
+- Is failure machine-readable without exposing sensitive detail?
+- What evidence will remain if the action must be investigated later?
+- Does the change add hidden heuristic or fallback policy?
+
+Run the narrow security-relevant tests and the repository governance gates
+before merging. Workspace, tool, runner, IPC, auth, and data-scope changes
+should include regression coverage at the owning boundary.
 
 ## Operator Responsibilities
 
-- Use the documented runner-service and deploy/auth flows instead of inventing bypass paths.
-- Treat new heuristics, fallback ranking, or policy shortcuts as security-relevant behavior changes that require explicit review.
-- Validate docs and contract changes with `pnpm run governance:check` before merging.
-- Review workspace and tool-surface changes for unintended write, network, or credential exposure.
-
-## Source-of-Truth References
-
-- Invariant index: [docs/references/lint-invariants.md](https://github.com/LumiCorp/kestrel/blob/main/docs/references/lint-invariants.md)
-- Architecture rules: [docs/references/architecture-rules.json](https://github.com/LumiCorp/kestrel/blob/main/docs/references/architecture-rules.json)
-- Operations security page: [apps/docs/content/operations/security.mdx](https://github.com/LumiCorp/kestrel/blob/main/apps/docs/content/operations/security.mdx)
-- Deploy auth guidance: [apps/docs/content/deploy/environment-and-auth.mdx](https://github.com/LumiCorp/kestrel/blob/main/apps/docs/content/deploy/environment-and-auth.mdx)
-- Contributor guidance: [CONTRIBUTING.md](https://github.com/LumiCorp/kestrel/blob/main/CONTRIBUTING.md)
+- Use documented runner, deployment, credential, and recovery flows.
+- Scope tokens and keys to the minimum required system and environment.
+- Rotate exposed credentials and preserve incident evidence before cleanup.
+- Review new tools and MCP services for input, output, network, filesystem, and
+  credential behavior.
+- Treat destructive reset as a recovery action, not a first diagnostic step.
+- Keep exact compatible release lines across runtime and public packages.
 
 ## Read Next
 
-- [ARCHITECTURE.md](https://github.com/LumiCorp/kestrel/blob/main/ARCHITECTURE.md)
-- [docs/references/lint-invariants.md](https://github.com/LumiCorp/kestrel/blob/main/docs/references/lint-invariants.md)
-- [apps/docs/content/operations/security.mdx](https://github.com/LumiCorp/kestrel/blob/main/apps/docs/content/operations/security.mdx)
+- [Architecture](ARCHITECTURE.md)
+- [Reliability](RELIABILITY.md)
+- [Operations security guide](apps/docs/content/operations/security.mdx)
+- [Environment and authentication](apps/docs/content/deploy/environment-and-auth.mdx)
+- [Lint invariants](docs/references/lint-invariants.md)
+- [Architecture rules](docs/references/architecture-rules.json)
+- [Contributing](CONTRIBUTING.md)

@@ -1,28 +1,79 @@
 # Contributing to Kestrel
 
-Kestrel Desktop is the flagship product surface of the Kestrel Suite. Contributions should preserve that Desktop-first public story while respecting the shared runtime, companion surfaces, and contract-heavy validation model underneath it.
+Kestrel is a contract-heavy runtime and product monorepo. Contributions are
+welcome when they keep behavior explicit, changes attributable, and validation
+proportional to risk.
 
-## Where To Start
+## Before You Start
 
-- Desktop product work: start with [apps/desktop/README.md](https://github.com/LumiCorp/kestrel/blob/main/apps/desktop/README.md)
-- Public docs and product framing: start with [README.md](https://github.com/LumiCorp/kestrel/blob/main/README.md) and [apps/docs/README.md](https://github.com/LumiCorp/kestrel/blob/main/apps/docs/README.md)
-- Runtime and shared contracts: start with [ARCHITECTURE.md](https://github.com/LumiCorp/kestrel/blob/main/ARCHITECTURE.md), [RELIABILITY.md](https://github.com/LumiCorp/kestrel/blob/main/RELIABILITY.md), and [SECURITY.md](https://github.com/LumiCorp/kestrel/blob/main/SECURITY.md)
+Choose the owner that matches your change:
+
+| Change | Start with |
+| --- | --- |
+| Runtime, orchestration, persistence, tools, or Local Core | [Architecture](ARCHITECTURE.md) and [Design principles](DESIGN.md) |
+| Desktop | [Desktop README](apps/desktop/README.md) |
+| Kestrel One | [Kestrel One README](apps/web/README.md) and its route-ownership manifest |
+| SDK or framework package | The package README under [`packages/`](packages) and exported contracts |
+| Public documentation | [Docs app README](apps/docs/README.md) and [editorial model](apps/docs/EDITORIAL.md) |
+| Reliability, replay, or evaluation | [Reliability](RELIABILITY.md) and [`evals/README.md`](evals/README.md) |
+| Security-sensitive boundary | [Security](SECURITY.md) |
+
+For runtime fixes, identify the observed wrong behavior, the component that
+first made it wrong, and the existing surface that owns the repair. A
+downstream rejection does not automatically transfer ownership downstream.
 
 ## Development Setup
 
+Kestrel uses Node.js 22 in CI and pnpm 9.
+
 ```bash
-cp .env.example .env
+git clone https://github.com/LumiCorp/kestrel.git
+cd kestrel
+corepack enable
 pnpm install
-pnpm run desktop:dev
 ```
 
-Kestrel Desktop is the recommended first-run path for local evaluation and product-facing changes.
+Copy the environment template only when the surface you are running needs it:
 
-## Validation Expectations
+```bash
+cp .env.example .env
+```
 
-Run the narrowest useful checks for your change first, then the broader gates when appropriate.
+Common development entry points:
 
-Baseline repo checks:
+```bash
+pnpm run desktop:dev
+pnpm run web:dev
+pnpm run docs:dev
+pnpm run tui
+```
+
+Offline builds and tests do not require model-provider credentials. Live model
+flows do.
+
+## Make the Change
+
+- Keep the patch small, reversible, and inside the owning surface.
+- Reuse existing shared contracts and utilities before adding an abstraction.
+- Parse unknown boundary input before use.
+- Preserve run lifecycle, replay, evidence, and terminal-result invariants.
+- Prefer prompts, schemas, field descriptions, examples, validators, retries,
+  and result shaping before heuristic policy.
+- Do not introduce keyword rules, scoring thresholds, fallback ranking,
+  classification, path matching, or other heuristic decisions without explicit
+  approval.
+- Add a regression proof where the behavior first became wrong.
+- Update public or root documentation when a user-visible contract changes.
+
+Schema migrations, irreversible data moves, autonomy-policy changes, and new
+heuristic runtime behavior require escalation before implementation or release.
+
+## Validate the Change
+
+Run the narrowest useful test while iterating, then widen according to the
+surface and risk.
+
+Repository baseline:
 
 ```bash
 pnpm run governance:check
@@ -30,27 +81,41 @@ pnpm run test
 pnpm run prompt-suite
 ```
 
-Runtime/core and replay-oriented work should also run:
+Runtime/core work also requires:
 
 ```bash
 pnpm run evals:release-check
 ```
 
-Desktop-focused public ship checks:
+Docs work:
+
+```bash
+pnpm run check:docs
+pnpm run docs:test
+pnpm run docs:build
+pnpm run governance:check
+```
+
+Desktop work:
 
 ```bash
 pnpm --filter @kestrel/desktop test
 pnpm --filter @kestrel/desktop build
 ```
 
-Docs-heavy changes should at minimum run:
+Kestrel One work:
 
 ```bash
-pnpm run check:docs
-pnpm run docs:test
+pnpm run web:typecheck
+pnpm run web:test
+pnpm run web:build
 ```
 
-If `governance:check` fails at `check:desktop-resources`, refresh the mirrored desktop resources and rerun governance:
+Public package work should run the owning package tests and release check. See
+[Reliability](RELIABILITY.md) for the complete verification ladder.
+
+If governance fails at `check:desktop-resources` after a source change that is
+mirrored into Desktop, refresh the resources and rerun governance:
 
 ```bash
 pnpm --filter @kestrel/desktop prepare:resources
@@ -59,13 +124,31 @@ pnpm run governance:check
 
 ## Pull Requests
 
-- Keep changes small, reversible, and grounded in existing shared utilities.
-- Preserve runtime contract invariants, replay semantics, and evidence-backed behavior.
-- Explain user-visible impact clearly, especially for Desktop, runtime, and docs changes.
-- Link issues when relevant and describe which validation commands you ran.
+A useful pull request explains:
 
-## Reporting Problems
+- the user-visible or contract-level problem
+- the component that owned the problem
+- the chosen repair and any deliberately excluded work
+- migrations, compatibility, security, or recovery implications
+- the exact validation commands and results
 
-- Bugs and feature requests: open a GitHub Issue.
-- Usage questions: use GitHub Discussions if enabled for the public repo; otherwise open an Issue.
-- Security issues: do not file a public issue. Follow [SECURITY.md](https://github.com/LumiCorp/kestrel/blob/main/SECURITY.md).
+Keep unrelated cleanup out of the patch. If a failure is transient or unrelated,
+record how you isolated it and whether the owning gate passed on rerun.
+
+## Documentation Changes
+
+Public docs begin with a reader goal and observable success state. Maintainer
+docs keep ownership, contracts, and evidence precise. Do not expose internal
+plans or archives by linking them into public navigation without registering
+and reviewing them against the public content boundary.
+
+See the [documentation map](docs/index.md) for source-of-truth locations.
+
+## Report Problems
+
+- [Open a bug](https://github.com/LumiCorp/kestrel/issues/new?template=bug_report.md)
+- [Request a feature](https://github.com/LumiCorp/kestrel/issues/new?template=feature_request.md)
+- [Browse existing issues](https://github.com/LumiCorp/kestrel/issues)
+- Report vulnerabilities privately through [Security](SECURITY.md)
+
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).

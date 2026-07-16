@@ -26,4 +26,4 @@ The public docs are written for people trying Kestrel, adopting it in a product,
 
 ## Public boundary
 
-Only pages registered by the public content registry may enter routes, navigation, search, related links, or static generation. Studio, archives, maintainer-only material, contributor setup, private analysis, and stale release claims stay outside that boundary.
+Only pages registered by the public content registry may enter routes, navigation, search, related links, or static generation. Archives, maintainer-only material, contributor setup, private analysis, and stale release claims stay outside that boundary.

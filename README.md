@@ -1,100 +1,181 @@
-# Kestrel
+<p align="center">
+  <img src="apps/docs/public/brand/kestrel-mark.png" alt="Kestrel mark" width="112" />
+</p>
 
-Kestrel is an open runtime platform for building and operating durable AI
-agents. This monorepo contains the runtime kernel, Local Core, CLI/TUI,
-self-contained Desktop application, Kestrel One hosted web product, public
-TypeScript packages, documentation, integrations, and declarative evaluation
-specifications.
+<h1 align="center">Kestrel</h1>
 
-## Product Boundaries
+<p align="center">
+  <strong>Durable infrastructure for agent work that has to finish.</strong>
+</p>
 
-- **Kestrel** owns the runtime, local services, public clients, packages, and
-  product surfaces in this repository.
-- **Kestrel CLI** is a Local Core client. Interactive, job, operator, web-proxy,
-  and evidence commands do not launch or reconstruct a second local runtime.
-- **Kestrel One** is the canonical hosted web product under `apps/web`.
-- **Kestrel Desktop** is the independent local UI surface. The target
-  architecture makes it a Local Core client; its current compatibility path
-  still starts Local Core with the bundled managed database until the client
-  cutover and packaging migration land.
-- **Kestrel Studio** is a separate private commercial product that consumes
-  exact released Kestrel packages. Studio source does not belong here.
-- **Ruhroh** is a separate project that owns evaluation execution, reporting,
-  comparison, and the maintained Kestrel adapter. Kestrel owns only the
-  declarative specifications and ownership evidence under `evals/`.
+<p align="center">
+  Build, run, inspect, recover, and govern AI agents across local workspaces,
+  team products, and application backends.
+</p>
 
-## Repository Layout
+<p align="center">
+  <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
+  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.6%20Beta-c66a2b.svg" alt="Kestrel 0.6 Beta" /></a>
+</p>
 
-- `src/`: runtime, orchestration, persistence, replay, governance, Local Core,
-  and shared adapters
-- `cli/`: `kestrel`, `ks`, `kcron`, the TUI, and runner-service commands
-- `apps/desktop/`: self-contained Electron application and bundled local data
-  runtime
-- `apps/web/`: Kestrel One, including auth, streaming, artifacts, knowledge,
-  bots, administration, and billing
-- `apps/docs/`: public documentation site
-- `packages/protocol/`: public runner protocol contracts
-- `packages/sdk/`: public TypeScript SDK
-- `packages/next/`: Next.js integration helpers
-- `packages/observability/`: observability integrations
-- `evals/`: declarative Ruhroh scenarios, suites, targets, and migration
-  evidence
-- `agents/reference-react/`: canonical bundled reference agent
-- `tools/`: typed tool contracts and handlers
-- `db/migrations/`: persistent runtime and orchestration schema
+Kestrel is an open runtime platform for agent work that cannot be reduced to a
+single request and response. It gives every run an identity, terminal outcome,
+event history, artifacts, and operator controls so work can survive
+interruptions without becoming a black box.
 
-## Local Setup
+Use Kestrel through a packaged desktop application, the hosted Kestrel One
+product, a CLI/TUI, or typed server-side packages. Every surface shares the
+same execution and result contracts.
 
-Prerequisites: Node.js 22 and pnpm 9.
+> **Release status:** this repository and its documentation describe the
+> `0.6.0-beta.0` contract line. Package and product availability may be staged.
+> Check [0.6 Beta release status](apps/docs/content/start/release-status.mdx)
+> before distributing an installer or pinning a production dependency.
+
+[Read the docs](https://docs.kestrelagents.dev) ·
+[Choose a quickstart](apps/docs/content/docs/quickstart.mdx) ·
+[Understand the architecture](ARCHITECTURE.md) ·
+[Contribute](CONTRIBUTING.md)
+
+## Why Kestrel
+
+A direct model call is enough for a disposable answer. Production agent work
+usually needs more:
+
+- **Continuity:** sessions and runs persist beyond one browser request or
+  process lifetime.
+- **Control:** people can inspect, steer, stop, resume, retry, and approve work
+  without creating an unrelated conversation.
+- **Durable outcomes:** completed, failed, cancelled, and waiting states are
+  explicit rather than inferred from the last message.
+- **Evidence:** events, artifacts, checkpoints, and operator decisions remain
+  available for diagnosis, replay, and evaluation.
+- **Governed effects:** filesystem, shell, network, model, and MCP capabilities
+  cross typed and policy-aware tool boundaries.
+- **Application contracts:** human-facing `assistantText` stays separate from
+  structured `finalizedPayload` data.
+
+The result is agent work that can be operated as a system—not merely watched
+as a chat transcript.
+
+## Choose Your Path
+
+| Goal | Start here | What you get |
+| --- | --- | --- |
+| Run agents against local files and repositories | [Kestrel Desktop](apps/docs/content/apps/desktop.mdx) | A packaged macOS application with local workspaces, persistent sessions, recovery, and operator control |
+| Continue agent work with a team | [Kestrel One](apps/docs/content/apps/web.mdx) | Shared Threads, Projects, Knowledge, artifacts, access control, and managed model access |
+| Add durable agents to an application | [Build your first agent](apps/docs/content/build/building-your-first-agent.mdx) | Typed TypeScript SDK, runner protocol, Next.js helpers, AI SDK adapter, and observability |
+| Operate or troubleshoot a deployment | [Operations](apps/docs/content/operations/index.mdx) | Reliability, security, replay, evaluation, deployment, and incident workflows |
+| Work from the terminal | [CLI and TUI](apps/docs/content/cli/index.mdx) | Local Core commands, interactive sessions, durable jobs, evidence, and automation |
+
+## How It Fits Together
+
+```mermaid
+flowchart LR
+    U["Person or product"] --> S["Desktop, Kestrel One, CLI, or app server"]
+    S --> R["Authenticated runner boundary"]
+    R --> K["Durable Kestrel runtime"]
+    K --> M["Model providers"]
+    K --> T["Allowed tools and MCP services"]
+    K --> E["Events, results, artifacts, and checkpoints"]
+    E --> S
+```
+
+Credentials and trusted identity stay on controlled clients or application
+servers. The runtime owns execution state and effects. Product surfaces own
+their user experience; they do not reconstruct a second runtime.
+
+Read [Kestrel Architecture](ARCHITECTURE.md) for authority, data flow, and
+package boundaries.
+
+## Build With Kestrel
+
+The application-facing SDK talks to an explicit Local Core or remote runner
+target. It does not run agents in the browser or infer execution authority from
+ambient process state.
 
 ```bash
-cp .env.example .env
+pnpm add @kestrel-agents/sdk@0.6.0-beta.0
+```
+
+```ts
+import { createAgent } from "@kestrel-agents/sdk";
+
+const agent = createAgent({
+  id: "support-agent",
+  profileId: "support",
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
+});
+
+const terminal = await agent.run(
+  {
+    sessionId: "customer-42",
+    message: "Investigate the failed deployment and prepare a recovery plan.",
+  },
+  {
+    actor: { actorId: "user-42", actorType: "end_user" },
+    tenantId: "acme",
+  },
+);
+
+console.log(terminal.payload.result.assistantText);
+console.log(terminal.payload.result.finalizedPayload);
+```
+
+Go deeper with the [SDK guide](packages/sdk/README.md),
+[Next.js helpers](packages/next/README.md),
+[AI SDK adapter](packages/ai-sdk/README.md), and
+[observability package](packages/observability/README.md).
+
+## Run the Repository Locally
+
+Kestrel uses Node.js 22 in CI and pnpm 9. No provider credentials are required
+to install dependencies or run the offline validation suites.
+
+```bash
+git clone https://github.com/LumiCorp/kestrel.git
+cd kestrel
+corepack enable
 pnpm install
 ```
 
-Start one product surface:
+Start the surface you are working on:
 
 ```bash
-pnpm run desktop:dev
-pnpm run web:dev
-pnpm run tui
+pnpm run desktop:dev  # packaged local product
+pnpm run web:dev      # Kestrel One
+pnpm run docs:dev     # documentation site
+pnpm run tui          # terminal interface
 ```
 
-Model-backed flows require `OPENROUTER_API_KEY`. Internet-backed flows require
-`TAVILY_API_KEY`. Kestrel One also requires its hosted service configuration;
-see `apps/web/.env.example`.
+Model-backed development requires a configured provider. Start from
+[`.env.example`](.env.example); Kestrel One has additional settings in
+[`apps/web/.env.example`](apps/web/.env.example).
 
-The CLI starts or attaches to Local Core and uses its authenticated Unix socket
-for execution and evidence. Desktop still uses the transitional managed-runner
-path. Local Core's 0.6 default is embedded PGlite; external PostgreSQL remains
-an explicit advanced deployment choice. Desktop cutover and removal of
-compatibility packaging are tracked in the local platform architecture plan.
+## Repository Map
 
-## Registry Install
+| Path | Responsibility |
+| --- | --- |
+| [`src/`](src) | Runtime contracts, execution, orchestration, persistence, replay, Local Core, and shared adapters |
+| [`cli/`](cli) | `kestrel`, `ks`, `kcron`, TUI, and runner-service commands |
+| [`apps/desktop/`](apps/desktop) | Electron desktop application over Local Core |
+| [`apps/web/`](apps/web) | Kestrel One hosted product |
+| [`apps/docs/`](apps/docs) | Public Next.js/MDX documentation site |
+| [`packages/`](packages) | Protocol, SDK, Next.js, AI SDK, and observability packages |
+| [`agents/reference-react/`](agents/reference-react) | Canonical reference agent |
+| [`tools/`](tools) | Typed tool contracts, catalog, and handlers |
+| [`evals/`](evals) | Declarative evaluation scenarios and release ownership evidence |
+| [`docs/`](docs) | ADRs, plans, runbooks, references, analysis, and maintainer evidence |
 
-Install the released runtime and CLI package globally:
+## Quality Gates
 
-```bash
-npm install --global @kestrel-agents/kestrel@0.5.1
-kestrel --help
-```
-
-The package installs the `kestrel`, `ks`, and `kcron` commands.
-
-## Common Commands
-
-- `pnpm run build`: build the public runtime
-- `pnpm run web:build`: build canonical Kestrel One
-- `pnpm run desktop:build`: build Desktop
-- `pnpm run desktop:package`: package Desktop
-- `pnpm run docs:build`: build the docs site
-- `pnpm run cli:package`: package the CLI/TUI distribution
-- `pnpm run runner:service`: start the runner service
-- `pnpm run install:cli`: install commands from the current checkout
-
-## Validation Gates
-
-Run focused checks first, then the repository gates:
+Run a focused test while iterating. Before a runtime or repository-wide change
+is considered ready, run the shared gates:
 
 ```bash
 pnpm run governance:check
@@ -103,23 +184,38 @@ pnpm run prompt-suite
 pnpm run evals:release-check
 ```
 
-`evals:release-check` executes the exact released Ruhroh version pinned by the
-workspace. It rejects source checkouts, copied adapters, and binary overrides.
+These gates protect architecture boundaries, public contracts, deterministic
+replay, model-visible behavior, package compatibility, and declarative Ruhroh
+evaluation inputs. See [Reliability](RELIABILITY.md) for the verification and
+incident model.
+
+## Project Boundaries
+
+- **Kestrel** owns the open runtime, Local Core, CLI/TUI, Desktop, Kestrel One,
+  public packages, tools, and declarative evaluation specifications in this
+  repository.
+- **Ruhroh** is a separate evaluation project. It owns evaluation execution,
+  reports, comparison, and the maintained Kestrel adapter; this repository
+  owns the specifications under [`evals/`](evals).
 
 ## Documentation
 
+- [Documentation map](docs/index.md)
 - [Architecture](ARCHITECTURE.md)
+- [Design principles](DESIGN.md)
 - [Reliability](RELIABILITY.md)
 - [Security](SECURITY.md)
 - [Quality score](QUALITY_SCORE.md)
 - [Contributing](CONTRIBUTING.md)
-- [Documentation index](docs/index.md)
-- [Desktop](apps/desktop/README.md)
-- [Kestrel One](apps/web/README.md)
-- [SDK](packages/sdk/README.md)
-- [Evaluations](evals/README.md)
+- [Support](SUPPORT.md)
 
-## Support
+## Contributing and Support
 
-Use GitHub Issues for reproducible defects and feature requests. Do not file
-security vulnerabilities publicly; follow [SECURITY.md](SECURITY.md).
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
+change ownership, and validation expectations.
+
+Use [GitHub Issues](https://github.com/LumiCorp/kestrel/issues) for reproducible
+bugs and feature requests. Do not report vulnerabilities publicly; follow the
+private disclosure process in [SECURITY.md](SECURITY.md).
+
+Kestrel is available under the [MIT License](LICENSE).

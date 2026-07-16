@@ -3,7 +3,8 @@
 TypeScript SDK for server-side applications that talk to Kestrel Local Core or
 a remote Kestrel-compatible runner service.
 
-This is the main application-facing package for teams extending or embedding the Kestrel Suite beyond the flagship Desktop app. It covers:
+This is the main application-facing package for teams embedding Kestrel in a
+server-side product. It covers:
 
 - creating an agent client bound to a runner service
 - running and streaming turns for a specific session
@@ -26,25 +27,19 @@ directly.
 - It does not run agents in-process.
 - It expects a reachable Kestrel runner-service boundary.
 
-Use this package when you want application code to call into an existing Kestrel deployment or build suite-adjacent integrations. If you need raw command and event control instead of the higher-level agent client, use `@kestrel-agents/sdk/runner`.
+Use this package when application code needs to call an existing Kestrel
+deployment. If you need raw command and event control instead of the
+higher-level agent client, use `@kestrel-agents/sdk/runner`.
 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/sdk
+pnpm add @kestrel-agents/sdk@0.6.0-beta.0
 ```
 
-```bash
-npm install @kestrel-agents/sdk
-```
-
-```bash
-yarn add @kestrel-agents/sdk
-```
-
-```bash
-bun add @kestrel-agents/sdk
-```
+Use an exact compatible release line across the runtime and public packages.
+Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+before pinning a production dependency.
 
 ## Requirements
 
@@ -278,5 +273,6 @@ Use the OpenAI-compatible HTTP layer instead of this SDK when an application alr
 
 - [Root README](https://github.com/LumiCorp/kestrel/blob/main/README.md)
 - [Next.js helpers](https://github.com/LumiCorp/kestrel/blob/main/packages/next/README.md)
+- [AI SDK adapter](https://github.com/LumiCorp/kestrel/blob/main/packages/ai-sdk/README.md)
 - [Observability helpers](https://github.com/LumiCorp/kestrel/blob/main/packages/observability/README.md)
 - [CLI runner protocol](https://github.com/LumiCorp/kestrel/blob/main/docs/cli/kchat-protocol.md)

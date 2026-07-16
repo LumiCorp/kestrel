@@ -2,7 +2,9 @@
 
 Tracing and observability helpers for Kestrel-backed agent clients.
 
-This package exposes a Kestrel-native trace model and an OpenTelemetry export bridge. It is for teams extending the Kestrel Suite with trace records around agent activity without making OTEL the primary application contract.
+This package exposes a Kestrel-native trace model and an OpenTelemetry export
+bridge. It adds application-facing traces around SDK activity without making
+OTEL the primary Kestrel contract.
 
 The core model includes:
 
@@ -26,8 +28,12 @@ It is not the runtime's internal observability system. It is the application-fac
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability @kestrel-agents/sdk
+pnpm add @kestrel-agents/observability@0.6.0-beta.0 \
+  @kestrel-agents/sdk@0.6.0-beta.0
 ```
+
+Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+before pinning a production dependency.
 
 ## Create a Tracer
 
@@ -76,4 +82,5 @@ const tracer = createTracer({
 ## Related Docs
 
 - [SDK README](https://github.com/LumiCorp/kestrel/blob/main/packages/sdk/README.md)
+- [Observability guide](../../apps/docs/content/build/adding-observability.mdx)
 - [Root README](https://github.com/LumiCorp/kestrel/blob/main/README.md)

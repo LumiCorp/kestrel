@@ -40,7 +40,7 @@ Focused captures were necessary because the full-page reference comparison canno
 - The Desktop, Kestrel One, and Build pathway links resolve to the expected public journeys.
 - Product media at 390 px retains its caption and meaning without horizontal overflow.
 - Browser console inspection returned no warnings or errors on the homepage and representative article routes.
-- Representative legacy URLs returned HTTP 308 redirects; Studio, archive, maintainer-only, and legacy chat routes returned 404.
+- Representative legacy URLs returned HTTP 308 redirects; private, archive, maintainer-only, and legacy chat routes returned 404.
 
 ## Comparison history
 
