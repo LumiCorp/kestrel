@@ -171,8 +171,6 @@ declarative specifications owned in this repository.
 
 ## Outside This Repository
 
-- **Kestrel Studio** is a private commercial product. It consumes exact
-  released packages and must not use workspace links or source imports.
 - **Ruhroh** owns evaluation execution, reports, comparison, and the maintained
   Kestrel adapter.
 

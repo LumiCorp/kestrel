@@ -94,7 +94,6 @@ These can ship in v0.5, but should be labeled as beta or experimental:
 - Polished Windows/Linux desktop promise unless those builds are packaged, signed where needed, and tested on clean machines.
 - Browser or edge runtime SDK support.
 - Mobile.
-- Studio as an official public product surface.
 - Unattended long-running autonomy as a default promise.
 - Marketplace-style MCP/tool installation UX.
 

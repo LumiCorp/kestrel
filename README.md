@@ -194,8 +194,6 @@ incident model.
 - **Kestrel** owns the open runtime, Local Core, CLI/TUI, Desktop, Kestrel One,
   public packages, tools, and declarative evaluation specifications in this
   repository.
-- **Kestrel Studio** is a separate private commercial product. It consumes
-  exact released Kestrel packages; its source does not belong here.
 - **Ruhroh** is a separate evaluation project. It owns evaluation execution,
   reports, comparison, and the maintained Kestrel adapter; this repository
   owns the specifications under [`evals/`](evals).
