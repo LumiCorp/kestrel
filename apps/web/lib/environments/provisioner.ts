@@ -422,11 +422,13 @@ export class EnvironmentProvisioner {
         machineId: environment.flyGatewayMachineId,
         runtimeImage: routerImage,
       });
-      if (gateway.state !== "started") {
+      if (gateway.state === "stopped") {
         await this.provider.startMachine({
           appName: environment.flyAppName,
           machineId: environment.flyGatewayMachineId,
         });
+      }
+      if (gateway.state !== "started") {
         await this.provider.waitForMachine({
           appName: environment.flyAppName,
           machineId: environment.flyGatewayMachineId,
@@ -448,11 +450,21 @@ export class EnvironmentProvisioner {
             machineId: environment.flyGatewayMachineId,
             runtimeImage: environment.routerImage,
           })
-          .then(async () => {
-            await this.provider.startMachine({
-              appName: environment.flyAppName!,
-              machineId: environment.flyGatewayMachineId!,
-            });
+          .then(async (gateway) => {
+            if (gateway.state === "stopped") {
+              await this.provider.startMachine({
+                appName: environment.flyAppName!,
+                machineId: environment.flyGatewayMachineId!,
+              });
+            }
+            if (gateway.state !== "started") {
+              await this.provider.waitForMachine({
+                appName: environment.flyAppName!,
+                machineId: environment.flyGatewayMachineId!,
+                state: "started",
+                timeoutSeconds: 90,
+              });
+            }
             await this.provider.waitForMachineHealth({
               appName: environment.flyAppName!,
               machineId: environment.flyGatewayMachineId!,
@@ -481,11 +493,13 @@ export class EnvironmentProvisioner {
           machineId: workspace.flyMachineId,
           runtimeImage,
         });
-        if (machine.state !== "started") {
+        if (machine.state === "stopped") {
           await this.provider.startMachine({
             appName: environment.flyAppName,
             machineId: workspace.flyMachineId,
           });
+        }
+        if (machine.state !== "started") {
           await this.provider.waitForMachine({
             appName: environment.flyAppName,
             machineId: workspace.flyMachineId,
