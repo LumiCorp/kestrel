@@ -15,12 +15,14 @@ import type { UIMessageStreamWriter } from "ai";
 test("completed output becomes canonical assistant text", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-1",
+    turnId: "turn-1",
   });
 
   const snapshot = accumulator.finish(completedEvent("The canonical answer."));
 
   assert.equal(snapshot.terminalStatus, "completed");
   assert.equal(snapshot.assistantText, "The canonical answer.");
+  assert.equal(snapshot.message.metadata?.kestrelTurnId, "turn-1");
   assert.deepEqual(snapshot.message.parts.at(-1), {
     type: "text",
     text: "The canonical answer.",
@@ -77,6 +79,7 @@ test("AI SDK stream and persisted message are emitted from the same accumulator"
   const snapshot = await writeKestrelRunnerStreamToUIMessage({
     writer,
     assistantMessageId: "assistant-stream",
+    turnId: "turn-stream",
     textPartId: "text-stream",
     events: events([
       progressEvent(),
@@ -88,6 +91,16 @@ test("AI SDK stream and persisted message are emitted from the same accumulator"
   });
 
   assert.equal(snapshot.assistantText, "Done.");
+  assert.equal(snapshot.message.metadata?.kestrelTurnId, "turn-stream");
+  assert.equal(
+    chunks.some(
+      (chunk) =>
+        chunk.type === "message-metadata" &&
+        (chunk.messageMetadata as { kestrelTurnId?: string } | undefined)
+          ?.kestrelTurnId === "turn-stream"
+    ),
+    true
+  );
   assert.equal(
     chunks.some((chunk) => chunk.type === "data-kestrel-progress"),
     true,

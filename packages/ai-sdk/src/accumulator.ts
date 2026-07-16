@@ -63,6 +63,7 @@ export function readKestrelTerminalInteraction(
 
 export function createKestrelPresentationAccumulator(input: {
   assistantMessageId: string;
+  turnId?: string | undefined;
 }): KestrelPresentationAccumulator {
   const parts: KestrelPresentationPart[] = [];
   const seenPartIds = new Set<string>();
@@ -115,6 +116,7 @@ export function createKestrelPresentationAccumulator(input: {
   const snapshot = (): KestrelPresentationSnapshot => {
     const metadata: KestrelMessageMetadata = {
       kestrelTerminalStatus: terminalStatus,
+      ...(input.turnId !== undefined ? { kestrelTurnId: input.turnId } : {}),
       ...(runId !== undefined ? { kestrelRunId: runId } : {}),
       ...(interaction !== null ? { kestrelRequestId: interaction.requestId } : {}),
       ...(terminalStatus === "contract_failure" && errorMessage !== null
@@ -274,13 +276,17 @@ export function createKestrelPresentationAccumulator(input: {
             terminalStatus = "completed";
             errorMessage = null;
           } else if (result.output.status === "WAITING") {
+            const waitingAssistantText = requireNonEmptyString(
+              result.assistantText,
+              "run.completed.payload.result.assistantText",
+            );
             interaction = readKestrelTerminalInteraction(event);
             if (!interaction) {
               throw new KestrelPresentationContractError(
                 "Waiting runtime result is missing its interaction.",
               );
             }
-            assistantText = interaction.prompt;
+            assistantText = waitingAssistantText;
             terminalStatus = "waiting";
             errorMessage = null;
             appendPart({

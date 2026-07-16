@@ -262,6 +262,7 @@ export async function getPublicThreadByShareToken(token: string) {
     columns: {
       id: true,
       threadId: true,
+      turnId: true,
       role: true,
       parts: true,
       feedback: true,
@@ -277,7 +278,21 @@ export async function getPublicThreadByShareToken(token: string) {
       authorUserId: false,
     },
   });
-  return { ...thread, messages };
+  const turns = await knowledgeDb.query.threadTurns.findMany({
+    where: (table, { eq }) => eq(table.threadId, thread.id),
+    orderBy: (table) => [asc(table.sequence)],
+    columns: {
+      id: true,
+      sequence: true,
+      inputMessageId: true,
+      status: true,
+      startedAt: true,
+      finishedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+  return { ...thread, messages, turns };
 }
 
 export async function createThreadForUser(input: {
@@ -388,12 +403,8 @@ export async function saveThreadMessages(
         durationMs: message.durationMs ?? null,
         externalMessageId: message.externalMessageId ?? null,
         source:
-          (message.source as
-            | "web"
-            | "mobile"
-            | "api"
-            | "github"
-            | "discord") ?? "web",
+          (message.source as "web" | "mobile" | "api" | "github" | "discord") ??
+          "web",
         createdAt: message.createdAt ?? new Date(),
       }))
     )

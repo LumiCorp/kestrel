@@ -99,10 +99,15 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
           turns: (durableState?.turns ?? []).map((turn) => ({
             id: turn.id,
             sequence: turn.sequence,
+            inputMessageId: turn.inputMessageId,
             status: turn.status,
             failureCode: turn.failureCode,
             failureMessage: turn.failureMessage,
             cancelRequestedAt: turn.cancelRequestedAt?.toISOString() ?? null,
+            startedAt: turn.startedAt?.toISOString() ?? null,
+            finishedAt: turn.finishedAt?.toISOString() ?? null,
+            createdAt: turn.createdAt.toISOString(),
+            updatedAt: turn.updatedAt.toISOString(),
           })),
           queue: durableState
             ? {

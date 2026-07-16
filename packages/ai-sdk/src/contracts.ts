@@ -102,6 +102,8 @@ export interface KestrelStatusPresentation {
 
 export interface KestrelMessageMetadata {
   kestrelTerminalStatus: KestrelTerminalStatus;
+  /** Durable product turn that owns this assistant stream segment. */
+  kestrelTurnId?: string | undefined;
   kestrelRunId?: string | undefined;
   kestrelRequestId?: string | undefined;
   kestrelContractFailure?: {

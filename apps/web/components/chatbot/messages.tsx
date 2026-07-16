@@ -1,11 +1,25 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
+import type { ThreadConversationState } from "@/lib/turns/client-contract";
+import {
+  collectDurableTurnPresentationParts,
+  type ProjectedConversationItem,
+  projectThreadConversation,
+} from "@/lib/turns/conversation-projector";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
-import { PreviewMessage, ThinkingMessage } from "./message";
+import {
+  InteractionPanel,
+  type RuntimeInteractionResponse,
+} from "./interaction-panel";
+import {
+  KestrelActivityTimeline,
+  PreviewMessage,
+  ThinkingMessage,
+} from "./message";
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -23,6 +37,11 @@ type MessagesProps = {
   isArtifactVisible: boolean;
   selectedModelId: string;
   showPendingAssistant?: boolean;
+  conversationState: ThreadConversationState;
+  onRefreshConversationState: () => Promise<void>;
+  onRuntimeInteractionResponse: (
+    response: RuntimeInteractionResponse
+  ) => Promise<void>;
 };
 
 function PureMessages({
@@ -37,6 +56,9 @@ function PureMessages({
   isReadonly,
   selectedModelId,
   showPendingAssistant = false,
+  conversationState,
+  onRefreshConversationState,
+  onRuntimeInteractionResponse,
 }: MessagesProps) {
   const latestAssistantMessageId = [...messages]
     .reverse()
@@ -89,6 +111,94 @@ function PureMessages({
 
   useDataStream();
 
+  const projection = useMemo(
+    () => projectThreadConversation({ messages, conversationState }),
+    [conversationState, messages]
+  );
+
+  const renderMessage = (
+    message: ChatMessage,
+    options: { hideActivity: boolean; isLast: boolean }
+  ) => (
+    <PreviewMessage
+      addToolApprovalResponse={addToolApprovalResponse}
+      feedback={feedbackByMessageId[message.id]}
+      hideKestrelActivity={options.hideActivity}
+      isLoading={status === "streaming" && options.isLast}
+      isReadonly={isReadonly}
+      key={message.id}
+      message={message}
+      onFeedbackChange={onFeedbackChange}
+      regenerate={regenerate}
+      requiresScrollPadding={hasSentMessage && options.isLast}
+      selectedLanguageModelId={selectedModelId}
+      setMessages={setMessages}
+      shouldAutoplaySpeech={message.id === latestAssistantMessageId}
+      threadId={threadId}
+      ttsAvailable={Boolean(ttsAvailable)}
+    />
+  );
+
+  const renderItem = (item: ProjectedConversationItem) => {
+    if (item.kind === "standalone_message") {
+      return renderMessage(item.message, {
+        hideActivity: false,
+        isLast: item.message.id === messages.at(-1)?.id,
+      });
+    }
+
+    const firstAssistantIndex = item.messages.findIndex(
+      (message) => message.role === "assistant"
+    );
+    const presentationParts = collectDurableTurnPresentationParts(
+      item.messages
+    );
+    const isTurnLoading =
+      item.turn?.status === "queued" || item.turn?.status === "running";
+    return (
+      <section
+        aria-label={
+          item.turn
+            ? `Conversation turn ${item.turn.sequence}`
+            : "Conversation turn"
+        }
+        className="flex min-w-0 flex-col gap-4 md:gap-6"
+        data-testid="durable-turn"
+        data-turn-id={item.turnId}
+        key={item.id}
+      >
+        {item.messages.map((message, index) => (
+          <Fragment key={message.id}>
+            {index === firstAssistantIndex && presentationParts.length > 0 ? (
+              <div className="pl-10 md:pl-11">
+                <KestrelActivityTimeline
+                  isLoading={isTurnLoading}
+                  parts={presentationParts}
+                  turnStatus={item.turn?.status}
+                />
+              </div>
+            ) : null}
+            {renderMessage(message, {
+              hideActivity: true,
+              isLast: message.id === messages.at(-1)?.id,
+            })}
+          </Fragment>
+        ))}
+        {isReadonly ? null : (
+          <InteractionPanel
+            embedded={true}
+            interactions={item.interactions.filter(
+              (interaction) => interaction.status === "pending"
+            )}
+            onResolved={onRefreshConversationState}
+            onRuntimeResponse={onRuntimeInteractionResponse}
+            threadId={threadId}
+          />
+        )}
+      </section>
+    );
+  };
+
   return (
     <div className="relative flex-1 bg-background">
       <div
@@ -98,28 +208,17 @@ function PureMessages({
         <div className="mx-auto flex min-w-0 max-w-4xl flex-col gap-4 px-2 py-4 md:gap-6 md:px-4">
           {messages.length === 0 && <Greeting />}
 
-          {messages.map((message, index) => (
-            <PreviewMessage
-              addToolApprovalResponse={addToolApprovalResponse}
-              feedback={feedbackByMessageId[message.id]}
-              isLoading={
-                status === "streaming" && messages.length - 1 === index
-              }
-              isReadonly={isReadonly}
-              key={message.id}
-              message={message}
-              onFeedbackChange={onFeedbackChange}
-              regenerate={regenerate}
-              requiresScrollPadding={
-                hasSentMessage && index === messages.length - 1
-              }
-              selectedLanguageModelId={selectedModelId}
-              setMessages={setMessages}
-              shouldAutoplaySpeech={message.id === latestAssistantMessageId}
-              threadId={threadId}
-              ttsAvailable={Boolean(ttsAvailable)}
-            />
-          ))}
+          {projection.items.map(renderItem)}
+
+          {projection.issues.length > 0 ? (
+            <div
+              className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-destructive text-sm"
+              role="alert"
+            >
+              This conversation could not be assembled from its durable turn
+              records. Reload the Thread or contact support.
+            </div>
+          ) : null}
 
           {((status === "submitted" &&
             !messages.some((msg) =>

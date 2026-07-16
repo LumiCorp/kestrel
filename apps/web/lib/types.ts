@@ -1,5 +1,5 @@
-import type { InferUITool, UIMessage } from "ai";
 import type { KestrelPresentationDataParts } from "@kestrel-agents/ai-sdk";
+import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/artifact";
 import type { createDocument } from "./ai/tools/create-document";
@@ -64,6 +64,7 @@ export const messageMetadataSchema = z.object({
   authorUserId: z.string().optional(),
   authorName: z.string().optional(),
   authorEmail: z.string().optional(),
+  kestrelTurnId: z.string().optional(),
   kestrelTerminalStatus: kestrelTerminalStatusSchema.optional(),
   deliveryState: z.enum(["sending", "queued"]).optional(),
 });

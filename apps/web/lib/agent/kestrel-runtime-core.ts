@@ -1,32 +1,32 @@
+import {
+  type KestrelInteractionPresentation,
+  type KestrelPresentationSnapshot,
+  type KestrelTerminalStatus,
+  type KestrelUIMessage,
+  writeKestrelFailureToUIMessage,
+  writeKestrelRunnerStreamToUIMessage,
+} from "@kestrel-agents/ai-sdk";
 import type {
   KestrelAgent,
   KestrelAgentResumeInput,
   KestrelAgentTurnInput,
   KestrelRequestContext,
   RunnerHistoryEntry,
-  RunnerStream,
   RunnerRunStreamEvent,
   RunnerRunTerminalEvent,
+  RunnerStream,
 } from "@kestrel-agents/sdk";
-import {
-  writeKestrelFailureToUIMessage,
-  writeKestrelRunnerStreamToUIMessage,
-  type KestrelPresentationSnapshot,
-  type KestrelInteractionPresentation,
-  type KestrelTerminalStatus,
-  type KestrelUIMessage,
-} from "@kestrel-agents/ai-sdk";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type InferUIMessageChunk,
-  type UIMessageStreamWriter,
   type UIMessage,
+  type UIMessageStreamWriter,
 } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
-import type { ChatMessage } from "@/lib/types";
 import type { Session } from "@/lib/auth-types";
+import type { ChatMessage } from "@/lib/types";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -92,7 +92,7 @@ export function adaptKestrelAgentForKestrelOne(
             ...(turn as KestrelAgentResumeInput),
             requestId: resumeRequestId,
           },
-          context,
+          context
         );
       }
       return agent.stream(input, context);
@@ -122,6 +122,7 @@ export type KestrelOneAgentResponseInput = {
   organizationId: string;
   correlation: KestrelOneRequestCorrelation;
   threadId: string;
+  durableTurnId?: string | undefined;
   messages: UIMessage[];
   approvalDecision?:
     | {
@@ -234,47 +235,48 @@ export function createKestrelOneAgentResponseFromAgent(
       try {
         try {
           const runStream = await input.agent.stream(
-          {
-            sessionId: input.threadId,
-            message: latestUserMessage,
-            eventType: interactionResponse?.eventType ?? "user.message",
-            ...(interactionResponse !== undefined
-              ? { resumeRequestId: interactionResponse.requestId }
-              : {}),
-            history,
-            ...(input.projectContext
-              ? {
-                  projectContext: {
-                    projectId: input.projectContext.projectId,
-                    contextRevisionId: input.projectContext.contextRevisionId,
-                    contextRevision: input.projectContext.contextRevision,
-                    content: input.projectContext.systemContext,
-                  },
-                }
-              : {}),
-            clientCapabilities: {
-              kestrelOne: {
-                requestId: input.correlation.requestId,
-                correlationId: input.correlation.correlationId,
-                tenantId: input.organizationId,
-                ...(input.projectContext
-                  ? {
+            {
+              sessionId: input.threadId,
+              message: latestUserMessage,
+              eventType: interactionResponse?.eventType ?? "user.message",
+              ...(interactionResponse !== undefined
+                ? { resumeRequestId: interactionResponse.requestId }
+                : {}),
+              history,
+              ...(input.projectContext
+                ? {
+                    projectContext: {
                       projectId: input.projectContext.projectId,
                       contextRevisionId: input.projectContext.contextRevisionId,
                       contextRevision: input.projectContext.contextRevision,
-                      contextGrantId: input.projectContext.grantId,
-                    }
-                  : {}),
-                capabilities: buildKestrelOneCapabilityDescriptors({
-                  request: input.request,
-                }),
+                      content: input.projectContext.systemContext,
+                    },
+                  }
+                : {}),
+              clientCapabilities: {
+                kestrelOne: {
+                  requestId: input.correlation.requestId,
+                  correlationId: input.correlation.correlationId,
+                  tenantId: input.organizationId,
+                  ...(input.projectContext
+                    ? {
+                        projectId: input.projectContext.projectId,
+                        contextRevisionId:
+                          input.projectContext.contextRevisionId,
+                        contextRevision: input.projectContext.contextRevision,
+                        contextGrantId: input.projectContext.grantId,
+                      }
+                    : {}),
+                  capabilities: buildKestrelOneCapabilityDescriptors({
+                    request: input.request,
+                  }),
+                },
               },
+              signal: input.signal ?? input.request.signal,
             },
-            signal: input.signal ?? input.request.signal,
-          },
-          context,
-          input.runtimeModel
-        );
+            context,
+            input.runtimeModel
+          );
 
           streamResult = await writeKestrelRunnerStreamToUIMessage({
             writer: mirroredWriter as UIMessageStreamWriter<KestrelUIMessage>,
@@ -282,6 +284,9 @@ export function createKestrelOneAgentResponseFromAgent(
             terminalEvent: runStream.result,
             assistantMessageId,
             textPartId,
+            ...(input.durableTurnId !== undefined
+              ? { turnId: input.durableTurnId }
+              : {}),
             onEvent: input.onRuntimeEvent,
           });
         } catch (error) {
@@ -290,6 +295,9 @@ export function createKestrelOneAgentResponseFromAgent(
             error,
             assistantMessageId,
             textPartId,
+            ...(input.durableTurnId !== undefined
+              ? { turnId: input.durableTurnId }
+              : {}),
           });
         }
       } finally {
@@ -311,22 +319,19 @@ export function createKestrelOneAgentResponseFromAgent(
 
       mirroredWriter.write({ type: "finish", finishReason: "stop" });
 
-      await input.onFinishPersist?.(
-        [streamResult.message],
-        {
-          model:
-            input.modelId ||
-            process.env.KESTREL_ONE_PROFILE_ID?.trim() ||
-            DEFAULT_PROFILE_ID,
-          title: title ?? null,
-          errorMessage: streamResult.errorMessage,
-          failureVisible: streamResult.failureVisible,
-          terminalStatus: streamResult.terminalStatus,
-          interaction: streamResult.interaction,
-          assistantMessageId: streamResult.message.id,
-          runId: streamResult.message.metadata?.kestrelRunId ?? null,
-        }
-      );
+      await input.onFinishPersist?.([streamResult.message], {
+        model:
+          input.modelId ||
+          process.env.KESTREL_ONE_PROFILE_ID?.trim() ||
+          DEFAULT_PROFILE_ID,
+        title: title ?? null,
+        errorMessage: streamResult.errorMessage,
+        failureVisible: streamResult.failureVisible,
+        terminalStatus: streamResult.terminalStatus,
+        interaction: streamResult.interaction,
+        assistantMessageId: streamResult.message.id,
+        runId: streamResult.message.metadata?.kestrelRunId ?? null,
+      });
     },
     onError: (error) => {
       streamErrorMessage =
@@ -351,11 +356,8 @@ function getLatestUserText(messages: UIMessage[]): string {
 function toKestrelHistory(messages: UIMessage[]): RunnerHistoryEntry[] {
   return messages
     .filter(
-      (
-        message
-      ): message is UIMessage & { role: "user" | "assistant" } =>
-        message.role === "user" ||
-        message.role === "assistant"
+      (message): message is UIMessage & { role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant"
     )
     .map((message) => ({
       role: message.role,

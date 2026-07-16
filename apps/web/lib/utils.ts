@@ -184,6 +184,7 @@ export function convertToUIMessages(
     authorUserId?: string | null;
     authorName?: string | null;
     authorEmail?: string | null;
+    turnId?: string | null;
   }>
 ): ChatMessage[] {
   return messages.map((message) => ({
@@ -196,6 +197,7 @@ export function convertToUIMessages(
       authorUserId: message.authorUserId ?? undefined,
       authorName: message.authorName ?? undefined,
       authorEmail: message.authorEmail ?? undefined,
+      kestrelTurnId: message.turnId ?? undefined,
     },
   }));
 }

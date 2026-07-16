@@ -20,11 +20,13 @@ export function InteractionPanel({
   interactions,
   onRuntimeResponse,
   onResolved,
+  embedded = false,
 }: {
   threadId: string;
   interactions: ThreadInteractionView[];
   onRuntimeResponse: (response: RuntimeInteractionResponse) => Promise<void>;
   onResolved: () => Promise<void>;
+  embedded?: boolean;
 }) {
   const [content, setContent] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -62,7 +64,9 @@ export function InteractionPanel({
       await onResolved();
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "The response could not be sent."
+        caught instanceof Error
+          ? caught.message
+          : "The response could not be sent."
       );
     } finally {
       setBusy(null);
@@ -103,7 +107,9 @@ export function InteractionPanel({
         error?: string;
       };
       if (!response.ok) {
-        throw new Error(payload.error ?? "The MCP request could not be resolved.");
+        throw new Error(
+          payload.error ?? "The MCP request could not be resolved."
+        );
       }
       await onResolved();
     } catch (caught) {
@@ -117,17 +123,26 @@ export function InteractionPanel({
     }
   }
 
-  if (interactions.length === 0) return null;
+  const visibleInteractions = interactions.filter(
+    (interaction) =>
+      !(interaction.source === "runtime" && interaction.kind === "user_input")
+  );
+
+  if (visibleInteractions.length === 0) return null;
 
   return (
     <section
       aria-labelledby="pending-interactions-heading"
-      className="mx-auto grid w-full max-w-4xl gap-2 px-2 md:px-4"
+      className={
+        embedded
+          ? "grid w-full gap-2 pl-10 md:pl-11"
+          : "mx-auto grid w-full max-w-4xl gap-2 px-2 md:px-4"
+      }
     >
       <h2 className="sr-only" id="pending-interactions-heading">
         Agent requests that need your response
       </h2>
-      {interactions.map((interaction, index) => {
+      {visibleInteractions.map((interaction, index) => {
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
@@ -156,7 +171,10 @@ export function InteractionPanel({
                     }))
                   }
                   onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    if (
+                      (event.metaKey || event.ctrlKey) &&
+                      event.key === "Enter"
+                    ) {
                       event.preventDefault();
                       void resolveRuntime(interaction);
                     }

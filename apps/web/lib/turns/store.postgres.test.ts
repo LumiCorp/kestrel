@@ -241,6 +241,25 @@ test(
     assert.equal(resolved.turnId, waiting.turn.id);
     assert.equal(resolved.shouldDispatch, true);
     assert.ok(resolved.replayAfterSequence > 0);
+    const resolvedInteractions = await store.listThreadInteractionsForUser({
+      threadId: interactionThreadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(
+      resolvedInteractions[0]?.responseMessageId,
+      `interaction-response-${suffix}`
+    );
+    assert.equal(
+      resolvedInteractions[0]?.responseEnvelope?.messageId,
+      `interaction-response-${suffix}`
+    );
+    const [responseMessage] = await sql<Array<{ turnId: string | null }>>`
+      SELECT "turn_id" AS "turnId"
+      FROM "thread_messages"
+      WHERE "id" = ${`interaction-response-${suffix}`}
+    `;
+    assert.equal(responseMessage?.turnId, waiting.turn.id);
     assert.equal(
       await store.getDurableTurnReplayBoundary(waiting.turn.id),
       0,
