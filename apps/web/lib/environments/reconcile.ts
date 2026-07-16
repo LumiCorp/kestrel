@@ -231,6 +231,17 @@ async function reconcileEnvironmentGateways(
   provider: FlyMachinesClient,
   now: Date
 ) {
+  const activeUpdates = await knowledgeDb.query.environmentOperations.findMany({
+    where: (table, { and, eq, inArray }) =>
+      and(
+        eq(table.type, "environment.update"),
+        inArray(table.status, ["queued", "running"])
+      ),
+    columns: { environmentId: true },
+  });
+  const updatingEnvironmentIds = new Set(
+    activeUpdates.map((operation) => operation.environmentId)
+  );
   const environments = await knowledgeDb.query.environments.findMany({
     where: (table, { and, inArray, isNotNull, isNull }) =>
       and(
@@ -244,6 +255,7 @@ async function reconcileEnvironmentGateways(
     process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
   for (const environment of environments) {
     if (!(environment.flyAppName && environment.routerImage)) continue;
+    if (updatingEnvironmentIds.has(environment.id)) continue;
     try {
       const gateway = await provider.ensureEnvironmentGateway({
         appName: environment.flyAppName,
@@ -448,22 +460,35 @@ async function createDueDailyBackup(now: Date) {
     orderBy: (table, { asc }) => [asc(table.lastActivityAt), asc(table.id)],
   });
   if (candidates.length === 0) return;
-  const recent = await knowledgeDb.query.workspaceBackups.findMany({
-    where: (table, { and, eq, gt, inArray }) =>
-      and(
-        inArray(
-          table.workspaceId,
-          candidates.map((candidate) => candidate.id)
+  const [recent, active] = await Promise.all([
+    knowledgeDb.query.workspaceBackups.findMany({
+      where: (table, { and, eq, gt, inArray }) =>
+        and(
+          inArray(
+            table.workspaceId,
+            candidates.map((candidate) => candidate.id)
+          ),
+          eq(table.reason, "daily"),
+          inArray(table.status, ["creating", "available"]),
+          gt(table.createdAt, cutoff)
         ),
-        eq(table.reason, "daily"),
-        inArray(table.status, ["creating", "available"]),
-        gt(table.createdAt, cutoff)
-      ),
-    columns: { workspaceId: true },
-  });
+      columns: { workspaceId: true },
+    }),
+    knowledgeDb.query.workspaceBackups.findMany({
+      where: (table, { and, inArray }) =>
+        and(
+          inArray(
+            table.workspaceId,
+            candidates.map((candidate) => candidate.id)
+          ),
+          inArray(table.status, ["queued", "creating"])
+        ),
+      columns: { workspaceId: true },
+    }),
+  ]);
   const candidate = selectDueDailyBackupCandidate(
     candidates,
-    recent.map((backup) => backup.workspaceId)
+    [...recent, ...active].map((backup) => backup.workspaceId)
   );
   if (!candidate) return;
   await createWorkspaceBackup({

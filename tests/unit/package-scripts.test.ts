@@ -128,7 +128,7 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
   );
   assert.equal(
     rootPackage.scripts?.["web:build"],
-    "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one build",
+    "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one preflight:vercel:production && pnpm --filter @kestrel/kestrel-one build",
   );
   assert.equal(rootPackage.scripts?.["kestrel-one:build"], undefined);
   assert.equal(
@@ -136,6 +136,10 @@ test("canonical apps/web uses exact public packages and keeps sibling builds at 
     "node --import tsx scripts/check-kestrel-boundary.ts",
   );
   assert.equal(appPackage.scripts?.build, "pnpm run clean && next build --webpack");
+  assert.equal(
+    appPackage.scripts?.["preflight:vercel:production"],
+    "tsx scripts/vercel-production-preflight.ts",
+  );
   assert.equal(vercelConfig.buildCommand, "cd ../.. && pnpm run web:build");
   assert.equal(appPackage.scripts?.["runtime:build"], undefined);
   assert.equal(appPackage.dependencies?.["@kestrel-agents/next"], "0.6.0");

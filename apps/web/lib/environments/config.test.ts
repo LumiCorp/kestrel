@@ -191,6 +191,17 @@ test("hosted runtime preparation permits the legacy runner during staged deploym
   );
 });
 
+test("hosted runtime image validation ignores surrounding deployment whitespace", () => {
+  const environment = validEnvironment();
+  assert.doesNotThrow(() =>
+    assertHostedEnvironmentRuntimeConfiguration({
+      ...environment,
+      KESTREL_ENVIRONMENT_ROUTER_IMAGE: ` ${environment.KESTREL_ENVIRONMENT_ROUTER_IMAGE}\n`,
+      KESTREL_WORKSPACE_RUNTIME_IMAGE: `${environment.KESTREL_WORKSPACE_RUNTIME_IMAGE}\n`,
+    })
+  );
+});
+
 test("hosted cutover rejects missing values and legacy global runner configuration", () => {
   assert.throws(
     () => assertHostedEnvironmentConfiguration({}),

@@ -88,6 +88,23 @@ test("Environment router fields converge for databases that applied the original
   }
 });
 
+test("Environment updates extend the existing durable operation contract", () => {
+  const updateMigration = fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "migrations/0037_environment_update_operation.sql"
+    ),
+    "utf8"
+  );
+  assert.match(updateMigration, /'environment\.update'/u);
+  assert.match(
+    updateMigration,
+    /ADD CONSTRAINT "environment_operations_type_check"/u
+  );
+  assert.doesNotMatch(updateMigration, /CREATE TABLE/u);
+  assert.doesNotMatch(updateMigration, /UPDATE |DELETE FROM|INSERT INTO/u);
+});
+
 test("Environment migration makes provider operations and grants auditable", () => {
   assert.match(migration, /environment_operations_idempotency_idx/u);
   assert.match(migration, /provider_request_id/u);

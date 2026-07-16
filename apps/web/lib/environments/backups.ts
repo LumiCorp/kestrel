@@ -6,6 +6,7 @@ import {
   decryptWorkspaceBackup,
   encryptWorkspaceBackup,
 } from "./backup-crypto";
+import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
 import {
   uploadBackupArchive,
   waitForWorkspaceService,
@@ -25,6 +26,7 @@ export async function createWorkspaceBackup(input: {
   workspaceId: string;
   actorUserId: string;
   reason: "checkpoint" | "daily" | "pre_destructive" | "pre_promotion";
+  idempotencyKey?: string;
 }) {
   const [environment, workspace, binding] = await Promise.all([
     knowledgeDb.query.environments.findFirst({
@@ -60,53 +62,24 @@ export async function createWorkspaceBackup(input: {
   ) {
     throw new Error("Workspace is not ready for backup.");
   }
-  const operationId = crypto.randomUUID();
-  const backupId = crypto.randomUUID();
   const now = new Date();
   const expiresAt = new Date(
     now.getTime() + WORKSPACE_BACKUP_RETENTION_DAYS * 86_400_000
   );
-  await knowledgeDb.transaction(async (transaction) => {
-    await transaction.insert(schema.environmentOperations).values({
-      id: operationId,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      workspaceId: input.workspaceId,
-      requestedByUserId: input.actorUserId,
-      type: "workspace.backup",
-      status: "running",
-      stage: "workspace.backup.exporting",
-      idempotencyKey: `workspace.backup:${backupId}`,
-      startedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await transaction.insert(schema.workspaceBackups).values({
-      id: backupId,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      workspaceId: input.workspaceId,
-      operationId,
-      reason: input.reason,
-      status: "creating",
-      expiresAt,
-      createdAt: now,
-      updatedAt: now,
-    });
+  const prepared = await prepareWorkspaceBackup({
+    ...input,
+    now,
+    expiresAt,
   });
+  if (prepared.available) return prepared.available;
+  const { operationId, backupId } = prepared;
   try {
     const route = await resolveEnvironmentExecutionRoute({
       organizationId: input.organizationId,
       threadId: binding.threadId,
       actorUserId: input.actorUserId,
     });
-    const [snapshot, archive] = await Promise.all([
-      createFlyClient().createVolumeSnapshot({
-        appName: environment.flyAppName,
-        volumeId: workspace.flyVolumeId,
-      }),
-      fetchBackupArchive(route.baseUrl, route.authToken),
-    ]);
+    const archive = await fetchBackupArchive(route.baseUrl, route.authToken);
     const checksumSha256 = createHash("sha256").update(archive).digest("hex");
     const encrypted = encryptWorkspaceBackup(archive, backupKey());
     const storage = getStorageAdapter();
@@ -126,6 +99,12 @@ export async function createWorkspaceBackup(input: {
         encryptionKeyId: backupKeyId(),
       },
     });
+    const snapshot = await createAuxiliaryVolumeSnapshot({
+      appName: environment.flyAppName,
+      volumeId: workspace.flyVolumeId,
+      createSnapshot: (snapshotInput) =>
+        createFlyClient().createVolumeSnapshot(snapshotInput),
+    });
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
       await transaction
@@ -139,6 +118,9 @@ export async function createWorkspaceBackup(input: {
           manifest: {
             flySnapshotId: snapshot.id,
             flySnapshotState: snapshot.state,
+            ...(snapshot.errorMessage
+              ? { flySnapshotError: snapshot.errorMessage }
+              : {}),
           },
           updatedAt: completedAt,
         })
@@ -148,13 +130,24 @@ export async function createWorkspaceBackup(input: {
         .set({
           status: "completed",
           stage: "workspace.backup.available",
-          result: { backupId, objectKey, flySnapshotId: snapshot.id },
+          result: {
+            backupId,
+            objectKey,
+            flySnapshotId: snapshot.id,
+            flySnapshotState: snapshot.state,
+          },
           completedAt,
           updatedAt: completedAt,
         })
         .where(eq(schema.environmentOperations.id, operationId));
     });
-    return { backupId, objectKey, snapshotId: snapshot.id, expiresAt };
+    return {
+      backupId,
+      objectKey,
+      snapshotId: snapshot.id,
+      snapshotState: snapshot.state,
+      expiresAt,
+    };
   } catch (error) {
     const message =
       error instanceof Error
@@ -180,6 +173,133 @@ export async function createWorkspaceBackup(input: {
     });
     throw error;
   }
+}
+
+type PreparedWorkspaceBackup =
+  | {
+      available: {
+        backupId: string;
+        objectKey: string;
+        snapshotId: string | null;
+        snapshotState: string;
+        expiresAt: Date;
+      };
+    }
+  | { available: null; operationId: string; backupId: string };
+
+async function prepareWorkspaceBackup(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  actorUserId: string;
+  reason: "checkpoint" | "daily" | "pre_destructive" | "pre_promotion";
+  idempotencyKey?: string;
+  now: Date;
+  expiresAt: Date;
+}): Promise<PreparedWorkspaceBackup> {
+  const requestedKey = input.idempotencyKey?.trim();
+  if (requestedKey) {
+    const existingOperation =
+      await knowledgeDb.query.environmentOperations.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.idempotencyKey, requestedKey)
+          ),
+      });
+    if (existingOperation) {
+      const existingBackup = await knowledgeDb.query.workspaceBackups.findFirst(
+        {
+          where: (table, { eq }) => eq(table.operationId, existingOperation.id),
+        }
+      );
+      if (!existingBackup) {
+        throw new Error(
+          "Idempotent Workspace backup operation is missing its backup record."
+        );
+      }
+      if (
+        existingOperation.status === "completed" &&
+        existingBackup.status === "available" &&
+        existingBackup.objectKey
+      ) {
+        const manifest = asRecord(existingBackup.manifest);
+        return {
+          available: {
+            backupId: existingBackup.id,
+            objectKey: existingBackup.objectKey,
+            snapshotId: readString(manifest?.flySnapshotId),
+            snapshotState:
+              readString(manifest?.flySnapshotState) ?? "not_requested",
+            expiresAt: existingBackup.expiresAt,
+          },
+        };
+      }
+      await knowledgeDb.transaction(async (transaction) => {
+        await transaction
+          .update(schema.environmentOperations)
+          .set({
+            status: "running",
+            stage: "workspace.backup.exporting",
+            errorCode: null,
+            errorMessage: null,
+            completedAt: null,
+            startedAt: input.now,
+            updatedAt: input.now,
+          })
+          .where(eq(schema.environmentOperations.id, existingOperation.id));
+        await transaction
+          .update(schema.workspaceBackups)
+          .set({
+            status: "creating",
+            objectKey: null,
+            encryptionKeyId: null,
+            checksumSha256: null,
+            sizeBytes: null,
+            manifest: null,
+            expiresAt: input.expiresAt,
+            updatedAt: input.now,
+          })
+          .where(eq(schema.workspaceBackups.id, existingBackup.id));
+      });
+      return {
+        available: null,
+        operationId: existingOperation.id,
+        backupId: existingBackup.id,
+      };
+    }
+  }
+  const operationId = crypto.randomUUID();
+  const backupId = crypto.randomUUID();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.insert(schema.environmentOperations).values({
+      id: operationId,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      requestedByUserId: input.actorUserId,
+      type: "workspace.backup",
+      status: "running",
+      stage: "workspace.backup.exporting",
+      idempotencyKey: requestedKey ?? `workspace.backup:${backupId}`,
+      startedAt: input.now,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.insert(schema.workspaceBackups).values({
+      id: backupId,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      operationId,
+      reason: input.reason,
+      status: "creating",
+      expiresAt: input.expiresAt,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+  });
+  return { available: null, operationId, backupId };
 }
 
 export async function listWorkspaceBackups(input: {
@@ -553,6 +673,16 @@ function backupKey() {
     );
   }
   return key;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function backupKeyId() {

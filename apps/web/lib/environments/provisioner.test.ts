@@ -10,14 +10,20 @@ import {
   type ProvisioningOperation,
 } from "./provisioner";
 
-function fixture(type: string, workspaceId: string | null = null) {
+function fixture(
+  type: string,
+  workspaceId: string | null = null,
+  input: Record<string, unknown> | null = null
+) {
   const calls: string[] = [];
   let operation: ProvisioningOperation | null = {
     id: "operation-id",
     organizationId: "organization-id",
     environmentId: "environment-id",
     workspaceId,
+    requestedByUserId: "user-id",
     type,
+    input,
   };
   const repository: EnvironmentProvisioningRepository = {
     async claimOperation() {
@@ -33,6 +39,9 @@ function fixture(type: string, workspaceId: string | null = null) {
         status: type === "environment.provision" ? "requested" : "ready",
         flyAppName:
           type === "environment.provision" ? null : "kestrel-env-existing",
+        flyGatewayMachineId:
+          type === "environment.provision" ? null : "gateway-machine-id",
+        routerImage: "registry.example/router@sha256:def",
         runtimeImage: "registry.example/runtime@sha256:abc",
         idleTimeoutMinutes: 15,
       };
@@ -53,6 +62,9 @@ function fixture(type: string, workspaceId: string | null = null) {
           }
         : null;
     },
+    async listEnvironmentWorkspaces() {
+      return [];
+    },
     async setEnvironmentProvisioning() {
       calls.push("environment:provisioning");
     },
@@ -64,6 +76,15 @@ function fixture(type: string, workspaceId: string | null = null) {
     },
     async failEnvironment(input) {
       calls.push(`environment:failed:${input.code}`);
+    },
+    async degradeEnvironment(input) {
+      calls.push(`environment:degraded:${input.code}`);
+    },
+    async completeEnvironmentGatewayUpdate() {
+      calls.push("environment:gateway-updated");
+    },
+    async completeEnvironmentRuntimeUpdate() {
+      calls.push("environment:runtime-updated");
     },
     async completeEnvironmentDelete() {
       calls.push("environment:deleted");
@@ -186,7 +207,10 @@ function fixture(type: string, workspaceId: string | null = null) {
 
 function createProvisioner(
   repository: EnvironmentProvisioningRepository,
-  provider: EnvironmentInfrastructureProvider
+  provider: EnvironmentInfrastructureProvider,
+  backupWorkspace?: ConstructorParameters<
+    typeof EnvironmentProvisioner
+  >[0]["backupWorkspace"]
 ) {
   return new EnvironmentProvisioner({
     repository,
@@ -197,6 +221,7 @@ function createProvisioner(
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
     credentialBrokerToken: "credential-broker-token",
+    backupWorkspace,
   });
 }
 
@@ -217,6 +242,46 @@ test("Environment provisioning durably follows requested through ready", async (
     "operation:completed",
   ]);
   assert.equal(await provisioner.process("operation-id"), "not_claimed");
+});
+
+test("Environment updates preserve Workspaces, update ingress, and verify runtimes", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+    },
+  ];
+  provider.updateMachineImage = async (input) => {
+    calls.push(`provider:image:${input.machineId}`);
+    return { id: input.machineId, state: "started", region: "iad" };
+  };
+  const provisioner = createProvisioner(repository, provider, async (input) => {
+    calls.push(`backup:${input.workspaceId}`);
+  });
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(calls, [
+    "operation:stage:environment.update.backing_up",
+    "backup:workspace-id",
+    "operation:stage:environment.update.gateway",
+    "provider:image:gateway-machine-id",
+    "provider:health",
+    "environment:gateway-updated",
+    "operation:stage:environment.update.workspaces",
+    "workspace:starting",
+    "provider:image:workspace-machine-id",
+    "provider:health",
+    "workspace:rebuilt",
+    "operation:stage:environment.update.verifying",
+    "environment:runtime-updated",
+    "operation:completed",
+  ]);
 });
 
 test("Workspace provisioning persists provider resources only after readiness", async () => {
@@ -285,6 +350,8 @@ test("Workspace provisioning defers without poisoning state until its Environmen
     region: "iad",
     status: "provisioning",
     flyAppName: null,
+    flyGatewayMachineId: null,
+    routerImage: null,
     runtimeImage: null,
     idleTimeoutMinutes: 15,
   });

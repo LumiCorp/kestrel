@@ -674,6 +674,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         "Fly Machine configuration is unavailable for image update."
       );
     }
+    if (sameImageDigest(current.config.image, input.runtimeImage)) {
+      return toMachine(current);
+    }
     const updated = parseResponse(
       machineSchema,
       await this.request(
@@ -918,6 +921,7 @@ function toMachine(
     id: machine.id,
     state: machine.state,
     region: machine.region,
+    ...(machine.config?.image ? { image: machine.config.image } : {}),
     ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
     ...(machine.config?.metadata?.kestrel_workspace_id
       ? { workspaceId: machine.config.metadata.kestrel_workspace_id }
@@ -929,6 +933,15 @@ function toMachine(
         path: mount.path,
       })) ?? [],
   };
+}
+
+function sameImageDigest(current: string | undefined, requested: string) {
+  if (current === requested) return true;
+  const currentDigest = current?.match(/@?(sha256:[a-f0-9]{64})$/u)?.[1];
+  const requestedDigest = requested.match(/@?(sha256:[a-f0-9]{64})$/u)?.[1];
+  return Boolean(
+    currentDigest && requestedDigest && currentDigest === requestedDigest
+  );
 }
 
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {

@@ -1604,6 +1604,7 @@ export const environmentOperations = pgTable(
     type: text("type", {
       enum: [
         "environment.provision",
+        "environment.update",
         "environment.delete",
         "workspace.provision",
         "workspace.start",

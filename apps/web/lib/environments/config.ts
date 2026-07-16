@@ -144,7 +144,7 @@ export function assertHostedEnvironmentRuntimeConfiguration(
     "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
     "KESTREL_WORKSPACE_RUNTIME_IMAGE",
   ] as const) {
-    const image = env[imageName] ?? "";
+    const image = env[imageName]?.trim() ?? "";
     if (
       !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
         image

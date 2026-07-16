@@ -274,6 +274,13 @@
       "when": 1784156400000,
       "tag": "0036_mobile_v2_thread_experience",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1784239200000,
+      "tag": "0037_environment_update_operation",
+      "breakpoints": true
     }
   ]
 }
