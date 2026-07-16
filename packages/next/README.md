@@ -2,7 +2,8 @@
 
 Next.js route helpers for Kestrel-backed agent endpoints.
 
-This package sits on top of `@kestrel-agents/sdk` and exists for teams extending the Kestrel Suite into Next.js products beyond the flagship Desktop app. It removes the repetitive route-handler glue around:
+This package sits on top of `@kestrel-agents/sdk` for server-side Next.js
+applications. It removes repetitive route-handler glue around:
 
 - request parsing
 - auth/context propagation
@@ -23,8 +24,12 @@ Use this package when your application already has a Kestrel agent client and yo
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next @kestrel-agents/sdk
+pnpm add @kestrel-agents/next@0.6.0-beta.0 \
+  @kestrel-agents/sdk@0.6.0-beta.0
 ```
+
+Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+before pinning a production dependency.
 
 ## Exports
 
@@ -89,4 +94,5 @@ Use this when an external system sends a payload that needs to be mapped into a 
 ## Related Docs
 
 - [SDK README](https://github.com/LumiCorp/kestrel/blob/main/packages/sdk/README.md)
+- [Next.js integration guide](../../apps/docs/content/build/integrating-with-nextjs.mdx)
 - [Root README](https://github.com/LumiCorp/kestrel/blob/main/README.md)

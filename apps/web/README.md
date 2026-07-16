@@ -1,45 +1,62 @@
-```text
-+------------------------------------------------------------------+
-|  _  __        _             _             ___                     |
-| | |/ /___ ___| |_ _ _ ___  | |   ___ ___ / _ \ _ _  ___          |
-| | ' </ -_|_-<  _| '_/ -_) | |__/ _ / _ \\ (_) | ' \/ -_)         |
-| |_|\_\___/__/\__|_| \___| |____\___\___/\___/|_||_\___|         |
-|                                                                  |
-|                Lumi Corp Starter Application Template             |
-+------------------------------------------------------------------+
-```
-
 # Kestrel One
 
-Kestrel One is Lumi Corp's application platform: one Next.js application that combines:
-- account, organization, org billing, passkey, 2FA, and personal API-key flows
-- durable Threads and Projects with canonical thread and project APIs
-- Knowledge-agent source management, sync, snapshot, document upload/RAG, and admin operations
-- organization-scoped model gateways and feature-gated managed model deployments
+Kestrel One is the hosted team product for durable agent work. It brings
+conversations, shared project context, files, Knowledge, artifacts, access
+control, and managed model access into one application while the Kestrel runner
+service remains the canonical execution boundary.
 
-Built with **Next.js 16**, **PostgreSQL**, **Redis**, and **shadcn/ui**.
+This app is built with Next.js 16, PostgreSQL, Redis, object storage, and the
+public Kestrel packages. It lives at `apps/web` in the monorepo.
 
-In the Kestrel monorepo, this app lives at `apps/web` and uses the Kestrel runner service as the canonical agent execution boundary. `app/route-ownership.manifest.ts` is the source of truth for route ownership, access, and unauthorized behavior.
+> Kestrel One is available to invited Beta organizations. This README is for
+> contributors and operators running the application from source. Product users
+> should start with the [Kestrel One guide](../docs/content/apps/web.mdx).
 
-## Features
+## Product Model
 
-- Email and password authentication
-- Organizations, roles, and active-org context
-- Passkeys, 2FA, password reset, and email verification
-- Personal API keys
-- Organization-owned Stripe billing controls in the Organizations surface
-- Threads, Projects, context revisions, sharing, uploads/files, and artifacts
-- Knowledge source management, OCR/import, sync, snapshot state, and org-shared document upload
-- Admin users, Stripe ops diagnostics, logs, stats, sandbox, API keys, docs, and agent configuration
+- **Organizations** own membership, billing, model access, Knowledge, and
+  administrative policy.
+- **Environments** own execution capacity, installed Apps/MCP services, and
+  environment-scoped credentials.
+- **Projects** group members, instructions, files, Knowledge context, Apps, and
+  related Threads.
+- **Threads** are durable conversations and work histories, either standalone
+  or attached to a Project.
+- **Turns and runs** execute through the Kestrel runner boundary and preserve
+  progress, tool activity, interactions, terminal results, and artifacts.
+
+`app/route-ownership.manifest.ts` is the source of truth for route ownership,
+access, and unauthorized behavior. Product code must not infer authority from
+the visual route alone.
+
+## Capabilities
+
+- durable standalone and Project Threads
+- Projects with revisioned context, members, files, Apps, and Knowledge
+- organization-scoped Knowledge ingestion, OCR/import, search, and citations
+- sharing and persisted artifacts
+- organization model gateways and feature-gated managed deployments
+- email/password, passkeys, 2FA, invitations, password reset, and API keys
+- organization-owned billing controls when explicitly enabled
+- administrative diagnostics, logs, stats, sandbox, model, and access surfaces
+- mobile companion APIs over the same hosted Thread and Project state
 
 ## Quick Start
 
+For the complete local stack, use the app's orchestrated development command
+from the repository root:
+
 ```bash
 pnpm install
-pnpm run web:dev
+cp apps/web/.env.example apps/web/.env.local
+pnpm --filter @kestrel/kestrel-one dev:all
 ```
 
-`pnpm dev:all`:
+Requirements: Docker with Docker Compose, PostgreSQL client tools (`psql`), and
+`curl`. Replace the placeholder `BETTER_AUTH_SECRET` in `.env.local` before
+starting.
+
+`dev:all`:
 - starts Docker Compose infra (`pgvector` Postgres, Redis, MinIO)
 - verifies service health and pgvector availability
 - applies migrations
@@ -50,9 +67,11 @@ pnpm run web:dev
 - starts the app on `127.0.0.1:43103` using webpack-backed, polling watch mode for local stability
 - starts and supervises the durable turn worker so queued thread turns run locally
 
-It now uses `.env.example` as a baseline for local defaults, then overlays `.env` and `.env.local` when present. When no override is provided, `REDIS_URL` points at the bundled Compose Redis instance. Keep a real `BETTER_AUTH_SECRET` in `.env.local` before committing or deploying.
+It uses `.env.example` as a baseline for local defaults, then overlays `.env`
+and `.env.local` when present. When no override is provided, `REDIS_URL` points
+at the bundled Compose Redis instance. Never commit the populated override.
 
-Hosted Environments are enabled by default for the deployment and for organizations without an explicit rollout override. `pnpm dev:all` selects the local Environment runtime, which needs no Fly credentials, signing keys, image references, or backup keys. Deployed instances use the Fly runtime by default and fail closed unless its immutable image, ticket-key, backup-key, and service-token values are complete. Set `KESTREL_ENVIRONMENTS_ENABLED=false` only as an emergency or staged-rollout off switch.
+Hosted Environments are enabled by default for the deployment and for organizations without an explicit rollout override. The local `dev:all` flow selects the local Environment runtime, which needs no Fly credentials, signing keys, image references, or backup keys. Deployed instances use the Fly runtime by default and fail closed unless its immutable image, ticket-key, backup-key, and service-token values are complete. Set `KESTREL_ENVIRONMENTS_ENABLED=false` only as an emergency or staged-rollout off switch.
 
 The local Environment runtime uses a separate `kestrel_runtime` database in the bundled Postgres service so its runtime schema cannot collide with Kestrel One's application schema. Set `KESTREL_RUNNER_DATABASE_URL` only when you intentionally want a different local runtime database.
 
@@ -61,7 +80,7 @@ For local browser flows, `DEV_AUTH_BYPASS=true` only works on `localhost`/`127.0
 Kestrel One declares exact released versions of `@kestrel-agents/sdk` and `@kestrel-agents/next`. Repository-root commands build the matching workspace packages before invoking the app, while Kestrel One's own scripts contain no sibling-package filters or source imports. `pnpm run check:kestrel-boundary` enforces that standalone contract.
 
 Public-repo defaults:
-- `pnpm dev:all` seeds a local-only admin for development, but there is no automatic first-user production admin bootstrap.
+- `dev:all` seeds a local-only admin for development, but there is no automatic first-user production admin bootstrap.
 - Billing is opt-in. Set `NEXT_PUBLIC_BILLING_ENABLED=true` only after configuring all required Stripe env vars for org-owned subscriptions.
 - `ADMIN_USER_IDS` is empty by default; no hardcoded public admin IDs ship with the repo.
 
