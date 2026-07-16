@@ -7,6 +7,7 @@ type EnvironmentOperationPresentationInput = {
 
 const OPERATION_LABELS: Record<string, string> = {
   "environment.provision": "Environment provisioning",
+  "environment.update": "Environment update",
   "environment.delete": "Environment deletion",
   "workspace.provision": "Workspace provisioning",
   "workspace.start": "Workspace wake",
@@ -42,6 +43,12 @@ const STAGE_DETAILS: Record<string, string> = {
   "environment.machine.stopped":
     "Workspace compute is asleep; its filesystem is retained.",
   "environment.activation.ready": "Environment ready.",
+  "environment.update.backing_up":
+    "Preserving every Workspace before the update…",
+  "environment.update.gateway": "Updating the Environment gateway…",
+  "environment.update.workspaces": "Updating Workspace runtimes…",
+  "environment.update.verifying": "Verifying the updated Environment…",
+  "environment.update.ready": "Environment update completed.",
   "environment.deleted": "Environment deleted.",
   "workspace.deleted": "Workspace deleted.",
   "workspace.backup.exporting": "Encrypting and exporting the Workspace…",

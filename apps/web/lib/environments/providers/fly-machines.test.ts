@@ -595,6 +595,36 @@ test("Fly on-demand snapshots use the Workspace volume endpoint", async () => {
   assert.match(requestedUrl, /\/apps\/app-1\/volumes\/vol-1\/snapshots$/u);
 });
 
+test("Fly image updates are idempotent across tag aliases of the same digest", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const digest = `sha256:${"a".repeat(64)}`;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ method: init?.method ?? "GET", url: String(url) });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        config: {
+          image: `registry.fly.io/kestrel-one-runner:workspace-current@${digest}`,
+        },
+      });
+    }) as typeof fetch,
+  });
+  const machine = await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+  });
+  assert.equal(machine.image?.endsWith(digest), true);
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["GET"]
+  );
+});
+
 test("Fly deletion operations are idempotent on missing resources", async () => {
   const requests: Array<{ url: string; method: string | undefined }> = [];
   const client = new FlyMachinesClient({

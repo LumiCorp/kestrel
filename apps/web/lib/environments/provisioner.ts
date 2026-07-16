@@ -23,7 +23,9 @@ export type ProvisioningOperation = {
   organizationId: string;
   environmentId: string;
   workspaceId: string | null;
+  requestedByUserId: string | null;
   type: string;
+  input: Record<string, unknown> | null;
 };
 
 export interface EnvironmentProvisioningRepository {
@@ -34,6 +36,8 @@ export interface EnvironmentProvisioningRepository {
     region: string;
     status: string;
     flyAppName: string | null;
+    flyGatewayMachineId: string | null;
+    routerImage: string | null;
     runtimeImage: string | null;
     idleTimeoutMinutes: number;
   } | null>;
@@ -49,6 +53,13 @@ export interface EnvironmentProvisioningRepository {
     sourceRepository: string | null;
     sourceDefaultBranch: string | null;
   } | null>;
+  listEnvironmentWorkspaces(environmentId: string): Promise<
+    Array<{
+      id: string;
+      flyMachineId: string | null;
+      flyVolumeId: string | null;
+    }>
+  >;
   setEnvironmentProvisioning(environmentId: string): Promise<void>;
   setEnvironmentDeleting(environmentId: string): Promise<void>;
   completeEnvironment(input: {
@@ -64,6 +75,19 @@ export interface EnvironmentProvisioningRepository {
     environmentId: string;
     code: string;
     message: string;
+  }): Promise<void>;
+  degradeEnvironment(input: {
+    environmentId: string;
+    code: string;
+    message: string;
+  }): Promise<void>;
+  completeEnvironmentGatewayUpdate(input: {
+    environmentId: string;
+    routerImage: string;
+  }): Promise<void>;
+  completeEnvironmentRuntimeUpdate(input: {
+    environmentId: string;
+    runtimeImage: string;
   }): Promise<void>;
   completeEnvironmentDelete(environmentId: string): Promise<void>;
   setWorkspaceProvisioning(workspaceId: string): Promise<void>;
@@ -118,6 +142,14 @@ export class EnvironmentProvisioner {
   private readonly ticketPublicKey: string;
   private readonly controlPlaneUrl: string;
   private readonly credentialBrokerToken: string;
+  private readonly backupWorkspace: (input: {
+    organizationId: string;
+    environmentId: string;
+    workspaceId: string;
+    actorUserId: string;
+    reason: "pre_destructive";
+    idempotencyKey: string;
+  }) => Promise<unknown>;
 
   constructor(input: {
     repository: EnvironmentProvisioningRepository;
@@ -127,6 +159,16 @@ export class EnvironmentProvisioner {
     ticketPublicKey: string;
     controlPlaneUrl: string;
     credentialBrokerToken: string;
+    backupWorkspace?:
+      | ((input: {
+          organizationId: string;
+          environmentId: string;
+          workspaceId: string;
+          actorUserId: string;
+          reason: "pre_destructive";
+          idempotencyKey: string;
+        }) => Promise<unknown>)
+      | undefined;
   }) {
     const {
       repository,
@@ -136,6 +178,7 @@ export class EnvironmentProvisioner {
       ticketPublicKey,
       controlPlaneUrl,
       credentialBrokerToken,
+      backupWorkspace,
     } = input;
     if (!runtimeImage.trim()) {
       throw new Error("Workspace runtime image is not configured.");
@@ -159,6 +202,12 @@ export class EnvironmentProvisioner {
     this.ticketPublicKey = ticketPublicKey;
     this.controlPlaneUrl = controlPlaneUrl;
     this.credentialBrokerToken = credentialBrokerToken;
+    this.backupWorkspace =
+      backupWorkspace ??
+      (async (backupInput) => {
+        const { createWorkspaceBackup } = await import("./backups");
+        return createWorkspaceBackup(backupInput);
+      });
   }
 
   async process(
@@ -169,6 +218,8 @@ export class EnvironmentProvisioner {
     try {
       if (operation.type === "environment.provision") {
         await this.provisionEnvironment(operation);
+      } else if (operation.type === "environment.update") {
+        await this.updateEnvironment(operation);
       } else if (operation.type === "workspace.provision") {
         await this.provisionWorkspace(operation);
       } else if (operation.type === "workspace.start") {
@@ -220,6 +271,11 @@ export class EnvironmentProvisioner {
       if (operation.workspaceId) {
         await this.repository.failWorkspace({
           workspaceId: operation.workspaceId,
+          ...failure,
+        });
+      } else if (operation.type === "environment.update") {
+        await this.repository.degradeEnvironment({
+          environmentId: operation.environmentId,
           ...failure,
         });
       } else {
@@ -309,6 +365,170 @@ export class EnvironmentProvisioner {
         networkName,
         gatewayMachineId: gateway.machineId,
         routerUrl: gateway.routerUrl,
+      },
+    });
+  }
+
+  private async updateEnvironment(operation: ProvisioningOperation) {
+    const environment = await this.repository.getEnvironment(
+      operation.environmentId
+    );
+    if (
+      !environment ||
+      environment.organizationId !== operation.organizationId ||
+      !environment.flyAppName ||
+      !environment.flyGatewayMachineId ||
+      !operation.requestedByUserId ||
+      !["ready", "degraded"].includes(environment.status)
+    ) {
+      throw operationError(
+        "ENVIRONMENT_NOT_READY",
+        "Environment update target is unavailable."
+      );
+    }
+    const runtimeImage = readImmutableImage(
+      operation.input?.runtimeImage,
+      "Workspace runtime image"
+    );
+    const routerImage = readImmutableImage(
+      operation.input?.routerImage,
+      "Environment router image"
+    );
+    const workspaces = await this.repository.listEnvironmentWorkspaces(
+      environment.id
+    );
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.update.backing_up",
+    });
+    for (const workspace of workspaces) {
+      if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
+      await this.backupWorkspace({
+        organizationId: operation.organizationId,
+        environmentId: environment.id,
+        workspaceId: workspace.id,
+        actorUserId: operation.requestedByUserId,
+        reason: "pre_destructive",
+        idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
+      });
+    }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.update.gateway",
+    });
+    try {
+      const gateway = await this.provider.updateMachineImage({
+        appName: environment.flyAppName,
+        machineId: environment.flyGatewayMachineId,
+        runtimeImage: routerImage,
+      });
+      if (gateway.state !== "started") {
+        await this.provider.startMachine({
+          appName: environment.flyAppName,
+          machineId: environment.flyGatewayMachineId,
+        });
+        await this.provider.waitForMachine({
+          appName: environment.flyAppName,
+          machineId: environment.flyGatewayMachineId,
+          state: "started",
+          timeoutSeconds: 90,
+        });
+      }
+      await this.provider.waitForMachineHealth({
+        appName: environment.flyAppName,
+        machineId: environment.flyGatewayMachineId,
+        checkName: "gateway",
+        timeoutSeconds: 90,
+      });
+    } catch (error) {
+      if (environment.routerImage && environment.routerImage !== routerImage) {
+        await this.provider
+          .updateMachineImage({
+            appName: environment.flyAppName,
+            machineId: environment.flyGatewayMachineId,
+            runtimeImage: environment.routerImage,
+          })
+          .then(async () => {
+            await this.provider.startMachine({
+              appName: environment.flyAppName!,
+              machineId: environment.flyGatewayMachineId!,
+            });
+            await this.provider.waitForMachineHealth({
+              appName: environment.flyAppName!,
+              machineId: environment.flyGatewayMachineId!,
+              checkName: "gateway",
+              timeoutSeconds: 90,
+            });
+          })
+          .catch(() => {});
+      }
+      throw error;
+    }
+    await this.repository.completeEnvironmentGatewayUpdate({
+      environmentId: environment.id,
+      routerImage,
+    });
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.update.workspaces",
+    });
+    for (const workspace of workspaces) {
+      if (!workspace.flyMachineId) continue;
+      await this.repository.setWorkspaceStarting(workspace.id);
+      try {
+        const machine = await this.provider.updateMachineImage({
+          appName: environment.flyAppName,
+          machineId: workspace.flyMachineId,
+          runtimeImage,
+        });
+        if (machine.state !== "started") {
+          await this.provider.startMachine({
+            appName: environment.flyAppName,
+            machineId: workspace.flyMachineId,
+          });
+          await this.provider.waitForMachine({
+            appName: environment.flyAppName,
+            machineId: workspace.flyMachineId,
+            state: "started",
+            timeoutSeconds: 90,
+          });
+        }
+        await this.provider.waitForMachineHealth({
+          appName: environment.flyAppName,
+          machineId: workspace.flyMachineId,
+          checkName: "workspace",
+          timeoutSeconds: 90,
+        });
+        await this.repository.completeWorkspaceRebuild({
+          workspaceId: workspace.id,
+          runtimeImage,
+        });
+      } catch (error) {
+        const failure = safeFailure(error);
+        await this.repository.failWorkspace({
+          workspaceId: workspace.id,
+          code: failure.code,
+          message: failure.message,
+        });
+        throw error;
+      }
+    }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.update.verifying",
+    });
+    await this.repository.completeEnvironmentRuntimeUpdate({
+      environmentId: environment.id,
+      runtimeImage,
+    });
+    await this.repository.completeOperation({
+      operationId: operation.id,
+      stage: "environment.update.ready",
+      result: {
+        gatewayMachineId: environment.flyGatewayMachineId,
+        routerImage,
+        runtimeImage,
+        workspaceCount: workspaces.length,
       },
     });
   }
@@ -708,7 +928,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           organizationId: schema.environmentOperations.organizationId,
           environmentId: schema.environmentOperations.environmentId,
           workspaceId: schema.environmentOperations.workspaceId,
+          requestedByUserId: schema.environmentOperations.requestedByUserId,
           type: schema.environmentOperations.type,
+          input: schema.environmentOperations.input,
         });
       return claimed ?? null;
     },
@@ -722,6 +944,8 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             region: true,
             status: true,
             flyAppName: true,
+            flyGatewayMachineId: true,
+            routerImage: true,
             runtimeImage: true,
             idleTimeoutMinutes: true,
           },
@@ -746,6 +970,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           },
         })
         .then((value) => value ?? null);
+    },
+    listEnvironmentWorkspaces(environmentId) {
+      return knowledgeDb.query.environmentWorkspaces.findMany({
+        where: (table, { and, eq, isNull }) =>
+          and(eq(table.environmentId, environmentId), isNull(table.deletedAt)),
+        columns: {
+          id: true,
+          flyMachineId: true,
+          flyVolumeId: true,
+        },
+      });
     },
     async setEnvironmentProvisioning(environmentId) {
       await knowledgeDb
@@ -840,6 +1075,43 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           status: "failed",
           failureCode: input.code,
           failureMessage: input.message,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environments.id, input.environmentId));
+    },
+    async degradeEnvironment(input) {
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          status: "degraded",
+          failureCode: input.code,
+          failureMessage: input.message,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environments.id, input.environmentId));
+    },
+    async completeEnvironmentGatewayUpdate(input) {
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          status: "ready",
+          routerImage: input.routerImage,
+          lastHealthAt: new Date(),
+          failureCode: null,
+          failureMessage: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environments.id, input.environmentId));
+    },
+    async completeEnvironmentRuntimeUpdate(input) {
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          status: "ready",
+          runtimeImage: input.runtimeImage,
+          lastHealthAt: new Date(),
+          failureCode: null,
+          failureMessage: null,
           updatedAt: new Date(),
         })
         .where(eq(schema.environments.id, input.environmentId));
@@ -1059,6 +1331,21 @@ function operationError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
 }
 
+function readImmutableImage(value: unknown, label: string) {
+  if (
+    typeof value !== "string" ||
+    !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
+      value
+    )
+  ) {
+    throw operationError(
+      "ENVIRONMENT_IMAGE_INVALID",
+      `${label} must use an immutable registry.fly.io sha256 digest.`
+    );
+  }
+  return value;
+}
+
 function assertEnvironmentOperationTransition(
   current: Parameters<typeof assertEnvironmentTransition>[0],
   next: Parameters<typeof assertEnvironmentTransition>[1]
@@ -1089,6 +1376,7 @@ function safeFailure(error: unknown): {
       retryable:
         error instanceof EnvironmentProviderError &&
         (error.code === "FLY_PROVIDER_UNAVAILABLE" ||
+          error.status === 412 ||
           error.status === 429 ||
           (error.status !== undefined && error.status >= 500)),
     };

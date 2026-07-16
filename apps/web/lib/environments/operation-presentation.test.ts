@@ -95,3 +95,18 @@ test("queued Environment operations identify Kestrel One as the control plane", 
     }
   );
 });
+
+test("Environment updates expose the durable rollout stage", () => {
+  assert.deepEqual(
+    describeEnvironmentOperation({
+      type: "environment.update",
+      status: "running",
+      stage: "environment.update.gateway",
+    }),
+    {
+      label: "Environment update",
+      detail: "Updating the Environment gateway…",
+      tone: "neutral",
+    }
+  );
+});

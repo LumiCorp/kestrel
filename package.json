@@ -40,7 +40,7 @@
     "test:core": "pnpm run protocol:build && KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test --test-concurrency=4 tests/**/*.test.ts agents/**/*.test.ts",
     "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run ai-sdk:build && pnpm run next:build",
     "web:dev": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one dev",
-    "web:build": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one build",
+    "web:build": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one preflight:vercel:production && pnpm --filter @kestrel/kestrel-one build",
     "web:start": "pnpm --filter @kestrel/kestrel-one start",
     "web:test": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one test",
     "web:typecheck": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one typecheck",

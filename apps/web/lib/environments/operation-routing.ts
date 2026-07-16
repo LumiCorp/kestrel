@@ -2,6 +2,7 @@ import type { EnvironmentOperationType } from "./contracts";
 
 export const PROVISIONER_OPERATION_TYPES = [
   "environment.provision",
+  "environment.update",
   "environment.delete",
   "workspace.provision",
   "workspace.start",

@@ -29,6 +29,7 @@ export type EnvironmentProviderMachine = {
   id: string;
   state: string;
   region: string;
+  image?: string | undefined;
   instanceId?: string | undefined;
   workspaceId?: string | undefined;
   mounts?: EnvironmentProviderMachineMount[] | undefined;

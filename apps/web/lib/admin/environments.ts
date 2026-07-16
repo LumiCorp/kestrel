@@ -1,6 +1,5 @@
 import { and, eq } from "drizzle-orm";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { createWorkspaceBackup } from "@/lib/environments/backups";
 import {
   getHostedEnvironmentsRollout,
   setHostedEnvironmentsOrganizationFlag,
@@ -109,57 +108,78 @@ export async function updateAdminEnvironmentRuntime(input: {
       "Workspace runtime image must use an immutable sha256 digest."
     );
   }
-  const workspaces = await knowledgeDb.query.environmentWorkspaces.findMany({
-    where: (table, { and, eq, isNull }) =>
-      and(
-        eq(table.organizationId, input.organizationId),
-        eq(table.environmentId, input.environmentId),
-        isNull(table.deletedAt)
-      ),
-  });
-  for (const workspace of workspaces) {
-    if (workspace.flyMachineId && workspace.flyVolumeId) {
-      await createWorkspaceBackup({
-        organizationId: input.organizationId,
-        environmentId: input.environmentId,
-        workspaceId: workspace.id,
-        actorUserId: input.actorUserId,
-        reason: "pre_destructive",
-      });
-    }
+  const routerImage =
+    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "";
+  if (
+    !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
+      routerImage
+    )
+  ) {
+    throw new Error(
+      "Environment router image must use an immutable registry.fly.io sha256 digest."
+    );
+  }
+  if (
+    environment.runtimeImage === input.runtimeImage &&
+    environment.routerImage === routerImage
+  ) {
+    return environment;
   }
   const now = new Date();
-  const operations = await knowledgeDb.transaction(async (transaction) => {
-    await transaction
-      .update(schema.environments)
-      .set({ runtimeImage: input.runtimeImage, updatedAt: now })
-      .where(eq(schema.environments.id, input.environmentId));
-    const created = [];
-    for (const workspace of workspaces) {
-      if (!workspace.flyMachineId) continue;
-      const [operation] = await transaction
-        .insert(schema.environmentOperations)
-        .values({
-          id: crypto.randomUUID(),
-          organizationId: input.organizationId,
-          environmentId: input.environmentId,
-          workspaceId: workspace.id,
-          requestedByUserId: input.actorUserId,
-          type: "workspace.rebuild",
-          status: "queued",
-          stage: "environment.machine.starting",
-          idempotencyKey: `workspace.rebuild:${workspace.id}:${input.runtimeImage}`,
-          input: { runtimeImage: input.runtimeImage },
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoNothing()
-        .returning();
-      if (operation) created.push(operation);
+  const idempotencyKey = [
+    "environment.update",
+    input.environmentId,
+    routerImage,
+    input.runtimeImage,
+  ].join(":");
+  const operation = await knowledgeDb.transaction(async (transaction) => {
+    const existing = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.idempotencyKey, idempotencyKey)
+        ),
+    });
+    if (existing) {
+      if (existing.status === "failed" || existing.status === "cancelled") {
+        const [reset] = await transaction
+          .update(schema.environmentOperations)
+          .set({
+            status: "queued",
+            stage: "requested",
+            requestedByUserId: input.actorUserId,
+            errorCode: null,
+            errorMessage: null,
+            completedAt: null,
+            updatedAt: now,
+          })
+          .where(eq(schema.environmentOperations.id, existing.id))
+          .returning();
+        return reset ?? existing;
+      }
+      return existing;
     }
+    const [created] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        requestedByUserId: input.actorUserId,
+        type: "environment.update",
+        status: "queued",
+        stage: "requested",
+        idempotencyKey,
+        input: { runtimeImage: input.runtimeImage, routerImage },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!created)
+      throw new Error("Environment update operation was not created.");
     return created;
   });
-  for (const operation of operations) {
+  if (operation.status !== "completed") {
     await enqueueEnvironmentOperation(operation.id);
   }
   await logAdminEvent({
@@ -169,10 +189,11 @@ export async function updateAdminEnvironmentRuntime(input: {
     action: "environment.runtime.updated",
     targetType: "environment",
     targetId: input.environmentId,
-    message: `Updated Environment runtime image and queued ${operations.length} Workspace rebuilds.`,
+    message: "Queued a durable Environment image update.",
     metadata: {
       runtimeImage: input.runtimeImage,
-      operationCount: operations.length,
+      routerImage,
+      operationId: operation.id,
     },
   });
   return { ...environment, runtimeImage: input.runtimeImage, updatedAt: now };
@@ -182,10 +203,17 @@ export async function updateAdminEnvironmentReasoningPolicy(input: {
   organizationId: string;
   actorUserId: string;
   environmentId: string;
-  request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" | undefined };
+  request: {
+    mode: "off" | "summary" | "provider_visible";
+    effort?: "low" | "medium" | "high" | undefined;
+  };
   retention: { mode: "live_only" | "provider_visible"; days: number };
 }) {
-  if (!Number.isInteger(input.retention.days) || input.retention.days < 1 || input.retention.days > 30) {
+  if (
+    !Number.isInteger(input.retention.days) ||
+    input.retention.days < 1 ||
+    input.retention.days > 30
+  ) {
     throw new Error("Reasoning retention must be from 1 to 30 days.");
   }
   const [environment] = await knowledgeDb
@@ -197,10 +225,12 @@ export async function updateAdminEnvironmentReasoningPolicy(input: {
       reasoningRetentionDays: input.retention.days,
       updatedAt: new Date(),
     })
-    .where(and(
-      eq(schema.environments.id, input.environmentId),
-      eq(schema.environments.organizationId, input.organizationId),
-    ))
+    .where(
+      and(
+        eq(schema.environments.id, input.environmentId),
+        eq(schema.environments.organizationId, input.organizationId)
+      )
+    )
     .returning();
   if (environment === undefined) {
     throw new Error("Environment not found.");
