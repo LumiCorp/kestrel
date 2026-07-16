@@ -701,6 +701,13 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
                   kestrel_workspace_id: "workspace-1",
                   kestrel_replacement_id: "restore-1",
                 },
+                mounts: [
+                  {
+                    volume: "volume-1",
+                    name: "ws_workspace1",
+                    path: "/workspace",
+                  },
+                ],
               },
             },
           ])
@@ -711,6 +718,7 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
               region: "iad",
               size_gb: 20,
               encrypted: true,
+              attached_machine_id: "machine-1",
             },
           ])) as typeof fetch,
   });
@@ -722,9 +730,56 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
           id: "machine-1",
           workspaceId: "workspace-1",
           replacementId: "restore-1",
+          mountedVolumeIds: ["volume-1"],
         },
       ],
-      volumes: [{ id: "volume-1", name: "ws_workspace1" }],
+      volumes: [
+        {
+          id: "volume-1",
+          name: "ws_workspace1",
+          region: "iad",
+          attachedMachineId: "machine-1",
+        },
+      ],
+    }
+  );
+});
+
+test("Fly Machine lookup preserves exact Workspace mount evidence", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async () =>
+      Response.json({
+        id: "machine-1",
+        state: "stopped",
+        region: "iad",
+        config: {
+          metadata: { kestrel_workspace_id: "workspace-1" },
+          mounts: [
+            {
+              volume: "volume-1",
+              name: "ws_workspace1",
+              path: "/workspace",
+            },
+          ],
+        },
+      })) as unknown as typeof fetch,
+  });
+  assert.deepEqual(
+    await client.getMachine({ appName: "app-1", machineId: "machine-1" }),
+    {
+      id: "machine-1",
+      state: "stopped",
+      region: "iad",
+      workspaceId: "workspace-1",
+      mounts: [
+        {
+          volumeId: "volume-1",
+          name: "ws_workspace1",
+          path: "/workspace",
+        },
+      ],
     }
   );
 });

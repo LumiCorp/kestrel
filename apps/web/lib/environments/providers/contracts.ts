@@ -19,11 +19,19 @@ export type EnvironmentProviderVolume = {
   encrypted: true;
 };
 
+export type EnvironmentProviderMachineMount = {
+  volumeId: string;
+  name?: string | undefined;
+  path: string;
+};
+
 export type EnvironmentProviderMachine = {
   id: string;
   state: string;
   region: string;
   instanceId?: string | undefined;
+  workspaceId?: string | undefined;
+  mounts?: EnvironmentProviderMachineMount[] | undefined;
 };
 
 export type EnvironmentProviderGateway = {
@@ -39,8 +47,14 @@ export type EnvironmentProviderInventory = {
     id: string;
     workspaceId: string | null;
     replacementId: string | null;
+    mountedVolumeIds?: string[] | undefined;
   }>;
-  volumes: Array<{ id: string; name: string }>;
+  volumes: Array<{
+    id: string;
+    name: string;
+    region?: string | undefined;
+    attachedMachineId?: string | null | undefined;
+  }>;
 };
 
 export type WorkspaceMachineProvisioningInput = {

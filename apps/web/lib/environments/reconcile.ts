@@ -5,7 +5,15 @@ import { getStorageAdapter } from "@/lib/storage";
 import { createWorkspaceBackup } from "./backups";
 import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
-import { FlyMachinesClient } from "./providers/fly-machines";
+import type { EnvironmentProviderInventory } from "./providers/contracts";
+import {
+  FlyMachinesClient,
+  workspaceVolumeName,
+} from "./providers/fly-machines";
+import {
+  assessWorkspaceVolumeBinding,
+  selectOrphanVolumeIds,
+} from "./reconcile-contract";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
 
 export async function reconcileHostedEnvironments() {
@@ -55,6 +63,12 @@ export async function reconcileHostedEnvironments() {
         ])
       )
     );
+  const inventoryByAppName = new Map<
+    string,
+    Promise<EnvironmentProviderInventory>
+  >();
+  let adoptedVolumeCount = 0;
+  let degradedWorkspaceCount = 0;
   for (const { workspace, environment } of workspaces) {
     if (!(workspace.flyMachineId && environment.flyAppName)) continue;
     try {
@@ -62,6 +76,52 @@ export async function reconcileHostedEnvironments() {
         appName: environment.flyAppName,
         machineId: workspace.flyMachineId,
       });
+      if (!machine) {
+        degradedWorkspaceCount += 1;
+        await markWorkspaceDegraded(
+          workspace.id,
+          now,
+          "ENVIRONMENT_WORKSPACE_MACHINE_MISSING",
+          "Workspace Machine is missing during reconciliation."
+        );
+        continue;
+      }
+      let inventoryPromise = inventoryByAppName.get(environment.flyAppName);
+      if (!inventoryPromise) {
+        inventoryPromise = provider.listEnvironmentResources({
+          appName: environment.flyAppName,
+        });
+        inventoryByAppName.set(environment.flyAppName, inventoryPromise);
+      }
+      const assessment = assessWorkspaceVolumeBinding({
+        workspaceId: workspace.id,
+        environmentRegion: environment.region,
+        expectedVolumeName: workspaceVolumeName(workspace.id),
+        recordedVolumeId: workspace.flyVolumeId,
+        machine,
+        inventory: await inventoryPromise,
+      });
+      if (assessment.status === "degraded") {
+        degradedWorkspaceCount += 1;
+        await markWorkspaceDegraded(
+          workspace.id,
+          now,
+          "ENVIRONMENT_WORKSPACE_VOLUME_RECONCILE_FAILED",
+          assessment.reason
+        );
+        continue;
+      }
+      if (assessment.status === "adopt") {
+        const adopted = await adoptWorkspaceVolumeBinding({
+          workspace,
+          machineId: machine.id,
+          oldVolumeId: assessment.oldVolumeId,
+          newVolumeId: assessment.newVolumeId,
+          reconciledAt: now,
+        });
+        if (!adopted) continue;
+        adoptedVolumeCount += 1;
+      }
       const status = machine?.state === "started" ? "ready" : "stopped";
       await knowledgeDb
         .update(schema.environmentWorkspaces)
@@ -74,10 +134,13 @@ export async function reconcileHostedEnvironments() {
         })
         .where(eq(schema.environmentWorkspaces.id, workspace.id));
     } catch {
-      await knowledgeDb
-        .update(schema.environmentWorkspaces)
-        .set({ status: "degraded", updatedAt: now })
-        .where(eq(schema.environmentWorkspaces.id, workspace.id));
+      degradedWorkspaceCount += 1;
+      await markWorkspaceDegraded(
+        workspace.id,
+        now,
+        "ENVIRONMENT_WORKSPACE_RECONCILE_FAILED",
+        "Workspace reconciliation failed."
+      );
     }
   }
   await cleanupReplacedWorkspaceResources(provider);
@@ -88,7 +151,80 @@ export async function reconcileHostedEnvironments() {
     operationCount: recoverableOperations.length,
     environmentGatewayCount,
     workspaceCount: workspaces.length,
+    adoptedVolumeCount,
+    degradedWorkspaceCount,
   };
+}
+
+async function markWorkspaceDegraded(
+  workspaceId: string,
+  now: Date,
+  failureCode: string,
+  failureMessage: string
+) {
+  await knowledgeDb
+    .update(schema.environmentWorkspaces)
+    .set({
+      status: "degraded",
+      failureCode,
+      failureMessage,
+      updatedAt: now,
+    })
+    .where(eq(schema.environmentWorkspaces.id, workspaceId));
+}
+
+async function adoptWorkspaceVolumeBinding(input: {
+  workspace: typeof schema.environmentWorkspaces.$inferSelect;
+  machineId: string;
+  oldVolumeId: string | null;
+  newVolumeId: string;
+  reconciledAt: Date;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const oldVolumeCondition = input.oldVolumeId
+      ? eq(schema.environmentWorkspaces.flyVolumeId, input.oldVolumeId)
+      : isNull(schema.environmentWorkspaces.flyVolumeId);
+    const updated = await tx
+      .update(schema.environmentWorkspaces)
+      .set({
+        flyVolumeId: input.newVolumeId,
+        updatedAt: input.reconciledAt,
+      })
+      .where(
+        and(
+          eq(schema.environmentWorkspaces.id, input.workspace.id),
+          eq(schema.environmentWorkspaces.flyMachineId, input.machineId),
+          oldVolumeCondition,
+          isNull(schema.environmentWorkspaces.deletedAt)
+        )
+      )
+      .returning({ id: schema.environmentWorkspaces.id });
+    if (!updated[0]) return false;
+    await tx.insert(schema.environmentOperations).values({
+      id: crypto.randomUUID(),
+      organizationId: input.workspace.organizationId,
+      environmentId: input.workspace.environmentId,
+      workspaceId: input.workspace.id,
+      type: "workspace.reconcile",
+      status: "completed",
+      stage: "workspace.reconcile.volume_binding_adopted",
+      idempotencyKey:
+        `workspace.reconcile:${input.workspace.id}:` +
+        `${input.oldVolumeId ?? "missing"}:${input.newVolumeId}`,
+      result: {
+        oldVolumeId: input.oldVolumeId,
+        newVolumeId: input.newVolumeId,
+        machineId: input.machineId,
+        workspaceId: input.workspace.id,
+        reconciledAt: input.reconciledAt.toISOString(),
+      },
+      startedAt: input.reconciledAt,
+      completedAt: input.reconciledAt,
+      createdAt: input.reconciledAt,
+      updatedAt: input.reconciledAt,
+    });
+    return true;
+  });
 }
 
 async function reconcileEnvironmentGateways(
@@ -205,10 +341,10 @@ async function cleanupOrphanedEnvironmentResources(
       .filter((machine) => !activeMachineIds.has(machine.id))
       .map((machine) => machine.id)
       .sort();
-    const orphanVolumeIds = inventory.volumes
-      .filter((volume) => !activeVolumeIds.has(volume.id))
-      .map((volume) => volume.id)
-      .sort();
+    const orphanVolumeIds = selectOrphanVolumeIds({
+      inventory,
+      activeVolumeIds,
+    });
     if (orphanMachineIds.length === 0 && orphanVolumeIds.length === 0) {
       continue;
     }
