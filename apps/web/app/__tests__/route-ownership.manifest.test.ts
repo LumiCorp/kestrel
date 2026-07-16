@@ -37,6 +37,12 @@ function readAppFile(file: string) {
   return fs.readFileSync(path.join(packageRoot, file), "utf8");
 }
 
+function readRouteGuardSource(file: string) {
+  const source = readAppFile(file);
+  const sharedRoute = source.match(/from "@\/(app\/api\/mobile\/v1\/.+\/route)"/u)?.[1];
+  return sharedRoute ? `${source}\n${readAppFile(`${sharedRoute}.ts`)}` : source;
+}
+
 test("Kestrel-One route ownership manifest classifies every page and API route", () => {
   const actualFiles = listRouteFiles(appRoot);
   const manifestFiles = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
@@ -89,7 +95,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
       continue;
     }
 
-    const source = readAppFile(entry.file);
+    const source = readRouteGuardSource(entry.file);
 
     if (entry.access === "admin") {
       assert.match(

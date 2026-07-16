@@ -54,7 +54,7 @@ function buildExecConfig() {
 }
 
 function buildContext(overrides: Partial<StepContext> = {}): StepContext {
-  return {
+  const context: StepContext = {
     runId: "run-1",
     session: {
       sessionId: "session-1",
@@ -95,6 +95,12 @@ function buildContext(overrides: Partial<StepContext> = {}): StepContext {
     },
     ...overrides,
   };
+  const payloadMode = context.event.payload.interactionMode;
+  const agentState = context.session.state.agent as Record<string, unknown> | undefined;
+  if (payloadMode === undefined && agentState?.interactionMode === undefined && agentState !== undefined) {
+    agentState.interactionMode = "build";
+  }
+  return context;
 }
 
 function transcriptForTask(task: string) {

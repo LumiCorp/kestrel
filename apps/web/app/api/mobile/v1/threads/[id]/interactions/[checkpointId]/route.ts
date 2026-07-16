@@ -4,7 +4,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { resolveMcpInteraction } from "@/lib/mcp/interactions";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import {
   listThreadInteractionsForUser,
@@ -83,7 +83,7 @@ export async function POST(
         ...body,
       });
     }
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: params.id,
       organizationId,
       userId: session.user.id,

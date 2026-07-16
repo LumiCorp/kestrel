@@ -11,6 +11,7 @@ import {
   listDurableThreadQueueForUser,
   listThreadInteractionsForUser,
 } from "@/lib/turns/store";
+import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
 
 type StoredMessage = NonNullable<
   Awaited<ReturnType<typeof getThreadWithMessagesForUser>>
@@ -77,4 +78,13 @@ export async function getMobileThreadSnapshot(input: {
       .filter((interaction) => interaction.status === "pending")
       .map(mobileInteractionDto),
   };
+}
+
+export function getMobileThreadSnapshotForRequest(
+  request: Request,
+  input: { threadId: string; organizationId: string; userId: string }
+) {
+  return new URL(request.url).pathname.includes("/api/mobile/v2/")
+    ? getMobileV2ThreadSnapshot(input)
+    : getMobileThreadSnapshot(input);
 }

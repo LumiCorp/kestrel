@@ -26,6 +26,7 @@ export function handlePendingToolBatch(input: {
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -61,6 +62,7 @@ export function handlePendingToolBatch(input: {
     toolCapabilityClassesByName: input.toolCapabilityClassesByName,
     toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
     toolExecutionClassByName: input.toolExecutionClassByName,
+    toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     modeSystemV2Enabled: input.modeSystemV2Enabled,
@@ -85,6 +87,7 @@ export async function handleToolBatchAction(input: {
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -113,6 +116,7 @@ export async function handleToolBatchAction(input: {
     items: input.action.items,
     toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
     toolExecutionClassByName: input.toolExecutionClassByName,
+    toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     modeSystemV2Enabled: input.modeSystemV2Enabled,
@@ -171,6 +175,7 @@ export async function handleToolBatchAction(input: {
     toolCapabilityClassesByName: input.toolCapabilityClassesByName,
     toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
     toolExecutionClassByName: input.toolExecutionClassByName,
+    toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     modeSystemV2Enabled: input.modeSystemV2Enabled,
@@ -219,6 +224,7 @@ type ExecuteToolBatchChunk = (input: {
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;

@@ -49,7 +49,8 @@ export function buildOpenAiHttpRequest(
       body.tool_choice = toolChoice;
     }
     body.tools = tools;
-    body.parallel_tool_calls = toolChoice === "required" ? false : true;
+    body.parallel_tool_calls =
+      openai?.parallelToolCalls ?? openrouterFallback?.parallelToolCalls ?? true;
   }
 
   const responseFormat = toResponseFormat(request, env);
@@ -143,6 +144,8 @@ function buildOpenAiResponsesRequest(
     if (toolChoice !== undefined) {
       body.tool_choice = toolChoice;
     }
+    body.parallel_tool_calls =
+      openai?.parallelToolCalls ?? fallback?.parallelToolCalls ?? true;
   }
   if (request.reasoning !== undefined && request.reasoning.mode !== "off") {
     body.reasoning = {

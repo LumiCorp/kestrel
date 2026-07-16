@@ -1990,7 +1990,10 @@ test("reference-react registration uses source filesystem mutations from runtime
   assert.equal(output.status, "FAILED");
   assert.equal(output.waitFor, undefined);
   assert.equal(toolCalled, true);
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
+  // The fixture gateway intentionally returns no structured follow-up action.
+  // After the source mutation executes, agent.loop now fails that response
+  // immediately instead of inferring a repeated action that reaches loop guard.
+  assert.equal(output.errors[0]?.code, "RUNTIME_ERROR");
   const eventTypes = store.getRunEvents().map((event) => event.type);
   assert.equal(eventTypes.includes("managed_worktree.auto_requested"), false);
   assert.equal(eventTypes.includes("managed_worktree.bound"), false);

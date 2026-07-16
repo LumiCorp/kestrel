@@ -25,6 +25,7 @@ export interface ActerStepConfig {
     capabilityClasses: string[];
     approvalCapabilities?: string[] | undefined;
     executionClass?: ToolExecutionClass | undefined;
+    allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
   }>;
 }
 
@@ -41,6 +42,7 @@ export interface ExecutionActionContext {
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
+  toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   reactState: Record<string, unknown>;
   activeRegion: string | undefined;
   checkpointSize: number;

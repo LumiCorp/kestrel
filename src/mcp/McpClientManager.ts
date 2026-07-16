@@ -648,6 +648,9 @@ function resolveToolPresentationMetadata(
         ...(configured.approvalMode !== undefined
           ? { approvalMode: configured.approvalMode }
           : {}),
+        ...(configured.allowedInteractionModes !== undefined
+          ? { allowedInteractionModes: [...configured.allowedInteractionModes] }
+          : {}),
       }
     : undefined;
 }
@@ -658,6 +661,10 @@ function hostedToolPresentation(
 ): McpToolPresentationMetadata {
   const metadata = asRecord(tool._meta);
   const approvalMode = readString(metadata, "kestrel/approvalMode");
+  const allowedInteractionModes = asArray(metadata?.["kestrel/allowedInteractionModes"])
+    .filter((value): value is "chat" | "plan" | "build" =>
+      value === "chat" || value === "plan" || value === "build"
+    );
   return {
     displayName:
       readString(tool, "title") ?? readString(tool, "description") ?? toolName,
@@ -669,6 +676,7 @@ function hostedToolPresentation(
     ...(approvalMode === "auto" || approvalMode === "ask"
       ? { approvalMode }
       : { approvalMode: "ask" as const }),
+    ...(allowedInteractionModes.length > 0 ? { allowedInteractionModes } : {}),
   };
 }
 

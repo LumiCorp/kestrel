@@ -15,6 +15,16 @@ const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
   ],
 ] as const);
 
+const GITHUB_TOOL_CAPABILITIES = new Map<string, string>([
+  ["kestrel_one.github_repository_read", "repository.read"],
+  ["kestrel_one.github_push_agent_branch", "repository.push_agent_branch"],
+  ["kestrel_one.github_pull_request_create", "pull_request.write"],
+  ["kestrel_one.github_issue_create", "issue.write"],
+  ["kestrel_one.github_pull_request_merge", "merge.write"],
+  ["kestrel_one.github_release_create", "release.write"],
+  ["kestrel_one.github_workflow_dispatch", "workflow.dispatch"],
+] as const);
+
 const TAVILY_TOOL_CAPABILITIES = new Map<string, string>([
   ["internet.search", "search"],
   ["internet.search_advanced", "search_advanced"],
@@ -105,6 +115,10 @@ export function restrictKestrelOneProfileTools(input: {
     input.effectiveCapabilities,
     "tavily"
   );
+  const githubApprovalByCapability = appApprovalModes(
+    input.effectiveCapabilities,
+    "github"
+  );
   const builtInApprovalByApp = new Map(
     [
       ...new Set(
@@ -124,6 +138,10 @@ export function restrictKestrelOneProfileTools(input: {
     ),
     ...[...TAVILY_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
       const approvalMode = tavilyApprovalByCapability.get(capability);
+      return approvalMode ? [[toolName, approvalMode] as const] : [];
+    }),
+    ...[...GITHUB_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+      const approvalMode = githubApprovalByCapability.get(capability);
       return approvalMode ? [[toolName, approvalMode] as const] : [];
     }),
     ...[...BUILT_IN_TOOL_CAPABILITIES].flatMap(
@@ -151,6 +169,13 @@ export function restrictKestrelOneProfileTools(input: {
       if (
         tavilyCapability !== undefined &&
         !tavilyApprovalByCapability.has(tavilyCapability)
+      ) {
+        return false;
+      }
+      const githubCapability = GITHUB_TOOL_CAPABILITIES.get(toolName);
+      if (
+        githubCapability !== undefined &&
+        !githubApprovalByCapability.has(githubCapability)
       ) {
         return false;
       }

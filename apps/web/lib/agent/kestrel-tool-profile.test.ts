@@ -45,6 +45,31 @@ test("calendar tools are removed when the user has no effective capability", () 
   assert.deepEqual(restricted.toolAllowlist, []);
 });
 
+test("GitHub tools are exposed only for effective Project capabilities", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.github_repository_read",
+        "kestrel_one.github_issue_create",
+        "kestrel_one.github_push_agent_branch",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:github.repository.read:auto",
+      "app:github.issue.write:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.github_repository_read",
+    "kestrel_one.github_issue_create",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.github_repository_read": "auto",
+    "kestrel_one.github_issue_create": "ask",
+  });
+});
+
 test("Tavily tools and approval modes come only from effective Project Apps", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {

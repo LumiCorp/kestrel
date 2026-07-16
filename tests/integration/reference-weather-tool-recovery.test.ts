@@ -249,72 +249,29 @@ test("reference harness uses free.time.current for 'what time is it in utc'", as
   );
 });
 
-test("reference harness prompts for mode change when chat mode blocks read-only tooling", async () => {
-  const store = new InMemorySessionStore();
-  const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
-    const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
-    if (schemaName === "kestrel_agent_action" || request.tools !== undefined) {
-      return modelResponse({
-        nextAction: {
-          kind: "ask_user",
-          prompt: "Switch to Build so I can use the available weather tool?",
-          waitFor: {
-            kind: "user",
-            eventType: "user.reply",
-            metadata: {
-              reason: "mode_blocks_tooling",
-            },
-          },
-        },
-        reason: "Chat mode blocks the tool-backed answer, so this asks for permission to continue in an acting mode.",
-      }) as T;
-    }
-    throw new Error(`Unexpected model schema '${schemaName ?? "unknown"}'`);
-  });
-
-  const kestrel = new Kestrel({
-    store,
-    modelGateway,
-    toolGateway: {
-      async call() {
-        throw new Error("chat-mode block should not call tools");
-      },
-      async preRun() {
-        // no-op
-      },
+test("reference harness uses read-only tools directly in Chat mode", async () => {
+  const result = await runReferenceRecoveryScenario({
+    sessionId: "session-weather-chat-1",
+    message: "whats the weather in cincy",
+    extractorObjective: "Get the current weather for Cincinnati",
+    toolName: "free.weather.current",
+    toolInputSchema: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      additionalProperties: false,
     },
+    capabilityClasses: ["weather.current"],
+    toolResult: { source: "test-weather", temperatureC: 12 },
+    expectedToolInput: { city: "Cincinnati, OH" },
+    expectedLoopEvidence: "temperatureC",
+    finalMessage: "Cincinnati is 12C.",
+    interactionMode: "chat",
+    expectedExecutionLane: "tooling",
   });
 
-  const registration = registerAgentReferenceRuntime(kestrel, {
-    thinkerToolsProvider: () => [],
-    capabilityManifestProvider: () => [
-      {
-        name: "free.weather.current",
-        description: "Current weather",
-        freshnessClass: "live",
-        latencyClass: "medium",
-        costClass: "free",
-        executionClass: "read_only",
-        capabilityClasses: ["weather.current"],
-      },
-    ],
-  });
-
-  const output = await kestrel.run({
-    id: "evt-chat-blocked",
-    type: "user.message",
-    sessionId: "session-chat-blocked",
-    payload: {
-      message: "whats the weather in cincy",
-      modeSystemV2Enabled: true,
-      interactionMode: "chat",
-      history: [],
-    },
-    stepAgent: registration.entryStepAgent,
-  });
-
-  assert.equal(output.status, "WAITING");
-  assert.equal(output.waitFor?.eventType, "user.reply");
+  assert.equal(result.toolCalls.some((entry) => entry.name === "free.weather.current"), true);
+  assert.equal(result.finalized[0]?.message, "Cincinnati is 12C.");
 });
 
 test("reference harness routes default plan-mode weather asks into tooling route", async () => {
@@ -523,7 +480,7 @@ async function runReferenceRecoveryScenario(input: {
   expectedToolInput: Record<string, unknown>;
   expectedLoopEvidence: string | string[];
   finalMessage: string;
-  interactionMode?: "plan" | "build";
+  interactionMode?: "chat" | "plan" | "build";
   expectedExecutionLane?: "chat" | "tooling";
 }): Promise<{
   toolCalls: Array<{ name: string; input: unknown }>;

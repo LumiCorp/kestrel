@@ -9,7 +9,7 @@ const packageRoot = path.resolve(
   "../.."
 );
 const contract = JSON.parse(
-  fs.readFileSync(path.join(packageRoot, "openapi/mobile-v1.json"), "utf8")
+  fs.readFileSync(path.join(packageRoot, "openapi/mobile-v2.json"), "utf8")
 ) as {
   paths: Record<string, Record<string, unknown>>;
   components: {
@@ -27,8 +27,13 @@ test("mobile OpenAPI contract contains every implemented companion route", () =>
     "/projects/{id}",
     "/threads",
     "/threads/{id}",
+    "/threads/{id}/branches",
     "/threads/{id}/interactions/{checkpointId}",
+    "/threads/{id}/messages",
+    "/threads/{id}/outline",
+    "/threads/{id}/queue",
     "/threads/{id}/queue/resume",
+    "/threads/{id}/read",
     "/threads/{id}/turns",
     "/turns/{turnId}",
     "/turns/{turnId}/events",
@@ -47,6 +52,8 @@ test("every Thread mutation returns the authoritative snapshot", () => {
     ["/threads", "post", ["200", "202"]],
     ["/threads/{id}/turns", "post", ["200", "202"]],
     ["/threads/{id}/queue/resume", "post", ["200"]],
+    ["/threads/{id}/queue", "put", ["200"]],
+    ["/threads/{id}/branches", "post", ["200", "202"]],
     ["/threads/{id}/interactions/{checkpointId}", "post", ["200"]],
     ["/turns/{turnId}", "delete", ["200"]],
     ["/turns/{turnId}/stop", "post", ["202"]],
@@ -86,14 +93,14 @@ test("Projects are read-only and the contract exposes no management verbs", () =
 
 test("mobile Project routes export GET only", () => {
   for (const relativePath of [
-    "app/api/mobile/v1/projects/route.ts",
-    "app/api/mobile/v1/projects/[id]/route.ts",
+    "app/api/mobile/v2/projects/route.ts",
+    "app/api/mobile/v2/projects/[id]/route.ts",
   ]) {
     const source = fs.readFileSync(
       path.join(packageRoot, relativePath),
       "utf8"
     );
-    assert.match(source, /export async function GET/u);
+    assert.match(source, /export (?:async function GET|\{ GET \})/u);
     assert.doesNotMatch(
       source,
       /export async function (?:POST|PATCH|PUT|DELETE)/u
@@ -138,10 +145,11 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
   assert.deepEqual(contract.components.schemas.ThreadSnapshot.required, [
     "snapshotVersion",
     "thread",
-    "messages",
+    "messageWindow",
     "turns",
     "queue",
     "interactions",
+    "readState",
   ]);
   assert.ok(Array.isArray(contract.components.schemas.MessagePart.oneOf));
   assert.deepEqual(
@@ -152,33 +160,13 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
       "TextPart",
       "SourceUrlPart",
       "SourceDocumentPart",
-      "ToolStatusPart",
-      "ProgressPart",
       "CitationPart",
       "ArtifactPart",
       "InteractionStatusPart",
-      "AssistantStatusPart",
     ]
   );
   assert.ok(Array.isArray(contract.components.schemas.TurnEvent.oneOf));
   assert.ok(contract.components.schemas.ErrorResponse.properties);
-  assert.deepEqual(
-    (
-      contract.components.schemas.ToolStatusPart.properties as Record<
-        string,
-        { enum?: string[] }
-      >
-    ).state?.enum,
-    [
-      "pending",
-      "running",
-      "waiting_for_approval",
-      "completed",
-      "failed",
-      "denied",
-      "unavailable",
-    ]
-  );
   assert.deepEqual(
     (
       contract.components.schemas.InteractionStatusPart.properties as Record<

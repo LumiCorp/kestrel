@@ -100,6 +100,7 @@ test("finalize control tool description stays prose closeout guidance", () => {
   const finalizeTool = registry.requestTools.find((tool) => tool.name === "kestrel_finalize");
   const inputSchema = finalizeTool?.inputSchema as Record<string, unknown> | undefined;
   const properties = inputSchema?.properties as Record<string, unknown> | undefined;
+  const required = inputSchema?.required as string[] | undefined;
   const statusSchema = properties?.status as Record<string, unknown> | undefined;
 
   assert.match(finalizeTool?.description ?? "", /Finish the run with a user-facing answer/u);
@@ -116,6 +117,21 @@ test("finalize control tool description stays prose closeout guidance", () => {
   assert.match(finalizeTool?.description ?? "", /keep working or report the blocker instead/u);
   assert.doesNotMatch(finalizeTool?.description ?? "", /swe-verified|sweValidation|benchmark|validation proof|edited tests/i);
   assert.deepEqual(statusSchema?.enum, ["goal_satisfied", "out_of_scope"]);
+  assert.equal(properties?.assistantProgress, undefined);
+  assert.equal(required?.includes("assistantProgress"), false);
+
+  const normalized = normalizeModelToolCallsToAgentTurnRaw({
+    aliasRegistry: registry,
+    sourceRunId: "run_1",
+    toolIntents: [
+      {
+        name: "kestrel_finalize",
+        input: { status: "goal_satisfied", message: "The exact answer." },
+      },
+    ],
+  });
+  assert.equal(normalized.action?.kind, "finalize");
+  assert.equal(normalized.assistantProgress, undefined);
 });
 
 test("cannot_satisfy description rejects unfinished build progress as a blocker", () => {

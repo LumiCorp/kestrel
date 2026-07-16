@@ -8,7 +8,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileThreadDtos } from "@/lib/mobile/dto";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { listThreadsForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
         durable.dispatchTurnId ?? durable.turn.id
       ).catch(() => {});
     }
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: body.id,
       organizationId,
       userId: session.user.id,

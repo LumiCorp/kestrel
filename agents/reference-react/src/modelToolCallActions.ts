@@ -102,14 +102,20 @@ export function normalizeModelToolCallsToAgentTurn(input: {
     }
     canonicalNames.push(entry.canonicalName);
     const progress = asString(intent.input.assistantProgress)?.trim();
-    if (progress === undefined || progress.length === 0 || progress.length > 600) {
+    const requiresAssistantProgress = entry.canonicalName !== "kestrel.finalize" &&
+      entry.canonicalName !== "kestrel.cannot_satisfy" &&
+      entry.canonicalName !== "kestrel.ask_user";
+    if (
+      requiresAssistantProgress &&
+      (progress === undefined || progress.length === 0 || progress.length > 600)
+    ) {
       throw new ModelToolCallActionError("Every model action tool call requires assistantProgress between 1 and 600 characters.", {
         reason: "invalid_assistant_progress",
         index,
       });
     }
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
-    if (assistantProgress === undefined && entry.canonicalName !== "kestrel.finalize" && entry.canonicalName !== "kestrel.cannot_satisfy" && entry.canonicalName !== "kestrel.ask_user") {
+    if (assistantProgress === undefined && requiresAssistantProgress) {
       assistantProgress = progress;
     }
     transcriptToolCalls.push({

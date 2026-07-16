@@ -222,6 +222,7 @@ export interface OpenRouterProviderOptions {
   maxTokens?: number | undefined;
   topP?: number | undefined;
   toolChoice?: "auto" | "none" | "required" | string | undefined;
+  parallelToolCalls?: boolean | undefined;
   responseSchemaName?: string | undefined;
 }
 
@@ -231,6 +232,7 @@ export interface OpenAiProviderOptions {
   maxTokens?: number | undefined;
   topP?: number | undefined;
   toolChoice?: "auto" | "none" | "required" | string | undefined;
+  parallelToolCalls?: boolean | undefined;
   responseSchemaName?: string | undefined;
 }
 
@@ -239,6 +241,7 @@ export interface AnthropicProviderOptions {
   maxTokens?: number | undefined;
   topP?: number | undefined;
   toolChoice?: "auto" | "none" | "required" | string | undefined;
+  parallelToolCalls?: boolean | undefined;
   responseSchemaName?: string | undefined;
 }
 

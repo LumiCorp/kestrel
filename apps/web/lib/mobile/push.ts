@@ -45,6 +45,7 @@ export async function dispatchPendingMobilePushNotifications() {
       delivery: schema.mobilePushDeliveries,
       token: schema.mobileDeviceRegistrations.expoPushToken,
       deviceEnabled: schema.mobileDeviceRegistrations.enabled,
+      targetMessageId: schema.threadTurns.outputMessageId,
     })
     .from(schema.mobilePushDeliveries)
     .innerJoin(
@@ -53,6 +54,10 @@ export async function dispatchPendingMobilePushNotifications() {
         schema.mobileDeviceRegistrations.id,
         schema.mobilePushDeliveries.deviceRegistrationId
       )
+    )
+    .innerJoin(
+      schema.threadTurns,
+      eq(schema.threadTurns.id, schema.mobilePushDeliveries.turnId)
     )
     .where(eq(schema.mobilePushDeliveries.status, "pending"))
     .limit(MAX_EXPO_BATCH_SIZE);
@@ -64,13 +69,14 @@ export async function dispatchPendingMobilePushNotifications() {
     method: "POST",
     headers: pushHeaders(),
     body: JSON.stringify(
-      deliverable.map(({ delivery, token }) =>
+      deliverable.map(({ delivery, token, targetMessageId }) =>
         buildMobilePushMessage({
           token,
           kind: delivery.kind,
           organizationId: delivery.organizationId,
           threadId: delivery.threadId,
           turnId: delivery.turnId,
+          targetMessageId,
         })
       )
     ),

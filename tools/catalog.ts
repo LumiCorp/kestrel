@@ -1,7 +1,10 @@
 import type { ModelToolSpec } from "../src/kestrel/contracts/model-io.js";
 import { RUNNER_BUILT_IN_TOOL_NAMES } from "@kestrel-agents/protocol";
 
-import { isApprovalCapabilityClass } from "../src/mode/contracts.js";
+import {
+  isApprovalCapabilityClass,
+  isInteractionMode,
+} from "../src/mode/contracts.js";
 import type {
   SharedToolContext,
   ToolCapabilityMetadata,
@@ -230,6 +233,9 @@ export function createToolCatalog(modules: SharedToolModule[] = DEFAULT_MODULES)
         latencyClass: capability.latencyClass,
         costClass: capability.costClass,
         executionClass: capability.executionClass,
+        ...(capability.allowedInteractionModes !== undefined
+          ? { allowedInteractionModes: [...capability.allowedInteractionModes] }
+          : {}),
         capabilityClasses: [...capability.capabilityClasses],
         ...(capability.approvalCapabilities !== undefined
           ? { approvalCapabilities: [...capability.approvalCapabilities] }
@@ -304,6 +310,26 @@ function validateCapabilityMetadata(name: string, capability: ToolCapabilityMeta
         toolName: name,
         field: "executionClass",
         contractPath: "definition.capability.executionClass",
+        classification: "configuration",
+        recoverable: false,
+      },
+    );
+  }
+  if (
+    capability.allowedInteractionModes !== undefined &&
+    (
+      capability.allowedInteractionModes.length === 0 ||
+      capability.allowedInteractionModes.some((item) => !isInteractionMode(item))
+    )
+  ) {
+    throw createToolCatalogError(
+      "TOOL_CAPABILITY_METADATA_INVALID",
+      `Tool '${name}' has invalid capability.allowedInteractionModes.`,
+      {
+        subsystem: "tooling",
+        toolName: name,
+        field: "allowedInteractionModes",
+        contractPath: "definition.capability.allowedInteractionModes",
         classification: "configuration",
         recoverable: false,
       },

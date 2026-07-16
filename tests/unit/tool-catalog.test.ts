@@ -313,6 +313,19 @@ test("mission control task proposal tool is the model-visible project follow-up 
   assert.equal(manifest?.executionClass, "external_side_effect");
   assert.deepEqual(manifest?.capabilityClasses, ["runtime.project.task_queue"]);
   assert.deepEqual(manifest?.approvalCapabilities, ["project.task_queue.write"]);
+  assert.deepEqual(manifest?.allowedInteractionModes, ["chat", "build"]);
+});
+
+test("authorized app mutations opt into Chat while agent branch push remains Build-only", () => {
+  const manifest = defaultToolCatalog.toCapabilityManifest([
+    "kestrel_one.google_calendar_create_event",
+    "kestrel_one.github_issue_create",
+    "kestrel_one.github_push_agent_branch",
+  ]);
+  assert.deepEqual(manifest[0]?.allowedInteractionModes, ["chat", "build"]);
+  assert.deepEqual(manifest[1]?.allowedInteractionModes, ["chat", "build"]);
+  assert.equal(manifest[2]?.allowedInteractionModes, undefined);
+  assert.equal(manifest[2]?.executionClass, "external_side_effect");
 });
 
 test("fs.mkdir tool description makes the acknowledgment contract explicit", () => {

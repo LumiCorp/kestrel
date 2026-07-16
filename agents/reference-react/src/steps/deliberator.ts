@@ -3,11 +3,12 @@ import type { ModelReasoningRequest, ModelRequest, ModelResponse, ModelToolSpec 
 
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import {
-  areApprovalCapabilitiesAllowed,
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
   formatUserFacingModeLabel,
   isToolClassAllowed,
+  isToolEligibleForInteractionMode,
+  needsPerCallApproval,
   normalizeInteractionMode,
   readBlockedApprovalCapability,
   type ActSubmode,
@@ -79,7 +80,6 @@ import {
   ModelToolCallActionError,
   buildModelToolAliasRegistry,
   normalizeModelToolCallsToAgentTurn,
-  providerToolAliasForCanonicalName,
 } from "../modelToolCallActions.js";
 import type {
   EvidenceLedgerContext,
@@ -131,15 +131,6 @@ interface AgentLoopStepConfig {
 }
 
 const DELIBERATOR_SCHEMA_RETRY_LIMIT = 3;
-const TERMINAL_CONTROL_TOOL_NAMES = [
-  "kestrel.finalize",
-  "kestrel.ask_user",
-  "kestrel.cannot_satisfy",
-] as const;
-const NONINTERACTIVE_TERMINAL_CONTROL_TOOL_NAMES = [
-  "kestrel.finalize",
-  "kestrel.cannot_satisfy",
-] as const;
 const EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.ask_user",
@@ -195,15 +186,6 @@ function cannotSatisfyReasonCodesForInteractionMode(input: {
     return undefined;
   }
   return ["missing_required_capability", "requested_tool_unavailable"];
-}
-
-function terminalControlToolNamesForContext(
-  eventType: string,
-  eventPayload: Record<string, unknown>,
-): readonly string[] {
-  return isNoninteractiveExecutionContext(eventType, eventPayload)
-    ? NONINTERACTIVE_TERMINAL_CONTROL_TOOL_NAMES
-    : TERMINAL_CONTROL_TOOL_NAMES;
 }
 
 function isNoninteractiveExecutionContext(eventType: string, eventPayload: Record<string, unknown>): boolean {
@@ -440,27 +422,44 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const cannotSatisfyReasonCodes = cannotSatisfyReasonCodesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
     });
-    const terminalControlToolNames = terminalControlToolNamesForContext(ctx.event.type, eventPayload);
     let activeReactState: Record<string, unknown> = {
       ...reactState,
       modelTranscript: contextRequest.transcript,
     };
+    const initialParallelToolCalls = shouldEnableParallelToolCalls({
+      tools: initialFilteredTools.tools,
+      capabilityManifest,
+      modeResolution,
+      executionPolicy,
+    });
     let response = await askDeliberator(
       io,
       config,
       contextRequest.modelInput,
       contextRequest.messages,
       initialFilteredTools.tools,
-      "auto",
+      "required",
+      initialParallelToolCalls,
       modeScopedControlToolNames,
       finalizeStatuses,
       cannotSatisfyReasonCodes,
     );
+    if (response.toolIntents.length === 0) {
+      return toRequiredToolCallMissingTransition({
+        stepIndex: ctx.stepIndex,
+        reactState: activeReactState,
+        response,
+        actionToolCount: buildModelToolAliasRegistry(initialFilteredTools.tools, {
+          controlToolNames: modeScopedControlToolNames,
+          finalizeStatuses,
+          cannotSatisfyReasonCodes,
+        }).requestTools.length,
+      });
+    }
     let activeModelTranscript = contextRequest.transcript;
     let attemptNumber = 1;
     let schemaRetriesUsed = 0;
     let policyRetriesUsed = 0;
-    let terminalControlRetryActive = false;
     const seenPolicyReasons = new Set<string>();
     let attempt = runDeliberatorCompileAttempt({
       response,
@@ -479,19 +478,6 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       cannotSatisfyReasonCodes,
     });
     while (attempt.ok === false) {
-      if (terminalControlRetryActive && readMissingToolCallFailure(attempt.error)) {
-        attempt = {
-          ...attempt,
-          error: buildTerminalControlToolRequiredError(terminalControlToolNames),
-        };
-        break;
-      }
-      const missingToolCall = readMissingToolCallFailure(attempt.error);
-      const useTerminalControlRetry = missingToolCall &&
-        shouldUseTerminalControlRetry({
-          reactState: attempt.prepared?.reducedReactState ?? reactState,
-          interactionMode: modeResolution.interactionMode,
-        });
       const retryKind = readDeliberatorRetryKind(attempt.error);
       if (retryKind === undefined || attemptNumber >= 4) {
         break;
@@ -511,18 +497,12 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       }
       attemptNumber += 1;
       const retryTools = attempt.prepared?.filteredTools ?? initialFilteredTools;
-      const retryFailure = useTerminalControlRetry
-        ? addTerminalControlRetryDetails({
-            error: attempt.error,
-            terminalControlToolNames,
-          })
-        : attempt.error;
       const retryContext = buildThinkerRetryContext({
         attempt: attemptNumber,
         maxAttempts: 4,
         previousResponse: response.output,
-        failure: retryFailure,
-        toolAvailability: useTerminalControlRetry ? undefined : retryTools.availability,
+        failure: attempt.error,
+        toolAvailability: retryTools.availability,
         executionIntent: attempt.prepared?.canonicalIntentContext.executionIntent,
         filesystemInventory: decisionContext.filesystemInventory,
       });
@@ -557,26 +537,43 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         config,
         retryRequest.modelInput,
         retryRequest.messages,
-        useTerminalControlRetry ? [] : retryTools.tools,
-        readMissingToolCallFailure(attempt.error) ? "required" : "auto",
-        useTerminalControlRetry ? terminalControlToolNames : modeScopedControlToolNames,
+        retryTools.tools,
+        "required",
+        shouldEnableParallelToolCalls({
+          tools: retryTools.tools,
+          capabilityManifest,
+          modeResolution,
+          executionPolicy,
+        }),
+        modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
       );
-      terminalControlRetryActive = useTerminalControlRetry;
+      if (response.toolIntents.length === 0) {
+        return toRequiredToolCallMissingTransition({
+          stepIndex: ctx.stepIndex,
+          reactState: activeReactState,
+          response,
+          actionToolCount: buildModelToolAliasRegistry(retryTools.tools, {
+            controlToolNames: modeScopedControlToolNames,
+            finalizeStatuses,
+            cannotSatisfyReasonCodes,
+          }).requestTools.length,
+        });
+      }
       attempt = runDeliberatorCompileAttempt({
         response,
         reactState: activeReactState,
         stepIndex: ctx.stepIndex,
         runId: ctx.runId,
         interactionMode: modeResolution.interactionMode,
-        deliberatorTools: useTerminalControlRetry ? [] : modeScopedDeliberatorTools,
+        deliberatorTools: modeScopedDeliberatorTools,
         capabilityManifest,
         decisionContext,
         observedCapabilities,
         executionPolicy,
         workspaceRoot: activeWorkspace?.workspaceRoot,
-        controlToolNames: useTerminalControlRetry ? terminalControlToolNames : modeScopedControlToolNames,
+        controlToolNames: modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
       });
@@ -722,15 +719,16 @@ function filterDeliberatorToolsForMode(input: {
   const toolApprovalCapabilitiesByName = new Map(
     input.capabilityManifest.map((tool) => [tool.name, tool.approvalCapabilities ?? []] as const),
   );
+  const toolAllowedInteractionModesByName = new Map(
+    input.capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes] as const),
+  );
   return input.tools.filter((tool) =>
     toolClassByName.has(tool.name) &&
-    isToolClassAllowed({
+    isToolEligibleForInteractionMode({
       interactionMode: input.modeResolution.interactionMode,
       actSubmode: input.modeResolution.actSubmode,
       toolClass: toolClassByName.get(tool.name) ?? "read_only",
-      executionPolicy: input.executionPolicy,
-    }) &&
-    areApprovalCapabilitiesAllowed({
+      allowedInteractionModes: toolAllowedInteractionModesByName.get(tool.name),
       executionPolicy: input.executionPolicy,
       requiredCapabilities: toolApprovalCapabilitiesByName.get(tool.name),
     })
@@ -748,6 +746,27 @@ function hasExecutableWorkspaceTools(input: {
     const executionClass = executionClassByName.get(tool.name);
     return executionClass === "sandboxed_only" || executionClass === "external_side_effect";
   });
+}
+
+function shouldEnableParallelToolCalls(input: {
+  tools: ModelToolSpec[];
+  capabilityManifest: ToolCapabilityManifestItem[];
+  modeResolution: { interactionMode: InteractionMode; actSubmode?: ActSubmode | undefined };
+  executionPolicy: ExecutionPolicyOverride | undefined;
+}): boolean {
+  if (needsPerCallApproval({
+    interactionMode: input.modeResolution.interactionMode,
+    actSubmode: input.modeResolution.actSubmode,
+    executionPolicy: input.executionPolicy,
+  })) {
+    return false;
+  }
+
+  const surfacedToolNames = new Set(input.tools.map((tool) => tool.name));
+  return input.capabilityManifest.every((tool) =>
+    surfacedToolNames.has(tool.name) === false ||
+    tool.approvalCapabilities?.includes("external.confirm") !== true
+  );
 }
 
 type DeliberatorPreparedCompileAttempt = {
@@ -938,7 +957,8 @@ async function askDeliberator(
   input: Record<string, unknown>,
   messages: ModelRequest["messages"],
   deliberatorTools: ModelToolSpec[],
-  toolChoice: "auto" | "required" = "auto",
+  toolChoice: "required" = "required",
+  parallelToolCalls = true,
   controlToolNames?: readonly string[] | undefined,
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined,
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined,
@@ -960,12 +980,15 @@ async function askDeliberator(
       openrouter: {
         endpoint: "chat",
         toolChoice,
+        parallelToolCalls,
       },
       openai: {
         toolChoice,
+        parallelToolCalls,
       },
       anthropic: {
         toolChoice,
+        parallelToolCalls,
       },
     },
     metadata: {
@@ -1268,91 +1291,6 @@ function mapModelToolCallActionError(error: unknown): {
   return mapDecisionCompileError(error);
 }
 
-function readMissingToolCallFailure(error: {
-  code: DecisionFailureCode;
-  details?: Record<string, unknown> | undefined;
-}): boolean {
-  return error.code === "DECISION_SCHEMA_FAILED" &&
-    asString(error.details?.reason) === "missing_model_tool_call";
-}
-
-function shouldUseTerminalControlRetry(input: {
-  reactState: Record<string, unknown>;
-  interactionMode: InteractionMode;
-}): boolean {
-  const visibleTodos = normalizeVisibleTodoState(input.reactState.visibleTodos);
-  if (visibleTodos !== undefined && analyzeVisibleTodosCompletion(visibleTodos).openItems.length > 0) {
-    return false;
-  }
-  if (input.interactionMode !== "build") {
-    return true;
-  }
-  const lastActionResult = asRecord(input.reactState.lastActionResult);
-  return lastActionResult !== undefined && hasObservedExecutionSuccess(lastActionResult);
-}
-
-function addTerminalControlRetryDetails(input: {
-  error: {
-    code: DecisionFailureCode;
-    message: string;
-    details?: Record<string, unknown> | undefined;
-  };
-  terminalControlToolNames: readonly string[];
-}): {
-  code: DecisionFailureCode;
-  message: string;
-  details?: Record<string, unknown> | undefined;
-} {
-  const expectedTools = input.terminalControlToolNames.map(providerToolAliasForCanonicalName);
-  return {
-    ...input.error,
-    message: "A terminal control tool is required to finish, ask, or report a blocker.",
-    details: {
-      ...(input.error.details ?? {}),
-      reason: "missing_model_tool_call",
-      terminalControlRetry: true,
-      expectedTools,
-      correction: buildTerminalControlCorrection(expectedTools),
-    },
-  };
-}
-
-function buildTerminalControlToolRequiredError(terminalControlToolNames: readonly string[]): {
-  code: DecisionFailureCode;
-  message: string;
-  details: Record<string, unknown>;
-} {
-  const expectedTools = terminalControlToolNames.map(providerToolAliasForCanonicalName);
-  return {
-    code: "TERMINAL_CONTROL_TOOL_REQUIRED",
-    message: `Terminal control tool required. Expected one of: ${expectedTools.join(", ")}.`,
-    details: {
-      reason: "terminal_control_tool_required",
-      expectedTools,
-      correction: buildTerminalControlCorrection(expectedTools),
-    },
-  };
-}
-
-function buildTerminalControlCorrection(expectedTools: readonly string[]): string {
-  const clauses = [
-    expectedTools.includes("kestrel_finalize")
-      ? "Call kestrel_finalize if the requested work is complete"
-      : undefined,
-    expectedTools.includes("kestrel_ask_user")
-      ? "Call kestrel_ask_user if you need user input"
-      : undefined,
-    expectedTools.includes("kestrel_cannot_satisfy")
-      ? "Call kestrel_cannot_satisfy only for a concrete blocker"
-      : undefined,
-  ].filter((item): item is string => item !== undefined);
-  return [
-    "You must call one available control tool now.",
-    clauses.length > 0 ? clauses.join(". ") + "." : `Expected one of: ${expectedTools.join(", ")}.`,
-    "Do not answer in prose.",
-  ].join(" ");
-}
-
 function toAgentLoopTodoOnlyTransition(input: {
   stepIndex: number;
   loopStepId: string;
@@ -1473,10 +1411,14 @@ function toAgentLoopActionTransition(
   const toolApprovalCapabilitiesByName = Object.fromEntries(
     capabilityManifest.map((tool) => [tool.name, tool.approvalCapabilities ?? []]),
   );
+  const toolAllowedInteractionModesByName = Object.fromEntries(
+    capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
+  );
   const blockedToolClass = resolveBlockedActionPolicy({
     action,
     toolExecutionClassByName,
     toolApprovalCapabilitiesByName,
+    toolAllowedInteractionModesByName,
     modeResolution,
     executionPolicy,
   });
@@ -1749,6 +1691,7 @@ function resolveBlockedActionPolicy(input: {
   action: NonNullable<CompiledDecision["action"]>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
+  toolAllowedInteractionModesByName: Record<string, InteractionMode[] | undefined>;
   modeResolution: { interactionMode: InteractionMode; actSubmode?: ActSubmode | undefined };
   executionPolicy: ExecutionPolicyOverride | undefined;
 }): { toolName: string; toolClass: ToolExecutionClass; blockedCapability?: string | undefined } | undefined {
@@ -1756,10 +1699,11 @@ function resolveBlockedActionPolicy(input: {
   for (const toolName of toolNames) {
     const toolClass = input.toolExecutionClassByName[toolName] ?? "read_only";
     if (
-      isToolClassAllowed({
+      isToolEligibleForInteractionMode({
         interactionMode: input.modeResolution.interactionMode,
         actSubmode: input.modeResolution.actSubmode,
         toolClass,
+        allowedInteractionModes: input.toolAllowedInteractionModesByName[toolName],
         executionPolicy: input.executionPolicy,
       }) === false
     ) {
@@ -1805,9 +1749,10 @@ function remapToolAvailabilityPolicyError(input: {
   }
   const toolClass = manifestItem.executionClass ?? "read_only";
   if (
-    isToolClassAllowed({
+    isToolEligibleForInteractionMode({
       interactionMode: input.interactionMode,
       toolClass,
+      allowedInteractionModes: manifestItem.allowedInteractionModes,
       executionPolicy: input.executionPolicy,
     }) === false
   ) {
@@ -2668,15 +2613,12 @@ function toAgentLoopValidationFeedbackTransition(input: {
     ? existingRetry.loopAttempt + 1
     : 1;
   const maxLoopAttempts = 4;
-  const terminalControlToolRequired = input.error.code === "TERMINAL_CONTROL_TOOL_REQUIRED";
-  const exhausted = terminalControlToolRequired || loopAttempt > maxLoopAttempts;
+  const exhausted = loopAttempt > maxLoopAttempts;
   const timestamp = new Date().toISOString();
   const feedbackError = exhausted
     ? {
         code: "AGENT_VALIDATION_RETRY_EXHAUSTED",
-        message: terminalControlToolRequired
-          ? input.error.message
-          : `Agent validation failed ${loopAttempt} consecutive times; aborting the run.`,
+        message: `Agent validation failed ${loopAttempt} consecutive times; aborting the run.`,
         details: {
           originalCode: input.error.code,
           originalMessage: input.error.message,
@@ -2779,6 +2721,70 @@ function toAgentLoopValidationFeedbackTransition(input: {
             maxLoopAttempts,
             ...(input.error.details !== undefined ? { details: input.error.details } : {}),
           },
+        },
+      ],
+      phase: "LOOP",
+    }),
+    stateNode: {
+      parent: "agent",
+      child: "loop",
+    },
+  };
+}
+
+function toRequiredToolCallMissingTransition(input: {
+  stepIndex: number;
+  reactState: Record<string, unknown>;
+  response: ModelResponse<unknown>;
+  actionToolCount: number;
+}): Transition {
+  const code = "MODEL_REQUIRED_TOOL_CALL_MISSING";
+  const message = "The model did not return the required structured action.";
+  const timestamp = new Date().toISOString();
+  const details = {
+    provider: input.response.provider.name,
+    model: input.response.provider.model,
+    phase: "agent.loop",
+    actionToolCount: input.actionToolCount,
+    textPresent: typeof input.response.text === "string" && input.response.text.trim().length > 0,
+  };
+  return {
+    status: "FAILED",
+    statePatch: buildAgentLoopStatePatch({
+      ...input.reactState,
+      ...createReferenceReactNextActionPatch(undefined),
+      ...createReferenceReactRetryContextPatch(undefined),
+      ...clearLegacyGoalPatch(),
+      decisionReason: message,
+      observations: [
+        ...asArray(input.reactState.observations),
+        {
+          kind: "model_contract_failure",
+          status: "failed",
+          errorCode: code,
+          message,
+          details,
+          timestamp,
+        },
+      ].slice(-50),
+      ...createReferenceReactLastActionResultPatch({
+        ok: false,
+        kind: "model_contract_failure",
+        status: "failed",
+        error: { code, message, details },
+        timestamp,
+      }),
+      ...createReferenceReactTerminalPatch({
+        status: "FAILED",
+        reasonCode: code,
+        message,
+      }),
+      decisionTrace: [
+        {
+          eventType: "decision.rejected",
+          phase: "agent.loop",
+          decisionCode: code,
+          metadata: details,
         },
       ],
       phase: "LOOP",
@@ -2957,20 +2963,6 @@ function buildThinkerRequiredCorrection(
   filesystemInventory?: FilesystemInventoryFact | undefined,
 ): Record<string, unknown> | undefined {
   const details = asRecord(failure.details);
-  if (
-    failure.code === "DECISION_SCHEMA_FAILED" &&
-    asString(details?.reason) === "missing_model_tool_call" &&
-    details?.terminalControlRetry === true
-  ) {
-    return {
-      terminalControlToolRequired: {
-        action: "call_one_terminal_control_tool",
-        expectedTools: asArray(details?.expectedTools).map(asString).filter((tool): tool is string => tool !== undefined),
-        correction: asString(details?.correction) ??
-          "You must call one available control tool now. Do not answer in prose.",
-      },
-    };
-  }
   if (
     failure.code === "DECISION_SCHEMA_FAILED" &&
     (

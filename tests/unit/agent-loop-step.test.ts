@@ -337,6 +337,7 @@ function projectTaskQueueCapabilityManifest() {
       capabilityClasses: ["runtime.project.task_queue"],
       approvalCapabilities: ["project.task_queue.write"],
       executionClass: "external_side_effect" as const,
+      allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build">,
     },
   ];
 }
@@ -388,6 +389,7 @@ function buildStep(input?: {
       capabilityClasses: string[];
       approvalCapabilities?: string[];
       executionClass: "read_only" | "sandboxed_only" | "external_side_effect";
+      allowedInteractionModes?: Array<"chat" | "plan" | "build">;
   }>;
 }) {
   return createAgentLoopStep({
@@ -1542,13 +1544,109 @@ test("agent loop sends native tool specs for tool-capable turns", async () => {
   assert.equal(capturedRequest.tools?.some((tool) => tool.name === "kestrel_finalize"), true);
   assert.deepEqual(capturedRequest.providerOptions?.openrouter, {
     endpoint: "chat",
-    toolChoice: "auto",
+    toolChoice: "required",
+    parallelToolCalls: true,
   });
-  assert.equal(capturedRequest.providerOptions?.openai?.toolChoice, "auto");
-  assert.equal(capturedRequest.providerOptions?.anthropic?.toolChoice, "auto");
+  assert.deepEqual(capturedRequest.providerOptions?.openai, {
+    toolChoice: "required",
+    parallelToolCalls: true,
+  });
+  assert.deepEqual(capturedRequest.providerOptions?.anthropic, {
+    toolChoice: "required",
+    parallelToolCalls: true,
+  });
 });
 
-test("agent loop retries missing terminal tool calls with control tools only after successful work", async () => {
+test("agent loop disables parallel tool calls when a surfaced action requires individual approval", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "chat",
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "chat",
+  };
+  const approvalTool: ModelToolSpec = {
+    name: "calendar.create_event",
+    description: "Create a calendar event.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { title: { type: "string" } },
+      required: ["title"],
+    },
+  };
+
+  await buildStep({
+    tools: [approvalTool],
+    capabilityManifest: [{
+      name: approvalTool.name,
+      description: approvalTool.description,
+      capabilityClasses: ["calendar.write"],
+      approvalCapabilities: ["network.call", "external.confirm"],
+      executionClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "build"],
+    }],
+  })(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "Answer without changing the calendar.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "No calendar change was made.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(capturedRequest?.tools?.some((tool) => tool.name === "calendar_create_event"), true);
+  assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+});
+
+test("agent loop disables parallel tool calls under strict per-call approval policy", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+    executionPolicy: {
+      approvalPolicy: { strictApprovalPerCall: true },
+    },
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "build",
+    executionPolicy: {
+      approvalPolicy: { strictApprovalPerCall: true },
+    },
+  };
+
+  await buildStep()(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "Read the requested file.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+});
+
+test("agent loop fails immediately when a required structured action is missing", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -1574,90 +1672,54 @@ test("agent loop retries missing terminal tool calls with control tools only aft
   })(buildContext, {
     useModel: async (request) => {
       requests.push(request);
-      if (requests.length === 1) {
-        return modelResponse({
-          reason: "The build passed, so I can report completion.",
-        });
-      }
       return modelResponse({
-        reason: "Finalize with the completed build result.",
+        reason: "The build passed, so I can report completion.",
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.providerOptions?.openrouter?.toolChoice, "required");
+  assert.equal(transition.status, "FAILED");
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const terminal = agent.terminal as Record<string, unknown>;
+  const error = (agent.lastActionResult as Record<string, unknown>).error as Record<string, unknown>;
+  assert.equal(terminal.reasonCode, "MODEL_REQUIRED_TOOL_CALL_MISSING");
+  assert.equal(error.code, "MODEL_REQUIRED_TOOL_CALL_MISSING");
+  assert.equal((error.details as Record<string, unknown>).textPresent, true);
+  assert.equal(agent.retryContext, undefined);
+});
+
+test("chat direct answers use one required structured call", async () => {
+  const chatContext = context();
+  chatContext.event.payload = { ...chatContext.event.payload, interactionMode: "chat" };
+  chatContext.session.state.agent = { interactionMode: "chat" };
+  const requests: ModelRequest[] = [];
+
+  const transition = await buildStep({ tools: [READ_TEXT_TOOL] })(chatContext, {
+    useModel: async (request) => {
+      requests.push(request);
+      return modelResponse({
+        reason: "Answer the user directly.",
         nextAction: {
           kind: "finalize",
           status: "goal_satisfied",
-          message: "Built and verified the Vite app.",
+          message: "The concise direct answer.",
         },
       });
     },
   } satisfies StepIO);
 
-  const retryToolNames = requests[1]?.tools?.map((tool) => tool.name);
-  const retryCannotSatisfyTool = requests[1]?.tools?.find((tool) => tool.name === "kestrel_cannot_satisfy");
-  const retryCannotSatisfySchema = retryCannotSatisfyTool?.inputSchema as Record<string, unknown> | undefined;
-  const retryCannotSatisfyProperties = retryCannotSatisfySchema?.properties as Record<string, unknown> | undefined;
-  const retryReasonCodeSchema = retryCannotSatisfyProperties?.reasonCode as Record<string, unknown> | undefined;
-  assert.equal(requests.length, 2);
-  assert.deepEqual(retryToolNames, ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy"]);
-  assert.deepEqual(retryReasonCodeSchema?.enum, ["missing_required_capability", "requested_tool_unavailable"]);
-  assert.equal(requests[1]?.providerOptions?.openrouter?.toolChoice, "required");
-  assert.equal(requests[1]?.providerOptions?.openai?.toolChoice, "required");
-  assert.equal(requests[1]?.providerOptions?.anthropic?.toolChoice, "required");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.providerOptions?.openai?.toolChoice, "required");
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
   const agent = transition.statePatch?.agent as Record<string, unknown>;
-  const commandBatch = agent.commandBatch as Record<string, unknown>;
-  const commands = commandBatch.commands as Array<Record<string, unknown>>;
-  assert.equal(commands[0]?.name, "finalize");
+  const commands = ((agent.commandBatch as Record<string, unknown>).commands) as Array<Record<string, unknown>>;
+  assert.equal(((commands[0]?.input as Record<string, unknown>).message), "The concise direct answer.");
 });
 
-test("agent loop terminal retry omits ask_user for noninteractive job runs", async () => {
-  const jobContext = context();
-  jobContext.event.type = "job.run";
-  jobContext.event.payload = {
-    ...jobContext.event.payload,
-    interactionMode: "build",
-  };
-  jobContext.session.state.agent = {
-    interactionMode: "build",
-    lastActionResult: {
-      kind: "tool",
-      status: "passed",
-      name: "exec_command",
-      toolName: "exec_command",
-      output: {
-        status: "passed",
-        text: "focused tests passed",
-      },
-    },
-  };
-  const requests: ModelRequest[] = [];
-
-  const transition = await buildStep({ tools: [READ_TEXT_TOOL] })(jobContext, {
-    useModel: async (request) => {
-      requests.push(request);
-      if (requests.length === 1) {
-        return modelResponse({ reason: "The implementation and focused tests are complete." });
-      }
-      return modelResponse({
-        reason: "Finalize the completed noninteractive job.",
-        nextAction: {
-          kind: "finalize",
-          status: "goal_satisfied",
-          message: "Implemented and verified the requested change.",
-        },
-      });
-    },
-  } satisfies StepIO);
-
-  assert.equal(requests.length, 2);
-  assert.deepEqual(requests[1]?.tools?.map((tool) => tool.name), [
-    "kestrel_finalize",
-    "kestrel_cannot_satisfy",
-  ]);
-  assert.equal(transition.status, "RUNNING");
-  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-});
-
-test("agent loop fails as validation exhausted when terminal-control retry still returns no tool call", async () => {
+test("required-action failure diagnostics do not retain prose as retry output", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -1693,20 +1755,12 @@ test("agent loop fails as validation exhausted when terminal-control retry still
   const terminal = agent.terminal as Record<string, unknown>;
   const lastActionResult = agent.lastActionResult as Record<string, unknown>;
   const error = lastActionResult.error as Record<string, unknown>;
-  assert.equal(requests.length, 2);
-  assert.deepEqual(requests[1]?.tools?.map((tool) => tool.name), [
-    "kestrel_finalize",
-    "kestrel_ask_user",
-    "kestrel_cannot_satisfy",
-  ]);
+  assert.equal(requests.length, 1);
   assert.equal(transition.status, "FAILED");
-  assert.equal(terminal.reasonCode, "AGENT_VALIDATION_RETRY_EXHAUSTED");
-  assert.equal(error.code, "AGENT_VALIDATION_RETRY_EXHAUSTED");
-  assert.equal((error.details as Record<string, unknown>).originalCode, "TERMINAL_CONTROL_TOOL_REQUIRED");
-  assert.deepEqual(
-    ((error.details as Record<string, unknown>).originalDetails as Record<string, unknown>).expectedTools,
-    ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy"],
-  );
+  assert.equal(terminal.reasonCode, "MODEL_REQUIRED_TOOL_CALL_MISSING");
+  assert.equal(error.code, "MODEL_REQUIRED_TOOL_CALL_MISSING");
+  assert.equal(agent.retryContext, undefined);
+  assert.equal(JSON.stringify(agent).includes("The work is complete."), false);
 });
 
 test("agent loop persists compiled decision verification for downstream finalize enforcement", async () => {

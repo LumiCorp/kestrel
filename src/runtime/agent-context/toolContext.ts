@@ -199,6 +199,13 @@ export function buildKestrelAgentToolSurface(
 function withAgentProgressContract(
   entry: KestrelAgentToolAliasEntry,
 ): KestrelAgentToolAliasEntry {
+  if (
+    entry.canonicalName === "kestrel.finalize" ||
+    entry.canonicalName === "kestrel.ask_user" ||
+    entry.canonicalName === "kestrel.cannot_satisfy"
+  ) {
+    return entry;
+  }
   const schema = entry.inputSchema;
   const properties = asRecord(schema.properties) ?? {};
   const required = Array.isArray(schema.required)

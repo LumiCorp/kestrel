@@ -243,12 +243,11 @@ const CASES: PromptSuiteCase[] = [
   {
     name: "chat_mode_weather_wait",
     message: "What is the current weather in Seattle right now?",
-    expectsTool: false,
-    tags: ["policy", "mode-block", "weather"],
+    expectsTool: true,
+    expectsNonRuntimeTool: true,
+    tags: ["policy", "chat-read-only", "weather"],
     failureClass: "policy",
     risk: "medium",
-    expectedStatus: "WAITING",
-    expectedWaitKind: "user",
     interactionMode: "chat",
   },
   {
@@ -1179,13 +1178,6 @@ async function runSingleCase(
         return promptSuiteToolResponse<T>({
           kind: "ask_user",
           prompt: "This file write needs build mode. Switch with /mode build to continue.",
-        });
-      }
-
-      if (testCase.name === "chat_mode_weather_wait") {
-        return promptSuiteToolResponse<T>({
-          kind: "ask_user",
-          prompt: "Current weather needs tools. Switch out of chat mode with /mode plan or /mode build to continue.",
         });
       }
 

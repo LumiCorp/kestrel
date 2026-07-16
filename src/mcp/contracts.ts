@@ -1,3 +1,5 @@
+import type { InteractionMode } from "../mode/contracts.js";
+
 export type McpServerTransport = "stdio" | "http" | "sse";
 
 export interface McpToolPresentationMetadata {
@@ -8,6 +10,7 @@ export interface McpToolPresentationMetadata {
   toolFamily: string;
   capabilityClasses: string[];
   approvalMode?: "auto" | "ask" | undefined;
+  allowedInteractionModes?: InteractionMode[] | undefined;
 }
 
 export interface McpServerCommonConfig {

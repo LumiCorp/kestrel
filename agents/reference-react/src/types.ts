@@ -6,7 +6,10 @@ import type {
   ManagedTaskWorktreeProposal,
   ManagedTaskWorktreeRequest,
 } from "../../../src/workspace/ManagedTaskWorktreeService.js";
-import type { ToolExecutionClass as RuntimeToolExecutionClass } from "../../../src/mode/contracts.js";
+import type {
+  InteractionMode,
+  ToolExecutionClass as RuntimeToolExecutionClass,
+} from "../../../src/mode/contracts.js";
 import type { ContinuationOfferV1 } from "../../../src/runtime/continuationOffer.js";
 
 export interface AgentRegistrationOptions {
@@ -634,6 +637,7 @@ export interface ToolCapabilityManifestItem {
   latencyClass?: ToolLatencyClass | undefined;
   costClass?: ToolCostClass | undefined;
   executionClass?: ToolExecutionClass | undefined;
+  allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: string[] | undefined;
   requires?: string[] | undefined;
@@ -776,8 +780,7 @@ export type DecisionFailureCode =
   | "DECISION_POLICY_FAILED"
   | "DECISION_MODEL_EMPTY_RESPONSE"
   | "DECISION_CAPABILITY_UNAVAILABLE"
-  | "DECISION_CAPABILITY_EVIDENCE_REQUIRED"
-  | "TERMINAL_CONTROL_TOOL_REQUIRED";
+  | "DECISION_CAPABILITY_EVIDENCE_REQUIRED";
 
 export type DecisionRunEventType =
   | "decision.generated"

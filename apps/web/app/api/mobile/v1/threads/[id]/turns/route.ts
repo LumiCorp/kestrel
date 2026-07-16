@@ -4,7 +4,7 @@ import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
-import { getMobileThreadSnapshot } from "@/lib/mobile/snapshot";
+import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -75,7 +75,7 @@ export async function POST(
         durable.dispatchTurnId ?? durable.turn.id
       ).catch(() => {});
     }
-    const snapshot = await getMobileThreadSnapshot({
+    const snapshot = await getMobileThreadSnapshotForRequest(request, {
       threadId: id,
       organizationId,
       userId: session.user.id,
@@ -85,7 +85,9 @@ export async function POST(
       { snapshot, acceptedTurnId: durable.turn.id },
       {
         status: durable.created ? 202 : 200,
-        headers: { location: `/api/mobile/v1/turns/${durable.turn.id}` },
+        headers: {
+          location: `${request.nextUrl.pathname.startsWith("/api/mobile/v2/") ? "/api/mobile/v2" : "/api/mobile/v1"}/turns/${durable.turn.id}`,
+        },
       }
     );
   } catch (error) {

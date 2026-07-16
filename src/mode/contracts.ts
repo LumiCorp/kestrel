@@ -138,7 +138,7 @@ export function getAllowedToolClasses(
   interactionMode: InteractionMode,
 ): ReadonlySet<ToolExecutionClass> {
   if (interactionMode === "chat") {
-    return new Set<ToolExecutionClass>();
+    return new Set<ToolExecutionClass>(["read_only"]);
   }
 
   if (interactionMode === "plan") {
@@ -150,6 +150,63 @@ export function getAllowedToolClasses(
     "sandboxed_only",
     "external_side_effect",
   ]);
+}
+
+export function defaultAllowedInteractionModesForToolClass(
+  toolClass: ToolExecutionClass,
+): InteractionMode[] {
+  if (toolClass === "read_only") {
+    return ["chat", "plan", "build"];
+  }
+  if (toolClass === "planning_write") {
+    return ["plan"];
+  }
+  return ["build"];
+}
+
+export function resolveToolAllowedInteractionModes(input: {
+  toolClass: ToolExecutionClass;
+  allowedInteractionModes?: readonly InteractionMode[] | undefined;
+}): InteractionMode[] {
+  return input.allowedInteractionModes === undefined
+    ? defaultAllowedInteractionModesForToolClass(input.toolClass)
+    : [...new Set(input.allowedInteractionModes)];
+}
+
+/**
+ * Shared model-surface and execution eligibility contract. Mode availability is
+ * a hard ceiling: policy overrides may narrow it, but cannot widen it. The only
+ * class-level exception is an external app action that explicitly opts into Chat.
+ */
+export function isToolEligibleForInteractionMode(input: {
+  interactionMode: InteractionMode;
+  actSubmode?: LegacyBuildSubmode | undefined;
+  toolClass: ToolExecutionClass;
+  allowedInteractionModes?: readonly InteractionMode[] | undefined;
+  executionPolicy?: ExecutionPolicyOverride | undefined;
+  requiredCapabilities?: readonly string[] | undefined;
+}): boolean {
+  const allowedModes = resolveToolAllowedInteractionModes(input);
+  if (!allowedModes.includes(input.interactionMode)) {
+    return false;
+  }
+  if (!areApprovalCapabilitiesAllowed({
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities: input.requiredCapabilities,
+  })) {
+    return false;
+  }
+
+  const override = input.executionPolicy?.toolClassPolicy?.[input.toolClass];
+  if (override === false) {
+    return false;
+  }
+  if (isToolClassAllowed(input)) {
+    return true;
+  }
+  return input.interactionMode === "chat" &&
+    input.toolClass === "external_side_effect" &&
+    input.allowedInteractionModes?.includes("chat") === true;
 }
 
 export function isToolClassAllowed(input: {
