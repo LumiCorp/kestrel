@@ -206,28 +206,52 @@ function withAgentProgressContract(
   ) {
     return entry;
   }
-  const schema = entry.inputSchema;
+  return {
+    ...entry,
+    description: `${entry.description} Include assistantProgress: one concise sentence describing the accepted action to the user; do not mention internal steps, routing, commits, or model calls.`,
+    inputSchema: addAgentProgressToActionSchema(entry.inputSchema),
+  };
+}
+
+const AGENT_PROGRESS_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 600,
+  description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
+} as const;
+
+function addAgentProgressToActionSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const properties = asRecord(schema.properties) ?? {};
   const required = Array.isArray(schema.required)
     ? schema.required.filter((item): item is string => typeof item === "string")
     : [];
   return {
-    ...entry,
-    description: `${entry.description} Include assistantProgress: one concise sentence describing the accepted action to the user; do not mention internal steps, routing, commits, or model calls.`,
-    inputSchema: {
-      ...schema,
-      type: "object",
-      properties: {
-        ...properties,
-        assistantProgress: {
-          type: "string",
-          minLength: 1,
-          maxLength: 600,
-          description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
-        },
-      },
-      required: [...new Set([...required, "assistantProgress"])],
+    ...schema,
+    type: "object",
+    properties: {
+      ...properties,
+      assistantProgress: AGENT_PROGRESS_SCHEMA,
     },
+    required: [...new Set([...required, "assistantProgress"])],
+    ...augmentTopLevelActionAlternatives(schema, "oneOf"),
+    ...augmentTopLevelActionAlternatives(schema, "anyOf"),
+    ...augmentTopLevelActionAlternatives(schema, "allOf"),
+  };
+}
+
+function augmentTopLevelActionAlternatives(
+  schema: Record<string, unknown>,
+  key: "oneOf" | "anyOf" | "allOf",
+): Record<string, unknown> {
+  const alternatives = schema[key];
+  if (!Array.isArray(alternatives)) {
+    return {};
+  }
+  return {
+    [key]: alternatives.map((alternative) => {
+      const branch = asRecord(alternative);
+      return branch === undefined ? alternative : addAgentProgressToActionSchema(branch);
+    }),
   };
 }
 

@@ -198,6 +198,11 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   assert.match(packageScript, /strict: true/u);
   assert.match(packageScript, /verifyPreparedDesktopPostgresBundle\(\{/u);
   assert.match(packageScript, /CLI_EXCLUDED_RUNTIME_PATHS/u);
+  assert.match(packageScript, /kestrel_cli_bundle_v1/u);
+  assert.match(packageScript, /sourceCommit/u);
+  assert.match(packageScript, /entrypoint: "bin\/kestrel"/u);
+  assert.match(packageScript, /createHash\("sha256"\)/u);
+  assert.match(packageScript, /\.sha256/u);
   assert.match(packageScript, /cli\/client\/InProcessRunnerTransport\.ts/u);
   assert.match(packageScript, /cli\/client\/RunnerProcess\.ts/u);
   assert.match(packageScript, /cli\/runner\/main\.ts/u);
@@ -207,6 +212,11 @@ test("CLI package installs the exact packed protocol and owns temporary cleanup"
   assert.match(releaseScript, /FORBIDDEN_LIBEXEC_PATHS/u);
   assert.match(releaseScript, /smokePackagedProtocolClient/u);
   assert.match(releaseScript, /scripts\/kchat-smoke\.ts/u);
+  assert.match(releaseScript, /artifact kestrel-bundle\.json must use kestrel_cli_bundle_v1/u);
+  assert.match(releaseScript, /bundle manifest sourceCommit must be a full Git commit/u);
+  assert.match(releaseScript, /CLI artifact digest mismatch/u);
+  assert.match(releaseScript, /KESTREL_CLI_PACKAGE_PLATFORM/u);
+  assert.match(releaseScript, /TARGET_PLATFORM === "darwin"/u);
 });
 
 test("public CI packages and verifies macOS release artifacts from a clean checkout", async () => {

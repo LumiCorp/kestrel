@@ -906,6 +906,41 @@ test("Kestrel agent context builder renders exec_command lifecycle correction", 
   assert.doesNotMatch(providerText, /Correction: The previous action was rejected by validation/u);
 });
 
+test("Kestrel agent context builder renders the exact rejected structured response for contract repair", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {},
+    retryContext: {
+      failure: {
+        code: "DECISION_SCHEMA_FAILED",
+        message: "Every model action tool call requires assistantProgress.",
+        details: {
+          reason: "invalid_assistant_progress",
+          schemaCategory: "tool_call",
+        },
+      },
+      requiredCorrection: {
+        assistantProgressContract: {
+          action: "repeat_rejected_tool_call_with_valid_assistant_progress",
+          requiredField: "assistantProgress",
+        },
+      },
+      previousResponse: {
+        toolCalls: [{ name: "fs_read_text", input: { path: "package.json" } }],
+      },
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "job.run",
+    goal: "Inspect the workspace.",
+    interactionMode: "build",
+  });
+
+  const providerText = JSON.stringify(context.messages);
+  assert.match(providerText, /Repeat the exact rejected tool call shown below/u);
+  assert.match(providerText, /Previous rejected structured response/u);
+  assert.match(providerText, /fs_read_text/u);
+  assert.match(providerText, /package\.json/u);
+});
+
 test("Kestrel agent context builder renders duplicate exec_command start correction", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_POLICY_FAILED",

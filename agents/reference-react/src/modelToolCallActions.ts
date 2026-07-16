@@ -112,6 +112,9 @@ export function normalizeModelToolCallsToAgentTurn(input: {
       throw new ModelToolCallActionError("Every model action tool call requires assistantProgress between 1 and 600 characters.", {
         reason: "invalid_assistant_progress",
         index,
+        providerName: intent.name,
+        canonicalName: entry.canonicalName,
+        receivedInputKeys: Object.keys(intent.input).sort(),
       });
     }
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;

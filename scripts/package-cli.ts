@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,8 +14,8 @@ import {
   verifyPreparedDesktopPostgresBundle,
 } from "./prepare-desktop-postgres-bundle.js";
 
-const TARGET_PLATFORM = "darwin";
-const TARGET_ARCH = "arm64";
+const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
+const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const CLI_RESOURCE_DIRECTORIES = ["cli", "src", "agents", "tools", "db", "scripts", "models", "bin"] as const;
 const CLI_EXCLUDED_RUNTIME_PATHS = [
@@ -39,8 +40,14 @@ const excludedRuntimePaths = new Set(
 
 if (process.platform !== TARGET_PLATFORM || process.arch !== TARGET_ARCH) {
   throw new Error(
-    `CLI v0.5 beta packaging currently targets ${TARGET_PLATFORM}-${TARGET_ARCH}; current host is ${process.platform}-${process.arch}.`,
+    `CLI packaging must run on its target platform; target is ${TARGET_PLATFORM}-${TARGET_ARCH}, current host is ${process.platform}-${process.arch}.`,
   );
+}
+if (
+  (TARGET_PLATFORM !== "darwin" && TARGET_PLATFORM !== "linux") ||
+  (TARGET_ARCH !== "arm64" && TARGET_ARCH !== "x64")
+) {
+  throw new Error(`Unsupported CLI package target: ${TARGET_PLATFORM}-${TARGET_ARCH}.`);
 }
 
 rmSync(stageDir, { recursive: true, force: true });
@@ -50,18 +57,58 @@ mkdirSync(outDir, { recursive: true });
 
 writeCliRuntimeManifest();
 copyCliRuntimeResources();
-prepareCliPostgresBundle();
-copyCliPostgresBundle();
+if (TARGET_PLATFORM === "darwin") {
+  prepareCliPostgresBundle();
+  copyCliPostgresBundle();
+}
 installRuntimeDependenciesWithPackedProtocol();
 writeLaunchers();
+writeBundleManifest();
 
 rmSync(artifactPath, { force: true });
 execFileSync("tar", ["-czf", artifactPath, "-C", stageDir, "."], {
   cwd: repoRoot,
   stdio: "inherit",
 });
+writeArtifactDigest();
 
 console.log(`[cli] packaged ${artifactPath}`);
+
+function writeBundleManifest(): void {
+  const sourceCommit = process.env.KESTREL_SOURCE_COMMIT?.trim() || readSourceCommit();
+  writeFileSync(
+    path.join(stageDir, "kestrel-bundle.json"),
+    `${JSON.stringify({
+      version: "kestrel_cli_bundle_v1",
+      package: rootPackageJson.name,
+      packageVersion: rootPackageJson.version,
+      sourceCommit,
+      platform: TARGET_PLATFORM,
+      arch: TARGET_ARCH,
+      nodeRequirement: rootPackageJson.engines?.node ?? null,
+      entrypoint: "bin/kestrel",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function writeArtifactDigest(): void {
+  const digest = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
+  writeFileSync(`${artifactPath}.sha256`, `${digest}  ${path.basename(artifactPath)}\n`, "utf8");
+  console.log(`[cli] sha256 ${digest}`);
+}
+
+function readSourceCommit(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    throw new Error("Unable to determine Kestrel source commit; set KESTREL_SOURCE_COMMIT explicitly.");
+  }
+}
 
 function writeCliRuntimeManifest(): void {
   const dependencies = resolveRuntimePackageDependencies({
@@ -226,6 +273,7 @@ child.on("error", (error) => {
 }
 
 function readPackageJson(packageJsonPath: string): {
+  name: string;
   version: string;
   packageManager?: string | undefined;
   engines?: Record<string, string> | undefined;
@@ -233,16 +281,21 @@ function readPackageJson(packageJsonPath: string): {
   devDependencies?: Record<string, string> | undefined;
 } {
   const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    name?: unknown;
     version?: unknown;
     packageManager?: unknown;
     engines?: unknown;
     dependencies?: unknown;
     devDependencies?: unknown;
   };
+  if (typeof parsed.name !== "string" || parsed.name.trim().length === 0) {
+    throw new Error(`Package manifest at '${packageJsonPath}' must declare a name.`);
+  }
   if (typeof parsed.version !== "string" || parsed.version.trim().length === 0) {
     throw new Error(`Package manifest at '${packageJsonPath}' must declare a version.`);
   }
   return {
+    name: parsed.name,
     version: parsed.version,
     ...(typeof parsed.packageManager === "string" ? { packageManager: parsed.packageManager } : {}),
     ...(isStringRecord(parsed.engines) ? { engines: parsed.engines } : {}),

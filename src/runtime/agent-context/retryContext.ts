@@ -33,8 +33,9 @@ export function buildKestrelAgentValidationFeedbackMessage(
 
 export function readCorrection(retryContext: Record<string, unknown> | undefined): string | undefined {
   const structuredCorrection = renderStructuredRetryCorrection(retryContext?.requiredCorrection);
+  const previousRejectedResponse = renderPreviousRejectedResponse(retryContext?.previousResponse);
   if (structuredCorrection !== undefined) {
-    return structuredCorrection;
+    return [structuredCorrection, previousRejectedResponse].filter((value): value is string => value !== undefined).join("\n");
   }
   const failure = asRecord(retryContext?.failure);
   const fallbackCorrection = asString(asRecord(failure?.details)?.modelFeedback) ??
@@ -49,9 +50,18 @@ export function readCorrection(retryContext: Record<string, unknown> | undefined
     details: asRecord(failure?.details),
   });
   if (recoveryInstruction === undefined || fallbackCorrection.includes(recoveryInstruction)) {
-    return fallbackCorrection;
+    return [fallbackCorrection, previousRejectedResponse].filter((value): value is string => value !== undefined).join("\n");
   }
-  return `${fallbackCorrection}\n- nextAction: ${recoveryInstruction}`;
+  return [`${fallbackCorrection}\n- nextAction: ${recoveryInstruction}`, previousRejectedResponse]
+    .filter((value): value is string => value !== undefined)
+    .join("\n");
+}
+
+function renderPreviousRejectedResponse(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return `Previous rejected structured response: ${stableStringify(value)}`;
 }
 
 function retryInstructionForValidationFeedback(input: {
@@ -130,6 +140,8 @@ function retryInstructionForAction(action: string | undefined): string | undefin
       return "Call exactly one Kestrel control tool now; do not answer in prose.";
     case "emit_compact_understanding_object":
       return "Emit understanding as a compact object with task, facts, currentGap, and actionBasis.";
+    case "repeat_rejected_tool_call_with_valid_assistant_progress":
+      return "Repeat the exact rejected tool call shown below, preserving its tool name and existing input, and add assistantProgress inside that same input. Return the corrected structured tool call only.";
     case "call_handoff_to_build_with_compact_continuation":
       return "Call kestrel_handoff_to_build with an operator-facing message and compact continuation object.";
     case "write_session_plan_before_handoff":
