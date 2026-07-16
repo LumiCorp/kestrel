@@ -6,6 +6,8 @@ import {
   DecisionCompileError,
   type CompileAgentActionInput,
 } from "../../agents/reference-react/src/decision/compileIntent.js";
+import { buildInternalDecisionContext } from "../../agents/reference-react/src/context/InternalDecisionContext.js";
+import { hashToolInput } from "../../agents/reference-react/src/memory/workingMemory.js";
 
 const readTextTool = {
   name: "fs.read_text",
@@ -83,6 +85,70 @@ const execCommandTool = {
     },
   },
 };
+
+test("internal decision context exposes existing exact-repeat evidence honestly", () => {
+  const input = {
+    path: "newsletter.html",
+  };
+  const inputHash = hashToolInput("fs.read_text", input);
+  const context = buildInternalDecisionContext({
+    reactState: {
+      lastActionResult: {
+        kind: "tool",
+        name: "fs.read_text",
+        toolName: "fs.read_text",
+        input,
+        inputHash,
+        status: "ok",
+      },
+      latestEvidenceDelta: {
+        kind: "duplicate_executed_result",
+        toolName: "fs.read_text",
+      },
+      postToolVerification: {
+        duplicateResult: {
+          kind: "duplicate_executed_result",
+          family: "command_result",
+          toolName: "fs.read_text",
+          fingerprint: "exec-command-validation",
+          duplicateCount: 2,
+          matchedPriorStep: 12,
+        },
+      },
+    },
+    eventPayload: {},
+  });
+
+  assert.equal(context.repetitionSignals?.lastToolName, "fs.read_text");
+  assert.equal(context.repetitionSignals?.lastToolInputHash, inputHash);
+  assert.equal(context.repetitionSignals?.lastResultReused, true);
+  assert.equal(context.repetitionSignals?.latestDuplicateResult?.duplicateCount, 2);
+
+  const compiled = compileAgentAction({
+    phase: "deliberator",
+    action: {
+      kind: "tool",
+      name: "fs.read_text",
+      input,
+    },
+    observedCapabilities: ["filesystem.read"],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file.",
+        capabilityClasses: ["filesystem.read"],
+      },
+    ],
+    availableTools: [readTextTool],
+    repetitionSignals: context.repetitionSignals,
+  });
+
+  assert.deepEqual(compiled.verification, {
+    missingCapabilities: [],
+    actionNovelty: false,
+    expectedEvidenceDelta: "low",
+  });
+});
 
 type LegacyCompileIntentFixtureInput = Omit<CompileAgentActionInput, "action"> & {
   output?: unknown;

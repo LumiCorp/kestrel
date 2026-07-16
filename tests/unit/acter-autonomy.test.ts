@@ -1236,6 +1236,10 @@ test("exec.wait_effect settles completed dev.shell.run results before loop", asy
   const exec = react.exec as Record<string, unknown>;
   const devShell = exec.devShell as Record<string, unknown>;
   const lastActionResult = react.lastActionResult as Record<string, unknown>;
+  const modelTranscript = react.modelTranscript as Record<string, unknown>;
+  const transcriptItems = modelTranscript.items as Array<Record<string, unknown>>;
+  const transcriptResult = [...transcriptItems].reverse().find((item) => item.kind === "tool_result");
+  const transcriptOutput = transcriptResult?.toolOutput as Record<string, unknown>;
   assert.equal(exec.pendingEffectKey, undefined);
   assert.equal(exec.pendingEffectType, undefined);
   assert.equal(exec.pendingToolCall, undefined);
@@ -1243,6 +1247,10 @@ test("exec.wait_effect settles completed dev.shell.run results before loop", asy
   assert.equal(lastActionResult.kind, "tool");
   assert.equal(lastActionResult.name, "dev.shell.run");
   assert.equal(devShell.status, "COMPLETED");
+  assert.equal(transcriptResult?.toolName, "dev.shell.run");
+  assert.match(String(transcriptOutput?.text), /Tool result: dev\.shell\.run/u);
+  assert.match(String(transcriptOutput?.text), /1000 fib\.txt/u);
+  assert.doesNotMatch(String(transcriptOutput?.text), /Tool result: effect_result_lookup/u);
 });
 
 test("exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode", async () => {

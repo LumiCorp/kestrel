@@ -85,7 +85,7 @@ export function buildRecoveryAdaptationVerdict(input: {
     typeof input.lowProgressCycles === "number" && Number.isFinite(input.lowProgressCycles) && input.lowProgressCycles > 0
       ? Math.trunc(input.lowProgressCycles)
       : 0;
-  const thrashIndex =
+  const stepRecurrenceIndex =
     typeof input.thrashIndex === "number" && Number.isFinite(input.thrashIndex) && input.thrashIndex > 0
       ? input.thrashIndex
       : 0;
@@ -110,15 +110,16 @@ export function buildRecoveryAdaptationVerdict(input: {
       critical: contextPressureLevel === "critical",
     },
     thrash: {
-      index: thrashIndex,
+      // Compatibility projection only. The supplied value measures repeated
+      // state-machine step names and is not evidence of semantic agent thrash.
+      index: stepRecurrenceIndex,
       threshold: CONTEXT_THRASH_CHECKPOINT_THRESHOLD,
-      requiresCheckpoint: thrashIndex >= CONTEXT_THRASH_CHECKPOINT_THRESHOLD,
+      requiresCheckpoint: false,
     },
     autoCompactEligible:
       completedWithoutWait &&
       (contextPressureLevel === "high" || contextPressureLevel === "critical") &&
-      contextPressureLevel !== "critical" &&
-      thrashIndex < CONTEXT_THRASH_CHECKPOINT_THRESHOLD,
+      contextPressureLevel !== "critical",
     researchStall: {
       eligible: researchToolActive && objectiveKey !== undefined,
       active:

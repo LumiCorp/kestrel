@@ -386,6 +386,9 @@ export class TuiRunController {
         latestProgressForSession: undefined,
         latestReasoningForSession: undefined,
       });
+      if (this.context.options.scripted === true) {
+        await this.context.appendHistoryLine("system", "Run Completed");
+      }
       await this.context.persistSessionAndUi();
       await this.appendTerminalHandoffDiagnostics({
         scope: "terminal_handoff.persist_completed",

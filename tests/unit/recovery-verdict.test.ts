@@ -98,3 +98,16 @@ test("isLowYieldSourceClusterStalled uses the shared low-yield threshold", () =>
   assert.equal(isLowYieldSourceClusterStalled(summary, "example.com/docs"), true);
   assert.equal(isLowYieldSourceClusterStalled(summary, "other.example.com/help"), false);
 });
+
+test("buildRecoveryAdaptationVerdict retains step recurrence without treating it as thrash policy", () => {
+  const verdict = buildRecoveryAdaptationVerdict({
+    evidenceRecovery: undefined,
+    webExtraction: undefined,
+    thrashIndex: 0.875,
+    outputStatus: "COMPLETED",
+  });
+
+  assert.equal(verdict.thrash.index, 0.875);
+  assert.equal(verdict.thrash.requiresCheckpoint, false);
+  assert.equal(verdict.autoCompactEligible, false);
+});

@@ -151,7 +151,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.todo_update",
-    description: "Update the visible live checklist for multi-step work. Use it to track objective, concrete work items, item statuses, planned checks, observed results, and blockers. For file or artifact changes, keep a check-work item open until the final state is reviewed after the last mutation. Mark items complete only after the corresponding work or check has been observed. When validation passed and the remaining issue is only a documented residual risk, mark the item done with a note and report the risk through kestrel.finalize data.openGap or data.knownWarnings. Detailed closeout requirements live in kestrel.finalize.",
+    description: "Update the visible live checklist for multi-step work. Emit this update alongside the related executable action instead of spending a separate turn on bookkeeping. After successful validation, emit completed checklist updates together with kestrel.finalize in the same decision. Use a standalone checklist update only when waiting or blocked and no executable or terminal action can accompany it. Track objective, concrete work items, item statuses, planned checks, observed results, and blockers. For file or artifact changes, keep a check-work item open until the final state is reviewed after the last mutation. Mark items complete only after the corresponding work or check has been observed. When validation passed and the remaining issue is only a documented residual risk, mark the item done with a note and report the risk through kestrel.finalize data.openGap or data.knownWarnings. Detailed closeout requirements live in kestrel.finalize.",
     inputSchema: VISIBLE_TODOS_SCHEMA,
   },
 ];

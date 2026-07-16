@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { buildMobileProjectCallback } from "@/lib/projects/mobile-return";
 
 export type ProjectIndexItem = {
   id: string;
@@ -22,9 +23,11 @@ export type ProjectIndexItem = {
 export function ProjectsIndexClient({
   projects,
   allowCreate = true,
+  mobileReturnTo,
 }: {
   projects: ProjectIndexItem[];
   allowCreate?: boolean;
+  mobileReturnTo?: string | null;
 }) {
   const router = useRouter();
   const { mutate } = useSWRConfig();
@@ -50,6 +53,12 @@ export function ProjectsIndexClient({
       }
       toast.success("Project created");
       await mutate("/api/projects");
+      if (mobileReturnTo) {
+        window.location.assign(
+          buildMobileProjectCallback(mobileReturnTo, result.project.id)
+        );
+        return;
+      }
       router.push(`/projects/${result.project.id}`);
       router.refresh();
     } catch (error) {

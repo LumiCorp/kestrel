@@ -14,6 +14,8 @@ export function computeQualityMetrics(input: {
   stepsExecuted: number;
   thrashIndex: number;
 }): QualityMetrics {
+  // thrashIndex is retained in the public quality shape for compatibility. Its
+  // source is a state-machine recurrence ratio, not a semantic behavior score.
   const rootClaims = Array.isArray(input.sessionState.claims)
     ? input.sessionState.claims
     : [];

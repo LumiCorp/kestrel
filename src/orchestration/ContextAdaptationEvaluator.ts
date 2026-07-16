@@ -40,7 +40,6 @@ export function evaluateContextAdaptation(input: {
     evidenceRecovery: postToolVerification?.evidenceRecoverySummary,
     webExtraction: postToolVerification?.webExtractionRetrySummary,
     contextPressure,
-    thrashIndex: output.quality.thrashIndex,
     outputStatus: output.status,
     waitFor: output.waitFor,
   });
@@ -52,9 +51,6 @@ export function evaluateContextAdaptation(input: {
   const sourceSignals: Record<string, unknown> = {};
   if (verdict.contextPressure.level !== "none") {
     sourceSignals.contextPressure = verdict.contextPressure.level;
-  }
-  if (verdict.thrash.index > 0) {
-    sourceSignals.thrashIndex = verdict.thrash.index;
   }
   if (capabilityLoss) {
     sourceSignals.capabilityLoss = true;
@@ -154,14 +150,11 @@ export function evaluateContextAdaptation(input: {
     };
   }
 
-  if (verdict.thrash.requiresCheckpoint || highPressure) {
+  if (highPressure) {
     return {
       disposition: "checkpoint",
       recommendedAction: "compact",
-      reason:
-        verdict.thrash.requiresCheckpoint
-          ? "Thread is thrashing and should compact before more work continues."
-          : "Thread context pressure is high and needs an operator checkpoint.",
+      reason: "Thread context pressure is high and needs an operator checkpoint.",
       sourceSignals,
       evidenceRecovery,
     };

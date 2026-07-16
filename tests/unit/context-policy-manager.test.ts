@@ -107,6 +107,29 @@ test("evaluateContextAdaptation recommends summarize_forward when evidence recov
   assert.equal(evidenceSignals?.targetedFetchUsed, true);
 });
 
+test("evaluateContextAdaptation does not treat step recurrence as semantic thrash", () => {
+  const thread = buildThread({
+    threadId: "thread-eval-step-recurrence",
+  });
+  const result = buildResult(
+    thread,
+    buildOutput({
+      runId: "run-eval-step-recurrence",
+      status: "COMPLETED",
+      thrashIndex: 0.875,
+    }),
+  );
+
+  const evaluation = evaluateContextAdaptation({
+    thread,
+    result,
+    session: null,
+  });
+
+  assert.equal(evaluation.disposition, "none");
+  assert.equal(evaluation.sourceSignals, undefined);
+});
+
 test("ContextPolicyManager records summarize_forward checkpoints from evaluator output", async () => {
   const store = new SessionStateStore();
   const thread = buildThread({

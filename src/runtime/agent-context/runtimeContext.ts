@@ -243,7 +243,7 @@ function renderEvidence(input: {
     lines.push(
       "Recent tool-result evidence:",
       ...input.recentToolResultEvidence.map((item) => `- ${item}`),
-      "Use these observed tool results before repeating the same failed action.",
+      "Treat the latest observed result as authoritative for the completed action. Use these results before repeating or replacing an action.",
     );
   }
   if (input.projectTaskQueueContext !== undefined && input.projectTaskQueueContext.trim().length > 0) {

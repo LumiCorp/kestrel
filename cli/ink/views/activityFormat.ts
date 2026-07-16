@@ -208,9 +208,9 @@ function summarizeLine(line: AgentRunLogLine): string {
   if (eventName === "quality_computed") {
     const quality = asRecord(metadata?.quality);
     const citation = typeof quality?.citationCoverage === "number" ? quality.citationCoverage : undefined;
-    const thrash = typeof quality?.thrashIndex === "number" ? quality.thrashIndex : undefined;
-    if (citation !== undefined && thrash !== undefined) {
-      return `Quality updated (citation ${citation}, thrash ${thrash}).`;
+    const stepRecurrence = typeof quality?.thrashIndex === "number" ? quality.thrashIndex : undefined;
+    if (citation !== undefined && stepRecurrence !== undefined) {
+      return `Quality updated (citation ${citation}, step recurrence ${stepRecurrence}).`;
     }
     return "Quality metrics updated.";
   }

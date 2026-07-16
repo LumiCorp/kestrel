@@ -3,6 +3,7 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promi
 import path from "node:path";
 
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
+import { resolveKestrelCoreHome } from "../src/localCore/home.js";
 
 type SmokeStatus = "passed" | "failed";
 type ArtifactStatus = "passed" | "failed" | "not_checked";
@@ -140,7 +141,6 @@ const DEFAULT_PROMPTS_DIR = "tests/cli-prompts";
 const PROMPT_ASSETS_DIRNAME = "assets";
 const PROMPT_ASSETS_PLACEHOLDER = "{{CLI_PROMPT_ASSETS_DIR}}";
 const WORKSPACE_PROMPT_ASSETS_DIRNAME = "prompt-assets";
-const TUI_FINAL_ASSISTANT_PATTERN = "(?:^|\\n)\\s*>?\\s*<<\\s+AGENT\\s+·";
 const DEFAULT_WORK_ROOT = "/private/tmp/kestrel-cli-prompt-smoke";
 const DEFAULT_TIMEOUT_SECONDS = 420;
 const DEFAULT_KEEP_RUNS = 10;
@@ -471,6 +471,7 @@ function buildPromptRunPaths(prompt: PromptCase, options: CliPromptSmokeOptions)
   const runDir = path.join(options.workRoot, `${timestampKey()}-${prompt.id}`);
   const workspacePath = path.join(runDir, "workspace");
   const kestrelHome = path.join(runDir, "home");
+  const stateRoot = resolveKestrelCoreHome({ KESTREL_CORE_HOME: kestrelHome }).homePath;
   const logsDir = path.join(runDir, "logs");
   return {
     runDir,
@@ -479,8 +480,8 @@ function buildPromptRunPaths(prompt: PromptCase, options: CliPromptSmokeOptions)
     logsDir,
     transcriptPath: path.join(logsDir, "tui-transcript.txt"),
     driverStderrPath: path.join(logsDir, "pty-driver-stderr.txt"),
-    historyPath: path.join(kestrelHome, "history.jsonl"),
-    diagnosticsPath: path.join(kestrelHome, "logs", "tui-diagnostics.log"),
+    historyPath: path.join(stateRoot, "history.jsonl"),
+    diagnosticsPath: path.join(stateRoot, "logs", "tui-diagnostics.log"),
     reportPath: path.join(runDir, "report.json"),
   };
 }
@@ -564,6 +565,7 @@ function buildPtyPayload(input: {
       KCHAT_SCRIPTED_INPUT_LINES_JSON: JSON.stringify(scriptedLines),
       KCHAT_MODEL_TIMEOUT_MS: readEnvString("KCHAT_MODEL_TIMEOUT_MS") ?? "120000",
       KCHAT_MODEL_RETRY_COUNT: readEnvString("KCHAT_MODEL_RETRY_COUNT") ?? "1",
+      KESTREL_STORE_DRIVER: "sqlite",
       KESTREL_ENABLE_MANAGED_WORKTREES: "false",
       KESTREL_MANAGED_WORKTREE_ISOLATION: "session",
       NPM_CONFIG_WORKSPACE_DIR: input.workspacePath,
@@ -638,7 +640,6 @@ function buildPromptSmokeCompletionPattern(): string {
     "(?:Run Completed)",
     "(?:Finalize provenance)",
     "(?:run\\.completed)",
-    TUI_FINAL_ASSISTANT_PATTERN,
   ].join("|");
 }
 
@@ -778,7 +779,6 @@ function hasCompletionEvidence(text: string): boolean {
     text.includes("Run Completed") ||
     text.includes("Finalize provenance") ||
     text.includes("run.completed") ||
-    new RegExp(TUI_FINAL_ASSISTANT_PATTERN, "u").test(text) ||
     text.includes('"status":"COMPLETED"')
   );
 }
@@ -1085,7 +1085,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function readResolvedWorkspaceRoot(kestrelHome: string): Promise<string | undefined> {
-  const raw = await readOptionalFile(path.join(kestrelHome, "workspaces.json"));
+  const stateRoot = resolveKestrelCoreHome({ KESTREL_CORE_HOME: kestrelHome }).homePath;
+  const raw = await readOptionalFile(path.join(stateRoot, "workspaces.json"));
   if (raw.length === 0) {
     return undefined;
   }

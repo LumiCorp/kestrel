@@ -191,6 +191,8 @@ export class Guardrails {
   }
 
   thrashIndex(): number {
+    // Compatibility metric: this is state-machine step recurrence, not semantic agent thrash.
+    // Do not use it to infer repeated intent or to trigger recovery policy.
     if (this.stepsExecuted === 0) {
       return 0;
     }

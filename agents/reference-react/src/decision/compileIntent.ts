@@ -194,10 +194,14 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     devShellProcesses: input.devShellProcesses,
     postToolVerification: input.postToolVerification,
   });
+  const exactRepeat = repetitionSignals?.sameToolAsLastAction === true &&
+    repetitionSignals.sameInputAsLastAction === true;
+  const repeatedFilesystemInspection = repetitionSignals?.sameFilesystemInspectionAsLastAction === true;
+  const actionNovelty = exactRepeat === false && repeatedFilesystemInspection === false;
   const verification = {
     missingCapabilities: [],
-    actionNovelty: true,
-    expectedEvidenceDelta: "medium",
+    actionNovelty,
+    expectedEvidenceDelta: actionNovelty ? "medium" : "low",
   } satisfies DecisionVerification;
   validateFinalizationDecision({
     action,

@@ -67,6 +67,7 @@ function createRunHarness(input: {
   pendingWaitFor?: TuiSessionMeta["pendingWaitFor"] | undefined;
   pendingManualCompaction?: boolean | undefined;
   sendCommand?: TuiRunControllerContext["client"]["sendCommand"] | undefined;
+  scripted?: boolean | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -131,7 +132,7 @@ function createRunHarness(input: {
   const reasoning: AgentProgressUpdateV1[] = [];
 
   const context: TuiRunControllerContext = {
-    options: { cwd: process.cwd() },
+    options: { cwd: process.cwd(), ...(input.scripted === true ? { scripted: true } : {}) },
     profileStore: undefined,
     sessionStore: undefined,
     workspaceStore: undefined,
@@ -268,6 +269,20 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.tui_response_received"));
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.persist_completed"));
   assert.equal(harness.uiStore.getState().running, false);
+});
+
+test("TuiRunController emits an explicit terminal marker for scripted completion", async () => {
+  const harness = createRunHarness({ scripted: true });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "complete the task" });
+
+  assert.deepEqual(
+    harness.history.slice(-2).map((line) => [line.role, line.text]),
+    [
+      ["assistant", "done"],
+      ["system", "Run Completed"],
+    ],
+  );
 });
 
 test("TuiRunController tags and retains only runtime waiting prompts on continuation", async () => {
