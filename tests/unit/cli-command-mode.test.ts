@@ -89,6 +89,7 @@ test("command mode emits one resolved profile for profile-bearing jobs", () => {
     assert.equal(payload.input.profileId, undefined);
     assert.equal(payload.profile?.storeDriver, undefined);
     assert.equal(payload.input.turn.eventType, "job.run");
+    assert.equal(payload.input.turn.stepAgent, "agent.loop");
     assert.doesNotThrow(() => parseRunnerCommandV2({
       id: "command-job-profile",
       type: "job.run",

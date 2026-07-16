@@ -3642,6 +3642,202 @@ test("agent loop mode-blocked transition does not restamp stale goal when transc
   assert.equal(metadata.reason, "planner_mode_blocked");
 });
 
+test("agent loop repairs missing assistantProgress within the bounded deliberator retry", async () => {
+  let modelCallCount = 0;
+  let retryRequest: ModelRequest | undefined;
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+    ],
+  })(context(), {
+    useModel: async (request: ModelRequest) => {
+      modelCallCount += 1;
+      if (modelCallCount === 2) {
+        retryRequest = request;
+      }
+      return {
+        output: {
+          understanding: {
+            task: "Inspect the workspace.",
+            facts: ["The workspace has not been inspected yet."],
+            currentGap: "The package metadata must be read.",
+            actionBasis: "Reading package.json is the next concrete step.",
+          },
+          reason: "Read the package metadata.",
+        },
+        text: "Read the package metadata.",
+        toolIntents: [
+          {
+            name: "fs_read_text",
+            input: {
+              path: "package.json",
+              ...(modelCallCount === 1
+                ? {}
+                : { assistantProgress: "I’m reading the package metadata now." }),
+            },
+          },
+        ],
+        provider: {
+          name: "openai",
+          model: "test/agent",
+          endpoint: "chat",
+        },
+      } satisfies ModelResponse<unknown>;
+    },
+  } satisfies StepIO);
+
+  assert.equal(modelCallCount, 2);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  const retryMessages = JSON.stringify(retryRequest?.messages);
+  assert.match(retryMessages, /invalid_assistant_progress/u);
+  assert.match(retryMessages, /assistantProgress/u);
+  assert.match(retryMessages, /minimumLength/u);
+  assert.match(retryMessages, /maximumLength/u);
+  assert.match(retryMessages, /600/u);
+  assert.match(retryMessages, /concrete work/u);
+  assert.match(retryMessages, /corrected structured tool call only/u);
+  assert.match(retryMessages, /Repeat the exact rejected tool call shown below/u);
+  assert.match(retryMessages, /Previous rejected structured response/u);
+  assert.match(retryMessages, /fs_read_text/u);
+  assert.match(retryMessages, /package\.json/u);
+  assert.deepEqual(retryRequest?.tools?.map((tool) => tool.name), ["fs_read_text"]);
+  assert.equal(retryRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.deepEqual(agent.nextAction, {
+    kind: "tool",
+    name: "fs.read_text",
+    input: { path: "package.json" },
+  });
+});
+
+test("agent loop advertises assistantProgress inside every exec_command lifecycle branch", async () => {
+  let execCommandSchema: Record<string, unknown> | undefined;
+  const execCommandLifecycleTool: ModelToolSpec = {
+    name: "exec_command",
+    description: "Run or continue a command.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        command: { type: "string" },
+        sessionId: { type: "string" },
+        stop: { type: "boolean" },
+      },
+      oneOf: [
+        { type: "object", additionalProperties: false, properties: { command: { type: "string" } }, required: ["command"] },
+        { type: "object", additionalProperties: false, properties: { sessionId: { type: "string" } }, required: ["sessionId"] },
+        { type: "object", additionalProperties: false, properties: { sessionId: { type: "string" }, stop: { type: "boolean" } }, required: ["sessionId", "stop"] },
+      ],
+    },
+  };
+  await buildStep({
+    tools: [execCommandLifecycleTool],
+    capabilityManifest: [
+      {
+        name: "exec_command",
+        description: "Run a command",
+        capabilityClasses: ["dev.shell"],
+        executionClass: "read_only",
+      },
+    ],
+  })(context(), {
+    useModel: async (request: ModelRequest) => {
+      execCommandSchema = request.tools?.find((tool) => tool.name === "exec_command")?.inputSchema;
+      return modelResponse({
+        version: "v1",
+        reason: "No command is needed.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "No command was needed.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const schema = execCommandSchema as Record<string, unknown>;
+  const branches = schema.oneOf as Array<Record<string, unknown>>;
+  assert.equal(Array.isArray(branches), true);
+  assert.equal(branches.length, 3);
+  for (const branch of branches) {
+    assert.equal((branch.required as string[]).includes("assistantProgress"), true);
+    assert.deepEqual((branch.properties as Record<string, unknown>).assistantProgress, {
+      type: "string",
+      minLength: 1,
+      maxLength: 600,
+      description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
+    });
+  }
+});
+
+test("agent loop terminates with the decision contract failure after assistantProgress retries are exhausted", async () => {
+  let modelCallCount = 0;
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+    ],
+  })(context(), {
+    useModel: async () => {
+      modelCallCount += 1;
+      return {
+        output: {
+          understanding: {
+            task: "Inspect the workspace.",
+            facts: ["The workspace has not been inspected yet."],
+            currentGap: "The package metadata must be read.",
+            actionBasis: "Reading package.json is the next concrete step.",
+          },
+          reason: "Read the package metadata.",
+        },
+        text: "Read the package metadata.",
+        toolIntents: [
+          {
+            name: "fs_read_text",
+            input: { path: "package.json" },
+          },
+        ],
+        provider: {
+          name: "openai",
+          model: "test/agent",
+          endpoint: "chat",
+        },
+      } satisfies ModelResponse<unknown>;
+    },
+  } satisfies StepIO);
+
+  assert.equal(modelCallCount, 4);
+  assert.equal(transition.status, "FAILED");
+  assert.equal(transition.nextStepAgent, undefined);
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const terminal = agent.terminal as Record<string, unknown>;
+  const retryContext = agent.retryContext as Record<string, unknown>;
+  const failure = retryContext.failure as Record<string, unknown>;
+  const details = failure.details as Record<string, unknown>;
+  const observations = agent.observations as Array<Record<string, unknown>>;
+  assert.equal(terminal.reasonCode, "DECISION_SCHEMA_FAILED");
+  assert.match(String(terminal.message), /contract remained invalid after 4 attempts/u);
+  assert.equal(failure.code, "DECISION_SCHEMA_FAILED");
+  assert.equal(details.reason, "invalid_assistant_progress");
+  assert.equal(details.attemptCount, 4);
+  assert.equal(retryContext.exhausted, true);
+  assert.equal(observations.at(-1)?.kind, "model_contract_failure");
+  assert.equal(observations.at(-1)?.errorCode, "DECISION_SCHEMA_FAILED");
+  assert.doesNotMatch(JSON.stringify(agent), /NO_PROGRESS_REASONING_LOOP/u);
+});
+
 test("agent loop rejects plan-mode external side-effect choices instead of asking for full-auto", async () => {
   const planContext = context();
   planContext.event.payload = {

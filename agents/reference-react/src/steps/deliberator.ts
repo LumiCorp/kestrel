@@ -500,7 +500,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       const retryContext = buildThinkerRetryContext({
         attempt: attemptNumber,
         maxAttempts: 4,
-        previousResponse: response.output,
+        previousResponse: buildDeliberatorRejectedResponse(response),
         failure: attempt.error,
         toolAvailability: retryTools.availability,
         executionIntent: attempt.prepared?.canonicalIntentContext.executionIntent,
@@ -527,6 +527,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         activeSkillPack: activeSkillPackContext,
         stepIndex: ctx.stepIndex,
       });
+      const assistantProgressRepairToolName = readAssistantProgressRepairToolName(attempt.error);
       activeModelTranscript = retryRequest.transcript;
       activeReactState = {
         ...activeReactState,
@@ -539,7 +540,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         retryRequest.messages,
         retryTools.tools,
         "required",
-        shouldEnableParallelToolCalls({
+        assistantProgressRepairToolName === undefined && shouldEnableParallelToolCalls({
           tools: retryTools.tools,
           capabilityManifest,
           modeResolution,
@@ -548,6 +549,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
+        assistantProgressRepairToolName,
       );
       if (response.toolIntents.length === 0) {
         return toRequiredToolCallMissingTransition({
@@ -580,6 +582,21 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     }
 
     if (attempt.ok === false) {
+      if (
+        readDeliberatorRetryKind(attempt.error) === "schema" &&
+        schemaRetriesUsed >= DELIBERATOR_SCHEMA_RETRY_LIMIT
+      ) {
+        return toDeliberatorContractFailureTransition({
+          stepIndex: ctx.stepIndex,
+          reactState: {
+            ...(attempt.prepared?.reducedReactState ?? reactState),
+            modelTranscript: activeModelTranscript,
+          },
+          error: attempt.error,
+          attemptCount: attemptNumber,
+          previousResponse: buildDeliberatorRejectedResponse(response),
+        });
+      }
       const schemaCategory = inferSchemaCategory(
         attempt.error.code,
         attempt.error.details,
@@ -594,7 +611,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         goal,
         error: attempt.error,
         schemaCategory,
-        previousResponse: response.output,
+        previousResponse: buildDeliberatorRejectedResponse(response),
       });
     }
 
@@ -632,7 +649,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           repeatedActionFailure.code,
           repeatedActionFailure.details,
         ),
-        previousResponse: response.output,
+        previousResponse: buildDeliberatorRejectedResponse(response),
       });
     }
     return toAgentLoopActionTransition(
@@ -962,6 +979,7 @@ async function askDeliberator(
   controlToolNames?: readonly string[] | undefined,
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined,
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined,
+  requiredProviderToolName?: string | undefined,
 ): Promise<ModelResponse<unknown>> {
   const promptInput = readDeliberatorPromptInput(input);
   const resolvedPromptVariant = resolveDeliberatorPromptVariant(promptInput);
@@ -970,11 +988,17 @@ async function askDeliberator(
     finalizeStatuses,
     cannotSatisfyReasonCodes,
   });
+  const requestTools = requiredProviderToolName === undefined
+    ? aliasRegistry.requestTools
+    : aliasRegistry.requestTools.filter((tool) => tool.name === requiredProviderToolName);
+  if (requiredProviderToolName !== undefined && requestTools.length !== 1) {
+    throw new Error(`Contract repair tool '${requiredProviderToolName}' is not available in the current model tool surface.`);
+  }
   const request: ModelRequest = {
     model: config.agentModel,
     input,
     messages: messages ?? [],
-    tools: aliasRegistry.requestTools,
+    tools: requestTools,
     reasoning: config.reasoningRequest ?? { mode: "provider_visible" },
     providerOptions: {
       openrouter: {
@@ -2796,6 +2820,88 @@ function toRequiredToolCallMissingTransition(input: {
   };
 }
 
+function toDeliberatorContractFailureTransition(input: {
+  stepIndex: number;
+  reactState: Record<string, unknown>;
+  error: {
+    code: DecisionFailureCode;
+    message: string;
+    details?: Record<string, unknown> | undefined;
+  };
+  attemptCount: number;
+  previousResponse: unknown;
+}): Transition {
+  const timestamp = new Date().toISOString();
+  const schemaCategory = inferSchemaCategory(input.error.code, input.error.details);
+  const message = `Model action contract remained invalid after ${input.attemptCount} attempts: ${input.error.message}`;
+  const details = {
+    ...(input.error.details ?? {}),
+    attemptCount: input.attemptCount,
+    schemaRetryLimit: DELIBERATOR_SCHEMA_RETRY_LIMIT,
+  };
+  return {
+    status: "FAILED",
+    statePatch: buildAgentLoopStatePatch({
+      ...input.reactState,
+      ...createReferenceReactNextActionPatch(undefined),
+      ...createReferenceReactRetryContextPatch({
+        failure: {
+          code: input.error.code,
+          message: input.error.message,
+          details,
+          schemaCategory,
+        },
+        previousResponse: input.previousResponse,
+        attemptCount: input.attemptCount,
+        exhausted: true,
+      }),
+      ...clearLegacyGoalPatch(),
+      decisionReason: message,
+      observations: [
+        ...asArray(input.reactState.observations),
+        {
+          kind: "model_contract_failure",
+          status: "failed",
+          errorCode: input.error.code,
+          message,
+          schemaCategory,
+          details,
+          timestamp,
+        },
+      ].slice(-50),
+      ...createReferenceReactLastActionResultPatch({
+        ok: false,
+        kind: "model_contract_failure",
+        status: "failed",
+        error: { code: input.error.code, message, details },
+        timestamp,
+      }),
+      ...createReferenceReactTerminalPatch({
+        status: "FAILED",
+        reasonCode: input.error.code,
+        message,
+      }),
+      decisionTrace: [
+        {
+          eventType: "decision.rejected",
+          phase: "agent.loop",
+          decisionCode: input.error.code,
+          metadata: {
+            message,
+            schemaCategory,
+            details,
+          },
+        },
+      ],
+      phase: "LOOP",
+    }),
+    stateNode: {
+      parent: "agent",
+      child: "loop",
+    },
+  };
+}
+
 function buildThinkerRetryContext(input: {
   attempt: number;
   maxAttempts: number;
@@ -2827,6 +2933,16 @@ function buildThinkerRetryContext(input: {
     previousResponse: input.previousResponse,
     failure,
     ...(structuredCorrection !== undefined ? { requiredCorrection: structuredCorrection } : {}),
+  };
+}
+
+function buildDeliberatorRejectedResponse(response: ModelResponse<unknown>): Record<string, unknown> {
+  return {
+    ...(response.output !== undefined ? { output: response.output } : {}),
+    toolCalls: response.toolIntents.map((intent) => ({
+      name: intent.name,
+      input: intent.input,
+    })),
   };
 }
 
@@ -2881,6 +2997,10 @@ function readDeliberatorRetryKind(error: {
       asString(details?.path) === "understanding" ||
       asString(details?.path) === "verification.verificationSteps" ||
       asString(details?.path) === "verification.expectedRepoDelta" ||
+      (
+        asString(details?.schemaCategory) === "tool_call" &&
+        asString(details?.reason) === "invalid_assistant_progress"
+      ) ||
       asString(details?.reason) === "invalid_deliberator_understanding" ||
       asString(details?.reason) === "forbidden_deliberator_field" ||
       asString(details?.reason) === "invalid_deliberator_output_object" ||
@@ -2893,6 +3013,18 @@ function readDeliberatorRetryKind(error: {
     return undefined;
   }
   return readThinkerPolicyRetryDirective(error) !== undefined ? "policy" : undefined;
+}
+
+function readAssistantProgressRepairToolName(error: {
+  code: DecisionFailureCode;
+  details?: Record<string, unknown> | undefined;
+}): string | undefined {
+  const details = asRecord(error.details);
+  return error.code === "DECISION_SCHEMA_FAILED" &&
+    asString(details?.schemaCategory) === "tool_call" &&
+    asString(details?.reason) === "invalid_assistant_progress"
+    ? asString(details?.providerName)
+    : undefined;
 }
 
 function readDeliberatorPolicyFailureReason(error: {
@@ -2963,6 +3095,26 @@ function buildThinkerRequiredCorrection(
   filesystemInventory?: FilesystemInventoryFact | undefined,
 ): Record<string, unknown> | undefined {
   const details = asRecord(failure.details);
+  if (
+    failure.code === "DECISION_SCHEMA_FAILED" &&
+    asString(details?.schemaCategory) === "tool_call" &&
+    asString(details?.reason) === "invalid_assistant_progress"
+  ) {
+    return {
+      assistantProgressContract: {
+        action: "repeat_rejected_tool_call_with_valid_assistant_progress",
+        rejectedReason: "invalid_assistant_progress",
+        rejectedToolCallIndex: details?.index,
+        rejectedProviderToolName: details?.providerName,
+        rejectedCanonicalToolName: details?.canonicalName,
+        requiredField: "assistantProgress",
+        minimumLength: 1,
+        maximumLength: 600,
+        requiredContent: "a concise user-facing description of the concrete work the tool is about to perform",
+        requiredResponse: "the corrected structured tool call only",
+      },
+    };
+  }
   if (
     failure.code === "DECISION_SCHEMA_FAILED" &&
     (

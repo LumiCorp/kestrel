@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { request } from "node:http";
 import { createRequire } from "node:module";
@@ -8,8 +9,8 @@ import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
 
 const TARGET_VERSION = "0.6.0";
-const TARGET_PLATFORM = "darwin";
-const TARGET_ARCH = "arm64";
+const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
+const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const REMOVED_CLI_NAMES = ["kwork", "kchat", "kcode"] as const;
 const REQUIRED_LIBEXEC_PATHS = [
@@ -43,10 +44,14 @@ const REQUIRED_LIBEXEC_PATHS = [
   "src/localCore/runtimeEnvironment.ts",
   "src/localCore/store.ts",
   "src/replay/RuntimeReplayBundle.ts",
-  "postgres-bundle/darwin-arm64/bin/initdb",
-  "postgres-bundle/darwin-arm64/bin/postgres",
-  "postgres-bundle/darwin-arm64/bin/pg_ctl",
-  "postgres-bundle/darwin-arm64/bin/createdb",
+  ...(TARGET_PLATFORM === "darwin"
+    ? [
+        `postgres-bundle/${TARGET_PLATFORM}-${TARGET_ARCH}/bin/initdb`,
+        `postgres-bundle/${TARGET_PLATFORM}-${TARGET_ARCH}/bin/postgres`,
+        `postgres-bundle/${TARGET_PLATFORM}-${TARGET_ARCH}/bin/pg_ctl`,
+        `postgres-bundle/${TARGET_PLATFORM}-${TARGET_ARCH}/bin/createdb`,
+      ]
+    : []),
   "src/runtime/RuntimeTurn.ts",
   "agents/reference-react/src/index.ts",
   "tools/createDefaultToolGateway.ts",
@@ -86,6 +91,7 @@ async function main(): Promise<void> {
     report();
     return;
   }
+  checkArtifactDigest();
 
   const extractRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-cli-release-"));
   try {
@@ -106,6 +112,30 @@ function checkSuiteVersion(): void {
 }
 
 async function checkExtractedArtifact(extractRoot: string): Promise<void> {
+  const bundleManifest = readJson(path.join(extractRoot, "kestrel-bundle.json")) as {
+    version?: unknown;
+    package?: unknown;
+    packageVersion?: unknown;
+    sourceCommit?: unknown;
+    platform?: unknown;
+    arch?: unknown;
+    entrypoint?: unknown;
+  };
+  if (bundleManifest.version !== "kestrel_cli_bundle_v1") {
+    errors.push("artifact kestrel-bundle.json must use kestrel_cli_bundle_v1");
+  }
+  if (bundleManifest.package !== "@kestrel-agents/kestrel" || bundleManifest.packageVersion !== TARGET_VERSION) {
+    errors.push("artifact bundle manifest package identity is invalid");
+  }
+  if (typeof bundleManifest.sourceCommit !== "string" || !/^[0-9a-f]{40}$/u.test(bundleManifest.sourceCommit)) {
+    errors.push("artifact bundle manifest sourceCommit must be a full Git commit");
+  }
+  if (bundleManifest.platform !== TARGET_PLATFORM || bundleManifest.arch !== TARGET_ARCH) {
+    errors.push("artifact bundle manifest target does not match the release artifact");
+  }
+  if (bundleManifest.entrypoint !== "bin/kestrel") {
+    errors.push("artifact bundle manifest entrypoint must be bin/kestrel");
+  }
   const binRoot = path.join(extractRoot, "bin");
   const libexecRoot = realpathSync(path.join(extractRoot, "libexec"));
   for (const name of CLI_NAMES) {
@@ -185,6 +215,19 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
 
   await runSmokeChecks(extractRoot);
+}
+
+function checkArtifactDigest(): void {
+  const digestPath = `${artifactPath}.sha256`;
+  if (!existsSync(digestPath)) {
+    errors.push(`missing CLI artifact digest: ${path.relative(root, digestPath)}`);
+    return;
+  }
+  const expected = readFileSync(digestPath, "utf8").trim().split(/\s+/u)[0];
+  const actual = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
+  if (expected !== actual) {
+    errors.push(`CLI artifact digest mismatch: expected ${String(expected)}, got ${actual}`);
+  }
 }
 
 async function runSmokeChecks(extractRoot: string): Promise<void> {

@@ -4,6 +4,11 @@ import path from "node:path";
 
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
 import { resolveKestrelCoreHome } from "../src/localCore/home.js";
+import {
+  derivePromptSmokeOutcome,
+  observeLocalPromptTerminal,
+  type DurableTerminalObservation,
+} from "./lib/cli-prompt-smoke-observer.js";
 
 type SmokeStatus = "passed" | "failed";
 type ArtifactStatus = "passed" | "failed" | "not_checked";
@@ -75,6 +80,7 @@ interface PtyStep {
 }
 
 interface PtyPayload {
+  sessionName: string;
   command: string[];
   env: Record<string, string>;
   steps: PtyStep[];
@@ -94,6 +100,11 @@ interface CommandResult {
   durationMs: number;
 }
 
+interface PtyDriverHandle {
+  result: Promise<CommandResult>;
+  terminate(): void;
+}
+
 interface PromptRunReport {
   id: string;
   status: SmokeStatus;
@@ -111,6 +122,8 @@ interface PromptRunReport {
   diagnosticsPath: string;
   reportPath: string;
   exitCode: number;
+  terminalObservation?: DurableTerminalObservation | undefined;
+  terminalObservationError?: string | undefined;
   badMatches: string[];
   assertionResults: AssertionResult[];
   createdFiles: string[];
@@ -172,7 +185,6 @@ const BAD_HISTORY_PATTERNS = [
   '"artifactVerification":{"status":"inconclusive"',
 ];
 
-const BLOCKED_CLOSEOUT_PATTERN = "I (?:can(?:not|'t|’t)|still can(?:not|'t|’t)) (?:complete|confirm)";
 let activePtyDriver: ReturnType<typeof spawn> | undefined;
 let currentAbortReportWriter: ((signal: NodeJS.Signals) => Promise<void>) | undefined;
 
@@ -397,9 +409,25 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
     promptAssetsPath,
   });
   let result: CommandResult;
+  let terminalObservation: DurableTerminalObservation | undefined;
+  let terminalObservationError: string | undefined;
+  let driver: PtyDriverHandle | undefined;
   try {
-    result = await runPtyDriver(payload, options.timeoutSeconds + 30);
+    driver = startPtyDriver(payload, options.timeoutSeconds + 30);
+    try {
+      terminalObservation = await observeLocalPromptTerminal({
+        kestrelHome: paths.kestrelHome,
+        sessionName: payload.sessionName,
+        timeoutMs: options.timeoutSeconds * 1_000,
+      });
+    } catch (error) {
+      terminalObservationError = error instanceof Error ? error.message : String(error);
+    } finally {
+      driver.terminate();
+    }
+    result = await driver.result;
   } catch (error) {
+    driver?.terminate();
     result = {
       exitCode: 1,
       stdout: "",
@@ -418,28 +446,28 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
   const resolvedWorkspaceRoot = await readResolvedWorkspaceRoot(paths.kestrelHome);
   const combinedEvidence = [result.stdout, result.stderr, history, diagnosticsLog].join("\n");
   const badMatches = findBadMatches(combinedEvidence);
-  const completed = hasCompletionEvidence(combinedEvidence);
   const createdFiles = await listWorkspaceFiles(paths.workspacePath);
-  const assertionResults = await runArtifactAssertions(paths.workspacePath, prompt.assertions);
-  const runtimeStatus: SmokeStatus =
-    completed && badMatches.length === 0 ? "passed" : "failed";
-  const artifactStatus: ArtifactStatus =
-    prompt.assertions.length === 0
-      ? "not_checked"
-      : assertionResults.every((assertion) => assertion.passed)
-        ? "passed"
-        : "failed";
+  const assertionResults = terminalObservation === undefined
+    ? []
+    : await runArtifactAssertions(paths.workspacePath, prompt.assertions);
+  const outcome = derivePromptSmokeOutcome({
+    terminalStatus: terminalObservation?.status,
+    assertionsConfigured: prompt.assertions.length > 0,
+    assertionsPassed: assertionResults.every((assertion) => assertion.passed),
+  });
+  const runtimeStatus: SmokeStatus = outcome.runtimeStatus;
+  const artifactStatus: ArtifactStatus = outcome.artifactStatus;
   const diagnostics = buildDiagnostics({
     result,
-    completed,
+    terminalObservation,
+    terminalObservationError,
     badMatches,
     assertionResults,
     createdFiles,
     workspacePath: paths.workspacePath,
     resolvedWorkspaceRoot,
   });
-  const status: SmokeStatus =
-    runtimeStatus === "passed" && artifactStatus !== "failed" ? "passed" : "failed";
+  const status: SmokeStatus = outcome.status;
 
   const report: PromptRunReport = {
     id: prompt.id,
@@ -458,6 +486,8 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
     diagnosticsPath: paths.diagnosticsPath,
     reportPath: paths.reportPath,
     exitCode: result.exitCode,
+    terminalObservation,
+    terminalObservationError,
     badMatches,
     assertionResults,
     createdFiles,
@@ -554,6 +584,7 @@ function buildPtyPayload(input: {
   ];
 
   return {
+    sessionName,
     command: ["/bin/zsh", "-lc", commandText],
     env: {
       ...stringEnv(process.env),
@@ -579,39 +610,8 @@ function buildPtyPayload(input: {
         fromCursor: true,
         timeoutSeconds: 120,
       },
-      {
-        pattern: buildPromptSmokeCompletionPattern(),
-        regex: true,
-        fromCursor: true,
-        timeoutSeconds: input.options.timeoutSeconds,
-      },
     ],
-    abortPatterns: [
-      {
-        pattern: "AGENT_VALIDATION_RETRY_EXHAUSTED",
-        regex: false,
-        reason: "validation_retry_exhausted",
-        fromCursor: true,
-      },
-      {
-        pattern: "LOOP_GUARD_TRIGGERED",
-        regex: false,
-        reason: "loop_guard",
-        fromCursor: true,
-      },
-      {
-        pattern: "Run failed:",
-        regex: false,
-        reason: "run_failed",
-        fromCursor: true,
-      },
-      {
-        pattern: BLOCKED_CLOSEOUT_PATTERN,
-        regex: true,
-        reason: "blocked_closeout",
-        fromCursor: true,
-      },
-    ],
+    abortPatterns: [],
     timeoutSeconds: input.options.timeoutSeconds + 30,
   };
 }
@@ -635,14 +635,6 @@ function expandPromptText(text: string, promptAssetsPath: string): string {
   return text.replaceAll(PROMPT_ASSETS_PLACEHOLDER, promptAssetsPath);
 }
 
-function buildPromptSmokeCompletionPattern(): string {
-  return [
-    "(?:Run Completed)",
-    "(?:Finalize provenance)",
-    "(?:run\\.completed)",
-  ].join("|");
-}
-
 function buildPromptSmokeReadyPattern(mode: PromptMode): string {
   const modePattern = escapeRegExp(mode);
   return [
@@ -658,7 +650,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function runPtyDriver(payload: PtyPayload, timeoutSeconds: number): Promise<CommandResult> {
+function startPtyDriver(payload: PtyPayload, timeoutSeconds: number): PtyDriverHandle {
   const startedAt = Date.now();
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const child = spawn("python3", [driverPath], {
@@ -680,9 +672,9 @@ function runPtyDriver(payload: PtyPayload, timeoutSeconds: number): Promise<Comm
     stderr += chunk;
   });
 
-  child.stdin.end(JSON.stringify(payload), "utf8");
+  child.stdin.write(`${JSON.stringify(payload)}\n`, "utf8");
 
-  return new Promise((resolve, reject) => {
+  const result = new Promise<CommandResult>((resolve, reject) => {
     const timeout = setTimeout(() => {
       if (settled) {
         return;
@@ -723,6 +715,18 @@ function runPtyDriver(payload: PtyPayload, timeoutSeconds: number): Promise<Comm
       });
     });
   });
+  let terminateRequested = false;
+  return {
+    result,
+    terminate() {
+      if (terminateRequested || child.stdin.writable === false) {
+        return;
+      }
+      terminateRequested = true;
+      child.stdin.write(`${JSON.stringify({ type: "terminate" })}\n`, "utf8");
+      child.stdin.end();
+    },
+  };
 }
 
 function installTerminationHandlers(): void {
@@ -774,18 +778,10 @@ function findBadMatches(text: string): string[] {
   return BAD_HISTORY_PATTERNS.filter((pattern) => text.includes(pattern));
 }
 
-function hasCompletionEvidence(text: string): boolean {
-  return (
-    text.includes("Run Completed") ||
-    text.includes("Finalize provenance") ||
-    text.includes("run.completed") ||
-    text.includes('"status":"COMPLETED"')
-  );
-}
-
 function buildDiagnostics(input: {
   result: CommandResult;
-  completed: boolean;
+  terminalObservation?: DurableTerminalObservation | undefined;
+  terminalObservationError?: string | undefined;
   badMatches: string[];
   assertionResults: AssertionResult[];
   createdFiles: string[];
@@ -793,13 +789,17 @@ function buildDiagnostics(input: {
   resolvedWorkspaceRoot?: string | undefined;
 }): string[] {
   const diagnostics: string[] = [];
-  if (input.result.exitCode !== 0 && input.completed) {
-    diagnostics.push(`PTY driver exited with code ${input.result.exitCode} after completion marker.`);
-  } else if (input.result.exitCode !== 0) {
+  if (input.result.exitCode !== 0) {
     diagnostics.push(`PTY driver exited with code ${input.result.exitCode}.`);
   }
-  if (!input.completed) {
-    diagnostics.push("No completion marker found in transcript, history, or diagnostics.");
+  if (input.terminalObservation === undefined) {
+    diagnostics.push(
+      input.terminalObservationError ?? "No canonical terminal event was observed.",
+    );
+  } else if (input.terminalObservation.status !== "completed") {
+    diagnostics.push(
+      `Canonical terminal outcome was ${input.terminalObservation.status} (${input.terminalObservation.eventType}, outputStatus=${input.terminalObservation.outputStatus}, reasonCode=${input.terminalObservation.reasonCode ?? "none"}).`,
+    );
   }
   for (const match of input.badMatches) {
     diagnostics.push(`Matched failure marker: ${match}`);

@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  AGENT_STEP_IDS,
   buildPresentedProviderModelCatalog,
   ModelPolicyStore,
   resolveProviderModelCatalog,
@@ -423,12 +424,20 @@ export function buildResolvedJobRunCommandPayload(
       turn: {
         ...input.turn,
         eventType: input.turn.eventType ?? "job.run",
+        stepAgent: input.turn.stepAgent ?? resolveJobEntryStepAgent(effectiveProfile),
       },
       ...(input.approvalPolicyPackId !== undefined
         ? { approvalPolicyPackId: input.approvalPolicyPackId }
         : {}),
     },
   };
+}
+
+function resolveJobEntryStepAgent(profile: Pick<TuiProfile, "agent">): string {
+  if (profile.agent === "reference-react") {
+    return AGENT_STEP_IDS.loop;
+  }
+  throw new Error(`Unsupported profile agent '${profile.agent}'`);
 }
 
 async function runOperatorCommand(

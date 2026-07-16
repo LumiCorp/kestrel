@@ -24,7 +24,7 @@ export const SHARED_DELIBERATOR_PROMPT = [
   "- Use kestrel.finalize for a direct answer, kestrel.ask_user for a question, and an authorized evidence or action tool when work is required.",
   "- For kestrel.finalize and kestrel.cannot_satisfy, the message is the exact user-facing text shown in chat.",
   "- For kestrel.ask_user, the prompt is the exact user-facing question or approval prompt shown in chat.",
-  "- Include assistantProgress only on real work actions; finalize, ask_user, and cannot_satisfy do not emit progress.",
+  "- Every real work action tool call MUST include assistantProgress inside that tool's input: one concise sentence describing the concrete work to the user. finalize, ask_user, and cannot_satisfy do not accept assistantProgress.",
   "- Do not put planner narration or bookkeeping in user-visible text.",
   "",
   "Be concise. Give short progress updates during longer work. Ask only when the missing answer materially changes the result and cannot be inferred from available context.",
