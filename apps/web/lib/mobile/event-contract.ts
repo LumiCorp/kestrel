@@ -4,6 +4,19 @@ export type MobileTurnEvent =
       data: { turnId: string; textDelta: string };
     }
   | {
+      type: "activity.updated";
+      data: {
+        turnId: string;
+        stage:
+          | "preparing"
+          | "reading_context"
+          | "working"
+          | "using_capability"
+          | "finalizing";
+        message: string;
+      };
+    }
+  | {
       type: "snapshot.changed";
       data: {
         turnId: string;
@@ -29,6 +42,22 @@ export function toMobileTurnEvent(input: {
         type: "message.delta",
         data: { turnId: input.turnId, textDelta: chunk.delta },
       };
+    }
+    if (
+      chunk?.type === "data-kestrel-progress" ||
+      chunk?.type === "data-kestrel-agent-progress"
+    ) {
+      const presentation = asRecord(chunk.data);
+      if (typeof presentation?.text === "string" && presentation.text.trim()) {
+        return {
+          type: "activity.updated",
+          data: {
+            turnId: input.turnId,
+            stage: "working",
+            message: presentation.text.trim(),
+          },
+        };
+      }
     }
     return {
       type: "snapshot.changed",

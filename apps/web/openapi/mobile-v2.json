@@ -2168,6 +2168,9 @@
             "$ref": "#/components/schemas/MessageDeltaEvent"
           },
           {
+            "$ref": "#/components/schemas/ActivityUpdatedEvent"
+          },
+          {
             "$ref": "#/components/schemas/SnapshotChangedEvent"
           }
         ]
@@ -2200,6 +2203,49 @@
               },
               "textDelta": {
                 "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityUpdatedEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "data",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "activity.updated"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "stage",
+              "message"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string"
+              },
+              "stage": {
+                "$ref": "#/components/schemas/ActivityStage"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "additionalProperties": false
