@@ -39,6 +39,7 @@ test("health payload reports healthy database state", () => {
     responseTimeMs: 5,
     uptimeSeconds: 10,
     version: "1.2.3",
+    revision: "abc123",
   });
 
   assert.equal(statusCode, 200);
@@ -46,6 +47,7 @@ test("health payload reports healthy database state", () => {
   assert.equal(body.checks.database.connected, true);
   assert.equal(body.environment, "test");
   assert.equal(body.version, "1.2.3");
+  assert.equal(body.revision, "abc123");
 });
 
 test("health payload reports unhealthy categorized database failures", () => {
@@ -90,4 +92,6 @@ test("health payload reports unhealthy categorized database failures", () => {
   assert.equal(body.status, "unhealthy");
   assert.equal(body.checks.database.category, "too_many_clients");
   assert.equal(body.checks.database.error, "sorry, too many clients already");
+  assert.equal(body.version, "unknown");
+  assert.equal(body.revision, "unknown");
 });

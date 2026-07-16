@@ -42,7 +42,16 @@ const volumeSchema = z.object({
   region: z.string().min(1),
   size_gb: z.number().int().positive(),
   encrypted: z.boolean(),
+  attached_machine_id: z.string().min(1).nullable().optional(),
 });
+
+const machineMountSchema = z
+  .object({
+    volume: z.string().min(1),
+    name: z.string().min(1).optional(),
+    path: z.string().min(1),
+  })
+  .passthrough();
 
 const machineSchema = z.object({
   id: z.string().min(1),
@@ -64,6 +73,7 @@ const machineSchema = z.object({
       image: z.string().min(1).optional(),
       env: z.record(z.string(), z.string()).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
+      mounts: z.array(machineMountSchema).optional(),
       services: z.array(z.unknown()).optional(),
     })
     .passthrough()
@@ -539,11 +549,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           workspaceId: machine.config?.metadata?.kestrel_workspace_id ?? null,
           replacementId:
             machine.config?.metadata?.kestrel_replacement_id ?? null,
+          mountedVolumeIds:
+            machine.config?.mounts?.map((mount) => mount.volume) ?? [],
         })
       ),
       volumes: parseResponse(z.array(volumeSchema), volumes).map((volume) => ({
         id: volume.id,
         name: volume.name,
+        region: volume.region,
+        attachedMachineId: volume.attached_machine_id ?? null,
       })),
     };
   }
@@ -860,7 +874,7 @@ function checkedVolume(
   };
 }
 
-function workspaceVolumeName(workspaceId: string): string {
+export function workspaceVolumeName(workspaceId: string): string {
   return `ws_${compactId(workspaceId, 20).replace(/-/gu, "_")}`;
 }
 
@@ -905,6 +919,15 @@ function toMachine(
     state: machine.state,
     region: machine.region,
     ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
+    ...(machine.config?.metadata?.kestrel_workspace_id
+      ? { workspaceId: machine.config.metadata.kestrel_workspace_id }
+      : {}),
+    mounts:
+      machine.config?.mounts?.map((mount) => ({
+        volumeId: mount.volume,
+        ...(mount.name ? { name: mount.name } : {}),
+        path: mount.path,
+      })) ?? [],
   };
 }
 

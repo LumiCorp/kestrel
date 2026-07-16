@@ -29,6 +29,7 @@ export function buildHealthResponsePayload(input: {
   responseTimeMs: number;
   uptimeSeconds: number;
   version?: string;
+  revision?: string;
 }) {
   const degraded = input.databaseHealth.ok
     ? isDatabasePressureHigh(input.databaseHealth)
@@ -47,7 +48,8 @@ export function buildHealthResponsePayload(input: {
     body: {
       status,
       timestamp: new Date().toISOString(),
-      version: input.version || "1.0.0",
+      version: input.version || "unknown",
+      revision: input.revision || "unknown",
       environment: input.environment || "development",
       checks: {
         database: {
