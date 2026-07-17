@@ -53,21 +53,11 @@ const REQUIRED_RUNTIME_RESOURCE_PATHS = [
   "agents/reference-react/src/index.ts",
 ] as const;
 
-const REQUIRED_RELEASE_DOCS = [
-  "docs/runbooks/2026-07-13-desktop-v0.6-macos-release.md",
-  "docs/runbooks/2026-07-13-desktop-v0.6-clean-machine-smoke.md",
-  "docs/runbooks/2026-07-10-desktop-v0.5.1-state-bridge.md",
-  "docs/plans/2026-07-13-kestrel-local-platform-architecture.md",
-] as const;
-
 const errors: string[] = [];
 
 checkManifestVersions();
 checkDesktopPackagerVersionSource();
 checkDesktopLocalCoreOwnership();
-checkReleaseDocs();
-checkLocalCoreReleaseDocs();
-checkDesktopBridgeReleaseDoc();
 checkDesktopResources();
 checkPackagedDesktopSignature();
 
@@ -178,71 +168,6 @@ function checkForbiddenLocalCoreBarrelImports(): void {
       if (/from\s+["'][^"']*\/localCore\/index\.js["']/u.test(source)) {
         errors.push(`${path.relative(ROOT, filePath)} must import narrow Local Core modules instead of localCore/index.js.`);
       }
-    }
-  }
-}
-
-function checkReleaseDocs(): void {
-  for (const relativePath of REQUIRED_RELEASE_DOCS) {
-    if (!existsSync(path.join(ROOT, relativePath))) {
-      errors.push(`missing Desktop v0.6 release doc: ${relativePath}`);
-    }
-  }
-}
-
-function checkLocalCoreReleaseDocs(): void {
-  const installDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-07-13-desktop-v0.6-macos-release.md"), "utf8");
-  const smokeDoc = readFileSync(path.join(ROOT, "docs/runbooks/2026-07-13-desktop-v0.6-clean-machine-smoke.md"), "utf8");
-
-  for (const [label, source] of [
-    ["Desktop install notes", installDoc],
-    ["clean-machine smoke checklist", smokeDoc],
-  ] as const) {
-    if (!source.includes("Kestrel Local Core")) {
-      errors.push(`${label} must describe Kestrel Local Core as the shared local source of truth.`);
-    }
-  }
-
-  for (const requiredPhrase of [
-    "Desktop-first then CLI",
-    "CLI-first then Desktop",
-    "concurrent launch",
-    "stale lock",
-    "inherited `DATABASE_URL`",
-    "0.5 state remains untouched",
-  ]) {
-    if (!smokeDoc.includes(requiredPhrase)) {
-      errors.push(`clean-machine smoke checklist must cover ${requiredPhrase}.`);
-    }
-  }
-  for (const requiredPhrase of [
-    "Developer ID Application",
-    "notarized",
-    "stapled",
-    "PGlite",
-    "KESTREL_DESKTOP_RELEASE=1",
-  ]) {
-    if (!installDoc.includes(requiredPhrase)) {
-      errors.push(`Desktop 0.6 release runbook must document '${requiredPhrase}'.`);
-    }
-  }
-}
-
-function checkDesktopBridgeReleaseDoc(): void {
-  const bridgeDoc = readFileSync(
-    path.join(ROOT, "docs", "runbooks", "2026-07-10-desktop-v0.5.1-state-bridge.md"),
-    "utf8",
-  );
-  for (const requiredPhrase of [
-    "bridge protocol version `2`",
-    "desktop-ui-state-v1",
-    "idempotent",
-    "TUI state",
-    "single supervised Electron process",
-    "rollback",
-  ]) {
-    if (!bridgeDoc.includes(requiredPhrase)) {
-      errors.push(`Desktop 0.5.1 bridge runbook must document '${requiredPhrase}'.`);
     }
   }
 }

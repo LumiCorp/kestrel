@@ -3,7 +3,7 @@ id: docs-index
 domain: docs
 status: active
 owner: kestrel-quality
-last_verified_at: 2026-07-16
+last_verified_at: 2026-07-17
 depends_on:
   - ../AGENTS.md
   - ../ARCHITECTURE.md
@@ -19,7 +19,7 @@ task instead of reading the repository as one long manual.
 | --- | --- | --- |
 | [Public docs site](https://docs.kestrelagents.dev) | People using, adopting, or operating Kestrel | Task-oriented product guides, tutorials, operations, and reference |
 | Root truth docs | Contributors and maintainers | Current product boundaries, architecture, design, reliability, security, and quality policy |
-| `docs/` working record | Maintainers and reviewers | ADRs, plans, runbooks, references, analysis, and historical evidence |
+| `docs/` working record | Maintainers and reviewers | Current delivery plans and retained reference material |
 
 ## Start by Goal
 
@@ -70,51 +70,15 @@ These files describe the current system and are checked for freshness:
 
 ## Working Record
 
-### Architecture decisions
-
-ADRs record decisions that should remain understandable after their
-implementation plan is complete.
-
-- [Runtime simplification boundaries](adr/0004-runtime-simplification-boundaries.md)
-- [Managed RunPod Serverless control plane](adr/0005-managed-runpod-serverless-control-plane.md)
-- [Workspace checkpoints](adr/0002-git-backed-workspace-checkpoints.md)
-- [Project-scoped full-auto threads](adr/0003-project-scoped-full-auto-card-threads.md)
-
 ### Active plans
 
-Use the [Plans index](PLANS.md) as the canonical plan inventory. High-signal
-platform plans include:
+Use the [Plans index](PLANS.md) as the canonical current delivery inventory.
 
-- [Local platform architecture](plans/2026-07-13-kestrel-local-platform-architecture.md)
-- [Kestrel One Threads and Projects](plans/2026-07-12-kestrel-one-threads-projects.md)
-- [Transcript-first agent runtime](plans/2026-07-06-transcript-first-agent-runtime.md)
-- [Runtime simplification baseline](plans/2026-06-08-runtime-simplification-baseline.md)
-
-### Runbooks
-
-Runbooks are operational procedures tied to a release, migration, or deployment
-shape. Begin with the runbook that matches the exact version and surface.
-
-- [Desktop 0.6 macOS release](runbooks/2026-07-13-desktop-v0.6-macos-release.md)
-- [Kestrel One Environment cutover](runbooks/2026-07-13-kestrel-one-environment-cutover.md)
-- [Gateway authority rollout](runbooks/2026-07-12-kestrel-one-gateway-authority-rollout.md)
-- [MVP operator runbook](runbooks/2026-02-25-kestrel-mvp-operator-runbook.md)
-
-### Reference contracts
+### Reference material
 
 - [Architecture rules](references/architecture-rules.json)
-- [Artifact evidence recovery](references/artifact-evidence-recovery-contract.md)
 - [Heuristic hotspots](references/heuristic-hotspots.md)
-- [Lint invariants](references/lint-invariants.md)
-- [Provider reasoning and agent progress](references/provider-reasoning-and-agent-progress.md)
 - [Release tracks](references/release-tracks.json)
-- [Workspace checkpoint thread identity](references/workspace-checkpoint-thread-id-contract.md)
-
-### Evidence and analysis
-
-Files under [`analysis/`](analysis) and [`references/`](references) may capture
-point-in-time findings. Check their `last_verified_at`, linked revision, and
-superseding plan before treating them as current product guidance.
 
 ## Documentation Ownership
 
@@ -124,8 +88,8 @@ superseding plan before treating them as current product guidance.
   generation.
 - Public editorial rules live in
   [`apps/docs/EDITORIAL.md`](../apps/docs/EDITORIAL.md).
-- Internal plans, analysis, and archive material stay in the repository but do
-  not enter the public docs automatically.
+- Internal plans and reference material stay in the repository but do not enter
+  the public docs automatically.
 - Release-sensitive examples must match
   [`apps/docs/lib/release.ts`](../apps/docs/lib/release.ts) and exported code.
 

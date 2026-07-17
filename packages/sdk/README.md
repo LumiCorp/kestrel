@@ -278,4 +278,3 @@ Use the OpenAI-compatible HTTP layer instead of this SDK when an application alr
 - [Next.js helpers](https://github.com/LumiCorp/kestrel/blob/main/packages/next/README.md)
 - [AI SDK adapter](https://github.com/LumiCorp/kestrel/blob/main/packages/ai-sdk/README.md)
 - [Observability helpers](https://github.com/LumiCorp/kestrel/blob/main/packages/observability/README.md)
-- [CLI runner protocol](https://github.com/LumiCorp/kestrel/blob/main/docs/cli/kchat-protocol.md)

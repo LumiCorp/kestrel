@@ -6,7 +6,6 @@ owner: kestrel-security
 last_verified_at: 2026-07-16
 depends_on:
   - ARCHITECTURE.md
-  - docs/references/lint-invariants.md
   - docs/references/architecture-rules.json
 ---
 
@@ -146,6 +145,5 @@ should include regression coverage at the owning boundary.
 - [Reliability](RELIABILITY.md)
 - [Operations security guide](apps/docs/content/operations/security.mdx)
 - [Environment and authentication](apps/docs/content/deploy/environment-and-auth.mdx)
-- [Lint invariants](docs/references/lint-invariants.md)
 - [Architecture rules](docs/references/architecture-rules.json)
 - [Contributing](CONTRIBUTING.md)
