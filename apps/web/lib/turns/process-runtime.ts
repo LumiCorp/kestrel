@@ -17,17 +17,18 @@ import {
 } from "@/lib/projects/context-grants";
 import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
 import { updateThreadTitleForUser } from "@/lib/threads/store";
+import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
 import {
   appendDurableTurnEvent,
-  recordMobileTurnRuntimeActivity,
   bindDurableTurnExecution,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
+  recordMobileTurnActivity,
+  recordMobileTurnRuntimeActivity,
 } from "@/lib/turns/store";
-import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
 import {
   convertToUIMessages,
   isPersistableAssistantMessage,
@@ -184,6 +185,11 @@ export async function processDurableThreadTurn(turnId: string) {
     if (!turn.requestedEnvironmentId) {
       throw new Error("Durable turn is missing its requested Environment.");
     }
+    await recordMobileTurnActivity({
+      turnId: turn.id,
+      stage: "reading_context",
+      milestoneId: `turn:${turn.id}:context`,
+    });
     projectContext = await loadBoundProjectContext(turn);
     const response = await createKestrelOneAgentResponse({
       request: workerRequest(turn.id),
@@ -222,7 +228,12 @@ export async function processDurableThreadTurn(turnId: string) {
         eventWrites = eventWrites.then(() =>
           recordMobileTurnRuntimeActivity({
             turnId: turn.id,
+            eventId: event.id,
             eventType: event.type,
+            progressCode:
+              event.type === "run.progress"
+                ? event.payload.update.code
+                : undefined,
           }).catch(() => {})
         );
         if (cancellationRequested && isSafeInterruptBoundary(event.type)) {

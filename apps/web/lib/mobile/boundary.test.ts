@@ -37,6 +37,7 @@ test("mobile OpenAPI contract contains every implemented companion route", () =>
     "/threads/{id}/turns",
     "/turns/{turnId}",
     "/turns/{turnId}/events",
+    "/turns/{turnId}/retry",
     "/turns/{turnId}/stop",
   ]);
   assert.deepEqual(Object.keys(contract.paths["/threads/{id}/turns"] ?? {}), [
@@ -56,6 +57,7 @@ test("every Thread mutation returns the authoritative snapshot", () => {
     ["/threads/{id}/branches", "post", ["200", "202"]],
     ["/threads/{id}/interactions/{checkpointId}", "post", ["200"]],
     ["/turns/{turnId}", "delete", ["200"]],
+    ["/turns/{turnId}/retry", "post", ["200", "202"]],
     ["/turns/{turnId}/stop", "post", ["202"]],
   ] as const;
   for (const [pathName, method, statuses] of mutations) {
@@ -115,7 +117,11 @@ test("mobile wire inputs contain no model or agent configuration", () => {
   const createTurn = JSON.stringify(
     contract.components.schemas.CreateTurnInput
   );
-  assert.doesNotMatch(`${createThread}\n${createTurn}`, /model|agent/iu);
+  const retryTurn = JSON.stringify(contract.components.schemas.RetryTurnInput);
+  assert.doesNotMatch(
+    `${createThread}\n${createTurn}\n${retryTurn}`,
+    /model|agent/iu
+  );
 });
 
 test("mobile responses, snapshots, message parts, errors, and SSE are concrete", () => {
@@ -163,6 +169,8 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
       "CitationPart",
       "ArtifactPart",
       "InteractionStatusPart",
+      "ProgressPart",
+      "ToolStatusPart",
     ]
   );
   assert.ok(Array.isArray(contract.components.schemas.TurnEvent.oneOf));

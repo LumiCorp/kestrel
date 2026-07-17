@@ -327,6 +327,49 @@
         }
       }
     },
+    "/turns/{turnId}/retry": {
+      "post": {
+        "operationId": "retryMobileTurn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TurnId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryTurnInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "202": {
+            "$ref": "#/components/responses/AcceptedTurn"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/turns/{turnId}/events": {
       "get": {
         "operationId": "streamMobileTurnEvents",
@@ -1647,6 +1690,12 @@
           },
           {
             "$ref": "#/components/schemas/InteractionStatusPart"
+          },
+          {
+            "$ref": "#/components/schemas/ProgressPart"
+          },
+          {
+            "$ref": "#/components/schemas/ToolStatusPart"
           }
         ]
       },
@@ -1655,6 +1704,7 @@
         "required": [
           "id",
           "turnId",
+          "sourceMessageId",
           "role",
           "parts",
           "createdAt"
@@ -1664,6 +1714,12 @@
             "type": "string"
           },
           "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceMessageId": {
             "type": [
               "string",
               "null"
@@ -1894,6 +1950,7 @@
         "type": "object",
         "required": [
           "id",
+          "turnId",
           "kind",
           "title",
           "prompt",
@@ -1902,6 +1959,9 @@
         ],
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "turnId": {
             "type": "string"
           },
           "kind": {
@@ -2045,6 +2105,18 @@
         "properties": {
           "message": {
             "$ref": "#/components/schemas/InputMessage"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RetryTurnInput": {
+        "type": "object",
+        "required": [
+          "messageId"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string"
           }
         },
         "additionalProperties": false

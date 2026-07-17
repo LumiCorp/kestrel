@@ -1,7 +1,10 @@
 import "server-only";
 
 import { eq, inArray } from "drizzle-orm";
-import { mobileMessageParts } from "@/lib/mobile/message-parts";
+import {
+  mobileMessageParts,
+  mobileV2DurablePartTypes,
+} from "@/lib/mobile/message-parts";
 import {
   mobileInteractionDto,
   mobileThreadDtos,
@@ -14,22 +17,14 @@ import {
 } from "@/lib/turns/store";
 import { getMobileV2MessageWindow, getMobileV2ReadState } from "./store";
 
-const durablePartTypes = new Set([
-  "text",
-  "source_url",
-  "source_document",
-  "citation",
-  "artifact",
-  "interaction_status",
-]);
-
 function messageDto(message: typeof schema.threadMessages.$inferSelect) {
   return {
     id: message.id,
     turnId: message.turnId ?? null,
+    sourceMessageId: message.sourceMessageId ?? null,
     role: message.role,
     parts: mobileMessageParts(message.parts).filter((part) =>
-      durablePartTypes.has(part.type)
+      mobileV2DurablePartTypes.has(part.type)
     ),
     createdAt: message.createdAt.toISOString(),
   };
@@ -133,7 +128,10 @@ export async function getMobileV2ThreadSnapshot(input: {
     },
     interactions: interactions
       .filter((interaction) => interaction.status === "pending")
-      .map(mobileInteractionDto),
+      .flatMap((interaction) => {
+        const turnId = interaction.turnId ?? queueState.queue.activeTurnId;
+        return turnId ? [{ ...mobileInteractionDto(interaction), turnId }] : [];
+      }),
     readState,
   };
 }

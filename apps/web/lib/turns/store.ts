@@ -18,6 +18,11 @@ import {
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
 import {
+  type MobileActivityStage,
+  mobileActivity,
+  mobileActivityForStage,
+} from "@/lib/mobile/activity";
+import {
   assertThreadTurnTransition,
   type ThreadTurnSource,
   type ThreadTurnTerminalStatus,
@@ -43,16 +48,6 @@ export class DurableTurnError extends Error {
   }
 }
 
-type MobileActivityStage =
-  | "queued"
-  | "preparing"
-  | "reading_context"
-  | "working"
-  | "using_capability"
-  | "finalizing"
-  | "waiting"
-  | "retrying";
-
 type MobileActivityMilestone = {
   id: string;
   kind:
@@ -67,7 +62,10 @@ type MobileActivityMilestone = {
   createdAt: string;
 };
 
-const milestoneForStage: Record<MobileActivityStage, MobileActivityMilestone["kind"]> = {
+const milestoneForStage: Record<
+  MobileActivityStage,
+  MobileActivityMilestone["kind"]
+> = {
   queued: "accepted",
   preparing: "started",
   reading_context: "context_ready",
@@ -93,20 +91,30 @@ function mobileActivityMilestones(value: unknown): MobileActivityMilestone[] {
 
 async function updateMobileTurnPresentation(
   tx: TurnTransaction,
-  input: { turnId: string; stage: MobileActivityStage; now: Date }
+  input: {
+    turnId: string;
+    stage: MobileActivityStage;
+    now: Date;
+    milestoneId?: string;
+  }
 ) {
   const existing = await tx.query.threadTurnPresentations.findFirst({
     where: eq(schema.threadTurnPresentations.turnId, input.turnId),
   });
   const milestone = {
-    id: crypto.randomUUID(),
+    id: input.milestoneId ?? crypto.randomUUID(),
     kind: milestoneForStage[input.stage],
     createdAt: input.now.toISOString(),
   } satisfies MobileActivityMilestone;
-  const milestones = [
-    ...mobileActivityMilestones(existing?.milestones),
-    milestone,
-  ].slice(-8);
+  const existingMilestones = mobileActivityMilestones(existing?.milestones);
+  const shouldAppendMilestone =
+    existing?.stage !== input.stage &&
+    !existingMilestones.some((entry) => entry.id === milestone.id);
+  const milestones = (
+    shouldAppendMilestone
+      ? [...existingMilestones, milestone]
+      : existingMilestones
+  ).slice(-8);
   await tx
     .insert(schema.threadTurnPresentations)
     .values({
@@ -120,25 +128,59 @@ async function updateMobileTurnPresentation(
       target: schema.threadTurnPresentations.turnId,
       set: { stage: input.stage, milestones, updatedAt: input.now },
     });
-}
-
-function mobileStageForRuntimeEvent(type: string): MobileActivityStage | null {
-  if (type === "session.described" || type.startsWith("context.")) return "reading_context";
-  if (type.startsWith("tool.") || type.includes("tool_call")) return "using_capability";
-  if (type.startsWith("agent.") || type.startsWith("model.")) return "working";
-  if (type.includes("final") || type.includes("complete")) return "finalizing";
-  return null;
+  return existing?.stage !== input.stage;
 }
 
 export async function recordMobileTurnRuntimeActivity(input: {
   turnId: string;
+  eventId: string;
   eventType: string;
+  progressCode?: string;
 }) {
-  const stage = mobileStageForRuntimeEvent(input.eventType);
-  if (!stage) return;
-  await knowledgeDb.transaction((tx) =>
-    updateMobileTurnPresentation(tx, { turnId: input.turnId, stage, now: new Date() })
-  );
+  const activity = mobileActivity({
+    kind: "runtime_event",
+    eventType: input.eventType,
+    code: input.progressCode,
+  });
+  if (!activity) return;
+  await knowledgeDb.transaction(async (tx) => {
+    const changed = await updateMobileTurnPresentation(tx, {
+      turnId: input.turnId,
+      stage: activity.stage,
+      now: new Date(),
+      milestoneId: input.eventId,
+    });
+    if (changed) {
+      await appendTurnEvent(tx, {
+        turnId: input.turnId,
+        type: "turn.activity",
+        data: activity,
+      });
+    }
+  });
+}
+
+export async function recordMobileTurnActivity(input: {
+  turnId: string;
+  stage: MobileActivityStage;
+  milestoneId: string;
+}) {
+  const activity = mobileActivityForStage(input.stage);
+  await knowledgeDb.transaction(async (tx) => {
+    const changed = await updateMobileTurnPresentation(tx, {
+      turnId: input.turnId,
+      stage: input.stage,
+      now: new Date(),
+      milestoneId: input.milestoneId,
+    });
+    if (changed) {
+      await appendTurnEvent(tx, {
+        turnId: input.turnId,
+        type: "turn.activity",
+        data: activity,
+      });
+    }
+  });
 }
 
 function queueLockKey(threadId: string) {
@@ -266,6 +308,7 @@ type DurableThreadTurnInput = {
   | {
       messageId: string;
       messageParts: unknown;
+      sourceMessageId?: string | null;
       approvalDecision?: undefined;
     }
   | {
@@ -355,6 +398,32 @@ async function createDurableThreadTurnInTransaction(
         "The input message is already bound to another turn."
       );
     }
+    if (input.sourceMessageId) {
+      const [sourceMessage] = await tx
+        .select({
+          id: schema.threadMessages.id,
+          sourceMessageId: schema.threadMessages.sourceMessageId,
+        })
+        .from(schema.threadMessages)
+        .where(
+          and(
+            eq(schema.threadMessages.id, input.sourceMessageId),
+            eq(schema.threadMessages.threadId, input.threadId),
+            eq(schema.threadMessages.role, "user")
+          )
+        )
+        .limit(1);
+      if (
+        !sourceMessage ||
+        (sourceMessage.sourceMessageId &&
+          sourceMessage.sourceMessageId !== sourceMessage.id)
+      ) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The retry source message is unavailable."
+        );
+      }
+    }
   }
 
   const [queueState] = await tx
@@ -378,6 +447,7 @@ async function createDurableThreadTurnInTransaction(
         parts: input.messageParts,
         searchText: extractSearchText(input.messageParts),
         source: input.source,
+        sourceMessageId: input.sourceMessageId ?? null,
         createdAt: now,
       })
       .onConflictDoNothing({ target: schema.threadMessages.id })
@@ -1650,6 +1720,37 @@ export async function getDurableTurnForUser(input: {
     });
     return turn;
   });
+}
+
+export async function getDurableTurnRetrySourceForUser(input: {
+  turnId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const turn = await getDurableTurnForUser(input);
+  if (!turn) return null;
+  if (
+    !["failed", "cancelled"].includes(turn.status) ||
+    turn.failureCode === "TURN_REMOVED" ||
+    !turn.inputMessageId
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Only a failed or stopped message can be retried."
+    );
+  }
+  const message = await knowledgeDb.query.threadMessages.findFirst({
+    where: and(
+      eq(schema.threadMessages.id, turn.inputMessageId),
+      eq(schema.threadMessages.threadId, turn.threadId),
+      eq(schema.threadMessages.role, "user")
+    ),
+  });
+  if (!message) {
+    throw new DurableTurnError("TURN_NOT_FOUND", "Retry message not found.");
+  }
+  const sourceMessageId = message.sourceMessageId ?? message.id;
+  return { turn, messageParts: message.parts, sourceMessageId };
 }
 
 export async function listDurableThreadQueueForUser(input: {
