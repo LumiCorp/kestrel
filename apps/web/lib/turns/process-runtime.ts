@@ -310,6 +310,25 @@ export async function processDurableThreadTurn(turnId: string) {
     await eventWrites.catch(() => {});
     const message =
       error instanceof Error ? error.message : "Durable turn execution failed.";
+    const visibleFailure = prepareKestrelRuntimeMessagesForPersistence([], {
+      errorMessage: message,
+      failureVisible: false,
+    }).filter(
+      (candidate): candidate is UIMessage =>
+        candidate.role === "assistant" &&
+        isPersistableAssistantMessage(candidate)
+    );
+    await persistDurableAssistantOutcome({
+      turnId: turn.id,
+      interaction: null,
+      messages: visibleFailure.map((assistantMessage) => ({
+        id: assistantMessage.id,
+        projectContextRevisionId: turn.projectContextRevisionId,
+        parts: assistantMessage.parts,
+        model: turn.requestedModelId ?? "unknown",
+        source: turn.source,
+      })),
+    });
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
       status: "failed",

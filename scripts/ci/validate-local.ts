@@ -15,17 +15,7 @@ const value = (name: string, fallback: string) => {
 const base = value("--base", "origin/main");
 const head = value("--head", "HEAD");
 const full = args.includes("--full");
-const changes = full
-  ? []
-  : parseCiNameStatus(
-      execFileSync(
-        "git",
-        ["diff", "--name-status", "-z", "--find-renames", base, head],
-        {
-          encoding: "utf8",
-        }
-      )
-    );
+const changes = full ? [] : readLocalChanges(base, head);
 const plan = planCiGates({ base, head, changes, full });
 const pnpm = (...commandArgs: string[]): Command => ({
   executable: "pnpm",
@@ -34,13 +24,24 @@ const pnpm = (...commandArgs: string[]): Command => ({
 const commands: Partial<Record<CiGateId, Command[]>> = {
   "static-policy": [
     pnpm("run", "governance:check"),
-    pnpm("run", "ci:lint", "--", "--base", base, "--head", head),
+    pnpm(
+      "run",
+      "ci:lint",
+      "--",
+      "--base",
+      base,
+      "--head",
+      head,
+      "--include-worktree"
+    ),
   ],
   "runtime-unit": [pnpm("run", "ci:runtime")],
   "package-contracts": [pnpm("run", "ci:packages")],
   "web-unit": [pnpm("run", "ci:web")],
   "web-build": [pnpm("run", "ci:web:build")],
   "service-contracts": [pnpm("run", "ci:services")],
+  "postgres-integration": [pnpm("run", "ci:postgres:local")],
+  "kestrel-one-product": [pnpm("run", "ci:product")],
   "docs-contracts": [pnpm("run", "ci:docs")],
   "desktop-contracts": [pnpm("run", "ci:desktop")],
   "package-macos":
@@ -73,4 +74,35 @@ for (const [gate, selection] of Object.entries(plan.gates) as Array<
     });
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
+}
+
+function readLocalChanges(baseRef: string, headRef: string) {
+  const parse = (...diffArgs: string[]) =>
+    parseCiNameStatus(execFileSync("git", diffArgs, { encoding: "utf8" }));
+  const changes = parse(
+    "diff",
+    "--name-status",
+    "-z",
+    "--find-renames",
+    baseRef,
+    headRef
+  );
+  if (headRef === "HEAD") {
+    changes.push(
+      ...parse("diff", "--name-status", "-z", "--find-renames", "HEAD"),
+      ...execFileSync(
+        "git",
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        { encoding: "utf8" }
+      )
+        .split("\0")
+        .filter(Boolean)
+        .map((path) => ({ status: "A" as const, path }))
+    );
+  }
+  return [
+    ...new Map(
+      changes.map((change) => [JSON.stringify(change), change])
+    ).values(),
+  ];
 }

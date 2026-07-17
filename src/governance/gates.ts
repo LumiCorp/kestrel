@@ -75,6 +75,8 @@ export const CI_GATE_IDS = [
   "web-unit",
   "web-build",
   "service-contracts",
+  "postgres-integration",
+  "kestrel-one-product",
   "docs-contracts",
   "desktop-contracts",
   "package-macos",
@@ -88,15 +90,23 @@ const RUNTIME: CiGateId[] = [
   "package-contracts",
   "web-unit",
   "web-build",
+  "kestrel-one-product",
   "desktop-contracts",
   "package-macos",
 ];
-const WEB: CiGateId[] = [...STATIC, "web-unit", "web-build"];
+const WEB: CiGateId[] = [
+  ...STATIC,
+  "web-unit",
+  "web-build",
+  "kestrel-one-product",
+];
+const POSTGRES: CiGateId[] = ["postgres-integration"];
 const SERVICES: CiGateId[] = [
   ...STATIC,
   "service-contracts",
   "web-unit",
   "web-build",
+  "kestrel-one-product",
 ];
 
 interface OwnershipRule {
@@ -186,6 +196,20 @@ const CI_OWNERSHIP_RULES: OwnershipRule[] = [
     risk: "high",
     gates: WEB,
     owns: prefix("apps/web/"),
+  },
+  {
+    id: "kestrel-one-postgres",
+    risk: "critical",
+    gates: POSTGRES,
+    owns: (path) =>
+      prefix(
+        "apps/web/drizzle/",
+        "apps/web/lib/db/",
+        "apps/web/lib/turns/",
+        "apps/web/lib/environments/",
+        "apps/web/lib/apps/",
+        "apps/web/lib/integrations/"
+      )(path) || path.endsWith(".postgres.test.ts"),
   },
   {
     id: "desktop",

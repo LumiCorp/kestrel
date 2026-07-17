@@ -1,6 +1,6 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile, writeFile } from "node:fs/promises";
-import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 
@@ -20,15 +20,24 @@ export type WorkspaceApplication = {
 export class WorkspaceApplicationRegistry {
   private readonly applications = new Map<string, WorkspaceApplication>();
   private readonly processes = new Map<string, ChildProcess>();
+  private readonly processExit = new Map<string, Promise<void>>();
   private readonly registryPath: string;
+  private readonly workspaceRoot: string;
 
-  constructor(private readonly workspaceRoot: string) {
-    this.registryPath = path.join(workspaceRoot, ".kestrel", "applications.json");
+  constructor(workspaceRoot: string) {
+    this.workspaceRoot = workspaceRoot;
+    this.registryPath = path.join(
+      workspaceRoot,
+      ".kestrel",
+      "applications.json"
+    );
   }
 
   async restore() {
     try {
-      const rows = JSON.parse(await readFile(this.registryPath, "utf8")) as unknown;
+      const rows = JSON.parse(
+        await readFile(this.registryPath, "utf8")
+      ) as unknown;
       if (!Array.isArray(rows)) return;
       for (const row of rows) {
         const parsed = parseStoredApplication(row);
@@ -83,7 +92,8 @@ export class WorkspaceApplicationRegistry {
 
   async start(id: string) {
     const application = this.applications.get(id);
-    if (!application) throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
+    if (!application)
+      throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
     if (this.processes.has(id)) return application;
     Object.assign(application, {
       desiredState: "running",
@@ -97,11 +107,21 @@ export class WorkspaceApplicationRegistry {
       "a"
     );
     const child = spawn("/bin/sh", ["-lc", application.command], {
-      cwd: resolveWorkspacePath(this.workspaceRoot, application.workingDirectory),
+      cwd: resolveWorkspacePath(
+        this.workspaceRoot,
+        application.workingDirectory
+      ),
       env: { ...process.env, PORT: String(application.port) },
       stdio: ["ignore", log.fd, log.fd],
     });
     this.processes.set(id, child);
+    let resolveExit!: () => void;
+    this.processExit.set(
+      id,
+      new Promise<void>((resolve) => {
+        resolveExit = resolve;
+      })
+    );
     Object.assign(application, {
       status: "running",
       processId: child.pid ?? null,
@@ -109,6 +129,7 @@ export class WorkspaceApplicationRegistry {
     });
     child.once("exit", (code) => {
       this.processes.delete(id);
+      this.processExit.delete(id);
       Object.assign(application, {
         status:
           application.desiredState === "stopped" || code === 0
@@ -117,8 +138,9 @@ export class WorkspaceApplicationRegistry {
         processId: null,
         updatedAt: new Date().toISOString(),
       });
-      void this.persist();
-      void log.close();
+      void this.persist().finally(() => {
+        void log.close().finally(resolveExit);
+      });
     });
     await this.persist();
     return application;
@@ -126,7 +148,8 @@ export class WorkspaceApplicationRegistry {
 
   async stop(id: string) {
     const application = this.applications.get(id);
-    if (!application) throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
+    if (!application)
+      throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
     const child = this.processes.get(id);
     Object.assign(application, {
       desiredState: "stopped",
@@ -140,8 +163,11 @@ export class WorkspaceApplicationRegistry {
   }
 
   async stopAll() {
-    for (const child of this.processes.values()) child.kill("SIGTERM");
-    this.processes.clear();
+    const exits = [...this.processes.entries()].map(([id, child]) => {
+      child.kill("SIGTERM");
+      return this.processExit.get(id);
+    });
+    await Promise.all(exits);
   }
 
   private async persist() {
@@ -186,7 +212,8 @@ export function parseRegistration(value: unknown, workspaceRoot: string) {
 }
 
 function parseStoredApplication(value: unknown): WorkspaceApplication | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return null;
   const row = value as Record<string, unknown>;
   return typeof row.id === "string" &&
     typeof row.name === "string" &&

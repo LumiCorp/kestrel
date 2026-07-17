@@ -14,11 +14,17 @@ const plan = (...paths: string[]) =>
     changes: paths.map((path) => ({ status: "M" as const, path })),
   });
 
-test("durable turn storage selects the available web and build gates", () => {
+test("durable turn storage selects web, PostgreSQL, and build gates", () => {
   const result = plan("apps/web/lib/turns/store.ts");
-  for (const gate of ["static-policy", "web-unit", "web-build"] as const)
+  for (const gate of [
+    "static-policy",
+    "web-unit",
+    "web-build",
+    "postgres-integration",
+    "kestrel-one-product",
+  ] as const)
     assert.equal(result.gates[gate].selected, true, gate);
-  assert.equal(result.risk, "high");
+  assert.equal(result.risk, "critical");
 });
 
 test("docs remain narrow while shared build inputs select every gate", () => {
@@ -34,6 +40,10 @@ test("docs remain narrow while shared build inputs select every gate", () => {
 test("runtime, service, desktop, and package paths select owned gates", () => {
   assert.equal(
     plan("src/runtime/agent.ts").gates["runtime-unit"].selected,
+    true
+  );
+  assert.equal(
+    plan("src/runtime/agent.ts").gates["kestrel-one-product"].selected,
     true
   );
   assert.equal(

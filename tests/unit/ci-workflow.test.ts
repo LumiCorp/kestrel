@@ -19,13 +19,20 @@ test("CI workflow exposes parallel owned gates behind one stable aggregate", asy
   assert.match(workflow, /^\s{4}name: ci-required\s*$/mu);
   assert.doesNotMatch(workflow, /^\s{2}validate:\s*$/mu);
   assert.doesNotMatch(workflow, /run: pnpm run test\s*$/mu);
-  assert.equal(workflow.match(/run: pnpm run ci:runtime\s*$/gmu)?.length, 1);
+  assert.equal(workflow.match(/pnpm run ci:runtime\s*$/gmu)?.length, 1);
   assert.match(
     workflow,
     /if: needs\.ci-plan\.outputs\.package_macos == 'true'/u
   );
   assert.match(setup, /pnpm install --frozen-lockfile/u);
   assert.match(workflow, /cron: "0 7 \* \* \*"/u);
+  assert.match(workflow, /image: pgvector\/pgvector:pg16/u);
+  assert.match(workflow, /postgres-integration -- pnpm run ci:postgres/u);
+  assert.match(workflow, /^\s{2}kestrel-one-product:\s*$/mu);
+  assert.match(workflow, /kestrel-one-product -- pnpm run ci:product/u);
+  assert.match(workflow, /pnpm run ci:run-gate/u);
+  assert.match(workflow, /KESTREL_PRODUCT_WEBKIT/u);
+  assert.match(workflow, /Upload failed product evidence/u);
   assert.doesNotMatch(workflow, /apt-get update/u);
 });
 

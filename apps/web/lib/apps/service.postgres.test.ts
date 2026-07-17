@@ -209,10 +209,12 @@ test(
       });
     assert.equal(initialWeatherAccess?.connectionId, null);
     assert.deepEqual(
-      initialWeatherAccess?.capabilities.map((capability) => ({
-        key: capability.key,
-        approvalMode: capability.approvalMode,
-      })),
+      initialWeatherAccess?.capabilities
+        .map((capability) => ({
+          key: capability.key,
+          approvalMode: capability.approvalMode,
+        }))
+        .sort((left, right) => right.key.localeCompare(left.key)),
       [
         { key: "getWeather", approvalMode: "auto" },
         { key: "forecast", approvalMode: "auto" },
@@ -227,14 +229,16 @@ test(
       enabled: false,
       approvalMode: "deny",
     });
-    assert.equal(
+    const weatherWithoutCurrent =
       await projectAppService.resolveEffectiveProjectAppAccess({
         organizationId,
         projectId,
         appKey: "built_in.weather",
         userId,
-      }),
-      null
+      });
+    assert.deepEqual(
+      weatherWithoutCurrent?.capabilities.map((capability) => capability.key),
+      ["forecast"]
     );
     await projectAppService.saveProjectAppCapabilityPolicy({
       organizationId,
@@ -253,7 +257,8 @@ test(
           appKey: "built_in.weather",
           userId,
         })
-      )?.capabilities[0]?.approvalMode,
+      )?.capabilities.find((capability) => capability.key === "getWeather")
+        ?.approvalMode,
       "ask"
     );
     await projectAppService.setProjectAppEnabled({

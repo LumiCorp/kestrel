@@ -33,6 +33,9 @@ resolve_docker_bin() {
 
 load_env_file() {
   local file="$1"
+  if [[ "${KESTREL_DISABLE_DOTENV:-0}" == "1" ]]; then
+    return
+  fi
   if [[ -f "$file" ]]; then
     log "Loading $(basename "$file")"
     set -a
@@ -201,8 +204,15 @@ KESTREL_DISABLE_DOTENV=1 DATABASE_URL="$KESTREL_RUNNER_DATABASE_URL" \
 log "Ensuring local admin account exists"
 pnpm create-dev-admin
 
-log "Generating checked-in RAG fixtures"
-pnpm fixtures:rag
+if [[ "${KESTREL_PRODUCT_CONTRACT:-false}" == "true" ]]; then
+  log "Seeding deterministic product-contract gateway"
+  node --conditions=react-server --import tsx scripts/seed-product-contract-gateway.ts
+fi
+
+if [[ "${KESTREL_SKIP_RAG_FIXTURES:-false}" != "true" ]]; then
+  log "Generating checked-in RAG fixtures"
+  pnpm fixtures:rag
+fi
 
 log "Starting local Environment runtime on ${RUNNER_HOST}:${RUNNER_PORT}"
 DATABASE_URL="$KESTREL_RUNNER_DATABASE_URL" \

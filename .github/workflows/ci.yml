@@ -31,6 +31,8 @@ jobs:
       web_unit: ${{ steps.plan.outputs.web_unit }}
       web_build: ${{ steps.plan.outputs.web_build }}
       service_contracts: ${{ steps.plan.outputs.service_contracts }}
+      postgres_integration: ${{ steps.plan.outputs.postgres_integration }}
+      kestrel_one_product: ${{ steps.plan.outputs.kestrel_one_product }}
       docs_contracts: ${{ steps.plan.outputs.docs_contracts }}
       desktop_contracts: ${{ steps.plan.outputs.desktop_contracts }}
       package_macos: ${{ steps.plan.outputs.package_macos }}
@@ -79,13 +81,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup
       - name: Governance and generated-resource drift
-        run: pnpm run governance:check
+        run: pnpm run ci:run-gate -- static-policy/governance -- pnpm run governance:check
       - name: OpenAPI drift
-        run: pnpm run ci:openapi-drift
+        run: pnpm run ci:run-gate -- static-policy/openapi -- pnpm run ci:openapi-drift
       - name: Route ownership drift
-        run: pnpm run ci:route-ownership
+        run: pnpm run ci:run-gate -- static-policy/routes -- pnpm run ci:route-ownership
       - name: Changed-file Ultracite
-        run: pnpm run ci:lint -- --base "${{ needs.ci-plan.outputs.base }}" --head "${{ needs.ci-plan.outputs.head }}"
+        run: pnpm run ci:run-gate -- static-policy/lint -- pnpm run ci:lint -- --base "${{ needs.ci-plan.outputs.base }}" --head "${{ needs.ci-plan.outputs.head }}"
 
   runtime-unit:
     name: Runtime unit, replay, prompts, and release eval
@@ -96,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:runtime
+      - run: pnpm run ci:run-gate -- runtime-unit -- pnpm run ci:runtime
 
   package-contracts:
     name: Public package contracts
@@ -107,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:packages
+      - run: pnpm run ci:run-gate -- package-contracts -- pnpm run ci:packages
 
   web-unit:
     name: Kestrel One unit and API contracts
@@ -118,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:web
+      - run: pnpm run ci:run-gate -- web-unit -- pnpm run ci:web
 
   web-build:
     name: Kestrel One production build
@@ -129,7 +131,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:web:build
+      - run: pnpm run ci:run-gate -- web-build -- pnpm run ci:web:build
 
   service-contracts:
     name: Hosted service contracts
@@ -140,7 +142,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:services
+      - run: pnpm run ci:run-gate -- service-contracts -- pnpm run ci:services
+
+  postgres-integration:
+    name: PostgreSQL integration
+    needs: ci-plan
+    if: needs.ci-plan.outputs.postgres_integration == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: kestrel_ci
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kestrel_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      KESTREL_TURN_DB_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/kestrel_ci
+      KESTREL_ENVIRONMENT_DB_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/kestrel_ci
+      KESTREL_APPS_DB_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/kestrel_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:run-gate -- postgres-integration -- pnpm run ci:postgres
+
+  kestrel-one-product:
+    name: Kestrel One durable conversation product contract
+    needs: ci-plan
+    if: needs.ci-plan.outputs.kestrel_one_product == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      KESTREL_PRODUCT_WEBKIT: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Build shared runtime packages
+        run: pnpm run ci:build:shared
+      - name: Install product-contract browsers
+        run: |
+          browsers=(chromium)
+          if [[ "$KESTREL_PRODUCT_WEBKIT" == "true" ]]; then
+            browsers+=(webkit)
+          fi
+          pnpm --filter @kestrel/kestrel-one exec playwright install --with-deps "${browsers[@]}"
+      - name: Run durable conversation product contract
+        env:
+          CI_ARTIFACT_NAME: kestrel-one-product-failure-${{ github.run_attempt }}
+        run: pnpm run ci:run-gate -- kestrel-one-product -- pnpm run ci:product
+      - name: Upload failed product evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kestrel-one-product-failure-${{ github.run_attempt }}
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 14
 
   docs-contracts:
     name: Documentation contracts
@@ -151,7 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:docs
+      - run: pnpm run ci:run-gate -- docs-contracts -- pnpm run ci:docs
 
   desktop-contracts:
     name: Desktop contracts
@@ -162,7 +228,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:desktop
+      - run: pnpm run ci:run-gate -- desktop-contracts -- pnpm run ci:desktop
 
   package-macos:
     name: macOS packages
@@ -178,9 +244,9 @@ jobs:
       - name: Add PostgreSQL to package path
         run: echo "$(brew --prefix postgresql@14)/bin" >> "$GITHUB_PATH"
       - name: Package and verify CLI
-        run: pnpm run cli:package && pnpm run cli:release-check
+        run: pnpm run ci:run-gate -- package-macos/cli -- pnpm run cli:package && pnpm run ci:run-gate -- package-macos/cli-release -- pnpm run cli:release-check
       - name: Package and verify Desktop
-        run: pnpm run desktop:package && pnpm run desktop:release-check
+        run: pnpm run ci:run-gate -- package-macos/desktop -- pnpm run desktop:package && pnpm run ci:run-gate -- package-macos/desktop-release -- pnpm run desktop:release-check
 
   ci-required:
     name: ci-required
@@ -193,6 +259,8 @@ jobs:
       - web-unit
       - web-build
       - service-contracts
+      - postgres-integration
+      - kestrel-one-product
       - docs-contracts
       - desktop-contracts
       - package-macos
