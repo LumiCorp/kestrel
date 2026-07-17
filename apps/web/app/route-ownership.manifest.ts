@@ -1243,6 +1243,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
+    "app/api/mobile/v2/turns/[turnId]/retry/route.ts",
+    "/api/mobile/v2/turns/:turnId/retry",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/threads/route.ts",
     "/api/threads",
     "threads",

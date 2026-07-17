@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mobileMessageParts } from "./message-parts";
+import { mobileMessageParts, mobileV2DurablePartTypes } from "./message-parts";
+
+test("mobile v2 retains progress and tool activity after reload", () => {
+  assert.equal(mobileV2DurablePartTypes.has("progress"), true);
+  assert.equal(mobileV2DurablePartTypes.has("tool_status"), true);
+});
 
 test("mobile snapshots preserve the durable Kestrel presentation timeline", () => {
   const parts = mobileMessageParts([
@@ -108,7 +113,8 @@ test("mobile snapshots never label runtime progress as agent progress", () => {
       type: "data-kestrel-progress",
       data: {
         id: "progress-runtime-1",
-        text: "The runtime committed a step.",
+        code: "MODEL_CALL_STARTED",
+        text: "Calling decision model (Qwen/Qwen3-8B).",
         timestamp: "2026-07-15T12:00:00.000Z",
       },
     },
@@ -120,10 +126,11 @@ test("mobile snapshots never label runtime progress as agent progress", () => {
       id: "progress-runtime-1",
       category: "runtime",
       label: "Runtime activity",
-      text: "The runtime committed a step.",
+      text: "Working",
       timestamp: "2026-07-15T12:00:00.000Z",
     },
   ]);
+  assert.equal(JSON.stringify(parts).includes("Qwen"), false);
 });
 
 test("mobile snapshots expose contract failure without leaking internal errors", () => {

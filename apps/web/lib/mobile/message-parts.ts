@@ -1,3 +1,5 @@
+import { mobileActivity } from "@/lib/mobile/activity";
+
 export type MobileMessagePart =
   | { type: "text"; text: string }
   | { type: "source_url"; sourceId: string; url: string; title: string | null }
@@ -74,6 +76,18 @@ type MobileAssistantErrorCode =
   | "AGENT_RUN_CANCELLED"
   | "PRESENTATION_CONTRACT_FAILURE";
 
+export const mobileV2DurablePartTypes: ReadonlySet<MobileMessagePart["type"]> =
+  new Set([
+    "text",
+    "source_url",
+    "source_document",
+    "citation",
+    "artifact",
+    "interaction_status",
+    "progress",
+    "tool_status",
+  ]);
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -143,6 +157,10 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
       const id = readString(data, "id");
       const text = readString(data, "text");
       const timestamp = readString(data, "timestamp");
+      const activity = mobileActivity({
+        kind: "progress",
+        code: readString(data, "code"),
+      });
       return id && text && timestamp
         ? [
             {
@@ -150,7 +168,7 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
               id,
               category: "runtime",
               label: readString(data, "phase") ?? "Runtime activity",
-              text,
+              text: activity.message,
               timestamp,
             },
           ]

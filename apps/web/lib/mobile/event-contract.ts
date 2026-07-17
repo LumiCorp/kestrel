@@ -1,3 +1,9 @@
+import {
+  isMobileActivityStage,
+  type MobileActivityStage,
+  mobileActivity,
+} from "@/lib/mobile/activity";
+
 export type MobileTurnEvent =
   | {
       type: "message.delta";
@@ -7,12 +13,7 @@ export type MobileTurnEvent =
       type: "activity.updated";
       data: {
         turnId: string;
-        stage:
-          | "preparing"
-          | "reading_context"
-          | "working"
-          | "using_capability"
-          | "finalizing";
+        stage: MobileActivityStage;
         message: string;
       };
     }
@@ -35,6 +36,23 @@ export function toMobileTurnEvent(input: {
   type: string;
   data: unknown;
 }): MobileTurnEvent {
+  if (input.type === "turn.activity") {
+    const activity = asRecord(input.data);
+    if (
+      isMobileActivityStage(activity?.stage) &&
+      typeof activity.message === "string" &&
+      activity.message.trim()
+    ) {
+      return {
+        type: "activity.updated",
+        data: {
+          turnId: input.turnId,
+          stage: activity.stage,
+          message: activity.message.trim(),
+        },
+      };
+    }
+  }
   if (input.type === "ui.message") {
     const chunk = asRecord(input.data);
     if (chunk?.type === "text-delta" && typeof chunk.delta === "string") {
@@ -43,21 +61,48 @@ export function toMobileTurnEvent(input: {
         data: { turnId: input.turnId, textDelta: chunk.delta },
       };
     }
-    if (
-      chunk?.type === "data-kestrel-progress" ||
-      chunk?.type === "data-kestrel-agent-progress"
-    ) {
+    if (chunk?.type === "data-kestrel-progress") {
       const presentation = asRecord(chunk.data);
       if (typeof presentation?.text === "string" && presentation.text.trim()) {
+        const activity = mobileActivity({
+          kind: "progress",
+          code:
+            typeof presentation.code === "string" ? presentation.code : null,
+        });
         return {
           type: "activity.updated",
           data: {
             turnId: input.turnId,
-            stage: "working",
-            message: presentation.text.trim(),
+            ...activity,
           },
         };
       }
+    }
+    if (chunk?.type === "data-kestrel-agent-progress") {
+      const presentation = asRecord(chunk.data);
+      if (typeof presentation?.text === "string" && presentation.text.trim()) {
+        const activity = mobileActivity({
+          kind: "agent_progress",
+          text: presentation.text,
+        });
+        return {
+          type: "activity.updated",
+          data: {
+            turnId: input.turnId,
+            ...activity,
+          },
+        };
+      }
+    }
+    if (chunk?.type === "data-kestrel-tool") {
+      const activity = mobileActivity({ kind: "tool" });
+      return {
+        type: "activity.updated",
+        data: {
+          turnId: input.turnId,
+          ...activity,
+        },
+      };
     }
     return {
       type: "snapshot.changed",

@@ -6,7 +6,7 @@ import "../../scripts/register-server-only.mjs";
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
 
 test(
-  "mobile Thread creation and queued removal are transactionally authoritative",
+  "mobile Thread creation, retry, and queued removal are transactionally authoritative",
   {
     skip: databaseUrl ? false : "KESTREL_TURN_DB_TEST_URL is not configured",
   },
@@ -27,6 +27,7 @@ test(
     const atomicThreadId = `mobile-store-atomic-${suffix}`;
     const rolledBackThreadId = `mobile-store-rollback-${suffix}`;
     const queueThreadId = `mobile-store-queue-${suffix}`;
+    const retryThreadId = `mobile-store-retry-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -64,8 +65,13 @@ test(
       await transaction`
         INSERT INTO "threads" (
           "id", "title", "created_by_user_id", "organization_id", "origin"
-        ) VALUES (
+        ) VALUES
+        (
           ${queueThreadId}, 'Queued Removal', ${userId},
+          ${organizationId}, 'mobile'
+        ),
+        (
+          ${retryThreadId}, 'Durable Retry', ${userId},
           ${organizationId}, 'mobile'
         )
       `;
@@ -115,6 +121,58 @@ test(
       WHERE "id" = ${rolledBackThreadId}
     `;
     assert.equal(rolledBackCount?.count, 0);
+
+    const originalRetry = await store.createDurableThreadTurn({
+      threadId: retryThreadId,
+      organizationId,
+      authorUserId: userId,
+      messageId: `message-retry-root-${suffix}`,
+      messageParts: [{ type: "text", text: "Retry this prompt" }],
+      idempotencyKey: `idempotency-retry-root-${suffix}`,
+      requestedEnvironmentId: environmentId,
+      source: "mobile",
+    });
+    assert.ok(await store.claimDurableThreadTurn(originalRetry.turn.id));
+    await store.completeDurableThreadTurn({
+      turnId: originalRetry.turn.id,
+      status: "failed",
+      failureCode: "AGENT_RUN_FAILED",
+    });
+    const retrySource = await store.getDurableTurnRetrySourceForUser({
+      turnId: originalRetry.turn.id,
+      organizationId,
+      userId,
+    });
+    assert.ok(retrySource);
+    const retryInput = {
+      threadId: retryThreadId,
+      organizationId,
+      authorUserId: userId,
+      messageId: `message-retry-attempt-${suffix}`,
+      messageParts: retrySource.messageParts,
+      sourceMessageId: retrySource.sourceMessageId,
+      idempotencyKey: `idempotency-retry-attempt-${suffix}`,
+      requestedEnvironmentId: environmentId,
+      source: "mobile" as const,
+    };
+    const retried = await store.createDurableThreadTurn(retryInput);
+    const duplicateRetry = await store.createDurableThreadTurn(retryInput);
+    assert.equal(retried.created, true);
+    assert.equal(duplicateRetry.created, false);
+    assert.equal(duplicateRetry.turn.id, retried.turn.id);
+    const [retryPrompt] = await sql<
+      Array<{ sourceMessageId: string | null; turnId: string | null }>
+    >`
+      SELECT
+        "source_message_id" AS "sourceMessageId",
+        "turn_id" AS "turnId"
+      FROM "thread_messages"
+      WHERE "id" = ${retryInput.messageId}
+    `;
+    assert.deepEqual(retryPrompt, {
+      sourceMessageId: originalRetry.turn.inputMessageId,
+      turnId: retried.turn.id,
+    });
 
     const createQueuedTurn = (label: string) =>
       store.createDurableThreadTurn({
