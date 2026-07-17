@@ -272,6 +272,32 @@ jobs:
       - name: Enforce selected gate results
         env:
           CI_PLAN_RESULT: ${{ needs.ci-plan.result }}
-          CI_GATE_PLAN: ${{ needs.ci-plan.outputs.plan }}
-          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+          CI_GATE_SELECTIONS: >-
+            {
+              "static-policy": ${{ needs.ci-plan.outputs.static_policy }},
+              "runtime-unit": ${{ needs.ci-plan.outputs.runtime_unit }},
+              "package-contracts": ${{ needs.ci-plan.outputs.package_contracts }},
+              "web-unit": ${{ needs.ci-plan.outputs.web_unit }},
+              "web-build": ${{ needs.ci-plan.outputs.web_build }},
+              "service-contracts": ${{ needs.ci-plan.outputs.service_contracts }},
+              "postgres-integration": ${{ needs.ci-plan.outputs.postgres_integration }},
+              "kestrel-one-product": ${{ needs.ci-plan.outputs.kestrel_one_product }},
+              "docs-contracts": ${{ needs.ci-plan.outputs.docs_contracts }},
+              "desktop-contracts": ${{ needs.ci-plan.outputs.desktop_contracts }},
+              "package-macos": ${{ needs.ci-plan.outputs.package_macos }}
+            }
+          CI_GATE_RESULTS: >-
+            {
+              "static-policy": "${{ needs.static-policy.result }}",
+              "runtime-unit": "${{ needs.runtime-unit.result }}",
+              "package-contracts": "${{ needs.package-contracts.result }}",
+              "web-unit": "${{ needs.web-unit.result }}",
+              "web-build": "${{ needs.web-build.result }}",
+              "service-contracts": "${{ needs.service-contracts.result }}",
+              "postgres-integration": "${{ needs.postgres-integration.result }}",
+              "kestrel-one-product": "${{ needs.kestrel-one-product.result }}",
+              "docs-contracts": "${{ needs.docs-contracts.result }}",
+              "desktop-contracts": "${{ needs.desktop-contracts.result }}",
+              "package-macos": "${{ needs.package-macos.result }}"
+            }
         run: pnpm run ci:required

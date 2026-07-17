@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { CI_GATE_IDS } from "../../src/governance/gates.js";
 
 const ROOT = process.cwd();
 
@@ -36,6 +38,44 @@ test("CI workflow exposes parallel owned gates behind one stable aggregate", asy
   assert.match(workflow, /KESTREL_PRODUCT_WEBKIT/u);
   assert.match(workflow, /Upload failed product evidence/u);
   assert.doesNotMatch(workflow, /apt-get update/u);
+  assert.match(workflow, /CI_GATE_SELECTIONS/u);
+  assert.match(workflow, /CI_GATE_RESULTS/u);
+  assert.doesNotMatch(workflow, /CI_GATE_PLAN/u);
+  assert.doesNotMatch(workflow, /CI_JOB_RESULTS/u);
+});
+
+test("ci-required accepts explicit selected-gate results and rejects a mismatch", () => {
+  const selections = Object.fromEntries(
+    CI_GATE_IDS.map((gate) => [gate, gate === "web-unit"])
+  );
+  const results = Object.fromEntries(
+    CI_GATE_IDS.map((gate) => [
+      gate,
+      gate === "web-unit" ? "success" : "skipped",
+    ])
+  );
+  const run = (gateResults: Record<string, string>) =>
+    spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/ci/assert-required.ts"],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CI_PLAN_RESULT: "success",
+          CI_GATE_SELECTIONS: JSON.stringify(selections),
+          CI_GATE_RESULTS: JSON.stringify(gateResults),
+        },
+      }
+    );
+
+  const accepted = run(results);
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const rejected = run({ ...results, "web-unit": "failure" });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /web-unit: expected success, received failure/u);
 });
 
 test("CI runtime owns the prompt and eval gates exactly once", async () => {
