@@ -192,6 +192,5 @@ the repository gates in [Reliability](RELIABILITY.md).
 - [Design principles](DESIGN.md)
 - [Published architecture overview](apps/docs/content/docs/architecture-overview.mdx)
 - [Architecture rules](docs/references/architecture-rules.json)
-- [Local platform architecture](docs/plans/2026-07-13-kestrel-local-platform-architecture.md)
 - [Reliability](RELIABILITY.md)
 - [Security](SECURITY.md)

@@ -4,7 +4,7 @@ domain: cli
 status: active
 owner: kestrel-cli
 last_verified_at: 2026-06-30
-depends_on: [../index.md, kchat-protocol.md]
+depends_on: [../index.md]
 ---
 
 # CLI Terminal Client
@@ -22,7 +22,6 @@ Advanced screens remain on demand through the command palette (`:`):
 - `activity feed`: inspect run log events (`run_started`, `step_started`, `step_committed`, terminal events, policy checkpoints, quality summaries)
 
 The CLI runs as a thin client over Local Core's authenticated Unix-domain socket.
-Protocol details: [docs/cli/kchat-protocol.md](https://github.com/LumiCorp/kestrel/blob/main/docs/cli/kchat-protocol.md).
 Workspace setup and scheduling guide: [docs/cli/workspaces.md](https://github.com/LumiCorp/kestrel/blob/main/docs/cli/workspaces.md).
 
 ## Launch

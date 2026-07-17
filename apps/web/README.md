@@ -338,6 +338,5 @@ organization-scoped knowledge snapshots as web chat.
 
 Additional references:
 
-- `../../docs/references/kestrel-one-production-readiness-evidence.md` for repo-grounded readiness evidence across auth, runner, storage, Redis, Postgres, pgvector, billing, and knowledge-tool audit surfaces
 - `content/admin-docs/knowledge-library.md` for operator guidance on storage, queueing, and troubleshooting
 - `docs/knowledge-library-user-guide.md` for the upload/search/citation user workflow

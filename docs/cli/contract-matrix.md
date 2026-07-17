@@ -6,13 +6,12 @@ owner: kestrel-cli
 last_verified_at: 2026-07-15
 depends_on:
   - ./kchat.md
-  - ./kchat-protocol.md
   - ../generated/cli-contract-matrix.json
 ---
 
 # CLI Contract Matrix
 
-This page is generated from `cli/contractMatrix.ts` and must stay aligned with parser behavior and protocol contracts.
+This page is generated from `cli/contractMatrix.ts` and must stay aligned with parser behavior and CLI contracts.
 
 ## Executables
 
