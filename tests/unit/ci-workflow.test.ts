@@ -76,5 +76,7 @@ test("product-contract browser proof waits for the durable worker before test ti
   assert.match(productConfig, /globalSetup: "\.\/tests\/product\/global-setup\.ts"/u);
   assert.match(productConfig, /KESTREL_TURN_WORKER_READY_FILE/u);
   assert.match(setup, /waitForWorkerReady/u);
+  assert.match(setup, /waitUntil: "commit"/u);
+  assert.match(setup, /prewarmNavigationTimeoutMs/u);
   assert.match(setup, /\/api\/mobile\/v2\/threads/u);
 });
