@@ -5,82 +5,205 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate:
+  ci-plan:
+    name: Plan required gates
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
+    timeout-minutes: 10
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      base: ${{ steps.plan.outputs.base }}
+      head: ${{ steps.plan.outputs.head }}
+      static_policy: ${{ steps.plan.outputs.static_policy }}
+      runtime_unit: ${{ steps.plan.outputs.runtime_unit }}
+      package_contracts: ${{ steps.plan.outputs.package_contracts }}
+      web_unit: ${{ steps.plan.outputs.web_unit }}
+      web_build: ${{ steps.plan.outputs.web_build }}
+      service_contracts: ${{ steps.plan.outputs.service_contracts }}
+      docs_contracts: ${{ steps.plan.outputs.docs_contracts }}
+      desktop_contracts: ${{ steps.plan.outputs.desktop_contracts }}
+      package_macos: ${{ steps.plan.outputs.package_macos }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          fetch-depth: 0
 
-      - name: Install native test dependencies
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Compute owned gate plan
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
+          base="$PR_BASE_SHA"
+          full=false
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            base="$PUSH_BASE_SHA"
+            full=true
+          fi
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            base="${HEAD_SHA}^"
+          fi
+          arguments=(--base "$base" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT" --verify-ownership)
+          if [[ "$full" == true ]]; then
+            arguments+=(--full)
+          fi
+          pnpm run ci:plan -- "${arguments[@]}"
 
-      - name: Install public dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Governance checks
+  static-policy:
+    name: Static policy
+    needs: ci-plan
+    if: needs.ci-plan.outputs.static_policy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Governance and generated-resource drift
         run: pnpm run governance:check
+      - name: OpenAPI drift
+        run: pnpm run ci:openapi-drift
+      - name: Route ownership drift
+        run: pnpm run ci:route-ownership
+      - name: Changed-file Ultracite
+        run: pnpm run ci:lint -- --base "${{ needs.ci-plan.outputs.base }}" --head "${{ needs.ci-plan.outputs.head }}"
 
-      - name: Full test suite
-        run: pnpm run test
+  runtime-unit:
+    name: Runtime unit, replay, prompts, and release eval
+    needs: ci-plan
+    if: needs.ci-plan.outputs.runtime_unit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:runtime
 
-      - name: Prompt suite
-        run: pnpm run prompt-suite
+  package-contracts:
+    name: Public package contracts
+    needs: ci-plan
+    if: needs.ci-plan.outputs.package_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:packages
 
-      - name: Ruhroh release gate
-        run: pnpm run evals:release-check
+  web-unit:
+    name: Kestrel One unit and API contracts
+    needs: ci-plan
+    if: needs.ci-plan.outputs.web_unit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:web
 
-      - name: Build public products
-        run: pnpm run build && pnpm run web:build && pnpm run docs:build && pnpm run desktop:build
+  web-build:
+    name: Kestrel One production build
+    needs: ci-plan
+    if: needs.ci-plan.outputs.web_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:web:build
+
+  service-contracts:
+    name: Hosted service contracts
+    needs: ci-plan
+    if: needs.ci-plan.outputs.service_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:services
+
+  docs-contracts:
+    name: Documentation contracts
+    needs: ci-plan
+    if: needs.ci-plan.outputs.docs_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:docs
+
+  desktop-contracts:
+    name: Desktop contracts
+    needs: ci-plan
+    if: needs.ci-plan.outputs.desktop_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:desktop
 
   package-macos:
+    name: macOS packages
+    needs: ci-plan
+    if: needs.ci-plan.outputs.package_macos == 'true'
     runs-on: macos-15
     timeout-minutes: 45
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
       - name: Install PostgreSQL bundle source
-        run: |
-          brew install postgresql@14
-          echo "$(brew --prefix postgresql@14)/bin" >> "$GITHUB_PATH"
-
-      - name: Install public dependencies
-        run: pnpm install --frozen-lockfile
-
+        run: brew install postgresql@14
+      - name: Add PostgreSQL to package path
+        run: echo "$(brew --prefix postgresql@14)/bin" >> "$GITHUB_PATH"
       - name: Package and verify CLI
         run: pnpm run cli:package && pnpm run cli:release-check
-
       - name: Package and verify Desktop
         run: pnpm run desktop:package && pnpm run desktop:release-check
+
+  ci-required:
+    name: ci-required
+    if: always()
+    needs:
+      - ci-plan
+      - static-policy
+      - runtime-unit
+      - package-contracts
+      - web-unit
+      - web-build
+      - service-contracts
+      - docs-contracts
+      - desktop-contracts
+      - package-macos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Enforce selected gate results
+        env:
+          CI_PLAN_RESULT: ${{ needs.ci-plan.result }}
+          CI_GATE_PLAN: ${{ needs.ci-plan.outputs.plan }}
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+        run: pnpm run ci:required

@@ -1,0 +1,23 @@
+name: Set up Kestrel CI
+description: Install the frozen public workspace on the selected runner
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+
+    - name: Ensure ripgrep is available
+      if: runner.os == 'Linux'
+      shell: bash
+      run: command -v rg >/dev/null 2>&1 || sudo apt-get install -y ripgrep
+
+    - name: Install public dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
