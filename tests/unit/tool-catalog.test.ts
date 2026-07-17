@@ -53,18 +53,18 @@ test("tool catalog wraps raw handlers in AgentToolResult envelopes", async () =>
   assert.match(result?.modelContext.text ?? "", /Raw output ref: tool-output:[a-f0-9]{16}/u);
 });
 
-test("dev shell tool descriptions distinguish bounded exec from live-process input", () => {
+test("dev shell tool descriptions distinguish unified exec lifecycle from internal compatibility tools", () => {
   const tools = defaultToolCatalog.toModelTools(["exec_command", "dev.shell.run", "dev.process.write"]);
   const unifiedTool = tools.find((tool) => tool.name === "exec_command");
   const execTool = tools.find((tool) => tool.name === "dev.shell.run");
   const writeTool = tools.find((tool) => tool.name === "dev.process.write");
 
-  assert.match(unifiedTool?.description ?? "", /Run one bounded shell command/u);
+  assert.match(unifiedTool?.description ?? "", /Start one shell command and observe it briefly/u);
   assert.match(unifiedTool?.description ?? "", /Command shape: use command/u);
-  assert.match(unifiedTool?.description ?? "", /return its final output and status/u);
+  assert.match(unifiedTool?.description ?? "", /status running and a sessionId/u);
   assert.match(unifiedTool?.description ?? "", /do not include sessionId, stdin, or stop/u);
   assert.match(unifiedTool?.description ?? "", /Continue\/read shape: only use sessionId/u);
-  assert.match(unifiedTool?.description ?? "", /existing live process session from runtime context/u);
+  assert.match(unifiedTool?.description ?? "", /sessionId returned by a running result/u);
   assert.match(unifiedTool?.description ?? "", /Never invent sessionId/u);
   assert.match(unifiedTool?.description ?? "", /sessionId/i);
   assert.match(unifiedTool?.description ?? "", /raw input/i);

@@ -50,6 +50,7 @@ export function filterDeliberatorToolsForContext(
   const hiddenTools: HiddenDeliberatorTool[] = [];
   const filteredTools = tools.filter((tool) => {
     const hidden =
+      readHiddenInternalDevShellTool(tool.name) ??
       readHiddenProcessStartTool(tool.name, filterContext) ??
       readHiddenDeadProcessTool(tool.name, filterContext) ??
       readHiddenManualProcessTool(tool.name, filterContext);
@@ -67,6 +68,18 @@ export function filterDeliberatorToolsForContext(
       hiddenTools,
       ...(hiddenTools.length > 0 ? { correction: hiddenTools[0]?.correction } : {}),
     },
+  };
+}
+
+function readHiddenInternalDevShellTool(toolName: string): HiddenDeliberatorTool | undefined {
+  if (toolName.startsWith("dev.shell.") === false && toolName.startsWith("dev.process.") === false) {
+    return ;
+  }
+  return {
+    name: toolName,
+    reason: "Internal dev-shell transport tools are not part of the model-facing terminal contract.",
+    correction:
+      "Use exec_command with command to start work, then reuse the returned sessionId to read, send stdin, or stop a running process.",
   };
 }
 

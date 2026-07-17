@@ -32,6 +32,10 @@ import {
 import {
   resolveKestrelTurnObjective,
 } from "../turnObjective.js";
+import {
+  deriveActiveExecCommandSessions,
+  deriveWorkspaceFreshness,
+} from "../workspaceFreshness.js";
 
 export type { KestrelBenchmarkContext, KestrelBenchmarkSource } from "./benchmarkContext.js";
 export {
@@ -157,6 +161,8 @@ export function buildKestrelAgentContext(
     }
   }
   const visibleTodos = normalizeVisibleTodoState(input.reactState.visibleTodos);
+  const workspaceFreshness = deriveWorkspaceFreshness(input.reactState.evidenceLedger);
+  const activeExecCommandSessions = deriveActiveExecCommandSessions(input.reactState.evidenceLedger);
   const activeProcessEvidence = buildActiveProcessEvidence(input.reactState, transcript);
   const recentFilesystemEvidence = buildRecentFilesystemEvidence(input.reactState);
   const recentToolResultEvidence = buildRecentToolResultEvidence({
@@ -183,6 +189,8 @@ export function buildKestrelAgentContext(
     ...(projectTaskQueueContext !== undefined ? { projectTaskQueueContext } : {}),
     ...(recoveryContext !== undefined ? { recoveryContext } : {}),
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
+    workspaceFreshness,
+    ...(activeExecCommandSessions.length > 0 ? { activeExecCommandSessions } : {}),
     ...(correction !== undefined ? { correction } : {}),
     activeWait: input.reactState.waitingFor,
   });
@@ -229,6 +237,13 @@ export function buildKestrelAgentContext(
         { id: "projectTaskQueue", origin: "project-snapshot", rendered: projectTaskQueueContext !== undefined },
         { id: "recovery", origin: "runtime-state", rendered: recoveryContext !== undefined },
         { id: "visibleTodos", origin: "runtime-state", rendered: visibleTodos !== undefined },
+        {
+          id: "workspaceFreshness",
+          origin: "runtime-evidence",
+          rendered: workspaceFreshness.status === "stale" ||
+            workspaceFreshness.status === "attempted_unresolved" ||
+            activeExecCommandSessions.length > 0,
+        },
         { id: "correction", origin: "feedback", rendered: correction !== undefined },
         { id: "activeWait", origin: "runtime-state", rendered: asRecord(input.reactState.waitingFor) !== undefined },
         { id: "transcript", origin: "model-transcript", rendered: transcript.items.length > 0 },

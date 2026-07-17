@@ -104,6 +104,7 @@ export interface DevShellCommandInput {
   maxReadBytes?: number | undefined;
   maxOutputBytes?: number | undefined;
   yieldTimeMs?: number | undefined;
+  timeoutMs?: number | undefined;
   allowedEnvNames?: string[] | undefined;
   envMode?: DevShellEnvMode | undefined;
   packageManagerPreflight?: DevShellPackageManagerPreflightConfig | undefined;
@@ -112,9 +113,7 @@ export interface DevShellCommandInput {
   strictMultiline?: boolean | undefined;
 }
 
-export interface DevShellRunInput extends DevShellCommandInput {
-  timeoutMs?: number | undefined;
-}
+export interface DevShellRunInput extends DevShellCommandInput {}
 
 export interface DevProcessStartInput extends DevShellCommandInput {}
 

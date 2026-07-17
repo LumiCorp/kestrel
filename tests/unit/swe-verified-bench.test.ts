@@ -192,6 +192,7 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
     workspaceRoot: "/tmp/workspace",
     modelName: "kestrel",
   });
+  assert.equal((jobInput as { storeDriver?: unknown }).storeDriver, undefined);
   assert.deepEqual((jobInput as { profile: Record<string, unknown> }).profile, {
     id: "swe-verified",
     label: "SWE Verified",
@@ -743,6 +744,10 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STATUS_PATH=/kestrel-attempt/kestrel-home/dev-shell/bootstrap-status.json"));
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000"));
     assert.equal(
+      dockerRun.args.some((arg, index) => arg === "-e" && dockerRun.args[index + 1] === "-e"),
+      false,
+    );
+    assert.equal(
       dockerRun.args.some((arg) => arg.startsWith("KESTREL_RUNNER_PROCESS_MODE=")),
       false,
     );
@@ -757,6 +762,9 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
       "20260602T123456789Z",
     );
     const runScript = readFileSync(path.join(attemptRoot, "run-kestrel.sh"), "utf8");
+    const runnerDockerfile = readFileSync(path.join(attemptRoot, "runner-image", "Dockerfile"), "utf8");
+    assert.match(runnerDockerfile, /RUN pnpm --filter @kestrel-agents\/protocol run build:self/u);
+    assert.doesNotMatch(runScript, /--store/u);
     assert.match(runScript, /kestrel_status=\$\?\ncd \/opt\/kestrel\nnode --import tsx/u);
     assert.match(runScript, /swe-verified-workspace-patch\.ts/u);
     assert.match(runScript, /--baseline-repo \/kestrel-baseline/u);

@@ -586,7 +586,7 @@ test("ExecutionEngine completes visible-todo finalize loops with documented resi
   assert.equal(terminal.reasonCode, "goal_satisfied");
   assert.equal(finalData.documentedResidualGapFinalized, true);
   assert.deepEqual(finalData.residualTodoIds, ["browser-e2e"]);
-  assert.equal(items[1]?.status, "done");
+  assert.equal(items[1]?.status, "blocked");
 });
 
 test("ExecutionEngine does not complete residual-gap finalize loops on partial post-tool verification", async () => {

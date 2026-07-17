@@ -30,7 +30,6 @@ export interface VisibleTodoFinalizeReadinessAnalysis {
   residualOpenItems: VisibleTodoItem[];
   blockingOpenItems: VisibleTodoItem[];
   complete: boolean;
-  completedVisibleTodos?: VisibleTodoState | undefined;
 }
 
 export interface VisibleTodoValidationError {
@@ -175,7 +174,6 @@ export function analyzeVisibleTodoFinalizeReadiness(input: {
       residualOpenItems: [],
       blockingOpenItems: actionableOpenItems,
       complete: true,
-      ...(input.todos !== undefined ? { completedVisibleTodos: input.todos } : {}),
     };
   }
   if (actionableOpenItems.length > 0 || input.residualGap === undefined) {
@@ -211,18 +209,6 @@ export function analyzeVisibleTodoFinalizeReadiness(input: {
     residualOpenItems,
     blockingOpenItems: [],
     complete: true,
-    completedVisibleTodos: {
-      objective: input.todos.objective,
-      items: input.todos.items.map((item) =>
-        residualOpenItems.some((residual) => residual.id === item.id)
-          ? {
-              ...item,
-              status: "done",
-              note: item.note ?? buildResidualGapNote(residualGap),
-            }
-          : item
-      ),
-    },
   };
 }
 
@@ -274,13 +260,6 @@ function normalizeVisibleTodoItem(
       ...(note !== undefined ? { note } : {}),
     },
   };
-}
-
-function buildResidualGapNote(gap: VisibleTodoResidualGapData): string {
-  if (gap.openGap !== undefined) {
-    return `Residual risk: ${gap.openGap}`;
-  }
-  return `Residual risk: ${gap.knownWarnings[0] ?? "documented in final answer"}`;
 }
 
 function invalid(path: string, message: string): { ok: false; error: VisibleTodoValidationError } {

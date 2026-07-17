@@ -5,6 +5,11 @@ import type {
 } from "../types.js";
 import type { InteractionMode } from "../../../../src/mode/contracts.js";
 import { findUserVisibleTextViolation } from "../userVisibleTextPolicy.js";
+import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
+import type {
+  WorkspaceFreshnessEvidenceRef,
+  WorkspaceFreshnessSummary,
+} from "../../../../src/runtime/workspaceFreshness.js";
 
 export interface DecisionPolicyContext {
   phase: "deliberator";
@@ -12,6 +17,9 @@ export interface DecisionPolicyContext {
   requiredCapabilities: string[];
   observedCapabilities: string[];
   hasExecutionEvidence?: boolean | undefined;
+  workspaceFreshness?: WorkspaceFreshnessSummary | undefined;
+  activeExecCommandSessions?: WorkspaceFreshnessEvidenceRef[] | undefined;
+  hasOpenVisibleTodos?: boolean | undefined;
   capabilityManifest: ToolCapabilityManifestItem[];
   executionIntent?: DecisionContextExecutionIntent | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -89,6 +97,53 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
     return;
   }
 
+  const activeSessions = context.activeExecCommandSessions ?? [];
+  if (activeSessions.length > 0) {
+    const sessionIds = activeSessions.map((item) => item.processId).filter((item): item is string => Boolean(item));
+    const recovery = sessionIds.map((sessionId) =>
+      `Call exec_command with {"sessionId":"${sessionId}","assistantProgress":"I am checking the running process."} and no command to collect its current or final result; repeat if it returns running, or use {"sessionId":"${sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} if the process is no longer needed.`
+    ).join(" ");
+    throw decisionPolicyError(
+      `Build mode cannot finalize goal_satisfied while an exec_command process is still running. ${recovery}`,
+      "DECISION_POLICY_FAILED",
+      {
+        reason: "build_goal_satisfied_with_live_exec_command",
+        sessionIds,
+        requiredAction: "settle_live_exec_command",
+      },
+    );
+  }
+
+  const freshness = context.workspaceFreshness;
+  if (freshness?.status === "stale") {
+    throw decisionPolicyError(
+      "Build mode cannot finalize goal_satisfied because the latest workspace mutation has no later current-state validation evidence.",
+      "DECISION_POLICY_FAILED",
+      {
+        reason: "build_goal_satisfied_with_stale_workspace",
+        latestMutationEvidenceId: freshness.latestMutation?.evidenceId,
+        latestMutationStepIndex: freshness.latestMutation?.stepIndex,
+        changedFiles: freshness.latestMutation?.changedFiles,
+        requiredAction: "run_current_state_validation_after_latest_mutation",
+      },
+    );
+  }
+  if (
+    freshness?.status === "attempted_unresolved" &&
+    (context.hasOpenVisibleTodos === true || hasExplicitResidualWarning(context.action) === false)
+  ) {
+    throw decisionPolicyError(
+      "Build mode can finalize with unresolved validation only when no actionable todo remains and finalize data.openGap or data.knownWarnings explicitly reports the unverified result.",
+      "DECISION_POLICY_FAILED",
+      {
+        reason: "build_goal_satisfied_with_unreported_unresolved_validation",
+        unresolvedEvidenceIds: freshness.unresolvedEvidence?.map((item) => item.evidenceId),
+        hasOpenVisibleTodos: context.hasOpenVisibleTodos === true,
+        requiredAction: "resolve_validation_or_report_explicit_residual_warning",
+      },
+    );
+  }
+
   if (context.hasExecutionEvidence === true || context.observedCapabilities.length > 0) {
     return;
   }
@@ -102,6 +157,22 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
       requiredAction: "choose_valid_build_mode_action",
     },
   );
+}
+
+function hasExplicitResidualWarning(action: ReactAction): boolean {
+  if (action.kind !== "finalize") {
+    return false;
+  }
+  const data = asRecord(asRecord(action.input)?.data);
+  const openGap = data?.openGap;
+  if ((asString(openGap)?.trim().length ?? 0) > 0) {
+    return true;
+  }
+  if (asRecord(openGap) !== undefined && Object.keys(asRecord(openGap) ?? {}).length > 0) {
+    return true;
+  }
+  const warnings = data?.knownWarnings;
+  return (asString(warnings)?.trim().length ?? 0) > 0 || asArray(warnings).length > 0;
 }
 
 function validateAskUserActionPolicy(
@@ -480,11 +551,4 @@ function decisionPolicyError(
     error.details = details;
   }
   return error;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
-  }
-  return value as Record<string, unknown>;
 }

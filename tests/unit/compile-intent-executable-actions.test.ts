@@ -2836,6 +2836,122 @@ test("compileIntent allows build-mode goal_satisfied after execution evidence", 
   assert.equal(compiled.action?.kind, "finalize");
 });
 
+test("compileIntent rejects build-mode goal_satisfied with stale workspace evidence", () => {
+  assert.throws(
+    () => compileIntent({
+      phase: "deliberator",
+      interactionMode: "build",
+      output: {
+        version: "v2",
+        reason: "The edit is complete.",
+        plan: { intent: "Edit the app.", successCriteria: ["The edit is complete."] },
+        requiredCapabilities: [],
+        nextAction: { kind: "finalize", status: "goal_satisfied", message: "Done." },
+        confidence: 0.95,
+        verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+      },
+      observedCapabilities: ["filesystem.write"],
+      capabilityManifest: [],
+      evidenceLedger: [{
+        id: "mutation",
+        version: "v1",
+        createdAt: "2026-07-17T00:00:01.000Z",
+        stepIndex: 1,
+        source: "tool",
+        kind: "file_write",
+        status: "passed",
+        summary: "fs.write_text changed src/app.ts.",
+        facts: { toolName: "fs.write_text", changedFiles: ["src/app.ts"] },
+      }],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.equal(cast.details?.reason, "build_goal_satisfied_with_stale_workspace");
+      assert.deepEqual(cast.details?.changedFiles, ["src/app.ts"]);
+      return true;
+    },
+  );
+});
+
+test("compileIntent rejects build-mode goal_satisfied with a live exec_command session", () => {
+  assert.throws(
+    () => compileIntent({
+      phase: "deliberator",
+      interactionMode: "build",
+      output: {
+        version: "v2",
+        reason: "The server is running.",
+        plan: { intent: "Start the app.", successCriteria: ["The app starts."] },
+        requiredCapabilities: [],
+        nextAction: { kind: "finalize", status: "goal_satisfied", message: "Done." },
+        confidence: 0.95,
+        verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+      },
+      observedCapabilities: ["dev.shell"],
+      capabilityManifest: [],
+      devShellProcesses: [{ processId: "proc-live", status: "RUNNING", workspaceRoot: "/tmp/project" }],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.match(cast.message, /exec_command with \{"sessionId":"proc-live","assistantProgress":"I am checking the running process\."\} and no command/u);
+      assert.equal(cast.details?.reason, "build_goal_satisfied_with_live_exec_command");
+      assert.deepEqual(cast.details?.sessionIds, ["proc-live"]);
+      return true;
+    },
+  );
+});
+
+test("compileIntent allows explicitly warned unresolved validation when no todo remains", () => {
+  const compiled = compileIntent({
+    phase: "deliberator",
+    interactionMode: "build",
+    output: {
+      version: "v2",
+      reason: "The edit is complete but the test runner is unavailable.",
+      plan: { intent: "Edit the app.", successCriteria: ["The edit is complete."] },
+      requiredCapabilities: [],
+      nextAction: {
+        kind: "finalize",
+        status: "goal_satisfied",
+        message: "Implemented; the test runner remained unavailable.",
+        data: { knownWarnings: ["pnpm test could not run because the runner was unavailable."] },
+      },
+      confidence: 0.95,
+      verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+    },
+    observedCapabilities: ["filesystem.write", "dev.shell"],
+    capabilityManifest: [],
+    evidenceLedger: [
+      {
+        id: "mutation",
+        version: "v1",
+        createdAt: "2026-07-17T00:00:01.000Z",
+        stepIndex: 1,
+        source: "tool",
+        kind: "file_write",
+        status: "passed",
+        summary: "fs.write_text changed src/app.ts.",
+        facts: { toolName: "fs.write_text", changedFiles: ["src/app.ts"] },
+      },
+      {
+        id: "failed-check",
+        version: "v1",
+        createdAt: "2026-07-17T00:00:02.000Z",
+        stepIndex: 2,
+        source: "tool",
+        kind: "process_result",
+        status: "failed",
+        summary: "pnpm test could not run.",
+        facts: { toolName: "exec_command", command: "pnpm test" },
+      },
+    ],
+  });
+
+  assert.equal(compiled.action?.kind, "finalize");
+});
+
 test("compileIntent allows more tool work without hidden progress gates", () => {
   const compiled = compileIntent({
     phase: "deliberator",

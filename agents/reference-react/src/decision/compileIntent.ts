@@ -13,6 +13,10 @@ import type { RuntimePlanState } from "../../../../src/runtime/planDocument.js";
 import { isPublicInternetHttpUrl } from "../../../../tools/runtime/builtInToolInputContracts.js";
 import { readRetrievalToolFamily } from "../../../../src/engine/retrievalLoopGuard.js";
 import { normalizeContinuationOffer } from "../../../../src/runtime/continuationOffer.js";
+import {
+  deriveActiveExecCommandSessions,
+  deriveWorkspaceFreshness,
+} from "../../../../src/runtime/workspaceFreshness.js";
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import { isShellFilesystemInspectionCommand } from "../filesystemInspection.js";
 export {
@@ -149,6 +153,15 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
   );
   const policyRequiredCapabilities = requiredCapabilities.filter(isModelFacingToolCapability);
   const visibleTodos = input.visibleTodosPatch ?? normalizeVisibleTodoState(input.visibleTodos);
+  const workspaceFreshness = deriveWorkspaceFreshness(input.evidenceLedger);
+  const activeExecCommandSessions = mergeActiveExecCommandSessions(
+    deriveActiveExecCommandSessions(input.evidenceLedger),
+    input.devShellProcesses,
+  );
+  const hasOpenVisibleTodos = visibleTodos !== undefined &&
+    analyzeVisibleTodosCompletion(visibleTodos).openItems.some((item) =>
+      item.status === "pending" || item.status === "in_progress"
+    );
   const trace: DecisionTrace[] = [
     {
       eventType: "decision.generated",
@@ -215,6 +228,9 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     requiredCapabilities: policyRequiredCapabilities,
     observedCapabilities: input.observedCapabilities,
     hasExecutionEvidence: hasBuildModeExecutionEvidence(input),
+    workspaceFreshness,
+    activeExecCommandSessions,
+    hasOpenVisibleTodos,
     capabilityManifest: input.capabilityManifest,
     ...(compatibilityExecutionIntent !== undefined ? { executionIntent: compatibilityExecutionIntent } : {}),
     ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -232,6 +248,10 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
       actionNovelty: verification.actionNovelty,
       requiredCapabilities,
       policyMissingRequiredCapabilities,
+      workspaceFreshness: workspaceFreshness.status,
+      activeExecCommandSessionIds: activeExecCommandSessions
+        .map((item) => item.processId)
+        .filter((item): item is string => item !== undefined),
       ...(input.actionProvenance !== undefined ? { actionProvenance: input.actionProvenance } : {}),
     },
   });
@@ -326,38 +346,29 @@ function hasBuildModeExecutionEvidence(input: CompileAgentActionInput): boolean 
   if (hasObservedLastActionResult(input.lastActionResult)) {
     return true;
   }
-  if (
-    hasOpenVisibleTodoItems(input.visibleTodosPatch) ||
-    hasOpenVisibleTodoItems(input.visibleTodos) ||
-    closesExistingVisibleTodos(input.visibleTodos, input.visibleTodosPatch)
-  ) {
-    return true;
-  }
   return false;
 }
 
-function hasOpenVisibleTodoItems(value: unknown): boolean {
-  const visibleTodos = normalizeVisibleTodoState(value);
-  if (visibleTodos === undefined || visibleTodos.items.length === 0) {
-    return false;
+function mergeActiveExecCommandSessions(
+  evidenceSessions: ReturnType<typeof deriveActiveExecCommandSessions>,
+  runtimeProcesses: Record<string, unknown>[] | undefined,
+): ReturnType<typeof deriveActiveExecCommandSessions> {
+  const byProcessId = new Map(
+    evidenceSessions.flatMap((item) => item.processId !== undefined ? [[item.processId, item] as const] : []),
+  );
+  for (const process of runtimeProcesses ?? []) {
+    const processId = asString(process.processId) ?? asString(process.sessionId);
+    const status = asString(process.status)?.trim().toUpperCase();
+    if (processId === undefined || status !== "RUNNING") {
+      continue;
+    }
+    byProcessId.set(processId, {
+      evidenceId: `runtime-process:${processId}`,
+      processId,
+      summary: `exec_command session ${processId} is still running.`,
+    });
   }
-  return analyzeVisibleTodosCompletion(visibleTodos).openItems.length > 0;
-}
-
-function closesExistingVisibleTodos(previousValue: unknown, nextValue: unknown): boolean {
-  const previous = normalizeVisibleTodoState(previousValue);
-  const next = normalizeVisibleTodoState(nextValue);
-  if (previous === undefined || next === undefined) {
-    return false;
-  }
-  if (
-    previous.items.length === 0 ||
-    analyzeVisibleTodosCompletion(previous).openItems.length === 0 ||
-    analyzeVisibleTodosCompletion(next).openItems.length > 0
-  ) {
-    return false;
-  }
-  return true;
+  return [...byProcessId.values()];
 }
 
 function hasRecordFields(value: unknown): boolean {

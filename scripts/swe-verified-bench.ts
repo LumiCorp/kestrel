@@ -346,7 +346,6 @@ export function buildSweVerifiedJobInput(input: {
     : sanitizeSweVerifiedIssueText(input.instance.hints_text, { stripLongPytestTraces: true });
   return {
     version: "job_input_v1",
-    storeDriver: "sqlite",
     approvalPolicyPackId: "dev",
     profile: {
       id: "swe-verified",
@@ -1053,6 +1052,7 @@ function createSweVerifiedRunnerBuildContext(input: {
       "WORKDIR /opt/kestrel",
       `COPY ${SWE_VERIFIED_RUNNER_SOURCE_DIR_NAME}/ ./`,
       "RUN pnpm install --frozen-lockfile --ignore-workspace",
+      "RUN pnpm --filter @kestrel-agents/protocol run build:self",
       `WORKDIR ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT}`,
       "",
     ].join("\n"),
@@ -1183,8 +1183,7 @@ function writeSweVerifiedContainerRunScript(input: {
       `cd ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT}`,
       "node /opt/kestrel/bin/kestrel.js job run \\",
       `  --json-in ${shellQuote(input.jobInputPath)} \\`,
-      `  --json-out ${shellQuote(input.jobOutputPath)} \\`,
-      `  --store sqlite > ${shellQuote(input.kestrelOutputPath)} 2>&1`,
+      `  --json-out ${shellQuote(input.jobOutputPath)} > ${shellQuote(input.kestrelOutputPath)} 2>&1`,
       "kestrel_status=$?",
       "cd /opt/kestrel",
       "node --import tsx /opt/kestrel/scripts/swe-verified-workspace-patch.ts \\",
@@ -1309,7 +1308,6 @@ function buildSweVerifiedDockerRunArgs(input: {
     `KESTREL_DEV_SHELL_STATUS_PATH=${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/kestrel-home/dev-shell/bootstrap-status.json`,
     "-e",
     "KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000",
-    "-e",
     "-e",
     "KESTREL_MODEL_PROMPT_DUMP=1",
     "-e",

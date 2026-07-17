@@ -3,8 +3,6 @@ import type {
   DevProcessStartInput,
   DevProcessStartResult,
   DevProcessStopResult,
-  DevShellRunInput,
-  DevShellRunResult,
   DevShellProcessStatus,
   DevShellSourceWriteGuardResult,
   DevShellUnauthorizedSourceWrite,
@@ -55,7 +53,7 @@ export const execCommandTool: SharedToolModule = {
   definition: {
     name: "exec_command",
     description:
-      "Run one bounded shell command and return its final output and status. Command shape: use command for ordinary inspection, build, test, and validation commands; do not include sessionId, stdin, or stop. Quote or escape shell glob metacharacters in path segments, especially bracketed framework routes such as 'src/app/[id]' or src/app/\\[id\\]. Continue/read shape: only use sessionId for an existing live process session from runtime context, plus optional stdin to send raw input or no stdin to read more output, and do not include command. Include the newline a terminal user would press in stdin. Stop shape: use sessionId with stop=true and do not include command or stdin. Never invent sessionId.",
+      "Start one shell command and observe it briefly. If it exits, the result is terminal; if it is still alive, the result has status running and a sessionId. Command shape: use command for ordinary inspection, build, test, validation, long-running, and interactive commands; do not include sessionId, stdin, or stop. Quote or escape shell glob metacharacters in path segments, especially bracketed framework routes such as 'src/app/[id]' or src/app/\\[id\\]. Continue/read shape: only use sessionId returned by a running result, plus optional stdin to send raw input or no stdin to read new output, and do not include command. Include the newline a terminal user would press in stdin. Stop shape: use sessionId with stop=true and do not include command or stdin. Never invent sessionId.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -70,7 +68,7 @@ export const execCommandTool: SharedToolModule = {
               type: "string",
               minLength: 1,
               description:
-                "Command shape only: run one bounded shell command to final output. Do not include sessionId, stdin, or stop.",
+                "Command shape only: start one command and observe it. It returns a terminal result if the process exits, otherwise status running with sessionId. Do not include sessionId, stdin, or stop.",
             },
             cwd: { type: "string", minLength: 1 },
             requiredTools: {
@@ -137,7 +135,7 @@ export const execCommandTool: SharedToolModule = {
           type: "string",
           minLength: 1,
           description:
-            "Command shape only: run one bounded shell command to final output. When command is present, omit sessionId, stdin, and stop.",
+            "Command shape only: start one managed process and observe it briefly. When command is present, omit sessionId, stdin, and stop.",
         },
         cwd: { type: "string", minLength: 1 },
         sessionId: {
@@ -203,11 +201,11 @@ export const execCommandTool: SharedToolModule = {
       const maxBytes = typeof maxOutputBytes === "number" ? maxOutputBytes : undefined;
 
       if (command !== undefined) {
-        const result = await service.runCommand(
-          buildRunCommandInput(context, body, command),
+        const result = await service.startProcess(
+          buildStartProcessInput(context, body, command),
           buildDevShellCommandOptions(context),
         );
-        return mapRunCommandResult(result, startedAt);
+        return mapProcessResult(result, startedAt);
       }
 
       const requiredSessionId = sessionId ?? requireStringValue("exec_command", body, "sessionId");
@@ -317,6 +315,7 @@ function buildStartProcessInput(
       ? { envNames: parseStringArrayField("exec_command", body, "envNames") }
       : {}),
     yieldTimeMs: resolveStartObservationMs(body),
+    ...(typeof readNumber(body, "timeoutMs") === "number" ? { timeoutMs: readNumber(body, "timeoutMs") } : {}),
     ...(typeof readNumber(body, "maxOutputBytes") === "number" ? { maxOutputBytes: readNumber(body, "maxOutputBytes") } : {}),
     ...(config.idleTimeoutMs !== undefined ? { idleTimeoutMs: config.idleTimeoutMs } : {}),
     ...(config.maxReadBytes !== undefined ? { maxReadBytes: config.maxReadBytes } : {}),
@@ -330,22 +329,9 @@ function buildStartProcessInput(
   };
 }
 
-function buildRunCommandInput(
-  context: SharedToolContext,
-  body: Record<string, unknown>,
-  command: string,
-): DevShellRunInput {
-  const input = buildStartProcessInput(context, body, command);
-  return {
-    ...input,
-    strictMultiline: true,
-    ...(typeof readNumber(body, "timeoutMs") === "number" ? { timeoutMs: readNumber(body, "timeoutMs") } : {}),
-  };
-}
-
 function resolveStartObservationMs(body: Record<string, unknown>): number {
   const requestedYieldTimeMs = readNumber(body, "yieldTimeMs");
-  if (typeof requestedYieldTimeMs === "number" && requestedYieldTimeMs > 0) {
+  if (typeof requestedYieldTimeMs === "number") {
     return requestedYieldTimeMs;
   }
   return DEFAULT_START_OBSERVATION_MS;
@@ -376,28 +362,6 @@ function mapProcessResult(
     durationMs: Math.max(0, Date.now() - startedAt),
     truncated: result.truncated,
     ...(result.nextCursor !== undefined ? { cursor: result.nextCursor } : {}),
-    ...(result.command !== undefined ? { command: result.command } : {}),
-    ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
-    ...(result.workspaceRoot !== undefined ? { workspaceRoot: result.workspaceRoot } : {}),
-    ...(result.sourceWriteGuard !== undefined ? { sourceWriteGuard: result.sourceWriteGuard } : {}),
-    ...(result.unauthorizedSourceWrites !== undefined ? { unauthorizedSourceWrites: result.unauthorizedSourceWrites } : {}),
-    ...(result.sourceWriteGuard?.changedFiles !== undefined
-      ? { changedFiles: result.sourceWriteGuard.changedFiles }
-      : {}),
-  };
-}
-
-function mapRunCommandResult(
-  result: DevShellRunResult,
-  startedAt: number,
-): ExecCommandOutput {
-  const status = mapStatus(result.status, result.exitCode, result.failureReason);
-  return {
-    status,
-    output: result.text,
-    ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-    durationMs: Math.max(0, Date.now() - startedAt),
-    truncated: result.truncated,
     ...(result.command !== undefined ? { command: result.command } : {}),
     ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     ...(result.workspaceRoot !== undefined ? { workspaceRoot: result.workspaceRoot } : {}),

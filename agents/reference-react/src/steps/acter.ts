@@ -1272,6 +1272,7 @@ function resumePendingEffect(input: {
     ledger: [...input.duplicateLedger],
   });
   const devShellExecPatch = buildDevShellExecStatePatch({
+    runId: input.runId,
     execState: asRecord(input.reactState.exec),
     decisionVerification: asRecord(input.reactState.decisionVerification),
     toolName,
@@ -1476,6 +1477,7 @@ function resumeDurableToolBatch(input: {
   const hasRemaining = nextPendingBatch.nextIndex < totalItems;
   const artifacts = collectToolArtifacts(pendingItem.name, rawOutput);
   const devShellExecPatch = buildDevShellExecStatePatch({
+    runId: input.runId,
     execState: asRecord(input.reactState.exec),
     decisionVerification: asRecord(input.reactState.decisionVerification),
     toolName: pendingItem.name,
@@ -2845,6 +2847,7 @@ function maybeRedirectSettledDevShellPollingAtDispatch(input: {
 }
 
 function buildDevShellExecStatePatch(input: {
+  runId: string;
   execState: Record<string, unknown> | undefined;
   decisionVerification?: Record<string, unknown> | undefined;
   toolName: string;
@@ -2966,6 +2969,7 @@ function buildDevShellExecStatePatch(input: {
     const processRecord: Record<string, unknown> = {
       ...currentProcess,
       processId,
+      ...(lifecycle.kind === "start" ? { ownerRunId: input.runId } : {}),
       ...(asString(commandContext?.command) !== undefined ? { command: asString(commandContext?.command) } : {}),
       ...(asString(commandContext?.cwd) !== undefined ? { cwd: asString(commandContext?.cwd) } : {}),
       ...(asString(commandContext?.workspaceRoot) !== undefined ? { workspaceRoot: asString(commandContext?.workspaceRoot) } : {}),

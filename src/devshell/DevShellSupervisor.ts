@@ -57,10 +57,14 @@ const TRANSCRIPT_TRUNCATED_MARKER =
 
 interface RunningProcess {
   record: DevShellProcessRecord;
+  recordWrite: Promise<void>;
+  settlement: Promise<void>;
+  resolveSettlement: () => void;
   child: ChildProcessWithoutNullStreams;
   outputObserver?: DevShellCommandOptions["outputObserver"] | undefined;
   sourceWriteGuard?: ActiveDevShellSourceWriteGuard | undefined;
   currentOffset: number;
+  deliveredOffset: number;
   transcriptWrite: Promise<void>;
   waiters: Array<() => void>;
   stopRequested: boolean;
@@ -68,10 +72,12 @@ interface RunningProcess {
   sourceWriteGuardChecked: boolean;
   sourceWriteGuardCheck?: Promise<void> | undefined;
   transcriptTruncated: boolean;
+  wallTimeout?: NodeJS.Timeout | undefined;
 }
 
 export class DevShellSupervisor {
   private readonly processes = new Map<string, RunningProcess>();
+  private readonly deliveredOffsets = new Map<string, number>();
   private readonly pnpmBuildApprovalWorkspaces = new Set<string>();
   private readonly idleInterval: NodeJS.Timeout;
 
@@ -120,6 +126,9 @@ export class DevShellSupervisor {
     const processes = [...this.processes.values()];
     this.processes.clear();
     for (const process of processes) {
+      if (process.wallTimeout !== undefined) {
+        clearTimeout(process.wallTimeout);
+      }
       process.stopRequested = true;
       signalProcessTree(process.child, "SIGTERM");
       await waitForProcessExit(process.child, 1000);
@@ -128,7 +137,10 @@ export class DevShellSupervisor {
         await waitForProcessExit(process.child, 500);
       }
       await process.transcriptWrite.catch(() => {});
+      await this.enforceSourceWriteGuard(process);
+      await this.releaseManagedWorktreeProcessLease(process.record);
     }
+    this.deliveredOffsets.clear();
   }
 
   async runCommand(input: DevShellRunInput, options: DevShellCommandOptions = {}): Promise<DevShellRunResult> {
@@ -229,9 +241,16 @@ export class DevShellSupervisor {
       };
     }
     const running = await this.startManagedProcess(input, options, preflight);
+    await waitForProcessExit(
+      running.child,
+      normalizeNonNegativeInt(input.yieldTimeMs, DEFAULT_YIELD_TIME_MS),
+    );
+    if (isProcessRunning(running.child) === false) {
+      await running.settlement;
+    }
     return this.collectProcessResult(running, {
       cursor: 0,
-      waitMs: input.yieldTimeMs,
+      waitMs: 0,
       maxBytes: input.maxOutputBytes,
     });
   }
@@ -373,21 +392,42 @@ export class DevShellSupervisor {
         : {}),
       ...(preflight !== undefined ? { preflight } : {}),
     };
+    let resolveSettlement = () => {};
+    const settlement = new Promise<void>((resolvePromise) => {
+      resolveSettlement = resolvePromise;
+    });
     const running: RunningProcess = {
       record,
+      recordWrite: Promise.resolve(),
+      settlement,
+      resolveSettlement,
       child,
       ...(options.outputObserver !== undefined ? { outputObserver: options.outputObserver } : {}),
       ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
       currentOffset: 0,
+      deliveredOffset: 0,
       transcriptWrite: Promise.resolve(),
       waiters: [],
       stopRequested: false,
       sourceWriteGuardChecked: false,
       transcriptTruncated: false,
     };
+    const wallTimeoutMs = typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs) && input.timeoutMs > 0
+      ? Math.trunc(input.timeoutMs)
+      : undefined;
+    if (wallTimeoutMs !== undefined) {
+      running.wallTimeout = setTimeout(() => {
+        if (isProcessRunning(running.child) === false) {
+          return;
+        }
+        running.forcedFailureReason = `dev shell process timed out after ${wallTimeoutMs} ms and was killed.`;
+        signalProcessTree(running.child, "SIGKILL");
+      }, wallTimeoutMs);
+      running.wallTimeout.unref();
+    }
     this.processes.set(processId, running);
     this.attachChildListeners(running);
-    await this.store.upsertProcess(record);
+    await this.persistLiveProcessRecord(running);
     return running;
   }
 
@@ -404,11 +444,10 @@ export class DevShellSupervisor {
 
   async writeAndReadProcess(input: DevProcessWriteAndReadInput): Promise<DevProcessWriteAndReadResult> {
     const running = await this.requireLiveProcess(input.processId);
-    const cursor = normalizeNonNegativeInt(input.cursor, running.currentOffset);
     running.child.stdin.write(input.data);
     await this.touchProcess(running);
     const result = await this.collectProcessResult(running, {
-      cursor,
+      ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
       waitMs: input.waitMs,
       maxBytes: input.maxBytes,
     });
@@ -425,14 +464,14 @@ export class DevShellSupervisor {
       return this.collectProcessResult(running, input);
     }
     const record = await this.requireProcessRecord(input.processId);
-    return this.collectStoredProcessResult(record, input);
+    return this.collectStoredProcessResultWithDeliveryCursor(record, input);
   }
 
   async stopProcess(input: DevProcessStopInput): Promise<DevProcessStopResult> {
     const running = this.processes.get(input.processId);
     if (running === undefined) {
       const record = await this.requireProcessRecord(input.processId);
-      return this.collectStoredProcessResult(record, input);
+      return this.collectStoredProcessResultWithDeliveryCursor(record, input);
     }
     running.stopRequested = true;
     const signal = input.signal ?? "SIGTERM";
@@ -452,7 +491,7 @@ export class DevShellSupervisor {
         exitCode: running.child.exitCode ?? 0,
         stopSignal: running.child.signalCode ?? signal,
       };
-      await this.store.upsertProcess(running.record);
+      await this.persistLiveProcessRecord(running);
       this.processes.delete(running.record.processId);
       await this.releaseManagedWorktreeProcessLease(running.record);
     }
@@ -542,6 +581,10 @@ export class DevShellSupervisor {
     code: number | null,
     signal: NodeJS.Signals | null,
   ): Promise<void> {
+    if (process.wallTimeout !== undefined) {
+      clearTimeout(process.wallTimeout);
+      process.wallTimeout = undefined;
+    }
     await process.transcriptWrite.catch(() => {});
     const completedAt = this.now().toISOString();
     const status: DevShellProcessStatus =
@@ -571,15 +614,20 @@ export class DevShellSupervisor {
           : {}),
       ...(status === "FAILED" ? { failurePhase: "command" as const } : {}),
     };
-    await this.store.upsertProcess(process.record);
+    await this.persistLiveProcessRecord(process);
     await this.enforceSourceWriteGuard(process);
     signalProcessTree(process.child, "SIGTERM");
     this.processes.delete(process.record.processId);
     await this.releaseManagedWorktreeProcessLease(process.record);
     flushWaiters(process);
+    process.resolveSettlement();
   }
 
   private async handleSpawnError(process: RunningProcess, error: Error): Promise<void> {
+    if (process.wallTimeout !== undefined) {
+      clearTimeout(process.wallTimeout);
+      process.wallTimeout = undefined;
+    }
     await process.transcriptWrite.catch(() => {});
     const completedAt = this.now().toISOString();
     process.record = {
@@ -590,10 +638,11 @@ export class DevShellSupervisor {
       exitCode: 1,
       failureReason: error.message,
     };
-    await this.store.upsertProcess(process.record);
+    await this.persistLiveProcessRecord(process);
     this.processes.delete(process.record.processId);
     await this.releaseManagedWorktreeProcessLease(process.record);
     flushWaiters(process);
+    process.resolveSettlement();
   }
 
   private async collectProcessResult(
@@ -607,7 +656,34 @@ export class DevShellSupervisor {
     await waitForOutputOrExit(process, normalizeNonNegativeInt(input.waitMs, DEFAULT_YIELD_TIME_MS));
     await process.transcriptWrite.catch(() => {});
     await this.enforceSourceWriteGuard(process);
-    return this.collectStoredProcessResult(process.record, input);
+    const result = await this.collectStoredProcessResult(process.record, {
+      ...input,
+      cursor: normalizeNonNegativeInt(input.cursor, process.deliveredOffset),
+    });
+    process.deliveredOffset = Math.max(process.deliveredOffset, result.nextCursor);
+    this.deliveredOffsets.set(process.record.processId, process.deliveredOffset);
+    return result;
+  }
+
+  private async collectStoredProcessResultWithDeliveryCursor(
+    record: DevShellProcessRecord,
+    input: {
+      cursor?: number | undefined;
+      maxBytes?: number | undefined;
+    },
+  ): Promise<DevProcessReadResult> {
+    const result = await this.collectStoredProcessResult(record, {
+      ...input,
+      cursor: normalizeNonNegativeInt(
+        input.cursor,
+        this.deliveredOffsets.get(record.processId) ?? 0,
+      ),
+    });
+    this.deliveredOffsets.set(
+      record.processId,
+      Math.max(this.deliveredOffsets.get(record.processId) ?? 0, result.nextCursor),
+    );
+    return result;
   }
 
   private async collectStoredProcessResult(
@@ -620,17 +696,22 @@ export class DevShellSupervisor {
     const maxBytes = normalizePositiveInt(input.maxBytes, record.maxReadBytes);
     const cursor = normalizeNonNegativeInt(input.cursor, 0);
     const transcript = await readTranscriptChunk(record.transcriptPath, cursor, maxBytes);
-    const updatedRecord: DevShellProcessRecord = {
-      ...record,
-      outputCursor: Math.max(record.outputCursor, transcript.size),
-      updatedAt: this.now().toISOString(),
-      expiresAt: this.bumpExpiry(record.expiresAt, record.idleTimeoutMs),
-    };
     const live = this.processes.get(record.processId);
+    const authoritativeRecord = live === undefined
+      ? record
+      : preferSettledProcessRecord(record, live.record);
+    const updatedRecord: DevShellProcessRecord = {
+      ...authoritativeRecord,
+      outputCursor: Math.max(authoritativeRecord.outputCursor, transcript.size),
+      updatedAt: this.now().toISOString(),
+      expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs),
+    };
     if (live !== undefined) {
       live.record = updatedRecord;
+      await this.persistLiveProcessRecord(live);
+    } else {
+      await this.store.upsertProcess(updatedRecord);
     }
-    await this.store.upsertProcess(updatedRecord);
     return {
       ...(updatedRecord.status === "RUNNING" ? { processId: updatedRecord.processId } : {}),
       status: updatedRecord.status,
@@ -723,7 +804,7 @@ export class DevShellSupervisor {
         sourceWriteGuard: finalizedResult,
       };
     }
-    await this.store.upsertProcess(process.record);
+    await this.persistLiveProcessRecord(process);
   }
 
   hasActiveProcesses(): boolean {
@@ -789,6 +870,29 @@ export class DevShellSupervisor {
         },
       );
     }
+    if (record.status === "RUNNING") {
+      const completedAt = this.now().toISOString();
+      const sourceWriteGuard = record.sourceWriteGuard === undefined
+        ? undefined
+        : {
+            ...record.sourceWriteGuard,
+            finalCheckCompleted: false,
+          };
+      const lostRecord: DevShellProcessRecord = {
+        ...record,
+        status: "LOST",
+        updatedAt: completedAt,
+        completedAt,
+        failureReason:
+          sourceWriteGuard === undefined
+            ? "dev shell supervisor no longer owns the recorded running process"
+            : "dev shell supervisor no longer owns the recorded running process; source-write guard final check did not run",
+        ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
+      };
+      await this.store.upsertProcess(lostRecord);
+      await this.releaseManagedWorktreeProcessLease(record);
+      return lostRecord;
+    }
     return record;
   }
 
@@ -798,7 +902,12 @@ export class DevShellSupervisor {
       updatedAt: this.now().toISOString(),
       expiresAt: this.bumpExpiry(process.record.expiresAt, process.record.idleTimeoutMs),
     };
-    await this.store.upsertProcess(process.record);
+    await this.persistLiveProcessRecord(process);
+  }
+
+  private async persistLiveProcessRecord(process: RunningProcess): Promise<void> {
+    process.recordWrite = process.recordWrite.then(() => this.store.upsertProcess(process.record));
+    await process.recordWrite;
   }
 
   private bumpExpiry(current: string, fallbackMs: number): string {
@@ -1607,6 +1716,16 @@ async function waitForOutputOrExit(process: RunningProcess, timeoutMs: number): 
 
 function isProcessRunning(child: ChildProcessWithoutNullStreams): boolean {
   return child.exitCode === null && child.signalCode === null;
+}
+
+function preferSettledProcessRecord(
+  observed: DevShellProcessRecord,
+  current: DevShellProcessRecord,
+): DevShellProcessRecord {
+  if (observed.status !== "RUNNING" && current.status === "RUNNING") {
+    return observed;
+  }
+  return current;
 }
 
 async function waitForProcessExit(

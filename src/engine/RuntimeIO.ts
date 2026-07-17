@@ -19,6 +19,7 @@ import {
   readNumeric,
   readRequestedModelProvider,
 } from "./ExecutionEngineSupport.js";
+import { isDevShellLifecycleTool } from "../runtime/devshellLifecycle.js";
 import {
   createToolConsoleBridge,
   emitDevShellConsoleStatus,
@@ -633,7 +634,7 @@ export class RuntimeIO {
                 maxConcurrentGlobal: this.options.guardrailConfig.maxConcurrentToolJobsGlobal,
                 maxQueuedPerRun: this.options.guardrailConfig.maxQueuedToolJobsPerRun,
                 maxQueuedGlobal: this.options.guardrailConfig.maxQueuedToolJobsGlobal,
-                retryCount: this.options.guardrailConfig.toolCallRetryCount,
+                retryCount: isDevShellLifecycleTool(name) ? 0 : this.options.guardrailConfig.toolCallRetryCount,
                 execute: executeToolCall,
                 isRetryableError: (error) => this.options.isRetryableToolError(error),
                 signal: progress.signal,
@@ -730,6 +731,15 @@ export class RuntimeIO {
         result,
         sessionState,
       });
+      const resultRecord = asPlainRecord(result);
+      const auditRecord = asPlainRecord(resultRecord?.auditRecord);
+      const toolOutput = asPlainRecord(auditRecord?.output ?? result);
+      const execCommandRunning = name === "exec_command" &&
+        typeof toolOutput?.status === "string" &&
+        toolOutput.status.trim().toLowerCase() === "running";
+      const completionMessage = execCommandRunning
+        ? `Tool '${name}' returned an active process session in ${Date.now() - startedAt}ms; the command is still running.`
+        : `Tool '${name}' completed in ${Date.now() - startedAt}ms.`;
 
       await this.options.emitProgressFromSequence({
         runId: progress.runId,
@@ -738,7 +748,7 @@ export class RuntimeIO {
         kind: "tool",
         phase: progress.phase,
         code: "TOOL_CALL_DONE",
-        message: `Tool '${name}' completed in ${Date.now() - startedAt}ms.`,
+        message: completionMessage,
         stepIndex: progress.stepIndex,
         stepAgent: progress.stepAgent,
         tool: {

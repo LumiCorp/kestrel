@@ -852,6 +852,9 @@ function buildToolFacts(
     ...(asString(output?.cwd) !== undefined ? { cwd: asString(output?.cwd) } : {}),
     ...(asString(output?.workspaceRoot) !== undefined ? { workspaceRoot: asString(output?.workspaceRoot) } : {}),
     ...(readChangedFiles(output).length > 0 ? { changedFiles: readChangedFiles(output) } : {}),
+    ...(asRecord(output?.workspaceCheckpoint) !== undefined
+      ? { workspaceCheckpoint: asRecord(output?.workspaceCheckpoint) }
+      : {}),
     ...(typeof output?.exitCode === "number" ? { exitCode: Math.trunc(output.exitCode) } : {}),
     ...(typeof output?.replacements === "number" && Number.isFinite(output.replacements)
       ? { replacements: Math.max(0, Math.trunc(output.replacements)) }

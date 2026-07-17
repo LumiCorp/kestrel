@@ -8,6 +8,7 @@ import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogE
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
+import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 
 import { GuardrailViolationError, Guardrails } from "./Guardrails.js";
 import { ToolJobQueue } from "./ToolJobQueue.js";
@@ -210,6 +211,8 @@ export class ExecutionEngine {
       logError: (entry) => this.logError(entry),
       releaseManagedWorktreeLeaseForRun: (runId, session, terminalStatus) =>
         this.releaseManagedWorktreeLeaseForRun(runId, session, terminalStatus),
+      settleOwnedExecCommandProcesses: (runId, session) =>
+        this.settleOwnedExecCommandProcesses(runId, session),
       resolveRuntimeBudget: (event) => this.resolveRuntimeBudget(event),
       resolveProgressPhase: (stepAgent) => this.resolveProgressPhase(stepAgent),
       resolveFilesystemResumeReadBudget: (input) => this.resolveFilesystemResumeReadBudget(input),
@@ -1472,6 +1475,10 @@ export class ExecutionEngine {
       taskId: checkpointContext.taskId,
       createdBy: "runtime",
     });
+    const observationBaseline = this.readLatestWorkspaceObservationBaseline(input.sessionState) ?? {
+      checkpointId: preAction.checkpoint.checkpointId,
+      gitRef: preAction.checkpoint.gitRef,
+    };
 
     try {
       const result = await this.deps.toolGateway.call(input.name, input.input, {
@@ -1483,13 +1490,15 @@ export class ExecutionEngine {
       const diff = await this.deps.workspaceCheckpointService!.diff({
         sessionId: input.sessionId,
         setup: checkpointContext.setup,
-        source: { checkpointId: preAction.checkpoint.checkpointId },
+        source: { checkpointId: observationBaseline.checkpointId },
         target: { workingTree: true },
         includeHunks: false,
       });
       const changedFiles = diff.files.map((file) => file.path);
-      const postAction = changedFiles.length === 0
-        ? undefined
+      const resultOutput = this.asRecord(result.auditRecord.output);
+      const processStillRunning = this.asString(resultOutput?.status)?.trim().toUpperCase() === "RUNNING";
+      const postAction = changedFiles.length === 0 && processStillRunning === false
+        ? preAction
         : await this.deps.workspaceCheckpointService!.capture({
             sessionId: input.sessionId,
             setup: checkpointContext.setup,
@@ -1504,8 +1513,8 @@ export class ExecutionEngine {
       return this.attachWorkspaceCheckpointEvidence(result, {
         toolName: input.name,
         changedFiles,
-        preActionCheckpointId: preAction.checkpoint.checkpointId,
-        preActionGitRef: preAction.checkpoint.gitRef,
+        preActionCheckpointId: observationBaseline.checkpointId,
+        preActionGitRef: observationBaseline.gitRef,
         postActionCheckpointId: postAction?.checkpoint.checkpointId,
         postActionGitRef: postAction?.checkpoint.gitRef,
       });
@@ -1541,6 +1550,24 @@ export class ExecutionEngine {
       }
       throw error;
     }
+  }
+
+  private readLatestWorkspaceObservationBaseline(
+    sessionState: Record<string, unknown>,
+  ): { checkpointId: string; gitRef: string } | undefined {
+    const agentState = this.asRecord(sessionState.agent);
+    const ledger = Array.isArray(agentState?.evidenceLedger) ? agentState.evidenceLedger : [];
+    for (const item of [...ledger].reverse()) {
+      const entry = this.asRecord(item);
+      const facts = this.asRecord(entry?.facts);
+      const checkpoint = this.asRecord(facts?.workspaceCheckpoint);
+      const checkpointId = this.asString(checkpoint?.postActionCheckpointId);
+      const gitRef = this.asString(checkpoint?.postActionGitRef);
+      if (checkpointId !== undefined && gitRef !== undefined) {
+        return { checkpointId, gitRef };
+      }
+    }
+    return ;
   }
 
   private assertManagedWorktreeSourceWriteGuardMode(toolName: string, result: unknown): void {
@@ -1598,6 +1625,90 @@ export class ExecutionEngine {
     };
   }
 
+  private async settleOwnedExecCommandProcesses(
+    runId: string,
+    session: SessionRecord,
+  ): Promise<void> {
+    const sessionState = session.state as Record<string, unknown>;
+    const agent = this.asRecord(sessionState.agent);
+    const execState = this.asRecord(agent?.exec);
+    const devShell = this.asRecord(execState?.devShell);
+    const processes = this.asRecord(devShell?.processes) ?? {};
+    const ownedProcessIds = Object.values(processes)
+      .map((value) => this.asRecord(value))
+      .filter((process): process is Record<string, unknown> =>
+        process !== undefined &&
+        this.asString(process.ownerRunId) === runId &&
+        this.asString(process.status)?.trim().toUpperCase() === "RUNNING")
+      .map((process) => this.asString(process.processId))
+      .filter((processId): processId is string => processId !== undefined);
+    if (ownedProcessIds.length === 0) {
+      return;
+    }
+
+    const binding = this.readManagedWorktreeBindingFromState(sessionState);
+    const workspace = binding === undefined
+      ? undefined
+      : {
+          workspaceRoot: binding.worktreeRoot,
+          repoRoot: binding.worktreeRoot,
+          managedWorktree: true,
+          sourceWorkspaceRoot: binding.sourceWorkspaceRoot,
+          sourceRepoRoot: binding.sourceRepoRoot,
+        };
+    const runtimePayload = workspace === undefined ? {} : { workspace };
+    const ledger = Array.isArray(agent?.evidenceLedger) ? agent.evidenceLedger : [];
+    const latestStepIndex = ledger.reduce((latest, value) => {
+      const stepIndex = this.asRecord(value)?.stepIndex;
+      return typeof stepIndex === "number" && Number.isFinite(stepIndex)
+        ? Math.max(latest, Math.trunc(stepIndex))
+        : latest;
+    }, 0);
+
+    for (const processId of ownedProcessIds) {
+      try {
+        const result = await this.callToolWithWorkspaceCheckpoint({
+          name: "exec_command",
+          input: { sessionId: processId, stop: true, yieldTimeMs: 1_000 },
+          sessionId: session.sessionId,
+          runId,
+          stepIndex: latestStepIndex + 1,
+          stepAgent: session.currentStepAgent ?? "runtime.closeout",
+          runtimeMetadata: runtimePayload,
+          runtimePayload,
+          sessionState,
+          ...(binding !== undefined ? { trustedManagedWorktreeBinding: binding } : {}),
+        });
+        await this.maybeAttachManagedWorktreeProcess({
+          runId,
+          sessionId: session.sessionId,
+          toolName: "exec_command",
+          toolInput: { sessionId: processId, stop: true },
+          result,
+          sessionState,
+        });
+        const output = this.asRecord(this.asRecord(result)?.auditRecord)?.output ?? result;
+        const outputRecord = this.asRecord(output);
+        await this.appendRunEvent(runId, session.sessionId, "run.tool.completed", "WARN", {
+          toolName: "exec_command",
+          lifecycle: "runtime_closeout_stop",
+          processId,
+          status: this.asString(outputRecord?.status),
+          exitCode: outputRecord?.exitCode,
+          changedFiles: outputRecord?.changedFiles,
+          workspaceCheckpoint: outputRecord?.workspaceCheckpoint,
+        }, latestStepIndex + 1);
+      } catch (error) {
+        await this.appendRunEvent(runId, session.sessionId, "run.tool.failed", "ERROR", {
+          toolName: "exec_command",
+          lifecycle: "runtime_closeout_stop",
+          processId,
+          message: error instanceof Error ? error.message : String(error),
+        }, latestStepIndex + 1);
+      }
+    }
+  }
+
   private async maybeAttachManagedWorktreeProcess(input: {
     runId: string;
     sessionId: string;
@@ -1610,14 +1721,22 @@ export class ExecutionEngine {
       return;
     }
     const resultOutput = this.asRecord(this.asRecord(input.result)?.auditRecord)?.output ?? input.result;
+    const toolInput = this.asRecord(input.toolInput);
+    const output = this.asRecord(resultOutput);
+    const isExecCommandContinuation = input.toolName === "exec_command" &&
+      this.asString(toolInput?.sessionId) !== undefined;
     if (
       input.toolName === "dev.process.stop" ||
       input.toolName === "dev.process.read" ||
-      input.toolName === "dev.process.write_and_read"
+      input.toolName === "dev.process.write_and_read" ||
+      isExecCommandContinuation
     ) {
-      const processId = this.asString(this.asRecord(input.toolInput)?.processId) ?? this.asString(this.asRecord(resultOutput)?.processId);
+      const processId = this.asString(toolInput?.processId) ??
+        this.asString(toolInput?.sessionId) ??
+        this.asString(output?.processId) ??
+        this.asString(output?.sessionId);
       const binding = this.readManagedWorktreeBindingFromState(input.sessionState);
-      const status = this.asString(this.asRecord(resultOutput)?.status);
+      const status = this.asString(output?.status)?.trim().toUpperCase();
       if (processId !== undefined && binding !== undefined && status !== "RUNNING") {
         await this.deps.managedTaskWorktreeService.releaseProcess({
           worktreeRoot: binding.worktreeRoot,
@@ -1630,11 +1749,14 @@ export class ExecutionEngine {
       }
       return;
     }
-    if (input.toolName !== "dev.process.start") {
+    const isExecCommandStart = input.toolName === "exec_command" &&
+      this.asString(toolInput?.command) !== undefined;
+    if (input.toolName !== "dev.process.start" && isExecCommandStart === false) {
       return;
     }
-    const processId = this.asString(this.asRecord(resultOutput)?.processId);
-    if (processId === undefined) {
+    const processId = this.asString(output?.processId) ?? this.asString(output?.sessionId);
+    const status = this.asString(output?.status)?.trim().toUpperCase();
+    if (processId === undefined || status !== "RUNNING") {
       return;
     }
     const binding = this.readManagedWorktreeBindingFromState(input.sessionState);
@@ -1679,19 +1801,15 @@ export class ExecutionEngine {
         : {}),
       ...(evidence.postActionGitRef !== undefined ? { postActionGitRef: evidence.postActionGitRef } : {}),
     };
-    const shouldExposeChangedFiles =
-      evidence.toolName !== "dev.process.start" &&
-      evidence.toolName !== "dev.process.read";
     const output = {
       ...resultRecord,
-      ...(shouldExposeChangedFiles && changedFiles.length > 0 ? { changedFiles } : {}),
-      ...(shouldExposeChangedFiles === false && changedFiles.length > 0 ? { pendingChangedFiles: changedFiles } : {}),
+      ...(changedFiles.length > 0 ? { changedFiles } : {}),
       workspaceCheckpoint: checkpointEvidence,
       ...(this.asRecord(resultRecord.sourceWriteGuard) !== undefined
         ? {
             sourceWriteGuard: {
               ...this.asRecord(resultRecord.sourceWriteGuard),
-              ...(shouldExposeChangedFiles && changedFiles.length > 0 ? { changedFiles } : {}),
+              ...(changedFiles.length > 0 ? { changedFiles } : {}),
               preActionCheckpointId: evidence.preActionCheckpointId,
               ...(evidence.postActionCheckpointId !== undefined
                 ? { postActionCheckpointId: evidence.postActionCheckpointId }
@@ -1700,13 +1818,7 @@ export class ExecutionEngine {
           }
         : {}),
     };
-    return {
-      ...result,
-      auditRecord: {
-        ...result.auditRecord,
-        output,
-      },
-    };
+    return replaceAgentToolResultOutput(result, output);
   }
 
   private buildModelTimeoutMetadata(

@@ -31,7 +31,6 @@ test("deliberator tool surface hides live-process controls during normal coding 
 
   assert.deepEqual(filtered.availability.allowedToolNames, [
     "exec_command",
-    "dev.shell.run",
     "fs.read_text",
     "fs.write_text",
   ]);
@@ -43,11 +42,12 @@ test("deliberator tool surface hides live-process controls during normal coding 
       "dev.process.stop",
       "dev.process.write",
       "dev.process.write_and_read",
+      "dev.shell.run",
     ],
   );
 });
 
-test("deliberator tool surface allows process controls for an active live process", () => {
+test("deliberator tool surface keeps internal process controls hidden for an active live process", () => {
   const filtered = filterDeliberatorToolsForContext(
     [
       tool("dev.shell.run"),
@@ -66,16 +66,10 @@ test("deliberator tool surface allows process controls for an active live proces
     },
   );
 
-  assert.deepEqual(filtered.availability.allowedToolNames, [
-    "dev.shell.run",
-    "dev.process.read",
-    "dev.process.write",
-    "dev.process.write_and_read",
-    "dev.process.stop",
-  ]);
+  assert.deepEqual(filtered.availability.allowedToolNames, []);
 });
 
-test("deliberator tool surface preserves managed-entrypoint process start when required", () => {
+test("deliberator tool surface keeps managed-entrypoint process start internal", () => {
   const filtered = filterDeliberatorToolsForContext(
     [tool("dev.shell.run"), tool("dev.process.start")],
     {
@@ -91,8 +85,5 @@ test("deliberator tool surface preserves managed-entrypoint process start when r
     },
   );
 
-  assert.deepEqual(filtered.availability.allowedToolNames, [
-    "dev.shell.run",
-    "dev.process.start",
-  ]);
+  assert.deepEqual(filtered.availability.allowedToolNames, []);
 });
