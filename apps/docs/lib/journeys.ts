@@ -45,14 +45,14 @@ export function buildJourneyMeta(
   currentUrl: string,
   pagesByUrl: ReadonlyMap<string, Pick<DocsPageMeta, "title" | "url">>,
 ): JourneyMeta | undefined {
-  if (!journeyId) return undefined;
+  if (!journeyId) return ;
   const journey = DOCS_JOURNEYS[journeyId];
   const index = journey.urls.indexOf(currentUrl);
   if (index === -1) {
     throw new Error(`Docs journey '${journeyId}' does not contain '${currentUrl}'.`);
   }
   const pageLink = (url: string | undefined) => {
-    if (!url) return undefined;
+    if (!url) return ;
     const page = pagesByUrl.get(url);
     if (!page) throw new Error(`Docs journey '${journeyId}' references missing page '${url}'.`);
     return { title: page.title, url: page.url };

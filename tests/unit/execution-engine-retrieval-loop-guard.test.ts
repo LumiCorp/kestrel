@@ -8,7 +8,6 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { GuardrailViolationError } from "../../src/engine/Guardrails.js";
 import {
   BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS,
-  BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS_WITH_EXPLICIT_TARGET,
   BROAD_RESUME_MAX_INVENTORY_ACTIONS,
 } from "../../src/runtime/filesystemResumeBudget.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
@@ -904,9 +903,7 @@ test("ExecutionEngine resumes build-mode workspace work after verified redundant
     toolGateway: {
       call: async () => null as never,
     },
-    modelGateway: new RetryingModelGateway(async <T>() => {
-      return "This synthesis would prematurely complete the build task." as T;
-    }),
+    modelGateway: new RetryingModelGateway(async <T>() => ("This synthesis would prematurely complete the build task." as T)),
     guardrails: {
       maxStepsPerRun: 200,
       maxStepVisits: 200,

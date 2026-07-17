@@ -27,7 +27,7 @@ export async function readCoreManifest(homePath: string): Promise<LocalCoreManif
     };
   } catch (error) {
     if (isNotFoundError(error)) {
-      return undefined;
+      return ;
     }
     throw error;
   }

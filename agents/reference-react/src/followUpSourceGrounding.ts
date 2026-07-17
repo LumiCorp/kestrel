@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 import { asArray, asRecord, asString } from "../../shared/valueAccess.js";
 import {
-  allowlistedCandidateNames,
   buildToolIntentContext,
   buildCandidateViews,
   resolveExecutionIntentToolName,
@@ -364,7 +363,7 @@ function buildPriorSourceCandidate(
 ): PriorSourceCandidate | undefined {
   const url = asString(record?.url);
   if (url === undefined || url.trim().length === 0) {
-    return undefined;
+    return ;
   }
 
   const normalizedUrl = url.trim();
@@ -402,7 +401,7 @@ function readRetainedSourceCandidates(
       const url = asString(entry.url);
       const toolName = asString(entry.toolName);
       if (url === undefined || toolName === undefined || url.trim().length === 0) {
-        return undefined;
+        return ;
       }
       const normalizedUrl = url.trim();
       const title = asString(entry.title);

@@ -125,11 +125,10 @@ function resolveDesktopProjectRootCandidate(
           return candidate;
         }
       } catch {
-        continue;
       }
     }
   }
-  return undefined;
+  return ;
 }
 
 export async function resolveVerifiedDesktopPathTarget(

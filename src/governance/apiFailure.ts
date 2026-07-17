@@ -76,7 +76,7 @@ function inferSubsystem(
   ) {
     return "runtime";
   }
-  return undefined;
+  return ;
 }
 
 function inferClassification(
@@ -116,7 +116,7 @@ function inferClassification(
   ) {
     return "runtime";
   }
-  return undefined;
+  return ;
 }
 
 function asString(value: unknown): string | undefined {

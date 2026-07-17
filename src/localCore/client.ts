@@ -653,11 +653,11 @@ export class LocalCoreApiError extends Error {
 
 function readServiceError(body: unknown): { code: string; message: string } | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return undefined;
+    return ;
   }
   const error = (body as Record<string, unknown>).error;
   if (typeof error !== "object" || error === null || Array.isArray(error)) {
-    return undefined;
+    return ;
   }
   const code = (error as Record<string, unknown>).code;
   const message = (error as Record<string, unknown>).message;
@@ -667,7 +667,7 @@ function readServiceError(body: unknown): { code: string; message: string } | un
     || typeof message !== "string"
     || message.trim().length === 0
   ) {
-    return undefined;
+    return ;
   }
   return { code: code.trim(), message: message.trim() };
 }

@@ -49,7 +49,7 @@ export function buildTranscriptStartScroll(input: {
     (row) => row.transcriptIndex === input.transcriptIndex && row.isFirstLine,
   );
   if (rowIndex < 0) {
-    return undefined;
+    return ;
   }
 
   const boundedWindow = Math.max(1, Math.trunc(input.listRows));
@@ -196,12 +196,12 @@ export function resolveChatVisualAnchor(
   cursor: number,
 ): ChatVisualAnchor | undefined {
   if (rows.length === 0) {
-    return undefined;
+    return ;
   }
   const bounded = Math.max(0, Math.min(cursor, rows.length - 1));
   const row = rows[bounded];
   if (row === undefined) {
-    return undefined;
+    return ;
   }
   return {
     transcriptIndex: row.transcriptIndex,

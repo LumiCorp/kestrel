@@ -113,8 +113,8 @@ export function mergeCodeModeConfig(
         base.sandbox.timeoutMs,
         300_000,
       ),
-      memoryMb: boundedPositiveInt(config?.sandbox?.memoryMb, base.sandbox.memoryMb, 8_192),
-      cpuShares: boundedPositiveInt(config?.sandbox?.cpuShares, base.sandbox.cpuShares, 2_048),
+      memoryMb: boundedPositiveInt(config?.sandbox?.memoryMb, base.sandbox.memoryMb, 8192),
+      cpuShares: boundedPositiveInt(config?.sandbox?.cpuShares, base.sandbox.cpuShares, 2048),
       networkDefault: config?.sandbox?.networkDefault ?? base.sandbox.networkDefault,
       allowDependencyInstall:
         config?.sandbox?.allowDependencyInstall ?? base.sandbox.allowDependencyInstall,

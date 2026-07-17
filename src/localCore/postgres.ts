@@ -7,7 +7,7 @@ import type { LocalCoreDatabaseStatus, LocalCoreFailure, LocalCorePaths } from "
 
 const LOCAL_CORE_POSTGRES_METADATA_VERSION = 1;
 const DEFAULT_SOCKET_PORT = 5432;
-const MAX_COMMAND_OUTPUT_CHARS = 4_000;
+const MAX_COMMAND_OUTPUT_CHARS = 4000;
 
 export interface LocalCorePostgresMetadata {
   version: typeof LOCAL_CORE_POSTGRES_METADATA_VERSION;
@@ -106,7 +106,7 @@ export function resolveLocalCorePostgresInstallation(input: {
         return installation;
       }
     }
-    return undefined;
+    return ;
   })();
 }
 
@@ -478,14 +478,14 @@ function parsePostmasterPidFile(raw: string): PostmasterPidFile | undefined {
     typeof socketPath !== "string" ||
     socketPath.length === 0
   ) {
-    return undefined;
+    return ;
   }
   return { pid, dataPath, port, socketPath };
 }
 
 function parseMetadata(value: unknown, paths: LocalCorePaths): LocalCorePostgresMetadata | undefined {
   if (typeof value !== "object" || value === null) {
-    return undefined;
+    return ;
   }
   const record = value as Partial<LocalCorePostgresMetadata>;
   if (
@@ -496,11 +496,11 @@ function parseMetadata(value: unknown, paths: LocalCorePaths): LocalCorePostgres
     record.dataPath !== paths.postgresDataPath ||
     record.socketPath !== paths.postgresSocketPath
   ) {
-    return undefined;
+    return ;
   }
   const port = record.port;
   if (typeof port !== "number") {
-    return undefined;
+    return ;
   }
   return {
     version: LOCAL_CORE_POSTGRES_METADATA_VERSION,

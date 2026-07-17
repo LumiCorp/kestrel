@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import type React from "react";
+import { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
 import { theme } from "../theme/tokens.js";
@@ -118,7 +119,7 @@ export function ThemedTextInput({
 
   useEffect(() => {
     setState((previousState) => {
-      if (!focus || !showCursor) {
+      if (!(focus && showCursor)) {
         return previousState;
       }
 

@@ -511,7 +511,7 @@ export async function writeDesktopSettings(settingsPath: string, settings: Deskt
 
 function normalizeOptionalSecret(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

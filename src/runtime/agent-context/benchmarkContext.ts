@@ -67,11 +67,11 @@ export function readBenchmarkContext(eventPayload: Record<string, unknown>): Kes
   const benchmark = asRecord(metadata?.benchmark);
   const context = asRecord(benchmark?.context) ?? asRecord(eventPayload.benchmarkContext);
   if (context === undefined) {
-    return undefined;
+    return ;
   }
   const source = asString(context.source) ?? asString(benchmark?.name);
   if (source !== "swe-verified" && source !== "terminal-bench") {
-    return undefined;
+    return ;
   }
   return {
     source,
@@ -142,7 +142,7 @@ function asString(value: unknown): string | undefined {
 
 function readStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const values = value
     .map(asString)

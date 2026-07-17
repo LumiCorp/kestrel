@@ -49,8 +49,8 @@ type VisibleTodoItemValidationResult =
 
 const VALID_TODO_STATUSES = new Set<VisibleTodoStatus>(["pending", "in_progress", "done", "blocked"]);
 const MAX_TODO_ITEMS = 40;
-const MAX_TODO_TEXT_LENGTH = 1_000;
-const MAX_TODO_NOTE_LENGTH = 2_000;
+const MAX_TODO_TEXT_LENGTH = 1000;
+const MAX_TODO_NOTE_LENGTH = 2000;
 
 export const VISIBLE_TODOS_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -136,7 +136,7 @@ export function analyzeVisibleTodosCompletion(todos: VisibleTodoState | undefine
 export function normalizeVisibleTodoResidualGapData(value: unknown): VisibleTodoResidualGapData | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const openGap = normalizeString(record.openGap, MAX_TODO_NOTE_LENGTH);
   const knownWarnings = Array.isArray(record.knownWarnings)
@@ -145,7 +145,7 @@ export function normalizeVisibleTodoResidualGapData(value: unknown): VisibleTodo
         .filter((item): item is string => item !== undefined)
     : [];
   if (openGap === undefined && knownWarnings.length === 0) {
-    return undefined;
+    return ;
   }
   const residualTodoIds = Array.isArray(record.residualTodoIds)
     ? record.residualTodoIds
@@ -228,7 +228,7 @@ export function analyzeVisibleTodoFinalizeReadiness(input: {
 
 export function renderVisibleTodosForModel(todos: VisibleTodoState | undefined): string | undefined {
   if (todos === undefined) {
-    return undefined;
+    return ;
   }
   const lines = ["Current work:"];
   for (const item of todos.items) {
@@ -302,11 +302,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function normalizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const normalized = value.trim();
   if (normalized.length === 0 || normalized.length > maxLength) {
-    return undefined;
+    return ;
   }
   return normalized;
 }

@@ -31,6 +31,8 @@ test("CI workflow exposes parallel owned gates behind one stable aggregate", asy
   assert.match(workflow, /^\s{2}kestrel-one-product:\s*$/mu);
   assert.match(workflow, /kestrel-one-product -- pnpm run ci:product/u);
   assert.match(workflow, /pnpm run ci:run-gate/u);
+  assert.match(workflow, /Full-repository Ultracite/u);
+  assert.match(workflow, /static-policy\/lint -- pnpm run ci:lint:full/u);
   assert.match(workflow, /KESTREL_PRODUCT_WEBKIT/u);
   assert.match(workflow, /Upload failed product evidence/u);
   assert.doesNotMatch(workflow, /apt-get update/u);
@@ -46,4 +48,16 @@ test("CI runtime owns the prompt and eval gates exactly once", async () => {
   assert.equal(runtime.match(/evals:release-check/gu)?.length, 1);
   assert.doesNotMatch(packageJson.scripts.test ?? "", /eval/u);
   assert.doesNotMatch(packageJson.scripts["governance:check"] ?? "", /eval/u);
+});
+
+test("product-contract bootstrap waits for Compose health before database setup", async () => {
+  const bootstrap = await readFile(
+    path.join(ROOT, "apps", "web", "scripts", "product-dev-all.sh"),
+    "utf8"
+  );
+
+  assert.match(
+    bootstrap,
+    /docker compose up -d --wait --wait-timeout 60 postgres/u
+  );
 });

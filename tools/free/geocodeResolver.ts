@@ -54,7 +54,7 @@ async function tryOpenMeteoGeocode(
     const geocodeUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
     const response = await fetchImpl(geocodeUrl);
     if (response.ok === false) {
-      return undefined;
+      return ;
     }
 
     const payload = parseJsonRecord(
@@ -79,12 +79,12 @@ async function tryOpenMeteoGeocode(
     const latitude = readNumber(first, "latitude");
     const longitude = readNumber(first, "longitude");
     if (latitude === undefined || longitude === undefined) {
-      return undefined;
+      return ;
     }
 
     return { latitude, longitude };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -101,7 +101,7 @@ async function tryNominatimGeocode(
       },
     });
     if (response.ok === false) {
-      return undefined;
+      return ;
     }
 
     const payload = await response.json();
@@ -114,18 +114,18 @@ async function tryNominatimGeocode(
     const latitude = toFiniteNumber(readString(first, "lat"));
     const longitude = toFiniteNumber(readString(first, "lon"));
     if (latitude === undefined || longitude === undefined) {
-      return undefined;
+      return ;
     }
 
     return { latitude, longitude };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
 function toFiniteNumber(value: string | undefined): number | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;

@@ -244,7 +244,7 @@ export function getTerminalWaitEventType(
   event: DesktopRunnerEvent,
 ): string | undefined {
   if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
-    return undefined;
+    return ;
   }
   const eventType = event.payload.result.output.waitFor?.eventType;
   return typeof eventType === "string" && eventType.trim().length > 0
@@ -256,7 +256,7 @@ export function getTerminalWaitingPrompt(
   event: DesktopRunnerEvent,
 ): { text: string; runId: string } | undefined {
   if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
-    return undefined;
+    return ;
   }
   const prompt = extractWaitPrompt(event.payload.result.output.waitFor);
   return prompt !== undefined

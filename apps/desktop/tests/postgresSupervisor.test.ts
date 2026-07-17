@@ -44,8 +44,8 @@ test("DesktopPostgresSupervisor initializes, starts, and reuses persisted metada
     metadataPath,
     platform: "darwin",
     arch: "arm64",
-    allocatePort: async () => 61234,
-    probeTcpPortImpl: async () => undefined,
+    allocatePort: async () => 61_234,
+    probeTcpPortImpl: async () => {},
     spawnImpl,
   });
 
@@ -56,8 +56,8 @@ test("DesktopPostgresSupervisor initializes, starts, and reuses persisted metada
     assert.equal(first.databaseUrl, "postgres://kestrel:kestrel@127.0.0.1:61234/kestrel");
     assert.equal(first.status.state, "healthy");
     assert.equal(first.status.managed, true);
-    assert.equal(first.status.port, 61234);
-    assert.equal(metadata.port, 61234);
+    assert.equal(first.status.port, 61_234);
+    assert.equal(metadata.port, 61_234);
     assert.equal(commands.some((entry) => entry.startsWith("initdb ")), true);
     assert.equal(commands.some((entry) => entry.startsWith("pg_ctl start ")), true);
     assert.equal(commands.some((entry) => entry.startsWith("createdb ")), true);
@@ -66,7 +66,7 @@ test("DesktopPostgresSupervisor initializes, starts, and reuses persisted metada
     const restarted = await supervisor.restart();
 
     assert.equal(restarted.state, "healthy");
-    assert.equal(restarted.port, 61234);
+    assert.equal(restarted.port, 61_234);
     assert.equal(commands.some((entry) => entry.startsWith("pg_ctl stop ")), true);
     assert.equal(commands.some((entry) => entry.startsWith("pg_ctl start ")), true);
     assert.equal(commands.some((entry) => entry.startsWith("initdb ")), false);
@@ -137,7 +137,7 @@ test("DesktopPostgresSupervisor reuses an already-running managed cluster", asyn
   mkdirSync(path.dirname(metadataPath), { recursive: true });
   writeFileSync(path.join(dataPath, "PG_VERSION"), "14\n", "utf8");
   writeFileSync(path.join(dataPath, "postmaster.pid"), "12345\n", "utf8");
-  writeFileSync(metadataPath, `${JSON.stringify({ version: 1, port: 61234 }, null, 2)}\n`, "utf8");
+  writeFileSync(metadataPath, `${JSON.stringify({ version: 1, port: 61_234 }, null, 2)}\n`, "utf8");
 
   const spawnImpl = ((command: string, args: string[]) => {
     commands.push(`${path.basename(command)} ${args.join(" ")}`);
@@ -159,7 +159,7 @@ test("DesktopPostgresSupervisor reuses an already-running managed cluster", asyn
     metadataPath,
     platform: "darwin",
     arch: "arm64",
-    probeTcpPortImpl: async () => undefined,
+    probeTcpPortImpl: async () => {},
     spawnImpl,
   });
 
@@ -167,7 +167,7 @@ test("DesktopPostgresSupervisor reuses an already-running managed cluster", asyn
     const ready = await supervisor.ensureReady();
 
     assert.equal(ready.status.state, "healthy");
-    assert.equal(ready.status.port, 61234);
+    assert.equal(ready.status.port, 61_234);
     assert.equal(commands.some((entry) => entry.startsWith("pg_ctl start ")), false);
     assert.equal(commands.some((entry) => entry.startsWith("createdb ")), true);
   } finally {

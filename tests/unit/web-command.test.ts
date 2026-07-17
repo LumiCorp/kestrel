@@ -14,7 +14,7 @@ import { DEFAULT_KESTREL_RUNNER_SERVICE_PORT } from "../../src/config/localDev.j
 test("parseWebCommandArgs parses host, port, and token flags", () => {
   assert.deepEqual(parseWebCommandArgs(["--host", "0.0.0.0", "--port", "43120", "--token", "secret"]), {
     host: "0.0.0.0",
-    port: 43120,
+    port: 43_120,
     token: "secret",
   });
 });
@@ -34,7 +34,7 @@ test("resolveWebCommandConfig prefers explicit token and port inputs", () => {
     KESTREL_RUNNER_SERVICE_TOKEN: "env-token",
   });
 
-  assert.equal(resolved.port, 43155);
+  assert.equal(resolved.port, 43_155);
   assert.equal(resolved.token, "flag-token");
   assert.equal(resolved.tokenSource, "provided");
 });
@@ -47,7 +47,7 @@ test("resolveWebCommandConfig accepts env-provided token and port", () => {
   });
 
   assert.equal(resolved.host, "0.0.0.0");
-  assert.equal(resolved.port, 43144);
+  assert.equal(resolved.port, 43_144);
   assert.equal(resolved.token, "env-token");
   assert.equal(resolved.tokenSource, "provided");
 });
@@ -80,7 +80,7 @@ test("formatWebCommandStartupLines redacts a provided token from startup output"
     {
       url: "http://127.0.0.1:43102",
       host: "127.0.0.1",
-      port: 43102,
+      port: 43_102,
     },
     {
       host: "127.0.0.1",
@@ -101,7 +101,7 @@ test("formatWebCommandStartupLines emits a generated token for local setup", () 
     {
       url: "http://127.0.0.1:43102",
       host: "127.0.0.1",
-      port: 43102,
+      port: 43_102,
     },
     {
       host: "127.0.0.1",
@@ -120,7 +120,7 @@ test("createWebCommandStartupMetadata rewrites wildcard bind hosts to a local co
     {
       url: "http://0.0.0.0:43102",
       host: "0.0.0.0",
-      port: 43102,
+      port: 43_102,
     },
     {
       host: "0.0.0.0",

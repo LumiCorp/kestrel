@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createDesktopError, type DesktopError } from "./errors.js";
 import type { RunnerProtocolObserver } from "./runnerTransport.js";
 
-const DEFAULT_HANDSHAKE_TIMEOUT_MS = 4_000;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 4000;
 
 interface RunnerPingCommandEnvelope {
   id: string;
@@ -45,7 +45,7 @@ export async function ensureDesktopRunnerResponsive(
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    let unsubscribe: () => void = () => undefined;
+    let unsubscribe: () => void = () => {};
     const settle = (callback: () => void) => {
       if (settled) {
         return;
@@ -135,18 +135,18 @@ export async function ensureDesktopRunnerResponsive(
 function parseRunnerEvent(line: string): RunnerProtocolEvent | undefined {
   const normalized = line.trim();
   if (normalized.length === 0) {
-    return undefined;
+    return ;
   }
 
   let decoded: unknown;
   try {
     decoded = JSON.parse(normalized);
   } catch {
-    return undefined;
+    return ;
   }
 
   if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
-    return undefined;
+    return ;
   }
 
   const record = decoded as Record<string, unknown>;
@@ -157,7 +157,7 @@ function parseRunnerEvent(line: string): RunnerProtocolEvent | undefined {
     record.payload === null ||
     Array.isArray(record.payload)
   ) {
-    return undefined;
+    return ;
   }
 
   return decoded as RunnerProtocolEvent;

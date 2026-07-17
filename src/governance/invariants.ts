@@ -145,10 +145,10 @@ export function checkInvariantViolations(input: {
   }
 
   if (
+    (
     input.file.endsWith("/agents/reference-react/src/steps/acter.ts") ||
-    input.file.endsWith("/agents/reference-react/src/steps/execStates.ts")
+    input.file.endsWith("/agents/reference-react/src/steps/execStates.ts")) && /\bstatePatch\s*:/.test(input.content)
   ) {
-    if (/\bstatePatch\s*:/.test(input.content)) {
       violations.push({
         rule_id: "reference-react-command-processor-mutation-authority",
         file: input.file,
@@ -156,7 +156,6 @@ export function checkInvariantViolations(input: {
           "Execution steps must not assemble Transition.statePatch directly; add or reuse a command-processor checkpoint helper.",
       });
     }
-  }
 
   return violations;
 }

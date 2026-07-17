@@ -362,7 +362,7 @@ function classifyManifestCompatibility(
       message: `Kestrel Local Core schema version ${actualSchemaVersion} does not match requested schema version ${expectedSchemaVersion}.`,
     };
   }
-  return undefined;
+  return ;
 }
 
 function normalizeDatabaseMode(

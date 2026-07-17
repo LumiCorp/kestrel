@@ -35,7 +35,7 @@ export function parseCommandExecutionRoleHint(value: unknown): CommandExecutionR
   const root = asRecord(value);
   const role = parseCommandExecutionRole(root?.role);
   if (root === undefined || role === undefined) {
-    return undefined;
+    return ;
   }
   const evidenceIds = asArray(root.evidenceIds)
     .map((item) => asString(item)?.trim())
@@ -68,7 +68,7 @@ export function deriveCommandExecutionRole(input: {
   hint?: CommandExecutionRoleHint | undefined;
 }): { effective: EffectiveCommandRole; mismatch?: CommandRoleMismatch | undefined } | undefined {
   if (input.toolName !== "dev.shell.run" && input.toolName !== "exec_command") {
-    return undefined;
+    return ;
   }
   const derivedRole: CommandExecutionRole = "general_evidence";
   const hint = input.hint ?? parseCommandExecutionRoleHint(input.toolInput?.executionRole);

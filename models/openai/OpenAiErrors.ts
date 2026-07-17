@@ -75,13 +75,13 @@ function safeParseJson(value: string): Record<string, unknown> | undefined {
   try {
     return asRecord(JSON.parse(value));
   } catch {
-    return undefined;
+    return ;
   }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

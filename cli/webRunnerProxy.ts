@@ -241,7 +241,7 @@ function normalizeHeaderValues(value: string | string[] | undefined): string[] {
 
 function readBearerToken(authorization: string | undefined): string | undefined {
   if (authorization === undefined || authorization.startsWith("Bearer ") === false) {
-    return undefined;
+    return ;
   }
   const token = authorization.slice("Bearer ".length);
   return token.length > 0 ? token : undefined;

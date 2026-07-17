@@ -949,7 +949,7 @@ function parseOptionalLocalCoreInteger(
 }
 
 function hasOwnLocalCoreField(record: Record<string, unknown>, field: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, field);
+  return  Object.hasOwn(record, field);
 }
 
 export interface EnsureLocalCoreReadyOptions {

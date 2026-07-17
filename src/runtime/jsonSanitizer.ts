@@ -10,13 +10,13 @@ export function sanitizeUtf16String(value: string): string {
   let next = "";
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
-    if (codeUnit === 0x0000) {
+    if (codeUnit === 0x00_00) {
       next += "\uFFFD";
       continue;
     }
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+    if (codeUnit >= 0xd8_00 && codeUnit <= 0xdb_ff) {
       const nextCodeUnit = index + 1 < value.length ? value.charCodeAt(index + 1) : undefined;
-      if (nextCodeUnit !== undefined && nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
+      if (nextCodeUnit !== undefined && nextCodeUnit >= 0xdc_00 && nextCodeUnit <= 0xdf_ff) {
         next += value[index] ?? "";
         next += value[index + 1] ?? "";
         index += 1;
@@ -25,7 +25,7 @@ export function sanitizeUtf16String(value: string): string {
       next += "\uFFFD";
       continue;
     }
-    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+    if (codeUnit >= 0xdc_00 && codeUnit <= 0xdf_ff) {
       next += "\uFFFD";
       continue;
     }
@@ -79,11 +79,11 @@ function sanitizeValue(value: unknown, ancestors: Set<object>): unknown {
 function readToJson(value: object): unknown {
   const candidate = value as { toJSON?: (() => unknown) | undefined };
   if (typeof candidate.toJSON !== "function") {
-    return undefined;
+    return ;
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype === Object.prototype || prototype === null) {
-    return undefined;
+    return ;
   }
   return candidate.toJSON();
 }

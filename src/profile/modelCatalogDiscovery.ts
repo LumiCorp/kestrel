@@ -3,7 +3,7 @@ import { DEFAULT_OPENROUTER_BASE_URL } from "../../models/openrouter/OpenRouterE
 import type { ModelProviderId } from "./runtimeProfile.js";
 import { MODEL_ALLOWLIST_BY_PROVIDER } from "./modelCatalog.js";
 
-const MODEL_CATALOG_TIMEOUT_MS = 2_500;
+const MODEL_CATALOG_TIMEOUT_MS = 2500;
 
 export interface ResolvedProviderModelCatalog {
   provider: ModelProviderId;

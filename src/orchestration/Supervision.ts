@@ -24,7 +24,7 @@ export function readSupervisionPolicy(
 ): ChildThreadSupervisionPolicy | undefined {
   const value = asRecord(policy)?.supervision;
   if (asRecord(value) === undefined) {
-    return undefined;
+    return ;
   }
   return value as ChildThreadSupervisionPolicy;
 }
@@ -99,14 +99,14 @@ export function normalizeLaunchPolicy(input: {
 
 function normalizePolicyInteger(value: number | undefined): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.max(0, Math.trunc(value));
 }
 
 function normalizePolicyString(value: string | undefined): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -222,7 +222,7 @@ export function buildSupervisionSummary(input: {
   latestDecision?: FanInDispositionSummary | undefined;
 }): SupervisionSummary | undefined {
   if (input.children.length === 0) {
-    return undefined;
+    return ;
   }
   const activeChildren = input.children.filter((child) => isTerminalOutcome(child.outcomeState) === false);
   const terminalChildren = input.children.filter((child) => isTerminalOutcome(child.outcomeState));
@@ -317,7 +317,7 @@ export function latestFanInDisposition(input: {
         : {}),
     };
   }
-  return undefined;
+  return ;
 }
 
 function isTerminalOutcome(state: SupervisionChildOutcomeState): boolean {

@@ -29,7 +29,7 @@ export function resolveRuntimeWorkspaceAuthority(
   input: ResolveWorkspaceAuthorityInput,
 ): RuntimeWorkspaceAuthorityContext | undefined {
   if (input.workspace === undefined) {
-    return undefined;
+    return ;
   }
 
   const resolvedMode = normalizeInteractionMode({

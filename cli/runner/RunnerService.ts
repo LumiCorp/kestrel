@@ -10,17 +10,17 @@ import {
   type RunnerHealthV1,
 } from "@kestrel-agents/protocol";
 
-import {
-  type RunnerActorMetadata,
-  type RunnerCommand,
-  type RunnerEvent,
-  type RunnerEventPayloadByType,
-  type RunnerEventSubscriptionFilter,
-  type RunnerEventSubscriptionRequest,
-  type RunnerEventType,
+import type {
+  RunnerActorMetadata,
+  RunnerCommand,
+  RunnerEvent,
+  RunnerEventPayloadByType,
+  RunnerEventSubscriptionFilter,
+  RunnerEventSubscriptionRequest,
+  RunnerEventType,
 } from "../protocol/contracts.js";
-import { RunnerHost, type RunnerProfileProvider } from "./RunnerHost.js";
-import { CommandRouter } from "./CommandRouter.js";
+import type { RunnerHost, RunnerProfileProvider } from "./RunnerHost.js";
+import type { CommandRouter } from "./CommandRouter.js";
 import {
   buildCompatibilityHeaders,
   buildOpenAiErrorResponse,
@@ -1099,7 +1099,7 @@ function parseCommandEnvelope(body: string): RunnerCommandParseResult {
 
 function readCandidateCommandId(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const id = (value as Record<string, unknown>).id;
   return typeof id === "string" && id.trim().length > 0 ? id : undefined;
@@ -1107,29 +1107,29 @@ function readCandidateCommandId(value: unknown): string | undefined {
 
 function parseSubscriptionRequest(body: string): RunnerEventSubscriptionRequest | undefined {
   if (body.length === 0) {
-    return undefined;
+    return ;
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return undefined;
+    return ;
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return undefined;
+    return ;
   }
 
   const record = parsed as Record<string, unknown>;
   const filter = parseSubscriptionFilter(record.filter);
   if (filter === undefined) {
-    return undefined;
+    return ;
   }
 
   const metadata = record.metadata;
   if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -1140,7 +1140,7 @@ function parseSubscriptionRequest(body: string): RunnerEventSubscriptionRequest 
 
 function parseSubscriptionFilter(value: unknown): RunnerEventSubscriptionFilter | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   const record = value as Record<string, unknown>;
@@ -1159,10 +1159,10 @@ function parseSubscriptionFilter(value: unknown): RunnerEventSubscriptionFilter 
   const eventTypes = normalizeSubscriptionEventTypes(record.eventTypes);
 
   if (sessionId === undefined && threadId === undefined && runId === undefined) {
-    return undefined;
+    return ;
   }
   if (record.eventTypes !== undefined && eventTypes === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -1176,16 +1176,16 @@ function parseSubscriptionFilter(value: unknown): RunnerEventSubscriptionFilter 
 
 function normalizeSubscriptionEventTypes(value: unknown): RunnerEventType[] | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
 
   const eventTypes: RunnerEventType[] = [];
   for (const entry of value) {
     if (typeof entry !== "string" || isRunnerEventType(entry) === false) {
-      return undefined;
+      return ;
     }
     eventTypes.push(entry);
   }
@@ -1241,7 +1241,7 @@ function resolveRunnerServiceRequestPath(
     return "/";
   }
   if (path.startsWith(`${pathPrefix}/`) === false) {
-    return undefined;
+    return ;
   }
   return path.slice(pathPrefix.length);
 }
@@ -1265,7 +1265,7 @@ function validateServiceAuthHeader(
   authToken: string | undefined,
 ): string | undefined {
   if (authToken === undefined || authToken.trim().length === 0) {
-    return undefined;
+    return ;
   }
   if (typeof authorization !== "string" || authorization.startsWith("Bearer ") === false) {
     return "Runner service authorization is required.";
@@ -1283,7 +1283,7 @@ function validateActorMetadata(actor: RunnerActorMetadata | undefined): string |
   if (actor.actorType !== "end_user" && actor.actorType !== "operator" && actor.actorType !== "service") {
     return "Runner actor metadata requires a valid actorType.";
   }
-  return undefined;
+  return ;
 }
 
 async function cancelStreamingRun(

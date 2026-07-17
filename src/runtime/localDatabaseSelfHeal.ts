@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DOCKER_READY_CHECK_TIMEOUT_MS = 5_000;
+const DOCKER_READY_CHECK_TIMEOUT_MS = 5000;
 const DOCKER_READY_WAIT_TIMEOUT_MS = 45_000;
-const DOCKER_READY_POLL_INTERVAL_MS = 2_000;
+const DOCKER_READY_POLL_INTERVAL_MS = 2000;
 const MACOS_DOCKER_APP_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker";
 const MACOS_DOCKER_APP_PATH = "/Applications/Docker.app";
 const MACOS_OPEN_BIN = "/usr/bin/open";
@@ -102,7 +102,7 @@ function resolveComposeDirectoryForSelfHeal(): string | undefined {
     }
     dir = parent;
   }
-  return undefined;
+  return ;
 }
 
 async function ensureDockerReadyForSelfHeal(input: {

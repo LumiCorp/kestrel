@@ -24,16 +24,7 @@ const pnpm = (...commandArgs: string[]): Command => ({
 const commands: Partial<Record<CiGateId, Command[]>> = {
   "static-policy": [
     pnpm("run", "governance:check"),
-    pnpm(
-      "run",
-      "ci:lint",
-      "--",
-      "--base",
-      base,
-      "--head",
-      head,
-      "--include-worktree"
-    ),
+    pnpm("run", "ci:lint:full"),
   ],
   "runtime-unit": [pnpm("run", "ci:runtime")],
   "package-contracts": [pnpm("run", "ci:packages")],

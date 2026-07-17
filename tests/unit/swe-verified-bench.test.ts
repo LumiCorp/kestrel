@@ -286,7 +286,7 @@ test("swe verified issue text removes HTML comments system details and long pyte
     "```",
     "Traceback (most recent call last):",
     ...Array.from({ length: 140 }, (_, index) =>
-      `  File \"/tmp/site-packages/_pytest/pluginmanager.py\", line ${index}, in load_setuptools_entrypoints`
+      `  File "/tmp/site-packages/_pytest/pluginmanager.py", line ${index}, in load_setuptools_entrypoints`
     ),
     "ValueError: Plugin already registered under a different name: pytest_astropy",
     "```",

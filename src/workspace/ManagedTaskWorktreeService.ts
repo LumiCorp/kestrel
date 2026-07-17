@@ -159,7 +159,7 @@ export interface ManagedTaskWorktreeDirtyState {
 
 export function deriveManagedWorktreeWorkspaceTaskKey(workspace: unknown): string | undefined {
   if (typeof workspace !== "object" || workspace === null || Array.isArray(workspace)) {
-    return undefined;
+    return ;
   }
   const record = workspace as Record<string, unknown>;
   const workspaceId = normalizeNonEmptyString(record.workspaceId);
@@ -517,7 +517,7 @@ export class ManagedTaskWorktreeService {
     const dirtyState = validation.status === "valid"
       ? await readDirtyState(binding.worktreeRoot)
       : binding.dirtyState;
-    const currentSourceHead = await git(binding.sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined);
+    const currentSourceHead = await git(binding.sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {});
     const conflictPaths = validation.status === "valid"
       ? await this.readFanInConflictPaths(binding, changedFiles)
       : [];
@@ -684,7 +684,7 @@ export class ManagedTaskWorktreeService {
   async readBindingForWorktreeRoot(worktreeRoot: string, input: { runId?: string | undefined } = {}): Promise<ManagedTaskWorktreeBinding | undefined> {
     const metadata = await this.readMetadata({ worktreeRoot });
     if (metadata === undefined) {
-      return undefined;
+      return ;
     }
     const latestSessionBinding = [...(metadata.bindings ?? [])]
       .sort((left, right) => right.lastBoundAt.localeCompare(left.lastBoundAt))[0];
@@ -956,7 +956,7 @@ export class ManagedTaskWorktreeService {
   }
 
   private async resolveSourceRepoRoot(sourceWorkspaceRoot: string, requestedRepoRoot: string | undefined): Promise<string> {
-    let gitRoot = await git(sourceWorkspaceRoot, ["rev-parse", "--show-toplevel"]).catch(() => undefined);
+    let gitRoot = await git(sourceWorkspaceRoot, ["rev-parse", "--show-toplevel"]).catch(() => {});
     if (gitRoot === undefined) {
       await git(sourceWorkspaceRoot, ["init"]);
       gitRoot = await git(sourceWorkspaceRoot, ["rev-parse", "--show-toplevel"]).catch((error) => {
@@ -995,7 +995,7 @@ export class ManagedTaskWorktreeService {
   }
 
   private async ensureSourceHead(sourceRepoRoot: string): Promise<string> {
-    const existingHead = await git(sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined);
+    const existingHead = await git(sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {});
     if (existingHead !== undefined && existingHead.length > 0) {
       return existingHead;
     }
@@ -1044,7 +1044,7 @@ export class ManagedTaskWorktreeService {
     }
     const metadata = await this.readMetadata(proposal);
     const target = await realpath(proposal.worktreeRoot).catch(() => proposal.worktreeRoot);
-    const topLevel = await git(proposal.worktreeRoot, ["rev-parse", "--show-toplevel"]).catch(() => undefined);
+    const topLevel = await git(proposal.worktreeRoot, ["rev-parse", "--show-toplevel"]).catch(() => {});
     const resolvedTopLevel = topLevel === undefined ? undefined : await realpath(topLevel).catch(() => topLevel);
     if (resolvedTopLevel !== target) {
       return this.inspectPathCollision(proposal, metadata, leaseOwnerLookup);
@@ -1057,7 +1057,7 @@ export class ManagedTaskWorktreeService {
     if (metadata === undefined || metadataIdentityMatchesProposal(metadata, proposal) === false) {
       return { status: "invalid", reason: "metadata_mismatch" };
     }
-    const targetHead = await git(proposal.worktreeRoot, ["rev-parse", "HEAD"]).catch(() => undefined);
+    const targetHead = await git(proposal.worktreeRoot, ["rev-parse", "HEAD"]).catch(() => {});
     if (targetHead !== metadata.baseHead) {
       return { status: "recoverable", action: "rotate", reason: "metadata_mismatch" };
     }
@@ -1106,7 +1106,7 @@ export class ManagedTaskWorktreeService {
     if (await this.hasActiveRunLeaseOwner(metadata, leaseOwnerLookup)) {
       return false;
     }
-    const gitDirPointer = await readFile(path.join(proposal.worktreeRoot, ".git"), "utf8").catch(() => undefined);
+    const gitDirPointer = await readFile(path.join(proposal.worktreeRoot, ".git"), "utf8").catch(() => {});
     if (gitDirPointer === undefined) {
       return false;
     }
@@ -1243,9 +1243,9 @@ export class ManagedTaskWorktreeService {
   }
 
   private async readMetadata(proposal: Pick<ManagedTaskWorktreeProposal, "worktreeRoot">): Promise<ManagedTaskWorktreeMetadata | undefined> {
-    const raw = await readFile(this.metadataPath(proposal), "utf8").catch(() => undefined);
+    const raw = await readFile(this.metadataPath(proposal), "utf8").catch(() => {});
     if (raw === undefined) {
-      return undefined;
+      return ;
     }
     return parseMetadata(raw);
   }
@@ -1346,9 +1346,9 @@ export class ManagedTaskWorktreeService {
     scope: ManagedTaskWorktreeScope;
   }): Promise<ManagedTaskWorktreeBindingRegistry | undefined> {
     const locator = this.bindingLocator(input);
-    const raw = await readFile(locator.registryPath, "utf8").catch(() => undefined);
+    const raw = await readFile(locator.registryPath, "utf8").catch(() => {});
     if (raw === undefined) {
-      return undefined;
+      return ;
     }
     return parseBindingRegistry(raw, locator.bindingKey, input.sourceRepoRoot, input.scope);
   }
@@ -1451,7 +1451,7 @@ export class ManagedTaskWorktreeService {
       return false;
     }
     const worktreePath = path.resolve(binding.worktreeRoot, safePath);
-    const fileStat = await lstat(worktreePath).catch(() => undefined);
+    const fileStat = await lstat(worktreePath).catch(() => {});
     return fileStat === undefined || fileStat.isFile() || fileStat.isSymbolicLink();
   }
 
@@ -1504,7 +1504,7 @@ export class ManagedTaskWorktreeService {
     for (const relativePath of changedFiles) {
       const safePath = requireSafeRelativeGitPath(relativePath);
       const worktreePath = path.resolve(binding.worktreeRoot, safePath);
-      const fileStat = await lstat(worktreePath).catch(() => undefined);
+      const fileStat = await lstat(worktreePath).catch(() => {});
       hash.update("\0path\0");
       hash.update(safePath);
       if (fileStat === undefined) {
@@ -1533,7 +1533,7 @@ export class ManagedTaskWorktreeService {
     const safePath = requireSafeRelativeGitPath(relativePath);
     const sourcePath = path.resolve(binding.sourceRepoRoot, safePath);
     const worktreePath = path.resolve(binding.worktreeRoot, safePath);
-    const fileStat = await lstat(worktreePath).catch(() => undefined);
+    const fileStat = await lstat(worktreePath).catch(() => {});
     await assertSourceParentInsideRepo(binding.sourceRepoRoot, sourcePath);
     if (fileStat === undefined) {
       await rm(sourcePath, { force: true });
@@ -1565,7 +1565,7 @@ export class ManagedTaskWorktreeService {
     const safePath = requireSafeRelativeGitPath(relativePath);
     const sourcePath = path.resolve(binding.sourceRepoRoot, safePath);
     await assertSourceParentInsideRepo(binding.sourceRepoRoot, sourcePath);
-    const sourceStat = await lstat(sourcePath).catch(() => undefined);
+    const sourceStat = await lstat(sourcePath).catch(() => {});
     if (sourceStat?.isDirectory()) {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_FAN_IN_PATH_INVALID",
@@ -1623,7 +1623,7 @@ function resolveWorktreeScope(input: Pick<ManagedTaskWorktreeRequest, "sessionId
 
 function normalizeNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -1662,7 +1662,7 @@ async function assertSourceParentInsideRepo(sourceRepoRoot: string, sourcePath: 
   let current = repoRoot;
   for (const part of parts) {
     current = path.join(current, part);
-    const currentStat = await lstat(current).catch(() => undefined);
+    const currentStat = await lstat(current).catch(() => {});
     if (currentStat === undefined) {
       return;
     }
@@ -1695,7 +1695,7 @@ async function assertSourceParentInsideRepo(sourceRepoRoot: string, sourcePath: 
 }
 
 async function removeExistingSourceLeaf(sourcePath: string): Promise<void> {
-  const sourceStat = await lstat(sourcePath).catch(() => undefined);
+  const sourceStat = await lstat(sourcePath).catch(() => {});
   if (sourceStat === undefined) {
     return;
   }
@@ -1721,7 +1721,7 @@ function isPathInside(root: string, target: string): boolean {
 
 function normalizeScope(value: unknown): ManagedTaskWorktreeScope | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   const kind = typeof record.kind === "string" ? record.kind : undefined;
@@ -1732,7 +1732,7 @@ function normalizeScope(value: unknown): ManagedTaskWorktreeScope | undefined {
   ) {
     return { kind, value: scopeValue };
   }
-  return undefined;
+  return ;
 }
 
 function scopesEqual(left: ManagedTaskWorktreeScope | undefined, right: ManagedTaskWorktreeScope | undefined): boolean {
@@ -1750,7 +1750,7 @@ function parseMetadata(raw: string): ManagedTaskWorktreeMetadata | undefined {
       typeof parsed.baseHead !== "string" ||
       typeof parsed.bindingKey !== "string"
     ) {
-      return undefined;
+      return ;
     }
     const legacySessionId = typeof parsed.sessionId === "string" ? parsed.sessionId : undefined;
     const createdBySessionId =
@@ -1758,7 +1758,7 @@ function parseMetadata(raw: string): ManagedTaskWorktreeMetadata | undefined {
         ? parsed.createdBySessionId
         : legacySessionId;
     if (createdBySessionId === undefined) {
-      return undefined;
+      return ;
     }
     const scope = normalizeScope(parsed.scope) ?? {
       kind: "sessionId" as const,
@@ -1787,7 +1787,7 @@ function parseMetadata(raw: string): ManagedTaskWorktreeMetadata | undefined {
       dirtyState: isDirtyState(parsed.dirtyState) ? parsed.dirtyState : undefined,
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1806,11 +1806,11 @@ function parseBindingRegistry(
       typeof parsed.currentGeneration !== "number" ||
       typeof parsed.currentWorktreeRoot !== "string"
     ) {
-      return undefined;
+      return ;
     }
     const scope = normalizeScope(parsed.scope);
     if (scopesEqual(scope, expectedScope) === false) {
-      return undefined;
+      return ;
     }
     const generations = Array.isArray(parsed.generations)
       ? parsed.generations.filter(isBindingRegistryGeneration)
@@ -1827,7 +1827,7 @@ function parseBindingRegistry(
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1948,7 +1948,7 @@ async function resolveRealDirectory(value: string, field: string): Promise<strin
     });
   }
   const resolved = path.resolve(trimmed);
-  const entry = await stat(resolved).catch(() => undefined);
+  const entry = await stat(resolved).catch(() => {});
   if (entry === undefined || entry.isDirectory() === false) {
     throw createRuntimeFailure("MANAGED_WORKTREE_INPUT_INVALID", `${field} must be an existing directory.`, {
       subsystem: "workspace",

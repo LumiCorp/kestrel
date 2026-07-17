@@ -29,7 +29,7 @@ export const internetCrawlTool: SharedToolModule = {
           maximum: 5,
           description: "Only sent to Tavily when instructions are provided.",
         },
-        maxChars: { type: "number", minimum: 500, maximum: 200000 },
+        maxChars: { type: "number", minimum: 500, maximum: 200_000 },
       },
       required: ["url"],
       additionalProperties: false,

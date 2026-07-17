@@ -109,10 +109,9 @@ function readMappedIpv4Address(address: string): string | undefined {
   const high = Number.parseInt(words[0] ?? "", 16);
   const low = Number.parseInt(words[1] ?? "", 16);
   if (
-    !/^[0-9a-f]{1,4}$/u.test(words[0] ?? "") ||
-    !/^[0-9a-f]{1,4}$/u.test(words[1] ?? "") ||
-    high > 0xffff ||
-    low > 0xffff
+    !(/^[0-9a-f]{1,4}$/u.test(words[0] ?? "") &&/^[0-9a-f]{1,4}$/u.test(words[1] ?? "") ) ||
+    high > 0xff_ff ||
+    low > 0xff_ff
   ) {
     return;
   }

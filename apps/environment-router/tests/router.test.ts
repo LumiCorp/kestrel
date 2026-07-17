@@ -34,8 +34,8 @@ const token = signEnvironmentExecutionTicket({
       "workspace.files.read",
       "events.subscribe",
     ],
-    issuedAt: 1_000,
-    expiresAt: 1_300,
+    issuedAt: 1000,
+    expiresAt: 1300,
     nonce: "nonce-1",
   },
 });
@@ -54,8 +54,8 @@ const terminalToken = signEnvironmentExecutionTicket({
     flyAppName: "kestrel-env-1",
     flyMachineId: "machine-1",
     capabilities: ["workspace.terminal.exec"],
-    issuedAt: 1_000,
-    expiresAt: 1_300,
+    issuedAt: 1000,
+    expiresAt: 1300,
     nonce: "nonce-2",
   },
 });
@@ -77,8 +77,8 @@ const promotionToken = signEnvironmentExecutionTicket({
       "workspace.promotions.read",
       "workspace.promotions.apply",
     ],
-    issuedAt: 1_000,
-    expiresAt: 1_300,
+    issuedAt: 1000,
+    expiresAt: 1300,
     nonce: "nonce-3",
   },
 });
@@ -97,8 +97,8 @@ const reasoningReadToken = signEnvironmentExecutionTicket({
     flyAppName: "kestrel-env-1",
     flyMachineId: "machine-1",
     capabilities: ["reasoning.read"],
-    issuedAt: 1_000,
-    expiresAt: 1_300,
+    issuedAt: 1000,
+    expiresAt: 1300,
     nonce: "nonce-reasoning-read",
   },
 });
@@ -108,7 +108,7 @@ test("router binds event subscriptions to the ticket Thread", () => {
     authorizeEnvironmentSubscription({
       authorization: `Bearer ${token}`,
       publicKey,
-      now: 1_100,
+      now: 1100,
       body: {
         metadata: { tenantId: "org-1" },
         filter: { sessionId: "thread-1" },
@@ -120,7 +120,7 @@ test("router binds event subscriptions to the ticket Thread", () => {
     authorizeEnvironmentSubscription({
       authorization: `Bearer ${token}`,
       publicKey,
-      now: 1_100,
+      now: 1100,
       body: {
         metadata: { tenantId: "org-1" },
         filter: { sessionId: "thread-2" },
@@ -140,19 +140,19 @@ test("router binds retained reasoning commands to action capability, tenant, and
   assert.equal(authorizeEnvironmentRequest({
     authorization: `Bearer ${reasoningReadToken}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     body: command("read"),
   }).status, 200);
   assert.equal(authorizeEnvironmentRequest({
     authorization: `Bearer ${reasoningReadToken}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     body: command("delete"),
   }).status, 403);
   assert.equal(authorizeEnvironmentRequest({
     authorization: `Bearer ${reasoningReadToken}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     body: command("read", "thread-2"),
   }).status, 403);
 });
@@ -161,14 +161,14 @@ test("router authorizes Workspace HTTP APIs by exact method and path", () => {
   assert.equal(authorizeEnvironmentHttpRequest({
     authorization: `Bearer ${token}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     method: "GET",
     pathname: "/v1/tree",
   }).status, 200);
   assert.equal(authorizeEnvironmentHttpRequest({
     authorization: `Bearer ${token}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     method: "POST",
     pathname: "/v1/terminal/exec",
   }).status, 403);
@@ -237,7 +237,7 @@ test("router authorizes the exact tenant and Thread into a signed Fly App", () =
   const decision = authorizeEnvironmentRequest({
     authorization: `Bearer ${token}`,
     publicKey,
-    now: 1_100,
+    now: 1100,
     body: {
       type: "run.start",
       metadata: { tenantId: "org-1" },
@@ -259,7 +259,7 @@ test("router rejects a ticket issued for another Environment gateway", () => {
       authorization: `Bearer ${token}`,
       publicKey,
       expectedAppName: "kestrel-env-2",
-      now: 1_100,
+      now: 1100,
       method: "GET",
       pathname: "/v1/tree",
     }).status,
@@ -284,7 +284,7 @@ test("router rejects cross-organization and cross-Thread commands", () => {
       authorizeEnvironmentRequest({
         authorization: `Bearer ${token}`,
         publicKey,
-        now: 1_100,
+        now: 1100,
         body,
       }).status,
       403
@@ -297,7 +297,7 @@ test("router rejects missing tickets and ungranted command capabilities", () => 
     authorizeEnvironmentRequest({
       authorization: undefined,
       publicKey,
-      now: 1_100,
+      now: 1100,
       body: {},
     }).status,
     401
@@ -306,7 +306,7 @@ test("router rejects missing tickets and ungranted command capabilities", () => 
     authorizeEnvironmentRequest({
       authorization: `Bearer ${token}`,
       publicKey,
-      now: 1_100,
+      now: 1100,
       body: {
         type: "run.cancel",
         metadata: { tenantId: "org-1" },

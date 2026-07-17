@@ -4213,7 +4213,7 @@ test("continuation replies apply manual compaction when adaptation already recom
               interactionMode: "plan",
               allowedToolClasses: ["read_only"],
               context: {
-                promptBudgetChars: 12000,
+                promptBudgetChars: 12_000,
                 estimatedChars: 4000,
                 degradationMode: "compact",
                 droppedSections: ["observations.compact"],

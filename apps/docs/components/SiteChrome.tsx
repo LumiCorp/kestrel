@@ -4,7 +4,6 @@ import MiniSearch from "minisearch";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SEARCH_FIELDS, SEARCH_STORE_FIELDS, searchWithIndex } from "@/lib/search-utils";
@@ -103,7 +102,7 @@ function SearchDialog() {
   }, [payload]);
 
   const results = useMemo(() => {
-    if (!payload || !engine) return [];
+    if (!(payload && engine)) return [];
     return query.trim().length === 0 ? payload.initialResults : searchWithIndex(engine, query);
   }, [engine, payload, query]);
 
@@ -198,7 +197,7 @@ function SearchDialog() {
           <div id="global-search-results" className="dialog-search-results" role="listbox" aria-label="Search results">
             {loading ? <p className="search-status">Loading search…</p> : null}
             {failed ? <p className="search-status">Search could not load. Use the full search page instead.</p> : null}
-            {!loading && !failed && results.length === 0 ? <p className="search-status">No public pages match that search.</p> : null}
+            {!(loading || failed ) && results.length === 0 ? <p className="search-status">No public pages match that search.</p> : null}
             {results.map((result, index) => (
               <button
                 key={result.url}

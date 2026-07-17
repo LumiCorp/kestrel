@@ -23,13 +23,13 @@ test("deriveModelTimeoutMs clamps timeout to remaining budget minus reserve", ()
     {
       input: "hello",
       metadata: {
-        runtimeBudgetRemainingMs: 5_000,
+        runtimeBudgetRemainingMs: 5000,
       },
     },
     DEFAULT_MODEL_TIMING_POLICY,
   );
 
-  assert.equal(timeout, 4_000);
+  assert.equal(timeout, 4000);
 });
 
 test("deriveModelTimeoutMs never exceeds remaining budget reserve", () => {
@@ -37,7 +37,7 @@ test("deriveModelTimeoutMs never exceeds remaining budget reserve", () => {
     {
       input: "hello",
       metadata: {
-        runtimeBudgetRemainingMs: 1_000,
+        runtimeBudgetRemainingMs: 1000,
       },
     },
     DEFAULT_MODEL_TIMING_POLICY,

@@ -33,7 +33,7 @@ test("BubbleMessage renders flat transcript rows with full-width header and body
   const header = childText(children[0]?.props.children);
   const firstLine = childText(children[1]?.props.children);
   const secondLine = childText(children[2]?.props.children);
-  assert.match(header, /^  << AGENT · 13:10:34$/);
+  assert.match(header, /^ {2}<< AGENT · 13:10:34$/);
   assert.equal(firstLine, "<< hello");
   assert.equal(secondLine, "   world");
 });

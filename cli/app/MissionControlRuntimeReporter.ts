@@ -5,7 +5,7 @@ import type { ResolvedWorkspace, TuiProfile, TuiSessionMeta } from "../contracts
 const DEFAULT_LOCAL_STUDIO_URL = "http://localhost:43200";
 const DEFAULT_LOCAL_SERVICE_TOKEN = "local-runner-token";
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const REQUEST_TIMEOUT_MS = 1_500;
+const REQUEST_TIMEOUT_MS = 1500;
 
 interface MissionControlRuntimeReporterOptions {
   cwd: string;

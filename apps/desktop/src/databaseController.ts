@@ -11,7 +11,7 @@ import { attemptLocalDatabaseSelfHeal } from "../../../src/runtime/localDatabase
 import { buildDefaultKestrelDatabaseUrl } from "./localDev.js";
 import {
   buildManagedDatabaseUrl,
-  DesktopPostgresSupervisor,
+  type DesktopPostgresSupervisor,
 } from "./postgresSupervisor.js";
 
 export interface DesktopDatabaseController {
@@ -230,11 +230,11 @@ class ExternalDesktopDatabaseController implements DesktopDatabaseController {
   }
 
   getLogPath(): string | undefined {
-    return undefined;
+    return ;
   }
 
   getDataPath(): string | undefined {
-    return undefined;
+    return ;
   }
 }
 
@@ -321,7 +321,7 @@ class UnavailableDesktopDatabaseController implements DesktopDatabaseController 
   }
 
   getDatabaseUrl(): string | undefined {
-    return undefined;
+    return ;
   }
 
   getLogPath(): string | undefined {
@@ -329,7 +329,7 @@ class UnavailableDesktopDatabaseController implements DesktopDatabaseController 
   }
 
   getDataPath(): string | undefined {
-    return undefined;
+    return ;
   }
 }
 

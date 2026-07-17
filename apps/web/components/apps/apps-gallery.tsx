@@ -107,7 +107,7 @@ export function AppsGallery({ initial }: { initial: AppsOverview }) {
           </TabsList>
         </Tabs>
         <div className="relative w-full xl:max-w-sm">
-          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="-translate-y-1/2 absolute top-1/2 left-3 size-4 text-muted-foreground" />
           <Input
             aria-label="Search Apps"
             className="pl-9"

@@ -15,7 +15,7 @@ import { redactDiagnosticText } from "../diagnostics/redaction.js";
 
 const RUN_TAIL_LIMIT = 160;
 const RECENT_RUN_LIMIT = 48;
-const DEFAULT_STOP_TIMEOUT_MS = 2_000;
+const DEFAULT_STOP_TIMEOUT_MS = 2000;
 const DEFAULT_FLUSH_INTERVAL_MS = 250;
 const HTTP_URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/giu;
 const URL_TRAILING_PUNCTUATION = /[),.;\]}]+$/u;
@@ -118,7 +118,7 @@ export function createDesktopProjectRunLedger(input: {
 
 function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -132,7 +132,7 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     typeof record.startedAt !== "string" ||
     typeof record.updatedAt !== "string"
   ) {
-    return undefined;
+    return ;
   }
   if (
     record.status !== "running" &&
@@ -141,7 +141,7 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     record.status !== "failed" &&
     record.status !== "stopped"
   ) {
-    return undefined;
+    return ;
   }
   return {
     runId: record.runId,
@@ -169,7 +169,7 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
 
 function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewUrl | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -183,7 +183,7 @@ function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewU
     Number.isFinite(record.count) === false ||
     record.count < 1
   ) {
-    return undefined;
+    return ;
   }
   return {
     url: record.url,
@@ -352,10 +352,10 @@ export async function readProjectLauncherDescriptor(input: {
   try {
     const manifestStat = await stat(manifestPath);
     if (manifestStat.isFile() === false) {
-      return undefined;
+      return ;
     }
   } catch {
-    return undefined;
+    return ;
   }
 
   let parsed: Record<string, unknown>;
@@ -379,7 +379,7 @@ export async function readProjectLauncherDescriptor(input: {
         }))
     : [];
   if (scripts.length === 0) {
-    return undefined;
+    return ;
   }
 
   const normalizedPackageManager = normalizePackageManagerField(parsed.packageManager);
@@ -773,7 +773,7 @@ export class DesktopProjectRunRegistry {
     this.options.onRunsChanged?.(snapshot);
     if (this.options.ledger !== undefined) {
       const writePromise = this.options.ledger.writeRuns(snapshot)
-        .catch(() => undefined)
+        .catch(() => {})
         .finally(() => {
           this.ledgerWrites.delete(writePromise);
         });
@@ -792,12 +792,12 @@ export class DesktopProjectRunRegistry {
   private findActiveRunByKey(liveKey: string): RunningProjectRun | undefined {
     const runId = this.liveRunIdByKey.get(liveKey);
     if (runId === undefined) {
-      return undefined;
+      return ;
     }
     const running = this.runningById.get(runId);
     if (running === undefined || running.settled) {
       this.liveRunIdByKey.delete(liveKey);
-      return undefined;
+      return ;
     }
     return running;
   }

@@ -30,7 +30,7 @@ async function main(): Promise<void> {
 
 function parsePort(value: string | undefined): number | undefined {
   if (value === undefined || value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;

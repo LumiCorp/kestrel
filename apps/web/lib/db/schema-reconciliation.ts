@@ -26,14 +26,14 @@ const publishedMigrationLedgerTimestamps: PublishedMigrationLedgerTimestamp[] = 
     hashes: [
       "a83c717278f3942b4b32baf816bec2220d767c8a28f43476c1fe4d96ef7f0aae",
     ],
-    timestamp: 1783886400000,
+    timestamp: 1_783_886_400_000,
   },
   {
     tag: "0015_managed_runpod_deployments",
     hashes: [
       "e0b7d20f37ba828c917a1ab88155984dbe3da4590660dd93b8ba5de186f6e2f1",
     ],
-    timestamp: 1783897200000,
+    timestamp: 1_783_897_200_000,
   },
   {
     tag: "0016_hosted_environments",
@@ -41,49 +41,49 @@ const publishedMigrationLedgerTimestamps: PublishedMigrationLedgerTimestamp[] = 
       "ccd8f19f3733f4e36ec75cbf619a4958b77f2d602adb9cd54ef2db68e17ff581",
       "34e56f5959b0da038e48bcb22696e74a8be682bcc9e0157fb25b7ccbb2c423d7",
     ],
-    timestamp: 1783900800000,
+    timestamp: 1_783_900_800_000,
   },
   {
     tag: "0017_github_user_oauth",
     hashes: [
       "7e02aeaceb039d0c9e757deb8575f3051d69f4bb913b5a31ed27624226358ce5",
     ],
-    timestamp: 1783904400000,
+    timestamp: 1_783_904_400_000,
   },
   {
     tag: "0018_environment_project_ownership",
     hashes: [
       "63e281b8f7c753c768b2ef97b4481964e7ef58b6a2868bbf9acfd83d4e95ce43",
     ],
-    timestamp: 1783908000000,
+    timestamp: 1_783_908_000_000,
   },
   {
     tag: "0019_hosted_mcp_control_plane",
     hashes: [
       "b7cd6518636ab85989237e5962e599804fc745a01811fe45a0584d72df51cb9a",
     ],
-    timestamp: 1783911600000,
+    timestamp: 1_783_911_600_000,
   },
   {
     tag: "0020_environment_router_upgrade",
     hashes: [
       "1a09f068f081dd124a5009ec6c0cdc45467c040d0a52429cffef39fa0238bc6c",
     ],
-    timestamp: 1783915200000,
+    timestamp: 1_783_915_200_000,
   },
   {
     tag: "0021_mcp_interaction_hardening",
     hashes: [
       "02ce28dc4f9c52f26c0854d3d241e9c1a5194bba75f5407a279e9a1727c02b38",
     ],
-    timestamp: 1783918800000,
+    timestamp: 1_783_918_800_000,
   },
   {
     tag: "0022_mcp_sampling_processing_deadline",
     hashes: [
       "fe48d40bb922a2c602d3cd6be3473c7896204aad6d1cafcb1f36e08f2e50488f",
     ],
-    timestamp: 1783922400000,
+    timestamp: 1_783_922_400_000,
   },
 ];
 

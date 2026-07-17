@@ -11,7 +11,7 @@ import {
   takeUtf8Prefix,
 } from "./ExecutionEngineSupport.js";
 
-const DEV_SHELL_CONSOLE_CHUNK_MAX_BYTES = 8_192;
+const DEV_SHELL_CONSOLE_CHUNK_MAX_BYTES = 8192;
 const DEV_SHELL_CONSOLE_TOTAL_MAX_BYTES = 65_536;
 
 export function createToolConsoleBridge(input: {

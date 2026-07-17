@@ -4,7 +4,6 @@ import { resourceFromAttributes } from "@opentelemetry/resources";
 import { SEMATTRS_ENDUSER_ID, SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
 import type {
-  KestrelTraceAttributes,
   KestrelTraceExporter,
   KestrelTracePrimitive,
   RunTrace,

@@ -1774,7 +1774,7 @@ test("ExecutionEngine refuses too-late deliberator model calls before emitting m
     sessionId: "session-late-deliberator-deadline",
     payload: {
       metadata: {
-        externalDeadlineMs: Date.now() + 1_000,
+        externalDeadlineMs: Date.now() + 1000,
       },
     },
     stepAgent: "agent.loop",
@@ -2357,7 +2357,7 @@ test("ExecutionEngine ignores volatile capability evidence metadata when enforci
             "dev.shell": {
               tool: "dev.process.read",
               stepIndex: count + 1,
-              ts: new Date(1_700_000_000_000 + count * 1_000).toISOString(),
+              ts: new Date(1_700_000_000_000 + count * 1000).toISOString(),
             },
           },
           observations: [

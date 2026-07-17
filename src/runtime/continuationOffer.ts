@@ -20,7 +20,7 @@ export function normalizeContinuationOffer(
 ): ContinuationOfferV1 | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const version = readString(record.version);
@@ -38,7 +38,7 @@ export function normalizeContinuationOffer(
     requiredToolClass === undefined ||
     requiredMode === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -61,7 +61,7 @@ function readToolExecutionClass(value: unknown): ContinuationRequiredToolClass |
   ) {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function readRequiredMode(value: unknown): ContinuationRequiredMode | undefined {
@@ -76,7 +76,7 @@ function readRequiredMode(value: unknown): ContinuationRequiredMode | undefined 
   ) {
     return "build";
   }
-  return undefined;
+  return ;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -99,7 +99,7 @@ function readString(value: unknown): string | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

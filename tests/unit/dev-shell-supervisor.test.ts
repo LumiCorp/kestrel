@@ -11,7 +11,7 @@ import {
   type DevShellOutputChunk,
 } from "../../src/devshell/contracts.js";
 
-const TEST_COMMAND_TIMEOUT_MS = 5_000;
+const TEST_COMMAND_TIMEOUT_MS = 5000;
 
 async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
@@ -188,15 +188,15 @@ test("DevShellSupervisor does not block command completion on console observers"
     },
   );
   try {
-    await resolveWithin(observerStarted, 1_000, "outputObserver was not invoked");
-    const result = await resolveWithin(runPromise, 1_000, "runCommand awaited the output observer");
+    await resolveWithin(observerStarted, 1000, "outputObserver was not invoked");
+    const result = await resolveWithin(runPromise, 1000, "runCommand awaited the output observer");
 
     assert.equal(result.status, "COMPLETED");
     assert.match(result.text, /done/u);
     assert.equal(observerResolved, false);
   } finally {
     releaseObserver?.();
-    await runPromise.catch(() => undefined);
+    await runPromise.catch(() => {});
     await supervisor.close();
   }
 });
@@ -860,7 +860,7 @@ test("DevShellSupervisor writes stdin and reads resulting output in one process 
     const started = await supervisor.startProcess({
       workspaceRoot,
       command: "printf 'ready\\n'; while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; test \"$line\" = done && break; done",
-      yieldTimeMs: 5_000,
+      yieldTimeMs: 5000,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
@@ -871,7 +871,7 @@ test("DevShellSupervisor writes stdin and reads resulting output in one process 
     const result = await supervisor.writeAndReadProcess({
       processId,
       data: "move N\n",
-      waitMs: 5_000,
+      waitMs: 5000,
       maxBytes: 4096,
     });
 
@@ -900,7 +900,7 @@ test("DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
     const started = await supervisor.startProcess({
       workspaceRoot,
       command: "node -e \"process.stdout.write('a\\\\u{1F642}b'); setTimeout(() => {}, 5000)\"",
-      yieldTimeMs: 5_000,
+      yieldTimeMs: 5000,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");

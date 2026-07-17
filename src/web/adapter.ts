@@ -8,11 +8,11 @@ import {
   DEFAULT_INTERACTION_MODE,
   normalizeInteractionMode,
 } from "../mode/contracts.js";
-import {
-  type RunnerCommandMetadata,
-  type RunnerCommandType,
-  type RunnerCommandPayloadByType,
-  type RunnerEvent,
+import type {
+  RunnerCommandMetadata,
+  RunnerCommandType,
+  RunnerCommandPayloadByType,
+  RunnerEvent,
 } from "../../cli/protocol/contracts.js";
 import {
   ProtocolClient,
@@ -1082,7 +1082,7 @@ function validateProtocolClientOptions(
     );
   }
   if (options === undefined) {
-    return undefined;
+    return ;
   }
   const metadata = options.defaultMetadata;
   return {

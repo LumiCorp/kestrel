@@ -24,7 +24,7 @@ export function authorizeEnvironmentHttpRequest(input: {
   });
   if ("status" in verified) return verified;
   const capability = workspaceHttpCapability(input.method, input.pathname);
-  if (!capability || !verified.ticket.capabilities.includes(capability)) {
+  if (!(capability && verified.ticket.capabilities.includes(capability))) {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
   return {
@@ -88,7 +88,7 @@ export function authorizeEnvironmentRequest(input: {
   const requiredCapability = command.type === "operator.run.reasoning"
     ? command.action === "delete" ? "reasoning.delete" : "reasoning.read"
     : COMMAND_CAPABILITIES[command.type];
-  if (!requiredCapability || !ticket.capabilities.includes(requiredCapability)) {
+  if (!(requiredCapability && ticket.capabilities.includes(requiredCapability))) {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
   if (command.sessionId && command.sessionId !== ticket.threadId) {

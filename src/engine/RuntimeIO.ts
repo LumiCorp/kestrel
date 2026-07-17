@@ -7,7 +7,7 @@ import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelRespo
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 
 import type { Guardrails } from "./Guardrails.js";
-import { ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
+import { type ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
 import {
   applyExternalDeadlineToolBudget,
   asPlainRecord,
@@ -1015,13 +1015,13 @@ function throwIfRuntimeIOAborted(signal: AbortSignal | undefined): void {
 }
 
 const TOOL_ACTIVITY_MAX_DEPTH = 4;
-const TOOL_ACTIVITY_MAX_STRING = 2_000;
+const TOOL_ACTIVITY_MAX_STRING = 2000;
 const TOOL_ACTIVITY_MAX_ARRAY = 25;
 const TOOL_ACTIVITY_MAX_KEYS = 50;
 
 function sanitizeToolActivityValue(value: unknown, depth = 0): unknown {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === null || typeof value === "number" || typeof value === "boolean") {
     return value;

@@ -122,7 +122,7 @@ interface SweVerifiedImageInfo {
 const DEFAULT_DATASET = "princeton-nlp/SWE-bench_Verified";
 const DEFAULT_SPLIT = "test";
 const DEFAULT_OUTPUT_ROOT = "runs/swe-verified";
-const DEFAULT_TIMEOUT_SEC = 1_800;
+const DEFAULT_TIMEOUT_SEC = 1800;
 const DEFAULT_MAX_WORKERS = 1;
 const SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT = "/testbed";
 const SWE_VERIFIED_CONTAINER_ATTEMPT_DIR = "/kestrel-attempt";
@@ -1359,7 +1359,7 @@ function stripLongPytestTraceBlocks(input: string): string {
 }
 
 function isLongPytestTrace(block: string): boolean {
-  if (block.length < 1_200) {
+  if (block.length < 1200) {
     return false;
   }
   const lower = block.toLowerCase();
@@ -1506,13 +1506,13 @@ function parseEmbeddedSweVerifiedEvaluationReport(output: string): Partial<SweVe
   const firstBrace = output.indexOf("{");
   const lastBrace = output.lastIndexOf("}");
   if (firstBrace < 0 || lastBrace <= firstBrace) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = JSON.parse(output.slice(firstBrace, lastBrace + 1)) as unknown;
     const record = asRecord(parsed);
     if (record === undefined) {
-      return undefined;
+      return ;
     }
     return compactEvaluationReport({
       resolved_instances: readNonNegativeNumber(record.resolved_instances),
@@ -1521,7 +1521,7 @@ function parseEmbeddedSweVerifiedEvaluationReport(output: string): Partial<SweVe
       unresolved_ids: readStringArray(record.unresolved_ids),
     });
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1544,7 +1544,7 @@ function readEvaluationIdSummary(output: string): Partial<SweVerifiedEvaluationR
 function readLabeledCount(output: string, pattern: RegExp): number | undefined {
   const match = output.match(pattern);
   if (match?.[1] === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(match[1], 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
@@ -1553,12 +1553,12 @@ function readLabeledCount(output: string, pattern: RegExp): number | undefined {
 function readJsonLikeStringList(output: string, pattern: RegExp): string[] | undefined {
   const match = output.match(pattern);
   if (match?.[1] === undefined) {
-    return undefined;
+    return ;
   }
   try {
     return readStringArray(JSON.parse(match[1]));
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1735,7 +1735,7 @@ function readAndValidateWorkspacePatchReport(input: {
       `workspace patch report baseline mismatch: expected ${input.expectedBaselineCommit}, got ${String(record?.baselineCommit)}`,
     );
   }
-  if (!Number.isInteger(record?.kestrelExitCode) || !Number.isInteger(record?.patchBytes) || Number(record?.patchBytes) < 0) {
+  if (!(Number.isInteger(record?.kestrelExitCode) && Number.isInteger(record?.patchBytes) ) || Number(record?.patchBytes) < 0) {
     throw new Error("workspace patch report has invalid exit-code or patch-byte fields");
   }
   const changedPaths = parseWorkspacePatchChanges(record?.changedPaths);
@@ -1775,7 +1775,7 @@ function readAndValidateWorkspacePatchReport(input: {
     }
     return report;
   }
-  if (!report.validation.applies || !report.validation.treeMatches) {
+  if (!(report.validation.applies && report.validation.treeMatches)) {
     throw new Error("successful workspace patch report must contain successful patch and tree validation");
   }
   if (!stages.some((stage) => stage.name === "validate_patch" && stage.status === "passed")) {
@@ -1980,7 +1980,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const values = value
     .map((item) => typeof item === "string" ? item.trim() : "")
@@ -2114,7 +2114,7 @@ function updateLatestAttemptMetadata(input: {
 
 function readLatestAttemptMetadata(filePath: string): SweVerifiedLatestAttemptMetadata | undefined {
   if (!existsSync(filePath)) {
-    return undefined;
+    return ;
   }
   return JSON.parse(readFileSync(filePath, "utf8")) as SweVerifiedLatestAttemptMetadata;
 }

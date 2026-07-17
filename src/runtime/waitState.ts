@@ -38,7 +38,7 @@ export function readActiveWaitState(
   reactState: Record<string, unknown> | undefined,
 ): ActiveRuntimeWaitState | undefined {
   if (reactState === undefined) {
-    return undefined;
+    return ;
   }
 
   return readCanonicalWaitingFor(asRecord(reactState.waitingFor));
@@ -113,12 +113,12 @@ export function buildCanonicalWaitingFor(input: {
 
 function readCanonicalWaitingFor(value: Record<string, unknown> | undefined): ActiveRuntimeWaitState | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const kind = readWaitKind(value.kind);
   const eventType = readNonEmptyString(value.eventType);
   if (kind === undefined || eventType === undefined) {
-    return undefined;
+    return ;
   }
   const timeoutMs = readNonNegativeNumber(value.timeoutMs);
   const metadata = asRecord(value.metadata);
@@ -156,7 +156,7 @@ function readRuntimeInteraction(
     eventType === undefined ||
     prompt === undefined
   ) {
-    return undefined;
+    return ;
   }
   const requestId = readNonEmptyString(interaction?.requestId);
   return {
@@ -195,7 +195,7 @@ function readNonNegativeNumber(value: unknown): number | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

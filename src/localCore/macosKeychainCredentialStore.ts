@@ -11,7 +11,7 @@ export const MACOS_SECURITY_EXECUTABLE = "/usr/bin/security";
 export const KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE =
   "com.kestrel.local-core.credentials";
 export const MACOS_KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE = 44;
-const MACOS_SECURITY_INTERACTIVE_MAX_LINE_BYTES = 4_095;
+const MACOS_SECURITY_INTERACTIVE_MAX_LINE_BYTES = 4095;
 
 export type MacosKeychainOperation = "read" | "write" | "delete" | "inspect";
 
@@ -85,7 +85,7 @@ export class MacosKeychainCredentialStore implements LocalCoreCredentialStore {
       ],
     });
     if (isMacosKeychainItemNotFound(result)) {
-      return undefined;
+      return ;
     }
     this.#assertSucceeded("read", credentialId, result);
     try {

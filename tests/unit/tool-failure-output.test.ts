@@ -110,7 +110,7 @@ test("model transcript renders failed dev.shell.run compactly with failure detai
   assert.match(rendered, /- failurePhase: command/u);
   assert.match(rendered, /- failureReason: pytest is not available in this environment\./u);
   assert.match(rendered, /- strictModeReason: multi_line_fail_fast/u);
-  assert.match(rendered, /- stdout:\n  \/opt\/miniconda3\/envs\/testbed\/bin\/python: No module named pytest/u);
+  assert.match(rendered, /- stdout:\n {2}\/opt\/miniconda3\/envs\/testbed\/bin\/python: No module named pytest/u);
   assert.match(rendered, /Raw output ref: tool-output:[a-f0-9]{16}/u);
   assert.doesNotMatch(rendered, /\nInput:/u);
   assert.doesNotMatch(rendered, /\nOutput:/u);

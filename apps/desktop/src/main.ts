@@ -35,7 +35,7 @@ import {
   type LocalCoreDaemonReady,
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
-import { LocalCoreClient } from "../../../src/localCore/client.js";
+import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import type {
@@ -75,7 +75,6 @@ import type {
   DesktopUiStateV1,
   DesktopMcpDiscoveryResult,
   DesktopMicrophoneAccess,
-  DesktopPackageManager,
   DesktopProjectRegistration,
   DesktopProjectFilesChangedEvent,
   DesktopProviderCredentialInput,
@@ -303,7 +302,7 @@ async function main(): Promise<void> {
   });
   app.on("before-quit", createDesktopBeforeQuitHandler({
     stopProjectRuns: stopCoreProjectRuns,
-    closeWebServer: async () => undefined,
+    closeWebServer: async () => {},
     stopRunner: async () => {
       unsubscribeProjectRunEvents?.();
       await desktopRunnerAdapter?.close();
@@ -586,11 +585,9 @@ function registerIpcHandlers(
     });
   });
   ipcMain.handle("desktop:get-settings", async () => await readDesktopRendererSettings());
-  ipcMain.handle("desktop:get-ui-state", async () => {
-    return await requireLocalCoreConnectionManager().executeIdempotent(
+  ipcMain.handle("desktop:get-ui-state", async () => await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.getDesktopUiState(),
-    );
-  });
+    ));
   ipcMain.handle("desktop:sync-legacy-ui-state", async (_event, input: unknown) => {
     let entries: DesktopLegacyUiStateEntries;
     try {
@@ -880,7 +877,7 @@ function registerIpcHandlers(
     });
     const selectedPath = result.canceled === true ? undefined : result.filePaths[0];
     if (selectedPath === undefined) {
-      return undefined;
+      return ;
     }
     await ensureDesktopProjectGitBootstrap(selectedPath);
     return {
@@ -979,9 +976,7 @@ function registerIpcHandlers(
     }, mainWindow?.webContents);
     return status;
   });
-  ipcMain.handle("desktop:request-microphone-access", async (): Promise<DesktopMicrophoneAccess> => {
-    return requestDesktopMicrophoneAccess();
-  });
+  ipcMain.handle("desktop:request-microphone-access", async (): Promise<DesktopMicrophoneAccess> => requestDesktopMicrophoneAccess());
   ipcMain.handle("desktop:reset-runtime-store", async () => {
     if (desktopConfig === undefined) {
       throw createDesktopError({
@@ -1267,9 +1262,7 @@ function registerIpcHandlers(
       ...resolveFileViewKind(resolvedPath),
     };
   });
-  ipcMain.handle("desktop:discover-mcp-servers", async (): Promise<DesktopMcpDiscoveryResult> => {
-    return discoverMcpServersFromKnownConfigFiles();
-  });
+  ipcMain.handle("desktop:discover-mcp-servers", async (): Promise<DesktopMcpDiscoveryResult> => discoverMcpServersFromKnownConfigFiles());
   ipcMain.handle("desktop:read-project-launcher", async (_event, projectPath: unknown, packageManagerOverride: unknown): Promise<DesktopProjectLauncherDescriptor | undefined> => {
     if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
       throw createDesktopError({
@@ -1286,11 +1279,9 @@ function registerIpcHandlers(
       }),
     );
   });
-  ipcMain.handle("desktop:list-project-runs", async (): Promise<DesktopManagedProjectRun[]> => {
-    return requireLocalCoreConnectionManager().executeIdempotent(
+  ipcMain.handle("desktop:list-project-runs", async (): Promise<DesktopManagedProjectRun[]> => requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.listDesktopProjectRuns(),
-    );
-  });
+    ));
   ipcMain.handle("desktop:start-project-run", async (_event, input: unknown): Promise<DesktopManagedProjectRun> => {
     if (typeof input !== "object" || input === null || Array.isArray(input)) {
       throw createDesktopError({
@@ -1346,41 +1337,31 @@ function registerIpcHandlers(
       async (client) => await client.restartDesktopProjectRun(runId),
     );
   });
-  ipcMain.handle("desktop:get-project-snapshot", async (_event, sessionId: unknown) => {
-    return getDesktopProjectSnapshot({
+  ipcMain.handle("desktop:get-project-snapshot", async (_event, sessionId: unknown) => getDesktopProjectSnapshot({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       sessionId,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    });
-  });
-  ipcMain.handle("desktop:run-project-action", async (_event, action: unknown) => {
-    return runDesktopProjectAction({
+    }));
+  ipcMain.handle("desktop:run-project-action", async (_event, action: unknown) => runDesktopProjectAction({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       action,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    });
-  });
-  ipcMain.handle("desktop:get-operator-thread", async (_event, threadId: unknown) => {
-    return getDesktopOperatorThread({
+    }));
+  ipcMain.handle("desktop:get-operator-thread", async (_event, threadId: unknown) => getDesktopOperatorThread({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       threadId,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    });
-  });
-  ipcMain.handle("desktop:list-operator-runs", async (_event, query: unknown) => {
-    return await listDesktopOperatorRuns({
+    }));
+  ipcMain.handle("desktop:list-operator-runs", async (_event, query: unknown) => await listDesktopOperatorRuns({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       query,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    });
-  });
-  ipcMain.handle("desktop:get-operator-run", async (_event, runId: unknown) => {
-    return getDesktopOperatorRun({
+    }));
+  ipcMain.handle("desktop:get-operator-run", async (_event, runId: unknown) => getDesktopOperatorRun({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       runId,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    });
-  });
+    }));
 }
 
 async function openProjectRunPreviewWindow(
@@ -1766,14 +1747,14 @@ function resolveWatchedProjectFilePath(
   filename: string | Buffer | null,
 ): string | undefined {
   if (filename === null) {
-    return undefined;
+    return ;
   }
   const candidatePath = path.resolve(rootPath, filename.toString());
   try {
     assertWithinRoot(rootPath, candidatePath, "changedPath");
     return candidatePath;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -2393,7 +2374,7 @@ async function stopCoreProjectRuns(): Promise<void> {
   const runs = await client.listDesktopProjectRuns().catch(() => []);
   await Promise.all(runs
     .filter((run) => run.status === "running" || run.status === "stopping")
-    .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => undefined)));
+    .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => {})));
 }
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {
@@ -2464,7 +2445,7 @@ async function reconfigureDatabaseController(
   settings: DesktopSettings,
 ): Promise<void> {
   if (databaseController !== undefined) {
-    await databaseController.close().catch(() => undefined);
+    await databaseController.close().catch(() => {});
   }
   databaseController = createAppDatabaseController(settings);
   currentDatabaseUrl = databaseController.getDatabaseUrl();

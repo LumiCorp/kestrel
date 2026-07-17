@@ -10,13 +10,13 @@ import type {
 } from "./contracts.js";
 import type { AssemblyChangeCause } from "../kestrel/contracts/orchestration.js";
 
-import { AssemblyCatalog } from "./AssemblyCatalog.js";
+import type { AssemblyCatalog } from "./AssemblyCatalog.js";
 import {
   buildCompatibilityDecision,
   mergeAssemblyCompatibilityMetadata,
   readAssemblyCompatibilityMetadata,
 } from "./AssemblyCompatibility.js";
-import { AssemblyPolicyEvaluator } from "./AssemblyPolicyEvaluator.js";
+import type { AssemblyPolicyEvaluator } from "./AssemblyPolicyEvaluator.js";
 import { assemblyProposalNotFoundFailure } from "../runtime/RuntimeFailure.js";
 
 export class RuntimeComposer {
@@ -340,7 +340,7 @@ export class RuntimeComposer {
     const runtimeAssembly = asRecord(thread.metadata?.runtimeAssembly);
     const bundleId = typeof runtimeAssembly?.bundleId === "string" ? runtimeAssembly.bundleId : undefined;
     if (bundleId === undefined) {
-      return undefined;
+      return ;
     }
     const bundle = await this.store.getAssemblyBundle(bundleId);
     return bundle === null ? undefined : bundle;
@@ -406,7 +406,7 @@ export class RuntimeComposer {
       input.requestedModel === undefined &&
       input.requestedPromptVariant === undefined
     ) {
-      return undefined;
+      return ;
     }
     const now = new Date().toISOString();
     const toolAllowlist =

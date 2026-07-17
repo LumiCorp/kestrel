@@ -412,7 +412,7 @@ export class CommandRouter {
 
 function readCommandId(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const id = (value as Record<string, unknown>).id;
   return typeof id === "string" && id.trim().length > 0 ? id : undefined;

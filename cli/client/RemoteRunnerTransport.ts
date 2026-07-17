@@ -221,13 +221,13 @@ export class RemoteRunnerTransport implements ProtocolTransport {
 
 function parseRunnerEvent(value: string): RunnerEvent | undefined {
   if (value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    return undefined;
+    return ;
   }
   return parseRunnerEventV2(parsed) as unknown as RunnerEvent;
 }

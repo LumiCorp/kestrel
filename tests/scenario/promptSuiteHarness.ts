@@ -1278,11 +1278,9 @@ async function runSingleCase(
       }
     }
   }
-  if (output.errors.length > 0) {
-    if (output.status !== "FAILED") {
+  if (output.errors.length > 0 && output.status !== "FAILED") {
       errors.push(...output.errors.map((error) => `${error.code}:${error.message}`));
     }
-  }
 
   return {
     name: testCase.name,
@@ -1451,7 +1449,7 @@ function computeByFailureClass(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -1876,5 +1874,5 @@ function buildPromptSuiteToolAction(
     };
   }
 
-  return undefined;
+  return ;
 }

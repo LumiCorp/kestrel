@@ -144,13 +144,13 @@ const DEFAULT_PREFLIGHT_TASK_ID = "hello-world";
 const KESTREL_AGENT = "benchmarks.terminal_bench.agents:KestrelTerminalBenchAgent";
 const KESTREL_ARTIFACT_PREFIX = "kestrel-terminal-bench";
 const BOOTSTRAP_DOCKER_WAIT_MS = 120_000;
-const BOOTSTRAP_DOCKER_POLL_MS = 2_000;
+const BOOTSTRAP_DOCKER_POLL_MS = 2000;
 const TERMINAL_BENCH_PYTHON = "3.13";
 const TERMINAL_BENCH_BASE_IMAGE = "ghcr.io/laude-institute/t-bench/python-3-13:latest";
 const DEFAULT_MAX_IMPROVE_ITERATIONS = 10;
 const DEFAULT_CODEX_REPAIR_MODEL = "gpt-5.4";
 const IMPROVE_ARTIFACT_ROOT = "runs/terminal-bench-improve";
-const EVIDENCE_FILE_LIMIT = 12000;
+const EVIDENCE_FILE_LIMIT = 12_000;
 
 export function appendRunNote(input: {
   cwd: string;
@@ -572,15 +572,15 @@ function checkDockerBuildxActivityAccess(env: NodeJS.ProcessEnv): string | undef
   const home = readNonEmptyEnv(env, "HOME");
   const dockerConfig = readNonEmptyEnv(env, "DOCKER_CONFIG") ?? (home !== undefined ? path.join(home, ".docker") : undefined);
   if (dockerConfig === undefined) {
-    return undefined;
+    return ;
   }
   const activityDir = path.join(dockerConfig, "buildx", "activity");
   if (!existsSync(activityDir)) {
-    return undefined;
+    return ;
   }
   try {
     accessSync(activityDir, constants.W_OK);
-    return undefined;
+    return ;
   } catch {
     return `Docker Buildx activity directory is not writable: ${activityDir}. Live Terminal-Bench Docker builds may fail before Kestrel starts; rerun with host approval/unsandboxed execution.`;
   }
@@ -654,12 +654,12 @@ export function resolveDockerHost(input: {
     "{{json .Endpoints.docker.Host}}",
   ], { env: input.env });
   if (result.status !== 0 || result.error !== undefined) {
-    return undefined;
+    return ;
   }
 
   const raw = result.stdout.toString("utf8").trim();
   if (raw.length === 0) {
-    return undefined;
+    return ;
   }
 
   try {
@@ -1820,7 +1820,7 @@ function runBenchmarkCommand(input: {
 function readTerminalBenchCommandTimeoutMs(env: NodeJS.ProcessEnv): number {
   const raw = env.KESTREL_TBENCH_COMMAND_TIMEOUT_SEC;
   const seconds = raw !== undefined && raw.trim().length > 0 ? Number(raw) : 1800;
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1800_000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1_800_000;
 }
 
 function classifyTerminalBenchSetupFailure(input: {
@@ -1836,7 +1836,7 @@ function classifyTerminalBenchSetupFailure(input: {
     };
   }
   if (input.outcome !== undefined || hasAdapterResultFile(input.runDir, input.adapter)) {
-    return undefined;
+    return ;
   }
   const error = input.result.error;
   const message = error instanceof Error ? error.message : "";
@@ -1853,7 +1853,7 @@ function classifyTerminalBenchSetupFailure(input: {
       notes: message || "Terminal-Bench command exited before producing results.json or adapter result files.",
     };
   }
-  return undefined;
+  return ;
 }
 
 function hasAdapterResultFile(runDir: string, adapter: Adapter): boolean {
@@ -1881,7 +1881,7 @@ export function readTerminalBenchOutcome(
   adapter?: Adapter | undefined,
 ): BenchmarkOutcome | undefined {
   if (!existsSync(resultPath)) {
-    return undefined;
+    return ;
   }
   const parsed = JSON.parse(readFileSync(resultPath, "utf8")) as {
     n_resolved?: unknown;
@@ -1932,17 +1932,17 @@ function readBenchmarkSetupFailure(input: {
   failureMode: string | undefined;
 }): BenchmarkSetupFailure | undefined {
   if (input.nUnresolved === 0 || hasAdapterResultFile(input.runDir, input.adapter)) {
-    return undefined;
+    return ;
   }
   if (!Array.isArray(input.parsed.results)) {
-    return undefined;
+    return ;
   }
   const resultRows = input.parsed.results.filter(isRecord);
   if (resultRows.length === 0) {
-    return undefined;
+    return ;
   }
   if (resultRows.some((row) => typeof row.agent_started_at === "string" && row.agent_started_at.length > 0)) {
-    return undefined;
+    return ;
   }
   const runLog = path.join(input.runDir, "run.log");
   return {
@@ -1969,14 +1969,14 @@ function readTerminalBenchFailureMode(parsed: { failure_mode?: unknown; results?
     return parsed.failure_mode;
   }
   if (!Array.isArray(parsed.results)) {
-    return undefined;
+    return ;
   }
   for (const result of parsed.results) {
     if (isRecord(result) && typeof result.failure_mode === "string") {
       return result.failure_mode;
     }
   }
-  return undefined;
+  return ;
 }
 
 export function readAdapterResultFailures(runDir: string, adapter: Adapter): AdapterResultFailure[] {
@@ -2040,7 +2040,7 @@ function readJsonRecord(filePath: string): Record<string, unknown> | undefined {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     return isRecord(parsed) ? parsed : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -2174,7 +2174,7 @@ export function buildFailurePacket(input: {
   cwd: string;
 }): string {
   const lines: string[] = [
-    `# Terminal-Bench Failure Packet`,
+    "# Terminal-Bench Failure Packet",
     "",
     `- iteration: ${input.iteration}`,
     `- dataset: ${input.dataset}`,

@@ -19,11 +19,11 @@ const MAX_FILESYSTEM_INSPECTION_CACHE_ENTRIES = 24;
 
 export function normalizeFilesystemInspectionPath(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim().replace(/\\/gu, "/");
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const withoutPrefix = trimmed.replace(/^(?:\.\/)+/u, "");
   const collapsed = withoutPrefix.replace(/\/+/gu, "/").replace(/\/$/u, "");
@@ -47,11 +47,11 @@ export function buildFilesystemInspectionActionKey(
   input: Record<string, unknown> | undefined,
 ): string | undefined {
   if (isFilesystemInspectionToolName(toolName) === false) {
-    return undefined;
+    return ;
   }
   const normalizedPath = normalizeFilesystemInspectionPath(asString(input?.path) ?? ".");
   if (normalizedPath === undefined) {
-    return undefined;
+    return ;
   }
   if (toolName === "fs.list") {
     return buildStableInspectionKey(toolName, {
@@ -96,7 +96,7 @@ export function findReusableFilesystemInspection(input: {
 }): FilesystemInspectionCacheEntry | undefined {
   const key = buildFilesystemInspectionActionKey(input.toolName, input.toolInput);
   if (key === undefined) {
-    return undefined;
+    return ;
   }
   return readFilesystemInspectionCache(input.reactState)
     .slice()
@@ -117,7 +117,7 @@ export function applyFilesystemInspectionCacheAfterToolResult(input: {
     return [];
   }
   if (isFilesystemInspectionToolName(input.toolName) === false) {
-    return undefined;
+    return ;
   }
   if (toolOutputIndicatesFailure(input.toolOutput)) {
     return readFilesystemInspectionCache(input.reactState);
@@ -200,7 +200,7 @@ export function buildShellFilesystemInspectionKey(
   workspaceRoot: string | undefined,
 ): string | undefined {
   if (isShellFilesystemInspectionCommand(commandText) === false) {
-    return undefined;
+    return ;
   }
   const normalizedRoot = normalizeFilesystemInspectionPath(workspaceRoot) ?? ".";
   const normalizedTargets = extractShellInspectionTargets(commandText);
@@ -300,7 +300,7 @@ function normalizeFilesystemInspectionCacheEntry(value: unknown): FilesystemInsp
     stepIndex === undefined ||
     updatedAt === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     key,

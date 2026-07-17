@@ -121,8 +121,8 @@ function createRuntimeIO(input: {
 }): RuntimeIO {
   let seq = 0;
   const store = {
-    appendModelCallProvenance: async () => undefined,
-    updateModelCallProvenance: async () => undefined,
+    appendModelCallProvenance: async () => {},
+    updateModelCallProvenance: async () => {},
   } as unknown as RuntimeStore;
   const toolGateway: ToolGateway = {
     call: async <T>() => {
@@ -184,15 +184,15 @@ function createRuntimeIO(input: {
     }),
     buildModelTimeoutMetadata: () => ({}),
     summarizePromptInput: () => ({}),
-    persistModelPromptDump: async () => undefined,
-    persistModelResponseDump: async () => undefined,
-    extractModelUsage: () => undefined,
-    extractModelMetadata: () => undefined,
+    persistModelPromptDump: async () => {},
+    persistModelResponseDump: async () => {},
+    extractModelUsage: () => {},
+    extractModelMetadata: () => {},
     callTool: async <T>() => {
       const result = input.toolCall === undefined ? { ok: true } : await input.toolCall();
       return result as T;
     },
-    afterToolResult: async () => undefined,
+    afterToolResult: async () => {},
     isRetryableToolError: () => false,
   });
 }

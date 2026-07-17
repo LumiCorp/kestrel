@@ -12,7 +12,7 @@ import {
 import { resolveLocalCorePaths } from "./home.js";
 
 const DEFAULT_STALE_AFTER_MS = 30_000;
-const MAX_MIGRATION_OUTPUT_CHARS = 4_000;
+const MAX_MIGRATION_OUTPUT_CHARS = 4000;
 
 export interface LocalCoreMigrationCommandResult {
   ok: boolean;
@@ -270,7 +270,7 @@ function collectCommandResult(child: ChildProcess): Promise<LocalCoreMigrationCo
 
 function parseMigrationLock(value: unknown): LocalCoreMigrationLock | undefined {
   if (typeof value !== "object" || value === null) {
-    return undefined;
+    return ;
   }
   const record = value as Partial<LocalCoreMigrationLock>;
   if (
@@ -286,7 +286,7 @@ function parseMigrationLock(value: unknown): LocalCoreMigrationLock | undefined 
     Number.isFinite(Date.parse(record.startedAt)) === false ||
     Number.isFinite(Date.parse(record.heartbeatAt)) === false
   ) {
-    return undefined;
+    return ;
   }
   return {
     version: LOCAL_CORE_LOCK_VERSION,

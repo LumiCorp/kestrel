@@ -30,10 +30,10 @@ export type SubmittedHistoryLine = SubmittedHistoryLineBase & (
 
 export function normalizeSubmittedHistory(history: unknown): SubmittedHistoryLine[] | undefined {
   if (history === undefined) {
-    return undefined;
+    return ;
   }
   if (Array.isArray(history) === false) {
-    return undefined;
+    return ;
   }
 
   return preserveInitialUserHistoryLine(
@@ -63,18 +63,18 @@ export function buildModelHistoryWindow(
 
 function normalizeSubmittedHistoryLine(line: unknown): SubmittedHistoryLine | undefined {
   if (isRecord(line) === false) {
-    return undefined;
+    return ;
   }
   const data = isRecord(line.data) ? line.data : undefined;
   const isRuntimeWaitingPrompt = line.role === "system" && data?.kind === "runtime.waiting_prompt";
   if (line.role !== "user" && line.role !== "assistant" && isRuntimeWaitingPrompt === false) {
-    return undefined;
+    return ;
   }
   if (typeof line.text !== "string" || typeof line.timestamp !== "string") {
-    return undefined;
+    return ;
   }
   if (line.role === "assistant" && isRecord(line.data) && line.data.reasoning === true) {
-    return undefined;
+    return ;
   }
 
   const normalized = {

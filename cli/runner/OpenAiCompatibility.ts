@@ -8,7 +8,6 @@ import type {
   RunnerActorMetadata,
   RunnerCommand,
   RunnerEvent,
-  RunnerEventType,
 } from "../protocol/contracts.js";
 import { summarizeRunTurnResult } from "./finalizedOutput.js";
 
@@ -959,7 +958,7 @@ function flattenMessageContent(content: unknown): string | undefined {
   }
 
   if (Array.isArray(content) === false) {
-    return undefined;
+    return ;
   }
 
   const textParts = content.flatMap((part) => {
@@ -975,7 +974,7 @@ function flattenMessageContent(content: unknown): string | undefined {
     return [];
   });
   if (textParts.length === 0) {
-    return undefined;
+    return ;
   }
   return textParts.join("\n");
 }
@@ -994,7 +993,7 @@ function flattenResponseContent(parts: unknown[]): string | undefined {
     return [];
   });
   if (textParts.length === 0) {
-    return undefined;
+    return ;
   }
   return textParts.join("\n");
 }
@@ -1002,14 +1001,14 @@ function flattenResponseContent(parts: unknown[]): string | undefined {
 function parseStructuredOutput(value: unknown): StructuredOutputConstraint | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const type = asNonEmptyString(record.type);
   if (type === "json_object") {
     return { type: "json_object" };
   }
   if (type !== "json_schema") {
-    return undefined;
+    return ;
   }
 
   const jsonSchema = asRecord(record.json_schema);
@@ -1090,18 +1089,18 @@ function toUsage(telemetry: {
 
 function toToolCall(event: RunnerEvent, index: number): CompatibilityToolCall | undefined {
   if (event.type !== "run.progress") {
-    return undefined;
+    return ;
   }
   const payload = asRecord(event.payload);
   const update = asRecord(payload?.update);
   if (update?.code !== "TOOL_CALL_STARTED") {
-    return undefined;
+    return ;
   }
 
   const tool = asRecord(update.tool);
   const name = asNonEmptyString(tool?.name);
   if (name === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -1196,33 +1195,31 @@ function readHeader(headers: Record<string, string | undefined>, name: string): 
       return value;
     }
   }
-  return undefined;
+  return ;
 }
 
 function parseStringMap(value: unknown): Record<string, string> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
-  const entries = Object.entries(record).flatMap(([key, entryValue]) => {
-    return typeof entryValue === "string" ? [[key, entryValue] as const] : [];
-  });
+  const entries = Object.entries(record).flatMap(([key, entryValue]) => typeof entryValue === "string" ? [[key, entryValue] as const] : []);
   if (entries.length === 0) {
-    return undefined;
+    return ;
   }
   return Object.fromEntries(entries);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

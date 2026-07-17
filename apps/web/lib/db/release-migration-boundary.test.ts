@@ -49,7 +49,7 @@ test("production migrations serialize and repair known skipped schema", () => {
     reconciliation,
     /ccd8f19f3733f4e36ec75cbf619a4958b77f2d602adb9cd54ef2db68e17ff581/u
   );
-  assert.match(reconciliation, /timestamp: 1783922400000/u);
+  assert.match(reconciliation, /timestamp: 1_783_922_400_000/u);
   assert.match(reconciliation, /recordReconciledMigration/u);
   assert.match(reconciliation, /public\.environment_workspaces/u);
   assert.match(reconciliation, /public\.mcp_credentials/u);

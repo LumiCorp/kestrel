@@ -150,7 +150,7 @@ function normalizeStoreDriver(value: string): StoreDriver {
 
 function readOptionalString(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -292,7 +292,7 @@ function describeSqliteInitError(error: unknown): string {
 
 function readErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) {
-    return undefined;
+    return ;
   }
   return readUnknownObjectString(error, "code");
 }

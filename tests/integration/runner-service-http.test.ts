@@ -357,7 +357,7 @@ test("shared runner service aborts durable replay when its client disconnects", 
       }),
       signal: controller.signal,
     }).then(
-      () => undefined,
+      () => {},
       (error: unknown) => error,
     );
     await replayStarted;
@@ -837,7 +837,7 @@ async function createHttpServerOrSkip(
   } catch (error) {
     if (isListenPermissionError(error)) {
       context?.skip("sandbox denied localhost listener setup for runner-service HTTP smoke test");
-      return undefined;
+      return ;
     }
     throw error;
   }
@@ -868,7 +868,7 @@ async function mountRunnerHandlerOrSkip(
   } catch (error) {
     if (isListenPermissionError(error)) {
       context.skip("sandbox denied localhost listener setup for shared runner-service handler test");
-      return undefined;
+      return ;
     }
     throw error;
   }

@@ -293,7 +293,7 @@ function mergeRunnerCommandMetadata(input: {
     && profile === undefined
     && durability === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -338,7 +338,7 @@ function summarizeRunnerFailureDiagnostics(diagnostics: {
       : undefined;
 
   if (primary === undefined) {
-    return undefined;
+    return ;
   }
   if (secondary === undefined || primary.includes(secondary)) {
     return primary;
@@ -388,7 +388,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;

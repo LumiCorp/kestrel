@@ -1044,25 +1044,25 @@ export class WorkspaceCheckpointService {
 
   private async readCurrentBranch(repoRoot: string): Promise<{ branch?: string } | undefined> {
     if (repoRoot.length === 0) {
-      return undefined;
+      return ;
     }
     try {
       const branch = (await this.runner.run("git", ["branch", "--show-current"], repoRoot)).trim();
       return branch.length > 0 ? { branch } : undefined;
     } catch {
-      return undefined;
+      return ;
     }
   }
 
   private async readHeadSha(repoRoot: string): Promise<{ headSha?: string } | undefined> {
     if (repoRoot.length === 0) {
-      return undefined;
+      return ;
     }
     try {
       const headSha = (await this.runner.run("git", ["rev-parse", "HEAD"], repoRoot)).trim();
       return headSha.length > 0 ? { headSha } : undefined;
     } catch {
-      return undefined;
+      return ;
     }
   }
 
@@ -1336,7 +1336,7 @@ function validateCleanupPositiveInteger(
   field: string,
 ): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (Number.isInteger(value) === false || value <= 0) {
     throw createRuntimeFailure(
@@ -1353,7 +1353,7 @@ function validateCleanupAgeValue(
   field: string,
 ): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (Number.isInteger(value) === false || value < 0) {
     throw createRuntimeFailure(

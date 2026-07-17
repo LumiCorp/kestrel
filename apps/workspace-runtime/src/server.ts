@@ -367,8 +367,7 @@ const server = createServer(async (request, response) => {
 server.listen(config.port, config.listenHost);
 const idleTimer = setInterval(() => {
   if (
-    !idleNotificationInFlight &&
-    !idleStopAccepted &&
+    !(idleNotificationInFlight ||idleStopAccepted ) &&
     activeRequests === 0 &&
     terminals.activeCount === 0 &&
     Date.now() - lastActivityAt >= config.idleTimeoutMinutes * 60_000
@@ -813,7 +812,7 @@ function streamWorkspaceBackup(response: ServerResponse) {
     });
     const child = spawn("tar", ["-czf", "-", "-C", config.workspaceRoot, "."]);
     child.stdout.pipe(response);
-    child.stderr.on("data", () => undefined);
+    child.stderr.on("data", () => {});
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();

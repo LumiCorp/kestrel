@@ -435,11 +435,11 @@ function checkpointReadyCommandBatch(input: {
 }): { reactState: Record<string, unknown>; emitEvents: Transition["emitEvents"] } | undefined {
   const commandBatchRecord = asRecord(input.reactState.commandBatch);
   if (commandBatchRecord === undefined || asString(commandBatchRecord.status) === "processed") {
-    return undefined;
+    return ;
   }
   const batch = readReferenceReactCommandBatch(commandBatchRecord);
   if (batch === undefined) {
-    return undefined;
+    return ;
   }
   const result = new ReferenceReactCommandProcessor().process(
     {
@@ -487,13 +487,13 @@ function mergeCommandCheckpointEvents(
 function readReferenceReactCommandBatch(value: Record<string, unknown>): ReferenceReactCommandBatch | undefined {
   const batchId = asString(value.batchId);
   if (batchId === undefined) {
-    return undefined;
+    return ;
   }
   const commands = asArray(value.commands)
     .map(readReferenceReactCommand)
     .filter((command): command is ReferenceReactCommand => command !== undefined);
   if (commands.length === 0) {
-    return undefined;
+    return ;
   }
   return {
     batchId,
@@ -509,7 +509,7 @@ function readReferenceReactCommand(value: unknown): ReferenceReactCommand | unde
   const commandClass = readCommandClass(record?.commandClass);
   const name = asString(record?.name);
   if (commandId === undefined || kind === undefined || commandClass === undefined || name === undefined) {
-    return undefined;
+    return ;
   }
   const metadata = asRecord(record?.metadata);
   return {
@@ -718,7 +718,7 @@ function readPendingBatch(value: unknown):
   | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const items = asArray(record.items)
     .map((item) => {
@@ -726,7 +726,7 @@ function readPendingBatch(value: unknown):
       const name = asString(entry?.name);
       const input = asRecord(entry?.input);
       if (name === undefined || input === undefined) {
-        return undefined;
+        return ;
       }
       return {
         name,
@@ -735,7 +735,7 @@ function readPendingBatch(value: unknown):
     })
     .filter((entry): entry is { name: string; input: Record<string, unknown> } => entry !== undefined);
   if (items.length === 0) {
-    return undefined;
+    return ;
   }
   const nextIndex = typeof record.nextIndex === "number" && Number.isFinite(record.nextIndex)
     ? Math.max(0, Math.floor(record.nextIndex))

@@ -5,7 +5,7 @@ import type {
   SubmitTurnResult,
   ThreadRecord,
 } from "./contracts.js";
-import { type EvidenceRecoverySummary } from "../runtime/evidenceQuality.js";
+import type { EvidenceRecoverySummary } from "../runtime/evidenceQuality.js";
 import { buildRecoveryAdaptationVerdict } from "../runtime/recoveryVerdict.js";
 
 export interface ContextAdaptationEvaluation {

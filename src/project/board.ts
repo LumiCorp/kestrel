@@ -553,11 +553,11 @@ function requireCard(board: ProductBoardSnapshot, cardId: string | undefined): P
 function normalizeCard(cardId: string, value: unknown): ProductBoardCard | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.title !== "string" || typeof record.prompt !== "string") {
-    return undefined;
+    return ;
   }
   const lane = readLane(record.lane);
   if (lane === undefined) {
-    return undefined;
+    return ;
   }
   const now = LEGACY_BOARD_TIMESTAMP;
   return {
@@ -586,7 +586,7 @@ function normalizeClaim(value: unknown): ProductBoardCard["activeClaim"] | undef
     typeof record.sessionId !== "string" ||
     (record.kind !== "implementation" && record.kind !== "testing")
   ) {
-    return undefined;
+    return ;
   }
   return {
     threadId: record.threadId,
@@ -605,7 +605,7 @@ function normalizeThread(value: unknown, _index: number): ProductBoardCard["thre
     typeof record.sessionId !== "string" ||
     (record.kind !== "implementation" && record.kind !== "testing")
   ) {
-    return undefined;
+    return ;
   }
   return {
     threadId: record.threadId,
@@ -622,7 +622,7 @@ function normalizeThread(value: unknown, _index: number): ProductBoardCard["thre
 function normalizeEvidence(cardId: string, value: unknown, index: number): ProductBoardEvidenceEntry | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.summary !== "string") {
-    return undefined;
+    return ;
   }
   return {
     id: typeof record.id === "string" ? record.id : buildLegacyEvidenceId(cardId, index, record.summary),

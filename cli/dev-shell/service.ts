@@ -382,7 +382,7 @@ function startOwnerWatch(
     }
     clearInterval(timer);
     void shutdown().finally(() => process.exit(0));
-  }, 5_000);
+  }, 5000);
   timer.unref();
   return timer;
 }

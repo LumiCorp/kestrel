@@ -134,7 +134,7 @@ export class SessionStore {
 
   getActive(file: SessionsFile): TuiSessionMeta | undefined {
     if (file.activeSessionName === undefined) {
-      return undefined;
+      return ;
     }
 
     return this.findByName(file, file.activeSessionName);
@@ -145,7 +145,7 @@ export class SessionStore {
       return await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+        return ;
       }
 
       throw error;

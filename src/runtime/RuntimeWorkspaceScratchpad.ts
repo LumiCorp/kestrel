@@ -53,7 +53,7 @@ function readWorkspaceScratchpadTarget(value: unknown): {
   const workspaceRoot = asString(record?.workspaceRoot);
   const workspaceId = asString(record?.workspaceId);
   if (workspaceRoot === undefined || workspaceId === undefined) {
-    return undefined;
+    return ;
   }
   const scratchpadPath = asString(record?.scratchpadPath);
   return {
@@ -94,7 +94,7 @@ function readOperatorAffordance(value: unknown): {
   const recommendedAction = asRecord(record?.recommendedAction);
   const summary = asString(recommendedAction?.summary);
   if (summary === undefined) {
-    return undefined;
+    return ;
   }
   return {
     recommendedAction: {
@@ -135,7 +135,7 @@ async function readOptionalTextFile(filePath: string): Promise<string | undefine
     return await readFile(filePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
+      return ;
     }
     throw error;
   }

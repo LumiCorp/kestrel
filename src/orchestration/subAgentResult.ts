@@ -25,7 +25,7 @@ export function normalizeSubAgentResultEnvelope(
 export function readSubAgentResultEnvelope(value: unknown): SubAgentResultEnvelope | undefined {
   const record = asRecord(value);
   if (record === undefined || isSubAgentResultStatus(record.status) === false || typeof record.result !== "string") {
-    return undefined;
+    return ;
   }
   const references = normalizeReferences(record.references);
   const error = normalizeError(record.error);
@@ -67,7 +67,7 @@ function normalizeResult(payload: unknown, record: Record<string, unknown> | und
 
 function normalizeReferences(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const references = value
     .filter((entry): entry is string => typeof entry === "string")
@@ -79,7 +79,7 @@ function normalizeReferences(value: unknown): string[] | undefined {
 function normalizeError(value: unknown): SubAgentResultEnvelope["error"] | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.code !== "string" || typeof record.message !== "string") {
-    return undefined;
+    return ;
   }
   return {
     code: record.code,

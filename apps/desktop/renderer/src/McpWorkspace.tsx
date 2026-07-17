@@ -1,6 +1,5 @@
 import { Plug, RefreshCw, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import React from "react";
 
 import type {
   DesktopMcpDiscoveryResult,

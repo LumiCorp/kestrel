@@ -37,7 +37,7 @@ async function readStreamBodyChunk(
 async function withTestTimeout<T>(
   promise: Promise<T>,
   timeoutMessage: string,
-  timeoutMs = 5_000,
+  timeoutMs = 5000,
 ): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -928,7 +928,7 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
     assert.equal(runResponse.statusCode, 200);
     assert.match(runResponse.body, /event: run\.completed/);
     assert.match(runResponse.body, /"assistantText":"profile response"/u);
-    assert.doesNotMatch(runResponse.body, /  profile response  /u);
+    assert.doesNotMatch(runResponse.body, / {2}profile response {2}/u);
     assert.equal(capturedProfileId, "reference");
   } finally {
     await service.close();
@@ -995,7 +995,7 @@ test("runner service settles an invalid job terminal without a journal", async (
         }),
       }),
       "invalid job terminal stream did not settle",
-      1_000,
+      1000,
     );
 
     assert.equal(response.statusCode, 200);
@@ -1066,7 +1066,7 @@ test("runner service settles an invalid runtime scope without a journal", async 
         }),
       }),
       "invalid runtime scope stream did not settle",
-      1_000,
+      1000,
     );
 
     assert.equal(response.statusCode, 200);

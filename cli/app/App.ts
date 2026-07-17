@@ -16,19 +16,16 @@ import type {
   TranscriptLine,
   TuiProfile,
   TuiSessionMeta,
-  UiState,
 } from "../contracts.js";
-import { loadShellAndDotEnv } from "../config/EnvLoader.js";
-import { ProfileStore } from "../config/ProfileStore.js";
-import { readRuntimeSettings, type RuntimeSettingsFile } from "../config/RuntimeSettings.js";
-import { HistoryStore } from "../history/HistoryStore.js";
-import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
+import type { ProfileStore } from "../config/ProfileStore.js";
+import type { RuntimeSettingsFile } from "../config/RuntimeSettings.js";
+import type { HistoryStore } from "../history/HistoryStore.js";
+import type { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
 import { parseFinalizePayload } from "../output/FinalizePayload.js";
-import { SessionStore } from "../session/SessionStore.js";
+import type { SessionStore } from "../session/SessionStore.js";
 import { resolveLocalCoreStoreClient } from "../localCoreStoreClient.js";
-import { UiStateStore } from "../ink/persistence/UiStateStore.js";
+import type { UiStateStore } from "../ink/persistence/UiStateStore.js";
 import {
-  buildInitialUiRuntimeState,
   computeUnreadIncrement,
   deriveLayoutProfile,
   derivePaneRowCounts,
@@ -39,7 +36,7 @@ import {
   moveCursor,
   pageCursor,
   toPersistedUiState,
-  UiStore,
+  type UiStore,
   type UiRuntimeState,
 } from "../ink/store/UiStore.js";
 import { AppRoot, type InkAppController } from "../ink/AppRoot.js";
@@ -120,7 +117,6 @@ import {
   toCanonicalInteractionMode,
   type ModelProviderId,
   type McpStatusSnapshot,
-  type ProgressUpdateV1,
   type AgentProgressUpdateV1,
 } from "../../src/index.js";
 import type { ResolvedModelPolicy } from "../../src/profile/modelPolicy.js";
@@ -159,18 +155,15 @@ import {
   getSkillPackById,
   listSkillPacks,
 } from "../runtime/skillPacks.js";
-import { WorkspaceStore } from "../workspace/WorkspaceStore.js";
+import type { WorkspaceStore } from "../workspace/WorkspaceStore.js";
 import {
   describeResolvedWorkspace,
-  resolveWorkspaceFromCwd,
 } from "../workspace/WorkspaceResolver.js";
 import {
-  preflightDatabaseConnection,
   resolveDatabasePreflightTarget,
   resolveDatabaseSelfHealPolicy,
 } from "../../src/runtime/databasePreflight.js";
 import {
-  attemptLocalDatabaseSelfHeal,
   resolveDockerCommandForSelfHealForTests,
   shouldLaunchDockerDesktopForSelfHealForTests,
 } from "../../src/runtime/localDatabaseSelfHeal.js";
@@ -2245,7 +2238,7 @@ export class App {
         interactionMode: "build",
       };
     }
-    return undefined;
+    return ;
   }
 
   private async handleLine(rawLine: string): Promise<void> {
@@ -3861,7 +3854,7 @@ export class App {
     if (state.activeView === "recovery") {
       return this.buildRecoveryCenterSnapshot(state);
     }
-    return undefined;
+    return ;
   }
 
   private buildWorkspaceJourneySnapshot(state: UiRuntimeState) {
@@ -5159,7 +5152,7 @@ export class App {
   }
 
   private leaveAlternateScreen(): void {
-    if (!process.stdout.isTTY || !this.alternateScreenEnabled) {
+    if (!(process.stdout.isTTY && this.alternateScreenEnabled)) {
       return;
     }
     process.stdout.write("\u001b[?1049l");
@@ -5272,7 +5265,7 @@ function buildFinalizeReportingGroundingNotice(
 ): string | undefined {
   const reportingGrounding = asRecord(data?.reportingGrounding);
   if (reportingGrounding === undefined) {
-    return undefined;
+    return ;
   }
   const labeledFields = FINALIZE_REPORTING_GROUNDING_FIELDS
     .map((field) => {
@@ -5281,7 +5274,7 @@ function buildFinalizeReportingGroundingNotice(
     })
     .filter((entry): entry is string => entry !== undefined);
   if (labeledFields.length === 0) {
-    return undefined;
+    return ;
   }
   return [
     `Finalize provenance: ${labeledFields.join(", ")}.`,
@@ -5297,7 +5290,7 @@ function asReportingGroundingLabel(value: unknown): FinalizeReportingGroundingLa
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -5375,7 +5368,7 @@ function truncatePreflightDetail(value: string): string {
 
 function formatDiagnosticError(error: unknown): string | undefined {
   if (error === undefined) {
-    return undefined;
+    return ;
   }
   if (error instanceof Error) {
     const diagnostics = asRunnerExitDiagnostics(error);
@@ -5397,7 +5390,7 @@ function formatDiagnosticError(error: unknown): string | undefined {
 
 function stringifyDiagnosticDetails(value: unknown): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   try {
     return JSON.stringify(value, null, 2);
@@ -5464,7 +5457,7 @@ export function resolveRunFailureSummaryForTests(payload: {
 
 function readNonEmptyText(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -5477,7 +5470,7 @@ function asRunnerExitDiagnostics(
     runnerExitDiagnostics?: { lastProcessError?: string | undefined; recentStderr?: unknown };
   }).runnerExitDiagnostics;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-    return undefined;
+    return ;
   }
   const recentStderr = Array.isArray(candidate.recentStderr)
     ? candidate.recentStderr.filter((line): line is string => typeof line === "string")
@@ -5546,7 +5539,7 @@ function findLatestSelectedLane(runLogs: AgentRunLogLine[]): string | undefined 
       return selectedLane;
     }
   }
-  return undefined;
+  return ;
 }
 
 function formatSessionMode(session: Pick<TuiSessionMeta, "interactionMode" | "actSubmode">): string {
@@ -5558,7 +5551,7 @@ function formatSessionMode(session: Pick<TuiSessionMeta, "interactionMode" | "ac
 
 function readErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) {
-    return undefined;
+    return ;
   }
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" && code.trim().length > 0 ? code : undefined;
@@ -5566,7 +5559,7 @@ function readErrorCode(error: unknown): string | undefined {
 
 function readErrorDetails(error: unknown): Record<string, unknown> | undefined {
   if (typeof error !== "object" || error === null || Array.isArray(error)) {
-    return undefined;
+    return ;
   }
   const details = (error as { details?: unknown }).details;
   return typeof details === "object" && details !== null && Array.isArray(details) === false

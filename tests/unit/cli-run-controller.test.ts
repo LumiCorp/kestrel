@@ -172,11 +172,11 @@ function createRunHarness(input: {
     selectors: createUiDerivedSelectors(),
     getRuntimeSettings: () => ({ version: 1, defaults: {} }),
     getSessionsFile: () => ({ version: 5, activeSessionName: "default", sessions: [activeSession] }),
-    setSessionsFile: () => undefined,
-    getActiveWorkspace: () => undefined,
-    setActiveWorkspace: () => undefined,
-    getLaunchWorkspace: () => undefined,
-    setLaunchWorkspace: () => undefined,
+    setSessionsFile: () => {},
+    getActiveWorkspace: () => {},
+    setActiveWorkspace: () => {},
+    getLaunchWorkspace: () => {},
+    setLaunchWorkspace: () => {},
     appendHistoryLine: async (
       role: TranscriptLine["role"],
       text: string,
@@ -185,9 +185,9 @@ function createRunHarness(input: {
     ) => {
       history.push({ role, text, ...(data !== undefined ? { data } : {}), output });
     },
-    persistSessionAndUi: async () => undefined,
-    persistUiState: async () => undefined,
-    persistActiveProfile: async () => undefined,
+    persistSessionAndUi: async () => {},
+    persistUiState: async () => {},
+    persistActiveProfile: async () => {},
     getActiveRunnerMetadata: () => ({ profile: uiStore.getState().activeProfile }),
     setActiveSessionState: async (patch: Partial<TuiSessionMeta>) => {
       const state = uiStore.getState();
@@ -198,10 +198,10 @@ function createRunHarness(input: {
         },
       });
     },
-    navigateToView: () => undefined,
+    navigateToView: () => {},
     withMcpSummary: (statusLine: string) => statusLine,
-    recordPersistenceFailure: () => undefined,
-    refreshWorkspaceForActiveSession: async () => undefined,
+    recordPersistenceFailure: () => {},
+    refreshWorkspaceForActiveSession: async () => {},
     shouldApplyCompactionOnContinuationResume: () => true,
     buildSessionOperatorState: ({ runtime }: {
       runtime?: TuiSessionMeta["operatorState"] | undefined;
@@ -216,11 +216,11 @@ function createRunHarness(input: {
     }) => {
       diagnostics.push(entry);
     },
-    handleTaskUpdatedEvent: async () => undefined,
-    syncBackgroundSessionProgress: async () => undefined,
-    syncBackgroundSessionResult: async () => undefined,
-    syncBackgroundSessionFailure: async () => undefined,
-    clearProgressForRun: () => undefined,
+    handleTaskUpdatedEvent: async () => {},
+    syncBackgroundSessionProgress: async () => {},
+    syncBackgroundSessionResult: async () => {},
+    syncBackgroundSessionFailure: async () => {},
+    clearProgressForRun: () => {},
     pushRunLog: (line: AgentRunLogLine) => {
       runLogs.push(line);
     },

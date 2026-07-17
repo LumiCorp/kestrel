@@ -517,8 +517,8 @@ export async function startLocalCoreApiServer(
         homePath: home.homePath,
         coreVersion: options.coreVersion,
         authorityId,
-      }).catch(() => undefined);
-    }, options.heartbeatMs ?? 5_000);
+      }).catch(() => {});
+    }, options.heartbeatMs ?? 5000);
     heartbeat.unref();
 
     const closeOnce = (): Promise<void> => {
@@ -529,7 +529,7 @@ export async function startLocalCoreApiServer(
         clearTimeout(idleTimeout);
       }
       closePromise = (async () => {
-        await maintenanceOperation?.promise.catch(() => undefined);
+        await maintenanceOperation?.promise.catch(() => {});
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -617,7 +617,7 @@ async function createExecutionBundle(input: {
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
-    return undefined;
+    return ;
   }
   const runtimeConfiguration = input.runtimeConfiguration
     ?? await input.runtimeConfigurationStore.read();
@@ -664,8 +664,8 @@ async function createExecutionBundle(input: {
       runtimeConfiguration,
     };
   } catch (error) {
-    await handler.close({ abortActiveRuns: true }).catch(() => undefined);
-    await closeLocalCoreStore(input.status.home.homePath).catch(() => undefined);
+    await handler.close({ abortActiveRuns: true }).catch(() => {});
+    await closeLocalCoreStore(input.status.home.homePath).catch(() => {});
     throw error;
   }
 }
@@ -789,16 +789,16 @@ async function cleanupFailedLocalCoreStartup(input: {
     }));
   }
   await Promise.allSettled(cleanup);
-  await closeLocalCoreStore(input.homePath).catch(() => undefined);
+  await closeLocalCoreStore(input.homePath).catch(() => {});
   if (input.socketPrepared) {
-    await rm(input.socketPath, { force: true }).catch(() => undefined);
+    await rm(input.socketPath, { force: true }).catch(() => {});
   }
   if (input.ownsLock) {
     await releaseCoreLock({
       homePath: input.homePath,
       coreVersion: input.coreVersion,
       authorityId: input.authorityId,
-    }).catch(() => undefined);
+    }).catch(() => {});
   }
 }
 
@@ -1387,7 +1387,7 @@ async function handleRequest(input: {
 
 function parseCredentialPath(pathname: string) {
   const match = /^\/v1\/credentials\/([^/]+)$/u.exec(pathname);
-  if (match === null) return undefined;
+  if (match === null) return ;
   try {
     return parseLocalCoreCredentialId(decodeURIComponent(match[1] ?? ""));
   } catch (error) {
@@ -1440,7 +1440,7 @@ function normalizeOptionalStringArrayField(value: unknown, field: string): strin
   }
   const candidate = (value as Record<string, unknown>)[field];
   if (candidate === undefined) {
-    return undefined;
+    return ;
   }
   if (Array.isArray(candidate) === false || candidate.some((entry) => typeof entry !== "string")) {
     throw new Error(`Request body field '${field}' must be an array of strings.`);
@@ -1502,7 +1502,7 @@ function normalizeReplayQueryString(
 ): string | undefined {
   const value = record[field];
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = normalizeString(value);
   if (normalized === undefined) {
@@ -1517,7 +1517,7 @@ function normalizeReplayQueryTimestamp(
 ): string | undefined {
   const value = normalizeReplayQueryString(record, field);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const timestamp = Date.parse(value);
   if (Number.isFinite(timestamp) === false) {
@@ -1528,7 +1528,7 @@ function normalizeReplayQueryTimestamp(
 
 function normalizeReplayQueryLimit(value: unknown): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isSafeInteger(value) === false || value <= 0) {
     throw invalidReplayQuery("Replay query field 'limit' must be a positive integer.");
@@ -1597,13 +1597,13 @@ function broadcastProjectRuns(
 }
 
 function writeProjectRunEvent(response: ServerResponse, runs: DesktopManagedProjectRun[]): void {
-  response.write(`event: project-runs\n`);
+  response.write("event: project-runs\n");
   response.write(`data: ${JSON.stringify({ runs })}\n\n`);
 }
 
 function parsePositiveInteger(value: string | null): number | undefined {
   if (value === null || value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;

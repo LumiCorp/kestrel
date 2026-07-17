@@ -77,7 +77,7 @@ test("DesktopProjectFileIndex refreshes a cached non-Git root after project regi
 test("DesktopProjectFileIndex falls back to known directory listings for non-Git roots", async () => {
   const rootPath = "/tmp/project-a";
   const index = new DesktopProjectFileIndex({
-    gitListFiles: async () => undefined,
+    gitListFiles: async () => {},
   });
   index.rememberDirectoryListing({
     rootPath,

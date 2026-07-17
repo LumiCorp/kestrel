@@ -5,7 +5,7 @@
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -13,7 +13,7 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 export function asString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
 
   return value;

@@ -55,7 +55,7 @@ test("buildRuntimeOperatorAffordance surfaces blocked wait reasons and compacted
       interactionMode: "plan",
       contextCache: {
         contextTelemetry: {
-          promptBudgetChars: 12000,
+          promptBudgetChars: 12_000,
           estimatedChars: 8200,
           degradationMode: "compact",
           droppedSections: ["recentConversation.full"],

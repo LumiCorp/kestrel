@@ -132,7 +132,7 @@ function sanitizeRecord(
   summaries: RedactionSummary[],
 ): Record<string, unknown> | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const next: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {

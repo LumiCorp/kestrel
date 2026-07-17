@@ -10,7 +10,7 @@ import { resolveLocalCorePaths } from "./home.js";
 
 const DEFAULT_STALE_AFTER_MS = 30_000;
 const ACQUISITION_RETRY_MS = 10;
-const ACQUISITION_WAIT_TIMEOUT_MS = 5_000;
+const ACQUISITION_WAIT_TIMEOUT_MS = 5000;
 
 export async function readCoreLock(input: {
   homePath: string;
@@ -219,7 +219,7 @@ export async function releaseCoreLock(input: {
 
 function parseCoreLock(value: unknown): LocalCoreLock | undefined {
   if (typeof value !== "object" || value === null) {
-    return undefined;
+    return ;
   }
   const record = value as Partial<LocalCoreLock>;
   if (
@@ -233,7 +233,7 @@ function parseCoreLock(value: unknown): LocalCoreLock | undefined {
     Number.isFinite(Date.parse(record.startedAt)) === false ||
     Number.isFinite(Date.parse(record.heartbeatAt)) === false
   ) {
-    return undefined;
+    return ;
   }
   return {
     version: LOCAL_CORE_LOCK_VERSION,
@@ -286,7 +286,7 @@ async function acquireLockAcquisitionGuard(lockPath: string): Promise<LockAcquis
         throw error;
       }
       if (Date.now() >= deadline) {
-        return undefined;
+        return ;
       }
       await delay(ACQUISITION_RETRY_MS);
     }

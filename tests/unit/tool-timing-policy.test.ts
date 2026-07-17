@@ -55,6 +55,6 @@ test("deriveShellRunTimeoutDecision rejects dispatch when only closeout budget r
   assert.equal(decision.kind, "deadline_exhausted");
   assert.equal(decision.remainingMs, 61_000);
   assert.equal(decision.closeoutReserveMs, 60_000);
-  assert.equal(decision.minDispatchMs, 2_500);
+  assert.equal(decision.minDispatchMs, 2500);
   assert.match(decision.failureReason, /Not enough external runtime budget/u);
 });

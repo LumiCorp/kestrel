@@ -14,7 +14,7 @@ test("Workspace exchanges its execution ticket for a scoped GitHub credential", 
     fetchImpl: async (url, init) => {
       capturedUrl = url.toString();
       capturedInit = init;
-      return Response.json({ token: "scoped-token", expiresAt: 1_060 });
+      return Response.json({ token: "scoped-token", expiresAt: 1060 });
     },
   });
   assert.equal(
@@ -31,7 +31,7 @@ test("Workspace exchanges its execution ticket for a scoped GitHub credential", 
   });
   assert.deepEqual(credential, {
     authorization: "Bearer scoped-token",
-    expiresAt: 1_060,
+    expiresAt: 1060,
   });
 });
 
@@ -45,7 +45,7 @@ test("Workspace binds push credentials to the candidate fingerprint", async () =
     candidateFingerprint: "candidate-sha256",
     fetchImpl: async (_url, init) => {
       body = JSON.parse(String(init?.body));
-      return Response.json({ token: "push-token", expiresAt: 1_060 });
+      return Response.json({ token: "push-token", expiresAt: 1060 });
     },
   });
   assert.deepEqual(body, {

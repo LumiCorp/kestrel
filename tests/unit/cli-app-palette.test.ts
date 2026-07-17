@@ -68,7 +68,7 @@ test("buildPaletteActions adds recent session switch actions sorted by updatedAt
     ],
   };
 
-  const actions = buildPaletteActions(state, 1700000000000);
+  const actions = buildPaletteActions(state, 1_700_000_000_000);
   const switchActions = actions.filter((action) => action.id.startsWith("session.switch."));
 
   assert.equal(switchActions.length, 2);
@@ -122,7 +122,7 @@ test("slash palette keeps the full slash command catalog", () => {
     ],
   };
 
-  const actions = buildPaletteActions(state, 1700000000000);
+  const actions = buildPaletteActions(state, 1_700_000_000_000);
 
   assert.equal(actions.some((action) => action.command === "/child"), true);
   assert.equal(actions.some((action) => action.command === "/checkpoint"), false);
@@ -182,7 +182,7 @@ test("buildPaletteActions caps switch actions and adds resume action when waitin
     sessions,
   };
 
-  const actions = buildPaletteActions(state, 1700000000000);
+  const actions = buildPaletteActions(state, 1_700_000_000_000);
   const switchActions = actions.filter((action) => action.id.startsWith("session.switch."));
 
   assert.equal(switchActions.length, 12);
@@ -224,7 +224,7 @@ test("buildPaletteActions keeps parser command roots discoverable via commands o
     ],
   };
 
-  const actions = buildPaletteActions(state, 1700000000000);
+  const actions = buildPaletteActions(state, 1_700_000_000_000);
   const visibleRoots = buildVisibleSlashRoots();
   const discoveredRoots = new Set<string>();
   for (const action of actions) {

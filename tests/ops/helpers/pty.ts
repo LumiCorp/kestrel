@@ -11,7 +11,7 @@ import { seedTuiHome } from "./tuiHome.js";
 
 const ANSI_PATTERN =
   // eslint-disable-next-line no-control-regex
-  /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/gu;
+  /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/gu;
 
 export interface TuiScenarioStep {
   waitFor: RegExp | string;
@@ -163,7 +163,7 @@ async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
     return;
   }
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 5_000) {
+  while (Date.now() - startedAt < 5000) {
     try {
       process.kill(ownerPid, 0);
     } catch {

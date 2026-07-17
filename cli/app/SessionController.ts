@@ -314,7 +314,7 @@ export class SessionController {
       })),
     );
     if (target === undefined) {
-      return undefined;
+      return ;
     }
     return this.context.getSessionsFile().sessions.find((session) => session.sessionId === target.id);
   }

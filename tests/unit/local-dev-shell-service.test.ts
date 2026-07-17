@@ -408,8 +408,8 @@ test("LocalDevShellService health timeout includes startup diagnostics", async (
       testService.bootstrapStatusPath,
       JSON.stringify({
         status: "booting",
-        pid: 12345,
-        ownerPid: 67890,
+        pid: 12_345,
+        ownerPid: 67_890,
         ownerKind: "ks",
         socketPath: testService.socketPath,
         at: "2026-06-17T16:10:00.000Z",
@@ -418,7 +418,7 @@ test("LocalDevShellService health timeout includes startup diagnostics", async (
     );
     await writeFile(testService.logPath, "", "utf8");
     return {
-      pid: 12345,
+      pid: 12_345,
       exitCode: null,
       signalCode: null,
     };
@@ -437,13 +437,13 @@ test("LocalDevShellService health timeout includes startup diagnostics", async (
         assert.match(runtimeError.message, /did not become ready/i);
         assert.equal(runtimeError.details?.bootstrapReason, "health_timeout");
         assert.equal(runtimeError.details?.startupTimeoutMs, 20);
-        assert.equal(runtimeError.details?.pid, 12345);
+        assert.equal(runtimeError.details?.pid, 12_345);
         assert.equal(runtimeError.details?.logEmpty, true);
         assert.equal(typeof runtimeError.details?.elapsedMs, "number");
         assert.deepEqual(runtimeError.details?.latestBootstrapStatus, {
           status: "booting",
-          pid: 12345,
-          ownerPid: 67890,
+          pid: 12_345,
+          ownerPid: 67_890,
           ownerKind: "ks",
           socketPath: testService.socketPath,
           at: "2026-06-17T16:10:00.000Z",

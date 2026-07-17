@@ -25,7 +25,7 @@ export interface HeapDiagnosticsReporter {
 
 export class NoopHeapDiagnosticsReporter implements HeapDiagnosticsReporter {
   async sample(): Promise<HeapPressureSample | undefined> {
-    return undefined;
+    return ;
   }
 }
 
@@ -68,7 +68,7 @@ export class RuntimeHeapDiagnostics implements HeapDiagnosticsReporter {
 
   async sample(input: HeapSampleInput): Promise<HeapPressureSample | undefined> {
     if (this.options.mode === "off" && this.guardMode() === "off") {
-      return undefined;
+      return ;
     }
     const record = this.buildRecord(input);
     if (this.options.mode !== "off") {

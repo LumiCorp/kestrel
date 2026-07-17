@@ -46,8 +46,7 @@ export async function handleAppRuntimeRequest(input: {
     const adapter = getAppProviderAdapter(input.appKey);
     const runtime = adapter?.runtime;
     if (
-      !runtime ||
-      !runtime.capabilityKeys.includes(input.capabilityKey)
+      !(runtime &&runtime.capabilityKeys.includes(input.capabilityKey))
     ) {
       throw new AppRuntimeError("APP_RUNTIME_PROVIDER_NOT_FOUND", 404);
     }

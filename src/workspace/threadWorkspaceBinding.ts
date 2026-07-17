@@ -72,7 +72,7 @@ export function deriveThreadWorkspaceSummaryProjection(
   binding: ThreadWorkspaceBinding | undefined,
 ): ThreadWorkspaceSummaryProjection | undefined {
   if (binding === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = normalizeThreadWorkspaceBinding(binding);
   return {
@@ -86,17 +86,17 @@ export function resolveThreadWorkspaceRuntimeContext(
   binding: ThreadWorkspaceBinding | undefined,
 ): WorkspaceRuntimeContext | undefined {
   if (binding === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = normalizeThreadWorkspaceBinding(binding);
   if (normalized.binding !== "active") {
-    return undefined;
+    return ;
   }
   if (normalized.runtimeContext !== undefined) {
     return normalized.runtimeContext;
   }
   if (normalized.workspaceRoot === undefined) {
-    return undefined;
+    return ;
   }
   return {
     workspaceId: normalized.workspaceId ?? normalized.workspaceRoot,
@@ -115,7 +115,7 @@ export function resolveThreadWorkspaceExecutionRoot(
 
 function trimString(value: string | undefined): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

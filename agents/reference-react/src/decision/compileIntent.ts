@@ -12,7 +12,6 @@ import {
 import type { RuntimePlanState } from "../../../../src/runtime/planDocument.js";
 import { isPublicInternetHttpUrl } from "../../../../tools/runtime/builtInToolInputContracts.js";
 import { readRetrievalToolFamily } from "../../../../src/engine/retrievalLoopGuard.js";
-import { deriveIntentPolicyApplicability } from "../../../../src/intentPolicy.js";
 import { normalizeContinuationOffer } from "../../../../src/runtime/continuationOffer.js";
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import { isShellFilesystemInspectionCommand } from "../filesystemInspection.js";
@@ -22,7 +21,6 @@ export {
 } from "./DecisionCompileError.js";
 import {
   DecisionCompileError,
-  type DecisionErrorCode,
   type DecisionIngestCategory,
 } from "./DecisionCompileError.js";
 import {
@@ -38,15 +36,6 @@ import {
   resolveExecutionIntentToolName,
 } from "../toolIntent.js";
 import { normalizeToolActionInput, sanitizeToolInputForSchema } from "../toolInputNormalization.js";
-import {
-  isHelperRepairCheckTool,
-  isHelperSourceEditTool,
-  isHelperSourceInspectionTool,
-  isHelperWorkTool,
-  isInteractiveProcessTool,
-  isManualDevShellProcessTool,
-  isRunHelperContinuationTool,
-} from "../deliberatorToolSurface.js";
 import { validateFinalizationDecision } from "../finalizationPolicy.js";
 import { hashToolInput } from "../memory/workingMemory.js";
 import type {
@@ -62,7 +51,6 @@ import type {
   DecisionFailureCode,
   DecisionTrace,
   DecisionVerification,
-  EvidenceDelta,
   EvidenceLedgerContext,
   EvidenceLedgerEntry,
   ReactAction,
@@ -579,7 +567,7 @@ export function compileDraftIntent(input: CompileDraftIntentInput): CompiledInte
           confidence: canonicalIntent.intentConfidence ?? canonicalIntent.toolIntent?.confidence ?? 1,
         } satisfies DraftIntent);
   if (draftIntent === undefined) {
-    return undefined;
+    return ;
   }
 
   const candidateTools = buildCandidateViews(draftIntent.execution, input.capabilityManifest);
@@ -689,7 +677,7 @@ export function compileIntentState(input: {
       confidence: record.confidence,
     });
     if (reparsedDraft === undefined) {
-      return undefined;
+      return ;
     }
     return compileDraftIntent({
       draftIntent: reparsedDraft,
@@ -700,7 +688,7 @@ export function compileIntentState(input: {
 
   const draftIntent = parseDraftIntent(input.value);
   if (draftIntent === undefined) {
-    return undefined;
+    return ;
   }
   return compileDraftIntent({
     draftIntent,
@@ -712,7 +700,7 @@ export function serializeCompiledIntentForState(
   value: CompiledIntent | undefined,
 ): CompiledIntent | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...value,
@@ -1062,7 +1050,7 @@ function readActiveWorkspaceRootFromDevShellProcesses(
       return processWorkspaceRoot;
     }
   }
-  return undefined;
+  return ;
 }
 
 function validateDevShellProcessBatchContract(action: ReactAction): void {
@@ -1266,7 +1254,7 @@ function findMatchingLiveProcessForCommand(
     }
     return { processId };
   }
-  return undefined;
+  return ;
 }
 
 function validateDevShellProcessTargets(
@@ -1367,7 +1355,7 @@ function isDevShellProcessTargetTool(toolName: string): boolean {
 function normalizeSourcePath(path: string | undefined): string | undefined {
   const trimmed = path?.trim();
   if (trimmed === undefined || trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   return trimmed
     .replace(/\\/gu, "/")
@@ -1423,7 +1411,7 @@ function validateDevShellExecCommandContract(action: ReactAction): void {
       const input = asRecord(item.input);
       const command = asString(input?.command);
       const sessionId = asString(input?.sessionId);
-      const hasStdin = input !== undefined && Object.prototype.hasOwnProperty.call(input, "stdin");
+      const hasStdin = input !== undefined && Object.hasOwn(input, "stdin");
       const hasStop = input?.stop === true;
       if (command !== undefined && (sessionId !== undefined || hasStdin || hasStop)) {
         throw new DecisionCompileError(
@@ -1497,12 +1485,12 @@ function isInteractivePythonInterpreterCommand(command: string | undefined): boo
 function readPrimaryShellExecutable(command: string | undefined): string | undefined {
   const trimmed = command?.trim();
   if (trimmed === undefined || trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const match = /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s+)*([^\s;&|()<>]+)/u.exec(trimmed);
   const raw = match?.[1]?.trim();
   if (raw === undefined || raw.length === 0) {
-    return undefined;
+    return ;
   }
   return raw.split("/").filter((part) => part.length > 0).at(-1)?.toLowerCase();
 }
@@ -1571,7 +1559,7 @@ function findLiveProcessForCommand(
 ): string | undefined {
   const expectedCommand = command?.trim();
   if (expectedCommand === undefined || expectedCommand.length === 0) {
-    return undefined;
+    return ;
   }
   return devShellProcesses
     ?.map((process) => {
@@ -1759,7 +1747,7 @@ function describeToolInputReceived(input: Record<string, unknown>, error: ErrorO
   }
   if (error?.keyword === "additionalProperties") {
     const additionalProperty = asString(asRecord(error.params)?.additionalProperty);
-    if (additionalProperty !== undefined && Object.prototype.hasOwnProperty.call(input, additionalProperty)) {
+    if (additionalProperty !== undefined && Object.hasOwn(input, additionalProperty)) {
       return describeValueShape(input[additionalProperty]);
     }
   }
@@ -1778,7 +1766,7 @@ function readAjvParamAsString(params: ErrorObject["params"], key: string): strin
       .join(" | ");
     return rendered.length > 0 ? rendered : undefined;
   }
-  return undefined;
+  return ;
 }
 
 function readJsonPointer(input: unknown, pointer: string | undefined): unknown {
@@ -1795,7 +1783,7 @@ function readJsonPointer(input: unknown, pointer: string | undefined): unknown {
     }
     const record = asRecord(current);
     if (record === undefined) {
-      return undefined;
+      return ;
     }
     current = record[segment];
   }
@@ -1864,7 +1852,7 @@ function withCompiledActionRepetitionSignals(
     nextToolInputHash === undefined &&
     nextFilesystemInspectionKey === undefined
   ) {
-    return undefined;
+    return ;
   }
   const {
     nextToolName: _priorNextToolName,
@@ -1904,7 +1892,7 @@ function hashCompiledToolInput(action: ReactAction): string | undefined {
   }
   if (action.kind === "tool_batch") {
     if (action.items.length === 0) {
-      return undefined;
+      return ;
     }
     if (action.items.length === 1) {
       const item = action.items[0];
@@ -1917,13 +1905,13 @@ function hashCompiledToolInput(action: ReactAction): string | undefined {
       })),
     );
   }
-  return undefined;
+  return ;
 }
 
 function normalizeFilesystemPath(path: string): string | undefined {
   const trimmed = path.trim().replace(/\\/gu, "/");
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const withoutPrefix = trimmed.replace(/^(?:\.\/)+/u, "");
   const collapsed = withoutPrefix.replace(/\/+/gu, "/").replace(/\/$/u, "");
@@ -1950,7 +1938,7 @@ function readPrimaryActionToolFamily(action: ReactAction): string | undefined {
     );
     return families.length === 1 ? families[0] : undefined;
   }
-  return undefined;
+  return ;
 }
 
 function isDevShellToolName(name: string): boolean {
@@ -2027,7 +2015,7 @@ function isSettledDevShellCommand(
 
 function readIntegerNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.trunc(value);
 }
@@ -2149,5 +2137,5 @@ function resolveChosenActionName(action: ReactAction): string | undefined {
   if (action.kind === "effect") {
     return action.type;
   }
-  return undefined;
+  return ;
 }

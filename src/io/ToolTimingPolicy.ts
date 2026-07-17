@@ -11,7 +11,7 @@ export interface ToolTimingPolicyConfig {
 export const DEFAULT_TOOL_TIMING_POLICY: ToolTimingPolicyConfig = {
   defaultShellRunTimeoutMs: 30_000,
   closeoutReserveMs: 60_000,
-  minDispatchMs: 2_500,
+  minDispatchMs: 2500,
 };
 
 export type ShellRunTimeoutDecision =
@@ -69,7 +69,7 @@ export function deriveShellRunTimeoutDecision(input: {
       closeoutReserveMs: config.closeoutReserveMs,
       minDispatchMs: config.minDispatchMs,
       failureReason:
-        `Not enough external runtime budget remains to start dev.shell.run ` +
+        "Not enough external runtime budget remains to start dev.shell.run " +
         `(${remainingMs}ms remaining, ${config.closeoutReserveMs}ms reserved for closeout).`,
     };
   }

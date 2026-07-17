@@ -57,7 +57,7 @@ export async function writeWorkspaceFile(input: {
     assertRevision(current.revision, input.expectedRevision);
     await rename(temporaryPath, filePath);
   } finally {
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => {});
   }
   return { revision: fileRevision(input.content) };
 }

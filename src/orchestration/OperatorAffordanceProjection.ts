@@ -316,7 +316,7 @@ export function deriveOperatorBlockReason(
   waitFor: Exclude<NormalizedOutput["waitFor"], undefined> | undefined,
 ): OperatorBlockReason | undefined {
   if (waitFor === undefined) {
-    return undefined;
+    return ;
   }
 
   const metadata = asRecord(waitFor.metadata);
@@ -353,7 +353,7 @@ export function deriveOperatorBlockReason(
     };
   }
 
-  return undefined;
+  return ;
 }
 
 export function deriveOperatorRecommendedAction(
@@ -412,7 +412,7 @@ export function buildOperatorWaitSummary(
   waitFor: Exclude<NormalizedOutput["waitFor"], undefined> | undefined,
 ): OperatorAffordancePayload["wait"] {
   if (waitFor === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -426,7 +426,7 @@ export function readOperatorContextSummary(
   value: Record<string, unknown> | undefined,
 ): OperatorAffordancePayload["context"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const promptBudgetChars = asNumber(value.promptBudgetChars);
@@ -437,7 +437,7 @@ export function readOperatorContextSummary(
     estimatedChars === undefined ||
     (degradationMode !== "full" && degradationMode !== "compact" && degradationMode !== "minimal")
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -459,13 +459,13 @@ export function readOperatorRuntimePlanSummary(
   reactState: Record<string, unknown> | undefined,
 ): OperatorAffordancePayload["runtimePlan"] {
   if (reactState === undefined) {
-    return undefined;
+    return ;
   }
   const workingPlan = asRecord(reactState.workingPlan);
   const commandProcessor = asRecord(reactState.commandProcessor);
   const lastCheckpoint = asRecord(commandProcessor?.lastCheckpoint);
   if (workingPlan === undefined && commandProcessor === undefined) {
-    return undefined;
+    return ;
   }
   const checkpoint =
     lastCheckpoint === undefined
@@ -518,7 +518,7 @@ export function readOperatorWaitDetail(
 
 function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as ExecutionPolicyOverride;
 }
@@ -526,7 +526,7 @@ function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefine
 function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undefined> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const kind = asString(record.kind);
   const eventType = asString(record.eventType);
@@ -534,13 +534,13 @@ function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undef
     eventType === undefined ||
     (kind !== "approval" && kind !== "effect" && kind !== "region_merge" && kind !== "user")
   ) {
-    return undefined;
+    return ;
   }
   const metadata = asRecord(record.metadata);
   if (kind === "user") {
     const prompt = asString(metadata?.prompt);
     if (prompt === undefined) {
-      return undefined;
+      return ;
     }
     return {
       kind,
@@ -572,7 +572,7 @@ function readStringArray(value: unknown): string[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

@@ -118,7 +118,7 @@ export function readInteractionPrompt(
   if (waitFor?.kind === "approval") {
     return extractWaitPrompt(waitFor);
   }
-  return undefined;
+  return ;
 }
 
 function readApprovalPresentation(
@@ -148,7 +148,7 @@ function normalizeAssistantText(value: unknown): string | null {
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

@@ -9,8 +9,8 @@ export interface ModelTimingPolicyConfig {
 
 export const DEFAULT_MODEL_TIMING_POLICY: ModelTimingPolicyConfig = {
   phaseCapMs: 180_000,
-  reserveMs: 1_000,
-  minTimeoutMs: 2_500,
+  reserveMs: 1000,
+  minTimeoutMs: 2500,
 };
 
 export function deriveModelTimeoutMs(
@@ -40,7 +40,7 @@ export function deriveModelTimeoutMs(
 
 function parseModelTimingMetadata(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;

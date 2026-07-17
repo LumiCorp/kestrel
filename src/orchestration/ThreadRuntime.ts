@@ -48,7 +48,6 @@ import { listPendingSteers, removePendingSteer } from "./SteeringQueue.js";
 import { TurnOrchestrator, mergeSubmittedHistoryMetadata } from "./TurnOrchestrator.js";
 import type {
   AssemblyBundleRecord,
-  ChildThreadBudget,
   DelegationRequest,
   FanInDispositionSummary,
   ReplyToRequestInput,
@@ -1400,7 +1399,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
 
   private async resolveExistingRunId(runId: string | undefined): Promise<string | undefined> {
     if (runId === undefined) {
-      return undefined;
+      return ;
     }
     const existingRun = await this.store.getRun(runId);
     return existingRun === null ? undefined : runId;
@@ -1510,7 +1509,7 @@ function readAssemblyCapabilityPackIds(
 ): ThreadRecord["environmentCapabilityPackIds"] {
   const value = metadata?.[key];
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const packs = value.filter(
     (entry): entry is NonNullable<ThreadRecord["environmentCapabilityPackIds"]>[number] =>

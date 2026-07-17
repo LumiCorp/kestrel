@@ -41,7 +41,7 @@ export interface ProviderReasoningVaultStatus {
   keyVersion: number;
 }
 
-const CONTINUATION_TTL_MS = 24 * 60 * 60 * 1_000;
+const CONTINUATION_TTL_MS = 24 * 60 * 60 * 1000;
 const KEY_BYTES = 32;
 const KEY_VERSION = 1;
 
@@ -151,7 +151,7 @@ export class ProviderReasoningVault {
         plaintext: visible.text,
         key: this.retainedKey,
         createdAt: now,
-        expiresAt: new Date(now.getTime() + retentionDays * 24 * 60 * 60 * 1_000),
+        expiresAt: new Date(now.getTime() + retentionDays * 24 * 60 * 60 * 1000),
       });
       await this.store.saveProviderReasoningRecord?.(record);
     }
@@ -179,7 +179,7 @@ export class ProviderReasoningVault {
     return await this.store.applyProviderReasoningRetentionPolicy?.({
       retentionScope,
       mode: policy.mode,
-      expiresAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1_000).toISOString(),
+      expiresAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString(),
     }) ?? 0;
   }
 

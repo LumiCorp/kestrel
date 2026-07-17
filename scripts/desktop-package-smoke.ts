@@ -419,7 +419,7 @@ async function closeElectronApplication(app: ElectronApplication | undefined): P
     return;
   }
   await Promise.race([
-    app.close().catch(() => undefined),
+    app.close().catch(() => {}),
     new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
   ]);
 }
@@ -458,7 +458,7 @@ function readSmokeLockPid(lockPath: string): number | undefined {
       ? lock.pid
       : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -574,7 +574,7 @@ async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
   }
 }
 
-async function stopOwnedProcess(pid: number, gracefulTimeoutMs = 5_000): Promise<void> {
+async function stopOwnedProcess(pid: number, gracefulTimeoutMs = 5000): Promise<void> {
   if (isPidAlive(pid) === false) {
     return;
   }
@@ -582,7 +582,7 @@ async function stopOwnedProcess(pid: number, gracefulTimeoutMs = 5_000): Promise
   await waitForPidExit(pid, gracefulTimeoutMs);
   if (isPidAlive(pid)) {
     process.kill(pid, "SIGKILL");
-    await waitForPidExit(pid, 5_000);
+    await waitForPidExit(pid, 5000);
   }
   if (isPidAlive(pid)) {
     throw new Error(`Smoke-owned process ${pid} did not exit.`);

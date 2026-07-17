@@ -1154,7 +1154,7 @@ function resolveKchatModelRetryCount(): string {
 function readNonEmptyEnv(key: string): string | undefined {
   const value = process.env[key];
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -1175,7 +1175,7 @@ export async function resolvePersistedSessionIdFromKestrelHome(input: {
   try {
     parsed = JSON.parse(await readFile(sessionsPath, "utf8"));
   } catch {
-    return undefined;
+    return ;
   }
 
   if (
@@ -1183,7 +1183,7 @@ export async function resolvePersistedSessionIdFromKestrelHome(input: {
     typeof parsed !== "object" ||
     !Array.isArray((parsed as { sessions?: unknown }).sessions)
   ) {
-    return undefined;
+    return ;
   }
 
   const sessions = (parsed as { sessions: unknown[] }).sessions;
@@ -1199,7 +1199,7 @@ export async function resolvePersistedSessionIdFromKestrelHome(input: {
       return record.sessionId;
     }
   }
-  return undefined;
+  return ;
 }
 
 async function readPersistedSessionSnapshotFromKestrelHome(input: {
@@ -1211,7 +1211,7 @@ async function readPersistedSessionSnapshotFromKestrelHome(input: {
   try {
     parsed = JSON.parse(await readFile(sessionsPath, "utf8"));
   } catch {
-    return undefined;
+    return ;
   }
 
   if (
@@ -1219,7 +1219,7 @@ async function readPersistedSessionSnapshotFromKestrelHome(input: {
     typeof parsed !== "object" ||
     !Array.isArray((parsed as { sessions?: unknown }).sessions)
   ) {
-    return undefined;
+    return ;
   }
 
   const sessions = (parsed as { sessions: unknown[] }).sessions;
@@ -1239,7 +1239,7 @@ async function readPersistedSessionSnapshotFromKestrelHome(input: {
       ...(record.pendingWaitFor !== undefined ? { pendingWaitFor: record.pendingWaitFor } : {}),
     };
   }
-  return undefined;
+  return ;
 }
 
 export function buildSimulatedUserWaitFingerprint(input: {
@@ -1377,7 +1377,7 @@ function readStructuredModelRoot(value: unknown): unknown {
     try {
       return JSON.parse(text);
     } catch {
-      return undefined;
+      return ;
     }
   }
   return value;
@@ -1906,7 +1906,7 @@ async function runSmokeChecks(input: {
           route: route.path,
           status: "failed",
           diagnostics: [
-            !response.ok ? `HTTP ${response.status}` : "",
+            response.ok ? "" : `HTTP ${response.status}`,
             ...missing.map((needle) => `Missing marker '${needle}'`),
           ].filter((line) => line.length > 0),
         });
@@ -2349,11 +2349,11 @@ function collectToolNamesFromArtifactIds(
 function readToolNameFromArtifactId(artifactId: string): string | undefined {
   const segments = artifactId.split(":");
   if (segments.length < 4) {
-    return undefined;
+    return ;
   }
   const markerIndex = segments.findIndex((segment) => segment === "tool-output" || segment === "tool-output-digest");
   if (markerIndex === -1) {
-    return undefined;
+    return ;
   }
   const toolName = segments[markerIndex + 2];
   return typeof toolName === "string" && toolName.trim().length > 0 ? toolName.trim() : undefined;
@@ -2517,7 +2517,7 @@ function resolveJsonPathValue(input: unknown, jsonPath: string): unknown {
   for (const segment of segments) {
     const record = asRecord(current);
     if (record === undefined) {
-      return undefined;
+      return ;
     }
     current = record[segment];
   }
@@ -2544,7 +2544,7 @@ function decodeHtmlEntities(input: string): string {
     }
     const isHex = normalized.startsWith("#x");
     const isDecimal = normalized.startsWith("#");
-    if (!isHex && !isDecimal) {
+    if (!(isHex || isDecimal)) {
       return match;
     }
     const numeric = Number.parseInt(normalized.slice(isHex ? 2 : 1), isHex ? 16 : 10);
@@ -2558,16 +2558,16 @@ function decodeHtmlEntities(input: string): string {
 function readAbsoluteHttpUrl(input: unknown): string | undefined {
   const value = readStringValue(input);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return undefined;
+      return ;
     }
     return value;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -3221,7 +3221,7 @@ async function collectRuntimeCompletionAttribution(input: {
     );
     const runtimeCompletedAt = runCompletedResult.rows[0]?.occurred_at;
     if (runtimeCompletedAt === undefined) {
-      return undefined;
+      return ;
     }
 
     const marker = input.completionMarker?.trim();
@@ -3278,7 +3278,7 @@ async function collectRuntimeCompletionAttribution(input: {
       ) || 0,
     };
   } catch {
-    return undefined;
+    return ;
   } finally {
     await pool.end();
   }
@@ -3286,7 +3286,7 @@ async function collectRuntimeCompletionAttribution(input: {
 
 function readRuntimeRunFailureEvent(value: unknown): RuntimeRunFailureEventRow | undefined {
   if (value === null || typeof value !== "object") {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   const details =
@@ -3347,14 +3347,14 @@ function dedupeInOrder(values: string[]): string[] {
 
 function readObjectRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
 
 function readStringValue(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -3362,7 +3362,7 @@ function readStringValue(value: unknown): string | undefined {
 
 function readIntegerValue(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.trunc(value);
 }
@@ -3562,7 +3562,7 @@ async function resolveManagedWorktreeValidationWorkspacePathFromKestrelHome(inpu
     const repoRoot = path.join(worktreesRoot, repoDir.name);
     const entries = await readdir(repoRoot, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".binding.json")) {
+      if (!(entry.isFile() && entry.name.endsWith(".binding.json"))) {
         continue;
       }
       sidecarPaths.push(path.join(repoRoot, entry.name));
@@ -3932,7 +3932,7 @@ async function isPostgresReachable(databaseUrl: string): Promise<boolean> {
       socket.destroy();
       resolve(value);
     };
-    socket.setTimeout(2_000);
+    socket.setTimeout(2000);
     socket.once("connect", () => done(true));
     socket.once("timeout", () => done(false));
     socket.once("error", () => done(false));
@@ -3993,7 +3993,7 @@ async function probePostgresQueryReadiness(databaseUrl: string): Promise<void> {
   try {
     await pool.query("SELECT 1");
   } finally {
-    await pool.end().catch(() => undefined);
+    await pool.end().catch(() => {});
   }
 }
 
@@ -4022,7 +4022,7 @@ export async function pruneMountaintopRuns(rootDir: string, keepRuns: number): P
   const withStats = await Promise.all(
     directories.map(async (name) => {
       const fullPath = path.join(rootDir, name);
-      const info = await stat(fullPath).catch(() => undefined);
+      const info = await stat(fullPath).catch(() => {});
       return info === undefined
         ? undefined
         : { fullPath, mtimeMs: info.mtimeMs };
@@ -4141,7 +4141,7 @@ function extractFailFastReason(output: string): string | undefined {
 function extractTimeoutPattern(output: string): string | undefined {
   const match = output.match(/Timed out waiting for\s+([^\n]+)/iu);
   if (match === null) {
-    return undefined;
+    return ;
   }
   return match[1]?.trim();
 }
@@ -4240,7 +4240,7 @@ function extractTranscriptTail(value: string): string | undefined {
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
   if (normalized.length === 0) {
-    return undefined;
+    return ;
   }
   const tailLines = normalized.slice(-60);
   return `${tailLines.join("\n")}\n`;

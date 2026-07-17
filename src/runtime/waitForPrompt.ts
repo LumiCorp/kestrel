@@ -8,7 +8,7 @@ export interface WaitForLike {
 
 export function extractWaitPrompt(waitFor: WaitForLike | undefined): string | undefined {
   if (waitFor === undefined) {
-    return undefined;
+    return ;
   }
 
   const metadata = asRecord(waitFor.metadata);
@@ -23,7 +23,7 @@ export function extractWaitPrompt(waitFor: WaitForLike | undefined): string | un
 
 export function extractUserReplyQuestion(waitFor: WaitForLike | undefined): string | undefined {
   if (waitFor?.eventType !== "user.reply") {
-    return undefined;
+    return ;
   }
 
   const metadata = asRecord(waitFor.metadata);
@@ -52,7 +52,7 @@ export function extractUserReplyQuestion(waitFor: WaitForLike | undefined): stri
 
 export function extractWaitDetail(waitFor: WaitForLike | undefined): string | undefined {
   if (waitFor?.eventType !== "user.reply") {
-    return undefined;
+    return ;
   }
 
   const metadata = asRecord(waitFor.metadata);
@@ -192,7 +192,7 @@ function buildModeBlockedWaitingText(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -202,7 +202,7 @@ function readFirstNonEmptyString(
   keys: string[],
 ): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   for (const key of keys) {
@@ -212,7 +212,7 @@ function readFirstNonEmptyString(
     }
   }
 
-  return undefined;
+  return ;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -226,7 +226,7 @@ function readStringArray(value: unknown): string[] {
 
 function readPositiveInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.max(1, Math.trunc(value));
 }

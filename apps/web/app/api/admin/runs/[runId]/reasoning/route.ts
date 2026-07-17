@@ -59,7 +59,7 @@ async function handleReasoningRequest(
         ),
       }),
     ]);
-    if (!environment?.routerUrl || !environment.flyAppName || !workspace?.flyMachineId) {
+    if (!((environment?.routerUrl && environment.flyAppName ) && workspace?.flyMachineId)) {
       return NextResponse.json({ error: "Environment runtime is unavailable." }, { status: 409 });
     }
     if (environment.reasoningRetentionMode !== "provider_visible") {

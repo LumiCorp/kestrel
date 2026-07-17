@@ -1,5 +1,5 @@
-import { ContextPolicyManager } from "./ContextPolicyManager.js";
-import { InteractionManager } from "./InteractionManager.js";
+import type { ContextPolicyManager } from "./ContextPolicyManager.js";
+import type { InteractionManager } from "./InteractionManager.js";
 import type {
   RunRepository,
   ThreadStore,
@@ -344,7 +344,7 @@ function appendAssistantHistory(input: {
 
 function readAssistantHistoryRunId(value: unknown): string | undefined {
   if (isRecord(value) === false || value.role !== "assistant") {
-    return undefined;
+    return ;
   }
   const data = isRecord(value.data) ? value.data : undefined;
   return data?.kind === "runtime.assistant_text" && typeof data.runId === "string"
@@ -354,11 +354,11 @@ function readAssistantHistoryRunId(value: unknown): string | undefined {
 
 function readWaitingPromptRunId(value: unknown): string | undefined {
   if (isRecord(value) === false || value.role !== "system") {
-    return undefined;
+    return ;
   }
   const data = isRecord(value.data) ? value.data : undefined;
   if (data?.kind !== "runtime.waiting_prompt" || typeof data.runId !== "string") {
-    return undefined;
+    return ;
   }
   const runId = data.runId.trim();
   return runId.length > 0 ? runId : undefined;

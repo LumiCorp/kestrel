@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import type { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { DesktopProtocolTransport, DesktopRuntimeStatus } from "./contracts.js";
 import type { RunnerProtocolObserver } from "./runnerTransport.js";

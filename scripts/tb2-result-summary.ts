@@ -80,7 +80,7 @@ export function formatTb2ReadableSummary(summary: HarborRunSummary): string {
 
 function formatExceptionStats(exceptionStats: Record<string, unknown> | undefined): string | undefined {
   if (exceptionStats === undefined) {
-    return undefined;
+    return ;
   }
   const names = Object.keys(exceptionStats).sort();
   return names.length > 0 ? `exceptions=${names.join(",")}` : undefined;
@@ -88,7 +88,7 @@ function formatExceptionStats(exceptionStats: Record<string, unknown> | undefine
 
 function formatProcessFailure(processFailure: HarborRunSummary["processFailure"]): string | undefined {
   if (processFailure === undefined) {
-    return undefined;
+    return ;
   }
   const parts = [
     processFailure.exitCode !== undefined ? `process_exit=${processFailure.exitCode}` : undefined,

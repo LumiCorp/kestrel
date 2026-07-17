@@ -7,7 +7,7 @@ import {
 } from "../src/localCore/index.js";
 
 function printText(report: LocalCoreMigrationReadinessReport): void {
-  process.stdout.write(`Kestrel Local Core migration readiness\n`);
+  process.stdout.write("Kestrel Local Core migration readiness\n");
   process.stdout.write(`generatedAt: ${report.generatedAt}\n`);
   for (const message of report.messages) {
     process.stdout.write(`- ${message}\n`);

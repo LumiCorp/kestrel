@@ -114,7 +114,7 @@ export class WorkspaceStore {
       return await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+        return ;
       }
 
       throw error;

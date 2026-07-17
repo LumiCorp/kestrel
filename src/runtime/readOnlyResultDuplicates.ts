@@ -61,7 +61,7 @@ export function detectReadOnlyResultDuplicate(input: {
     output: input.output,
   });
   if (candidate === undefined) {
-    return undefined;
+    return ;
   }
   const prior = input.ledger.find((entry) => entry.fingerprint === candidate.fingerprint);
   return {
@@ -94,12 +94,12 @@ export function fingerprintReadOnlyResult(input: {
   if (input.toolName === "source.fetch") {
     return fingerprintSourcePageResult(input.toolName, input.output);
   }
-  return undefined;
+  return ;
 }
 
 export function canonicalizeDuplicateUrl(url: string | undefined): string | undefined {
   if (typeof url !== "string" || url.trim().length === 0) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = new URL(url);
@@ -121,7 +121,7 @@ export function canonicalizeDuplicateUrl(url: string | undefined): string | unde
     }
     return parsed.toString();
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -131,7 +131,7 @@ function fingerprintListResult(
 ): Omit<ReadOnlyResultDuplicateVerdict, "kind" | "duplicateCount" | "matchedPriorStep"> | undefined {
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const rawResults = asArray(record.results);
   const fallbackResults = asArray(record.sources);
@@ -151,7 +151,7 @@ function fingerprintListResult(
     })
     .filter((entry) => entry.title !== undefined || entry.source !== undefined || entry.url !== undefined);
   if (results.length === 0) {
-    return undefined;
+    return ;
   }
   const fingerprint = createHash("sha256")
     .update(JSON.stringify(results))
@@ -174,7 +174,7 @@ function fingerprintSourceListResult(
 ): Omit<ReadOnlyResultDuplicateVerdict, "kind" | "duplicateCount" | "matchedPriorStep"> | undefined {
   const fingerprint = fingerprintListResult(toolName, output);
   if (fingerprint === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...fingerprint,
@@ -190,7 +190,7 @@ function fingerprintPageResult(
 ): Omit<ReadOnlyResultDuplicateVerdict, "kind" | "duplicateCount" | "matchedPriorStep"> | undefined {
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const canonicalUrl = canonicalizeDuplicateUrl(asString(record.url));
   const canonicalSource = normalizeSourceCluster(canonicalUrl ?? asString(record.url));
@@ -202,9 +202,9 @@ function fingerprintPageResult(
   ]
     .filter((item): item is string => item !== undefined)
     .join("\n")
-    .slice(0, 2_000);
+    .slice(0, 2000);
   if ((canonicalUrl ?? canonicalSource) === undefined || contentSeed.length === 0) {
-    return undefined;
+    return ;
   }
   const fingerprint = createHash("sha256")
     .update(
@@ -230,7 +230,7 @@ function fingerprintSourcePageResult(
 ): Omit<ReadOnlyResultDuplicateVerdict, "kind" | "duplicateCount" | "matchedPriorStep"> | undefined {
   const fingerprint = fingerprintPageResult(toolName, output);
   if (fingerprint === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...fingerprint,
@@ -247,12 +247,12 @@ function normalizeText(value: string | undefined): string | undefined {
 
 function readHostname(url: string | undefined): string | undefined {
   if (url === undefined) {
-    return undefined;
+    return ;
   }
   try {
     return new URL(url).hostname.toLowerCase().replace(/^www\./u, "");
   } catch {
-    return undefined;
+    return ;
   }
 }
 

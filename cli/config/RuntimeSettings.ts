@@ -78,7 +78,7 @@ export async function writeRuntimeSettings(home: string, settings: RuntimeSettin
 
 function parseOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -88,12 +88,12 @@ function parseOptionalStoreDriver(value: unknown): StoreDriverId | undefined {
   if (value === "auto" || value === "postgres" || value === "sqlite") {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId | undefined {
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;
   }
-  return undefined;
+  return ;
 }

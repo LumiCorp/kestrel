@@ -887,8 +887,7 @@ export class StepRunner {
           outcome: action.outcome,
         }, input.state.stepIndex);
       }
-      if (action.kind === "sync_primary") {
-        if (await this.deps.regionScheduler.isSyncNodeSettled(input.state.session.sessionId)) {
+      if (action.kind === "sync_primary" && (await this.deps.regionScheduler.isSyncNodeSettled(input.state.session.sessionId))) {
           await this.deps.logInfo({
             runId: input.runId,
             sessionId: input.state.session.sessionId,
@@ -912,7 +911,6 @@ export class StepRunner {
             input.state.stepIndex,
           );
         }
-      }
     }
 
     await this.deps.sampleHeap({
@@ -1041,7 +1039,7 @@ export class StepRunner {
     input.state.currentStep = transition.nextStepAgent;
     input.state.lastStepAgent = stepName;
     input.state.stepIndex += 1;
-    return undefined;
+    return ;
   }
 
   private async selectStep(input: {

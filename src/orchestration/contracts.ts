@@ -12,8 +12,6 @@ import type {
   ContextPolicyDefinitionRecord,
   DelegationRecord,
   InteractionRequestRecord,
-  OperatorAttentionRecord,
-  OperatorFocusRecord,
   RunTurnAttachment,
   SpecialistDefinitionRecord,
   ThreadCompactionEventRecord,

@@ -43,7 +43,7 @@ export function isPlanDocumentPath(value: unknown): value is string {
 
 export function resolvePlanDocumentAbsolutePath(value: unknown, homePath = resolveKestrelHomePath()): string | undefined {
   if (isPlanDocumentPath(value) === false) {
-    return undefined;
+    return ;
   }
   const normalized = normalizePlanDocumentPath(value);
   const relativeToHome = normalized.slice("~/.kestrel/".length);
@@ -53,7 +53,7 @@ export function resolvePlanDocumentAbsolutePath(value: unknown, homePath = resol
 export function sanitizePlanDocumentSessionSegment(sessionId: unknown): string | undefined {
   const raw = normalizeString(sessionId);
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
   const sanitized = raw
     .replace(/[^A-Za-z0-9._-]+/gu, "_")
@@ -61,7 +61,7 @@ export function sanitizePlanDocumentSessionSegment(sessionId: unknown): string |
     .replace(/_+/gu, "_")
     .slice(0, 96);
   if (sanitized.length === 0 || sanitized === "." || sanitized === "..") {
-    return undefined;
+    return ;
   }
   return sanitized;
 }
@@ -101,14 +101,14 @@ export function normalizeRuntimePlanState(value: unknown): RuntimePlanState | un
 export function normalizeRuntimePlanDocumentSnapshot(value: unknown): RuntimePlanDocumentSnapshot | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const planPath = normalizeString(record.path);
   if (planPath === undefined || isPlanDocumentPath(planPath) === false) {
-    return undefined;
+    return ;
   }
   if (typeof record.exists !== "boolean") {
-    return undefined;
+    return ;
   }
   return {
     path: normalizePlanDocumentPath(planPath),

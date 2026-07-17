@@ -26,13 +26,13 @@ export function resolveBlockedWaitModeReply(
   intentValue?: unknown,
 ): BlockedWaitModeReply | undefined {
   if (isModeBlockedWait(waitFor) === false) {
-    return undefined;
+    return ;
   }
 
   const intent = readUserReplyIntent(intentValue);
   const parsed = parseExplicitModeCommand(reply) ?? parseRequestedModeIntent(intent);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
 
   const resolved = normalizeInteractionMode({
@@ -71,7 +71,7 @@ function parseRequestedModeIntent(
     intent.confidence !== "high" ||
     intent.interactionMode === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     interactionMode: intent.interactionMode,
@@ -80,7 +80,7 @@ function parseRequestedModeIntent(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

@@ -331,7 +331,7 @@ test("terminal bench improve full queue stops on first unresolved task", async (
       path.join(readLatestImproveRoot(tmp), "task-001-hello-world", "docker-cleanup.txt"),
       "utf8",
     );
-    assert.match(cleanupOutput, new RegExp(escapeRegExp(`docker compose -p hello-world-1-of-1-`), "u"));
+    assert.match(cleanupOutput, new RegExp(escapeRegExp("docker compose -p hello-world-1-of-1-"), "u"));
     assert.match(cleanupOutput, new RegExp(escapeRegExp(composePath), "u"));
     assert.match(cleanupOutput, /status=0/u);
     assert.match(cleanupOutput, /cleanup ok/u);

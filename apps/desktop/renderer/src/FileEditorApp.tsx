@@ -1,5 +1,4 @@
 import { ExternalLink, Save } from "lucide-react";
-import React from "react";
 import { useEffect, useState } from "react";
 
 import type { DesktopFileContent } from "../../src/contracts";

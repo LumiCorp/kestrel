@@ -4,25 +4,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
-import type { MemorySnapshot, ProgressKind, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
+import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
-import type { PersistedArtifact, SessionRecord } from "../kestrel/contracts/store.js";
+import type { SessionRecord } from "../kestrel/contracts/store.js";
 
 import { GuardrailViolationError, Guardrails } from "./Guardrails.js";
-import { validateTransition } from "./TransitionValidator.js";
 import { ToolJobQueue } from "./ToolJobQueue.js";
 import { asRuntimeError, createRuntimeFailure, RunCancelledError } from "../runtime/RuntimeFailure.js";
 import { normalizeInteractionMode } from "../mode/contracts.js";
-import { mergeRedactionSummaries, redactDiagnosticText } from "../diagnostics/redaction.js";
-import { isModeBlockedWait } from "../runtime/blockedWaitModeReply.js";
 import {
   clearRuntimeWaitState,
   readActiveWaitState,
 } from "../runtime/waitState.js";
 import {
   classifyUserReplyIntent,
-  readHighConfidenceApprovalDecision,
   readUserReplyIntent,
 } from "../runtime/userReplyIntent.js";
 import {
@@ -30,9 +26,6 @@ import {
   isResearchRecoveryToolName,
 } from "../runtime/recoveryVerdict.js";
 import {
-  BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS,
-  BROAD_RESUME_MAX_INVENTORY_ACTIONS,
-  BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS_WITH_EXPLICIT_TARGET,
   LEGACY_FILESYSTEM_RESUME_STOP_REASON,
   isBroadResumeBudgetExhausted,
   buildFilesystemResumeReadBudgetDetail,
@@ -69,19 +62,16 @@ import {
 import {
   ContinuationCoordinator,
   FRESH_TURN_AGENT_CONTROL_KEYS,
-  type ContinuationRequestState,
   type ContinuationState,
   type ContinuationWaitReason,
 } from "./ContinuationCoordinator.js";
 import {
   KNOWN_RUN_EVENT_TYPES,
-  asPlainRecord,
   assertModelCallAdmission,
   buildContinuationNextActions,
   buildContinuationPartialAnswer,
   buildModelInputSnapshot,
   buildResearchStallPartialAnswer,
-  buildStateTransitionLogMetadata,
   countTrailingLoopCyclesWithSameEvidence,
   isRecoverableDispatchLoopGuard,
   latestObservationSummary,
@@ -92,8 +82,6 @@ import {
   readLoopHistory,
   readModelBudgetClass,
   readMaybeNumber,
-  readModelRequestSchemaName,
-  readNonEmptyString,
   readResearchObjective,
   readTruncatedToolArtifactsForResume,
   resolveExecSubstateForStep,
@@ -123,7 +111,7 @@ const DEFAULT_GUARDRAILS: GuardrailConfig = {
   toolBatchCheckpointSize: 10,
   toolCallRetryCount: 1,
 };
-const DEFAULT_PROGRESS_HEARTBEAT_MS = 2_000;
+const DEFAULT_PROGRESS_HEARTBEAT_MS = 2000;
 const MAX_PROGRESS_MESSAGE_LENGTH = 140;
 const MODEL_PROMPT_DUMP_ENV = "KESTREL_MODEL_PROMPT_DUMP";
 const MODEL_PROMPT_DUMP_DIR_ENV = "KESTREL_MODEL_PROMPT_DUMP_DIR";
@@ -1312,11 +1300,11 @@ export class ExecutionEngine {
     sample: HeapPressureSample,
   ): Promise<SessionRecord | undefined> {
     if (this.deps.store.patchSessionState === undefined) {
-      return undefined;
+      return ;
     }
     const agent = this.asRecord(session.state.agent) ?? {};
     if (agent.modelTranscript === undefined) {
-      return undefined;
+      return ;
     }
     const compactedTranscript = compactModelTranscript({
       transcript: agent.modelTranscript,
@@ -1412,13 +1400,13 @@ export class ExecutionEngine {
     reason?: string | undefined;
   }): Promise<HeapPressureSample | undefined> {
     if (this.deps.heapDiagnostics === undefined) {
-      return undefined;
+      return ;
     }
     try {
       return await this.deps.heapDiagnostics.sample(input);
     } catch {
       // Diagnostics must not change runtime behavior.
-      return undefined;
+      return ;
     }
   }
 
@@ -1580,14 +1568,14 @@ export class ExecutionEngine {
     trustedBinding: ManagedTaskWorktreeBinding | undefined,
   ): { setup: ProductProjectSetupState; taskId?: string | undefined } | undefined {
     if (this.deps.workspaceCheckpointService === undefined || isMutationCapableToolName(toolName) === false) {
-      return undefined;
+      return ;
     }
     if (trustedBinding === undefined) {
-      return undefined;
+      return ;
     }
     const workspace = this.asRecord(runtimeMetadata?.workspace);
     if (workspace?.managedWorktree !== true || this.asString(workspace.workspaceRoot) !== trustedBinding.worktreeRoot) {
-      return undefined;
+      return ;
     }
     const workspaceRoot = this.asString(workspace.workspaceRoot);
     if (workspaceRoot === undefined || workspaceRoot.trim().length === 0) {
@@ -1980,7 +1968,7 @@ export class ExecutionEngine {
     if (update.kind === "waiting" && update.waitFor === undefined) {
       return "waitfor_required";
     }
-    return undefined;
+    return ;
   }
 
   private resolveEffects(
@@ -2015,7 +2003,7 @@ export class ExecutionEngine {
   ): Promise<{ status: TransitionStatus; errors: RuntimeError[] } | undefined> {
     const pendingEffects = await this.deps.store.listPendingEffects(sessionId);
     if (pendingEffects.length === 0) {
-      return undefined;
+      return ;
     }
 
     await this.logInfo({
@@ -2047,18 +2035,18 @@ export class ExecutionEngine {
       };
     }
 
-    return undefined;
+    return ;
   }
 
   private resolveRegionLaneCursor(sessionState: Record<string, unknown>): string | undefined {
     const regionState = this.asRecord(sessionState.region);
     if (regionState === undefined) {
-      return undefined;
+      return ;
     }
 
     const cursor = regionState.laneCursor;
     if (typeof cursor !== "string" || cursor.trim().length === 0) {
-      return undefined;
+      return ;
     }
     return cursor;
   }
@@ -2271,17 +2259,17 @@ export class ExecutionEngine {
     continuation?: NormalizedOutput["continuation"] | undefined;
   }): Promise<NormalizedOutput | undefined> {
     if (input.runtimeError.code !== "IO_MODEL_TIMEOUT") {
-      return undefined;
+      return ;
     }
     const timeoutDetails = this.asRecord(input.runtimeError.details);
     const phase = this.asString(timeoutDetails?.phase);
     if (phase !== "agent" && this.resolveProgressPhase(input.currentStep) !== "agent") {
-      return undefined;
+      return ;
     }
     const reactState = this.asRecord(input.session.state.agent) ?? {};
     const truncatedArtifacts = readTruncatedToolArtifactsForResume(reactState.lastActionResult);
     if (truncatedArtifacts === undefined) {
-      return undefined;
+      return ;
     }
 
     const waitMetadata: Record<string, unknown> = {
@@ -2457,17 +2445,17 @@ export class ExecutionEngine {
     progressSeq: number;
   }): Promise<NormalizedOutput | undefined> {
     if (input.runtimeError.code !== "LOOP_GUARD_TRIGGERED") {
-      return undefined;
+      return ;
     }
     const loopDetails = this.asRecord(input.runtimeError.details);
     if (loopDetails?.loopClassification !== "tool_input_invalid") {
-      return undefined;
+      return ;
     }
     const lastRejection = this.asRecord(loopDetails.lastRejection);
     const rawPath = this.asString(lastRejection?.path);
     const path = typeof rawPath === "string" ? rawPath.trim() : undefined;
     if (path === undefined || path.length === 0) {
-      return undefined;
+      return ;
     }
     const toolName = this.asString(lastRejection?.toolName) ?? "filesystem tool";
     const question = `I repeatedly reached the same no-progress loop because the filesystem path '${path}' does not exist. What should I do: create it, use a different path, or skip this step?`;
@@ -2621,10 +2609,10 @@ export class ExecutionEngine {
     const runtimeErrorDetails = this.asRecord(runtimeError?.details);
     if (forcedRetrievalStall) {
       if (activeToolName === undefined || isRetrievalToolName(activeToolName) === false) {
-        return undefined;
+        return ;
       }
     } else if (activeToolName === undefined || isResearchRecoveryToolName(activeToolName) === false) {
-      return undefined;
+      return ;
     }
 
     const lowProgressCycles = countTrailingLoopCyclesWithSameEvidence(
@@ -2649,7 +2637,7 @@ export class ExecutionEngine {
       verdict.lowYieldClusters.length > 0 &&
       verdict.lowYieldClusters.every((cluster) => cluster.lastToolName !== activeToolName)
     ) {
-      return undefined;
+      return ;
     }
     const objectiveKey = verdict.objectiveKey ?? readResearchObjective(reactState);
     const effectiveLowProgressCycles = forcedRetrievalStall
@@ -2659,7 +2647,7 @@ export class ExecutionEngine {
       objectiveKey === undefined ||
       (forcedRetrievalStall === false && verdict.researchStall.active === false)
     ) {
-      return undefined;
+      return ;
     }
 
     const continuation = this.buildContinuationSummary(reactState, currentStep);
@@ -2856,12 +2844,12 @@ export class ExecutionEngine {
         this.readFilesystemActionPath(this.asRecord(reactState.nextAction));
     }
 
-    return undefined;
+    return ;
   }
 
   private readConcreteRepairTargetPathFromEvidenceLedger(value: unknown): string | undefined {
     if (Array.isArray(value) === false) {
-      return undefined;
+      return ;
     }
     for (const entryValue of value.slice(-6).reverse()) {
       const entry = this.asRecord(entryValue);
@@ -2873,7 +2861,7 @@ export class ExecutionEngine {
         return target;
       }
     }
-    return undefined;
+    return ;
   }
 
   private evidenceRequiresRepair(entry: Record<string, unknown> | undefined): boolean {
@@ -2887,13 +2875,13 @@ export class ExecutionEngine {
 
   private readPathFromEvidence(entry: Record<string, unknown> | undefined): string | undefined {
     if (entry === undefined) {
-      return undefined;
+      return ;
     }
     const target = this.asRecord(entry.target);
     const targetType = this.asString(target?.type) ?? this.asString(entry.targetType);
     const targetValue = this.asString(target?.value) ?? this.asString(entry.targetValue);
     if (targetValue === undefined || targetValue.trim().length === 0) {
-      return undefined;
+      return ;
     }
     return targetType === undefined || targetType === "path" || targetType === "file" || targetType === ""
       ? this.normalizeFilesystemClarificationPath(targetValue)
@@ -3022,14 +3010,14 @@ export class ExecutionEngine {
   private resolveStateNode(sessionState: Record<string, unknown>): StepContext["stateNode"] {
     const stateNode = this.asRecord(sessionState.stateNode);
     if (stateNode === undefined) {
-      return undefined;
+      return ;
     }
 
     const parent = typeof stateNode.parent === "string" ? stateNode.parent : undefined;
     const child = typeof stateNode.child === "string" ? stateNode.child : undefined;
     const region = typeof stateNode.region === "string" ? stateNode.region : undefined;
     if (parent === undefined || child === undefined) {
-      return undefined;
+      return ;
     }
 
     return {
@@ -3041,7 +3029,7 @@ export class ExecutionEngine {
 
   private readFilesystemActionPath(value: Record<string, unknown> | undefined): string | undefined {
     if (value === undefined) {
-      return undefined;
+      return ;
     }
     const input = this.asRecord(value.input);
     return this.asString(input?.path) ?? this.asString(value.path);
@@ -3049,11 +3037,11 @@ export class ExecutionEngine {
 
   private normalizeFilesystemClarificationPath(path: string | undefined): string | undefined {
     if (path === undefined) {
-      return undefined;
+      return ;
     }
     const trimmed = path.trim();
     if (trimmed.length === 0) {
-      return undefined;
+      return ;
     }
     if (trimmed === "./") {
       return ".";
@@ -3063,7 +3051,7 @@ export class ExecutionEngine {
 
   private asRecord(value: unknown): Record<string, unknown> | undefined {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return undefined;
+      return ;
     }
 
     return value as Record<string, unknown>;
@@ -3123,7 +3111,7 @@ export class ExecutionEngine {
     createdAt: string;
   }): Promise<{ jsonPath: string } | undefined> {
     if (this.shouldPersistFullModelPrompt() === false) {
-      return undefined;
+      return ;
     }
     const fileStem = `step-${String(input.progress.stepIndex).padStart(5, "0")}-call-${input.callId}`;
     const directory = path.join(
@@ -3170,7 +3158,7 @@ export class ExecutionEngine {
           error: error instanceof Error ? error.message : String(error),
         },
       });
-      return undefined;
+      return ;
     }
   }
 
@@ -3234,14 +3222,14 @@ export class ExecutionEngine {
     const record = this.asRecord(value);
     const usage = this.asRecord(record?.usage);
     if (usage === undefined) {
-      return undefined;
+      return ;
     }
 
     const inputTokens = readMaybeNumber(usage.inputTokens);
     const outputTokens = readMaybeNumber(usage.outputTokens);
     const totalTokens = readMaybeNumber(usage.totalTokens);
     if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-      return undefined;
+      return ;
     }
 
     return {
@@ -3255,7 +3243,7 @@ export class ExecutionEngine {
     const record = this.asRecord(value);
     const provider = this.asRecord(record?.provider);
     if (provider === undefined) {
-      return undefined;
+      return ;
     }
 
     const structuredOutput = this.asRecord(provider.structuredOutput);
@@ -3479,14 +3467,14 @@ export class ExecutionEngine {
     stepIndex: number | undefined,
   ): RunLifecycleObservabilityFrame | undefined {
     if (stepIndex !== undefined) {
-      return undefined;
+      return ;
     }
     const frame = this.runLifecycleFrameStore.getStore();
     if (frame === undefined) {
-      return undefined;
+      return ;
     }
     if (frame.runId !== runId || frame.sessionId !== sessionId) {
-      return undefined;
+      return ;
     }
     return frame;
   }
@@ -3757,10 +3745,10 @@ export class ExecutionEngine {
 
   private readRunEventType(value: unknown): RunEventType | undefined {
     if (typeof value !== "string") {
-      return undefined;
+      return ;
     }
     if (KNOWN_RUN_EVENT_TYPES.has(value as RunEventType) === false) {
-      return undefined;
+      return ;
     }
     return value as RunEventType;
   }

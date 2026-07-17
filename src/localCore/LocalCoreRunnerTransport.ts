@@ -93,7 +93,7 @@ function readRequestUrl(input: Parameters<typeof fetch>[0]): URL {
 
 function readRequestBody(body: RequestInit["body"]): string | undefined {
   if (body === undefined || body === null) {
-    return undefined;
+    return ;
   }
   if (typeof body !== "string") {
     throw new Error("Local Core runner transport only accepts serialized JSON request bodies.");

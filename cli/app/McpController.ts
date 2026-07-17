@@ -174,9 +174,7 @@ export class McpController {
       const currentServers = state.activeProfile.mcpServers ?? [];
       const nextServers = currentServers.filter((server) => server.id !== serverId);
       const prefix = `mcp.${serverId}.`;
-      const nextAllowlist = (state.activeProfile.toolAllowlist ?? []).filter((name) => {
-        return name.startsWith(prefix) === false;
-      });
+      const nextAllowlist = (state.activeProfile.toolAllowlist ?? []).filter((name) => name.startsWith(prefix) === false);
       await this.context.persistActiveProfile({
         ...state.activeProfile,
         mcpServers: nextServers,

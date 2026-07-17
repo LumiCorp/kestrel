@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+import type React from "react";
+import { useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import { useSyncExternalStore } from "react";
 
@@ -260,7 +261,7 @@ function readSessionWaitingEventType(state: UiRuntimeState): string | undefined 
   if ((state.activeSession.operatorState?.inbox?.userInputs ?? 0) > 0) {
     return "user.reply";
   }
-  return undefined;
+  return ;
 }
 
 function labelForView(view: UiRuntimeState["activeView"]): string {
@@ -319,7 +320,7 @@ function readLastExecutionLane(state: UiRuntimeState): string | undefined {
       return route;
     }
   }
-  return undefined;
+  return ;
 }
 
 function readString(
@@ -334,7 +335,7 @@ function readAssemblyRuntimeSummary(
   assembly: NonNullable<UiRuntimeState["activeSession"]["operatorState"]>["assembly"] | undefined,
 ): string | undefined {
   if (assembly === undefined) {
-    return undefined;
+    return ;
   }
   const parts: string[] = [];
   if (assembly.provider !== undefined) {

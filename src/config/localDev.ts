@@ -3,9 +3,9 @@ const DEFAULT_LOCAL_DATABASE_NAME = "kestrel";
 const DEFAULT_LOCAL_DATABASE_USER = "kestrel";
 const DEFAULT_LOCAL_DATABASE_PASSWORD = "kestrel";
 
-export const DEFAULT_KESTREL_DB_PORT = 55432;
-export const DEFAULT_KESTREL_WEB_PORT = 43103;
-export const DEFAULT_KESTREL_RUNNER_SERVICE_PORT = 43102;
+export const DEFAULT_KESTREL_DB_PORT = 55_432;
+export const DEFAULT_KESTREL_WEB_PORT = 43_103;
+export const DEFAULT_KESTREL_RUNNER_SERVICE_PORT = 43_102;
 
 export interface KestrelLocalPortConfig {
   dbPort: number;
@@ -47,7 +47,7 @@ function readPortOverride(value: string | undefined, fallback: number, key: stri
   }
 
   const parsed = Number(value.trim());
-  if (Number.isInteger(parsed) === false || parsed <= 0 || parsed > 65535) {
+  if (Number.isInteger(parsed) === false || parsed <= 0 || parsed > 65_535) {
     const error = new Error(`${key} must be a valid TCP port.`) as Error & { code: string };
     error.code = "LOCAL_DEV_INVALID_PORT";
     throw error;

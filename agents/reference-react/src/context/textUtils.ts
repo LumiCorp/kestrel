@@ -66,7 +66,7 @@ export function normalizePositiveInt(value: number | undefined, fallback: number
 
 export function clampText(value: string | undefined, maxChars: number): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   if (trimmed.length <= maxChars) {
@@ -162,7 +162,7 @@ export function clampTaskText(value: string, maxChars: number): string {
 
 export function summarizeValue(value: unknown, maxChars: number): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   try {
     const serialized = JSON.stringify(sortValue(value));

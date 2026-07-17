@@ -164,7 +164,7 @@ export function getDesktopSetupAdvanceError(input: {
     return "Choose a project before continuing.";
   }
 
-  return undefined;
+  return ;
 }
 
 export function buildCompletedDesktopSetupSettings(input: {
@@ -216,11 +216,10 @@ export function deriveDesktopOnboardingState(
   const projectOnboardingCompleted =
     setupCompleted ||
     (Array.isArray(settings.projects) && settings.projects.length > 0);
-  const providerRequirementState = !providerSelectionCompleted
-    ? "choice_required"
-    : providerCredentialSatisfied
+  const providerRequirementState = providerSelectionCompleted
+    ? providerCredentialSatisfied
       ? "ready"
-      : "credential_required";
+      : "credential_required" : "choice_required";
   const nextStep: DesktopOnboardingStep =
     providerRequirementState === "choice_required"
       ? "provider"
@@ -260,7 +259,7 @@ export function describeDesktopProviderRequirement(
 ): DesktopProviderRequirement | undefined {
   const onboarding = deriveDesktopOnboardingState(settings);
   if (onboarding.providerRequirementState === "ready") {
-    return undefined;
+    return ;
   }
   if (onboarding.providerRequirementState === "choice_required") {
     return {

@@ -30,6 +30,6 @@ export function createDesktopBeforeQuitHandler(
       } finally {
         options.quitApp();
       }
-    })().catch(() => undefined);
+    })().catch(() => {});
   };
 }

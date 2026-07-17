@@ -162,7 +162,7 @@ test("macOS Keychain rejects values that exceed security interactive input witho
   });
 
   await assert.rejects(
-    () => store.set("provider.openrouter.default", "x".repeat(4_096)),
+    () => store.set("provider.openrouter.default", "x".repeat(4096)),
     MacosKeychainCredentialStoreError,
   );
   assert.equal(calls, 0);

@@ -415,7 +415,7 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
     }
   }
   const legacyProgressField = ["workPlan", "executionLedger", "evidenceLedger", "progress"].find((field) =>
-    Object.prototype.hasOwnProperty.call(agent, field)
+    Object.hasOwn(agent, field)
   );
   if (legacyProgressField !== undefined) {
     return {
@@ -467,7 +467,7 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
       message: "state.region.laneCursor must be a string",
     };
   }
-  return undefined;
+  return ;
 }
 
 export function readAgentState(state: Record<string, unknown>): RuntimeAgentState {
@@ -481,7 +481,7 @@ export function readExecState(state: Record<string, unknown>): RuntimeExecState 
 export function readWaitState(state: Record<string, unknown>): RuntimeWaitState | undefined {
   const waitingFor = readAgentState(state).waitingFor;
   if (waitingFor === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(waitingFor.kind !== undefined ? { kind: waitingFor.kind } : {}),
@@ -595,8 +595,8 @@ function looksLikeLegacyPlanState(value: unknown): boolean {
   const record = asRecord(value);
   return (
     record !== undefined &&
-    Object.prototype.hasOwnProperty.call(record, "path") === false &&
-    Object.prototype.hasOwnProperty.call(record, "status") === false
+    Object.hasOwn(record, "path") === false &&
+    Object.hasOwn(record, "status") === false
   );
 }
 

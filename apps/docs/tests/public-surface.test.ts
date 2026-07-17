@@ -11,7 +11,7 @@ test("public surfaces never expose excluded content or Studio", async () => {
   assert.ok(!corpus.includes(["Scene", "Runner"].join("")));
   assert.doesNotMatch(corpus, /0\.5\.0-beta\.0/iu);
   assert.doesNotMatch(corpus, /\/chat(?:["')\s]|$)/iu);
-  assert.ok(pages.every(({ meta }) => !meta.internal && !meta.archive && meta.audience !== "maintainers"));
+  assert.ok(pages.every(({ meta }) => !(meta.internal || meta.archive ) && meta.audience !== "maintainers"));
   assert.ok(search.every((document) => pages.some(({ meta }) => meta.url === document.url)));
   assert.equal(await getPageMetaBySlug(["archive"]), null);
   assert.equal(await getPageMetaBySlug(["runtime", "governance-and-invariants"]), null);

@@ -27,7 +27,7 @@ test("resolveModelTimeoutMs ignores invalid profile override and falls back to e
     { modelProvider: "ollama", modelTimeoutMs: 0 },
     { KCHAT_MODEL_TIMEOUT_MS: "9000" } as NodeJS.ProcessEnv,
   );
-  assert.equal(timeout, 9_000);
+  assert.equal(timeout, 9000);
 });
 
 test("resolveModelTimeoutMs defaults local OpenAI-compatible providers to a tighter timeout", () => {

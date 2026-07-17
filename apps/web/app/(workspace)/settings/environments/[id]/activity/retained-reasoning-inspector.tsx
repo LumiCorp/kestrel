@@ -46,14 +46,14 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
           <Button size="sm" variant="destructive" type="button" onClick={remove}>Delete retained reasoning</Button>
         ) : null}
       </div>
-      {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
+      {status ? <p className="text-muted-foreground text-xs">{status}</p> : null}
       {entries?.map((entry, index) => (
         <div className="rounded-md border bg-muted/30 p-3 text-sm" key={`${entry.createdAt}-${index}`}>
-          <div className="mb-2 text-xs font-medium text-muted-foreground">
+          <div className="mb-2 font-medium text-muted-foreground text-xs">
             {formatLabel(entry.format)} · {entry.provider}/{entry.model}
           </div>
           <div className="whitespace-pre-wrap">{entry.text}</div>
-          <div className="mt-2 text-xs text-muted-foreground">Expires {new Date(entry.expiresAt).toLocaleString()}</div>
+          <div className="mt-2 text-muted-foreground text-xs">Expires {new Date(entry.expiresAt).toLocaleString()}</div>
         </div>
       ))}
     </div>

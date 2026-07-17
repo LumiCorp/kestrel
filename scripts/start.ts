@@ -16,8 +16,8 @@ import {
 } from "../src/config/localDev.js";
 
 const DEFAULT_DATABASE_STARTUP_TIMEOUT_MS = 30_000;
-const DEFAULT_DATABASE_POLL_INTERVAL_MS = 1_000;
-const CHILD_SHUTDOWN_TIMEOUT_MS = 7_000;
+const DEFAULT_DATABASE_POLL_INTERVAL_MS = 1000;
+const CHILD_SHUTDOWN_TIMEOUT_MS = 7000;
 const MACOS_DOCKER_APP_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker";
 
 export type StartTarget = "tui" | "web";
@@ -298,7 +298,7 @@ async function pingDatabase(connectionString: string): Promise<void> {
   const pool = new Pool({
     connectionString,
     max: 1,
-    connectionTimeoutMillis: 1_500,
+    connectionTimeoutMillis: 1500,
   });
 
   try {

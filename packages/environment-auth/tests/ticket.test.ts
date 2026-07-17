@@ -32,15 +32,15 @@ const ticket: EnvironmentExecutionTicket = {
   flyAppName: "kestrel-env-1",
   flyMachineId: "machine-1",
   capabilities: ["run.stream", "profile.read"],
-  issuedAt: 1_000,
-  expiresAt: 1_300,
+  issuedAt: 1000,
+  expiresAt: 1300,
   nonce: "nonce-1",
 };
 
 test("execution tickets bind the complete routing identity", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });
   assert.deepEqual(
-    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1_100 }),
+    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
     ticket,
   );
 });
@@ -51,15 +51,15 @@ test("execution tickets reject tampering, expiration, and excessive lifetime", (
     verifyEnvironmentExecutionTicket({
       token: `${token}x`,
       publicKey,
-      now: 1_100,
+      now: 1100,
     }),
   );
   assert.throws(() =>
-    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1_300 }),
+    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1300 }),
   );
   assert.throws(() =>
     signEnvironmentExecutionTicket({
-      ticket: { ...ticket, expiresAt: 1_301 },
+      ticket: { ...ticket, expiresAt: 1301 },
       privateKey,
     }),
   );
@@ -80,8 +80,8 @@ const toolCredential: EnvironmentToolCredentialTicket = {
   capability: "repository.read",
   operation: "git.upload_pack",
   operationBinding: null,
-  issuedAt: 1_000,
-  expiresAt: 1_060,
+  issuedAt: 1000,
+  expiresAt: 1060,
   nonce: "tool-nonce-1",
 };
 
@@ -91,11 +91,11 @@ test("tool credentials bind one provider resource capability and operation", () 
     privateKey,
   });
   assert.deepEqual(
-    verifyEnvironmentToolCredential({ token, publicKey, now: 1_030 }),
+    verifyEnvironmentToolCredential({ token, publicKey, now: 1030 }),
     toolCredential,
   );
   assert.throws(() =>
-    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1_030 }),
+    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1030 }),
   );
 });
 
@@ -108,15 +108,15 @@ test("tool credentials reject tampering expiration and lifetimes over one minute
     verifyEnvironmentToolCredential({
       token: `${token}x`,
       publicKey,
-      now: 1_030,
+      now: 1030,
     }),
   );
   assert.throws(() =>
-    verifyEnvironmentToolCredential({ token, publicKey, now: 1_060 }),
+    verifyEnvironmentToolCredential({ token, publicKey, now: 1060 }),
   );
   assert.throws(() =>
     signEnvironmentToolCredential({
-      ticket: { ...toolCredential, expiresAt: 1_061 },
+      ticket: { ...toolCredential, expiresAt: 1061 },
       privateKey,
     }),
   );

@@ -8,7 +8,6 @@ import type {
   RunnerEventSubscriptionFilter,
   RunnerRunTerminalEvent,
   RunnerStream,
-  RunnerStreamEvent,
 } from "@kestrel-agents/sdk";
 import type { RunnerEventEnvelope } from "@kestrel-agents/sdk/runner";
 
@@ -300,11 +299,11 @@ function findLastProgressEventTimestamp(span: Span, code: string): string | unde
     const event = span.events[index];
     if (event?.attributes?.["kestrel.progress_code"] === code) return event.ts;
   }
-  return undefined;
+  return ;
 }
 
 function readProgressCode(event: RunnerEventEnvelope): string | undefined {
-  if (event.type !== "run.progress") return undefined;
+  if (event.type !== "run.progress") return ;
   const payload = event.payload as { update?: { code?: unknown } | undefined };
   return typeof payload.update?.code === "string" ? payload.update.code : undefined;
 }
@@ -441,7 +440,7 @@ function wrapRunnerStream<TEvent extends RunnerEventEnvelope, TTerminal>(
       throw error;
     })
     .finally(async () => {
-      await pump.catch(() => undefined);
+      await pump.catch(() => {});
       if (settled) {
         return;
       }

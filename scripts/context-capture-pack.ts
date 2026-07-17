@@ -1,7 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { ModelToolSpec } from "../src/kestrel/contracts/model-io.js";
 import {
   buildKestrelAgentContext,
   buildKestrelAgentToolModelContext,

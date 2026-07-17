@@ -362,7 +362,7 @@ test("kestrel web forces shutdown after the grace period when an event stream is
   });
 
   runner.signal("SIGINT");
-  const exit = await runner.waitForExit(5_000);
+  const exit = await runner.waitForExit(5000);
 
   assert.equal(exit.code, 0);
   assert.match(runner.stderrOutput(), /shutting down gracefully/u);
@@ -387,11 +387,11 @@ test("kestrel web forces shutdown immediately on a second signal", async (t) => 
   runner.signal("SIGINT");
   await new Promise((resolve) => setTimeout(resolve, 50));
   runner.signal("SIGINT");
-  const exit = await runner.waitForExit(2_000);
+  const exit = await runner.waitForExit(2000);
   const elapsedMs = Date.now() - startedAt;
 
   assert.equal(exit.code, 0);
-  assert.ok(elapsedMs < 5_000, `Expected second signal to force shutdown before grace timeout, got ${elapsedMs}ms.`);
+  assert.ok(elapsedMs < 5000, `Expected second signal to force shutdown before grace timeout, got ${elapsedMs}ms.`);
   assert.match(runner.stderrOutput(), /received another shutdown signal; forcing shutdown/u);
   assert.match(runner.stderrOutput(), /runner service stopped/u);
 });
@@ -635,7 +635,7 @@ async function waitForLocalCoreReady(input: {
       const client = new LocalCoreClient({
         socketPath: input.socketPath,
         token: normalizedToken,
-        timeoutMs: 2_000,
+        timeoutMs: 2000,
       });
       await client.status();
       return normalizedToken;
@@ -665,7 +665,7 @@ async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
     return;
   }
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 5_000) {
+  while (Date.now() - startedAt < 5000) {
     try {
       process.kill(ownerPid, 0);
     } catch {
@@ -717,7 +717,7 @@ async function openEventSubscription(
       },
     );
     req.once("error", reject);
-    req.setTimeout(5_000, () => {
+    req.setTimeout(5000, () => {
       req.destroy(new Error("Timed out waiting for the web runner event subscription."));
     });
     req.end(body);
@@ -1012,12 +1012,12 @@ function extractContextJson(content: string): string | undefined {
   const endTag = "</context_json>";
   const start = content.indexOf(startTag);
   if (start < 0) {
-    return undefined;
+    return ;
   }
   const jsonStart = start + startTag.length;
   const end = content.indexOf(endTag, jsonStart);
   if (end < 0) {
-    return undefined;
+    return ;
   }
   return content.slice(jsonStart, end).trim();
 }
@@ -1027,12 +1027,12 @@ function extractTaggedTextSection(content: string, tagName: string): string | un
   const endTag = `</${tagName}>`;
   const start = content.indexOf(startTag);
   if (start < 0) {
-    return undefined;
+    return ;
   }
   const valueStart = start + startTag.length;
   const end = content.indexOf(endTag, valueStart);
   if (end < 0) {
-    return undefined;
+    return ;
   }
   const value = content.slice(valueStart, end).trim();
   return value.length > 0 ? value : undefined;

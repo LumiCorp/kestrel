@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import type React from "react";
+import { useMemo } from "react";
 import { Box, Text } from "ink";
 
 import type { SplashPreflightCheck, SplashPreflightCheckState, SplashPreflightState } from "../../contracts.js";

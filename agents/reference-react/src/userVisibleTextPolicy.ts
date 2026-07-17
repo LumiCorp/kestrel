@@ -67,7 +67,7 @@ export function findUserVisibleTextViolation(input: {
 }): UserVisibleTextViolation | undefined {
   const normalizedText = input.text.trim();
   if (normalizedText.length === 0) {
-    return undefined;
+    return ;
   }
 
   for (const rule of INVALID_USER_VISIBLE_PATTERNS) {
@@ -88,7 +88,7 @@ export function findUserVisibleTextViolation(input: {
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function buildViolationMessage(field: UserVisibleTextField): string {

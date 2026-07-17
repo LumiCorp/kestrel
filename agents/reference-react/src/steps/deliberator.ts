@@ -82,7 +82,6 @@ import {
   normalizeModelToolCallsToAgentTurn,
 } from "../modelToolCallActions.js";
 import type {
-  EvidenceLedgerContext,
   DecisionFailureCode,
   DecisionContextExecutionIntent,
   DecisionTrace,
@@ -101,7 +100,6 @@ import {
 import { normalizeRuntimePlanDocumentSnapshot } from "../../../../src/runtime/planDocument.js";
 import {
   analyzeVisibleTodoFinalizeReadiness,
-  analyzeVisibleTodosCompletion,
   normalizeVisibleTodoState,
   normalizeVisibleTodoResidualGapData,
   type VisibleTodoState,
@@ -176,14 +174,14 @@ function finalizeStatusesForInteractionMode(input: {
   if (input.interactionMode === "build") {
     return ["goal_satisfied", "out_of_scope"];
   }
-  return undefined;
+  return ;
 }
 
 function cannotSatisfyReasonCodesForInteractionMode(input: {
   interactionMode: InteractionMode;
 }): readonly KestrelAgentCannotSatisfyReasonCode[] | undefined {
   if (input.interactionMode !== "build") {
-    return undefined;
+    return ;
   }
   return ["missing_required_capability", "requested_tool_unavailable"];
 }
@@ -1182,7 +1180,7 @@ function readManagedEntrypointToolFilterArtifactTarget(
   decisionContext: InternalDecisionContext,
 ): string | undefined {
   void decisionContext;
-  return undefined;
+  return ;
 }
 
 function tryCompileAgentAction(
@@ -1415,11 +1413,9 @@ function toAgentLoopActionTransition(
     traces,
     stepIndex,
   });
-  if (visibleTodoContinuation !== undefined) {
-    if (visibleTodoContinuation.kind === "continue") {
+  if (visibleTodoContinuation !== undefined && visibleTodoContinuation.kind === "continue") {
       return visibleTodoContinuation.transition;
     }
-  }
   const visibleTodosForState = visibleTodoContinuation?.visibleTodos ?? compiled.visibleTodos;
   traces.push({
     eventType: "agent.action_selected",
@@ -1611,11 +1607,11 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
     input.action.kind !== "finalize" ||
     input.action.finalizeReason !== "goal_satisfied"
   ) {
-    return undefined;
+    return ;
   }
   const visibleTodos = input.compiled.visibleTodos ?? normalizeVisibleTodoState(input.reactState.visibleTodos);
   if (visibleTodos === undefined) {
-    return undefined;
+    return ;
   }
   const finalizeData = normalizeVisibleTodoResidualGapData(asRecord(input.action.input)?.data);
   const analysis = analyzeVisibleTodoFinalizeReadiness({
@@ -1632,7 +1628,7 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
   }
   const openItem = analysis.blockingOpenItems[0];
   if (openItem === undefined) {
-    return undefined;
+    return ;
   }
   const decisionReason = buildVisibleTodoFinalizeContinuationCorrection({
     itemId: openItem.id,
@@ -1741,7 +1737,7 @@ function resolveBlockedActionPolicy(input: {
       return { toolName, toolClass, blockedCapability };
     }
   }
-  return undefined;
+  return ;
 }
 
 function remapToolAvailabilityPolicyError(input: {
@@ -1860,7 +1856,7 @@ function validateRuntimeContinuationResume(input: {
       return "missing_plan_document";
     }
   }
-  return undefined;
+  return ;
 }
 
 const PLAN_HANDOFF_CONTINUATION_REASONS = new Set([
@@ -1975,7 +1971,7 @@ function readRepeatedActionFailureForNextStep(input: {
 } | undefined {
   const nextAction = input.action;
   if (nextAction === undefined) {
-    return undefined;
+    return ;
   }
   const lastAction = asRecord(input.reactState.lastAction);
   const lastActionResult = asRecord(input.reactState.lastActionResult);
@@ -1984,7 +1980,7 @@ function readRepeatedActionFailureForNextStep(input: {
     lastActionResult === undefined ||
     !isActionEquivalent(nextAction, lastAction)
   ) {
-    return undefined;
+    return ;
   }
 
   if (hasObservedExecutionFailure(lastActionResult)) {
@@ -2005,10 +2001,10 @@ function readRepeatedActionFailureForNextStep(input: {
   }
 
   if (!hasObservedExecutionSuccess(lastActionResult)) {
-    return undefined;
+    return ;
   }
   if (isFilesystemInspectionAction(nextAction)) {
-    return undefined;
+    return ;
   }
   return {
       code: "DECISION_POLICY_FAILED",
@@ -2151,9 +2147,9 @@ function asObservedFailureRecord(record: Record<string, unknown> | undefined): b
 
 function clampRetryDetail(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
-  return value.length <= 1_200 ? value : `${value.slice(0, 1_197)}...`;
+  return value.length <= 1200 ? value : `${value.slice(0, 1197)}...`;
 }
 
 function omitUndefined(input: Record<string, unknown>): Record<string, unknown> {
@@ -2237,7 +2233,7 @@ function areJsonValuesEqual(left: unknown, right: unknown): boolean {
       return false;
     }
     for (const [key, leftValue] of leftEntries) {
-      if (!Object.hasOwn(rightRecord, key) || !areJsonValuesEqual(leftValue, rightRecord[key])) {
+      if (!(Object.hasOwn(rightRecord, key) && areJsonValuesEqual(leftValue, rightRecord[key]))) {
         return false;
       }
     }
@@ -2453,7 +2449,7 @@ function formatModeLabel(mode: InteractionMode, actSubmode: ActSubmode | undefin
 function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const toolClassPolicyRaw = asRecord(record.toolClassPolicy);
   const toolClassPolicy = toolClassPolicyRaw === undefined
@@ -2513,7 +2509,7 @@ function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefine
           : {}),
       };
   if (toolClassPolicy === undefined && capabilityPolicy === undefined && approvalPolicy === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(toolClassPolicy !== undefined ? { toolClassPolicy } : {}),
@@ -2949,11 +2945,11 @@ function buildDeliberatorRejectedResponse(response: ModelResponse<unknown>): Rec
 function stripModelVisibleCorrectionText(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const stripped = asRecord(stripCorrectionFields(record));
   if (stripped === undefined) {
-    return undefined;
+    return ;
   }
   return Object.keys(stripped).length > 0 ? stripped : undefined;
 }
@@ -3010,7 +3006,7 @@ function readDeliberatorRetryKind(error: {
     return "schema";
   }
   if (error.code !== "DECISION_POLICY_FAILED") {
-    return undefined;
+    return ;
   }
   return readThinkerPolicyRetryDirective(error) !== undefined ? "policy" : undefined;
 }
@@ -3470,7 +3466,7 @@ function buildThinkerRequiredCorrection(
       },
     };
   }
-  return undefined;
+  return ;
 }
 
 function isRecoverableToolActionShapeMismatch(
@@ -3491,15 +3487,15 @@ function readCanonicalToolNameFromActionShapeFailure(
   toolAvailability?: DeliberatorToolAvailability | undefined,
 ): string | undefined {
   if (error.code !== "DECISION_SCHEMA_FAILED") {
-    return undefined;
+    return ;
   }
   const details = asRecord(error.details);
   if (asString(details?.path) !== "nextAction.type" && asString(details?.path) !== "nextAction.kind") {
-    return undefined;
+    return ;
   }
   const actionId = asString(details?.actionId)?.trim();
   if (actionId === undefined || actionId.length === 0) {
-    return undefined;
+    return ;
   }
   const allowed = toolAvailability?.allowedToolNames ?? [];
   if (allowed.includes(actionId)) {
@@ -3509,7 +3505,7 @@ function readCanonicalToolNameFromActionShapeFailure(
   if (withoutRequestPrefix !== undefined && allowed.includes(withoutRequestPrefix)) {
     return withoutRequestPrefix;
   }
-  return undefined;
+  return ;
 }
 
 function inputContextManagedEntrypointsForRetry(
@@ -3560,7 +3556,7 @@ function readThinkerPolicyRetryDirective(error: {
     return "dev_shell_retry";
   }
   if (error.code !== "DECISION_POLICY_FAILED") {
-    return undefined;
+    return ;
   }
   const reason = asString(details?.reason);
   if (reason === "work_item_action_mismatch") {

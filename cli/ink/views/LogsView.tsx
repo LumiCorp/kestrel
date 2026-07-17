@@ -1,4 +1,4 @@
-import React from "react";
+import type React from "react";
 import { Box, Text } from "ink";
 
 import type { AgentRunLogLine, UiLogFilters, ViewScrollState } from "../../contracts.js";

@@ -1893,7 +1893,7 @@ export function buildOperatorRecoveryCenter(input: {
 
 function summarizeMcpHealth(status: McpStatusSnapshot | undefined): string | undefined {
   if (status === undefined) {
-    return undefined;
+    return ;
   }
   if (status.servers.length === 0) {
     return "no-servers";

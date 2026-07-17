@@ -73,7 +73,7 @@ export function resolveDatabasePreflightTarget(
 
   const rawPort = parsed.port.trim();
   const port = rawPort.length === 0 ? 5432 : Number(rawPort);
-  if (Number.isInteger(port) === false || port <= 0 || port > 65535) {
+  if (Number.isInteger(port) === false || port <= 0 || port > 65_535) {
     throw new Error(`DATABASE_URL port is invalid ('${rawPort}').`);
   }
 
@@ -215,7 +215,7 @@ export async function preflightDatabaseConnection(input: {
   }
 
   try {
-    await probeTcpPort(target.host, target.port, input.timeoutMs ?? 1_200);
+    await probeTcpPort(target.host, target.port, input.timeoutMs ?? 1200);
     return {
       ok: true,
       target,
@@ -237,7 +237,7 @@ export async function preflightDatabaseConnection(input: {
       const recovered = await input.autoStart();
       if (recovered.ok) {
         try {
-          await probeTcpPort(target.host, target.port, input.retryTimeoutMs ?? 2_500);
+          await probeTcpPort(target.host, target.port, input.retryTimeoutMs ?? 2500);
           return {
             ok: true,
             target,
@@ -298,7 +298,7 @@ export function maybeBuildDatabaseConnectionFailure(input: {
   try {
     target = resolveDatabasePreflightTarget(input.descriptor.databaseUrl, input.env);
   } catch {
-    return undefined;
+    return ;
   }
 
   const failure = describeConnectionFailure(input.error);
@@ -311,7 +311,7 @@ export function maybeBuildDatabaseConnectionFailure(input: {
     message !== undefined &&
     /connection refused|econnrefused|timeout|timed out|econnreset/iu.test(message) === false
   ) {
-    return undefined;
+    return ;
   }
 
   return buildDatabaseConnectionFailure({
@@ -423,7 +423,7 @@ function parseBooleanFlag(value: string | undefined, fallback: boolean): boolean
 
 function readConnectionErrorCode(error: unknown): string | undefined {
   if (typeof (error as { code?: unknown })?.code !== "string") {
-    return undefined;
+    return ;
   }
   const code = String((error as { code: string }).code).trim();
   return CONNECTION_ERROR_CODES.has(code) ? code : undefined;

@@ -272,7 +272,7 @@ export class ProfileStore {
       return await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+        return ;
       }
 
       throw error;
@@ -528,7 +528,7 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
 
 function parseModelProvider(value: unknown, profileId: string): TuiProfile["modelProvider"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (
     value === "openrouter" ||
@@ -547,7 +547,7 @@ function parseModelCredential(
   profileId: string,
 ): TuiProfile["modelCredential"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' modelCredential must be an object`);
@@ -577,7 +577,7 @@ function parseModelCredential(
 
 function parseStoreDriver(value: unknown, profileId: string): TuiProfile["storeDriver"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === "auto" || value === "postgres" || value === "sqlite") {
     return value;
@@ -592,7 +592,7 @@ function parseApprovalPolicyPackId(
   profileId: string,
 ): TuiProfile["approvalPolicyPackId"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;
@@ -604,7 +604,7 @@ function parseApprovalPolicyPackId(
 
 function parseDelegation(value: unknown): TuiProfile["delegation"] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   const allowAgentSpawn =
@@ -629,7 +629,7 @@ function parseDelegation(value: unknown): TuiProfile["delegation"] {
 }
 
 function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["reasoning"] {
-  if (value === undefined) return undefined;
+  if (value === undefined) return ;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' field 'reasoning' must be an object`);
   }
@@ -664,14 +664,14 @@ function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["re
 
 function parseAgentStageConfig(value: unknown, profileId: string): TuiProfile["agentStageConfig"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' field 'agentStageConfig' must be an object`);
   }
   const record = value as Record<string, unknown>;
   if (record.modelByStage === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof record.modelByStage !== "object" || record.modelByStage === null || Array.isArray(record.modelByStage)) {
     throw new Error(`Profile '${profileId}' field 'agentStageConfig.modelByStage' must be an object`);
@@ -695,7 +695,7 @@ function parseAgentStageConfig(value: unknown, profileId: string): TuiProfile["a
 
 function parseModelTimeoutMs(value: unknown, profileId: string): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isInteger(value) === false || value <= 0) {
     throw new Error(`Profile '${profileId}' field 'modelTimeoutMs' must be a positive integer`);
@@ -705,7 +705,7 @@ function parseModelTimeoutMs(value: unknown, profileId: string): number | undefi
 
 function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   const input = value as Record<string, unknown>;
@@ -743,7 +743,7 @@ function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
     toolBatchCheckpointSize === undefined &&
     toolCallRetryCount === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -764,7 +764,7 @@ function parseToolQueue(
   profileId: string,
 ): ToolQueueProfileConfig | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -789,7 +789,7 @@ function parseToolQueue(
     checkpointSize === undefined &&
     retryCount === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -806,7 +806,7 @@ function parseCodeMode(
   profileId: string,
 ): CodeModeProfileConfig | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -836,7 +836,7 @@ function parseCodeMode(
     retention === undefined &&
     approvalMode === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -859,7 +859,7 @@ function parseDevShell(
   profileId: string,
 ): DevShellProfileConfig | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' field 'devShell' must be an object`);
@@ -887,7 +887,7 @@ function parseDevShell(
     allowedEnvNames === undefined &&
     envMode === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -904,7 +904,7 @@ function parseCodeModeSandbox(
   profileId: string,
 ): Partial<CodeModeProfileConfig["sandbox"]> | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' field 'codeMode.sandbox' must be an object`);
@@ -947,7 +947,7 @@ function parseCodeModeSandbox(
     maxArtifacts === undefined &&
     maxArtifactBytes === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -969,11 +969,11 @@ function parseTheme(
   notices: string[],
 ): ThemeOverrides | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     notices.push(`Ignored invalid theme config for profile '${profileId}': theme must be an object.`);
-    return undefined;
+    return ;
   }
 
   const input = value as Record<string, unknown>;
@@ -1003,7 +1003,7 @@ function parseCodeModeRetention(
   profileId: string,
 ): Partial<CodeModeProfileConfig["retention"]> | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' field 'codeMode.retention' must be an object`);
@@ -1016,7 +1016,7 @@ function parseCodeModeRetention(
     typeof input.persistArtifacts === "boolean" ? input.persistArtifacts : undefined;
 
   if (persistSummary === undefined && persistArtifacts === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -1027,7 +1027,7 @@ function parseCodeModeRetention(
 
 function parseMcpServers(value: unknown, profileId: string): McpServerConfig[] | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (Array.isArray(value) === false) {
@@ -1101,7 +1101,7 @@ function parseMcpToolMetadataMap(
   index: number,
 ): McpServerConfig["toolMetadata"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' mcpServers[${index}] field 'toolMetadata' must be an object`);
@@ -1203,7 +1203,7 @@ function parseHeaderEnvMap(
   index: number,
 ): Record<string, string> | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -1236,7 +1236,7 @@ function parseDefaultInteractionMode(
   profileId: string,
 ): "chat" | "plan" | "build" | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (value === "chat" || value === "plan" || value === "build") {
@@ -1257,7 +1257,7 @@ function parseDefaultActSubmode(
   profileId: string,
 ): "strict" | "safe" | "full_auto" | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   if (value === "strict" || value === "safe" || value === "full_auto") {
@@ -1284,7 +1284,7 @@ function readOptionalString(
 ): string | undefined {
   const maybe = value[key];
   if (maybe === undefined) {
-    return undefined;
+    return ;
   }
 
   if (typeof maybe !== "string" || maybe.trim().length === 0) {

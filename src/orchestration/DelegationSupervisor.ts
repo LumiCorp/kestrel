@@ -533,14 +533,14 @@ function assertDelegationDepth(policy: { depth: number; maxDepth: number }): voi
 
 function normalizePolicyInteger(value: number | undefined): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.max(0, Math.trunc(value));
 }
 
 function normalizePolicyString(value: string | undefined): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

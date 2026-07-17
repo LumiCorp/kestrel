@@ -118,7 +118,7 @@ test("ensureDesktopRunnerResponsive handles synchronous observer errors without 
           message: "Runner failed during boot.",
         },
       }));
-      return () => undefined;
+      return () => {};
     },
     ensureStarted() {
       throw new Error("ensureStarted should not run after synchronous settlement");

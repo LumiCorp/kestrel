@@ -22,8 +22,8 @@ import {
   normalizeRetrievalGuardOutput,
   readRetrievalToolFamily,
 } from "./retrievalLoopGuard.js";
-import { Guardrails, GuardrailViolationError } from "./Guardrails.js";
-import { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
+import { type Guardrails, GuardrailViolationError } from "./Guardrails.js";
+import type { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
 
 type RunEventLevel = "INFO" | "WARN" | "ERROR";
 const LOOP_GUARD_HISTORY_WINDOW = 12;
@@ -398,13 +398,13 @@ export class LoopGuardCoordinator {
     continuation?: NormalizedOutput["continuation"] | undefined;
   }): Promise<{ session: SessionRecord; currentStep: string | undefined; output?: undefined } | { output: NormalizedOutput } | undefined> {
     if (input.event.type !== "user.reply") {
-      return undefined;
+      return ;
     }
     const reactState = asRecord(input.session.state.agent) ?? {};
     const activeWait = readActiveWaitState(reactState);
     const waitMetadata = asRecord(activeWait?.metadata);
     if (activeWait?.kind !== "user" || waitMetadata?.reason !== "loop_visit_stall") {
-      return undefined;
+      return ;
     }
 
     const payload = asRecord(input.event.payload) ?? {};
@@ -414,7 +414,7 @@ export class LoopGuardCoordinator {
     if (shouldResume === false) {
       const waitingStepAgent = activeWait.resumeStepAgent ?? input.currentStep ?? input.session.currentStepAgent;
       if (waitingStepAgent === undefined) {
-        return undefined;
+        return ;
       }
       const waitFor: RuntimeWaitMatcher = {
         kind: activeWait.kind,
@@ -518,7 +518,7 @@ export class LoopGuardCoordinator {
     const reactState = asRecord(input.session.state.agent) ?? {};
     const summary = this.buildResearchStallSummary(reactState, input.currentStep, input.runtimeError);
     if (summary === undefined) {
-      return undefined;
+      return ;
     }
     const loopStallDiagnostics = buildLoopStallDiagnostics(
       reactState,
@@ -680,37 +680,37 @@ export class LoopGuardCoordinator {
     runtimeError: RuntimeError;
   }): Promise<NormalizedOutput | undefined> {
     if (input.runtimeError.code !== "LOOP_GUARD_TRIGGERED" || input.currentStep !== "agent.loop") {
-      return undefined;
+      return ;
     }
     const errorDetails = asRecord(input.runtimeError.details);
     if (asString(errorDetails?.guardType) !== "NO_PROGRESS_REASONING_LOOP") {
-      return undefined;
+      return ;
     }
     const reactState = asRecord(input.session.state.agent) ?? {};
     if (hasVisibleTodoFinalizeContinuationSignal(reactState) === false) {
-      return undefined;
+      return ;
     }
     if (hasSuccessfulExecutionEvidence(input.session.state, reactState) === false) {
-      return undefined;
+      return ;
     }
 
     const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
     const finalizeAction = asRecord(reactState.lastAction);
     if (finalizeAction?.kind !== "finalize" || finalizeAction.finalizeReason !== "goal_satisfied") {
-      return undefined;
+      return ;
     }
     const finalizeInput = asRecord(finalizeAction.input);
     const finalizeData = asRecord(finalizeInput?.data);
     const residualGap = normalizeVisibleTodoResidualGapData(finalizeData);
     if (residualGap === undefined) {
-      return undefined;
+      return ;
     }
     const readiness = analyzeVisibleTodoFinalizeReadiness({
       todos: visibleTodos,
       residualGap,
     });
     if (readiness.complete === false || readiness.residualOpenItems.length === 0) {
-      return undefined;
+      return ;
     }
 
     const completedVisibleTodos = readiness.completedVisibleTodos ?? visibleTodos;
@@ -823,21 +823,21 @@ export class LoopGuardCoordinator {
       input.runtimeError.code !== "MAX_STEP_VISITS_EXCEEDED" &&
       isRecoverableDispatchLoopGuard(input.runtimeError, input.currentStep) === false
     ) {
-      return undefined;
+      return ;
     }
     if (input.currentStep !== "agent.loop" && input.currentStep !== "agent.exec.dispatch") {
-      return undefined;
+      return ;
     }
 
     const reactState = asRecord(input.session.state.agent) ?? {};
     const history = readLoopHistory(asRecord(reactState.loopGuard)?.history);
     if (history.length < 3) {
-      return undefined;
+      return ;
     }
 
     const activeToolName = readActiveToolName(reactState);
     if (activeToolName !== undefined && isMutationCapableToolName(activeToolName)) {
-      return undefined;
+      return ;
     }
 
     const diagnostic = buildLoopStallDiagnostics(reactState, input.currentStep, input.runtimeError) ?? {
@@ -965,10 +965,10 @@ export class LoopGuardCoordinator {
     const reactState = asRecord(input.session.state.agent) ?? {};
     const summary = this.buildResearchStallSummary(reactState, input.currentStep, input.runtimeError);
     if (summary?.verifiedEvidenceAvailable !== true) {
-      return undefined;
+      return ;
     }
     if (this.isBuildModeRun(reactState, input.event)) {
-      return undefined;
+      return ;
     }
 
     const synthesisResult = await this.synthesizeVerifiedRetrievalAnswer({
@@ -982,7 +982,7 @@ export class LoopGuardCoordinator {
       signal: input.signal,
     });
     if (synthesisResult === undefined) {
-      return undefined;
+      return ;
     }
 
     const artifactEvidenceUnavailable = synthesisResult.completionState === "artifact_evidence_unavailable";
@@ -1212,7 +1212,7 @@ export class LoopGuardCoordinator {
         code: runtimeError.code,
         message: runtimeError.message,
       }, input.stepIndex);
-      return undefined;
+      return ;
     }
   }
 
@@ -1272,7 +1272,7 @@ export class LoopGuardCoordinator {
     | undefined
   > {
     if (input.runtimeError.code !== "LOOP_GUARD_TRIGGERED") {
-      return undefined;
+      return ;
     }
     const errorDetails = asRecord(input.runtimeError.details);
     const guardType = asString(errorDetails?.guardType);
@@ -1285,7 +1285,7 @@ export class LoopGuardCoordinator {
       readRetrievalToolFamily(retrievalFamily ?? "") === "filesystem.read_like" ||
       (toolName !== undefined && isFilesystemInspectionToolName(toolName));
     if (isFilesystemLoopGuard === false) {
-      return undefined;
+      return ;
     }
 
     const transitionPatch = asRecord(input.transition.statePatch) ?? {};
@@ -1302,11 +1302,11 @@ export class LoopGuardCoordinator {
       ...patchReact,
     };
     if (this.isUnattendedRepairContinuation(input.event, reactState) === false) {
-      return undefined;
+      return ;
     }
     const targetPath = this.readConcreteRepairTargetPath(reactState);
     if (targetPath === undefined) {
-      return undefined;
+      return ;
     }
 
     const nextAction =
@@ -1411,11 +1411,11 @@ export class LoopGuardCoordinator {
     | undefined
   > {
     if (input.runtimeError.code !== "LOOP_GUARD_TRIGGERED") {
-      return undefined;
+      return ;
     }
     const errorDetails = asRecord(input.runtimeError.details);
     if (asString(errorDetails?.guardType) !== "REPEATED_REDUNDANT_RETRIEVAL_PIVOT") {
-      return undefined;
+      return ;
     }
 
     const priorReact = asRecord(input.previousState.agent) ?? {};
@@ -1426,10 +1426,10 @@ export class LoopGuardCoordinator {
     };
     const summary = this.buildResearchStallSummary(reactState, input.currentStep, input.runtimeError);
     if (summary?.verifiedEvidenceAvailable !== true) {
-      return undefined;
+      return ;
     }
     if (this.isBuildModeRun(reactState, input.event) === false) {
-      return undefined;
+      return ;
     }
 
     const now = new Date().toISOString();
@@ -1665,11 +1665,11 @@ function readLoopGuardToolInputRejection(reactState: Record<string, unknown>): R
   const details = asRecord(lastActionResult?.details);
   const code = readNonEmptyString(lastActionResult?.errorCode) ?? readNonEmptyString(lastActionResult?.code);
   if (code !== "TOOL_INPUT_INVALID") {
-    return undefined;
+    return ;
   }
   const path = readNonEmptyString(details?.path) ?? readNonEmptyString(lastActionResult?.path);
   if (path === undefined) {
-    return undefined;
+    return ;
   }
   const reason =
     readNonEmptyString(lastActionResult?.message) ??
@@ -1798,7 +1798,7 @@ function buildNoActionReasoningStateSignature(
 
 function compactRetryContextForLoopGuard(value: Record<string, unknown> | undefined): unknown {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const failure = asRecord(value.failure);
   const details = asRecord(failure?.details);
@@ -1811,11 +1811,11 @@ function compactRetryContextForLoopGuard(value: Record<string, unknown> | undefi
 
 function readLatestEvidenceLedgerEntry(value: unknown): unknown {
   if (Array.isArray(value) === false || value.length === 0) {
-    return undefined;
+    return ;
   }
   const entry = asRecord(value[value.length - 1]);
   if (entry === undefined) {
-    return undefined;
+    return ;
   }
   const target = asRecord(entry.target);
   const nextUse = asRecord(entry.nextUse);
@@ -1842,7 +1842,7 @@ function readLatestDecisionRedirect(value: unknown):
     }
   | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   for (let index = value.length - 1; index >= 0; index -= 1) {
     const entry = asRecord(value[index]);
@@ -1859,7 +1859,7 @@ function readLatestDecisionRedirect(value: unknown):
       allowedToolNames: Array.isArray(metadata?.allowedToolNames) ? metadata.allowedToolNames : [],
     };
   }
-  return undefined;
+  return ;
 }
 
 function readLoopHistory(
@@ -1945,7 +1945,7 @@ function readToolCycleMarker(
 ): ToolCycleMarker | undefined {
   const action = asRecord(value);
   if (action === undefined || action.kind !== "tool" || typeof action.name !== "string") {
-    return undefined;
+    return ;
   }
   if (action.name !== "internet.extract") {
     return {
@@ -1981,7 +1981,7 @@ function readRetrievalCycleMarker(
 ): RetrievalLoopHistoryEntry | undefined {
   const nextAction = asRecord(reactPatch.nextAction);
   if (nextAction?.kind !== "tool" || typeof nextAction.name !== "string" || isRetrievalToolName(nextAction.name) === false) {
-    return undefined;
+    return ;
   }
   const lastActionResult = asRecord(priorReact.lastActionResult);
   const outputToolName =
@@ -1995,11 +1995,11 @@ function readRetrievalCycleMarker(
     outputToolName === undefined ||
     isRetrievalToolName(outputToolName) === false
   ) {
-    return undefined;
+    return ;
   }
   const inputRecord = asRecord(nextAction.input);
   if (inputRecord === undefined) {
-    return undefined;
+    return ;
   }
   const input = normalizeRetrievalGuardInput(nextAction.name, inputRecord);
   const output = normalizeRetrievalGuardOutput(outputToolName, lastActionResult);
@@ -2018,7 +2018,7 @@ function readNormalizedRetrievalInput(
   const primaryText = typeof record?.primaryText === "string" ? record.primaryText : undefined;
   const comparableFields = asRecord(record?.comparableFields);
   if (toolName === undefined || primaryText === undefined || comparableFields === undefined) {
-    return undefined;
+    return ;
   }
   const normalizedComparableFields: Record<string, string> = {};
   for (const [key, entry] of Object.entries(comparableFields)) {
@@ -2038,7 +2038,7 @@ function readNormalizedRetrievalOutput(
 ): ReturnType<typeof normalizeRetrievalGuardOutput> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   return {
     topUrls: readStringArray(record.topUrls),
@@ -2206,11 +2206,11 @@ function isRecoverableDispatchLoopGuard(runtimeError: RuntimeError, currentStep:
 
 function readStepVisitCount(runtimeError: RuntimeError | undefined): number | undefined {
   if (runtimeError === undefined) {
-    return undefined;
+    return ;
   }
   const match = runtimeError.message.match(/visited\s+(\d+)\s+times/u);
   if (match === null) {
-    return undefined;
+    return ;
   }
   const value = Number.parseInt(match[1] ?? "", 10);
   return Number.isFinite(value) ? value : undefined;
@@ -2221,13 +2221,13 @@ function readConcreteLoopStallTarget(
 ): Record<string, unknown> | undefined {
   const nextAction = asRecord(reactState.nextAction);
   if (nextAction === undefined) {
-    return undefined;
+    return ;
   }
   if (nextAction.kind === "tool") {
     return readConcreteToolTarget(nextAction);
   }
   if (nextAction.kind !== "tool_batch" || Array.isArray(nextAction.items) === false) {
-    return undefined;
+    return ;
   }
   for (const item of nextAction.items) {
     const target = readConcreteToolTarget(asRecord(item));
@@ -2238,18 +2238,18 @@ function readConcreteLoopStallTarget(
       };
     }
   }
-  return undefined;
+  return ;
 }
 
 function readConcreteToolTarget(
   action: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (action === undefined || typeof action.name !== "string") {
-    return undefined;
+    return ;
   }
   const input = asRecord(action.input);
   if (input === undefined) {
-    return undefined;
+    return ;
   }
   const fields = [
     "path",
@@ -2278,7 +2278,7 @@ function readConcreteToolTarget(
       label: `${action.name} ${field}=${displayValue}`,
     };
   }
-  return undefined;
+  return ;
 }
 
 function readActiveToolName(reactState: Record<string, unknown>): string | undefined {
@@ -2337,7 +2337,7 @@ function readTruncatedToolArtifactsForResume(
   | undefined {
   const lastAction = asRecord(lastActionResult);
   if (lastAction === undefined) {
-    return undefined;
+    return ;
   }
 
   const outputs: Record<string, unknown>[] = [];
@@ -2352,7 +2352,7 @@ function readTruncatedToolArtifactsForResume(
 
   const truncatedOutputs = outputs.filter((output) => output.truncated === true);
   if (truncatedOutputs.length === 0) {
-    return undefined;
+    return ;
   }
 
   const artifactIds = [
@@ -2365,7 +2365,7 @@ function readTruncatedToolArtifactsForResume(
     ),
   ];
   if (artifactIds.length === 0) {
-    return undefined;
+    return ;
   }
   const digestArtifactIds = [
     ...new Set(
@@ -2443,7 +2443,7 @@ function extractVerifiedRetrievalSynthesisMessage(value: unknown): string | unde
   }
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const direct =
     readNonEmptyString(record.message) ??
@@ -2454,7 +2454,7 @@ function extractVerifiedRetrievalSynthesisMessage(value: unknown): string | unde
   }
   const output = asRecord(record.output);
   if (output === undefined) {
-    return undefined;
+    return ;
   }
   return normalizeSynthesisMessage(
     readNonEmptyString(output.message) ??
@@ -2523,14 +2523,14 @@ function extractModelUsage(value: unknown):
   const record = asRecord(value);
   const usage = asRecord(record?.usage);
   if (usage === undefined) {
-    return undefined;
+    return ;
   }
 
   const inputTokens = readMaybeNumber(usage.inputTokens);
   const outputTokens = readMaybeNumber(usage.outputTokens);
   const totalTokens = readMaybeNumber(usage.totalTokens);
   if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -2588,12 +2588,12 @@ function resolveExecSubstateForStep(stepAgent: string): string | undefined {
   if (stepAgent.startsWith("agent.exec.")) {
     return stepAgent.slice("agent.exec.".length);
   }
-  return undefined;
+  return ;
 }
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -2632,7 +2632,7 @@ function sortValue(value: unknown): unknown {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

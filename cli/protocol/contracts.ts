@@ -1,7 +1,6 @@
 import type {
   RunnerCommandType as CanonicalRunnerCommandType,
   RunnerEventType as CanonicalRunnerEventType,
-  RunnerRunStreamEventType,
 } from "@kestrel-agents/protocol";
 import type {
   ClientCapabilities,
@@ -134,7 +133,7 @@ export type JobRunCommandPayload =
       input: JobInputWithProfileReference;
     };
 
-export type ProfileListCommandPayload = {};
+export type ProfileListCommandPayload = Record<string, never>;
 
 export interface ProfileGetCommandPayload {
   profileId: string;

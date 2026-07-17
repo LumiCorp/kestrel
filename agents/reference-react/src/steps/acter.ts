@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { ArtifactIntent, StepAgent, StepIO, Transition, WaitForMatcher } from "../../../../src/kestrel/contracts/execution.js";
+import type { ArtifactIntent, StepAgent, StepIO, Transition, } from "../../../../src/kestrel/contracts/execution.js";
 import type { AgentToolResult } from "../../../../src/kestrel/contracts/model-io.js";
 import { isModelVisibleExecutableActionId } from "../../../../src/kestrel/executableActions.js";
 
@@ -1847,8 +1847,7 @@ async function executeToolBatchChunk(input: {
         checkpointSize: normalizedCheckpointSize,
       }
     : undefined;
-  const reducedReactState = toolResults.reduce<Record<string, unknown>>((state, item, index) => {
-    return applyReactStateEvent({
+  const reducedReactState = toolResults.reduce<Record<string, unknown>>((state, item, index) => applyReactStateEvent({
       reactState: state,
       event: {
         type: "tool_result_observed",
@@ -1861,8 +1860,7 @@ async function executeToolBatchChunk(input: {
         reused: item.reused,
         workspaceRoot: readActiveWorkspaceRootFromExecState(asRecord(state.exec)),
       },
-    }).reactState;
-  }, input.reactState);
+    }).reactState, input.reactState);
 
   const postToolVerification = buildPostToolVerification({
     reactState: input.reactState,
@@ -2150,7 +2148,7 @@ function resolveAutonomyPolicy(
 ): AutonomyPolicy | undefined {
   const record = asRecord(value);
   if (record === undefined && fallbackLevel === undefined) {
-    return undefined;
+    return ;
   }
   const level = normalizeAutonomyLevel(asString(record?.level) ?? fallbackLevel ?? "L2");
   const base = defaultAutonomyPolicy(level);
@@ -2250,7 +2248,7 @@ function readExecutionPolicy(
   | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const toolClassPolicyRaw = asRecord(record.toolClassPolicy);
@@ -2316,7 +2314,7 @@ function readExecutionPolicy(
     capabilityPolicy === undefined &&
     approvalPolicy === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -2355,7 +2353,7 @@ function readCompiledAction(value: unknown): ReactAction | undefined {
     return validation.action;
   }
   if (validation.failure.details.reason === "missing_compiled_next_action") {
-    return undefined;
+    return ;
   }
   throw createActerInvalidCompiledActionError(validation.failure);
 }
@@ -2365,7 +2363,7 @@ function normalizeCompiledAction(
   workspaceRoot: string | undefined,
 ): ReactAction | undefined {
   if (action === undefined) {
-    return undefined;
+    return ;
   }
   if (action.kind === "effect" && isModelVisibleExecutableActionId(action.type) === false) {
     throw createRuntimeFailure(
@@ -2434,13 +2432,13 @@ function readPendingExecutableAction(
 ): { kind: "effect"; actionId: string; idempotencyKey: string } | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const kind = asString(record.kind);
   const actionId = asString(record.actionId);
   const idempotencyKey = asString(record.idempotencyKey);
   if (kind !== "effect" || actionId === undefined || idempotencyKey === undefined) {
-    return undefined;
+    return ;
   }
   if (isModelVisibleExecutableActionId(actionId) === false) {
     throw createRuntimeFailure(
@@ -2482,7 +2480,7 @@ function readPendingToolBatch(value: unknown): PendingToolBatchState | undefined
       const name = asString(item?.name);
       const rawInput = asRecord(item?.input);
       if (name === undefined || rawInput === undefined) {
-        return undefined;
+        return ;
       }
       const toolCallId = asString(item?.toolCallId);
       return {
@@ -2493,7 +2491,7 @@ function readPendingToolBatch(value: unknown): PendingToolBatchState | undefined
     })
     .filter((item): item is NonNullable<typeof item> => item !== undefined);
   if (items.length === 0) {
-    return undefined;
+    return ;
   }
 
   const nextIndex = normalizeNonNegativeInt(record?.nextIndex, 0);
@@ -2504,7 +2502,7 @@ function readPendingToolBatch(value: unknown): PendingToolBatchState | undefined
       const name = asString(item?.name);
       const rawInput = asRecord(item?.input);
       if (name === undefined || rawInput === undefined) {
-        return undefined;
+        return ;
       }
       const toolCallId = asString(item?.toolCallId);
       return {
@@ -2535,7 +2533,7 @@ function readPendingToolBatch(value: unknown): PendingToolBatchState | undefined
       const input = asRecord(pending?.input);
       const idempotencyKey = asString(pending?.idempotencyKey);
       if (name === undefined || input === undefined || idempotencyKey === undefined) {
-        return undefined;
+        return ;
       }
       const toolCallId = asString(pending?.toolCallId);
       return {
@@ -2628,7 +2626,7 @@ function compactToolInputForDecision(
   };
   const keys = keysByTool[toolName];
   if (keys === undefined) {
-    return undefined;
+    return ;
   }
   const compact: Record<string, unknown> = {};
   for (const key of keys) {
@@ -2652,7 +2650,7 @@ function compactDecisionToolInputValue(
     (key === "find" || key === "replace") &&
     typeof value === "string"
   ) {
-    return value.length <= 1_000 ? value : `${value.slice(0, 997)}...`;
+    return value.length <= 1000 ? value : `${value.slice(0, 997)}...`;
   }
   return value;
 }
@@ -2721,20 +2719,20 @@ function readDevShellArtifactValidation(input: {
     input.chunk === undefined ||
     input.lastControllerCommand === undefined
   ) {
-    return undefined;
+    return ;
   }
   const lines = input.chunk.split(/\r?\n/u);
   const markerIndex = lines.findIndex(
     (line) => line.startsWith("artifact_exists:") || line.startsWith("artifact_missing:"),
   );
   if (markerIndex < 0) {
-    return undefined;
+    return ;
   }
   const marker = lines[markerIndex] ?? "";
   const exists = marker.startsWith("artifact_exists:");
   const artifactPath = marker.slice(marker.indexOf(":") + 1).trim();
   if (artifactPath.length === 0) {
-    return undefined;
+    return ;
   }
   let byteCount: number | undefined;
   let contentLines: string[] = [];
@@ -2816,10 +2814,10 @@ function maybeBuildRequiredActiveDevShellReadAction(input: {
     (input.toolName.startsWith("dev.shell.") === false && input.toolName.startsWith("dev.process.") === false) ||
     input.toolName === "dev.process.read"
   ) {
-    return undefined;
+    return ;
   }
   void input;
-  return undefined;
+  return ;
 }
 
 function maybeRedirectActiveDevShellExecAtDispatch(input: {
@@ -2831,7 +2829,7 @@ function maybeRedirectActiveDevShellExecAtDispatch(input: {
   toolInput: Record<string, unknown>;
 }): Transition | undefined {
   void input;
-  return undefined;
+  return ;
 }
 
 function maybeRedirectSettledDevShellPollingAtDispatch(input: {
@@ -2843,7 +2841,7 @@ function maybeRedirectSettledDevShellPollingAtDispatch(input: {
   toolInput: Record<string, unknown>;
 }): Transition | undefined {
   void input;
-  return undefined;
+  return ;
 }
 
 function buildDevShellExecStatePatch(input: {
@@ -2854,13 +2852,13 @@ function buildDevShellExecStatePatch(input: {
   toolOutput: unknown;
 }): Record<string, unknown> | undefined {
   if (isDevShellLifecycleTool(input.toolName) === false) {
-    return undefined;
+    return ;
   }
   const current = asRecord(input.execState?.devShell);
   const output = asRecord(input.toolOutput);
   const lifecycle = normalizeDevShellLifecycle(input.toolName, input.toolInput, output);
   if (lifecycle === undefined) {
-    return undefined;
+    return ;
   }
   const next: Record<string, unknown> = {
     ...(current ?? {}),
@@ -3067,7 +3065,7 @@ function sourcePathMatches(candidatePath: string | undefined, sourcePath: string
   const normalize = (value: string | undefined): string | undefined => {
     const trimmed = value?.trim();
     if (trimmed === undefined || trimmed.length === 0) {
-      return undefined;
+      return ;
     }
     return trimmed
       .replace(/\\/gu, "/")
@@ -3175,7 +3173,7 @@ function extractDevShellErrorPreview(chunk: string): string | undefined {
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
   if (lines.length === 0) {
-    return undefined;
+    return ;
   }
   const relevant = lines.filter((line) =>
     /(?:traceback|error|exception|failed|not found|can't open file|syntaxerror|nameerror|runtimeerror|file ".*", line \d+)/iu.test(line),
@@ -3186,7 +3184,7 @@ function extractDevShellErrorPreview(chunk: string): string | undefined {
 
 function inferHelperSourcePath(command: string | undefined): string | undefined {
   if (command === undefined) {
-    return undefined;
+    return ;
   }
   const interpreterMatch = command.match(/(?:^|[\s;&|])(?:python(?:3(?:\.\d+)?)?|node|tsx|ts-node|bash|sh|ruby|go\s+run|cargo\s+run\s+--bin)\s+(['"]?)([^\s'";&|]+\.(?:py|js|jsx|ts|tsx|mjs|cjs|sh|rb|go|rs))\1/u);
   if (interpreterMatch?.[2] !== undefined) {
@@ -3374,7 +3372,7 @@ function helperCommandRoleHasConcreteTarget(
 function normalizeDevShellCommandContext(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const command = asString(record.command);
   const cwd = asString(record.cwd);
@@ -3440,22 +3438,22 @@ function readDevShellCompletionMarker(
   }
   const text = asString(output?.text) ?? asString(output?.chunk) ?? asString(output?.chunkPreview);
   if (text === undefined || text.length === 0) {
-    return undefined;
+    return ;
   }
   const matches = [...text.matchAll(/__KESTREL_CMD_DONE__:([^:\s]+):(-?\d+)/g)];
   if (matches.length === 0) {
-    return undefined;
+    return ;
   }
   const marker = matches[matches.length - 1];
   if (marker === undefined) {
-    return undefined;
+    return ;
   }
   const processId = typeof marker[1] === "string" ? marker[1] : undefined;
   const parsedExitCode =
     typeof marker[2] === "string" ? Number.parseInt(marker[2], 10) : Number.NaN;
   const exitCode = Number.isFinite(parsedExitCode) ? Math.trunc(parsedExitCode) : undefined;
   if (processId === undefined && exitCode === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(processId !== undefined ? { processId } : {}),
@@ -3562,10 +3560,10 @@ function readDispatchReuseGuard(value: unknown): DispatchReuseGuardState | undef
     inputHash === undefined ||
     consecutiveReuseCount === undefined
   ) {
-    return undefined;
+    return ;
   }
   if (consecutiveReuseCount < 1) {
-    return undefined;
+    return ;
   }
   return {
     runId,

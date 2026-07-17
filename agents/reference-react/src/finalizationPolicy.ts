@@ -104,7 +104,7 @@ function readArtifactVerificationContradiction(input: {
       details: requirementFailures,
     };
   }
-  return undefined;
+  return ;
 }
 
 function readArtifactVerificationFailures(

@@ -32,7 +32,7 @@ test("pty driver abortPatterns fail fast with explicit reason", async () => {
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:fatal_marker/u);
   assert.doesNotMatch(result.stderr, /Timed out waiting/u);
-  assert.ok(durationMs < 5_000, `expected fail-fast before timeout, duration=${durationMs}ms`);
+  assert.ok(durationMs < 5000, `expected fail-fast before timeout, duration=${durationMs}ms`);
 });
 
 test("pty driver abortPatterns support maxMatches thresholds", async () => {
@@ -65,7 +65,7 @@ test("pty driver abortPatterns support maxMatches thresholds", async () => {
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:repeat_loop/u);
   assert.match(result.stderr, /maxMatches=1/u);
-  assert.ok(durationMs < 5_000, `expected threshold fail-fast before timeout, duration=${durationMs}ms`);
+  assert.ok(durationMs < 5000, `expected threshold fail-fast before timeout, duration=${durationMs}ms`);
 });
 
 function readStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {

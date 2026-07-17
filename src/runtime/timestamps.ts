@@ -48,7 +48,7 @@ function describeType(value: unknown): string {
 
 function toIsoTimestamp(value: string): string | undefined {
   if (BARE_GMT_OFFSET.test(value)) {
-    return undefined;
+    return ;
   }
 
   const direct = Date.parse(value);
@@ -58,7 +58,7 @@ function toIsoTimestamp(value: string): string | undefined {
 
   const gmtOffset = value.match(ISO_GMT_OFFSET_SUFFIX);
   if (gmtOffset === null) {
-    return undefined;
+    return ;
   }
 
   const [, prefix, hours, minutes] = gmtOffset;
@@ -67,5 +67,5 @@ function toIsoTimestamp(value: string): string | undefined {
     return new Date(parsed).toISOString();
   }
 
-  return undefined;
+  return ;
 }

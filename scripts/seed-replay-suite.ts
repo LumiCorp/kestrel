@@ -200,7 +200,7 @@ function createBehaviorBundle(input: {
       tolerant_metrics: {
         stepsObservedDelta: 1,
         progressToolCallsDelta: 2,
-        durationMsDelta: 5_000,
+        durationMsDelta: 5000,
       },
       ...(input.artifacts !== undefined
         ? {
@@ -244,7 +244,7 @@ function createSyntheticBundle(input: {
       tolerant_metrics: {
         stepsObservedDelta: 1,
         progressToolCallsDelta: 2,
-        durationMsDelta: 5_000,
+        durationMsDelta: 5000,
       },
       ...(input.artifacts !== undefined
         ? {

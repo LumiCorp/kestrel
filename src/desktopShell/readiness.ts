@@ -322,7 +322,7 @@ function runnerAction(
       command: runtimeHealth?.code === "STORE_SQLITE_INIT_FAILED" ? "copy_help_packet" : "restart_runtime",
     };
   }
-  return undefined;
+  return ;
 }
 
 function summarize(

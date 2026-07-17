@@ -93,7 +93,7 @@ test("RetryingModelGateway uses slower backoff for rate limits without retry-aft
 
     assert.deepEqual(result, { ok: true });
     assert.equal(attempts, 2);
-    assert.ok(Date.now() - startedAt >= 1_550, "expected rate-limit backoff to exceed the old 250ms retry");
+    assert.ok(Date.now() - startedAt >= 1550, "expected rate-limit backoff to exceed the old 250ms retry");
   } finally {
     Math.random = originalRandom;
   }

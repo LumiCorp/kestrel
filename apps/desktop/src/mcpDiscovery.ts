@@ -210,11 +210,11 @@ export function parseDockerMcpTools(raw: string): DesktopMcpToolSummary[] | unde
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return undefined;
+    return ;
   }
 
   if (Array.isArray(parsed) === false) {
-    return undefined;
+    return ;
   }
 
   const tools: DesktopMcpToolSummary[] = [];
@@ -280,7 +280,7 @@ function parseDesktopMcpServer(
   sourcePath: string,
 ): DesktopMcpServerConfig | undefined {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return undefined;
+    return ;
   }
   const record = input as Record<string, unknown>;
   const command = typeof record.command === "string" ? record.command : undefined;
@@ -289,7 +289,7 @@ function parseDesktopMcpServer(
     ? record.transport
     : "stdio";
   if (command === undefined && url === undefined) {
-    return undefined;
+    return ;
   }
   return {
     id,

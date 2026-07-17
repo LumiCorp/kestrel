@@ -140,7 +140,7 @@ function parseFiles(
       const path = readString(entry, "path");
       const content = readString(entry, "content");
       if (path === undefined || content === undefined) {
-        return undefined;
+        return ;
       }
       return {
         path,
@@ -155,7 +155,7 @@ function parseFiles(
 
 function parsePositiveNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false || value <= 0) {
-    return undefined;
+    return ;
   }
   return Math.floor(value);
 }
@@ -164,12 +164,12 @@ function parseLanguage(value: string | undefined): CodeExecutionLanguage | undef
   if (value === "javascript" || value === "python" || value === "bash") {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function parseNetwork(value: string | undefined): CodeNetworkMode | undefined {
   if (value === "off" || value === "on") {
     return value;
   }
-  return undefined;
+  return ;
 }

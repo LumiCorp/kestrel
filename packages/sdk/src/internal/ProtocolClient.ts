@@ -11,7 +11,6 @@ import type {
   RunnerCommandPayloadByType,
   RunnerCommandType,
   RunnerEvent,
-  RunnerEventEnvelope,
   RunnerEventType,
   RunnerResponseByCommandType,
 } from "../contracts.js";
@@ -202,11 +201,11 @@ export class ProtocolClient {
 
 function createProtocolErrorEvent(value: unknown, cause: unknown): RunnerEvent | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const event = value as Record<string, unknown>;
   if (typeof event.commandId !== "string" || event.commandId.length === 0) {
-    return undefined;
+    return ;
   }
   const detail = cause instanceof Error ? cause.message : String(cause);
   return {

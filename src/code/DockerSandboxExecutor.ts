@@ -118,12 +118,12 @@ async function writeDeclaredFiles(workspaceDir: string, files: CodeExecutionFile
 function sanitizeRelativePath(value: string): string | undefined {
   const normalized = value.replace(/\\/gu, "/").trim();
   if (normalized.length === 0) {
-    return undefined;
+    return ;
   }
 
   const candidate = path.posix.normalize(normalized);
   if (candidate.startsWith("/") || candidate.startsWith("../") || candidate.includes("/../")) {
-    return undefined;
+    return ;
   }
 
   return candidate;
@@ -192,7 +192,7 @@ function buildDependencyInstallCommand(
   dependencies: string[],
 ): string | undefined {
   if (dependencies.length === 0) {
-    return undefined;
+    return ;
   }
 
   const packages = dependencies.map((item) => shellQuote(item)).join(" ");
@@ -205,7 +205,7 @@ function buildDependencyInstallCommand(
     return `pip install --disable-pip-version-check --no-input --quiet ${packages}`;
   }
 
-  return undefined;
+  return ;
 }
 
 function joinShellCommands(lines: Array<string | undefined>): string {
@@ -319,7 +319,7 @@ async function collectArtifacts(input: {
 
     const contents = await readFile(absolutePath);
     const sha256 = createHash("sha256").update(contents).digest("hex");
-    const previewText = contents.toString("utf8", 0, Math.min(contents.byteLength, 2_000));
+    const previewText = contents.toString("utf8", 0, Math.min(contents.byteLength, 2000));
 
     artifacts.push({
       path: relativePath,
@@ -327,7 +327,7 @@ async function collectArtifacts(input: {
       sha256,
       preview: {
         text: previewText,
-        truncated: contents.byteLength > 2_000,
+        truncated: contents.byteLength > 2000,
       },
     });
 

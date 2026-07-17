@@ -64,8 +64,8 @@ test("runAgentTool returns FAILED envelope for recoverable runtime failures", as
   assert.match(result.modelContext.text, /- cwd: \/testbed/u);
   assert.match(result.modelContext.text, /- exitCode: 1/u);
   assert.match(result.modelContext.text, /- failureReason: tests failed/u);
-  assert.match(result.modelContext.text, /- stdout:\n  failed output/u);
-  assert.match(result.modelContext.text, /- stderr:\n  traceback/u);
+  assert.match(result.modelContext.text, /- stdout:\n {2}failed output/u);
+  assert.match(result.modelContext.text, /- stderr:\n {2}traceback/u);
 });
 
 test("runAgentTool preserves nested output from plain object failures", async () => {
@@ -96,8 +96,8 @@ test("runAgentTool preserves nested output from plain object failures", async ()
   assert.match(result.modelContext.text, /- cwd: \/testbed/u);
   assert.match(result.modelContext.text, /- exitCode: 1/u);
   assert.match(result.modelContext.text, /- failureReason: tests failed/u);
-  assert.match(result.modelContext.text, /- stdout:\n  assert 1 == 2/u);
-  assert.match(result.modelContext.text, /- stderr:\n  Traceback/u);
+  assert.match(result.modelContext.text, /- stdout:\n {2}assert 1 == 2/u);
+  assert.match(result.modelContext.text, /- stderr:\n {2}Traceback/u);
   assert.doesNotMatch(result.modelContext.text, /\[object Object\]/u);
 });
 

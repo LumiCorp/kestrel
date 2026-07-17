@@ -70,8 +70,8 @@ test("runtime doctor reports blocked parent threads with child blocker details",
   assert.match(result.stdout, /classification=approval_wait/);
   assert.match(result.stdout, /childBlocker delegationId=ops-delegation-approval childThreadId=ops-approval-child-thread status=WAITING/);
   assert.match(result.stdout, /assemblyProvider provider=openrouter model=google\/gemini-3\.1-flash-lite-preview/);
-  assert.match(result.stdout, /variant=\"reference-react:root\"/);
-  assert.match(result.stdout, /assemblyCompatibility status=downgraded source=policy downgrade=\"provider_variant_unavailable\" capabilityLoss=\"structured_output_unavailable\"/);
+  assert.match(result.stdout, /variant="reference-react:root"/);
+  assert.match(result.stdout, /assemblyCompatibility status=downgraded source=policy downgrade="provider_variant_unavailable" capabilityLoss="structured_output_unavailable"/);
 });
 
 test("runtime replay surfaces multi-child supervision outcomes for parent threads", async () => {

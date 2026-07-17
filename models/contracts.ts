@@ -51,17 +51,20 @@ export interface OpenRouterResponseContext {
   structuredOutput?: OpenRouterHttpRequest["structuredOutput"] | undefined;
 }
 
-export interface OpenRouterInvoker {
-  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
-}
+export type OpenRouterInvoker = <TOutput>(
+  request: ModelRequest,
+  options?: ModelGatewayCallOptions
+) => Promise<ModelResponse<TOutput>>;
 
-export interface OpenAiInvoker {
-  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
-}
+export type OpenAiInvoker = <TOutput>(
+  request: ModelRequest,
+  options?: ModelGatewayCallOptions
+) => Promise<ModelResponse<TOutput>>;
 
-export interface AnthropicInvoker {
-  <TOutput>(request: ModelRequest, options?: ModelGatewayCallOptions): Promise<ModelResponse<TOutput>>;
-}
+export type AnthropicInvoker = <TOutput>(
+  request: ModelRequest,
+  options?: ModelGatewayCallOptions
+) => Promise<ModelResponse<TOutput>>;
 
 export interface ParsedToolIntent {
   intents: ModelToolIntent[];

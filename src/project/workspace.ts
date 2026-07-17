@@ -280,7 +280,7 @@ export class ProductProjectWorkspaceService {
       const output = await this.runner.run("git", args, repoRoot);
       return output.trim();
     } catch {
-      return undefined;
+      return ;
     }
   }
 
@@ -289,7 +289,7 @@ export class ProductProjectWorkspaceService {
     repoRoot: string,
   ): Promise<ProductReviewSnapshot["pullRequests"] | undefined> {
     if (setup.githubConnected !== true) {
-      return undefined;
+      return ;
     }
     try {
       const output = await this.runner.run(
@@ -307,7 +307,7 @@ export class ProductProjectWorkspaceService {
       const parsed = JSON.parse(output) as Array<Record<string, unknown>>;
       return normalizePullRequestSummaries(parsed);
     } catch {
-      return undefined;
+      return ;
     }
   }
 
@@ -329,7 +329,7 @@ export class ProductProjectWorkspaceService {
     comments?: ProductReviewComment[];
   } | undefined> {
     if (setup.githubConnected !== true || typeof pullRequestNumber !== "number") {
-      return undefined;
+      return ;
     }
     try {
       const output = await this.runner.run(
@@ -361,7 +361,7 @@ export class ProductProjectWorkspaceService {
         ],
       };
     } catch {
-      return undefined;
+      return ;
     }
   }
 }
@@ -557,7 +557,7 @@ function parseGithubFiles(input: Array<Record<string, unknown>>): ProductReviewC
   return input
     .map<ProductReviewChangedFile | undefined>((entry) => {
       if (typeof entry.path !== "string") {
-        return undefined;
+        return ;
       }
       return {
         path: entry.path,
@@ -589,7 +589,7 @@ function parseGithubComments(input: Array<Record<string, unknown>>, state: strin
     .map<ProductReviewComment | undefined>((entry, index) => {
       const body = typeof entry.body === "string" ? entry.body : undefined;
       if (body === undefined || body.trim().length === 0) {
-        return undefined;
+        return ;
       }
       const authorRecord = typeof entry.author === "object" && entry.author !== null ? entry.author as Record<string, unknown> : undefined;
       return {

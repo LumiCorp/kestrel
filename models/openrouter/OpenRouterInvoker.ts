@@ -17,9 +17,7 @@ interface CreateOpenRouterInvokerOptions {
 export function createOpenRouterInvoker(options: CreateOpenRouterInvokerOptions): OpenRouterInvoker {
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => {
-    return invokeWithDiagnostics<TOutput>(fetchImpl, options.env, request, callOptions);
-  };
+  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => invokeWithDiagnostics<TOutput>(fetchImpl, options.env, request, callOptions);
 }
 
 async function invokeWithDiagnostics<TOutput>(
@@ -197,7 +195,7 @@ function mergeStreamingToolCalls(message: Record<string, unknown>, chunks: unkno
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> | undefined {
-  try { return asRecord(JSON.parse(value)); } catch { return undefined; }
+  try { return asRecord(JSON.parse(value)); } catch { return ; }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -208,11 +206,11 @@ function asArray(value: unknown): unknown[] { return Array.isArray(value) ? valu
 
 function readOpenRouterPayloadError(payload: unknown): { status: number } | undefined {
   if (typeof payload !== "object" || payload === null) {
-    return undefined;
+    return ;
   }
   const error = (payload as { error?: unknown }).error;
   if (typeof error !== "object" || error === null) {
-    return undefined;
+    return ;
   }
   const code = (error as { code?: unknown }).code;
   return { status: typeof code === "number" ? code : 400 };

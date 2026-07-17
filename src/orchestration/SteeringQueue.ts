@@ -56,7 +56,7 @@ function withPendingSteers(
   }
   return {
     ...thread,
-    metadata: metadata,
+    metadata,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -87,7 +87,7 @@ function normalizePendingSteer(value: unknown): PendingSteerRecord[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

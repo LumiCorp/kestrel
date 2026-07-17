@@ -34,12 +34,12 @@ export function buildPersistedRuntimeEventFromAgentProgressUpdate(
 export function readAgentProgressUpdateFromPersistedRuntimeEvent(
   event: PersistedRuntimeEvent,
 ): AgentProgressUpdateV1 | undefined {
-  if (event.type !== "agent.progress") return undefined;
+  if (event.type !== "agent.progress") return ;
   const metadata = asRecord(event.metadata);
   const seq = readNumber(metadata?.seq);
   const message = readString(metadata?.message);
   const stepAgent = readString(metadata?.stepAgent);
-  if (seq === undefined || message === undefined || stepAgent === undefined || event.stepIndex === undefined) return undefined;
+  if (seq === undefined || message === undefined || stepAgent === undefined || event.stepIndex === undefined) return ;
   return {
     version: "v1",
     runId: event.runId,
@@ -87,7 +87,7 @@ export function readProgressUpdateFromPersistedRuntimeEvent(
 ): ProgressUpdateV1 | undefined {
   const kind = readProgressKindFromRunEventType(event.type);
   if (kind === undefined) {
-    return undefined;
+    return ;
   }
   const metadata = asRecord(event.metadata);
   const phase = readString(metadata?.phase);
@@ -95,7 +95,7 @@ export function readProgressUpdateFromPersistedRuntimeEvent(
   const message = readString(metadata?.message);
   const seq = readNumber(metadata?.seq);
   if (phase === undefined || code === undefined || message === undefined || seq === undefined) {
-    return undefined;
+    return ;
   }
   return {
     version: "v1",
@@ -150,14 +150,14 @@ export function readReasoningUpdateFromPersistedRuntimeEvent(
   event: PersistedRuntimeEvent,
 ): ReasoningUpdateV1 | undefined {
   if (event.type !== "reasoning.update") {
-    return undefined;
+    return ;
   }
   const metadata = asRecord(event.metadata);
   const milestone = readString(metadata?.milestone);
   const message = readString(metadata?.message);
   const seq = readNumber(metadata?.seq);
   if (milestone === undefined || message === undefined || seq === undefined) {
-    return undefined;
+    return ;
   }
   return {
     version: "v1",
@@ -208,14 +208,14 @@ export function readToolUpdateFromPersistedRuntimeEvent(
 ): RunToolUpdateV1 | undefined {
   const phase = readToolPhaseFromRunEventType(event.type);
   if (phase === undefined) {
-    return undefined;
+    return ;
   }
   const metadata = asRecord(event.metadata);
   const seq = readNumber(metadata?.seq);
   const toolCallId = readString(metadata?.toolCallId);
   const toolName = readString(metadata?.toolName);
   if (seq === undefined || toolCallId === undefined || toolName === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -277,7 +277,7 @@ function readToolPhaseFromRunEventType(type: RunEventType): RunToolPhase | undef
   if (type === "run.tool.failed") {
     return "failed";
   }
-  return undefined;
+  return ;
 }
 
 function readProgressKindFromRunEventType(type: RunEventType): ProgressKind | undefined {
@@ -293,12 +293,12 @@ function readProgressKindFromRunEventType(type: RunEventType): ProgressKind | un
   if (type === "progress.heartbeat") {
     return "heartbeat";
   }
-  return undefined;
+  return ;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

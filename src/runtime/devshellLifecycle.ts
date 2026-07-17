@@ -35,7 +35,7 @@ export function normalizeDevShellLifecycle(
   output: unknown,
 ): DevShellLifecycleFacts | undefined {
   if (isDevShellLifecycleTool(toolName) === false) {
-    return undefined;
+    return ;
   }
   const inputRecord = asRecord(input);
   const outputRecord = asRecord(output);
@@ -62,7 +62,7 @@ export function normalizeDevShellLifecycle(
 
 export function normalizeDevShellLifecycleStatus(value: string | undefined): DevShellLifecycleStatus | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   switch (value.trim().toUpperCase()) {
     case "RUNNING":
@@ -78,7 +78,7 @@ export function normalizeDevShellLifecycleStatus(value: string | undefined): Dev
     case "LOST":
       return "STOPPED";
     default:
-      return undefined;
+      return ;
   }
 }
 
@@ -104,7 +104,7 @@ function readLifecycleKind(
       if (input?.stop === true) {
         return "stop";
       }
-      if (Object.prototype.hasOwnProperty.call(input ?? {}, "stdin")) {
+      if (Object.hasOwn(input ?? {}, "stdin")) {
         return "write";
       }
       if (asString(input?.sessionId) !== undefined) {
@@ -136,7 +136,7 @@ function readSessionId(
   processId: string | undefined,
 ): string | undefined {
   if (toolName !== "exec_command") {
-    return undefined;
+    return ;
   }
   return firstString(output?.sessionId, input?.sessionId, processId);
 }
@@ -151,7 +151,7 @@ function readStdin(
   if (toolName === "dev.process.write" || toolName === "dev.process.write_and_read") {
     return firstString(input?.data, input?.input, input?.chars);
   }
-  return undefined;
+  return ;
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -161,7 +161,7 @@ function firstString(...values: unknown[]): string | undefined {
       return text;
     }
   }
-  return undefined;
+  return ;
 }
 
 function firstNumber(...values: unknown[]): number | undefined {
@@ -170,7 +170,7 @@ function firstNumber(...values: unknown[]): number | undefined {
       return Math.trunc(value);
     }
   }
-  return undefined;
+  return ;
 }
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): T {
