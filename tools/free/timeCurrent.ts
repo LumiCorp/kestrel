@@ -75,10 +75,10 @@ async function tryWorldTimeApi(
       `https://worldtimeapi.org/api/timezone/${encodeURIComponent(timezone)}`,
     );
   } catch {
-    return undefined;
+    return ;
   }
   if (response.ok === false) {
-    return undefined;
+    return ;
   }
 
   const payload = parseJsonRecord("free.time.current", "worldtimeapi", await response.json(), {
@@ -103,10 +103,10 @@ async function tryTimeApiIo(
       `https://timeapi.io/api/Time/current/zone?timeZone=${encodeURIComponent(timezone)}`,
     );
   } catch {
-    return undefined;
+    return ;
   }
   if (response.ok === false) {
-    return undefined;
+    return ;
   }
 
   const payload = parseJsonRecord("free.time.current", "timeapi.io", await response.json(), {

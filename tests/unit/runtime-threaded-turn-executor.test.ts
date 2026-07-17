@@ -28,7 +28,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
       event = input;
       return output("COMPLETED");
     },
-    refreshToolRuntime: async () => undefined,
+    refreshToolRuntime: async () => {},
     resolveAvailableToolAllowlist: (names) => names.filter((name) => name !== "fs.write_text"),
     resolveSkillPackById: (skillPackId) => skillPackId === "skill-pack:review"
       ? {
@@ -143,7 +143,7 @@ test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before c
       event = input;
       return output("COMPLETED");
     },
-    refreshToolRuntime: async () => undefined,
+    refreshToolRuntime: async () => {},
     resolveAvailableToolAllowlist: (names) => names,
     handleCapabilityLoss: async () => ({
       record: {
@@ -208,7 +208,7 @@ test("RuntimeThreadedTurnExecutor preserves canonical runtime turns while patchi
       event = input;
       return output("COMPLETED");
     },
-    refreshToolRuntime: async () => undefined,
+    refreshToolRuntime: async () => {},
     resolveAvailableToolAllowlist: (names) => names,
   });
   const runtimeTurn: RuntimeTurnInput = {

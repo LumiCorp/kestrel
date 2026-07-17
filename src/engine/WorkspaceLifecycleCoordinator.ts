@@ -562,7 +562,7 @@ export class WorkspaceLifecycleCoordinator {
   readManagedWorktreeBindingFromState(state: Record<string, unknown>): ManagedTaskWorktreeBinding | undefined {
     const binding = asRecord(asRecord(asRecord(state.agent)?.exec)?.managedWorktreeBinding);
     if (binding?.status !== "bound") {
-      return undefined;
+      return ;
     }
     const sessionId = asString(binding.sessionId);
     const sourceWorkspaceRoot = asString(binding.sourceWorkspaceRoot);
@@ -601,7 +601,7 @@ export class WorkspaceLifecycleCoordinator {
       lastObservedSourceHead === undefined ||
       scope === undefined
     ) {
-      return undefined;
+      return ;
     }
     return {
       status: "bound",
@@ -762,7 +762,7 @@ function readAutoProvisionDevToolNameFromState(state: Record<string, unknown>): 
       }
     }
   }
-  return undefined;
+  return ;
 }
 
 function applyWorkspaceLifecycleAgentPatch(
@@ -886,7 +886,7 @@ function parseApprovalDecisionFromPayload(payload: unknown): "approve" | "deny" 
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

@@ -1,7 +1,7 @@
-import {
-  type ContinuationOfferV1,
-  type ContinuationRequiredMode,
-  type ContinuationRequiredToolClass,
+import type {
+  ContinuationOfferV1,
+  ContinuationRequiredMode,
+  ContinuationRequiredToolClass,
 } from "./continuationOffer.js";
 
 export type RuntimeContinuationStatus =
@@ -72,7 +72,7 @@ export function normalizeRuntimeContinuationState(
 ): RuntimeContinuationStateV1 | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const version = readString(record.version);
   const id = readNonEmptyString(record.id);
@@ -97,7 +97,7 @@ export function normalizeRuntimeContinuationState(
     status === undefined ||
     createdAt === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -229,7 +229,7 @@ function readString(value: unknown): string | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

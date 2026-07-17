@@ -1,7 +1,7 @@
 import type { ModelTranscript, ModelTranscriptItem } from "../modelTranscript.js";
 
 const MAX_RECENT_FILESYSTEM_EVIDENCE_ITEMS = 4;
-const MAX_RECENT_FILESYSTEM_PREVIEW_CHARS = 1_200;
+const MAX_RECENT_FILESYSTEM_PREVIEW_CHARS = 1200;
 const MAX_RECENT_TOOL_RESULT_EVIDENCE_ITEMS = 3;
 const MAX_ACTIVE_PROCESS_EVIDENCE_ITEMS = 2;
 const MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS = 360;
@@ -13,7 +13,7 @@ export function buildProjectTaskQueueContext(projectSnapshot: unknown): string |
   const taskQueue = asRecord(snapshot?.taskQueue);
   const tasks = asRecord(taskQueue?.tasks);
   if (snapshot === undefined || taskQueue === undefined || tasks === undefined) {
-    return undefined;
+    return ;
   }
   const lines = [
     "Mission Control task queue:",
@@ -78,7 +78,7 @@ export function buildRecentToolResultEvidence(input: {
         isSameToolAction(item, lastToolName, lastToolInput)
       ) {
         skippedLatestTranscriptCopy = true;
-        return undefined;
+        return ;
       }
       return describeTranscriptToolResult(item);
     })
@@ -181,7 +181,7 @@ function describeLedgerActiveProcessEntry(entry: Record<string, unknown>): strin
   const kind = asString(entry.kind);
   const status = asString(entry.status);
   if (kind !== "process_state" || isRunningStatus(status) === false) {
-    return undefined;
+    return ;
   }
   const facts = asRecord(entry.facts);
   const target = asRecord(entry.target);
@@ -190,7 +190,7 @@ function describeLedgerActiveProcessEntry(entry: Record<string, unknown>): strin
     asString(target?.value) ??
     asString(entry.targetValue);
   if (sessionId === undefined) {
-    return undefined;
+    return ;
   }
   const toolName = asString(facts?.toolName) ?? "exec_command";
   const command = asString(facts?.command);
@@ -211,7 +211,7 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
   const facts = asRecord(entry.facts);
   const toolName = asString(facts?.toolName);
   if (facts === undefined || toolName === undefined) {
-    return undefined;
+    return ;
   }
   const target = asRecord(entry.target);
   const targetPath = asString(facts.outputPath) ?? asString(facts.inputPath) ?? asString(target?.value);
@@ -303,7 +303,7 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
     const count = typeof facts.entryCount === "number" ? Math.trunc(facts.entryCount) : undefined;
     return `fs.list ${targetPath ?? "."}${count !== undefined ? ` returned ${count} entr${count === 1 ? "y" : "ies"}` : ""}.`;
   }
-  return undefined;
+  return ;
 }
 
 function describeActiveProcessResult(record: Record<string, unknown>): string | undefined {
@@ -312,7 +312,7 @@ function describeActiveProcessResult(record: Record<string, unknown>): string | 
   const output = asRecord(record.output);
   const sessionId = asString(output?.sessionId) ?? asString(output?.processId) ?? asString(input?.sessionId);
   if (sessionId === undefined) {
-    return undefined;
+    return ;
   }
   const cursor = typeof output?.cursor === "number" ? Math.trunc(output.cursor) : undefined;
   const preview = asString(output?.output) ?? asString(output?.text);
@@ -349,7 +349,7 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
   const input = asRecord(record.input);
   const output = asRecord(record.output);
   if (toolName === undefined) {
-    return undefined;
+    return ;
   }
   if (toolName === "fs.read_text") {
     const targetPath = asString(output?.path) ?? asString(input?.path);
@@ -386,7 +386,7 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
       .join(", ");
     return `fs.list ${targetPath ?? "."} returned ${entries.length} entr${entries.length === 1 ? "y" : "ies"}${paths.length > 0 ? `: ${paths}` : "."}`;
   }
-  return undefined;
+  return ;
 }
 
 function isRunningStatus(value: unknown): boolean {
@@ -396,11 +396,11 @@ function isRunningStatus(value: unknown): boolean {
 function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: string): string | undefined {
   const result = asRecord(value);
   if (result === undefined || asString(result.kind) !== "tool") {
-    return undefined;
+    return ;
   }
   const toolName = asString(result.toolName) ?? asString(result.name);
   if (toolName === undefined) {
-    return undefined;
+    return ;
   }
   const input = asRecord(result.input);
   const output = asRecord(result.output);
@@ -435,12 +435,12 @@ function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: s
 
 function describeTranscriptToolResult(item: ModelTranscriptItem): string | undefined {
   if (item.kind !== "tool_result") {
-    return undefined;
+    return ;
   }
   const toolOutput = asRecord(item.toolOutput);
   const text = asString(toolOutput?.text);
   if (text === undefined) {
-    return undefined;
+    return ;
   }
   const status = readRenderedToolFact(text, "status");
   const toolInput = asRecord(item.toolInput);
@@ -542,7 +542,7 @@ function readRenderedToolBlock(text: string, fieldName: string): string | undefi
   const lines = text.split(/\r?\n/u);
   const startIndex = lines.findIndex((line) => line === `- ${fieldName}:`);
   if (startIndex === -1) {
-    return undefined;
+    return ;
   }
   const block: string[] = [];
   for (const line of lines.slice(startIndex + 1)) {
@@ -556,7 +556,7 @@ function readRenderedToolBlock(text: string, fieldName: string): string | undefi
   }
   const value = block.join("\n").trim();
   if (value.length === 0 || value === "<empty>") {
-    return undefined;
+    return ;
   }
   return clampEvidencePreview(value, MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS);
 }
@@ -593,7 +593,7 @@ function numberDelta(before: unknown, after: unknown): number | undefined {
     Number.isFinite(before) === false ||
     Number.isFinite(after) === false
   ) {
-    return undefined;
+    return ;
   }
   return Math.trunc(after) - Math.trunc(before);
 }

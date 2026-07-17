@@ -238,11 +238,11 @@ async function loadPages(specs: RegisteredPageSpec[]) {
 export const getAllPages = cache(async () => loadPages(pageRegistry));
 
 export function isPublicDocsPage(meta: DocsPageMeta) {
-  return !meta.internal && !meta.archive && meta.section !== "archive" && meta.audience !== "maintainers";
+  return !(meta.internal || meta.archive ) && meta.section !== "archive" && meta.audience !== "maintainers";
 }
 
 export const getPublicPages = cache(async () => {
-  const publicSpecs = pageRegistry.filter((spec) => !spec.internal && !spec.archive);
+  const publicSpecs = pageRegistry.filter((spec) => !(spec.internal || spec.archive));
   const pages = await loadPages(publicSpecs);
   return pages.filter((page) => isPublicDocsPage(page.meta));
 });

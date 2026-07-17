@@ -130,7 +130,7 @@ let activeTheme: ThemeTokens = DEFAULT_THEME;
 export const theme = new Proxy({ ...DEFAULT_THEME }, {
   get(_target, prop) {
     if (typeof prop !== "string") {
-      return undefined;
+      return ;
     }
     return activeTheme[prop as keyof ThemeTokens];
   },
@@ -139,7 +139,7 @@ export const theme = new Proxy({ ...DEFAULT_THEME }, {
   },
   getOwnPropertyDescriptor(_target, prop) {
     if (typeof prop !== "string" || isThemeTokenName(prop) === false) {
-      return undefined;
+      return ;
     }
     return {
       configurable: true,
@@ -287,7 +287,7 @@ export function isThemeColor(value: string): boolean {
 export function normalizeThemeColor(value: string): string | undefined {
   const trimmed = value.trim();
   if (isThemeColor(trimmed) === false) {
-    return undefined;
+    return ;
   }
   return trimmed.toUpperCase();
 }
@@ -341,6 +341,6 @@ function readMacOsAppearance(): string | undefined {
       stdio: ["ignore", "pipe", "ignore"],
     });
   } catch {
-    return undefined;
+    return ;
   }
 }

@@ -25,7 +25,7 @@ import type {
   ToolCapabilityMetadata,
   ToolPresentationMetadata,
 } from "../contracts.js";
-import { asRecord, createToolInputError, readNumber, readString, requireStringField } from "../helpers.js";
+import { asRecord, readNumber, readString, requireStringField } from "../helpers.js";
 
 export const FILESYSTEM_TOOL_NAMES = [
   "fs.list",
@@ -48,12 +48,12 @@ export const DEFAULT_SEARCH_MAX_RESULTS = 20;
 export const DEFAULT_SEARCH_MAX_PREVIEW_CHARS = 240;
 export const DEFAULT_SEARCH_MAX_TOTAL_PREVIEW_CHARS = 12_000;
 export const DEFAULT_LIST_MAX_DEPTH = 5;
-export const MAX_LIST_ENTRIES = 1_000;
+export const MAX_LIST_ENTRIES = 1000;
 export const MAX_JSON_VERIFICATION_REQUIREMENTS = 200;
 export const MAX_JSON_VERIFICATION_FAILURES = 100;
 export const MIN_SEARCH_MAX_PREVIEW_CHARS = 40;
-export const MAX_SEARCH_MAX_PREVIEW_CHARS = 1_000;
-export const MIN_SEARCH_MAX_TOTAL_PREVIEW_CHARS = 1_000;
+export const MAX_SEARCH_MAX_PREVIEW_CHARS = 1000;
+export const MIN_SEARCH_MAX_TOTAL_PREVIEW_CHARS = 1000;
 export const MAX_SEARCH_MAX_TOTAL_PREVIEW_CHARS = 64_000;
 
 interface ResolvedFileSystemPolicy {
@@ -185,7 +185,7 @@ export function readBoolean(
   key: string,
 ): boolean | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const maybe = value[key];
@@ -206,7 +206,7 @@ export function readOptionalPositiveInt(
 ): number | undefined {
   const value = readNumber(input, key);
   if (value === undefined || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
 
   const normalized = Math.trunc(value);
@@ -221,7 +221,7 @@ export function readOptionalBoundedPositiveInt(
 ): number | undefined {
   const value = readOptionalPositiveInt(input, key);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   return Math.min(Math.max(value, min), max);
 }
@@ -260,7 +260,7 @@ export function readOptionalNonNegativeInt(
 ): number | undefined {
   const value = readNumber(input, key);
   if (value === undefined || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
 
   const normalized = Math.trunc(value);
@@ -440,7 +440,7 @@ export async function listFileSystemEntries(input: {
   const addEntry = async (absolutePath: string): Promise<ResolvedExistingPath | undefined> => {
     if (entries.length >= MAX_LIST_ENTRIES) {
       truncated = true;
-      return undefined;
+      return ;
     }
 
     const resolved = await resolveExistingFileSystemPath(absolutePath, policy);
@@ -569,7 +569,7 @@ async function readAllowedGitRepositoryFacts(
     const resolved = await resolveExistingFileSystemPath(gitPath, policy);
     return readGitRepositoryFacts(resolved.absolutePath);
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -613,7 +613,7 @@ async function readOptionalText(filePath: string): Promise<string | undefined> {
   try {
     return await readFile(filePath, "utf8");
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -658,7 +658,7 @@ function buildListDirectoryMessage(input: {
   directoryFacts?: FileSystemDirectoryFacts | undefined;
 }): string | undefined {
   if (input.empty === false) {
-    return undefined;
+    return ;
   }
   if (input.depthLimited) {
     return "No entries were returned because recursive listing was limited to maxDepth 0.";
@@ -677,7 +677,7 @@ function buildListDirectoryMessage(input: {
 
 function describeGitRepositoryFacts(facts: FileSystemGitRepositoryFacts | undefined): string | undefined {
   if (facts === undefined) {
-    return undefined;
+    return ;
   }
   const branchText = facts.currentBranch !== undefined ? ` on branch ${facts.currentBranch}` : "";
   const headText =
@@ -829,7 +829,7 @@ async function safeRealPath(value: string): Promise<string | undefined> {
     return await realpath(value);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
+      return ;
     }
     throw error;
   }
@@ -1002,7 +1002,7 @@ function parseRipgrepMatch(
   };
 
   if (event.type !== "match" || event.data?.path?.text === undefined) {
-    return undefined;
+    return ;
   }
 
   return {

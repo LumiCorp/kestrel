@@ -62,7 +62,7 @@ export function ReasoningPolicyForm(props: {
           <option value="summary">Provider-returned summary</option>
           <option value="provider_visible">Provider-visible thinking or reasoning</option>
         </select>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-muted-foreground text-xs">
           The format is labeled in the run UI. Kestrel never claims or exposes unavailable raw reasoning.
         </p>
       </div>
@@ -91,7 +91,7 @@ export function ReasoningPolicyForm(props: {
           <option value="live_only">Live only (recommended)</option>
           <option value="provider_visible">Retain encrypted provider-visible content</option>
         </select>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-muted-foreground text-xs">
           Encrypted provider continuation state is never rendered or included in retained content. Retained content is available only to organization administrators through run inspection.
           Hosted runtime activation fails closed unless the runtime advertises a valid reasoning encryption key.
         </p>
@@ -112,7 +112,7 @@ export function ReasoningPolicyForm(props: {
         <Button type="button" disabled={saving || retentionDays < 1 || retentionDays > 30} onClick={save}>
           {saving ? "Saving…" : "Save reasoning policy"}
         </Button>
-        {status ? <span className="text-sm text-muted-foreground">{status}</span> : null}
+        {status ? <span className="text-muted-foreground text-sm">{status}</span> : null}
       </div>
     </div>
   );

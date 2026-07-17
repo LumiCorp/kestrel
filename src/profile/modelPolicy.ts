@@ -336,7 +336,7 @@ function normalizeModelByStage(value: unknown, options: { strict: boolean }): Re
 
 function normalizeModelTimeoutMs(value: unknown, options: { strict: boolean }): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isInteger(value) === false || value <= 0) {
     if (options.strict) {
@@ -345,7 +345,7 @@ function normalizeModelTimeoutMs(value: unknown, options: { strict: boolean }): 
         "Model policy modelTimeoutMs must be a positive integer.",
       );
     }
-    return undefined;
+    return ;
   }
   return value;
 }

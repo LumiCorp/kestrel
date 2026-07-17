@@ -68,7 +68,7 @@ export function classifyDurableTerminalEvent(
     event.type !== "run.completed" &&
     event.type !== "run.failed"
   ) {
-    return undefined;
+    return ;
   }
   const output = event.type === "job.completed" || event.type === "job.failed"
     ? event.payload.output
@@ -147,7 +147,7 @@ export async function observeDurableSessionTerminal(input: {
     } finally {
       clearTimeout(timer);
       controller.abort();
-      await client?.close().catch(() => undefined);
+      await client?.close().catch(() => {});
     }
 
     if (now() >= deadline) {

@@ -137,7 +137,7 @@ export function createVisualCrossingWeatherAdapterFromTransport(
         humidityPct: readNumber(current, "humidity"),
         condition: readString(current, "conditions"),
         windSpeedKph: readNumber(current, "windspeed"),
-        observedAt: new Date(observedAtEpoch * 1_000).toISOString(),
+        observedAt: new Date(observedAtEpoch * 1000).toISOString(),
       };
     },
 
@@ -164,7 +164,7 @@ export function createVisualCrossingWeatherAdapterFromTransport(
       }
       const hourlyRows = days.flatMap((day) => {
         const date = readString(day, "datetime");
-        if (!date || !Array.isArray(day.hours)) return [];
+        if (!(date && Array.isArray(day.hours))) return [];
         return day.hours.flatMap((value) => {
           const hour = asRecord(value);
           const time = hour ? readString(hour, "datetime") : undefined;

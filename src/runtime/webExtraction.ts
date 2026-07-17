@@ -43,11 +43,11 @@ export function readWebExtractionDiagnostics(
   output: unknown,
 ): WebExtractionDiagnostics | undefined {
   if (toolName !== "internet.extract") {
-    return undefined;
+    return ;
   }
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const firstResult = asRecord(asArray(record.results)[0]);
@@ -85,11 +85,11 @@ export function normalizeWebExtractionRetrySummary(
 ): WebExtractionRetrySummary | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const objectiveKey = asString(record.objectiveKey);
   if (objectiveKey === undefined) {
-    return undefined;
+    return ;
   }
 
   const clusters = Array.isArray(record.clusters)
@@ -116,7 +116,7 @@ export function updateWebExtractionRetrySummary(input: {
 }): WebExtractionRetrySummary | undefined {
   const objectiveKey = normalizeObjectiveKey(input.objective);
   if (objectiveKey === undefined) {
-    return undefined;
+    return ;
   }
   const prior = normalizeWebExtractionRetrySummary(input.prior) ?? {
     objectiveKey,
@@ -182,7 +182,7 @@ export function updateWebExtractionRetrySummary(input: {
 
 export function normalizeSourceCluster(url: string | undefined): string | undefined {
   if (typeof url !== "string" || url.trim().length === 0) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = new URL(url);
@@ -193,14 +193,14 @@ export function normalizeSourceCluster(url: string | undefined): string | undefi
       .filter((segment) => segment.length > 0)[0];
     return `${hostname}${firstPath !== undefined ? `/${firstPath}` : ""}`;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
 function normalizeObjectiveKey(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase().replace(/\s+/gu, " ");
   if (normalized === undefined || normalized.length === 0) {
-    return undefined;
+    return ;
   }
   return normalized.slice(0, 160);
 }
@@ -211,7 +211,7 @@ function normalizeRetryCluster(value: unknown): WebExtractionRetryClusterSummary
   const sourceCluster = asString(record?.sourceCluster);
   const lastQuality = readQuality(record?.lastQuality);
   if (key === undefined || sourceCluster === undefined) {
-    return undefined;
+    return ;
   }
   return {
     key,
@@ -242,7 +242,7 @@ function normalizeDiagnostics(value: unknown): WebExtractionDiagnostics | undefi
   const record = asRecord(value);
   const toolName = asString(record?.toolName);
   if (toolName === undefined) {
-    return undefined;
+    return ;
   }
   const quality = readQuality(record?.quality);
   return {

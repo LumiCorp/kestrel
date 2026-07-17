@@ -157,15 +157,13 @@ test("Local Core connection manager coalesces concurrent recovery onto one conne
   });
   const calls = [0, 0];
 
-  const results = await Promise.all(calls.map(async (_value, index) => {
-    return await manager.executeIdempotent(async (client) => {
+  const results = await Promise.all(calls.map(async (_value, index) => await manager.executeIdempotent(async (client) => {
       calls[index] = (calls[index] ?? 0) + 1;
       if (client === staleClient) {
         throw Object.assign(new Error("missing socket"), { code: "ENOENT" });
       }
       return client;
-    });
-  }));
+    })));
 
   assert.deepEqual(results, [recoveredClient, recoveredClient]);
   assert.deepEqual(calls, [2, 2]);
@@ -224,7 +222,7 @@ async function withTimeout<T>(promise: Promise<T>): Promise<T> {
   return await Promise.race([
     promise,
     new Promise<never>((_resolve, reject) => {
-      setTimeout(() => reject(new Error("Timed out waiting for Local Core event.")), 1_000).unref();
+      setTimeout(() => reject(new Error("Timed out waiting for Local Core event.")), 1000).unref();
     }),
   ]);
 }

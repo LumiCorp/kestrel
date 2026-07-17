@@ -50,7 +50,7 @@ test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns",
       throw new Error("not used");
     },
     getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   const result = await coordinator.runTurn({
@@ -117,7 +117,7 @@ test("RuntimeTurnCoordinatorService forwards attachments on ordinary thread turn
       throw new Error("not used");
     },
     getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   await coordinator.runTurn({
@@ -182,7 +182,7 @@ test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and att
       throw new Error("not used");
     },
     getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   await coordinator.runTurn({
@@ -257,7 +257,7 @@ test("RuntimeTurnCoordinatorService performs exactly one supported recovery cont
       });
     },
     getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   const result = await coordinator.runTurn({
@@ -295,7 +295,7 @@ test("RuntimeTurnCoordinatorService preserves turn context for recovery continua
         : output("COMPLETED");
     },
     getSession: async () => sessionRecord("session-coordinator", "Recovered test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   await coordinator.runTurn({
@@ -356,7 +356,7 @@ test("RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () 
       });
     },
     getSession: async () => sessionRecord("session-coordinator", "Approve resuming this run?"),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   const result = await coordinator.runTurn({
@@ -383,7 +383,7 @@ test("RuntimeTurnCoordinatorService uses direct run when no thread runtime is co
       return output("COMPLETED");
     },
     getSession: async () => sessionRecord("session-coordinator", "Completed direct test turn."),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   await coordinator.runTurn({
@@ -597,7 +597,7 @@ test("RuntimeTurnCoordinatorService lets an explicit affordance hook suppress th
         scratch: {},
       },
     }),
-    buildOperatorAffordance: () => undefined,
+    buildOperatorAffordance: () => {},
   });
 
   const result = await coordinator.runTurn({

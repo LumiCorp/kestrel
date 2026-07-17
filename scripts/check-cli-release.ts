@@ -151,7 +151,7 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     if (launcherSource.includes(root)) {
       errors.push(`artifact launcher bin/${name} must not reference the source checkout`);
     }
-    if (!launcherSource.includes("libexecRoot") || !launcherSource.includes("\"libexec\"")) {
+    if (!(launcherSource.includes("libexecRoot") && launcherSource.includes("\"libexec\""))) {
       errors.push(`artifact launcher bin/${name} must resolve ../libexec`);
     }
   }

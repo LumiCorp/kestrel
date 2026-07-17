@@ -168,7 +168,7 @@ function resolveCompatibilityProfile(
   model?: string | undefined,
 ): string | undefined {
   if (provider === undefined) {
-    return undefined;
+    return ;
   }
   if (provider === "openai") {
     return "openai.responses";
@@ -195,7 +195,7 @@ function firstNonEmptyString(...values: Array<string | undefined>): string | und
       return value;
     }
   }
-  return undefined;
+  return ;
 }
 
 function isCompatibilityStatus(value: unknown): value is AssemblyCompatibilityStatus {

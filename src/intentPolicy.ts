@@ -64,7 +64,7 @@ export function deriveIntentWorkflowKind(input: {
   if (operationKind !== undefined) {
     return "direct_operation";
   }
-  return undefined;
+  return ;
 }
 
 export function deriveIntentPolicyApplicability(

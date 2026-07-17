@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     await client?.close();
     if (ownsHome) {
       if (socketPath !== undefined) {
-        await waitForPathRemoval(socketPath, 5_000);
+        await waitForPathRemoval(socketPath, 5000);
       }
       await rm(home, { recursive: true, force: true });
     }

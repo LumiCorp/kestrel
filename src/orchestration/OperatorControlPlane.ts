@@ -43,7 +43,6 @@ import type {
   OperatorContextPostureSummary,
   OperatorEvidenceRecoverySummary,
   OperatorChildResultSummary,
-  ReplyToRequestInput,
   RetryThreadInput,
   SupersedeChildThreadInput,
   SteerThreadInput,
@@ -861,7 +860,7 @@ export class OperatorControlPlane {
     input: { sessionId?: string | undefined; threadId?: string | undefined },
   ): Promise<string | undefined> {
     if (threads.length === 0) {
-      return undefined;
+      return ;
     }
     if (input.threadId !== undefined) {
       return input.threadId;
@@ -877,7 +876,7 @@ export class OperatorControlPlane {
       await this.persistFocus(first.sessionId, first.threadId, "runtime");
       return first.threadId;
     }
-    return undefined;
+    return ;
   }
 
   private async buildInboxItemsForThread(thread: ThreadRecord): Promise<OperatorInboxItem[]> {
@@ -1069,7 +1068,7 @@ export class OperatorControlPlane {
       delegations.map(async (delegation) => {
         const child = await this.store.getThread(delegation.childThreadId);
         if (child === null) {
-          return undefined;
+          return ;
         }
         return {
           delegation,
@@ -1079,11 +1078,9 @@ export class OperatorControlPlane {
     );
     const winner = candidates
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
-      .sort((left, right) => {
-        return right.child.updatedAt.localeCompare(left.child.updatedAt);
-      })[0];
+      .sort((left, right) => right.child.updatedAt.localeCompare(left.child.updatedAt))[0];
     if (winner === undefined) {
-      return undefined;
+      return ;
     }
     return {
       threadId: winner.child.threadId,
@@ -1100,7 +1097,7 @@ export class OperatorControlPlane {
 
   private async getDoctorForThread(thread: ThreadRecord) {
     if (thread.activeRunId === undefined) {
-      return undefined;
+      return ;
     }
     const replay = await this.replay.replay({
       runId: thread.activeRunId,
@@ -1273,13 +1270,13 @@ function buildCompatibilityAlertInboxItem(
 ): OperatorInboxItem | undefined {
   const metadata = status.assemblyBundle?.metadata;
   if (metadata === undefined) {
-    return undefined;
+    return ;
   }
   const compatibilityStatus = asString(metadata.compatibilityStatus);
   const downgradeReason = asString(metadata.downgradeReason);
   const capabilityLossReason = asString(metadata.capabilityLossReason);
   if (compatibilityStatus !== "downgraded" && downgradeReason === undefined && capabilityLossReason === undefined) {
-    return undefined;
+    return ;
   }
   return {
     itemId: `compatibility:${thread.threadId}:${status.activeAssembly?.recordId ?? "active"}`,
@@ -1389,7 +1386,7 @@ function deriveNextActionSummary(
       threadId: status.thread.threadId,
     };
   }
-  return undefined;
+  return ;
 }
 
 function deriveBlockerSummary(
@@ -1462,7 +1459,7 @@ function deriveBlockerSummary(
       ...(doctor.wait.eventType !== undefined ? { eventType: doctor.wait.eventType } : {}),
     };
   }
-  return undefined;
+  return ;
 }
 
 function deriveContextPosture(
@@ -1540,7 +1537,7 @@ function findLatestCheckpointDisposition(
     });
   const selected = resolved.find((entry) => entry.resolutionAction !== undefined) ?? resolved[0];
   if (selected === undefined) {
-    return undefined;
+    return ;
   }
   return {
     status: selected.status,
@@ -1693,7 +1690,7 @@ function buildCheckpointContinuationBrief(
   let brief = requiredLines.join("\n");
   for (const line of optionalLines) {
     const candidate = `${brief}\n${line}`;
-    if (candidate.length <= 1_200) {
+    if (candidate.length <= 1200) {
       brief = candidate;
     }
   }
@@ -1714,7 +1711,7 @@ function buildPriorStateLine(input: {
   if (input.latestAssistant !== undefined) {
     return `The latest assistant-visible state before this checkpoint was: "${clampLine(input.latestAssistant.text, 280)}".`;
   }
-  return undefined;
+  return ;
 }
 
 function readThreadHistory(thread: ThreadRecord): Array<{ role: "user" | "assistant"; text: string }> {
@@ -1732,7 +1729,7 @@ function readThreadHistory(thread: ThreadRecord): Array<{ role: "user" | "assist
 
 function summarizeCheckpointSignals(signals: Record<string, unknown> | undefined): string | undefined {
   if (signals === undefined) {
-    return undefined;
+    return ;
   }
   const entries = Object.entries(signals)
     .filter(([, value]) => value !== undefined && value !== null)
@@ -1808,7 +1805,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const strings = value
     .map((entry) => asString(entry))
@@ -1863,7 +1860,7 @@ function projectRuntimePlan(
   plan: ReplayRuntimePlanSummary | undefined,
 ): OperatorRuntimePlanSummary | undefined {
   if (plan === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(plan.phase !== undefined ? { phase: plan.phase } : {}),
@@ -1935,13 +1932,13 @@ function toOperatorChildResultSummary(
 function deriveRuntimePlanSummary(state: Record<string, unknown> | undefined): OperatorRuntimePlanSummary | undefined {
   const react = asRecord(state?.react);
   if (react === undefined) {
-    return undefined;
+    return ;
   }
   const workingPlan = asRecord(react.workingPlan);
   const commandProcessor = asRecord(react.commandProcessor);
   const lastCheckpoint = asRecord(commandProcessor?.lastCheckpoint);
   if (workingPlan === undefined && commandProcessor === undefined) {
-    return undefined;
+    return ;
   }
   const checkpoint =
     lastCheckpoint === undefined

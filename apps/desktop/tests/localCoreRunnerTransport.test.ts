@@ -123,7 +123,7 @@ test("LocalCoreRunnerTransport forwards streamed run updates before the terminal
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000;
+  const deadline = Date.now() + 1000;
   while (!predicate() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

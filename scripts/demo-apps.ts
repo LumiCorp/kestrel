@@ -56,8 +56,8 @@ const ALL_DEMO_APPS: DemoAppId[] = [
 ];
 
 const APP_PORTS: Record<Exclude<DemoAppId, "desktop">, number> = {
-  web: 43103,
-  docs: 43102,
+  web: 43_103,
+  docs: 43_102,
 };
 
 class DemoCliError extends Error {
@@ -127,7 +127,7 @@ export function parseDemoArgs(argv: string[]): DemoArgs {
     if (token === "--wait-ms" || token.startsWith("--wait-ms=")) {
       const raw = readValue(argv, index, token, "--wait-ms");
       const parsed = Number.parseInt(raw, 10);
-      if (Number.isFinite(parsed) === false || parsed < 5_000) {
+      if (Number.isFinite(parsed) === false || parsed < 5000) {
         throw new DemoCliError("--wait-ms must be an integer greater than or equal to 5000.");
       }
       waitTimeoutMs = parsed;
@@ -440,7 +440,7 @@ async function waitForHttpReady(spec: DemoProcessSpec, timeoutMs: number): Promi
     } catch {
       // Keep polling until timeout.
     }
-    await delay(1_000);
+    await delay(1000);
   }
   throw new Error(`${spec.label} did not become ready at ${spec.readyUrl} within ${timeoutMs}ms.`);
 }
@@ -482,7 +482,7 @@ async function stopManagedProcess(entry: ManagedProcess): Promise<void> {
         // Process may have already exited.
       }
       resolve();
-    }, 7_000);
+    }, 7000);
 
     child.once("exit", () => {
       clearTimeout(timer);
@@ -558,11 +558,11 @@ function readLocalPort(url: string): number | undefined {
   try {
     const parsed = new URL(url);
     if (parsed.hostname !== DEFAULT_HOST && parsed.hostname !== "localhost") {
-      return undefined;
+      return ;
     }
     return Number.parseInt(parsed.port, 10);
   } catch {
-    return undefined;
+    return ;
   }
 }
 

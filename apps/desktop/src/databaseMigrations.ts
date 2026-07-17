@@ -17,7 +17,7 @@ interface CommandResult {
   code: number | null;
 }
 
-const MAX_MIGRATION_OUTPUT_CHARS = 4_000;
+const MAX_MIGRATION_OUTPUT_CHARS = 4000;
 
 export async function runDesktopDatabaseMigrations(
   options: DesktopDatabaseMigrationOptions,

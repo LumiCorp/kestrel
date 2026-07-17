@@ -292,7 +292,7 @@ function readFlagValue(args: string[], index: number, name: string): string {
 
 function readNonEmptyString(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -300,7 +300,7 @@ function readNonEmptyString(value: string | undefined): string | undefined {
 
 function parsePort(value: string, label: string): number {
   const parsed = Number(value.trim());
-  if (Number.isInteger(parsed) === false || parsed <= 0 || parsed > 65535) {
+  if (Number.isInteger(parsed) === false || parsed <= 0 || parsed > 65_535) {
     throw new Error(`${label} must be a valid TCP port.`);
   }
   return parsed;

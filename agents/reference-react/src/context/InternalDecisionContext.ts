@@ -63,7 +63,7 @@ function buildDecisionRepetitionSignals(
     lastResultReused === false &&
     duplicateKind === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     ...(lastToolName !== undefined ? { lastToolName } : {}),

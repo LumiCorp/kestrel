@@ -218,7 +218,7 @@ function readInputString(
 ): string | undefined {
   const value = readString(body, key);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -284,7 +284,7 @@ function parseTargetSelector(
     hasLocalHour === false &&
     hasDayOffset === false
   ) {
-    return undefined;
+    return ;
   }
   if (hasDayOffset && Number.isInteger(dayOffset) === false) {
     throw createToolInputError(
@@ -307,11 +307,11 @@ function selectForecastIndex(
   currentLocalTime: string | undefined,
 ): number | undefined {
   if (times.length === 0) {
-    return undefined;
+    return ;
   }
   if (options === undefined) {
     if (currentLocalTime === undefined) {
-      return undefined;
+      return ;
     }
     const currentHour = `${currentLocalTime.slice(0, 13)}:00`;
     const currentIndex = times.findIndex((time) => time === currentHour);
@@ -335,7 +335,7 @@ function selectForecastIndex(
       return offsetIndex >= 0 ? offsetIndex : undefined;
     }
   }
-  return undefined;
+  return ;
 }
 
 function mapHourAtIndex(
@@ -394,7 +394,7 @@ function buildDailySlice(
 
 function getNumericAt(value: unknown, index: number): number | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const item = value[index];
   return typeof item === "number" ? item : undefined;

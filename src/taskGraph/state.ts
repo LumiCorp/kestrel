@@ -479,7 +479,7 @@ function readRuntimeSummary(input: ProductTaskRuntimeSignalInput): TaskRuntimeSu
 function readApprovalPrompt(view: OperatorThreadView | undefined): string | undefined {
   const eventType = view?.activeWait?.eventType;
   if (eventType !== "user.approval") {
-    return undefined;
+    return ;
   }
   const metadata = view?.activeWait?.metadata;
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
@@ -504,18 +504,18 @@ function summarizeSupervision(
 
 function summarizeEvidence(issues: string[]): string | undefined {
   if (issues.length === 0) {
-    return undefined;
+    return ;
   }
   return issues.join(", ");
 }
 
 function parseTaskNode(taskId: string, value: unknown): ProductTaskNode | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (typeof record.title !== "string" || typeof record.order !== "number" || typeof record.status !== "string") {
-    return undefined;
+    return ;
   }
   return {
     id: taskId,
@@ -609,7 +609,7 @@ function parseSubAgentResult(value: unknown): SubAgentResultEnvelope | undefined
     (record.status !== "completed" && record.status !== "blocked" && record.status !== "failed") ||
     typeof record.result !== "string"
   ) {
-    return undefined;
+    return ;
   }
   const references = parseStringArray(record.references);
   const error = asRecord(record.error);
@@ -625,7 +625,7 @@ function parseSubAgentResult(value: unknown): SubAgentResultEnvelope | undefined
 
 function parseStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const items = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
   return items.length > 0 ? items : undefined;
@@ -641,7 +641,7 @@ function parseChildActivitySummary(value: unknown): TaskChildActivitySummary | u
     typeof record.failed !== "number" ||
     typeof record.completed !== "number"
   ) {
-    return undefined;
+    return ;
   }
   return {
     total: record.total,
@@ -658,7 +658,7 @@ function parseChildStatusByDelegation(
 ): Record<string, TaskChildActivityStatus> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const entries = Object.entries(record).filter(
     (entry): entry is [string, TaskChildActivityStatus] =>
@@ -670,7 +670,7 @@ function parseChildStatusByDelegation(
 function parseStringRecord(value: unknown): Record<string, string> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const entries = Object.entries(record).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -681,7 +681,7 @@ function parseStringRecord(value: unknown): Record<string, string> | undefined {
 function parsePullRequestLink(value: unknown): ProductPullRequestLink | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.number !== "number" || typeof record.title !== "string") {
-    return undefined;
+    return ;
   }
   return {
     number: record.number,

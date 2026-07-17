@@ -7,17 +7,17 @@ export interface DevShellCommandSafetyIssue {
 
 export function normalizeDevShellExecCommand(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const unfenced = unwrapMarkdownCodeFence(trimmed);
   const unwrapped = unwrapWholeCommandQuotes(unfenced);
   const command = unwrapped.trim();
   if (command.length === 0) {
-    return undefined;
+    return ;
   }
   return normalizeEscapedNewlinePythonInlineCommand(command) ??
     normalizePythonHeredocCommand(command) ??
@@ -27,7 +27,7 @@ export function normalizeDevShellExecCommand(value: unknown): string | undefined
 export function findDevShellCommandSafetyIssue(command: string): DevShellCommandSafetyIssue | undefined {
   const token = findUnquotedShellGlobPathSegment(commandWithoutHeredocBodies(command));
   if (token === undefined) {
-    return undefined;
+    return ;
   }
   return {
     code: "UNQUOTED_SHELL_GLOB_PATH_SEGMENT",
@@ -115,7 +115,7 @@ function readHeredocLabelAt(
   if (quote === "'" || quote === "\"") {
     const endIndex = line.indexOf(quote, startIndex + 1);
     if (endIndex <= startIndex + 1) {
-      return undefined;
+      return ;
     }
     return {
       value: line.slice(startIndex + 1, endIndex),
@@ -124,7 +124,7 @@ function readHeredocLabelAt(
   }
   const match = line.slice(startIndex).match(/^([A-Za-z_][A-Za-z0-9_]*)/u);
   if (match === null || match[1] === undefined) {
-    return undefined;
+    return ;
   }
   return {
     value: match[1],
@@ -193,7 +193,7 @@ function findUnquotedShellGlobPathSegment(command: string): string | undefined {
 
 function readUnquotedGlobPathToken(chars: Array<{ char: string; quoted: boolean }>): string | undefined {
   if (chars.length === 0) {
-    return undefined;
+    return ;
   }
   for (let index = 0; index < chars.length; index += 1) {
     const item = chars[index];
@@ -210,7 +210,7 @@ function readUnquotedGlobPathToken(chars: Array<{ char: string; quoted: boolean 
       return chars.map((part) => part.char).join("");
     }
   }
-  return undefined;
+  return ;
 }
 
 function findPathSegmentStart(chars: Array<{ char: string; quoted: boolean }>, index: number): number {
@@ -271,16 +271,16 @@ function unwrapWholeCommandQuotes(command: string): string {
 function normalizeEscapedNewlinePythonInlineCommand(command: string): string | undefined {
   const match = command.match(/^(python(?:3(?:\.\d+)?)?)\s+-c\s+"([\s\S]*)"\s*$/u);
   if (match === null) {
-    return undefined;
+    return ;
   }
   const executable = match[1];
   const payload = match[2];
   if (executable === undefined || payload === undefined || !payload.includes("\\n")) {
-    return undefined;
+    return ;
   }
   const decoded = decodeEscapedPythonPhysicalNewlines(payload.replace(/\\"/gu, "\""));
   if (decoded === undefined || decoded.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const repaired = escapePhysicalNewlinesInPythonStringLiterals(decoded);
   const label = chooseHeredocLabel(repaired);
@@ -290,18 +290,18 @@ function normalizeEscapedNewlinePythonInlineCommand(command: string): string | u
 function normalizePythonHeredocCommand(command: string): string | undefined {
   const match = command.match(/^(python(?:3(?:\.\d+)?)?)\s+<<'([A-Za-z_][A-Za-z0-9_]*)'\n([\s\S]*)\n\2\s*$/u);
   if (match === null) {
-    return undefined;
+    return ;
   }
   const executable = match[1];
   const label = match[2];
   const payload = match[3];
   if (executable === undefined || label === undefined || payload === undefined) {
-    return undefined;
+    return ;
   }
   const decoded = decodeEscapedPythonPhysicalNewlines(payload) ?? payload;
   const repaired = escapePhysicalNewlinesInPythonStringLiterals(decoded);
   if (repaired === payload) {
-    return undefined;
+    return ;
   }
   return `${executable} <<'${label}'\n${repaired.trimEnd()}\n${label}`;
 }

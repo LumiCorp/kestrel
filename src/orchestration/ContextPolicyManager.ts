@@ -8,7 +8,6 @@ import type {
 import type { StructuredContextSummaryV1 } from "../kestrel/contracts/orchestration.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import type {
-  ContextCheckpointAction,
   ContextCheckpointRecord,
   ContextPolicyDecision,
   ContextSummaryArtifactRecord,
@@ -356,7 +355,7 @@ function buildContextCheckpointDraft(input: {
     input.adaptation.recommendedAction === undefined ||
     input.adaptation.reason === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -460,7 +459,7 @@ function renderList(label: string, values: string[]): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

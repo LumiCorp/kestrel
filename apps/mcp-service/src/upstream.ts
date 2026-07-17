@@ -261,11 +261,7 @@ async function refreshOAuthCredentialIfNeeded(input: {
   const credentialId = input.server.credential?.id;
   const store = input.identity.credentialStore;
   if (
-    !credentialId ||
-    !store ||
-    !input.payload.refreshToken ||
-    !input.payload.tokenEndpoint ||
-    !input.payload.clientId
+    !((((credentialId &&store ) &&input.payload.refreshToken ) &&input.payload.tokenEndpoint ) &&input.payload.clientId)
   ) {
     await store?.markRefreshRequired(credentialId ?? "");
     throw new Error("MCP OAuth credential requires reauthorization.");

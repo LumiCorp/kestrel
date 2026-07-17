@@ -80,7 +80,7 @@ test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory"
     for await (const event of subscription) {
       return event;
     }
-    return undefined;
+    return ;
   })();
 
   await agent.run(
@@ -184,13 +184,13 @@ test("core SDK e2e isolates concurrent subscriptions and rejects stale concurren
     for await (const event of subscriptionA) {
       return event;
     }
-    return undefined;
+    return ;
   })();
   const eventB = (async () => {
     for await (const event of subscriptionB) {
       return event;
     }
-    return undefined;
+    return ;
   })();
 
   await Promise.all([
@@ -282,7 +282,7 @@ test("core SDK e2e stream lifecycle and subscription delivery stay consistent fo
     for await (const event of subscription) {
       return event;
     }
-    return undefined;
+    return ;
   })();
 
   const stream = agent.stream(

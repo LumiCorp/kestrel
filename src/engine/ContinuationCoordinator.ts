@@ -10,7 +10,7 @@ import {
   isHighConfidenceContinuation,
 } from "../runtime/userReplyIntent.js";
 import { Guardrails } from "./Guardrails.js";
-import { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
+import type { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
 
 const CONTINUATION_EXTRA_STEPS = 50;
 const CONTINUATION_EXTRA_MODEL_CALLS = 50;
@@ -144,7 +144,7 @@ export class ContinuationCoordinator {
     const react = asRecord(sessionState.agent);
     const continuation = asRecord(react?.continuation);
     if (continuation === undefined) {
-      return undefined;
+      return ;
     }
     return {
       baseMaxStepsPerRun:
@@ -228,7 +228,7 @@ export class ContinuationCoordinator {
     | undefined
   > {
     if (input.event.type !== "user.reply") {
-      return undefined;
+      return ;
     }
     const reactState = asRecord(input.session.state.agent) ?? {};
     const waitReason = readContinuationWaitReason(reactState);
@@ -237,13 +237,13 @@ export class ContinuationCoordinator {
       asString(input.event.payload.text) ??
       "";
     if (isContinuationWaitReason(waitReason) === false) {
-      return undefined;
+      return ;
     }
 
     const continuationState = this.readContinuationState(input.session.state);
     const pending = continuationState?.pendingContinuationRequest;
     if (continuationState === undefined || pending === undefined) {
-      return undefined;
+      return ;
     }
     const intent = await classifyUserReplyIntent({
       reply,
@@ -431,7 +431,7 @@ export class ContinuationCoordinator {
     if (failed !== undefined) {
       return { output: failed };
     }
-    return undefined;
+    return ;
   }
 
   async maybeRequestContinuation(input: {
@@ -590,7 +590,7 @@ export class ContinuationCoordinator {
     eventPayload: Record<string, unknown>,
   ): Record<string, unknown> | undefined {
     if (shouldPreserveBlockedResumeLineageForFreshTurn(reactState, eventPayload)) {
-      return undefined;
+      return ;
     }
     const execState = asRecord(reactState.exec);
     const hasResidualExecState =
@@ -628,7 +628,7 @@ export class ContinuationCoordinator {
       hasResidualExecutableIntentState ||
       hasResidualExecState;
     if (hasResidualControlState === false) {
-      return undefined;
+      return ;
     }
 
     return clearRuntimeWaitState({
@@ -799,14 +799,14 @@ function parseContinuationRequestState(
   value: Record<string, unknown> | undefined,
 ): ContinuationRequestState | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const resumeStepAgent =
     typeof value.resumeStepAgent === "string" && value.resumeStepAgent.trim().length > 0
       ? value.resumeStepAgent
       : undefined;
   if (resumeStepAgent === undefined) {
-    return undefined;
+    return ;
   }
   return {
     extraStepsRequested: readMaybeNumber(value.extraStepsRequested) ?? CONTINUATION_EXTRA_STEPS,
@@ -880,7 +880,7 @@ function isContinuationWaitReason(value: string | undefined): value is Continuat
 
 function readMaybeContinuationReason(value: unknown): string | undefined {
   if (typeof value === "string") {
-    return undefined;
+    return ;
   }
   const record = asRecord(value);
   return typeof record?.reason === "string" ? record.reason : undefined;
@@ -972,7 +972,7 @@ function buildContinuationPartialAnswer(
     return lastObservation.trim();
   }
   if (completedSoFar.length === 0) {
-    return undefined;
+    return ;
   }
   return `Current verified progress so far:\n- ${completedSoFar.join("\n- ")}`;
 }
@@ -1031,7 +1031,7 @@ function formatDevShellStatusCounts(statusCounts: Map<string, number>): string |
     })
     .filter((part): part is string => part !== undefined);
   if (parts.length === 0) {
-    return undefined;
+    return ;
   }
   return `Dev shell process state: ${parts.join(", ")}.`;
 }
@@ -1069,7 +1069,7 @@ function formatLatestDevShellProcess(entry: Record<string, unknown>): string | u
   const command = asString(entry.command);
   const status = asString(entry.status);
   if (command === undefined && status === undefined) {
-    return undefined;
+    return ;
   }
   const statusLabel = status === undefined ? "recorded" : formatStatusLabel(status);
   const exitCode = readMaybeNumber(entry.exitCode);
@@ -1099,7 +1099,7 @@ function readToolEvidenceProgress(reactState: Record<string, unknown>): string[]
 
 function formatToolCallCounts(value: unknown): string | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const parts = value
     .map((entry) => {
@@ -1146,7 +1146,7 @@ function summarizeEvidenceItems(items: string[], limit: number): string | undefi
     .map((item) => summarizeInline(item, 80))
     .filter((item) => item.length > 0);
   if (normalized.length === 0) {
-    return undefined;
+    return ;
   }
   const visible = normalized.slice(0, limit);
   const hiddenCount = normalized.length - visible.length;
@@ -1220,7 +1220,7 @@ function readStringArray(value: unknown): string[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

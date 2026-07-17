@@ -54,7 +54,7 @@ function createPool(input?: {
         queries.push(sql);
         return { rows: [] };
       },
-      release: () => undefined,
+      release: () => {},
     }),
     query: async (sql: string) => {
       queries.push(sql);

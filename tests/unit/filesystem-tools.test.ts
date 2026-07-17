@@ -412,7 +412,7 @@ test("filesystem search and list outputs are bounded and deterministic", async (
 test("filesystem search clips previews and total returned preview payload", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "maps"), { recursive: true });
-  const longLine = `${"x".repeat(2_000)} FIXME ${"y".repeat(2_000)}`;
+  const longLine = `${"x".repeat(2000)} FIXME ${"y".repeat(2000)}`;
   for (let index = 0; index < 10; index += 1) {
     await writeFile(path.join(policyRoots.workspaceRoot, "maps", `bundle-${index}.js.map`), longLine, "utf8");
   }
@@ -436,7 +436,7 @@ test("filesystem search clips previews and total returned preview payload", asyn
   }));
 
   assert.equal(result.maxPreviewChars, 80);
-  assert.equal(result.maxTotalPreviewChars, 1_000);
+  assert.equal(result.maxTotalPreviewChars, 1000);
   assert.equal(result.matches.length, 10);
   assert.equal(result.matchCount, 10);
   assert.equal(result.returnedMatchCount, 10);
@@ -466,13 +466,13 @@ test("filesystem search total preview budget stops result accumulation", async (
     query: "TODO",
     maxResults: 8,
     maxPreviewChars: 240,
-    maxTotalPreviewChars: 1_000,
+    maxTotalPreviewChars: 1000,
   }));
 
   assert.equal(result.matches.length, 4);
   assert.equal(result.truncated, true);
   assert.equal(result.totalPreviewChars, 960);
-  assert.equal(result.maxTotalPreviewChars, 1_000);
+  assert.equal(result.maxTotalPreviewChars, 1000);
 });
 
 test("filesystem search glob narrows without widening into ignored roots", async () => {

@@ -418,7 +418,7 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
       terminalObservation = await observeLocalPromptTerminal({
         kestrelHome: paths.kestrelHome,
         sessionName: payload.sessionName,
-        timeoutMs: options.timeoutSeconds * 1_000,
+        timeoutMs: options.timeoutSeconds * 1000,
       });
     } catch (error) {
       terminalObservationError = error instanceof Error ? error.message : String(error);
@@ -525,7 +525,7 @@ async function writeAbortedPromptReport(input: {
   const diagnosticsLog = await readOptionalFile(input.paths.diagnosticsPath);
   const createdFiles = await listWorkspaceFiles(input.paths.workspacePath).catch(() => []);
   const assertionResults = await runArtifactAssertions(input.paths.workspacePath, input.prompt.assertions).catch(() => []);
-  const resolvedWorkspaceRoot = await readResolvedWorkspaceRoot(input.paths.kestrelHome).catch(() => undefined);
+  const resolvedWorkspaceRoot = await readResolvedWorkspaceRoot(input.paths.kestrelHome).catch(() => {});
   const badMatches = findBadMatches([history, diagnosticsLog].join("\n"));
   const artifactStatus: ArtifactStatus =
     input.prompt.assertions.length === 0
@@ -1041,7 +1041,7 @@ function readJsonPath(value: unknown, jsonPath: string): unknown {
     .filter((part) => part.length > 0)
     .reduce<unknown>((current, part) => {
       if (!isRecord(current)) {
-        return undefined;
+        return ;
       }
       return current[part];
     }, value);
@@ -1088,7 +1088,7 @@ async function readResolvedWorkspaceRoot(kestrelHome: string): Promise<string | 
   const stateRoot = resolveKestrelCoreHome({ KESTREL_CORE_HOME: kestrelHome }).homePath;
   const raw = await readOptionalFile(path.join(stateRoot, "workspaces.json"));
   if (raw.length === 0) {
-    return undefined;
+    return ;
   }
   const parsed = JSON.parse(raw) as {
     workspaces?: Array<{ rootPath?: unknown; launchCwd?: unknown }>;

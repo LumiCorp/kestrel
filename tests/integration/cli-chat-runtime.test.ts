@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 
 import type {
   Kestrel,
@@ -348,7 +345,7 @@ test("KestrelChatRuntime delegates direct runtime turns with step agent and oper
               interactionMode: "plan",
               contextCache: {
                 contextTelemetry: {
-                  promptBudgetChars: 12000,
+                  promptBudgetChars: 12_000,
                   estimatedChars: 4000,
                   degradationMode: "full",
                   droppedSections: [],

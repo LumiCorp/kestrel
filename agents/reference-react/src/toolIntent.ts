@@ -57,7 +57,7 @@ export function serializeDraftIntentForState(
     | undefined,
 ): ExtractorDecision | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const execution: ExecutionIntent = {
@@ -127,7 +127,7 @@ export function serializeToolIntentForState(
   value: DecisionContextToolIntent | undefined,
 ): LegacyExtractedToolIntent | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   return {
     version: "v1",
@@ -164,7 +164,7 @@ export function buildParsedExecutionIntentState(
 ): ParsedExecutionIntentState | undefined {
   const parsed = parseDraftIntent(value);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -180,7 +180,7 @@ export function buildToolIntentContext(
 ): DecisionContextToolIntent | undefined {
   const parsed = buildParsedExecutionIntentState(value);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const candidateViews = buildCandidateViews(parsed.execution, capabilityManifest);
   const allowlistedCandidates = allowlistedCandidateNames(candidateViews);
@@ -277,7 +277,7 @@ export function resolveExecutionIntentToolName(input: {
   metadata?: DecisionContextIntentMetadata | undefined;
 }): string | undefined {
   if (input.execution === undefined) {
-    return undefined;
+    return ;
   }
   const allowlisted = allowlistedCandidateNames(input.candidateViews);
   if (allowlisted.length === 1) {
@@ -289,7 +289,7 @@ export function resolveExecutionIntentToolName(input: {
   ) {
     return allowlisted[0];
   }
-  return undefined;
+  return ;
 }
 
 function parseSplitExtractorDecision(value: unknown): DraftIntent | undefined {
@@ -298,12 +298,12 @@ function parseSplitExtractorDecision(value: unknown): DraftIntent | undefined {
   const confidence = typeof root?.confidence === "number" ? root.confidence : undefined;
 
   if (root?.version !== "v3" || executionRecord === undefined || confidence === undefined) {
-    return undefined;
+    return ;
   }
 
   const execution = parseExecutionIntent(executionRecord);
   if (execution === undefined || confidence < 0 || confidence > 1) {
-    return undefined;
+    return ;
   }
 
   const metadata = parseExecutionIntentMetadata(root?.metadata);
@@ -318,7 +318,7 @@ function parseSplitExtractorDecision(value: unknown): DraftIntent | undefined {
 function parseLegacyExtractorDecision(value: unknown): DraftIntent | undefined {
   const legacy = parseLegacyExtractedToolIntent(value);
   if (legacy === undefined) {
-    return undefined;
+    return ;
   }
 
   const metadata: ExecutionIntentMetadata = {
@@ -416,7 +416,7 @@ function parseLegacyExtractedToolIntent(value: unknown): LegacyExtractedToolInte
     confidence < 0 ||
     confidence > 1
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -444,7 +444,7 @@ function parseExecutionIntent(value: unknown): ExecutionIntent | undefined {
   const record = asRecord(value);
   const objective = asString(record?.objective);
   if (record === undefined || objective === undefined) {
-    return undefined;
+    return ;
   }
 
   const candidateTools = parseCandidateToolNames(record.candidateTools);
@@ -468,7 +468,7 @@ function parseExecutionIntent(value: unknown): ExecutionIntent | undefined {
 function parseExecutionIntentMetadata(value: unknown): ExecutionIntentMetadata | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const metadata: ExecutionIntentMetadata = {};
@@ -522,7 +522,7 @@ function parseClarification(
   const clarificationNeeded = clarificationRecord?.needed;
   const clarificationPrompt = asString(clarificationRecord?.prompt);
   if (typeof clarificationNeeded !== "boolean") {
-    return undefined;
+    return ;
   }
   return {
     needed: clarificationNeeded,
@@ -537,7 +537,7 @@ function hasMetadataFields(metadata: ExecutionIntentMetadata): boolean {
 function parseWorkflowIntent(value: unknown): ExtractedWorkflowIntent | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const kind = normalizeWorkflowKind(asString(record.kind));
   return kind === undefined ? undefined : { kind };
@@ -560,11 +560,11 @@ function deriveWorkflowIntentFromLegacyFields(input: {
 function parseRepoScope(value: unknown): ExtractedRepoScope | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const kind = record.kind;
   if (kind !== "workspace" && kind !== "paths" && kind !== "unknown") {
-    return undefined;
+    return ;
   }
   const targets = parseStringList(record.targets);
   return {
@@ -576,7 +576,7 @@ function parseRepoScope(value: unknown): ExtractedRepoScope | undefined {
 function parseVerificationIntent(value: unknown): ExtractedVerificationIntent | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.requested !== "boolean") {
-    return undefined;
+    return ;
   }
   const kinds = asArray(record.kinds)
     .map((entry) => parseVerificationKind(entry))
@@ -591,7 +591,7 @@ function normalizeLegacyVerificationIntent(
   value: LegacyExtractedToolIntent["verificationIntent"],
 ): ExtractedVerificationIntent | undefined {
   if (value === undefined || typeof value.requested !== "boolean") {
-    return undefined;
+    return ;
   }
   const kinds = (value.kinds ?? [])
     .map((entry) => parseVerificationKind(entry))
@@ -615,7 +615,7 @@ function parseVerificationKind(value: unknown): ExtractedVerificationKind | unde
 function parseOperationIntent(value: unknown): ExtractedOperationIntent | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const kind = record.kind;
   return kind === "write_file" ||
@@ -666,13 +666,13 @@ function normalizeCandidateToolName(value: unknown): string | undefined {
   if (fromRecord !== undefined && fromRecord.length > 0) {
     return fromRecord;
   }
-  return undefined;
+  return ;
 }
 
 function parseInputHints(value: unknown): ExtractedToolInputHints | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const inputHints: ExtractedToolInputHints = {};
@@ -772,7 +772,7 @@ function parseExecutionPreference(value: unknown): ExecutionIntentMetadata["exec
 function parseCommand(value: unknown): string | undefined {
   const parsed = asString(value);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = parsed.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -793,14 +793,14 @@ function parseHostWorkflowKind(value: unknown): ExtractedHostWorkflowKind | unde
 function parseFollowUpSourceSelection(value: unknown): ExtractedFollowUpSourceSelection | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const kind = asString(record.kind);
   if (kind === "use_prior_source") {
     const candidateId = asString(record.candidateId);
     if (candidateId === undefined || candidateId.trim().length === 0) {
-      return undefined;
+      return ;
     }
     return {
       kind,
@@ -818,7 +818,7 @@ function parseFollowUpSourceSelection(value: unknown): ExtractedFollowUpSourceSe
       query === undefined ||
       query.trim().length === 0
     ) {
-      return undefined;
+      return ;
     }
     return {
       kind,
@@ -835,5 +835,5 @@ function parseFollowUpSourceSelection(value: unknown): ExtractedFollowUpSourceSe
     };
   }
 
-  return undefined;
+  return ;
 }

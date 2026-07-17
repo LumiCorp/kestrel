@@ -22,7 +22,6 @@ import {
 import { hashToolInput } from "../../agents/reference-react/src/memory/workingMemory.js";
 import {
   createExecutionStepReducer,
-  shapeToolExecutionResultForTests,
 } from "../../agents/reference-react/src/steps/acter.js";
 import { handleAskUserAction } from "../../agents/reference-react/src/steps/acter/askUserHandler.js";
 import { buildFilesystemInspectionActionKey } from "../../agents/reference-react/src/filesystemInspection.js";
@@ -2172,16 +2171,14 @@ test("exec.wait_effect records running dev.shell process state", async () => {
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "RUNNING",
             processId: "proc-live",
             chunk: "ready\n",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -2256,16 +2253,14 @@ test("exec.wait_effect records dev.process.write input and keeps process live", 
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "RUNNING",
             processId: "proc-live",
             chunk: "ok\n",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -2338,8 +2333,7 @@ test("exec.wait_effect records settled dev.shell process completion", async () =
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "COMPLETED",
             processId: "proc-live",
@@ -2347,8 +2341,7 @@ test("exec.wait_effect records settled dev.shell process completion", async () =
             chunk: "done\n",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -2423,16 +2416,14 @@ test("exec.wait_effect preserves live process state when a helper exec completes
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "COMPLETED",
             exitCode: 0,
             chunk: "helper\n",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -2511,8 +2502,7 @@ test("exec.wait_effect records helper tactic failure as ledger evidence", async 
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "FAILED",
             exitCode: 1,
@@ -2524,8 +2514,7 @@ test("exec.wait_effect records helper tactic failure as ledger evidence", async 
             ].join("\n"),
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -2613,8 +2602,7 @@ test("exec.wait_effect treats failed artifact check commands as process evidence
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             command: "./run_controller.sh",
             cwd: "/workspace",
@@ -2624,8 +2612,7 @@ test("exec.wait_effect treats failed artifact check commands as process evidence
             chunk: "/bin/bash: line 1: ./run_controller.sh: Permission denied\n__KESTREL_CMD_DONE__:proc-helper:126",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -3554,8 +3541,7 @@ test("exec.wait_effect records failed artifact reads instead of terminating veri
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           status: "FAILED",
           output: undefined,
           error: {
@@ -3566,8 +3552,7 @@ test("exec.wait_effect records failed artifact reads instead of terminating veri
               recoverable: true,
             },
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -3655,8 +3640,7 @@ test("exec.wait_effect records durable batch filesystem failures as failed evide
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           status: "FAILED",
           error: {
             code: "EFFECT_EXECUTION_FAILED",
@@ -3666,8 +3650,7 @@ test("exec.wait_effect records durable batch filesystem failures as failed evide
               recoverable: true,
             },
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -3909,8 +3892,7 @@ test("exec.wait_effect records helper outcome after empty helper read without en
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             processId: "proc-helper",
             status: "RUNNING",
@@ -3919,8 +3901,7 @@ test("exec.wait_effect records helper outcome after empty helper read without en
             updatedAt: "2026-05-01T00:00:05.000Z",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 
@@ -4008,16 +3989,14 @@ test("exec.wait_effect leaves stale helper diagnostics non-authoritative after s
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async <T>(): Promise<T> => {
-        return {
+      useTool: async <T>(): Promise<T> => ({
           output: {
             status: "COMPLETED",
             exitCode: 0,
             chunk: "ok\n",
             truncated: false,
           },
-        } as T;
-      },
+        } as T),
     },
   );
 

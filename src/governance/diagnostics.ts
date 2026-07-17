@@ -207,12 +207,12 @@ function readCandidateTools(value: unknown): Array<{ name: string; allowlisted: 
   return value
     .map((entry) => {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-        return undefined;
+        return ;
       }
       const record = entry as Record<string, unknown>;
       const name = asString(record.name);
       if (name === undefined) {
-        return undefined;
+        return ;
       }
       return {
         name,
@@ -224,7 +224,7 @@ function readCandidateTools(value: unknown): Array<{ name: string; allowlisted: 
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -235,7 +235,7 @@ function parseInternetSignal(
   const record = asRecord(metadata);
   const toolName = asString(record?.toolName);
   if (toolName === undefined || toolName.startsWith("internet.") === false) {
-    return undefined;
+    return ;
   }
 
   const status = readInternetStatus(record?.status);
@@ -290,7 +290,7 @@ function readAttempts(value: unknown): number {
 
 function readPositiveNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false || value < 0) {
-    return undefined;
+    return ;
   }
   return value;
 }

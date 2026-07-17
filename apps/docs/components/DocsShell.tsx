@@ -1,5 +1,4 @@
 import Link from "next/link";
-import React from "react";
 import type { ReactNode } from "react";
 
 import { SiteChrome } from "@/components/SiteChrome";

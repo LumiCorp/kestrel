@@ -110,7 +110,7 @@ function readInputString(
 ): string | undefined {
   const value = readString(body, key);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

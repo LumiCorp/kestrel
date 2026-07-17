@@ -228,15 +228,14 @@ export function readRecentHarborRunFailure(
         latest = { path: resultPath, mtimeMs: stats.mtimeMs };
       }
     } catch {
-      continue;
     }
   }
   if (latest === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = readJsonRecord(latest.path);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const stats = isRecord(parsed?.stats) ? parsed.stats : undefined;
   const errored = typeof stats?.n_errored_trials === "number" ? stats.n_errored_trials : 0;
@@ -250,7 +249,7 @@ function readHarborRewardFailure(cwd: string, resultPath: string, parsed: Record
   const stats = isRecord(parsed.stats) ? parsed.stats : undefined;
   const evals = isRecord(stats?.evals) ? stats.evals : undefined;
   if (evals === undefined) {
-    return undefined;
+    return ;
   }
   for (const value of Object.values(evals)) {
     if (!isRecord(value)) {
@@ -266,7 +265,7 @@ function readHarborRewardFailure(cwd: string, resultPath: string, parsed: Record
       }
     }
   }
-  return undefined;
+  return ;
 }
 
 function buildCodexAgentEnvArgs(env: NodeJS.ProcessEnv): string[] {
@@ -307,24 +306,24 @@ function recentHarborJobRoots(cwd: string, startedAtMs: number): string[] {
 
 function readCodexAdapterFailure(cwd: string, jsonPath: string, startedAtMs: number): CodexAdapterFailure | undefined {
   if (!jsonPath.includes("kestrel-codex-harbor-cli-")) {
-    return undefined;
+    return ;
   }
   let stats;
   try {
     stats = statSync(jsonPath);
   } catch {
-    return undefined;
+    return ;
   }
   if (stats.mtimeMs + 1000 < startedAtMs) {
-    return undefined;
+    return ;
   }
   const parsed = readJsonRecord(jsonPath);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const status = typeof parsed.status === "string" ? parsed.status : undefined;
   if (status === undefined || status === "completed") {
-    return undefined;
+    return ;
   }
   return {
     path: path.relative(cwd, jsonPath),
@@ -367,7 +366,7 @@ function assertSafeArtifactPath(artifact: string): void {
 function readHarborCommandTimeoutMs(env: NodeJS.ProcessEnv): number {
   const raw = env.KESTREL_TBENCH_HARBOR_COMMAND_TIMEOUT_SEC ?? env.KESTREL_TBENCH_COMMAND_TIMEOUT_SEC;
   const seconds = raw !== undefined && raw.trim().length > 0 ? Number(raw) : 1800;
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1800_000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1_800_000;
 }
 
 function listJsonFiles(root: string): string[] {
@@ -389,7 +388,7 @@ function readJsonRecord(filePath: string): Record<string, unknown> | undefined {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     return isRecord(parsed) ? parsed : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 

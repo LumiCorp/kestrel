@@ -84,7 +84,7 @@ export function listSkillPacks(): SkillPackDefinition[] {
 
 export function getSkillPackById(id: string | undefined): SkillPackDefinition | undefined {
   if (id === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = id.trim().toLowerCase();
   return SKILL_PACKS.find((entry) => entry.id === normalized);

@@ -38,7 +38,7 @@ export function resolveBundledPostgresInstallation(input: {
     }
   }
 
-  return undefined;
+  return ;
 }
 
 function buildInstallation(rootPath: string): BundledPostgresInstallation {

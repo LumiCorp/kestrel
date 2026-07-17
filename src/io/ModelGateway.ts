@@ -242,8 +242,8 @@ function resolveRetryDelayMs(error: unknown, attempt: number): number {
   }
 
   const rateLimited = isRateLimitedModelError(error);
-  const baseMs = rateLimited ? 2_000 : 250;
-  const maxMs = rateLimited ? 30_000 : 4_000;
+  const baseMs = rateLimited ? 2000 : 250;
+  const maxMs = rateLimited ? 30_000 : 4000;
   const raw = Math.min(maxMs, baseMs * 2 ** attempt);
   return applyRetryJitter(raw);
 }
@@ -341,7 +341,7 @@ function readRetryAfterMs(error: unknown): number | undefined {
   }
   const topLevelSeconds = readPositiveNumber(record?.retryAfterSeconds);
   if (topLevelSeconds !== undefined) {
-    return Math.ceil(topLevelSeconds * 1_000);
+    return Math.ceil(topLevelSeconds * 1000);
   }
   const details = asRecord(record?.details);
   const detailMs = readPositiveNumber(details?.retryAfterMs);
@@ -350,9 +350,9 @@ function readRetryAfterMs(error: unknown): number | undefined {
   }
   const detailSeconds = readPositiveNumber(details?.retryAfterSeconds);
   if (detailSeconds !== undefined) {
-    return Math.ceil(detailSeconds * 1_000);
+    return Math.ceil(detailSeconds * 1000);
   }
-  return undefined;
+  return ;
 }
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -421,7 +421,7 @@ function annotateGatewayFailure(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

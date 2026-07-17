@@ -13,19 +13,19 @@ export function resolveLocalCoreStoreClient(
   env: NodeJS.ProcessEnv = process.env,
 ): LocalCoreStoreClientResolution | undefined {
   if (env.KESTREL_LOCAL_CORE_DAEMON === "1" || env.KESTREL_LOCAL_CORE_DIRECT === "1") {
-    return undefined;
+    return ;
   }
   const socketPath = normalizeString(env.KESTREL_LOCAL_CORE_API_SOCKET);
   const token = normalizeString(env.KESTREL_LOCAL_CORE_API_TOKEN);
   const homePath = normalizeString(env.KESTREL_CORE_HOME);
   if (socketPath === undefined || token === undefined || homePath === undefined) {
-    return undefined;
+    return ;
   }
   if (path.resolve(baseDir) !== path.resolve(homePath)) {
-    return undefined;
+    return ;
   }
   if (existsSync(socketPath) === false) {
-    return undefined;
+    return ;
   }
   return {
     homePath,

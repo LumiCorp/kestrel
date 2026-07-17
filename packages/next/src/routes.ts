@@ -15,9 +15,7 @@ export interface NextRequestCorrelation {
   forwardedFor?: string | undefined;
 }
 
-export interface AgentContextResolver {
-  (request: Request, correlation: NextRequestCorrelation): Promise<KestrelRequestContext> | KestrelRequestContext;
-}
+export type AgentContextResolver = (request: Request, correlation: NextRequestCorrelation) => Promise<KestrelRequestContext> | KestrelRequestContext
 
 export interface JsonRunRouteHandlerOptions {
   agent: KestrelAgent;

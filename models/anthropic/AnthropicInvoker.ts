@@ -142,7 +142,7 @@ function parseJsonRecord(value: string): Record<string, unknown> | undefined {
 }
 
 function parseJsonValue(value: string): unknown {
-  try { return JSON.parse(value); } catch { return undefined; }
+  try { return JSON.parse(value); } catch { return ; }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -173,7 +173,7 @@ async function handleRequest(
 void discoveryWorker.pollOnce().catch(() => {});
 setInterval(() => {
   void discoveryWorker.pollOnce().catch(() => {});
-}, 2_000).unref();
+}, 2000).unref();
 
 setInterval(() => {
   const now = Date.now();

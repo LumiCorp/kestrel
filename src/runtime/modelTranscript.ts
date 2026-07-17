@@ -1,7 +1,7 @@
 import type { ModelMessage } from "../kestrel/contracts/model-io.js";
 import { buildAgentToolSuccessResult, isAgentToolResult } from "../../tools/toolResult.js";
 
-import { normalizeVisibleTodoState, renderVisibleTodosForModel, type VisibleTodoState } from "./visibleTodos.js";
+import { renderVisibleTodosForModel, type VisibleTodoState } from "./visibleTodos.js";
 
 export { buildRuntimeContextFragment } from "./agent-context/runtimeContext.js";
 
@@ -53,7 +53,7 @@ const MAX_TRANSCRIPT_ITEMS = 120;
 export function normalizeModelTranscript(value: unknown): ModelTranscript | undefined {
   const record = asRecord(value);
   if (record === undefined || record.version !== 1 || Array.isArray(record.items) === false) {
-    return undefined;
+    return ;
   }
   const windowId = typeof record.windowId === "number" && Number.isFinite(record.windowId)
     ? Math.max(1, Math.trunc(record.windowId))
@@ -87,7 +87,7 @@ export function validateModelTranscript(value: unknown): ModelTranscriptValidati
 export function readActiveTaskGoalFromTranscript(value: unknown): string | undefined {
   const transcript = normalizeModelTranscript(value);
   if (transcript === undefined) {
-    return undefined;
+    return ;
   }
   for (const item of transcript.items) {
     if (item.kind !== "user") {
@@ -98,7 +98,7 @@ export function readActiveTaskGoalFromTranscript(value: unknown): string | undef
       return content;
     }
   }
-  return undefined;
+  return ;
 }
 
 export function appendModelTranscriptItems(
@@ -326,7 +326,7 @@ export function rebaseModelTranscriptAfterCompaction(input: {
   const outgoing = normalizeModelTranscript(input.outgoingTranscript);
   const latestCompaction = compacted?.compactions?.at(-1);
   if (compacted === undefined || outgoing === undefined || latestCompaction === undefined) {
-    return undefined;
+    return ;
   }
 
   const existingIds = new Set(compacted.items.map((item) => item.id));
@@ -435,14 +435,14 @@ function transcriptItemToMessage(
   }
   if (item.kind === "correction") {
     if (item.content !== undefined && item.content === context.suppressCorrectionContent) {
-      return undefined;
+      return ;
     }
     return item.content !== undefined ? { role: "user", content: `Correction: ${item.content}` } : undefined;
   }
   if (item.kind === "todo_update") {
     return item.content !== undefined ? { role: "assistant", content: item.content } : undefined;
   }
-  return undefined;
+  return ;
 }
 
 function renderDanglingToolCallRepairContent(item: ModelTranscriptItem, toolCallId: string): string {
@@ -470,7 +470,7 @@ function findPendingToolCallId(input: {
 }): string | undefined {
   const transcript = normalizeModelTranscript(input.transcript);
   if (transcript === undefined) {
-    return undefined;
+    return ;
   }
   const completedCallIds = new Set(
     transcript.items
@@ -597,10 +597,10 @@ function renderToolInputForTranscript(item: ModelTranscriptItem): string {
 function compactKnownToolInputForTranscript(item: ModelTranscriptItem): Record<string, unknown> | undefined {
   const input = item.toolInput;
   if (input === undefined) {
-    return undefined;
+    return ;
   }
   if (item.toolName !== "fs.write_text" && item.toolName !== "fs_write_text") {
-    return undefined;
+    return ;
   }
   const content = asStringForSummary(input.content);
   if (content === undefined) {
@@ -652,7 +652,7 @@ function normalizeTranscriptItem(value: unknown): ModelTranscriptItem | undefine
   const createdAt = asString(record?.createdAt);
   const kind = asString(record?.kind);
   if (record === undefined || id === undefined || createdAt === undefined || isTranscriptKind(kind) === false) {
-    return undefined;
+    return ;
   }
   return {
     id,
@@ -677,7 +677,7 @@ function assignTranscriptItemIdentity(
   return {
     ...item,
     id,
-    createdAt: new Date(ordinal * 1_000).toISOString(),
+    createdAt: new Date(ordinal * 1000).toISOString(),
     ...(item.kind === "tool_call" && item.toolCallId === undefined ? { toolCallId: id } : {}),
   };
 }
@@ -690,7 +690,7 @@ function normalizeCompactions(value: unknown): ModelTranscriptCompactionRecord[]
       const createdAt = asString(record?.createdAt);
       const summaryItemId = asString(record?.summaryItemId);
       if (record === undefined || id === undefined || createdAt === undefined || summaryItemId === undefined) {
-        return undefined;
+        return ;
       }
       return {
         id,
@@ -727,7 +727,7 @@ function stringifyForTranscript(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

@@ -334,7 +334,7 @@ export async function buildOperatorSessionProjection(
 
 function normalizeOptionalSessionTimestamp(value: string | undefined): string | undefined {
   if (value === undefined || value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   return value;
 }
@@ -384,7 +384,7 @@ async function ensureMainThread(
   threadRuntime: OperatorSessionProjectionRuntime | undefined,
 ): Promise<ThreadRecord | undefined> {
   if (threadRuntime === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof threadRuntime.ensureMainThreadForSession === "function") {
     return threadRuntime.ensureMainThreadForSession({
@@ -406,7 +406,7 @@ async function ensureMainThread(
       },
     });
   }
-  return undefined;
+  return ;
 }
 
 function toOperatorInboxSummary(inbox: OperatorInboxSnapshot): OperatorInboxSummary {
@@ -433,7 +433,7 @@ function findLatestAssemblyDecision(
   const proposalStatus = asString(assembly?.latestProposalStatus);
   const decisionResult = asString(assembly?.latestDecisionResult);
   if (proposalStatus === undefined && decisionResult === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(proposalStatus === "PENDING" || proposalStatus === "APPROVED" || proposalStatus === "REJECTED"
@@ -454,7 +454,7 @@ function toAssemblyProviderSummary(
     (providerId !== "openrouter" && providerId !== "openai" && providerId !== "anthropic") ||
     model === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     id: providerId,
@@ -481,7 +481,7 @@ function toAssemblyCompatibilitySummary(
     downgradeReason === undefined &&
     capabilityLossReason === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     ...(status === "compatible" || status === "downgraded" || status === "incompatible" ? { status } : {}),
@@ -500,7 +500,7 @@ function toAssemblyCompatibilitySummary(
 function readWaitForFromSession(state: Record<string, unknown>): NormalizedOutput["waitFor"] | undefined {
   const wait = readActiveWaitState(asRecord(state.agent));
   if (wait === undefined) {
-    return undefined;
+    return ;
   }
   return buildWaitForMatcher({
     kind: toNormalizedOutputWaitKind(wait.kind),
@@ -531,14 +531,14 @@ function readDescribeWaitFor(input: {
   if (fromOperatorView !== undefined) {
     return fromOperatorView;
   }
-  return undefined;
+  return ;
 }
 
 function readWaitForFromThread(
   status: ThreadStatusSnapshot | null,
 ): NormalizedOutput["waitFor"] | undefined {
   if (status === null) {
-    return undefined;
+    return ;
   }
   const threadWait = status.thread.waitFor;
   if (threadWait?.kind !== undefined) {
@@ -570,14 +570,14 @@ function readWaitForFromThread(
       eventType: "delegation",
     });
   }
-  return undefined;
+  return ;
 }
 
 function readWaitForFromOperatorView(
   view: OperatorThreadView | null,
 ): NormalizedOutput["waitFor"] | undefined {
   if (view === null) {
-    return undefined;
+    return ;
   }
   if (view.childBlocker !== undefined) {
     return buildWaitForMatcher({
@@ -591,7 +591,7 @@ function readWaitForFromOperatorView(
   }
   const eventType = view.activeWait?.eventType ?? view.activeWait?.sourceEventType;
   if (eventType === undefined) {
-    return undefined;
+    return ;
   }
   return buildWaitForMatcher({
     kind: normalizeWaitKind(view.activeWait?.kind),
@@ -602,7 +602,7 @@ function readWaitForFromOperatorView(
 
 function describeDominantBlocker(view: OperatorThreadView | null): string | undefined {
   if (view === null) {
-    return undefined;
+    return ;
   }
   if (view.blocker !== undefined) {
     if (view.blocker.kind === "child_thread" && view.blocker.childThreadId !== undefined) {
@@ -624,7 +624,7 @@ function describeDominantBlocker(view: OperatorThreadView | null): string | unde
     }
     return view.activeWait.kind;
   }
-  return undefined;
+  return ;
 }
 
 function readBlockerChain(view: OperatorThreadView | null): string[] {
@@ -770,7 +770,7 @@ function mapOutcomeToThreadStatus(
 
 function readContextPosture(view: OperatorThreadView | null): string | undefined {
   if (view === null) {
-    return undefined;
+    return ;
   }
   if (view.contextPosture !== undefined) {
     return view.contextPosture.summary;
@@ -802,7 +802,7 @@ function buildWaitForMatcher(input: {
   if (input.kind === "user") {
     const prompt = asString(input.metadata?.prompt);
     if (input.metadata === undefined || prompt === undefined) {
-      return undefined;
+      return ;
     }
     return {
       kind: "user",

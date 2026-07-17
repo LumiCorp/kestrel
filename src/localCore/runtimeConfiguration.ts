@@ -25,7 +25,7 @@ export const LOCAL_CORE_RUNTIME_CONFIGURATION_RELATIVE_PATH = path.join(
 const SETTINGS_DIRECTORY_MODE = 0o700;
 const CONFIGURATION_FILE_MODE = 0o600;
 const CONFIGURATION_STRING_MAX_LENGTH = 512;
-const CONFIGURATION_URL_MAX_LENGTH = 2_048;
+const CONFIGURATION_URL_MAX_LENGTH = 2048;
 
 export type LocalCoreRuntimeEnvironmentOptionsMode = "inherit" | "replace";
 
@@ -389,8 +389,8 @@ export class LocalCoreRuntimeConfigurationStore {
   #runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#operation.then(operation);
     this.#operation = result.then(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     );
     return result;
   }

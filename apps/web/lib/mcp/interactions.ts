@@ -289,10 +289,12 @@ async function executeApprovedSampling(
     .join("\n");
   const controller = new AbortController();
   const remainingMs = Math.max(0, processingExpiresAt.getTime() - Date.now());
-  const timeout =
-    remainingMs === 0
-      ? (controller.abort(), undefined)
-      : setTimeout(() => controller.abort(), remainingMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  if (remainingMs === 0) {
+    controller.abort();
+  } else {
+    timeout = setTimeout(() => controller.abort(), remainingMs);
+  }
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({

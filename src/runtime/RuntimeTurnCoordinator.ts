@@ -11,7 +11,6 @@ import type { SessionRecord } from "../kestrel/contracts/store.js";
 import type {
   ResumeBlockedTurnInput,
   SubmitTurnInput,
-  SubmitTurnResult,
   ThreadRuntimePort,
   ThreadStatusSnapshot,
 } from "../orchestration/contracts.js";
@@ -284,7 +283,7 @@ function buildDefaultOperatorAffordance(input: {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -301,7 +300,7 @@ function selectCurrentInteractionRequest(
   status: ThreadStatusSnapshot | null | undefined,
 ): ThreadStatusSnapshot["openRequests"][number] | undefined {
   if (status === null || status === undefined) {
-    return undefined;
+    return ;
   }
   const currentRequestId = status.thread.currentRequestId;
   if (typeof currentRequestId === "string") {

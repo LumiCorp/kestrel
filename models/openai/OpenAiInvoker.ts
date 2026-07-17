@@ -174,7 +174,7 @@ function parseJsonRecord(value: string): Record<string, unknown> | undefined {
       ? parsed as Record<string, unknown>
       : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 

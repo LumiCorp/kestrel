@@ -10,7 +10,6 @@ import {
   Square,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import React from "react";
 
 import type {
   DesktopDirectoryListing,

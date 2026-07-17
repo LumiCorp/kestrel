@@ -266,7 +266,7 @@ function summarizeProgress(metadata: Record<string, unknown> | undefined): strin
     return message;
   }
 
-  return undefined;
+  return ;
 }
 
 function formatContext(line: AgentRunLogLine): string {
@@ -294,7 +294,7 @@ function humanizeEventName(eventName: string): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -305,7 +305,7 @@ function readString(
 ): string | undefined {
   const field = value?.[key];
   if (typeof field !== "string" || field.trim().length === 0) {
-    return undefined;
+    return ;
   }
   return field;
 }
@@ -320,7 +320,7 @@ function readStringArray(value: unknown): string[] {
 function readNumber(value: Record<string, unknown> | undefined, key: string): number | undefined {
   const field = value?.[key];
   if (typeof field !== "number" || Number.isFinite(field) === false) {
-    return undefined;
+    return ;
   }
   return field;
 }

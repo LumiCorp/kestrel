@@ -53,7 +53,7 @@ export function buildAnthropicHttpRequest(
     body.temperature = temperature;
   }
   const maxTokens = provider?.maxTokens ?? fallback?.maxTokens;
-  body.max_tokens = typeof maxTokens === "number" ? maxTokens : 2_048;
+  body.max_tokens = typeof maxTokens === "number" ? maxTokens : 2048;
   const topP = provider?.topP ?? fallback?.topP;
   if (typeof topP === "number") {
     body.top_p = topP;
@@ -192,7 +192,7 @@ function resolveStructuredOutput(
   schema?: Record<string, unknown> | undefined;
 } | undefined {
   if (request.responseFormat !== "json") {
-    return undefined;
+    return ;
   }
   if (request.responseSchema !== undefined && Array.isArray(request.tools) && request.tools.length > 0) {
     throw createAnthropicBadResponseError(
@@ -283,7 +283,7 @@ function mapAnthropicMessage(message: ModelMessage): Record<string, unknown> {
 
 function toSystemPrompt(messages: ModelMessage[] | undefined): string | undefined {
   if (Array.isArray(messages) === false) {
-    return undefined;
+    return ;
   }
   const system = messages
     .filter((message) => message.role === "system")
@@ -356,22 +356,22 @@ function toProviderToolName(name: string): string {
 
 function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
   if (text === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   try {
     return JSON.parse(trimmed) as TOutput;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
 function mapUsage(value: Record<string, unknown> | undefined) {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const inputTokens = asNumber(value.input_tokens);
   const outputTokens = asNumber(value.output_tokens);
@@ -400,7 +400,7 @@ function asArray(value: unknown): unknown[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

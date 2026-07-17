@@ -180,7 +180,7 @@ function buildResponsesBody(
 
 function mapOpenRouterToolChoice(toolChoice: unknown): string | undefined {
   if (typeof toolChoice !== "string") {
-    return undefined;
+    return ;
   }
   return toolChoice;
 }
@@ -504,12 +504,12 @@ function buildStructuredOutputTelemetry(
 
 function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
   if (text === undefined) {
-    return undefined;
+    return ;
   }
 
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
 
   const direct = parseJsonText<TOutput>(trimmed);
@@ -534,12 +534,12 @@ function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
     }
   }
 
-  return undefined;
+  return ;
 }
 
 function parseStructuredOutput<TOutput>(value: unknown): TOutput | undefined {
   if (value === undefined || value === null) {
-    return undefined;
+    return ;
   }
   if (typeof value === "string") {
     return parseOutput<TOutput>(value);
@@ -547,14 +547,14 @@ function parseStructuredOutput<TOutput>(value: unknown): TOutput | undefined {
   if (typeof value === "object") {
     return value as TOutput;
   }
-  return undefined;
+  return ;
 }
 
 function parseJsonText<T>(value: string): T | undefined {
   try {
     return JSON.parse(value) as T;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -613,7 +613,7 @@ function mapUsage(
   endpoint: OpenRouterEndpoint,
 ): ModelResponse["usage"] {
   if (usage === undefined) {
-    return undefined;
+    return ;
   }
 
   if (endpoint === "responses") {
@@ -622,7 +622,7 @@ function mapUsage(
     const totalTokens = asNumber(usage.total_tokens);
 
     if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-      return undefined;
+      return ;
     }
 
     return {
@@ -637,7 +637,7 @@ function mapUsage(
   const totalTokens = asNumber(usage.total_tokens);
 
   if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -668,7 +668,7 @@ function extractOutputTextFromResponses(value: unknown): string | undefined {
   }
 
   if (parts.length === 0) {
-    return undefined;
+    return ;
   }
 
   return parts.join("\n");
@@ -714,7 +714,7 @@ function extractChatMessageText(value: unknown): string | undefined {
     .filter((item): item is string => item !== undefined && item.length > 0);
 
   if (chunks.length === 0) {
-    return undefined;
+    return ;
   }
 
   return chunks.join("\n");
@@ -723,7 +723,7 @@ function extractChatMessageText(value: unknown): string | undefined {
 function extractOpenRouterChatReasoning(
   message: Record<string, unknown> | undefined,
 ): ModelResponse["reasoning"] | undefined {
-  if (message === undefined) return undefined;
+  if (message === undefined) return ;
   const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
   const details = asArray(message.reasoning_details);
   for (const detail of details) {
@@ -807,7 +807,7 @@ function safeJsonStringify(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;

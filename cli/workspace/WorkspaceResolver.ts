@@ -10,7 +10,7 @@ import type {
   WorkspaceRuntimeContext,
   WorkspacesFile,
 } from "../contracts.js";
-import { WorkspaceStore } from "./WorkspaceStore.js";
+import type { WorkspaceStore } from "./WorkspaceStore.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -150,7 +150,7 @@ async function resolveWorkspaceEntry(entry: WorkspaceRegistryEntry): Promise<Res
       rootPath: await resolveExistingDirectory(entry.rootPath),
     });
   } catch {
-    return undefined;
+    return ;
   }
 }
 

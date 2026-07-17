@@ -87,12 +87,12 @@ export function normalizeEvidenceRecoverySummary(
 ): EvidenceRecoverySummary | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const objectiveKey = asString(record.objectiveKey);
   const family = readFamily(record.family);
   if (objectiveKey === undefined || family === undefined) {
-    return undefined;
+    return ;
   }
   return {
     objectiveKey,
@@ -130,7 +130,7 @@ export function updateEvidenceRecoverySummary(input: {
 }): EvidenceRecoverySummary | undefined {
   const objectiveKey = normalizeObjectiveKey(input.objective);
   if (objectiveKey === undefined) {
-    return undefined;
+    return ;
   }
   const toolName = input.toolName ?? readPrimaryToolName(input.output);
   const family = inferEvidenceRecoveryFamily(toolName) ?? normalizeEvidenceRecoverySummary(input.prior)?.family ?? "web_research";
@@ -288,7 +288,7 @@ function readWebResearchDiagnostics(input: {
   const family = inferEvidenceRecoveryFamily(toolName);
   const duplicateVerdict = readDuplicateVerdict(input.output);
   if (toolName === undefined || family === undefined || family === "filesystem_retrieval") {
-    return undefined;
+    return ;
   }
   if (toolName === "internet.extract" || toolName === "source.fetch") {
     return readPageDuplicateDiagnostics({
@@ -305,7 +305,7 @@ function readWebResearchDiagnostics(input: {
     toolName !== "source.search" &&
     toolName !== "source.triage"
   ) {
-    return undefined;
+    return ;
   }
   if (
     toolName === "internet.search" &&
@@ -316,12 +316,12 @@ function readWebResearchDiagnostics(input: {
       output: input.output,
     }) === false
   ) {
-    return undefined;
+    return ;
   }
 
   const record = asRecord(input.output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const results = readResultItems(record);
   const explicitlySourceConstrained = hasExplicitStructuredSourceConstraint({
@@ -483,7 +483,7 @@ function normalizeDiagnostics(value: unknown): EvidenceRecoveryDiagnostics | und
   const toolName = asString(record?.toolName);
   const quality = readQuality(record?.quality);
   if (family === undefined || toolName === undefined) {
-    return undefined;
+    return ;
   }
   return {
     family,
@@ -521,7 +521,7 @@ function readPageDuplicateDiagnostics(input: {
     duplicateVerdict?.kind !== "duplicate_cached_result" &&
     duplicateVerdict?.kind !== "duplicate_executed_result"
   ) {
-    return undefined;
+    return ;
   }
   const output = asRecord(input.output);
   const url = canonicalizeDuplicateUrl(asString(output?.url)) ?? asString(output?.url);
@@ -565,7 +565,7 @@ function readResultItems(record: Record<string, unknown>): Array<{
     .map((entry) => {
       const item = asRecord(entry);
       if (item === undefined) {
-        return undefined;
+        return ;
       }
       return {
         ...(asString(item.title) !== undefined ? { title: asString(item.title) } : {}),
@@ -673,7 +673,7 @@ function readRecoveryStage(
   if (stage === "broaden_search" || stage === "target_article_fetch") {
     return stage;
   }
-  return undefined;
+  return ;
 }
 
 function readDuplicateVerdict(value: unknown): EvidenceRecoveryDuplicateVerdict | undefined {
@@ -709,7 +709,7 @@ function isNewsResearchSearchAttempt(input: {
 function normalizeObjectiveKey(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase().replace(/\s+/gu, " ");
   if (normalized === undefined || normalized.length === 0) {
-    return undefined;
+    return ;
   }
   return normalized.slice(0, 160);
 }
@@ -747,7 +747,7 @@ function inferEvidenceRecoveryFamily(toolName: string | undefined): EvidenceReco
   ) {
     return "source_retrieval";
   }
-  return undefined;
+  return ;
 }
 
 function isFilesystemMutationTool(toolName: string | undefined): boolean {
@@ -764,7 +764,7 @@ function isFilesystemMutationTool(toolName: string | undefined): boolean {
 function normalizeFilesystemInspection(value: unknown): FilesystemInspectionSummary | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const inventoryActions = readNonNegativeNumber(record.inventoryActions);
   const groundedReadActions = readNonNegativeNumber(record.groundedReadActions);
@@ -773,7 +773,7 @@ function normalizeFilesystemInspection(value: unknown): FilesystemInspectionSumm
     .filter((entry): entry is string => entry !== undefined)
     .slice(0, 32);
   if (inventoryActions === 0 && groundedReadActions === 0 && inventoryPaths.length === 0) {
-    return undefined;
+    return ;
   }
   return {
     inventoryActions,
@@ -795,7 +795,7 @@ function updateFilesystemInspectionSummary(input: {
   const toolName = input.toolName;
   const prior = input.prior;
   if (toolName !== "fs.list" && toolName !== "fs.read_text" && toolName !== "fs.search_text") {
-    return undefined;
+    return ;
   }
   const inventoryActions = prior?.inventoryActions ?? 0;
   const groundedReadActions = prior?.groundedReadActions ?? 0;
@@ -864,7 +864,7 @@ function filesystemTargetMatchesInventory(targetPath: string, inventoryPath: str
 function normalizeFilesystemPath(path: string | undefined): string | undefined {
   const trimmed = path?.trim().replace(/\\/gu, "/");
   if (trimmed === undefined || trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const withoutPrefix = trimmed.replace(/^(?:\.\/)+/u, "");
   const collapsed = withoutPrefix.replace(/\/+/gu, "/").replace(/\/$/u, "");
@@ -885,7 +885,7 @@ function normalizeDuplicateVerdict(value: unknown): EvidenceRecoveryDuplicateVer
     fingerprint === undefined ||
     duplicateCount < 1
   ) {
-    return undefined;
+    return ;
   }
   return {
     kind,
@@ -911,7 +911,7 @@ function normalizeRetainedCandidates(value: unknown): RetainedEvidenceCandidate[
       const url = asString(entry.url);
       const toolName = asString(entry.toolName);
       if (url === undefined || toolName === undefined) {
-        return undefined;
+        return ;
       }
       return {
         url,
@@ -1078,7 +1078,7 @@ function inferEvidenceRecoveryDuplicateFamily(
   if (toolName === "source.fetch") {
     return "source_page_content";
   }
-  return undefined;
+  return ;
 }
 
 function inferWebRecoveryDuplicateFamily(

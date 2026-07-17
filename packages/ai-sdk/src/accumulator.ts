@@ -434,7 +434,7 @@ function requireNonEmptyString(value: unknown, label: string): string {
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

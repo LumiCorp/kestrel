@@ -88,10 +88,10 @@ function readHiddenProcessStartTool(
   context: DeliberatorToolFilterContext,
 ): HiddenDeliberatorTool | undefined {
   if (toolName !== "dev.process.start") {
-    return undefined;
+    return ;
   }
   if (managedEntrypointRequiresProcessStart(context)) {
-    return undefined;
+    return ;
   }
   return {
     name: toolName,
@@ -115,10 +115,10 @@ function readHiddenDeadProcessTool(
     toolName !== "dev.process.read" &&
     toolName !== "dev.process.stop"
   ) {
-    return undefined;
+    return ;
   }
   if (hasLiveDevShellProcess(context)) {
-    return undefined;
+    return ;
   }
   return {
     name: toolName,
@@ -133,7 +133,7 @@ function readHiddenManualProcessTool(
   context: DeliberatorToolFilterContext,
 ): HiddenDeliberatorTool | undefined {
   if (isManualDevShellProcessTool(toolName) === false || shouldHideManualProcessToolForGather(toolName, context) === false) {
-    return undefined;
+    return ;
   }
   return {
     name: toolName,

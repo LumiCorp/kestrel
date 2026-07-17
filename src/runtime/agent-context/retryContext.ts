@@ -42,7 +42,7 @@ export function readCorrection(retryContext: Record<string, unknown> | undefined
     asString(asRecord(failure?.details)?.correction) ??
     asString(failure?.message);
   if (fallbackCorrection === undefined) {
-    return undefined;
+    return ;
   }
   const recoveryInstruction = retryInstructionForValidationFeedback({
     code: asString(failure?.code) ?? "",
@@ -59,7 +59,7 @@ export function readCorrection(retryContext: Record<string, unknown> | undefined
 
 function renderPreviousRejectedResponse(value: unknown): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   return `Previous rejected structured response: ${stableStringify(value)}`;
 }
@@ -88,7 +88,7 @@ function retryInstructionForValidationFeedback(input: {
   ) {
     return "Call exactly one available tool or Kestrel control tool now; do not answer in prose.";
   }
-  return undefined;
+  return ;
 }
 
 function readRequiredCorrection(value: unknown): string | undefined {
@@ -101,13 +101,13 @@ function readRequiredCorrection(value: unknown): string | undefined {
 function renderStructuredRetryCorrection(value: unknown): string | undefined {
   const correction = asRecord(value);
   if (correction === undefined) {
-    return undefined;
+    return ;
   }
   const sections = Object.entries(correction)
     .map(([kind, detail]) => renderStructuredRetryCorrectionSection(kind, detail))
     .filter((section): section is string => section !== undefined);
   if (sections.length === 0) {
-    return undefined;
+    return ;
   }
   return [
     "The previous action was rejected. Correct the next action using this structured feedback.",
@@ -118,7 +118,7 @@ function renderStructuredRetryCorrection(value: unknown): string | undefined {
 function renderStructuredRetryCorrectionSection(kind: string, value: unknown): string | undefined {
   const detail = asRecord(value);
   if (detail === undefined) {
-    return undefined;
+    return ;
   }
   const action = asString(detail.action);
   const instruction = retryInstructionForAction(action);
@@ -180,7 +180,7 @@ function retryInstructionForAction(action: string | undefined): string | undefin
     case "stop_live_process_or_use_process_tools_or_file_tools":
       return "Use process tools, stop the live process, or create files with file tools instead of starting escaped multiline input.";
     default:
-      return undefined;
+      return ;
   }
 }
 

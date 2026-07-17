@@ -21,7 +21,7 @@ import type {
 } from "./types.js";
 
 const MAX_LEDGER_ENTRIES = 80;
-const DEFAULT_PREVIEW_BYTES = 2_000;
+const DEFAULT_PREVIEW_BYTES = 2000;
 const MAX_FACT_TEXT_PREVIEW_CHARS = 500;
 const MAX_MATCH_PREVIEW_ITEMS = 6;
 const MAX_CHANGED_FILE_FACT_ITEMS = 40;
@@ -212,7 +212,7 @@ export function deriveActiveControllerFailure(input: {
     }
     return failure;
   }
-  return undefined;
+  return ;
 }
 
 export function buildHelperOutcomeEvidenceEntry(input: {
@@ -294,7 +294,7 @@ export function summarizeToolEvidenceLedger(input: {
     incrementToolCount(successfulCounts, toolName);
   }
   if (successfulCounts.size === 0 && failedCounts.size === 0) {
-    return undefined;
+    return ;
   }
   return {
     successfulCalls: [...successfulCounts.entries()]
@@ -534,7 +534,7 @@ function parseEvidenceLedgerEntry(value: unknown): EvidenceLedgerEntry | undefin
     summary === undefined ||
     summary.length === 0
   ) {
-    return undefined;
+    return ;
   }
   const createdAt = asString(root.createdAt) ?? buildEvidenceCreatedAt();
   return {
@@ -685,8 +685,8 @@ function buildToolFacts(
       : {}),
     ...(readContent !== undefined
       ? {
-          contentPreview: clamp(readContent, 2_000),
-          contentPreviewTruncated: readContent.length > 2_000,
+          contentPreview: clamp(readContent, 2000),
+          contentPreviewTruncated: readContent.length > 2000,
         }
       : {}),
     ...(toolName === "fs.search_text" && asString(input?.query) !== undefined
@@ -890,7 +890,7 @@ function numberDelta(before: unknown, after: unknown): number | undefined {
     Number.isFinite(before) === false ||
     Number.isFinite(after) === false
   ) {
-    return undefined;
+    return ;
   }
   return Math.trunc(after) - Math.trunc(before);
 }
@@ -1100,7 +1100,7 @@ function buildDerivedToolEvidence(
               }
             : {}),
           ...(exitCode !== undefined ? { exitCode } : {}),
-          errorPreview: clamp(chunk ?? base.summary, 1_200),
+          errorPreview: clamp(chunk ?? base.summary, 1200),
         },
         links: {
           ...(base.links ?? {}),
@@ -1140,7 +1140,7 @@ function buildToolNextUse(
       supports: target?.value,
     };
   }
-  return undefined;
+  return ;
 }
 
 function incrementToolCount(target: Map<string, number>, toolName: string): void {
@@ -1277,7 +1277,7 @@ function inferHelperOutcomeFromProcessResult(input: {
       nextSuggestedAction: input.artifactTarget !== undefined ? "replan" : "continue_helper",
     };
   }
-  return undefined;
+  return ;
 }
 
 function normalizeTargetValue(value: string | undefined): string | undefined {
@@ -1286,7 +1286,7 @@ function normalizeTargetValue(value: string | undefined): string | undefined {
 
 function findRepeatedInspection(ledger: EvidenceLedgerEntry[]): EvidenceLedgerEntry | undefined {
   void ledger;
-  return undefined;
+  return ;
 }
 
 function selectContextEntries(
@@ -1443,7 +1443,7 @@ function readControllerErrorPreview(entry: EvidenceLedgerEntry): string | undefi
 
 function inferSourcePath(command: string | undefined): string | undefined {
   if (command === undefined) {
-    return undefined;
+    return ;
   }
   const runnerMatch = command.match(/(?:python3?|node|tsx|bash|sh)\s+([^\s;&|]+?\.(?:py|js|mjs|ts|sh))/u);
   if (runnerMatch?.[1] !== undefined) {
@@ -1501,7 +1501,7 @@ function parseTarget(value: unknown): EvidenceLedgerEntry["target"] | undefined 
     : undefined;
   const targetValue = asString(target?.value);
   if (type === undefined || targetValue === undefined) {
-    return undefined;
+    return ;
   }
   return {
     type,
@@ -1515,7 +1515,7 @@ function parseTarget(value: unknown): EvidenceLedgerEntry["target"] | undefined 
 function parseRaw(value: unknown): EvidenceLedgerEntry["raw"] | undefined {
   const raw = asRecord(value);
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = {
     ...(asString(raw.ref) !== undefined ? { ref: asString(raw.ref) } : {}),
@@ -1533,7 +1533,7 @@ function parseRaw(value: unknown): EvidenceLedgerEntry["raw"] | undefined {
 function parseLinks(value: unknown): EvidenceLedgerEntry["links"] | undefined {
   const links = asRecord(value);
   if (links === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = {
     ...(asString(links.processId) !== undefined ? { processId: asString(links.processId) } : {}),
@@ -1553,7 +1553,7 @@ function parseLinks(value: unknown): EvidenceLedgerEntry["links"] | undefined {
 function parseNextUse(value: unknown): EvidenceLedgerEntry["nextUse"] | undefined {
   const nextUse = asRecord(value);
   if (nextUse === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = {
     ...(asString(nextUse.supports) !== undefined ? { supports: asString(nextUse.supports) } : {}),
@@ -1580,7 +1580,7 @@ function parseClaimImpact(value: unknown): EvidenceClaimImpact | undefined {
     : undefined;
   const reason = asString(root?.reason)?.trim();
   if (success === undefined || scope === undefined || reason === undefined || reason.length === 0) {
-    return undefined;
+    return ;
   }
   const requirementIds = asArray(root?.requirementIds)
     .map((item) => asString(item)?.trim())

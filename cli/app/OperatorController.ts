@@ -490,10 +490,10 @@ export class OperatorController {
     const findCheckpoint = () => {
       const checkpoint = this.context.uiStore.getState().activeSession.operatorState?.latestCheckpoint;
       if (checkpoint === undefined || checkpoint.status !== "PENDING") {
-        return undefined;
+        return ;
       }
       if (input.checkpointId !== undefined && checkpoint.checkpointId !== input.checkpointId) {
-        return undefined;
+        return ;
       }
       return checkpoint;
     };
@@ -526,7 +526,7 @@ export class OperatorController {
     );
     const recommendedAction = normalizeContextCheckpointAction(item?.recommendedAction);
     if (item?.checkpointId === undefined || recommendedAction === undefined) {
-      return undefined;
+      return ;
     }
     return {
       checkpointId: item.checkpointId,
@@ -577,13 +577,13 @@ function normalizeContextCheckpointAction(value: unknown): OperatorCheckpointSum
   ) {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function readCommandOption(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index === -1) {
-    return undefined;
+    return ;
   }
   const value = args[index + 1];
   return value !== undefined && value.startsWith("--") === false ? value : undefined;
@@ -612,5 +612,5 @@ function normalizeToolClassToken(value: string): ToolExecutionClass | undefined 
   ) {
     return value;
   }
-  return undefined;
+  return ;
 }

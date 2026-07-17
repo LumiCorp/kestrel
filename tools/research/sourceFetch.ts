@@ -45,7 +45,7 @@ export const sourceFetchTool: SharedToolModule = {
     return async (input: unknown) => {
       const body = parseObjectInput("source.fetch", input);
       const url = requireStringField("source.fetch", body, "url");
-      const maxChars = Math.max(500, Math.min(100_000, Math.trunc(readNumber(body, "maxChars") ?? 8_000)));
+      const maxChars = Math.max(500, Math.min(100_000, Math.trunc(readNumber(body, "maxChars") ?? 8000)));
 
       const response = await fetchImpl(url);
       ensureFetchOk("source.fetch", "generic-fetch", response, { url, maxChars });
@@ -84,7 +84,7 @@ function stripHtml(value: string): string {
 function extractTitle(htmlOrText: string): string | undefined {
   const match = htmlOrText.match(/<title>([\s\S]*?)<\/title>/iu);
   if (match?.[1] === undefined) {
-    return undefined;
+    return ;
   }
 
   const value = match[1].replace(/\s+/g, " ").trim();

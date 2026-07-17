@@ -101,7 +101,7 @@ async function loadSingleBundle(): Promise<ReplayFixtureBundle | undefined> {
       previous,
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 

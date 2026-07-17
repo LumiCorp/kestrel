@@ -129,7 +129,7 @@ test("fs.write_text tool result renders compact factual output without raw JSON"
       path: "example_test.py",
       changed: true,
       existed: true,
-      bytesBefore: 10284,
+      bytesBefore: 10_284,
       bytesAfter: 7538,
       lineCountBefore: 329,
       lineCountAfter: 241,
@@ -185,7 +185,7 @@ test("fs.write_text shaped large output renders compact digest facts", () => {
       path: "astropy/timeseries/tests/test_sampled.py",
       changed: true,
       existed: true,
-      bytesBefore: 16402,
+      bytesBefore: 16_402,
       bytesAfter: 4883,
       lineCountBefore: 421,
       lineCountAfter: 133,
@@ -280,7 +280,7 @@ test("dev shell run tool result renders process fields and raw stdout without cl
       {
         id: "call_shell",
         name: "dev.shell.run",
-        input: { command: "git grep pattern | head", cwd: "/testbed", timeoutMs: 10000 },
+        input: { command: "git grep pattern | head", cwd: "/testbed", timeoutMs: 10_000 },
       },
     ],
   });
@@ -288,7 +288,7 @@ test("dev shell run tool result renders process fields and raw stdout without cl
     transcript,
     stepIndex: 2,
     toolName: "dev.shell.run",
-    toolInput: { command: "git grep pattern | head", cwd: "/testbed", timeoutMs: 10000 },
+    toolInput: { command: "git grep pattern | head", cwd: "/testbed", timeoutMs: 10_000 },
     toolOutput: {
       command: "git grep pattern | head",
       cwd: "/testbed",
@@ -313,8 +313,8 @@ test("dev shell run tool result renders process fields and raw stdout without cl
   assert.match(rendered, /- status: COMPLETED/u);
   assert.match(rendered, /- exitCode: 0/u);
   assert.match(rendered, /- truncated: false/u);
-  assert.match(rendered, /- stdout:\n  fatal: option '-n' must come before non-option arguments/u);
-  assert.match(rendered, /- stderr:\n  <empty>/u);
+  assert.match(rendered, /- stdout:\n {2}fatal: option '-n' must come before non-option arguments/u);
+  assert.match(rendered, /- stderr:\n {2}<empty>/u);
   assert.match(rendered, /Raw output ref: tool-output:[a-f0-9]{16}/u);
   assert.doesNotMatch(rendered, /\nInput:/u);
   assert.doesNotMatch(rendered, /\nOutput:/u);
@@ -1106,7 +1106,7 @@ test("tool result transcript correlates normalized tool inputs by canonical tool
     transcript,
     stepIndex: 2,
     toolName: "dev.shell.run",
-    toolInput: { command: "pwd", timeoutMs: 30000 },
+    toolInput: { command: "pwd", timeoutMs: 30_000 },
     toolOutput: { exitCode: 0, stdout: "/repo\n" },
   });
 

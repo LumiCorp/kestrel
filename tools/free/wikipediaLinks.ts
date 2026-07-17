@@ -134,7 +134,7 @@ function extractPage(payload: Record<string, unknown>): Record<string, unknown> 
       ? (query.pages as Record<string, unknown>)
       : undefined;
   if (pages === undefined) {
-    return undefined;
+    return ;
   }
 
   for (const value of Object.values(pages)) {
@@ -146,5 +146,5 @@ function extractPage(payload: Record<string, unknown>): Record<string, unknown> 
       return page;
     }
   }
-  return undefined;
+  return ;
 }

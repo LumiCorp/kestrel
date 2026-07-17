@@ -62,12 +62,12 @@ export default async function EnvironmentActivityPage({
         <CardTitle>Run inspection</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {runs.length === 0 ? <p className="text-sm text-muted-foreground">No Environment runs yet.</p> : runs.map((run) => (
+        {runs.length === 0 ? <p className="text-muted-foreground text-sm">No Environment runs yet.</p> : runs.map((run) => (
           <div className="grid gap-3 rounded-md border p-3" key={run.id}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-mono text-xs">{run.id}</div>
-                <div className="text-xs text-muted-foreground">{run.status}</div>
+                <div className="text-muted-foreground text-xs">{run.status}</div>
               </div>
               <Badge variant="outline">
                 {run.reasoningPolicySnapshot?.retention.mode !== "provider_visible"

@@ -35,7 +35,7 @@ export type CapabilityEvidenceSnapshot = Record<string, { tool: string; stepInde
 const MAX_STORED_TOOL_PAYLOAD_BYTES = 8 * 1024;
 const MAX_STORED_DEV_SHELL_PAYLOAD_BYTES = 192 * 1024;
 const MAX_TOOL_PROMPT_PREVIEW_CHARS = 2 * 1024;
-const FETCH_CONTENT_PREVIEW_CHARS = 1_600;
+const FETCH_CONTENT_PREVIEW_CHARS = 1600;
 const MAX_DEV_SHELL_PROMPT_PREVIEW_CHARS = 6 * 1024;
 const MAX_COMPACT_DEV_SHELL_CHUNK_PREVIEW_CHARS = 4 * 1024;
 const MAX_FAILURE_VISIBLE_TEXT_CHARS = 8 * 1024;
@@ -341,7 +341,7 @@ function normalizeFailureErrorRecord(error: unknown): Record<string, unknown> | 
       ...(details !== undefined ? { details } : {}),
     };
   }
-  return undefined;
+  return ;
 }
 
 function buildVisibleToolFailureContext(input: {
@@ -686,7 +686,7 @@ function coerceToolDigestScalar(
   if (typeof value === "string") {
     return summarizeText(value, MAX_TOOL_DIGEST_SCALAR_PREVIEW_CHARS);
   }
-  return undefined;
+  return ;
 }
 
 function buildToolOutputDigestAdapter(
@@ -694,7 +694,7 @@ function buildToolOutputDigestAdapter(
   output: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (output === undefined) {
-    return undefined;
+    return ;
   }
   if (toolName === "internet.research") {
     return buildDeepReportDigestAdapter(output);
@@ -708,7 +708,7 @@ function buildToolOutputDigestAdapter(
   if (toolName === "code.execute") {
     return buildCodeExecuteDigestAdapter(output);
   }
-  return undefined;
+  return ;
 }
 
 function buildDeepReportDigestAdapter(
@@ -853,12 +853,12 @@ function compactArtifactVerificationToolOutput(
   output: unknown,
 ): Record<string, unknown> | undefined {
   if (isArtifactVerificationTool(toolName) === false) {
-    return undefined;
+    return ;
   }
   const record = asRecord(output);
   const artifactVerification = asRecord(record?.artifactVerification);
   if (record === undefined || artifactVerification === undefined) {
-    return undefined;
+    return ;
   }
   const requirements = asArray(artifactVerification.requirements)
     .map((item) => asRecord(item))
@@ -948,12 +948,12 @@ function compactInternetToolOutput(
   output: unknown,
 ): Record<string, unknown> | undefined {
   if (toolName.startsWith("internet.") === false) {
-    return undefined;
+    return ;
   }
 
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   if (toolName === "internet.search" || toolName === "internet.news") {
@@ -1039,7 +1039,7 @@ function compactInternetToolOutput(
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function compactDevShellToolOutput(
@@ -1048,7 +1048,7 @@ function compactDevShellToolOutput(
 ): Record<string, unknown> | undefined {
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const lifecycle = normalizeDevShellLifecycle(toolName, undefined, record);
@@ -1093,7 +1093,7 @@ function compactDevShellToolOutput(
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function readChangedFiles(value: unknown): string[] {
@@ -1108,12 +1108,12 @@ function readInternetToolResultSignal(
   output: unknown,
 ): InternetToolResultSignal | undefined {
   if (toolName.startsWith("internet.") === false) {
-    return undefined;
+    return ;
   }
 
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   const status = asString(record.status);
@@ -1131,7 +1131,7 @@ function readInternetToolResultSignal(
     degradedCode === undefined &&
     degradedMessage === undefined
   ) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -1340,11 +1340,11 @@ function readDevShellVerificationDiagnostics(
   action: unknown,
 ): Record<string, unknown> | undefined {
   if (toolName === undefined || isDevShellLifecycleTool(toolName) === false) {
-    return undefined;
+    return ;
   }
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const priorDevShell = asRecord(asRecord(reactState.exec)?.devShell);
   const actionInput = asRecord(asRecord(action)?.input);
@@ -1449,7 +1449,7 @@ function deriveEvidenceRecoveryStage(input: {
   }
 
   if (toolName !== "internet.extract" && toolName !== "internet.extract") {
-    return undefined;
+    return ;
   }
 
   const outputRecord = asRecord(input.output);
@@ -1457,7 +1457,7 @@ function deriveEvidenceRecoveryStage(input: {
   const actionInput = asRecord(actionRecord?.input);
   const url = asString(outputRecord?.url) ?? asString(actionInput?.url);
   if (url === undefined) {
-    return undefined;
+    return ;
   }
 
   const candidateUrls = asArray(asRecord(priorRecoverySummary?.latest)?.candidateUrls)
@@ -1469,7 +1469,7 @@ function deriveEvidenceRecoveryStage(input: {
 
   const sourceCluster = normalizeSourceCluster(url);
   if (sourceCluster === undefined) {
-    return undefined;
+    return ;
   }
   const priorWebExtraction = normalizeWebExtractionRetrySummary(postToolVerification?.webExtractionRetrySummary);
   const matchedCluster = priorWebExtraction?.clusters.find(
@@ -1512,7 +1512,7 @@ export function toDuplicateResult(input: {
     ledger: input.ledger,
   });
   if (detected === undefined) {
-    return undefined;
+    return ;
   }
   if (input.kind !== "duplicate_cached_result") {
     return detected;
@@ -1753,7 +1753,7 @@ function compactToolObservationInput(
   input: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (input === undefined) {
-    return undefined;
+    return ;
   }
   if (toolName === "fs.search_text") {
     return pickDefined({
@@ -1802,7 +1802,7 @@ function compactToolObservationInput(
       maxBytes: typeof input.maxBytes === "number" ? Math.trunc(input.maxBytes) : undefined,
     });
   }
-  return undefined;
+  return ;
 }
 
 function compactToolObservationOutput(
@@ -1811,7 +1811,7 @@ function compactToolObservationOutput(
 ): Record<string, unknown> | undefined {
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   if (toolName === "fs.search_text") {
     const matches = asArray(record.matches);
@@ -1912,7 +1912,7 @@ function compactToolObservationOutput(
       ...compactObservationString("chunkPreview", asString(record.chunk)),
     });
   }
-  return undefined;
+  return ;
 }
 
 function compactDiffPreviewObservation(
@@ -2015,7 +2015,7 @@ function inferToolFeedbackStatus(output: unknown): "ok" | "failed" {
 function readToolFeedbackError(output: unknown): Record<string, unknown> | undefined {
   const record = asRecord(output);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const error = asRecord(record.error);
   if (error !== undefined) {
@@ -2024,7 +2024,7 @@ function readToolFeedbackError(output: unknown): Record<string, unknown> | undef
   const message = asString(record.message);
   const code = asString(record.errorCode);
   if (message === undefined && code === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(code !== undefined ? { code } : {}),
@@ -2093,7 +2093,7 @@ function readDevShellChunkBytes(record: Record<string, unknown> | undefined): nu
 function normalizeDevShellCommandContext(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const command = asString(record.command);
   const cwd = asString(record.cwd);

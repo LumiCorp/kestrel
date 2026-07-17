@@ -11,7 +11,7 @@ export function resolveSplashInputAction(
   if (input === " ") {
     return "dismiss";
   }
-  return undefined;
+  return ;
 }
 
 export function isComposerSoftLineBreakKeypress(

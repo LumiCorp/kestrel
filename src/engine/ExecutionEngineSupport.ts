@@ -13,7 +13,7 @@ import {
   buildWaitResumeToken as buildRuntimeWaitResumeToken,
   type RuntimeWaitMatcher,
 } from "../runtime/waitState.js";
-import {
+import type {
   normalizeRetrievalGuardInput,
   normalizeRetrievalGuardOutput,
 } from "./retrievalLoopGuard.js";
@@ -148,7 +148,7 @@ export function buildContinuationNextActions(
     const toolNames = nextAction.items
       .map((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) {
-          return undefined;
+          return ;
         }
         const record = item as Record<string, unknown>;
         return typeof record.name === "string" ? record.name : undefined;
@@ -186,7 +186,7 @@ export function buildContinuationPartialAnswer(
     return lastObservation.trim();
   }
   if (completedSoFar.length === 0) {
-    return undefined;
+    return ;
   }
   return `Current verified progress so far:\n- ${completedSoFar.join("\n- ")}`;
 }
@@ -223,7 +223,7 @@ export function isRecoverableDispatchLoopGuard(runtimeError: RuntimeError, curre
 export function readNumeric(value: Record<string, unknown>, key: string): number | undefined {
   const candidate = value[key];
   if (typeof candidate !== "number" || Number.isFinite(candidate) === false) {
-    return undefined;
+    return ;
   }
   return candidate;
 }
@@ -282,7 +282,7 @@ function summarizeModelInputSection(value: unknown): Record<string, unknown> {
     serializedLength: serialized.length,
     omittedFromPayload: false,
     clippedInPayload: false,
-    snapshotPreviewClipped: serialized.length > 4_000,
+    snapshotPreviewClipped: serialized.length > 4000,
   };
 }
 
@@ -454,11 +454,11 @@ export function normalizeAgentFeedbackForLoopGuard(reactState: Record<string, un
 
 export function readLatestEvidenceLedgerEntry(value: unknown): unknown {
   if (Array.isArray(value) === false || value.length === 0) {
-    return undefined;
+    return ;
   }
   const entry = asPlainRecord(value[value.length - 1]);
   if (entry === undefined) {
-    return undefined;
+    return ;
   }
   const target = asPlainRecord(entry.target);
   const nextUse = asPlainRecord(entry.nextUse);
@@ -510,8 +510,8 @@ export function buildStateTransitionLogMetadata(input: {
     patch: {
       statePatchKeys: Object.keys(input.statePatch).sort((left, right) => left.localeCompare(right)),
       reactKeys: Object.keys(patchReact).sort((left, right) => left.localeCompare(right)),
-      hasNextAction: Object.prototype.hasOwnProperty.call(patchReact, "nextAction"),
-      hasEvidenceLedger: Object.prototype.hasOwnProperty.call(input.statePatch, "evidenceLedger"),
+      hasNextAction: Object.hasOwn(patchReact, "nextAction"),
+      hasEvidenceLedger: Object.hasOwn(input.statePatch, "evidenceLedger"),
     },
   };
 }
@@ -536,7 +536,7 @@ function hydrateReactForTransitionLog(state: Record<string, unknown>): Record<st
 export function compactActionForStateTransitionLog(value: unknown): unknown {
   const action = asPlainRecord(value);
   if (action === undefined) {
-    return undefined;
+    return ;
   }
   const input = asPlainRecord(action.input);
   return {
@@ -635,7 +635,7 @@ export function readNormalizedRetrievalInput(
   const primaryText = typeof record?.primaryText === "string" ? record.primaryText : undefined;
   const comparableFields = asPlainRecord(record?.comparableFields);
   if (toolName === undefined || primaryText === undefined || comparableFields === undefined) {
-    return undefined;
+    return ;
   }
   const normalizedComparableFields: Record<string, string> = {};
   for (const [key, entry] of Object.entries(comparableFields)) {
@@ -655,7 +655,7 @@ export function readNormalizedRetrievalOutput(
 ): ReturnType<typeof normalizeRetrievalGuardOutput> | undefined {
   const record = asPlainRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   return {
     topUrls: readStringArray(record.topUrls),
@@ -723,7 +723,7 @@ export function readTruncatedToolArtifactsForResume(
   | undefined {
   const lastAction = asPlainRecord(lastActionResult);
   if (lastAction === undefined) {
-    return undefined;
+    return ;
   }
 
   const outputs: Record<string, unknown>[] = [];
@@ -738,7 +738,7 @@ export function readTruncatedToolArtifactsForResume(
 
   const truncatedOutputs = outputs.filter((output) => output.truncated === true);
   if (truncatedOutputs.length === 0) {
-    return undefined;
+    return ;
   }
 
   const artifactIds = [
@@ -751,7 +751,7 @@ export function readTruncatedToolArtifactsForResume(
     ),
   ];
   if (artifactIds.length === 0) {
-    return undefined;
+    return ;
   }
   const digestArtifactIds = [
     ...new Set(
@@ -808,7 +808,7 @@ export function buildWaitResumeToken(
 
 export function toRuntimeWaitMatcher(waitFor: Transition["waitFor"]): RuntimeWaitMatcher | undefined {
   if (waitFor === undefined || waitFor.kind === undefined) {
-    return undefined;
+    return ;
   }
   return {
     kind: waitFor.kind,
@@ -851,7 +851,7 @@ export function resolveExecSubstateForStep(stepAgent: string): string | undefine
   if (stepAgent.startsWith("agent.exec.")) {
     return stepAgent.slice("agent.exec.".length);
   }
-  return undefined;
+  return ;
 }
 
 export function resolveTerminalReasonCode(
@@ -892,7 +892,7 @@ export function readRequestedModelProvider(request: ModelRequest): string | unde
       return request.model.slice(0, separatorIndex);
     }
   }
-  return undefined;
+  return ;
 }
 
 export function assertModelCallAdmission(input: {

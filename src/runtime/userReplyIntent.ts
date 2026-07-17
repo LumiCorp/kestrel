@@ -61,7 +61,7 @@ export function readUserReplyIntent(value: unknown): UserReplyIntent | undefined
   const kind = readKind(record?.kind);
   const confidence = readConfidence(record?.confidence);
   if (kind === undefined || confidence === undefined) {
-    return undefined;
+    return ;
   }
   const proceed = typeof record?.proceed === "boolean" ? record.proceed : undefined;
   const decision = readDecision(record?.decision);
@@ -81,11 +81,11 @@ export function parseExplicitModeCommand(reply: unknown):
   | { interactionMode: UserReplyIntentInteractionMode; actSubmode?: UserReplyIntentActSubmode | undefined }
   | undefined {
   if (typeof reply !== "string") {
-    return undefined;
+    return ;
   }
   const normalized = normalizeReply(reply);
   if (normalized.startsWith("/mode ") === false) {
-    return undefined;
+    return ;
   }
   return parseModePhrase(normalized.slice("/mode ".length).trim());
 }
@@ -231,7 +231,7 @@ function readModelRoot(value: unknown): unknown {
     try {
       return JSON.parse(text);
     } catch {
-      return undefined;
+      return ;
     }
   }
   return value;
@@ -240,7 +240,7 @@ function readModelRoot(value: unknown): unknown {
 function summarizeWaitFor(waitFor: UserReplyIntentWaitContract | undefined): Record<string, unknown> | undefined {
   const metadata = asRecord(waitFor?.metadata);
   if (waitFor === undefined && metadata === undefined) {
-    return undefined;
+    return ;
   }
   return {
     eventType: waitFor?.eventType,
@@ -274,7 +274,7 @@ function parseModePhrase(value: string):
   if (phrase === "build") {
     return { interactionMode: "build" };
   }
-  return undefined;
+  return ;
 }
 
 function normalizeReply(value: string): string {

@@ -188,11 +188,11 @@ function buildHttpErrorDetails(
 
 function parseRetryAfterSeconds(value: string | undefined): number | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const numeric = Number(trimmed);
   if (Number.isFinite(numeric) && numeric > 0) {
@@ -200,10 +200,10 @@ function parseRetryAfterSeconds(value: string | undefined): number | undefined {
   }
   const absoluteTimeMs = Date.parse(trimmed);
   if (Number.isNaN(absoluteTimeMs)) {
-    return undefined;
+    return ;
   }
   const deltaMs = absoluteTimeMs - Date.now();
-  return deltaMs > 0 ? deltaMs / 1_000 : undefined;
+  return deltaMs > 0 ? deltaMs / 1000 : undefined;
 }
 
 function selectProviderMessage(details: Record<string, unknown>): string | undefined {
@@ -217,7 +217,7 @@ function selectProviderMessage(details: Record<string, unknown>): string | undef
     return provider.trim();
   }
 
-  return undefined;
+  return ;
 }
 
 function safeParseJson(value: string): Record<string, unknown> | undefined {
@@ -225,13 +225,13 @@ function safeParseJson(value: string): Record<string, unknown> | undefined {
     const parsed = JSON.parse(value);
     return asRecord(parsed);
   } catch {
-    return undefined;
+    return ;
   }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

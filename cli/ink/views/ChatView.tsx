@@ -1,4 +1,4 @@
-import React from "react";
+import type React from "react";
 import { Box, Text } from "ink";
 
 import type {
@@ -209,7 +209,7 @@ function buildSelectionSummary(input: {
   highlightRunId?: string | undefined;
 }): string | undefined {
   if (input.windowed.scroll.tailLocked && input.unreadCount === 0 && input.highlightRunId === undefined) {
-    return undefined;
+    return ;
   }
 
   const cursorRow = input.visualRows[input.windowed.scroll.cursor];
@@ -251,5 +251,5 @@ function buildComposerStatus(input: {
   if (input.tailLocked === false) {
     return "Browsing history";
   }
-  return undefined;
+  return ;
 }

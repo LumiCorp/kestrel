@@ -5,7 +5,7 @@ import type {
 } from "./weatherFailover.js";
 
 export const WEATHER_TOTAL_PROVIDER_BUDGET_MS = 18_000;
-export const OPEN_METEO_ATTEMPT_TIMEOUT_MS = 8_000;
+export const OPEN_METEO_ATTEMPT_TIMEOUT_MS = 8000;
 export const VISUAL_CROSSING_ATTEMPT_TIMEOUT_MS = 10_000;
 
 /** Approved production policy for the fixed Open-Meteo -> Visual Crossing sequence. */

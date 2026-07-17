@@ -53,7 +53,7 @@ test("durable observer reconnects and follows the same session to terminal", asy
   const terminal = terminalEvent("job.completed", "COMPLETED");
   const observed = await observeDurableSessionTerminal({
     sessionId: "session-1",
-    timeoutMs: 1_000,
+    timeoutMs: 1000,
     openClient: async () => {
       connectionCount += 1;
       return fakeClient(connectionCount === 1 ? [] : [terminal]);

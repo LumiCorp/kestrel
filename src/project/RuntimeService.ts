@@ -110,7 +110,7 @@ export class ProductProjectRuntimeService {
     snapshot: ProductProjectSnapshot;
     action: ProductProjectAction;
   }): void {
-    void this.runAssignedCardThread(input).catch(() => undefined);
+    void this.runAssignedCardThread(input).catch(() => {});
   }
 
   private async runAssignedCardThread(input: {
@@ -328,7 +328,7 @@ function findClaimedActionCard(
       card.activeClaim?.sessionId.endsWith(`:${action.actionId}:start-implementation:${card.id}`) === true,
     );
   }
-  return undefined;
+  return ;
 }
 
 function resolveAssignedCardRunCancelSessionId(
@@ -336,7 +336,7 @@ function resolveAssignedCardRunCancelSessionId(
   action: ProductProjectAction,
 ): string | undefined {
   if (action.type !== "board.card.move" && action.type !== "board.card.manual_done") {
-    return undefined;
+    return ;
   }
   const card = action.cardId !== undefined ? snapshot.board.cards[action.cardId] : undefined;
   if (action.type === "board.card.manual_done") {
@@ -347,7 +347,7 @@ function resolveAssignedCardRunCancelSessionId(
     card?.activeClaim === undefined ||
     (card.lane !== "wip" && card.lane !== "testing")
   ) {
-    return undefined;
+    return ;
   }
   return targetLane === "planned" || targetLane === "idea" || targetLane === "done"
     ? card.activeClaim.sessionId
@@ -440,7 +440,7 @@ function buildAssignedCardWorkspace(
   const empty = createEmptyProjectSnapshot();
   const workspaceRoot = snapshot.setup.workspaceRoot.trim();
   if (workspaceRoot.length === 0 || workspaceRoot === empty.setup.workspaceRoot) {
-    return undefined;
+    return ;
   }
   return {
     workspaceId: workspaceRoot,

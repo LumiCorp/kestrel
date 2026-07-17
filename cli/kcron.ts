@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from "node:fs";
 
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
 import { resolveWorkspaceFromBinding } from "./workspace/WorkspaceResolver.js";
-import { KcronStateStore, type KcronStateFile, type KcronWorkspaceState } from "./kcron/state.js";
+import { KcronStateStore, type KcronStateFile, } from "./kcron/state.js";
 import { installManagedService, uninstallManagedService } from "./kcron/service.js";
 import { ensureCliLocalCoreReady, formatCliLocalCoreStatus } from "./localCoreShell.js";
 
@@ -172,7 +172,7 @@ async function startDaemon(
   }, DEFAULT_POLL_INTERVAL_MS);
   timer.unref?.();
 
-  await new Promise<void>(() => undefined);
+  await new Promise<void>(() => {});
 }
 
 async function evaluateRegisteredWorkspaces(

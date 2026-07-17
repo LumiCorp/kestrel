@@ -2542,7 +2542,7 @@ export class PostgresSessionStore implements SessionStore {
     if (status === "WAITING" || status === "COMPLETED" || status === "FAILED") {
       return status;
     }
-    return undefined;
+    return ;
   }
 
   private buildRecoveredRunError(
@@ -2695,7 +2695,7 @@ export class PostgresSessionStore implements SessionStore {
 
   private asRecord(value: unknown): Record<string, unknown> | undefined {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return undefined;
+      return ;
     }
     return value as Record<string, unknown>;
   }
@@ -2740,7 +2740,7 @@ export class PostgresSessionStore implements SessionStore {
   private readDelegationSupervisionGroupId(record: DelegationRecord): string | undefined {
     const policy = record.policy;
     if (policy === undefined || typeof policy !== "object" || policy === null || Array.isArray(policy)) {
-      return undefined;
+      return ;
     }
     const flatGroupId = policy.supervisionGroupId;
     if (typeof flatGroupId === "string" && flatGroupId.trim().length > 0) {
@@ -2748,7 +2748,7 @@ export class PostgresSessionStore implements SessionStore {
     }
     const supervision = policy.supervision;
     if (typeof supervision !== "object" || supervision === null || Array.isArray(supervision)) {
-      return undefined;
+      return ;
     }
     const nestedGroupId = (supervision as Record<string, unknown>).groupId;
     return typeof nestedGroupId === "string" && nestedGroupId.trim().length > 0

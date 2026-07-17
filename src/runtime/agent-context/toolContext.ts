@@ -62,7 +62,7 @@ export type KestrelAgentCannotSatisfyReasonCode =
   | "requested_tool_unavailable";
 
 const MODEL_CONTEXT_TEXT_LIMIT = 12_000;
-const GENERIC_VALUE_PREVIEW_CHARS = 2_000;
+const GENERIC_VALUE_PREVIEW_CHARS = 2000;
 const READ_TEXT_CONTENT_LIMIT = 10_000;
 const LIST_ENTRY_LIMIT = 80;
 const SEARCH_MATCH_LIMIT = 40;
@@ -558,7 +558,7 @@ function weatherCodeFields(value: unknown): string[] {
 
 function describeWeatherCode(value: unknown): string | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   const code = Math.trunc(value);
   if (code === 0) return "clear sky";
@@ -859,7 +859,7 @@ function numberDelta(before: unknown, after: unknown): number | undefined {
     Number.isFinite(before) === false ||
     Number.isFinite(after) === false
   ) {
-    return undefined;
+    return ;
   }
   return Math.trunc(after) - Math.trunc(before);
 }
@@ -968,12 +968,12 @@ function renderNonDuplicateText(
   stderr: string | undefined,
 ): string | undefined {
   if (text === undefined || text.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const normalized = text.trim();
   const streams = [stdout, stderr].filter((item): item is string => item !== undefined && item.length > 0).join("").trim();
   if (normalized === stdout?.trim() || normalized === stderr?.trim() || (streams.length > 0 && normalized === streams)) {
-    return undefined;
+    return ;
   }
   return text;
 }
@@ -998,7 +998,7 @@ function firstString(...values: unknown[]): string | undefined {
       return value;
     }
   }
-  return undefined;
+  return ;
 }
 
 function numberOr(value: unknown, fallback: number): number {

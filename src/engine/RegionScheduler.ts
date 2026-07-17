@@ -128,7 +128,7 @@ export class RegionScheduler {
     transition: Transition,
   ): string | undefined {
     if (activeRegionItem === undefined || transition.regionOps?.syncNode === undefined) {
-      return undefined;
+      return ;
     }
 
     const patch = transition.statePatch;
@@ -152,7 +152,7 @@ export class RegionScheduler {
       return `region sync patch missing regions.${activeRegionItem.region}`;
     }
 
-    return undefined;
+    return ;
   }
 
   afterTransition(input: {

@@ -214,14 +214,14 @@ function normalizeScratchpadItems(items: string[] | undefined): string[] {
 
 function normalizeScratchpadLine(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const normalized = value
     .trim()
     .replace(/^[-*]\s+/u, "")
     .replace(/\s+/gu, " ");
   if (normalized.length === 0 || normalized === "(none)") {
-    return undefined;
+    return ;
   }
   return normalized.length > MAX_ITEM_CHARS
     ? `${normalized.slice(0, MAX_ITEM_CHARS - 1).trimEnd()}...`
@@ -238,11 +238,11 @@ function readStringArray(value: unknown): string[] {
 
 function summarizeDecision(nextAction: Record<string, unknown> | undefined): string | undefined {
   if (nextAction === undefined) {
-    return undefined;
+    return ;
   }
   const kind = asString(nextAction.kind);
   if (kind === undefined) {
-    return undefined;
+    return ;
   }
   if (kind === "tool") {
     const name = asString(nextAction.name);
@@ -262,7 +262,7 @@ function summarizeDecision(nextAction: Record<string, unknown> | undefined): str
 
 function summarizeLastAction(lastAction: Record<string, unknown> | undefined): string | undefined {
   if (lastAction === undefined) {
-    return undefined;
+    return ;
   }
   const kind = asString(lastAction.kind);
   const name = asString(lastAction.name);
@@ -272,7 +272,7 @@ function summarizeLastAction(lastAction: Record<string, unknown> | undefined): s
   if (kind === "finalize") {
     return "Produced a final answer.";
   }
-  return undefined;
+  return ;
 }
 
 function summarizeFilesystemToolResult(
@@ -280,7 +280,7 @@ function summarizeFilesystemToolResult(
   lastAction: Record<string, unknown>,
 ): string | undefined {
   if (toolName !== "fs.read_text" && toolName !== "fs.search_text" && toolName !== "fs.list") {
-    return undefined;
+    return ;
   }
   const input = asRecord(lastAction.input);
   const output = asRecord(lastAction.output);

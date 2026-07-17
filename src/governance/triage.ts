@@ -87,7 +87,7 @@ function buildEvidenceInventory(artifacts: UiEvidenceArtifact[]): UiEvidenceInve
     .map((snapshot_type) => {
       const value = counters.get(snapshot_type);
       if (value === undefined || value.total === 0) {
-        return undefined;
+        return ;
       }
       return {
         snapshot_type,

@@ -39,16 +39,16 @@ export async function consumeSseEventPayloads(
 
 export function parseRunnerEvent(value: string): RunnerEvent | undefined {
   if (value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    return undefined;
+    return ;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return undefined;
+    return ;
   }
   try {
     return parseRunnerEventV2(parsed) as RunnerEvent;

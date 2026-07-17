@@ -1,5 +1,5 @@
 import Link from "next/link";
-import React from "react";
+import type React from "react";
 import type { ComponentPropsWithoutRef } from "react";
 
 import { CodeBlock } from "@/components/CodeBlock";
@@ -45,7 +45,13 @@ function Anchor(props: ComponentPropsWithoutRef<"a">) {
 }
 
 function DocsImage(props: ComponentPropsWithoutRef<"img">) {
-  return <img {...props} className={`doc-product-image ${props.className ?? ""}`.trim()} />;
+  return (
+    <img
+      {...props}
+      alt={props.alt ?? ""}
+      className={`doc-product-image ${props.className ?? ""}`.trim()}
+    />
+  );
 }
 
 interface CalloutProps {

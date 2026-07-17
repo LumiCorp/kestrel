@@ -658,7 +658,7 @@ test("mountaintop marker-timeout diagnostics include replay context and failing 
 test("mountaintop runtime completion diagnostics distinguish wrapper validation from runtime churn", () => {
   const diagnostics = deriveRuntimeCompletionAttributionDiagnostics({
     runtimeCompletedAt: "2026-04-04T00:26:41.000Z",
-    wrapperValidationDurationMs: 10625,
+    wrapperValidationDurationMs: 10_625,
     postMarkerRuntimeShellActions: 0,
     postMarkerSettledTerminalPollingRedirects: 0,
   });
@@ -1132,7 +1132,7 @@ test("mountaintop runtime session evidence lookup diagnoses missing failed-run s
       sessionId: "reference-mountaintop-cli-missing",
       runId: "run-missing",
     },
-    loadSessionState: async () => undefined,
+    loadSessionState: async () => {},
   });
 
   assert.equal(lookup.state, undefined);
@@ -1411,7 +1411,7 @@ test("mountaintop waits for query-ready postgres before running migrations", asy
   let attempts = 0;
   const result = await waitForPostgresReady({
     databaseUrl: "postgres://kestrel:kestrel@localhost:55432/kestrel_ops_test",
-    timeoutMs: 5_000,
+    timeoutMs: 5000,
     pollIntervalMs: 1,
     probe: async () => {
       attempts += 1;
@@ -1419,13 +1419,13 @@ test("mountaintop waits for query-ready postgres before running migrations", asy
         throw new Error(`not ready ${attempts}`);
       }
     },
-    sleepFn: async () => undefined,
+    sleepFn: async () => {},
   });
 
   assert.deepEqual(result, {
     ready: true,
     attempts: 3,
-    timeoutMs: 5_000,
+    timeoutMs: 5000,
     pollIntervalMs: 1,
   });
 });
@@ -1438,7 +1438,7 @@ test("mountaintop readiness reports the last postgres query error on timeout", a
     probe: async () => {
       throw new Error("read ECONNRESET");
     },
-    sleepFn: async () => undefined,
+    sleepFn: async () => {},
   });
 
   assert.deepEqual(result, {

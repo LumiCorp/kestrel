@@ -297,7 +297,7 @@ function parseToolArguments(value: string | undefined): Record<string, unknown> 
 }
 
 function mapResponsesUsage(value: Record<string, unknown> | undefined) {
-  if (value === undefined) return undefined;
+  if (value === undefined) return ;
   const inputTokens = asNumber(value.input_tokens);
   const outputTokens = asNumber(value.output_tokens);
   const totalTokens = asNumber(value.total_tokens);
@@ -507,7 +507,7 @@ function extractChatMessageText(value: unknown): string | undefined {
     return value;
   }
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
 
   const parts: string[] = [];
@@ -528,12 +528,12 @@ function extractChatMessageText(value: unknown): string | undefined {
 
 function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
   if (text === undefined) {
-    return undefined;
+    return ;
   }
 
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
 
   const direct = parseJsonText<TOutput>(trimmed);
@@ -555,7 +555,7 @@ function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
     return parseJsonText<TOutput>(trimmed.slice(firstBrace, lastBrace + 1));
   }
 
-  return undefined;
+  return ;
 }
 
 function extractToolIntentsFromToolCalls(value: unknown): ModelToolIntent[] {
@@ -589,13 +589,13 @@ function dedupeToolIntents(toolIntents: ModelToolIntent[]): ModelToolIntent[] {
 
 function mapUsage(usage: Record<string, unknown> | undefined): ModelResponse["usage"] {
   if (usage === undefined) {
-    return undefined;
+    return ;
   }
   const inputTokens = asNumber(usage.prompt_tokens);
   const outputTokens = asNumber(usage.completion_tokens);
   const totalTokens = asNumber(usage.total_tokens);
   if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
@@ -616,7 +616,7 @@ function parseJsonText<T>(value: string): T | undefined {
   try {
     return JSON.parse(value) as T;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -630,7 +630,7 @@ function safeJsonStringify(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

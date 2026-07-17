@@ -12,7 +12,7 @@ export function createOllamaModelGatewayFromEnv(
   options: OllamaGatewayFactoryOptions = {},
 ): ModelGateway {
   const loaded = loadOllamaEnv(options.env);
-  const hasApiKeyOverride = Object.prototype.hasOwnProperty.call(
+  const hasApiKeyOverride = Object.hasOwn(
     options.envConfig ?? {},
     "apiKey",
   );

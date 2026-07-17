@@ -24,7 +24,6 @@ import {
   useRef,
   useState,
 } from "react";
-import React from "react";
 
 import type {
   DesktopBridgeInfo,
@@ -127,8 +126,7 @@ export function DesktopApp() {
     };
   }, []);
 
-  useEffect(() => {
-    return window.kestrelDesktop.onRunnerEvent((event) => {
+  useEffect(() => window.kestrelDesktop.onRunnerEvent((event) => {
       setActivity(describeRunnerActivity(event));
       if (event.type === "run.started") {
         setActiveRun((current) => current === undefined
@@ -146,12 +144,9 @@ export function DesktopApp() {
       ) {
         setMissionControlRevision((value) => value + 1);
       }
-    });
-  }, []);
+    }), []);
 
-  useEffect(() => {
-    return window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth);
-  }, []);
+  useEffect(() => window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth), []);
 
   useEffect(() => {
     if (state === undefined) {
@@ -1136,7 +1131,7 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
 
 function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
   if (event.type !== "run.completed") {
-    return undefined;
+    return ;
   }
   const result = asRecord(event.payload.result);
   return readString(result?.assistantText);
@@ -1144,7 +1139,7 @@ function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
 
 function extractTerminalError(event: DesktopRunnerEvent): string | undefined {
   if (event.type !== "run.failed") {
-    return undefined;
+    return ;
   }
   const error = asRecord(event.payload.error);
   return readString(error?.message) ?? readString(error?.code) ?? "Run failed.";

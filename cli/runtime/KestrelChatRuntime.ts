@@ -83,7 +83,6 @@ import {
   buildExecutionPolicyFromPack,
 } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import type { OperatorThreadView } from "../../src/orchestration/contracts.js";
 import { createTerminalBenchDevShellServiceFromEnv } from "../../src/devshell/TerminalBenchDevShellService.js";
 import { createRuntimeHeapDiagnosticsFromEnv } from "../../src/runtime/heapDiagnostics.js";
 import type {
@@ -380,7 +379,7 @@ export class KestrelChatRuntime {
     }
     const session = await this.kestrel.getSession(sessionId);
     if (session === null) {
-      return undefined;
+      return ;
     }
     return this.buildSessionDescription(sessionId, session);
   }
@@ -388,7 +387,7 @@ export class KestrelChatRuntime {
   async getSessionState(sessionId: string): Promise<RuntimeSessionStateProjection | undefined> {
     const session = await this.kestrel.getSession(sessionId);
     if (session === null) {
-      return undefined;
+      return ;
     }
     return buildRuntimeSessionStateProjection({
       sessionId,
@@ -911,7 +910,7 @@ export class KestrelChatRuntime {
   private async ensureMainThread(sessionId: string) {
     const threadRuntime = this.threadRuntime;
     if (threadRuntime === undefined) {
-      return undefined;
+      return ;
     }
     if (
       typeof (threadRuntime as {
@@ -1067,7 +1066,7 @@ function createRuntimeWithStore(
   void reasoningPolicyReady.catch(() => {});
   const providerReasoningPurgeTimer = setInterval(() => {
     void providerReasoningVault.purgeExpired().catch(() => {});
-  }, 60 * 60 * 1_000);
+  }, 60 * 60 * 1000);
   providerReasoningPurgeTimer.unref();
 
   const kestrel = new Kestrel({
@@ -1275,7 +1274,7 @@ export function resolveDevShellServiceForProfile(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   if (profile.devShell?.enabled !== true) {
-    return undefined;
+    return ;
   }
   return createTerminalBenchDevShellServiceFromEnv(env) ?? new LocalDevShellService();
 }
@@ -1366,7 +1365,7 @@ export function applyRequiredManagedWorkspacePolicy(
 function parseEnvInt(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
   const raw = env[name];
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
 
   const parsed = Number.parseInt(raw, 10);
@@ -1379,7 +1378,7 @@ function parseEnvBoolean(
 ): boolean | undefined {
   const raw = env[name];
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = raw.trim().toLowerCase();
   if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
@@ -1388,7 +1387,7 @@ function parseEnvBoolean(
   if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
     return false;
   }
-  return undefined;
+  return ;
 }
 
 function parseEnvString(
@@ -1397,7 +1396,7 @@ function parseEnvString(
 ): string | undefined {
   const raw = env[name];
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -1412,10 +1411,10 @@ function normalizePositiveInt(value: number, fallback: number): number {
 
 function normalizeOptionalPositiveInt(value: unknown): number | undefined {
   if (typeof value !== "number") {
-    return undefined;
+    return ;
   }
   if (Number.isFinite(value) === false || value <= 0) {
-    return undefined;
+    return ;
   }
   return Math.floor(value);
 }
@@ -1462,7 +1461,7 @@ function asError(value: unknown, fallbackMessage: string): Error {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

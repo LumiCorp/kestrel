@@ -258,7 +258,7 @@ export function resolveHarborBinary(input: {
       return { binary, version };
     }
   }
-  return undefined;
+  return ;
 }
 
 export function ensureHarborBinary(input: {
@@ -274,13 +274,13 @@ export function ensureHarborBinary(input: {
   }
   if (input.requestedBinary !== "harbor") {
     input.stderr.write(`[bench:terminal:harbor] Harbor CLI is not available at ${input.requestedBinary}.\n`);
-    return undefined;
+    return ;
   }
 
   const uvVersion = input.spawn("uv", ["--version"], { env: input.env });
   if (uvVersion.status !== 0 || uvVersion.error !== undefined) {
     input.stderr.write("[bench:terminal:harbor] Harbor CLI is not available, and uv is not installed. Install uv, then run: uv tool install harbor\n");
-    return undefined;
+    return ;
   }
 
   input.stdout.write("[bench:terminal:harbor] Harbor CLI is not available; installing with uv tool install harbor\n");
@@ -290,13 +290,13 @@ export function ensureHarborBinary(input: {
   });
   if (install.status !== 0 || install.error !== undefined) {
     input.stderr.write(`[bench:terminal:harbor] Harbor install failed.\n${formatSpawnFailure(install)}`);
-    return undefined;
+    return ;
   }
 
   const installed = resolveHarborBinary(input);
   if (installed === undefined) {
     input.stderr.write("[bench:terminal:harbor] Harbor was installed but is still not available on PATH. Add the uv tool bin directory to PATH and retry.\n");
-    return undefined;
+    return ;
   }
   return installed.binary;
 }
@@ -321,11 +321,11 @@ export function readRecentHarborRunFailure(
 ): string | undefined {
   const latest = latestHarborResult(cwd, startedAtMs);
   if (latest === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = readJsonRecord(latest.path);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const stats = isRecord(parsed.stats) ? parsed.stats : undefined;
   const errored = typeof stats?.n_errored_trials === "number" ? stats.n_errored_trials : 0;
@@ -409,14 +409,14 @@ function readHarborRewardFailure(cwd: string, resultPath: string, parsed: Record
   if (rewardMean !== undefined && rewardMean < 1) {
     return `${path.relative(cwd, resultPath)} reports reward mean ${rewardMean}`;
   }
-  return undefined;
+  return ;
 }
 
 function readHarborRewardMean(parsed: Record<string, unknown>): number | undefined {
   const stats = isRecord(parsed.stats) ? parsed.stats : undefined;
   const evals = isRecord(stats?.evals) ? stats.evals : undefined;
   if (evals === undefined) {
-    return undefined;
+    return ;
   }
   for (const value of Object.values(evals)) {
     if (!isRecord(value)) {
@@ -430,13 +430,13 @@ function readHarborRewardMean(parsed: Record<string, unknown>): number | undefin
       return metric.mean;
     }
   }
-  return undefined;
+  return ;
 }
 
 function readHarborExceptionStats(stats: Record<string, unknown>): Record<string, unknown> | undefined {
   const evals = isRecord(stats.evals) ? stats.evals : undefined;
   if (evals === undefined) {
-    return undefined;
+    return ;
   }
   for (const value of Object.values(evals)) {
     if (!isRecord(value)) {
@@ -447,7 +447,7 @@ function readHarborExceptionStats(stats: Record<string, unknown>): Record<string
       return exceptionStats;
     }
   }
-  return undefined;
+  return ;
 }
 
 function latestHarborResult(cwd: string, startedAtMs: number): { path: string; mtimeMs: number } | undefined {
@@ -464,7 +464,6 @@ function latestHarborResult(cwd: string, startedAtMs: number): { path: string; m
         latest = { path: resultPath, mtimeMs: stats.mtimeMs };
       }
     } catch {
-      continue;
     }
   }
   return latest;
@@ -489,25 +488,25 @@ function recentHarborJobRoots(cwd: string, startedAtMs: number): string[] {
 }
 
 function readHarborAdapterFailure(cwd: string, jsonPath: string, startedAtMs: number): HarborAdapterFailure | undefined {
-  if (!jsonPath.includes(`kestrel-harbor-cli-`)) {
-    return undefined;
+  if (!jsonPath.includes("kestrel-harbor-cli-")) {
+    return ;
   }
   let stats;
   try {
     stats = statSync(jsonPath);
   } catch {
-    return undefined;
+    return ;
   }
   if (stats.mtimeMs + 1000 < startedAtMs) {
-    return undefined;
+    return ;
   }
   const parsed = readJsonRecord(jsonPath);
   if (parsed === undefined) {
-    return undefined;
+    return ;
   }
   const status = typeof parsed.status === "string" ? parsed.status : undefined;
   if (status === undefined || status === "completed") {
-    return undefined;
+    return ;
   }
   return {
     path: path.relative(cwd, jsonPath),
@@ -579,7 +578,7 @@ function readLatestProcessFailureSummary(root: string): HarborProcessFailureSumm
     }
   }
   if (latest === undefined) {
-    return undefined;
+    return ;
   }
   const command = typeof latest.failure.command === "string" ? latest.failure.command : undefined;
   const exitCode = typeof latest.failure.exit_code === "number"
@@ -683,7 +682,7 @@ function shellQuote(value: string): string {
 function readHarborCommandTimeoutMs(env: NodeJS.ProcessEnv): number {
   const raw = env.KESTREL_TBENCH_HARBOR_COMMAND_TIMEOUT_SEC ?? env.KESTREL_TBENCH_COMMAND_TIMEOUT_SEC;
   const seconds = raw !== undefined && raw.trim().length > 0 ? Number(raw) : 1800;
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1800_000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1_800_000;
 }
 
 function listJsonFiles(root: string): string[] {
@@ -705,7 +704,7 @@ function readJsonRecord(filePath: string): Record<string, unknown> | undefined {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     return isRecord(parsed) ? parsed : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 

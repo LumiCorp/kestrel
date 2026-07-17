@@ -2,7 +2,7 @@ import { createRuntimeFailure } from "../src/runtime/RuntimeFailure.js";
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -11,7 +11,7 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
 export function asNonEmptyRecord(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (record === undefined || Object.keys(record).length === 0) {
-    return undefined;
+    return ;
   }
 
   return record;
@@ -32,7 +32,7 @@ export function readString(
   key: string,
 ): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const maybe = value[key];
@@ -44,7 +44,7 @@ export function readNumber(
   key: string,
 ): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const maybe = value[key];

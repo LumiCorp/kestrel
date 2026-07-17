@@ -201,7 +201,7 @@ test("exec_command continuation output is visible in model context", () => {
 
   assert.match(result.modelContext.text, /- sessionId: proc-1/u);
   assert.match(result.modelContext.text, /- stdin: move W/u);
-  assert.match(result.modelContext.text, /- text:\n  hit wall\n  > /u);
+  assert.match(result.modelContext.text, /- text:\n {2}hit wall\n {2}> /u);
 });
 
 test("exec_command stops an existing session", async () => {

@@ -338,7 +338,7 @@ test("ThreadRuntime derives operator session summaries only from the returned ru
     "events",
     "eventMetadata",
   ]) {
-    assert.equal(serializedIndex.includes(`\"${forbiddenField}\"`), false, forbiddenField);
+    assert.equal(serializedIndex.includes(`"${forbiddenField}"`), false, forbiddenField);
   }
 
   const capped = await runtime.listOperatorRuns({ limit: 500 });

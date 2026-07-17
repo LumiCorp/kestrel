@@ -198,7 +198,7 @@ export function createTerminalBenchDevShellServiceFromEnv(
 ): TerminalBenchDevShellService | undefined {
   const bridgeUrl = env[DEV_SHELL_BRIDGE_URL_ENV]?.trim();
   if (bridgeUrl === undefined || bridgeUrl.length === 0) {
-    return undefined;
+    return ;
   }
   return new TerminalBenchDevShellService(bridgeUrl);
 }

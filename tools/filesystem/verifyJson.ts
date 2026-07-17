@@ -391,7 +391,7 @@ function readOptionalTrimmedString(
 
 function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   const normalized = Math.trunc(value);
   return normalized >= 0 ? normalized : undefined;
@@ -407,13 +407,13 @@ function resolveJsonPathValue(root: unknown, pathValue: string): unknown {
     if (Array.isArray(current)) {
       const index = Number.parseInt(segment, 10);
       if (Number.isNaN(index) || index < 0 || index >= current.length) {
-        return undefined;
+        return ;
       }
       current = current[index];
       continue;
     }
     if (isRecord(current) === false) {
-      return undefined;
+      return ;
     }
     current = current[segment];
   }

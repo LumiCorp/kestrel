@@ -42,7 +42,7 @@ function resolveMessageRecipient(
   if (effectType === "assistant.respond") {
     return "operator";
   }
-  return undefined;
+  return ;
 }
 
 function resolveMessageBody(payload: Record<string, unknown> | undefined): string | undefined {
@@ -55,5 +55,5 @@ function resolveMessageBody(payload: Record<string, unknown> | undefined): strin
   if (typeof payload?.content === "string" && payload.content.trim().length > 0) {
     return payload.content;
   }
-  return undefined;
+  return ;
 }

@@ -968,7 +968,7 @@ function buildDelegationPolicyJson(record: DelegationRecord): Record<string, unk
 
 function stripSubAgentResultFromPolicy(policy: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (policy === undefined) {
-    return undefined;
+    return ;
   }
   const { subAgentResult: _subAgentResult, ...rest } = policy;
   return Object.keys(rest).length > 0 ? rest : undefined;
@@ -1177,7 +1177,7 @@ function stripProposalCompatibilityRequestMetadata(
   metadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (metadata === undefined) {
-    return undefined;
+    return ;
   }
   const {
     requestedProvider: _requestedProvider,

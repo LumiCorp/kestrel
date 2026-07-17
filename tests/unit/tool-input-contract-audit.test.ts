@@ -19,7 +19,7 @@ test("strict built-in tool schemas strip unexpected top-level keys in the audit 
       unexpected: true,
     });
     assert.equal(
-      Object.prototype.hasOwnProperty.call(sanitized as Record<string, unknown>, "unexpected"),
+      Object.hasOwn(sanitized as Record<string, unknown>, "unexpected"),
       false,
       `strict schema sanitizer leaked unexpected field for ${tool.name}`,
     );

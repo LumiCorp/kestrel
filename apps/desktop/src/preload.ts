@@ -8,7 +8,6 @@ import type {
   DesktopPackageManager,
   DesktopProjectAction,
   DesktopProjectFilesChangedEvent,
-  DesktopProjectLauncherDescriptor,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
   DesktopToolCredentialInput,

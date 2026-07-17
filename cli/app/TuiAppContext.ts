@@ -2,7 +2,7 @@ import type { RuntimeSettingsFile } from "../config/RuntimeSettings.js";
 import type { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
 import type { HistoryStore } from "../history/HistoryStore.js";
 import type { UiStateStore } from "../ink/persistence/UiStateStore.js";
-import type { UiRuntimeState, UiStore } from "../ink/store/UiStore.js";
+import type { UiStore } from "../ink/store/UiStore.js";
 import type { createUiDerivedSelectors } from "../ink/store/selectors.js";
 import type { ProtocolClient } from "../client/ProtocolClient.js";
 import type { ProfileStore } from "../config/ProfileStore.js";

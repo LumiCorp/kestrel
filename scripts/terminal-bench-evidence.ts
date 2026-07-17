@@ -308,11 +308,11 @@ function terminalBenchAggregateMetrics(parsed: JsonRecord): {
   }
 
   if (!Array.isArray(parsed.results)) {
-    return undefined;
+    return ;
   }
   const rows = parsed.results.filter(isRecord);
   if (rows.length === 0) {
-    return undefined;
+    return ;
   }
   const resolved = rows.filter((row) => row.is_resolved === true).length;
   return {
@@ -568,7 +568,7 @@ async function readJsonObject(file: string): Promise<JsonRecord | undefined> {
     const parsed = JSON.parse(await readFile(file, "utf8")) as unknown;
     return isRecord(parsed) ? parsed : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -595,12 +595,12 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function durationMs(start?: string, end?: string): number | undefined {
   if (start === undefined || end === undefined) {
-    return undefined;
+    return ;
   }
   const startedAt = Date.parse(start);
   const endedAt = Date.parse(end);
-  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) {
-    return undefined;
+  if (!(Number.isFinite(startedAt) && Number.isFinite(endedAt) ) || endedAt < startedAt) {
+    return ;
   }
   return endedAt - startedAt;
 }

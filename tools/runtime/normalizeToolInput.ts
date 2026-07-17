@@ -701,7 +701,7 @@ function normalizeCodeExecuteFiles(value: unknown): unknown[] | undefined {
   if (typeof value === "object" && value !== null) {
     return [value];
   }
-  return undefined;
+  return ;
 }
 
 function normalizeCodeExecuteStringArray(value: unknown): unknown[] | undefined {
@@ -712,12 +712,12 @@ function normalizeCodeExecuteStringArray(value: unknown): unknown[] | undefined 
     const trimmed = value.trim();
     return trimmed.length > 0 ? [trimmed] : [];
   }
-  return undefined;
+  return ;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -735,7 +735,7 @@ function normalizeOptionalInteger(value: unknown): number | undefined {
     const parsed = Number.parseInt(value.trim(), 10);
     return Number.isFinite(parsed) ? parsed : undefined;
   }
-  return undefined;
+  return ;
 }
 
 function firstDefinedInteger(...values: Array<number | undefined>): number | undefined {
@@ -755,7 +755,7 @@ function normalizeOptionalBoolean(value: unknown): boolean | undefined {
       return false;
     }
   }
-  return undefined;
+  return ;
 }
 
 function normalizeOptionalStringArray(value: unknown): string[] | undefined {
@@ -773,7 +773,7 @@ function normalizeOptionalStringArray(value: unknown): string[] | undefined {
       .filter((item) => item.length > 0);
     return normalized.length > 0 ? normalized : [];
   }
-  return undefined;
+  return ;
 }
 
 function resolveDevShellPaths(
@@ -847,7 +847,7 @@ function normalizeFilesystemField(
       return normalized;
     }
   }
-  return undefined;
+  return ;
 }
 
 function normalizeFilesystemRawField(
@@ -867,7 +867,7 @@ function normalizeFilesystemRawField(
       return normalized;
     }
   }
-  return undefined;
+  return ;
 }
 
 function firstDefinedString(...values: Array<string | undefined>): string | undefined {
@@ -881,7 +881,7 @@ function normalizeIncludeAnswer(value: unknown): boolean | "basic" | "advanced" 
   if (value === "basic" || value === "advanced") {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function normalizeIncludeRawContent(value: unknown): false | "markdown" | "text" | undefined {
@@ -891,7 +891,7 @@ function normalizeIncludeRawContent(value: unknown): false | "markdown" | "text"
   if (value === false || value === "markdown" || value === "text") {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function normalizeCrawlMapInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -939,7 +939,7 @@ function sanitizeSchemaValue(schema: unknown, value: unknown): unknown {
 
   const sanitized: Record<string, unknown> = {};
   for (const [key, propertySchema] of Object.entries(properties)) {
-    if (Object.prototype.hasOwnProperty.call(valueRecord, key) === false) {
+    if (Object.hasOwn(valueRecord, key) === false) {
       continue;
     }
     sanitized[key] = sanitizeSchemaValue(propertySchema, valueRecord[key]);

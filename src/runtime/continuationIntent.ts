@@ -67,7 +67,7 @@ export function parseContinuationIntent(value: unknown): ContinuationIntentDecis
 
 function readSingleToken(value: string): string | undefined {
   if (/^[a-z]+$/u.test(value) === false) {
-    return undefined;
+    return ;
   }
   return value;
 }

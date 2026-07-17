@@ -468,7 +468,7 @@ async function maybeRequireToolApproval(input: {
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
     })
   ) {
-    return undefined;
+    return ;
   }
 
   const approvalId = buildApprovalId(input.runId, input.stepIndex, input.toolName, input.toolInput);
@@ -491,7 +491,7 @@ async function maybeRequireToolApproval(input: {
   });
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
-    return undefined;
+    return ;
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
@@ -635,21 +635,21 @@ async function maybeRequireManagedWorktreeApproval(input: {
   io?: StepIO | undefined;
 }): Promise<Transition | undefined> {
   if (isMutationCapableToolName(input.toolName) === false) {
-    return undefined;
+    return ;
   }
   if (input.autoProvisionAllowed === true && isAutoProvisionedWorkspaceTool(input.toolName)) {
-    return undefined;
+    return ;
   }
   if (hasManagedWorktreeContext(input.reactState)) {
-    return undefined;
+    return ;
   }
   const workspace = asRecord(input.eventPayload?.workspace);
   if (workspace?.managedWorktreeRequired === false) {
-    return undefined;
+    return ;
   }
   const sourceWorkspaceRoot = asString(workspace?.sourceWorkspaceRoot) ?? asString(workspace?.workspaceRoot);
   if (sourceWorkspaceRoot === undefined) {
-    return undefined;
+    return ;
   }
   if (input.proposalProvider === undefined) {
     throw createRuntimeFailure(
@@ -702,7 +702,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
     if (hasManagedWorktreeContext(input.reactState)) {
-      return undefined;
+      return ;
     }
     throw createRuntimeFailure(
       "MANAGED_WORKTREE_APPROVAL_NOT_BOUND",
@@ -937,7 +937,7 @@ async function resolveApprovalDecision(input: {
   io?: StepIO | undefined;
 }): Promise<"approve" | "deny" | undefined> {
   if (input.eventType !== "user.approval") {
-    return undefined;
+    return ;
   }
   const existing = readHighConfidenceApprovalDecision(readUserReplyIntent(input.eventPayload?.userReplyIntent));
   if (existing !== undefined) {
@@ -957,7 +957,7 @@ async function resolveApprovalDecision(input: {
     return explicitDecision;
   }
   if (message === undefined || input.io === undefined) {
-    return undefined;
+    return ;
   }
   const intent = await classifyUserReplyIntent({
     reply: message,
@@ -973,7 +973,7 @@ async function resolveApprovalDecision(input: {
 
 function readExplicitApprovalDecision(value: unknown): "approve" | "deny" | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const normalized = value.trim().toLowerCase();
   if (normalized === "approve") {
@@ -982,7 +982,7 @@ function readExplicitApprovalDecision(value: unknown): "approve" | "deny" | unde
   if (normalized === "deny") {
     return "deny";
   }
-  return undefined;
+  return ;
 }
 
 function riskLevelForToolClass(
@@ -1133,7 +1133,7 @@ async function maybeRequireAutonomyEscalation(input: {
     riskSignals: input.riskSignals,
   });
   if (autonomy.allowed && autonomy.escalateReasons.length === 0) {
-    return undefined;
+    return ;
   }
 
   const approvalPayload = {
@@ -1173,7 +1173,7 @@ async function maybeRequireAutonomyEscalation(input: {
     currentPendingApprovalId === approvalId &&
     decision === "approve"
   ) {
-    return undefined;
+    return ;
   }
   if (
     input.eventType === "user.approval" &&

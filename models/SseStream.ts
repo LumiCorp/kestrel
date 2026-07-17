@@ -68,7 +68,7 @@ function parseFrame(frame: string): ServerSentEvent | undefined {
     }
   }
   if (data.length === 0) {
-    return undefined;
+    return ;
   }
   return {
     ...(event !== undefined ? { event } : {}),

@@ -16,6 +16,6 @@ export function parseLocalCorePlatform(
     case "win32":
       return value;
     default:
-      return undefined;
+      return ;
   }
 }

@@ -129,7 +129,7 @@ function validateCompiledActionShape(
         return itemFailure;
       }
     }
-    return undefined;
+    return ;
   }
   if (kind === "effect") {
     return requireNonEmptyString(action.type, "state.agent.nextAction.type") ??

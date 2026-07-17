@@ -184,11 +184,9 @@ test("RetryingModelGateway forwards attempt timeout metadata to the invoker", as
 
 test("RetryingModelGateway preserves timeout diagnostics from request metadata", async () => {
   const gateway = new RetryingModelGateway(
-    async <T>() => {
-      return await new Promise<T>((resolve) => {
+    async <T>() => await new Promise<T>((resolve) => {
         setTimeout(() => resolve({ ok: true } as T), 40);
-      });
-    },
+      }),
     {
       timeoutMs: 10,
       retryCount: 1,

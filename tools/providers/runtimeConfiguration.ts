@@ -126,7 +126,7 @@ function normalizeSettings(
 }
 
 function normalizeOptional(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) return ;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
 }

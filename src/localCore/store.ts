@@ -130,7 +130,7 @@ export async function archiveLocalCorePgliteStore(
   }
 
   const archiveStem = `${storePath}.archived-${archiveTimestamp(resetAt)}`;
-  for (let collision = 0; collision < 1_000; collision += 1) {
+  for (let collision = 0; collision < 1000; collision += 1) {
     const archivedStorePath = collision === 0
       ? archiveStem
       : `${archiveStem}-${collision}`;
@@ -156,7 +156,7 @@ async function closeLocalCoreStoreByStateRoot(stateRootPath: string): Promise<vo
     return;
   }
   storesByStateRoot.delete(stateRootPath);
-  const handle = await existing.handle.catch(() => undefined);
+  const handle = await existing.handle.catch(() => {});
   await handle?.close();
 }
 
@@ -164,7 +164,7 @@ export async function closeAllLocalCoreStores(): Promise<void> {
   const entries = [...storesByStateRoot.values()];
   storesByStateRoot.clear();
   await Promise.all(entries.map(async (entry) => {
-    const handle = await entry.handle.catch(() => undefined);
+    const handle = await entry.handle.catch(() => {});
     await handle?.close();
   }));
 }
@@ -180,7 +180,7 @@ async function createStoreAfterClosing(
   },
 ): Promise<LocalCoreStoreHandle> {
   if (previousHandle !== undefined) {
-    const previous = await previousHandle.catch(() => undefined);
+    const previous = await previousHandle.catch(() => {});
     await previous?.close();
   }
 
@@ -208,7 +208,7 @@ async function createStoreAfterClosing(
     await sqlHandle.executor.query("SELECT 1 AS local_core_ready");
     return buildHandle(input, sqlHandle);
   } catch (error) {
-    await sqlHandle.close().catch(() => undefined);
+    await sqlHandle.close().catch(() => {});
     throw error;
   }
 }

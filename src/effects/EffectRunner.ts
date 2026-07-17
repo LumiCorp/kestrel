@@ -10,7 +10,7 @@ import type {
   EffectStore,
   SessionRepository,
 } from "../kestrel/contracts/store.js";
-import { EffectRegistry } from "./EffectRegistry.js";
+import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
 export class InlineEffectRunner implements EffectRunner {

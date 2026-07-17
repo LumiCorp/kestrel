@@ -29,11 +29,11 @@ export function createContinuationHandoffWaitTransition(input: {
 }): Transition | undefined {
   const action = asRecord(input.reactState.nextAction);
   if (action?.kind !== "handoff_to_build") {
-    return undefined;
+    return ;
   }
   const message = asString(action.message)?.trim();
   if (message === undefined || message.length === 0) {
-    return undefined;
+    return ;
   }
   const data = asRecord(action.data);
   const activePlan = normalizeRuntimePlanState(input.reactState.plan);
@@ -45,7 +45,7 @@ export function createContinuationHandoffWaitTransition(input: {
   const proposedNextAction = asString(data?.proposedNextAction)?.trim() ?? message;
   const continuationOffer = normalizeContinuationOffer(action.continuation, "handoff-run");
   if (continuationOffer === undefined) {
-    return undefined;
+    return ;
   }
   const activeContinuation = createRuntimeContinuationState({
     offer: continuationOffer,

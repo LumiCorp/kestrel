@@ -7,7 +7,6 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import React from "react";
 
 import type {
   DesktopBootState,

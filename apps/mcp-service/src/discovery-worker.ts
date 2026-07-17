@@ -764,9 +764,7 @@ function parseDiscoveryCredential(row: {
     return;
   }
   if (
-    !row.credential_id ||
-    !row.credential_kind ||
-    !row.encrypted_payload ||
+    !((row.credential_id &&row.credential_kind ) &&row.encrypted_payload ) ||
     row.credential_kind !== row.auth_mode
   ) {
     throw new Error("MCP discovery credential is unavailable or mismatched.");

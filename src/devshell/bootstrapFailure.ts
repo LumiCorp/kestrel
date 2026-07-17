@@ -9,11 +9,11 @@ export function formatDevShellBootstrapFailureMessage(error: unknown): string {
 
 function readStringDetail(error: unknown, key: string): string | undefined {
   if (typeof error !== "object" || error === null) {
-    return undefined;
+    return ;
   }
   const details = (error as { details?: unknown }).details;
   if (typeof details !== "object" || details === null) {
-    return undefined;
+    return ;
   }
   const value = (details as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;

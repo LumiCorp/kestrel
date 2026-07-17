@@ -25,7 +25,6 @@ import {
   normalizeInteractionMode,
   AGENT_STEP_IDS,
   type NormalizedOutput,
-  type ProgressUpdateV1,
   type AgentProgressUpdateV1,
 } from "../../src/index.js";
 import { buildModelHistoryWindow } from "../../src/runtime/submittedHistory.js";
@@ -796,7 +795,7 @@ export function resolveRunFailureSummary(payload: {
 
 function readNonEmptyText(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -857,7 +856,7 @@ function buildFinalizeReportingGroundingNotice(
 ): string | undefined {
   const reportingGrounding = asRecord(data?.reportingGrounding);
   if (reportingGrounding === undefined) {
-    return undefined;
+    return ;
   }
   const labeledFields = FINALIZE_REPORTING_GROUNDING_FIELDS
     .map((field) => {
@@ -866,7 +865,7 @@ function buildFinalizeReportingGroundingNotice(
     })
     .filter((entry): entry is string => entry !== undefined);
   if (labeledFields.length === 0) {
-    return undefined;
+    return ;
   }
   return [
     `Finalize provenance: ${labeledFields.join(", ")}.`,
@@ -882,7 +881,7 @@ function asReportingGroundingLabel(value: unknown): FinalizeReportingGroundingLa
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -894,7 +893,7 @@ function isRuntimeWaitingPromptHistoryLine(line: TranscriptLine): boolean {
 
 function stringifyDiagnosticDetails(value: unknown): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   try {
     return JSON.stringify(value, null, 2);
@@ -905,7 +904,7 @@ function stringifyDiagnosticDetails(value: unknown): string | undefined {
 
 function formatDiagnosticError(error: unknown): string | undefined {
   if (error === undefined) {
-    return undefined;
+    return ;
   }
   if (error instanceof Error) {
     const diagnostics = asRunnerExitDiagnostics(error);
@@ -932,7 +931,7 @@ function asRunnerExitDiagnostics(
     runnerExitDiagnostics?: { lastProcessError?: string | undefined; recentStderr?: unknown };
   }).runnerExitDiagnostics;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-    return undefined;
+    return ;
   }
   const recentStderr = Array.isArray(candidate.recentStderr)
     ? candidate.recentStderr.filter((line): line is string => typeof line === "string")

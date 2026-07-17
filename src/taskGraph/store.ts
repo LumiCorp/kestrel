@@ -159,8 +159,8 @@ export class ProductTaskGraphStore {
     const next = previous.then(run, run);
     let queueEntry: Promise<unknown>;
     queueEntry = next.then(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     ).finally(() => {
       if (this.mutationQueues.get(sessionId) === queueEntry) {
         this.mutationQueues.delete(sessionId);

@@ -120,15 +120,14 @@ export function findReusableToolOutcome(input: {
   toolInput: Record<string, unknown>;
 }): ToolOutcomeCacheEntry | undefined {
   if (isReusableToolOutcomeDisabled(input.toolName)) {
-    return undefined;
+    return ;
   }
   const inputHash = hashToolInput(input.toolName, input.toolInput);
   const lastAction = asRecord(input.reactState.lastActionResult);
   const lastActionName = asString(lastAction?.name);
   const lastActionOutput = lastAction?.output;
   const lastActionInputHash = asString(lastAction?.inputHash);
-  if (lastActionName === input.toolName) {
-    if (lastActionInputHash === inputHash) {
+  if (lastActionName === input.toolName && lastActionInputHash === inputHash) {
       return {
         toolName: input.toolName,
         inputHash,
@@ -141,7 +140,6 @@ export function findReusableToolOutcome(input: {
         updatedAt: new Date().toISOString(),
       };
     }
-  }
 
   return readToolOutcomeCache(input.memory).find(
     (entry) => entry.toolName === input.toolName && entry.inputHash === inputHash && entry.reusable,
@@ -165,15 +163,15 @@ function buildToolOutcomeEntry(input: {
   const action = asRecord(input.action);
   const result = asRecord(input.lastActionResult);
   if (asString(action?.kind) !== "tool" || asString(result?.kind) !== "tool") {
-    return undefined;
+    return ;
   }
   const toolName = asString(action?.name);
   const toolInput = asRecord(action?.input);
   if (toolName === undefined || toolInput === undefined) {
-    return undefined;
+    return ;
   }
   if (isReusableToolOutcomeDisabled(toolName)) {
-    return undefined;
+    return ;
   }
   const output = result?.output;
   const status = normalizeToolStatus(output);
@@ -210,7 +208,7 @@ function normalizeToolOutcomeCacheEntry(value: unknown): ToolOutcomeCacheEntry |
     stepIndex === undefined ||
     (status !== "success" && status !== "error" && status !== "blocked")
   ) {
-    return undefined;
+    return ;
   }
   return {
     toolName,
@@ -246,7 +244,7 @@ function buildDuplicateLedgerEntry(input: {
       family !== "source_search_results" &&
       family !== "source_page_content")
   ) {
-    return undefined;
+    return ;
   }
   const matchedPriorStep = readPositiveInt(duplicate?.matchedPriorStep);
   return {
@@ -288,7 +286,7 @@ function normalizeDuplicateLedgerEntry(value: unknown): ReadOnlyResultDuplicateL
       family !== "source_search_results" &&
       family !== "source_page_content")
   ) {
-    return undefined;
+    return ;
   }
   const matchedPriorStep = readPositiveInt(record?.matchedPriorStep);
   return {
@@ -310,12 +308,12 @@ function normalizeDuplicateLedgerEntry(value: unknown): ReadOnlyResultDuplicateL
 function normalizeMemoryRecord(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const key = asString(record.key);
   const summary = asString(record.summary);
   if (key === undefined || summary === undefined) {
-    return undefined;
+    return ;
   }
   return record;
 }

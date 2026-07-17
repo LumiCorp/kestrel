@@ -36,7 +36,7 @@ export class UiStateStore {
       raw = await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+        return ;
       }
       throw error;
     }
@@ -44,11 +44,11 @@ export class UiStateStore {
     try {
       const parsed = JSON.parse(raw) as UiStateFile;
       if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) {
-        return undefined;
+        return ;
       }
       return migrateUiState(parsed.state);
     } catch {
-      return undefined;
+      return ;
     }
   }
 

@@ -80,7 +80,7 @@ export function validateBuiltInToolInputContract(name: string, input: unknown): 
 }
 
 function readBuiltInToolInputContract(name: string): BuiltInToolInputContract | undefined {
-  return Object.prototype.hasOwnProperty.call(BUILT_IN_TOOL_INPUT_CONTRACTS, name)
+  return  Object.hasOwn(BUILT_IN_TOOL_INPUT_CONTRACTS, name)
     ? BUILT_IN_TOOL_INPUT_CONTRACTS[name as keyof typeof BUILT_IN_TOOL_INPUT_CONTRACTS]
     : undefined;
 }
@@ -259,7 +259,7 @@ function isHostname(value: string): boolean {
 function normalizeFilesystemMutationPath(value: string): string | undefined {
   const trimmed = value.trim().replace(/\\/gu, "/");
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const withoutPrefix = trimmed.replace(/^(?:\.\/)+/u, "");
   const collapsed = withoutPrefix.replace(/\/+/gu, "/").replace(/\/$/u, "");

@@ -89,7 +89,7 @@ export class PostgresDevShellStore implements DevShellProcessStore {
     let where = "";
     if (input?.status !== undefined && input.status.length > 0) {
       values.push(input.status);
-      where = `WHERE status = ANY($1::text[])`;
+      where = "WHERE status = ANY($1::text[])";
     }
     const result = await this.db.query<DevShellProcessRow>(
       `SELECT process_id, command_text, status, workspace_root, cwd, shell_path, idle_timeout_ms,

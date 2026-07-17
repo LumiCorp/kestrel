@@ -601,7 +601,7 @@ function parseOperatorPhase(
   value: unknown,
 ): DesktopRuntimeThreadInspection["operatorPhase"] {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (
     value !== "assemble"

@@ -168,11 +168,11 @@ function isForbiddenEnvironmentFile(relativePath: string): boolean {
 function readTrackedText(relativePath: string): string | undefined {
   const absolutePath = path.join(repoRoot, relativePath);
   if (!existsSync(absolutePath)) {
-    return undefined;
+    return ;
   }
   const contents = readFileSync(absolutePath);
   if (contents.includes(0)) {
-    return undefined;
+    return ;
   }
   return contents.toString("utf8");
 }

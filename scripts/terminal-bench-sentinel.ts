@@ -187,7 +187,7 @@ function runGitStatus(): string | undefined {
     env: process.env,
   });
   if (result.status !== 0 || result.error !== undefined) {
-    return undefined;
+    return ;
   }
   return result.stdout.toString("utf8");
 }
@@ -242,7 +242,7 @@ function classifyFailure(startedAtMs: number): FailureClassification {
 function readLatestSummary(startedAtMs: number): { status: string; path: string } | undefined {
   const root = path.join(process.cwd(), IMPROVE_ROOT);
   if (!existsSync(root)) {
-    return undefined;
+    return ;
   }
   const candidates = readdirSync(root)
     .map((entry) => path.join(root, entry, "summary.json"))
@@ -252,7 +252,7 @@ function readLatestSummary(startedAtMs: number): { status: string; path: string 
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   const latest = candidates[0];
   if (latest === undefined) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = JSON.parse(readFileSync(latest.path, "utf8")) as { status?: unknown };
@@ -260,7 +260,7 @@ function readLatestSummary(startedAtMs: number): { status: string; path: string 
       ? { status: parsed.status, path: path.relative(process.cwd(), latest.path) }
       : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }
 

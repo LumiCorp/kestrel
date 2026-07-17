@@ -162,7 +162,7 @@ export function buildWorkspaceCheckpointSummary(
 
 function normalizeCheckpointRecord(value: unknown): WorkspaceCheckpointRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -180,7 +180,7 @@ function normalizeCheckpointRecord(value: unknown): WorkspaceCheckpointRecord | 
     typeof record.fileCount !== "number" ||
     typeof record.totalBytes !== "number"
   ) {
-    return undefined;
+    return ;
   }
   return {
     checkpointId: record.checkpointId,
@@ -222,7 +222,7 @@ function normalizeCheckpointRecord(value: unknown): WorkspaceCheckpointRecord | 
 
 function normalizeRestoreRecord(value: unknown): WorkspaceRestoreRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -235,7 +235,7 @@ function normalizeRestoreRecord(value: unknown): WorkspaceRestoreRecord | undefi
     typeof record.reason !== "string" ||
     typeof record.createdAt !== "string"
   ) {
-    return undefined;
+    return ;
   }
   return {
     restoreId: record.restoreId,
@@ -264,7 +264,7 @@ function normalizeRestoreRecord(value: unknown): WorkspaceRestoreRecord | undefi
 
 function normalizePromotionRecord(value: unknown): WorkspacePromotionRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -277,7 +277,7 @@ function normalizePromotionRecord(value: unknown): WorkspacePromotionRecord | un
     typeof record.baseHead !== "string" ||
     typeof record.createdAt !== "string"
   ) {
-    return undefined;
+    return ;
   }
   return {
     promotionId: record.promotionId,
@@ -368,7 +368,7 @@ function normalizeStringArray(value: unknown): string[] {
 
 function normalizeCleanupRecord(value: unknown): WorkspaceCheckpointCleanupRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -380,7 +380,7 @@ function normalizeCleanupRecord(value: unknown): WorkspaceCheckpointCleanupRecor
     typeof record.retainedCheckpointCount !== "number" ||
     typeof record.retainedBytes !== "number"
   ) {
-    return undefined;
+    return ;
   }
   return {
     cleanupId: record.cleanupId,
@@ -400,7 +400,7 @@ function normalizeCleanupRecord(value: unknown): WorkspaceCheckpointCleanupRecor
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

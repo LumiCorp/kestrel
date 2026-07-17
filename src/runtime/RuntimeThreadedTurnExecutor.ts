@@ -333,7 +333,7 @@ function readRuntimeTurnProjectContext(
     typeof contextRevision !== "number" || Number.isSafeInteger(contextRevision) === false || contextRevision < 1 ||
     content === undefined || content.length === 0
   ) {
-    return undefined;
+    return ;
   }
   return {
     projectId,

@@ -64,7 +64,7 @@ export async function createDevShellSourceWriteGuard(input: {
   request?: DevShellSourceWriteGuardRequest | undefined;
 }): Promise<ActiveDevShellSourceWriteGuard | undefined> {
   if (input.request?.enabled !== true) {
-    return undefined;
+    return ;
   }
 
   const workspaceRoot = path.resolve(input.workspaceRoot);
@@ -125,7 +125,7 @@ export async function enforceDevShellSourceWriteGuard(
   guard: ActiveDevShellSourceWriteGuard | undefined,
 ): Promise<DevShellSourceWriteGuardResult | undefined> {
   if (guard === undefined) {
-    return undefined;
+    return ;
   }
   if (guard.config.mode === "checkpoint_worktree") {
     return {
@@ -235,7 +235,7 @@ function consumeMatchingApprovalGrant(input: {
   grants: DevShellSourceWriteApprovalGrant[] | undefined;
 }): DevShellSourceWriteApprovalGrant | undefined {
   if (input.grants === undefined) {
-    return undefined;
+    return ;
   }
   const now = Date.now();
   const grantIndex = input.grants.findIndex((grant) => {
@@ -257,7 +257,7 @@ function consumeMatchingApprovalGrant(input: {
     return grant.writablePaths.length > 0;
   });
   if (grantIndex < 0) {
-    return undefined;
+    return ;
   }
   const [grant] = input.grants.splice(grantIndex, 1);
   return grant;

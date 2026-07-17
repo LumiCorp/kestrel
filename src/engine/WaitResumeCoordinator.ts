@@ -73,7 +73,7 @@ export class WaitResumeCoordinator {
   }) {
     const runtimeWaitFor = toRuntimeWaitMatcher(input.waitFor);
     if (runtimeWaitFor === undefined || input.resumeStepAgent === undefined) {
-      return undefined;
+      return ;
     }
     return this.buildWaitingFor({
       waitFor: runtimeWaitFor,
@@ -168,7 +168,7 @@ export class WaitResumeCoordinator {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -183,7 +183,7 @@ function readWaitReason(waitFor: Transition["waitFor"]): string {
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -191,7 +191,7 @@ function readNonEmptyString(value: unknown): string | undefined {
 
 function toRuntimeWaitMatcher(waitFor: Transition["waitFor"]): RuntimeWaitMatcher | undefined {
   if (waitFor === undefined || waitFor.kind === undefined) {
-    return undefined;
+    return ;
   }
   return {
     kind: waitFor.kind,

@@ -246,11 +246,11 @@ function makeEvidence(action: TaskAction, fallbackSummary: string): TaskEvidence
 function normalizeTask(taskId: string, value: unknown): Task | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.title !== "string" || typeof record.instructions !== "string") {
-    return undefined;
+    return ;
   }
   const status = normalizeStatus(record.status);
   if (status === undefined) {
-    return undefined;
+    return ;
   }
   return {
     id: typeof record.id === "string" ? record.id : taskId,
@@ -280,7 +280,7 @@ function normalizeTask(taskId: string, value: unknown): Task | undefined {
 function normalizeEvidence(value: unknown): TaskEvidence | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.id !== "string" || typeof record.timestamp !== "string" || typeof record.summary !== "string") {
-    return undefined;
+    return ;
   }
   return {
     id: record.id,

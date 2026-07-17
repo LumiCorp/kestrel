@@ -43,11 +43,11 @@ export class InteractionManager {
     const waitFor = input.waitFor;
     if (waitFor === undefined || typeof waitFor.eventType !== "string") {
       await this.cancelPendingRequests(pending);
-      return undefined;
+      return ;
     }
     if (waitFor.kind !== "approval" && waitFor.kind !== "user") {
       await this.cancelPendingRequests(pending);
-      return undefined;
+      return ;
     }
 
     const eventType = waitFor.eventType;

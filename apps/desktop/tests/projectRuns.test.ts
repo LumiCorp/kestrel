@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -657,7 +657,7 @@ test("DesktopProjectRunRegistry fails runs when spawn emits an error and stop re
 
   assert.equal(stoppedRun?.status, "stopped");
   assert.equal(killSignals.at(-1), "SIGTERM");
-  assert.ok(elapsedMs < 1_000, `expected stopRun to settle quickly, received ${elapsedMs}ms`);
+  assert.ok(elapsedMs < 1000, `expected stopRun to settle quickly, received ${elapsedMs}ms`);
 });
 
 test("DesktopProjectRunRegistry signals the owned process group on POSIX stops", async () => {

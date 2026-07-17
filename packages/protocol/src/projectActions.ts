@@ -788,7 +788,7 @@ function optionalNonNegativeInteger(
 
 function optionalPositiveIntegerValue(value: unknown, label: string): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isInteger(value) === false || value <= 0) {
     throw new RunnerProtocolContractError(`${label} must be a positive integer`);

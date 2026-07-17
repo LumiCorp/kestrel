@@ -180,11 +180,11 @@ export function isRetrievalToolName(toolName: string): boolean {
 
 function normalizeComparableFieldValue(key: string, value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   if (key.toLowerCase().includes("url")) {
     return canonicalizeDuplicateUrl(trimmed) ?? normalizeText(trimmed);
@@ -215,10 +215,10 @@ function normalizeRetrievalText(value: string): string {
 
 function normalizeRetrievalToken(token: string): string | undefined {
   if (token.length === 0) {
-    return undefined;
+    return ;
   }
   if (TEXT_STOP_WORDS.has(token)) {
-    return undefined;
+    return ;
   }
   return TEXT_TOKEN_ALIASES.get(token) ?? token;
 }
@@ -262,14 +262,14 @@ function readEntrySignal(entry: Record<string, unknown>): string | undefined {
     readSignalValue(asString(entry.status) ?? asString(entry.kind)),
   ].filter((part): part is string => part !== undefined);
   if (parts.length === 0) {
-    return undefined;
+    return ;
   }
   return parts.join(" | ");
 }
 
 function readSignalValue(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = normalizeText(value);
   return normalized.length > 0 ? normalized : undefined;
@@ -278,7 +278,7 @@ function readSignalValue(value: string | undefined): string | undefined {
 function readEntryUrl(entry: Record<string, unknown>): string | undefined {
   const candidate = asString(entry.url) ?? asString(entry.link) ?? asString(entry.href) ?? asString(entry.canonicalUrl);
   if (candidate === undefined) {
-    return undefined;
+    return ;
   }
   return canonicalizeDuplicateUrl(candidate) ?? normalizeText(candidate);
 }
@@ -293,7 +293,7 @@ function readEntryDomain(entry: Record<string, unknown>, url: string | undefined
   }
   const source = asString(entry.source) ?? asString(entry.domain) ?? asString(entry.hostname);
   if (source === undefined) {
-    return undefined;
+    return ;
   }
   return source.toLowerCase().replace(/^www\./u, "");
 }

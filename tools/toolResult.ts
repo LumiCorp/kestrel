@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import type {
-  AgentToolAuditRecord,
   AgentToolPresentation,
   AgentToolResult,
 } from "../src/kestrel/contracts/model-io.js";
@@ -318,7 +317,7 @@ function durationMs(startedAt: string, completedAt: string): number {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -333,7 +332,7 @@ function firstString(...values: unknown[]): string | undefined {
       return value;
     }
   }
-  return undefined;
+  return ;
 }
 
 function compactDefined(record: Record<string, unknown>): Record<string, unknown> {

@@ -12,7 +12,7 @@ import {
 
 test("Weather production policy uses the approved budgets", () => {
   assert.equal(WEATHER_TOTAL_PROVIDER_BUDGET_MS, 18_000);
-  assert.equal(OPEN_METEO_ATTEMPT_TIMEOUT_MS, 8_000);
+  assert.equal(OPEN_METEO_ATTEMPT_TIMEOUT_MS, 8000);
   assert.equal(VISUAL_CROSSING_ATTEMPT_TIMEOUT_MS, 10_000);
   assert.equal(WEATHER_FAILOVER_POLICY.failoverOnTimeout, true);
 });

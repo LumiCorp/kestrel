@@ -51,7 +51,7 @@ export function buildCorruptedNextActionInspectionReport(input: {
         )
         .sort((left, right) => left.version - right.version);
       if (latestStateCorrupt === false && corruptedVersions.length === 0) {
-        return undefined;
+        return ;
       }
 
       const wait = readActiveWaitState(agent);
@@ -96,7 +96,7 @@ function classifyRepairability(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

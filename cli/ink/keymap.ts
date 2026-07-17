@@ -33,7 +33,7 @@ export function regionForDigit(input: string): FocusRegion | undefined {
   if (input === "5") {
     return "details";
   }
-  return undefined;
+  return ;
 }
 
 export function cycleRegion(current: FocusRegion, reverse: boolean): FocusRegion {

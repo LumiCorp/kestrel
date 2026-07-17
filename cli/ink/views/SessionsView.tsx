@@ -1,4 +1,4 @@
-import React from "react";
+import type React from "react";
 import { Box, Text } from "ink";
 
 import type {
@@ -115,7 +115,7 @@ function readWaitingEventType(session: TuiSessionMeta): string | undefined {
   if (session.operatorState?.wait?.eventType !== undefined) {
     return session.operatorState.wait.eventType;
   }
-  return undefined;
+  return ;
 }
 
 function readSessionStatus(session: TuiSessionMeta): string {
@@ -137,7 +137,7 @@ function summarizeSessionAttention(session: TuiSessionMeta): string | undefined 
   if (session.operatorState?.assembly?.compatibility?.status === "downgraded") {
     return "downgraded";
   }
-  return undefined;
+  return ;
 }
 
 function summarizeSessionActivity(session: TuiSessionMeta): string | undefined {
@@ -149,7 +149,7 @@ function summarizeSessionActivity(session: TuiSessionMeta): string | undefined {
   if (reasoning !== undefined) {
     return `thinking:${truncate(reasoning, 24)}`;
   }
-  return undefined;
+  return ;
 }
 
 function formatInboxSummary(session: TuiSessionMeta): string {
@@ -242,7 +242,7 @@ function summarizeChildThreads(
   superseded: number;
 } | undefined {
   if (children === undefined || children.length === 0) {
-    return undefined;
+    return ;
   }
   return {
     total: children.length,

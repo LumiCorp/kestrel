@@ -46,7 +46,7 @@ function cloneProcess(record: DevShellProcessRecord): DevShellProcessRecord {
 
 function clonePreflight(record: DevShellProcessRecord["preflight"]): DevShellProcessRecord["preflight"] {
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...record,
@@ -64,7 +64,7 @@ function cloneSourceWriteGuard(
   guard: DevShellProcessRecord["sourceWriteGuard"],
 ): DevShellProcessRecord["sourceWriteGuard"] {
   if (guard === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...guard,

@@ -181,7 +181,7 @@ function compileIntent(input: LegacyCompileIntentFixtureInput) {
 
 function normalizeLegacyNextActionForFixture(value: unknown): CompileAgentActionInput["action"] | undefined {
   if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const action = value as Record<string, unknown>;
   if (action.kind === "finalize" && typeof action.status === "string") {
@@ -337,7 +337,7 @@ test("compileIntent rejects mixed exec_command start and continuation input befo
               cwd: "/app",
               sessionId: "tb-proc-123",
               stdin: "move N\n",
-              maxOutputBytes: 1000000,
+              maxOutputBytes: 1_000_000,
             },
           },
         },
@@ -464,7 +464,7 @@ test("compileIntent allows fresh exec_command when no matching live session exis
 test("compileIntent allows repeated same-path fs.read_text when cached contents are unchanged", () => {
   const compiled = compileIntent({
     phase: "deliberator",
-    output: fsReadDecision("./src/app/page.tsx", { maxBytes: 20000 }),
+    output: fsReadDecision("./src/app/page.tsx", { maxBytes: 20_000 }),
     observedCapabilities: ["filesystem.read"],
     capabilityManifest: [{
       name: "fs.read_text",
@@ -2401,10 +2401,10 @@ test("compileIntent allows repeated cached batch reads when next paths are absol
           nextAction: {
             kind: "tool_batch",
             items: [
-              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/App.jsx`, maxBytes: 20000 } },
-              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/App.css`, maxBytes: 20000 } },
-              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/index.css`, maxBytes: 20000 } },
-              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/main.jsx`, maxBytes: 12000 } },
+              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/App.jsx`, maxBytes: 20_000 } },
+              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/App.css`, maxBytes: 20_000 } },
+              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/index.css`, maxBytes: 20_000 } },
+              { name: "fs.read_text", input: { path: `${workspaceRoot}/src/main.jsx`, maxBytes: 12_000 } },
             ],
           },
         },
@@ -2423,22 +2423,22 @@ test("compileIntent allows repeated cached batch reads when next paths are absol
           items: [
             {
               name: "fs.read_text",
-              input: { path: `${workspaceRoot}/src/App.jsx`, maxBytes: 20000 },
+              input: { path: `${workspaceRoot}/src/App.jsx`, maxBytes: 20_000 },
               output: { path: "src/App.jsx", content: "starter app", truncated: false, encoding: "utf8" },
             },
             {
               name: "fs.read_text",
-              input: { path: `${workspaceRoot}/src/App.css`, maxBytes: 20000 },
+              input: { path: `${workspaceRoot}/src/App.css`, maxBytes: 20_000 },
               output: { path: "src/App.css", content: "starter css", truncated: false, encoding: "utf8" },
             },
             {
               name: "fs.read_text",
-              input: { path: `${workspaceRoot}/src/index.css`, maxBytes: 20000 },
+              input: { path: `${workspaceRoot}/src/index.css`, maxBytes: 20_000 },
               output: { path: "src/index.css", content: "starter index css", truncated: false, encoding: "utf8" },
             },
             {
               name: "fs.read_text",
-              input: { path: `${workspaceRoot}/src/main.jsx`, maxBytes: 12000 },
+              input: { path: `${workspaceRoot}/src/main.jsx`, maxBytes: 12_000 },
               output: { path: "src/main.jsx", content: "starter main", truncated: false, encoding: "utf8" },
             },
           ],

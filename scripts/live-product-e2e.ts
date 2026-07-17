@@ -273,7 +273,7 @@ function buildGoldenJourneyResult(results: StepResult[]): StepResult | undefined
   ];
   const present = requiredIds.filter((id) => results.some((result) => result.id === id));
   if (present.length !== requiredIds.length) {
-    return undefined;
+    return ;
   }
   const missingPass = results.filter((result) => requiredIds.includes(result.id) && result.status !== "passed");
   if (missingPass.length > 0) {
@@ -396,7 +396,7 @@ export function classifyStepStatus(step: ScenarioStep, exitCode: number, stdout:
 function readPhasesArg(args: string[]): Set<Phase> | undefined {
   const phaseArg = readArgValue(args, "--phase");
   if (phaseArg === undefined || phaseArg.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const values = phaseArg.split(",").map((value) => value.trim()).filter((value) => value.length > 0);
   const unknown = values.filter((value) => !ALL_PHASES.includes(value as Phase));
@@ -531,11 +531,11 @@ function renderSummary(results: StepResult[], logDir: string): void {
 function readArgValue(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index < 0) {
-    return undefined;
+    return ;
   }
   const next = args[index + 1];
   if (next === undefined || next.startsWith("--")) {
-    return undefined;
+    return ;
   }
   return next;
 }

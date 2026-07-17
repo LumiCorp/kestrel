@@ -52,26 +52,26 @@ function createControllerHarness(): {
     selectors: createUiDerivedSelectors(),
     getRuntimeSettings: () => ({ version: 1, defaults: {} }),
     getSessionsFile: () => ({ version: 1, active: "default", sessions: [activeSession] }),
-    setSessionsFile: () => undefined,
-    getActiveWorkspace: () => undefined,
-    setActiveWorkspace: () => undefined,
-    getLaunchWorkspace: () => undefined,
-    setLaunchWorkspace: () => undefined,
+    setSessionsFile: () => {},
+    getActiveWorkspace: () => {},
+    setActiveWorkspace: () => {},
+    getLaunchWorkspace: () => {},
+    setLaunchWorkspace: () => {},
     appendHistoryLine: async (_role: "system" | "assistant" | "user", text: string) => {
       historyLines.push(text);
     },
-    persistSessionAndUi: async () => undefined,
-    persistUiState: async () => undefined,
+    persistSessionAndUi: async () => {},
+    persistUiState: async () => {},
     persistActiveProfile: async (profile: TuiProfile) => {
       persistedProfiles.push(profile);
       uiStore.patch({ activeProfile: profile });
     },
-    setActiveSessionState: async () => undefined,
+    setActiveSessionState: async () => {},
     navigateToView: (view: AppView) => {
       uiStore.patch({ activeView: view });
     },
     withMcpSummary: (statusLine: string) => statusLine,
-    recordPersistenceFailure: () => undefined,
+    recordPersistenceFailure: () => {},
   } as unknown as TuiAppContext;
 
   return {

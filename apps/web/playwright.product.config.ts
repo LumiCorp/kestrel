@@ -6,6 +6,7 @@ const postgresPort = 58_433;
 const redisPort = 56_380;
 const minioApiPort = 59_002;
 const minioConsolePort = 59_003;
+const workerReadyFile = "/tmp/kestrel-one-product-contract-worker.ready";
 const baseURL = `http://127.0.0.1:${port}`;
 const databaseUrl = `postgresql://postgres:postgres@127.0.0.1:${postgresPort}/kestrel_product_contract`;
 const inheritedEnv = Object.fromEntries(
@@ -32,6 +33,7 @@ const webServerEnv = {
   KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "product-contract-broker",
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
+  KESTREL_TURN_WORKER_READY_FILE: workerReadyFile,
   COMPOSE_PROJECT_NAME: "kestrel-one-product-contract",
   LOCAL_POSTGRES_PORT: String(postgresPort),
   LOCAL_REDIS_PORT: String(redisPort),
@@ -54,6 +56,7 @@ const webServerEnv = {
 };
 
 export default defineConfig({
+  globalSetup: "./tests/product/global-setup.ts",
   testDir: "./tests/product",
   fullyParallel: false,
   workers: 1,

@@ -717,7 +717,7 @@ test("Local Core restart and reset reject an in-flight runtime-store read", asyn
 
   try {
     const pendingRead = client.runs();
-    await withTimeout(readEntered, 5_000, "Timed out waiting for the runtime-store read.");
+    await withTimeout(readEntered, 5000, "Timed out waiting for the runtime-store read.");
     const maintenanceOperations: Array<() => Promise<unknown>> = [
       () => client.restart(),
       () => client.resetRuntimeStore(),
@@ -894,7 +894,7 @@ test("Local Core serializes reset against every other maintenance request", asyn
     assert.equal((await stream.result).type, "run.completed");
 
     const resetPromise = client.resetRuntimeStore();
-    await withTimeout(runtimeCloseEntered, 5_000, "Timed out waiting for reset maintenance to close the runtime.");
+    await withTimeout(runtimeCloseEntered, 5000, "Timed out waiting for reset maintenance to close the runtime.");
     const conflictingOperations: Array<() => Promise<unknown>> = [
       () => client.restart(),
       () => client.resetRuntimeStore(),
@@ -1166,7 +1166,7 @@ test("Local Core maintenance ends subscriptions owned by each retired execution 
     assert.equal(restarted.state, "healthy");
     await withTimeout(
       streamEnded,
-      5_000,
+      5000,
       "Timed out waiting for Local Core restart to end the retired event stream.",
     );
     assert.equal(subscription.complete, true);
@@ -1186,7 +1186,7 @@ test("Local Core maintenance ends subscriptions owned by each retired execution 
     assert.equal(reset.status.state, "healthy");
     await withTimeout(
       resetStreamEnded,
-      5_000,
+      5000,
       "Timed out waiting for Local Core reset to end the retired event stream.",
     );
     assert.equal(resetSubscription.complete, true);
@@ -1395,7 +1395,7 @@ test("CLI disconnect leaves a durable Core run available to another client", asy
       },
     }).catch((error: unknown) => error);
 
-    await withTimeout(started, 5_000, "Timed out waiting for the CLI run to start.");
+    await withTimeout(started, 5000, "Timed out waiting for the CLI run to start.");
     assert.ok(startedEventId);
     unsubscribe();
     await cli.close();
@@ -1424,7 +1424,7 @@ test("CLI disconnect leaves a durable Core run available to another client", asy
       for (let index = 0; index < 8 && completed === false; index += 1) {
         const next = await withTimeout(
           iterator.next(),
-          5_000,
+          5000,
           "Timed out waiting for the durable CLI run terminal event.",
         );
         if (next.done) {
@@ -2039,7 +2039,7 @@ test("Local Core API owns Desktop project runs and streams changes", async () =>
   }
 });
 
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (await predicate()) {
@@ -2121,7 +2121,7 @@ async function openRuntimeEventSubscription(input: {
 
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs = 5_000,
+  timeoutMs = 5000,
   timeoutMessage = "Timed out waiting for Local Core event replay.",
 ): Promise<T> {
   let timer: NodeJS.Timeout | undefined;

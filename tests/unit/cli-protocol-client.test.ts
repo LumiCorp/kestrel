@@ -858,7 +858,7 @@ test("ProtocolClient preserves runner.error details on terminal command failures
   await tick();
   transport.emitRunnerError("Local Postgres is not reachable at localhost:55432/kestrel.", {
     host: "localhost",
-    port: 55432,
+    port: 55_432,
     database: "kestrel",
     recommendedAction: "Start the local database with `pnpm run db:up`.",
   }, "cmd-details");
@@ -871,7 +871,7 @@ test("ProtocolClient preserves runner.error details on terminal command failures
     };
     assert.equal(typed.code, "RUNNER_RUNTIME_ERROR");
     assert.equal(typed.details?.host, "localhost");
-    assert.equal(typed.details?.port, 55432);
+    assert.equal(typed.details?.port, 55_432);
     assert.equal(typed.details?.database, "kestrel");
     return true;
   });

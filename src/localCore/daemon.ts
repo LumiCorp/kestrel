@@ -101,11 +101,11 @@ async function connectIfLive(input: {
     isPidAlive: input.isPidAlive,
   });
   if (lock.state !== "live") {
-    return undefined;
+    return ;
   }
   const socketPath = lock.lock.socketPath ?? input.socketPath;
   if (existsSync(socketPath) === false) {
-    return undefined;
+    return ;
   }
   try {
     const token = (await readFile(input.tokenPath, "utf8")).trim();
@@ -113,12 +113,12 @@ async function connectIfLive(input: {
     const client = new LocalCoreClient({
       socketPath: connection.socketPath,
       token: connection.authToken,
-      timeoutMs: 2_000,
+      timeoutMs: 2000,
     });
     const status = await client.status();
     return { status, client, connection };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -236,7 +236,7 @@ async function waitForDaemon(input: {
       const client = new LocalCoreClient({
         socketPath: connection.socketPath,
         token: connection.authToken,
-        timeoutMs: 2_000,
+        timeoutMs: 2000,
       });
       const status = await client.status();
       return { status, client, connection };

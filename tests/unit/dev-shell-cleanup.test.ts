@@ -15,7 +15,7 @@ test("cleanupDevShellServices dry-run reports owner-exited services without sign
     path.join(serviceDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE),
     JSON.stringify({
       pid: process.pid,
-      ownerPid: 99999999,
+      ownerPid: 99_999_999,
       ownerKind: "ks",
       socketPath: path.join(serviceDir, "supervisor.sock"),
     }),
@@ -41,7 +41,7 @@ test("cleanupDevShellServices refuses to signal unverified stale pids", async ()
     path.join(root, DEV_SHELL_BOOTSTRAP_STATUS_FILE),
     JSON.stringify({
       pid: process.pid,
-      ownerPid: 99999999,
+      ownerPid: 99_999_999,
       ownerKind: "ks",
       socketPath: path.join(root, "supervisor.sock"),
     }),

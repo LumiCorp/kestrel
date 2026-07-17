@@ -68,7 +68,7 @@ test("evaluateExecutionPolicy allows configured languages and clamps timeout", (
       ...DEFAULT_CODE_MODE_ENABLED_CONFIG,
       sandbox: {
         ...DEFAULT_CODE_MODE_ENABLED_CONFIG.sandbox,
-        timeoutMs: 5_000,
+        timeoutMs: 5000,
         allowDependencyInstall: true,
       },
     },
@@ -79,7 +79,7 @@ test("evaluateExecutionPolicy allows configured languages and clamps timeout", (
     throw new Error("Expected allowed policy decision");
   }
   assert.equal(decision.ok, true);
-  assert.equal(decision.policy.timeoutMs, 5_000);
-  assert.equal(decision.request.timeoutMs, 5_000);
+  assert.equal(decision.policy.timeoutMs, 5000);
+  assert.equal(decision.request.timeoutMs, 5000);
   assert.deepEqual(decision.request.dependencies, ["left-pad"]);
 });

@@ -230,7 +230,7 @@ function normalizeLegacyNextActionForFixture(
   sourceRunId: string | undefined,
 ): CompileAgentActionInput["action"] | undefined {
   if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   const action = value as Record<string, unknown>;
   if (action.kind === "finalize" && typeof action.status === "string") {

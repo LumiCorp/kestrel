@@ -799,7 +799,7 @@ export class InMemorySessionStore implements SessionStore {
   }): Promise<RunEvent[]> {
     const fromTs = input.fromTimestamp ?? "";
     const toTs = input.toTimestamp ?? "9999-12-31T23:59:59.999Z";
-    const limit = input.limit ?? 1_000;
+    const limit = input.limit ?? 1000;
     const threadSessionId =
       input.threadId !== undefined
         ? (await this.orchestrationStore.getThread(input.threadId))?.sessionId

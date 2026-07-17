@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveKestrelCoreHome } from "../../src/localCore/home.js";
 import { shouldKeepEnvironmentDatabaseUrl } from "../localCoreEnv.js";
 
-const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+const DEFAULT_STOP_TIMEOUT_MS = 5000;
 
 export interface RunnerProcessHandlers {
   onLine: (line: string) => void;
@@ -126,7 +126,7 @@ export class RunnerProcess {
       this.resolveStop = resolve;
     });
 
-    this.trySignalChild(child, "SIGTERM", `Runner process failed to send SIGTERM`);
+    this.trySignalChild(child, "SIGTERM", "Runner process failed to send SIGTERM");
     this.stopTimer = setTimeout(() => {
       if (this.child !== child) {
         return;

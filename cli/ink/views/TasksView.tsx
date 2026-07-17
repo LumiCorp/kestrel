@@ -1,4 +1,4 @@
-import React from "react";
+import type React from "react";
 import { Box, Text } from "ink";
 
 import type {
@@ -282,7 +282,7 @@ function summarizeChildThreads(
   superseded: number;
 } | undefined {
   if (children === undefined || children.length === 0) {
-    return undefined;
+    return ;
   }
   return {
     total: children.length,

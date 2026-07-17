@@ -21,7 +21,7 @@ export function readLatestArtifactVerificationFacts(
       return facts;
     }
   }
-  return undefined;
+  return ;
 }
 
 export function readLatestActiveArtifactVerificationFacts(
@@ -50,11 +50,11 @@ export function readLatestActiveArtifactVerificationFacts(
       token.startsWith("verify:")
     );
     if (hasLaterConcreteSupport) {
-      return undefined;
+      return ;
     }
     return facts;
   }
-  return undefined;
+  return ;
 }
 
 export function readBlockingArtifactVerification(
@@ -63,10 +63,10 @@ export function readBlockingArtifactVerification(
   const record = asRecord(artifactVerification);
   const status = asString(record?.status);
   if (status !== "failed" && status !== "inconclusive") {
-    return undefined;
+    return ;
   }
   if (record === undefined) {
-    return undefined;
+    return ;
   }
   const target = asString(record.target);
   return {

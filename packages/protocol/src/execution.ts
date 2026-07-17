@@ -1537,21 +1537,21 @@ export function parseRunnerResultV2<TOutput = unknown>(
   value: unknown,
 ): RunnerResultV2<TOutput> {
   const result = requireRecord(value, "runner result");
-  if (Object.prototype.hasOwnProperty.call(result, "assistantText") === false) {
+  if (Object.hasOwn(result, "assistantText") === false) {
     throw new RunnerProtocolContractError("runner result.assistantText is required");
   }
   const assistantText = parseAssistantText(result.assistantText);
-  if (Object.prototype.hasOwnProperty.call(result, "output") === false) {
+  if (Object.hasOwn(result, "output") === false) {
     throw new RunnerProtocolContractError("runner result.output is required");
   }
   return {
     ...result,
     output: result.output as TOutput,
     assistantText,
-    ...(Object.prototype.hasOwnProperty.call(result, "finalizedPayload")
+    ...(Object.hasOwn(result, "finalizedPayload")
       ? { finalizedPayload: result.finalizedPayload }
       : {}),
-    ...(Object.prototype.hasOwnProperty.call(result, "operatorAffordance")
+    ...(Object.hasOwn(result, "operatorAffordance")
       ? { operatorAffordance: result.operatorAffordance }
       : {}),
   };
@@ -2356,7 +2356,7 @@ function validateRunnerInteractionRequest(
     const approval = requireRecord(interaction.approval, `${label}.approval`);
     requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
     requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
-    if (Object.prototype.hasOwnProperty.call(approval, "input") === false) {
+    if (Object.hasOwn(approval, "input") === false) {
       throw new RunnerProtocolContractError(`${label}.approval.input is required`);
     }
   }
@@ -2785,7 +2785,7 @@ function rejectUnknownFields(
 function validateRecordArray(
   value: unknown,
   label: string,
-  validate: (record: Record<string, unknown>, label: string) => void = () => undefined,
+  validate: (record: Record<string, unknown>, label: string) => void = () => {},
 ): void {
   if (!Array.isArray(value)) {
     throw new RunnerProtocolContractError(`${label} must be an array`);

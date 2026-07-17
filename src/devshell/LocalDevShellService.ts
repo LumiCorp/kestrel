@@ -78,7 +78,7 @@ export class LocalDevShellService implements DevShellServicePort {
     this.bootstrapStatusPath = baseDir === undefined
       ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH") ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
-    this.startupTimeoutMs = options.startupTimeoutMs ?? readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ?? 5_000;
+    this.startupTimeoutMs = options.startupTimeoutMs ?? readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ?? 5000;
     this.pollIntervalMs = options.pollIntervalMs ?? 100;
   }
 
@@ -144,7 +144,7 @@ export class LocalDevShellService implements DevShellServicePort {
     child.ref();
     if (isChildProcessRunning(child)) {
       child.kill("SIGTERM");
-      await waitForChildProcessExit(child, 1_000);
+      await waitForChildProcessExit(child, 1000);
     }
     if (isChildProcessRunning(child)) {
       child.kill("SIGKILL");
@@ -184,7 +184,7 @@ export class LocalDevShellService implements DevShellServicePort {
             processId: start.processId,
             signal: "SIGKILL",
             cursor,
-            waitMs: 1_000,
+            waitMs: 1000,
             ...(input.maxOutputBytes !== undefined ? { maxBytes: input.maxOutputBytes } : {}),
           },
           options,
@@ -220,7 +220,7 @@ export class LocalDevShellService implements DevShellServicePort {
         {
           processId: start.processId,
           cursor,
-          waitMs: Math.min(1_000, remainingMs),
+          waitMs: Math.min(1000, remainingMs),
           ...(input.maxOutputBytes !== undefined ? { maxBytes: input.maxOutputBytes } : {}),
         },
         options,
@@ -356,7 +356,7 @@ export class LocalDevShellService implements DevShellServicePort {
           throw error;
         }
       }
-      const deadline = Date.now() + 1_000;
+      const deadline = Date.now() + 1000;
       while (Date.now() < deadline) {
         try {
           await this.performRequest("GET", "/health");
@@ -371,11 +371,11 @@ export class LocalDevShellService implements DevShellServicePort {
 
   private readBootstrapPrerequisiteFailure() {
     if (process.env.KESTREL_STORE_DRIVER?.trim() !== "postgres") {
-      return undefined;
+      return ;
     }
     const databaseUrl = process.env.DATABASE_URL;
     if (typeof databaseUrl === "string" && databaseUrl.trim().length > 0) {
-      return undefined;
+      return ;
     }
     return createRuntimeFailure(
       "DEV_SHELL_SERVICE_UNAVAILABLE",
@@ -441,9 +441,9 @@ export class LocalDevShellService implements DevShellServicePort {
           ...(typeof parsed.at === "string" ? { at: parsed.at } : {}),
         };
       }
-      return undefined;
+      return ;
     } catch {
-      return undefined;
+      return ;
     }
   }
 
@@ -497,11 +497,11 @@ export class LocalDevShellService implements DevShellServicePort {
       const raw = await readFile(this.logPath, "utf8");
       const trimmed = raw.trim();
       if (trimmed.length === 0) {
-        return undefined;
+        return ;
       }
-      return trimmed.slice(-2_000);
+      return trimmed.slice(-2000);
     } catch {
-      return undefined;
+      return ;
     }
   }
 
@@ -612,18 +612,18 @@ function readOptionalEnvPath(name: string): string | undefined {
 function readOptionalPositiveIntegerEnv(name: string): number | undefined {
   const value = process.env[name]?.trim();
   if (value === undefined || value.length === 0) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return undefined;
+    return ;
   }
   return parsed;
 }
 
 function readNodeErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || Array.isArray(error)) {
-    return undefined;
+    return ;
   }
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
@@ -632,7 +632,7 @@ function readNodeErrorCode(error: unknown): string | undefined {
 function parseDevShellServiceErrorPayload(raw: string): RuntimeError | undefined {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   try {
     const parsed = JSON.parse(trimmed) as unknown;
@@ -661,14 +661,14 @@ function parseDevShellServiceErrorPayload(raw: string): RuntimeError | undefined
       };
     }
   } catch {
-    return undefined;
+    return ;
   }
-  return undefined;
+  return ;
 }
 
 function asLocalRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -694,7 +694,7 @@ async function waitForChildProcessExit(child: ChildProcess, timeoutMs: number): 
     return;
   }
   await Promise.race([
-    once(child, "exit").then(() => undefined),
+    once(child, "exit").then(() => {}),
     new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
   ]);
 }

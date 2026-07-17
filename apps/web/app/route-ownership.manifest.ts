@@ -59,7 +59,6 @@ export interface KestrelOneRouteOwnershipEntry {
   readonly primaryNavigation?: boolean;
 }
 
-// biome-ignore lint/nursery/useMaxParams: compact manifest declarations keep route ownership auditable.
 function page(
   file: string,
   route: string,
@@ -79,7 +78,6 @@ function page(
   };
 }
 
-// biome-ignore lint/nursery/useMaxParams: compact manifest declarations keep route ownership auditable.
 function api(
   file: string,
   route: string,

@@ -102,7 +102,7 @@ export function createTavilyInternetProvider(
 ): TavilyInternetProvider {
   const env = options.env ?? process.env;
   const timeoutSeconds = millisecondsToSeconds(
-    clampInteger(options.timeoutMs, 1_000, 60_000, DEFAULT_TIMEOUT_MS),
+    clampInteger(options.timeoutMs, 1000, 60_000, DEFAULT_TIMEOUT_MS),
   );
   const maxAttempts = clampInteger(options.maxAttempts, 1, 5, DEFAULT_MAX_ATTEMPTS);
   const apiKey = coalesceNonEmpty(options.apiKey, env.TAVILY_API_KEY);
@@ -181,8 +181,7 @@ export function createTavilyInternetProvider(
 
   const search = async (
     input: InternetSearchInput,
-  ): Promise<InternetProviderCallResult<{ query: string; results: InternetSearchResultItem[] }>> => {
-    return runSearchFanout({
+  ): Promise<InternetProviderCallResult<{ query: string; results: InternetSearchResultItem[] }>> => runSearchFanout({
       input: {
         ...input,
         topic: "general",
@@ -190,7 +189,6 @@ export function createTavilyInternetProvider(
       },
       toolName: "internet.search",
     });
-  };
 
   const searchAdvanced = async (
     input: InternetAdvancedSearchInput,
@@ -255,8 +253,7 @@ export function createTavilyInternetProvider(
 
   const getUrl = async (
     input: InternetExtractInput,
-  ): Promise<InternetProviderCallResult<InternetExtractOutput>> => {
-    return requestWithRetries(
+  ): Promise<InternetProviderCallResult<InternetExtractOutput>> => requestWithRetries(
       () =>
         client.extract(input.urls, {
           extractDepth: input.extractDepth ?? "advanced",
@@ -282,12 +279,10 @@ export function createTavilyInternetProvider(
         projectId,
       },
     );
-  };
 
   const crawl = async (
     input: InternetCrawlInput,
-  ): Promise<InternetProviderCallResult<{ baseUrl: string; results: InternetFetchResult[] }>> => {
-    return requestWithRetries(
+  ): Promise<InternetProviderCallResult<{ baseUrl: string; results: InternetFetchResult[] }>> => requestWithRetries(
       () =>
         client.crawl(input.url, {
           extractDepth: input.extractDepth ?? "advanced",
@@ -318,7 +313,6 @@ export function createTavilyInternetProvider(
         projectId,
       },
     );
-  };
 
   const map = async (
     input: InternetMapInput,
@@ -881,17 +875,17 @@ function trySplitLargestOrGroup(atoms: string[], depth: number): QueryPlanResult
     }
   }
 
-  return undefined;
+  return ;
 }
 
 function splitTopLevelOrClauses(atom: string): string[] | undefined {
   if (atom.startsWith("(") === false || atom.endsWith(")") === false) {
-    return undefined;
+    return ;
   }
 
   const inner = atom.slice(1, -1).trim();
   if (inner.length === 0) {
-    return undefined;
+    return ;
   }
 
   const clauses: string[] = [];
@@ -1059,7 +1053,7 @@ function mergeQueryFanoutResults<TData extends { query: string }, TResult extend
 function mergeUsage(values: Array<Record<string, unknown> | undefined>): Record<string, unknown> | undefined {
   const present = values.filter((value): value is Record<string, unknown> => value !== undefined);
   if (present.length === 0) {
-    return undefined;
+    return ;
   }
   const credits = present
     .map((value) => (typeof value.credits === "number" ? value.credits : 0))
@@ -1189,7 +1183,7 @@ function classifyRecoverableSdkFailure(error: unknown): RecoverableFailure | und
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function extractStatusCode(error: unknown): number | undefined {
@@ -1200,12 +1194,12 @@ function extractStatusCode(error: unknown): number | undefined {
 
   const message = extractSdkErrorMessage(error);
   if (message === undefined) {
-    return undefined;
+    return ;
   }
 
   const match = message.match(/^(\d{3})\s+error:/iu);
   if (match === null) {
-    return undefined;
+    return ;
   }
 
   const status = Number.parseInt(match[1] ?? "", 10);
@@ -1235,7 +1229,7 @@ function extractRetryAfterSeconds(error: unknown): number | undefined {
   const headers = readHeadersRecord(error);
   const value = readHeaderValue(headers, "retry-after");
   if (value === undefined) {
-    return undefined;
+    return ;
   }
 
   const asInt = Number.parseInt(value, 10);
@@ -1245,7 +1239,7 @@ function extractRetryAfterSeconds(error: unknown): number | undefined {
 
   const asDate = Date.parse(value);
   if (Number.isNaN(asDate)) {
-    return undefined;
+    return ;
   }
 
   const deltaSeconds = Math.ceil((asDate - Date.now()) / 1000);
@@ -1271,7 +1265,7 @@ function readHeadersRecord(error: unknown): Record<string, unknown> | undefined 
 
 function asPlainObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
 
   return value as Record<string, unknown>;
@@ -1282,7 +1276,7 @@ function readHeaderValue(
   key: string,
 ): string | undefined {
   if (headers === undefined) {
-    return undefined;
+    return ;
   }
 
   for (const [candidate, value] of Object.entries(headers)) {
@@ -1292,14 +1286,14 @@ function readHeaderValue(
     return typeof value === "string" ? value : undefined;
   }
 
-  return undefined;
+  return ;
 }
 
 function normalizeTimeRange(
   freshness: string | undefined,
 ): TavilySearchOptions["timeRange"] | undefined {
   if (freshness === undefined) {
-    return undefined;
+    return ;
   }
 
   const normalized = freshness.trim().toLowerCase();
@@ -1316,14 +1310,14 @@ function normalizeTimeRange(
     return normalized;
   }
 
-  return undefined;
+  return ;
 }
 
 function deriveSource(url: string): string | undefined {
   try {
     return new URL(url).hostname;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1338,11 +1332,11 @@ function clampInteger(
 }
 
 function millisecondsToSeconds(timeoutMs: number): number {
-  return Math.max(1, Math.ceil(timeoutMs / 1_000));
+  return Math.max(1, Math.ceil(timeoutMs / 1000));
 }
 
 function jitteredBackoffMs(attempt: number): number {
-  const base = Math.min(2_000, 250 * 2 ** Math.max(0, attempt - 1));
+  const base = Math.min(2000, 250 * 2 ** Math.max(0, attempt - 1));
   const jitter = Math.floor(Math.random() * 120);
   return base + jitter;
 }
@@ -1506,7 +1500,7 @@ function coalesceNonEmpty(...values: Array<string | undefined>): string | undefi
     }
   }
 
-  return undefined;
+  return ;
 }
 
 export type {

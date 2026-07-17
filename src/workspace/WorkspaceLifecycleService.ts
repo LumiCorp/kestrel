@@ -5,7 +5,7 @@ import type {
   ManagedTaskWorktreeProvisionResult,
   ManagedTaskWorktreeRequest,
 } from "./ManagedTaskWorktreeService.js";
-import { ManagedTaskWorktreeService } from "./ManagedTaskWorktreeService.js";
+import type { ManagedTaskWorktreeService } from "./ManagedTaskWorktreeService.js";
 
 export interface WorkspaceLifecycleDevToolRequest extends ManagedTaskWorktreeRequest {
   toolName: string;
@@ -61,7 +61,7 @@ export class WorkspaceLifecycleService {
     input: WorkspaceLifecycleDevToolRequest,
   ): Promise<WorkspaceLifecycleBoundContext | undefined> {
     if (isAutoProvisionedWorkspaceTool(input.toolName) === false) {
-      return undefined;
+      return ;
     }
 
     const provisioned = await this.managedTaskWorktreeService.provision({

@@ -206,7 +206,7 @@ export class WorkspaceController {
 
   async resolveWorkspaceFromSelectionValue(value: string | undefined): Promise<ResolvedWorkspace | undefined> {
     if (value === undefined || value.trim().length === 0) {
-      return undefined;
+      return ;
     }
     const resolved = await resolveWorkspaceFromBinding({
       workspaceId: value,
@@ -220,7 +220,7 @@ export class WorkspaceController {
     const activeSession = state.activeSession;
     if (activeSession.workspaceId === undefined && activeSession.workspaceRoot === undefined) {
       this.context.setActiveWorkspace(undefined);
-      return undefined;
+      return ;
     }
     const resolved = await resolveWorkspaceFromBinding({
       workspaceId: activeSession.workspaceId,

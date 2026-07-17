@@ -1,4 +1,4 @@
-import type { StepContext, UserWaitForMatcher, WaitForMatcher } from "../../../src/kestrel/contracts/execution.js";
+import type { StepContext, UserWaitForMatcher, } from "../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
 
 import type { DevShellSourceWriteGuardResult } from "../../../src/devshell/contracts.js";

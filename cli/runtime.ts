@@ -153,7 +153,7 @@ function readReplayQuery(args: string[]): {
 function readArg(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index === -1) {
-    return undefined;
+    return ;
   }
   return args[index + 1];
 }
@@ -161,7 +161,7 @@ function readArg(args: string[], name: string): string | undefined {
 function readNumberArg(args: string[], name: string): number | undefined {
   const value = readArg(args, name);
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;

@@ -255,9 +255,7 @@ function parseServerCredential(
     return;
   }
   if (
-    !row.credential_id ||
-    !row.credential_kind ||
-    !row.encrypted_payload ||
+    !((row.credential_id &&row.credential_kind ) &&row.encrypted_payload ) ||
     row.credential_kind !== row.auth_mode
   ) {
     throw new Error("Authorized MCP server credential is unavailable or mismatched.");

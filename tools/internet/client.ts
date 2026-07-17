@@ -62,5 +62,5 @@ function coalesceNonEmpty(...values: Array<string | undefined>): string | undefi
     }
   }
 
-  return undefined;
+  return ;
 }

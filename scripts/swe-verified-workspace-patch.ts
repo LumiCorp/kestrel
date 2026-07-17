@@ -588,7 +588,7 @@ function renderGitFailure(args: string[], result: SpawnSyncReturns<Buffer>): str
 }
 
 function assertDirectory(directoryPath: string, label: string): void {
-  if (!existsSync(directoryPath) || !lstatSync(directoryPath).isDirectory()) {
+  if (!(existsSync(directoryPath) && lstatSync(directoryPath).isDirectory())) {
     throw new PatchExportFailure("validate_input", `${label} does not exist or is not a directory: ${directoryPath}`);
   }
 }

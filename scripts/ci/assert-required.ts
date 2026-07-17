@@ -1,12 +1,26 @@
 import { appendFileSync } from "node:fs";
-import type { CiGatePlan } from "../../src/governance/contracts.js";
 import { CI_GATE_IDS } from "../../src/governance/gates.js";
 
-const plan = JSON.parse(process.env.CI_GATE_PLAN ?? "") as CiGatePlan;
-const results = JSON.parse(process.env.CI_JOB_RESULTS ?? "") as Record<
-  string,
-  { result?: string | undefined }
->;
+function parseCiEnvironment(name: string): Record<string, unknown> {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required.`);
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("must be a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(
+      `${name} must be a JSON object: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+const selections = parseCiEnvironment("CI_GATE_SELECTIONS");
+const results = parseCiEnvironment("CI_GATE_RESULTS");
 const failures: string[] = [];
 
 if (process.env.CI_PLAN_RESULT !== "success") {
@@ -16,8 +30,16 @@ if (process.env.CI_PLAN_RESULT !== "success") {
 }
 
 for (const gate of CI_GATE_IDS) {
-  const result = results[gate]?.result ?? "missing";
-  const selected = plan.gates[gate].selected;
+  const selected = selections[gate];
+  const result = results[gate] ?? "missing";
+  if (typeof selected !== "boolean") {
+    failures.push(`${gate}: selection must be boolean, received ${String(selected)}`);
+    continue;
+  }
+  if (typeof result !== "string") {
+    failures.push(`${gate}: result must be string, received ${String(result)}`);
+    continue;
+  }
   if (selected && result !== "success")
     failures.push(`${gate}: expected success, received ${result}`);
   if (!selected && result !== "skipped")
@@ -28,7 +50,7 @@ const summaryPath = process.env.GITHUB_STEP_SUMMARY;
 if (summaryPath) {
   const rows = CI_GATE_IDS.map(
     (gate) =>
-      `| \`${gate}\` | ${plan.gates[gate].selected ? "selected" : "excluded"} | ${results[gate]?.result ?? "missing"} |`
+      `| \`${gate}\` | ${selections[gate] === true ? "selected" : "excluded"} | ${results[gate] ?? "missing"} |`
   );
   appendFileSync(
     summaryPath,
@@ -47,5 +69,5 @@ if (summaryPath) {
 if (failures.length > 0)
   throw new Error(`Required CI gate mismatch:\n${failures.join("\n")}`);
 process.stdout.write(
-  `All ${CI_GATE_IDS.filter((gate) => plan.gates[gate].selected).length} selected CI gates passed.\n`
+  `All ${CI_GATE_IDS.filter((gate) => selections[gate] === true).length} selected CI gates passed.\n`
 );

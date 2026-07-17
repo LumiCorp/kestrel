@@ -49,7 +49,7 @@ function readRequiredEnv(env: NodeJS.ProcessEnv, key: string): string {
 
 function parseInteger(value: string | undefined): number | undefined {
   if (value === undefined || value.trim().length === 0) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;

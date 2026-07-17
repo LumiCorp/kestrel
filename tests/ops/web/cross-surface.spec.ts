@@ -56,7 +56,7 @@ test("fresh TUI chat persists into Mission Control and runtime replay", async ({
         waitFor: new RegExp(`${freshSessionName} .* (CHAT|READY)`, "i"),
         actions: [
           { typeText: `hello from ${freshSessionName}`, settleMs: 250 },
-          { key: "enter", settleMs: 1_000 },
+          { key: "enter", settleMs: 1000 },
         ],
       },
       {
@@ -214,7 +214,7 @@ test("desktop project runs render through the mocked desktop bridge", async ({ p
       listProjectRuns: async () => [run],
       onProjectRuns: (listener: (runs: DesktopManagedProjectRun[]) => void) => {
         listener([run]);
-        return () => undefined;
+        return () => {};
       },
       readProjectLauncher: async () => ({
         projectPath: injectedProjectPath,
@@ -233,25 +233,25 @@ test("desktop project runs render through the mocked desktop bridge", async ({ p
         version: "1",
         capabilities: ["settings", "project_files", "project_runs", "project_run_preview"],
       }),
-      onCommand: () => () => undefined,
+      onCommand: () => () => {},
       getSupportBundle: async () => ({ generatedAt: "2026-05-19T12:00:00.000Z" }),
       getBootState: async () => ({ phase: "ready", message: "Ready" }),
-      onBootState: () => () => undefined,
-      pickProjectFolder: async () => undefined,
-      openExternal: async () => undefined,
-      openPath: async () => undefined,
-      revealPath: async () => undefined,
+      onBootState: () => () => {},
+      pickProjectFolder: async () => {},
+      openExternal: async () => {},
+      openPath: async () => {},
+      revealPath: async () => {},
       restartRuntime: async () => ({ running: true, recentStdout: [], recentStderr: [], logPath: "/tmp/runtime.log" }),
       requestMicrophoneAccess: async () => ({ state: "granted", granted: true }),
       resetRuntimeStore: async () => ({ archived: false, runtimeStatus: { running: true, recentStdout: [], recentStderr: [], logPath: "/tmp/runtime.log" } }),
-      restartApp: async () => undefined,
-      openDiagnostics: async () => undefined,
+      restartApp: async () => {},
+      openDiagnostics: async () => {},
       getRuntimeStatus: async () => ({ running: true, recentStdout: [], recentStderr: [], logPath: "/tmp/runtime.log" }),
       getRuntimeHealth: async () => ({ state: "ready", summary: "Ready", running: true }),
       getDatabaseStatus: async () => ({ state: "ready", summary: "Ready", managed: true, initialized: true, running: true }),
       restartDatabase: async () => ({ state: "ready", summary: "Ready", managed: true, initialized: true, running: true }),
       repairDatabase: async () => ({ state: "ready", summary: "Ready", managed: true, initialized: true, running: true }),
-      revealDatabaseFiles: async () => undefined,
+      revealDatabaseFiles: async () => {},
       listDirectory: async () => ({ rootPath: injectedProjectPath, directoryPath: injectedProjectPath, entries: [] }),
       searchProjectFiles: async (rootPath: string, query: string) => ({
         rootPath,

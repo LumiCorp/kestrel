@@ -233,7 +233,7 @@ export function buildFinalizePayload(
 function readFinalizeLastActionResult(lastActionResult: unknown): unknown {
   const record = asRecord(lastActionResult);
   if (record?.kind === "validation_feedback") {
-    return undefined;
+    return ;
   }
   return lastActionResult;
 }
@@ -584,11 +584,11 @@ function readRuntimeLinkRecords(
 function readRuntimeFetchExcerpt(output: Record<string, unknown>): string | undefined {
   const content = asString(output.content) ?? asString(output.contentPreview);
   if (content === undefined) {
-    return undefined;
+    return ;
   }
   const normalized = normalizeRuntimeInlineText(content);
   if (normalized.length === 0) {
-    return undefined;
+    return ;
   }
   return summarizeText(normalized, RUNTIME_UI_FETCH_EXCERPT_MAX_CHARS);
 }
@@ -653,11 +653,11 @@ function readRuntimeToolWarning(
 
 function normalizeRuntimeHttpUrl(value: string | undefined): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return undefined;
+    return ;
   }
   const href = trimmed.startsWith("http://") || trimmed.startsWith("https://")
     ? trimmed
@@ -665,11 +665,11 @@ function normalizeRuntimeHttpUrl(value: string | undefined): string | undefined 
   try {
     const parsed = new URL(href);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return undefined;
+      return ;
     }
     return parsed.href;
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -699,7 +699,7 @@ function formatRuntimeFsSearchMatch(
   const previewRaw = asString(match.preview) ?? "";
   const preview = normalizeRuntimeInlineText(previewRaw);
   if (path.trim().length === 0) {
-    return undefined;
+    return ;
   }
   return `${path}:${Math.max(1, Math.trunc(line))}:${Math.max(1, Math.trunc(column))} | ${preview.length > 0 ? preview : "<no preview>"}`;
 }
@@ -765,7 +765,7 @@ function readLatestSettledDevShellArtifactCandidate(
 ): { toolName: string; output: Record<string, unknown> } | undefined {
   const record = asRecord(lastActionResult);
   if (record === undefined) {
-    return undefined;
+    return ;
   }
 
   if (asString(record.kind) === "tool") {
@@ -779,11 +779,11 @@ function readLatestSettledDevShellArtifactCandidate(
     ) {
       return { toolName, output };
     }
-    return undefined;
+    return ;
   }
 
   if (asString(record.kind) !== "tool_batch") {
-    return undefined;
+    return ;
   }
 
   const items = asArray(record.items);
@@ -801,7 +801,7 @@ function readLatestSettledDevShellArtifactCandidate(
     }
   }
 
-  return undefined;
+  return ;
 }
 
 function isPromotableDevShellConsoleTool(toolName: string): boolean {
@@ -837,7 +837,7 @@ function buildConsoleArtifactFromDevShellResult(input: {
     asPositiveNumber(input.output.lastExitCode);
   const consoleOutput = readDevShellConsoleOutput(input.output);
   if (consoleOutput.stdout === undefined && consoleOutput.stderr === undefined && exitCode === undefined) {
-    return undefined;
+    return ;
   }
   const status = normalizeDevShellConsoleStatus(exitCode);
   const text = readCleanedDevShellOutputText(input.output.text ?? input.output.output);
@@ -933,7 +933,7 @@ function readDevShellConsoleOutput(output: Record<string, unknown>): {
 function readCleanedDevShellOutputText(value: unknown): string | undefined {
   const raw = asString(value);
   if (raw === undefined) {
-    return undefined;
+    return ;
   }
   const cleaned = stripDevShellCompletionMarkers(raw);
   return cleaned.length > 0 ? cleaned : undefined;
@@ -964,22 +964,22 @@ function readDevShellCompletionMarker(
   }
   const text = asString(output?.text) ?? asString(output?.output) ?? asString(output?.chunk) ?? asString(output?.chunkPreview);
   if (text === undefined || text.length === 0) {
-    return undefined;
+    return ;
   }
   const matches = [...text.matchAll(/__KESTREL_CMD_DONE__:([^:\s]+):(-?\d+)/g)];
   if (matches.length === 0) {
-    return undefined;
+    return ;
   }
   const marker = matches[matches.length - 1];
   if (marker === undefined) {
-    return undefined;
+    return ;
   }
   const processId = typeof marker[1] === "string" ? marker[1] : undefined;
   const parsedExitCode =
     typeof marker[2] === "string" ? Number.parseInt(marker[2], 10) : Number.NaN;
   const exitCode = Number.isFinite(parsedExitCode) ? Math.trunc(parsedExitCode) : undefined;
   if (processId === undefined && exitCode === undefined) {
-    return undefined;
+    return ;
   }
   return {
     ...(processId !== undefined ? { processId } : {}),
@@ -991,7 +991,7 @@ function normalizeDevShellConsoleStatus(
   exitCode: number | undefined,
 ): CodeExecutionStatus | undefined {
   if (exitCode === undefined) {
-    return undefined;
+    return ;
   }
   return exitCode === 0 ? "ok" : "error";
 }
@@ -1014,12 +1014,12 @@ function readCodeExecutionResult(
 } | undefined {
   const lastAction = asRecord(value);
   if (asString(lastAction?.kind) !== "tool" || asString(lastAction?.name) !== "code.execute") {
-    return undefined;
+    return ;
   }
 
   const output = asRecord(lastAction?.output);
   if (output === undefined) {
-    return undefined;
+    return ;
   }
 
   const status = asCodeExecutionStatus(output.status);
@@ -1057,7 +1057,7 @@ function asCodeExecutionStatus(value: unknown): CodeExecutionStatus | undefined 
   ) {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 function parseKchatArtifactManifest(stdout: string | undefined): ParsedKchatArtifactManifestResult {
@@ -1106,7 +1106,6 @@ function parseKchatArtifactManifest(stdout: string | undefined): ParsedKchatArti
         artifacts: parsedArtifacts as ManifestArtifact[],
       };
     } catch {
-      continue;
     }
   }
 
@@ -1143,7 +1142,7 @@ function parseManifestArtifact(value: unknown): ManifestArtifact | undefined {
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function buildArtifactsFromManifest(
@@ -1196,7 +1195,7 @@ function resolveHtmlFromExecutionArtifact(
   filePath: string | undefined,
 ): string | undefined {
   if (filePath === undefined || filePath.trim().length === 0) {
-    return undefined;
+    return ;
   }
 
   const match = artifacts.find((artifact) => asString(artifact.path) === filePath);
@@ -1204,7 +1203,7 @@ function resolveHtmlFromExecutionArtifact(
   const text = asString(preview?.text);
   const truncated = preview?.truncated === true;
   if (text === undefined || truncated) {
-    return undefined;
+    return ;
   }
   return text;
 }
@@ -1245,7 +1244,7 @@ function parseChatArtifact(
 ): ChatArtifact | undefined {
   const artifact = asRecord(value);
   if (artifact === undefined) {
-    return undefined;
+    return ;
   }
 
   const kind = asString(artifact.kind);
@@ -1257,7 +1256,7 @@ function parseChatArtifact(
   if (kind === "html") {
     const html = asString(artifact.html);
     if (html === undefined || html.trim().length === 0) {
-      return undefined;
+      return ;
     }
     return {
       id,
@@ -1299,14 +1298,14 @@ function parseChatArtifact(
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function parseArtifactSource(value: unknown): ChatArtifactSource | undefined {
   const source = asRecord(value);
   const type = asString(source?.type);
   if (type !== "finalize" && type !== "code.execute") {
-    return undefined;
+    return ;
   }
   const toolName = asString(source?.toolName);
   return {

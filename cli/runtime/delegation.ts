@@ -352,14 +352,12 @@ export class RuntimeDelegationService implements DelegationServicePort {
   }
 
   private assertDelegationCapacity(parentSessionId: string): void {
-    const active = [...this.tasks.values()].filter((entry) => {
-      return (
+    const active = [...this.tasks.values()].filter((entry) => (
         entry.task.parentSessionId === parentSessionId &&
         (entry.task.status === "PENDING" ||
           entry.task.status === "RUNNING" ||
           entry.task.status === "WAITING")
-      );
-    });
+      ));
     const maxConcurrent = this.profile.delegation?.maxConcurrentChildSessions ?? 2;
     if (active.length >= maxConcurrent) {
       throw new Error(`Delegation limit reached (${maxConcurrent} active child sessions).`);
@@ -423,14 +421,14 @@ function assertDelegationDepth(input: { depth: number; maxDepth: number }): void
 
 function normalizePolicyInteger(value: number | undefined): number | undefined {
   if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return undefined;
+    return ;
   }
   return Math.max(0, Math.trunc(value));
 }
 
 function normalizePolicyString(value: string | undefined): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -448,7 +446,7 @@ function slugify(value: string): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

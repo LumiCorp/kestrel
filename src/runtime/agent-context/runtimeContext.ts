@@ -126,7 +126,7 @@ export function readActiveWorkspaceContext(value: unknown): ActiveWorkspaceConte
   const workspaceId = asString(record?.workspaceId);
   const workspaceRoot = asString(record?.workspaceRoot);
   if (workspaceId === undefined || workspaceRoot === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -144,7 +144,7 @@ export function buildWorkspaceModelContext(
 ): ActiveWorkspaceModelContext | undefined {
   const workspace = readActiveWorkspaceContext(value);
   if (workspace === undefined) {
-    return undefined;
+    return ;
   }
   return {
     workspaceId: workspace.workspaceId,
@@ -175,7 +175,7 @@ export function readActiveProjectContext(value: unknown): ActiveProjectContext |
     contextRevision < 1 ||
     content === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     projectId,
@@ -190,7 +190,7 @@ export function readActiveSkillPackContext(value: unknown): ActiveSkillPackConte
   const id = asString(record?.id);
   const label = asString(record?.label);
   if (id === undefined || label === undefined) {
-    return undefined;
+    return ;
   }
 
   return {
@@ -255,7 +255,7 @@ function renderEvidence(input: {
 function renderWorkspaceContext(value: unknown): string | undefined {
   const workspace = readActiveWorkspaceContext(value);
   if (workspace === undefined) {
-    return undefined;
+    return ;
   }
 
   return [
@@ -270,7 +270,7 @@ function renderWorkspaceContext(value: unknown): string | undefined {
 function renderProjectContext(value: unknown): string | undefined {
   const projectContext = readActiveProjectContext(value);
   if (projectContext === undefined) {
-    return undefined;
+    return ;
   }
   return [
     "Project context:",
@@ -284,7 +284,7 @@ function renderProjectContext(value: unknown): string | undefined {
 function renderSkillPackContext(value: unknown): string | undefined {
   const skillPack = readActiveSkillPackContext(value);
   if (skillPack === undefined) {
-    return undefined;
+    return ;
   }
 
   const lines = [
@@ -310,7 +310,7 @@ function renderSkillPackContext(value: unknown): string | undefined {
 function renderObjectBlock(label: string, value: unknown): string | undefined {
   const record = asRecord(value);
   if (record === undefined || Object.keys(record).length === 0) {
-    return undefined;
+    return ;
   }
   return `${label}: ${JSON.stringify(record)}`;
 }
@@ -339,7 +339,7 @@ function formatWorkspaceCommands(commands: WorkspaceCommandContext): string[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }

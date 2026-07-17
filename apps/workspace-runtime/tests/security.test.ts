@@ -23,8 +23,8 @@ const token = signEnvironmentExecutionTicket({
     flyAppName: "app-1",
     flyMachineId: "machine-1",
     capabilities: ["run.stream"],
-    issuedAt: 1_000,
-    expiresAt: 1_300,
+    issuedAt: 1000,
+    expiresAt: 1300,
     nonce: "nonce-1",
   },
 });
@@ -37,7 +37,7 @@ test("Workspace service revalidates the signed tenant boundary", () => {
     organizationId: "org-1",
     environmentId: "env-1",
     machineId: "machine-1",
-    now: 1_100,
+    now: 1100,
   }).threadId, "thread-1");
   assert.throws(() => authorizeWorkspaceRequest({
     authorization: `Bearer ${token}`,
@@ -45,7 +45,7 @@ test("Workspace service revalidates the signed tenant boundary", () => {
     workspaceId: "workspace-2",
     organizationId: "org-1",
     environmentId: "env-1",
-    now: 1_100,
+    now: 1100,
   }));
 });
 

@@ -37,7 +37,7 @@ export function readDevShellConfig(context: SharedToolContext): DevShellProfileC
 
 export function buildDevShellCommandOptions(context: SharedToolContext): DevShellCommandOptions | undefined {
   if (context.toolConsole === undefined) {
-    return undefined;
+    return ;
   }
   return {
     outputObserver: (chunk) =>
@@ -60,11 +60,11 @@ export function buildDevShellSourceWriteGuardRequest(
   config: DevShellProfileConfig,
 ): DevShellSourceWriteGuardRequest | undefined {
   if (config.enabled !== true) {
-    return undefined;
+    return ;
   }
   const guard = config.sourceWriteGuard;
   if (guard?.enabled === false) {
-    return undefined;
+    return ;
   }
   return {
     enabled: true,
@@ -85,7 +85,7 @@ export function buildDevShellPackageManagerPreflight(
   context: SharedToolContext,
 ): DevShellPackageManagerPreflightConfig | undefined {
   if (context.interactionMode !== "build") {
-    return undefined;
+    return ;
   }
   return {
     pnpmApproveBuilds: "approve_all",
@@ -150,14 +150,14 @@ export function resolveWorkspaceAppCwd(workspaceRoot: string, appRoot: string | 
 function normalizeWorkspaceAppRoot(appRoot: string | undefined): string | undefined {
   const raw = appRoot?.trim();
   if (raw === undefined || raw.length === 0 || path.isAbsolute(raw)) {
-    return undefined;
+    return ;
   }
   const normalized = path.posix.normalize(raw.replaceAll("\\", "/"));
   if (normalized === "" || normalized === ".") {
     return ".";
   }
   if (normalized === ".." || normalized.startsWith("../")) {
-    return undefined;
+    return ;
   }
   return normalized;
 }

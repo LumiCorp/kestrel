@@ -164,14 +164,14 @@ export async function validateEvaluationOwnershipLedger(
     ? suite.scenarioIds.filter((value): value is string => typeof value === "string").sort()
     : [];
   compareSets("Ruhroh suite scenario", [...expectedRuhrohIds].sort(), suiteScenarioIds, errors);
-  if (!isRecord(suite.scenarioVersions)) {
-    errors.push("Ruhroh suite scenarioVersions must be an object");
-  } else {
+  if (isRecord(suite.scenarioVersions)) {
     for (const scenarioId of expectedRuhrohIds) {
       if (typeof suite.scenarioVersions[scenarioId] !== "string") {
         errors.push(`Ruhroh suite is missing scenario version for ${scenarioId}`);
       }
     }
+  } else {
+    errors.push("Ruhroh suite scenarioVersions must be an object");
   }
 
   const target = await readJson<{ targets?: unknown }>(path.join(root, TARGET_PATH));

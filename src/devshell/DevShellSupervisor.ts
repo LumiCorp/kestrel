@@ -30,7 +30,6 @@ import type {
   DevShellProcessStatus,
   DevShellProcessStore,
   DevShellOutputChannel,
-  DevShellPackageManagerPreflightConfig,
   DevShellPreflightResult,
   DevShellPnpmBuildApprovalPreflight,
   DevShellReadiness,
@@ -48,10 +47,10 @@ import { resolveDefaultDevShellBaseDir } from "./paths.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_MAX_READ_BYTES = DEFAULT_DEV_SHELL_DISABLED_CONFIG.maxReadBytes ?? 131_072;
-const DEFAULT_YIELD_TIME_MS = 1_000;
+const DEFAULT_YIELD_TIME_MS = 1000;
 const PNPM_APPROVE_BUILDS_COMMAND = "pnpm approve-builds --all";
 const PNPM_APPROVE_BUILDS_TIMEOUT_MS = 120_000;
-const PREFLIGHT_OUTPUT_PREVIEW_BYTES = 4_096;
+const PREFLIGHT_OUTPUT_PREVIEW_BYTES = 4096;
 const DEFAULT_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024;
 const TRANSCRIPT_TRUNCATED_MARKER =
   "\n[dev-shell transcript truncated; set KESTREL_DEV_SHELL_TRANSCRIPT_MAX_BYTES to raise the capture limit]\n";
@@ -123,7 +122,7 @@ export class DevShellSupervisor {
     for (const process of processes) {
       process.stopRequested = true;
       signalProcessTree(process.child, "SIGTERM");
-      await waitForProcessExit(process.child, 1_000);
+      await waitForProcessExit(process.child, 1000);
       if (isProcessRunning(process.child)) {
         signalProcessTree(process.child, "SIGKILL");
         await waitForProcessExit(process.child, 500);
@@ -169,7 +168,7 @@ export class DevShellSupervisor {
     if (isProcessRunning(running.child)) {
       running.forcedFailureReason = `dev.shell.run timed out after ${timeoutMs} ms and killed the process.`;
       signalProcessTree(running.child, "SIGKILL");
-      await waitForProcessExit(running.child, 1_000);
+      await waitForProcessExit(running.child, 1000);
     }
     await running.transcriptWrite.catch(() => {});
     await this.enforceSourceWriteGuard(running);
@@ -700,7 +699,7 @@ export class DevShellSupervisor {
         }`;
       if (processStillRunning) {
         signalProcessTree(process.child, "SIGKILL");
-        await waitForProcessExit(process.child, 1_000);
+        await waitForProcessExit(process.child, 1000);
       }
       const completedAt = this.now().toISOString();
       process.record = {
@@ -739,7 +738,7 @@ export class DevShellSupervisor {
       }
       process.stopRequested = true;
       signalProcessTree(process.child, "SIGTERM");
-      await waitForProcessExit(process.child, 1_500);
+      await waitForProcessExit(process.child, 1500);
       if (isProcessRunning(process.child)) {
         signalProcessTree(process.child, "SIGKILL");
         await waitForProcessExit(process.child, 500);
@@ -831,7 +830,7 @@ export class DevShellSupervisor {
     input: DevShellCommandInput,
   ): Promise<DevShellPnpmBuildApprovalPreflight | undefined> {
     if (input.packageManagerPreflight?.pnpmApproveBuilds !== "approve_all") {
-      return undefined;
+      return ;
     }
     const normalizedCommand = normalizeDevShellExecCommand(input.command);
     if (normalizedCommand === undefined || isPnpmShellCommand(normalizedCommand) === false) {
@@ -954,7 +953,7 @@ async function findPackageInfo(input: {
     }
     current = parent;
   }
-  return undefined;
+  return ;
 }
 
 async function readPackageInfo(packageJsonPath: string): Promise<{ packageManager?: string | undefined } | undefined> {
@@ -969,7 +968,7 @@ async function readPackageInfo(packageJsonPath: string): Promise<{ packageManage
       ...(packageManager !== undefined ? { packageManager } : {}),
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -986,7 +985,7 @@ function readShellCommandExecutable(command: string): string | undefined {
     }
     return word;
   }
-  return undefined;
+  return ;
 }
 
 function buildShellCommandExecutionPlan(input: {
@@ -1332,7 +1331,7 @@ function normalizeNodeEnv(value: string | undefined): "production" | "developmen
   if (value === "production" || value === "development" || value === "test") {
     return value;
   }
-  return undefined;
+  return ;
 }
 
 async function readTranscriptChunk(
@@ -1340,7 +1339,7 @@ async function readTranscriptChunk(
   cursor: number,
   maxBytes: number,
 ): Promise<{ chunk: string; cursor: number; nextCursor: number; size: number; truncated: boolean }> {
-  const fileStat = await stat(transcriptPath).catch(() => undefined);
+  const fileStat = await stat(transcriptPath).catch(() => {});
   const size = fileStat?.size ?? 0;
   if (size === 0) {
     return {
@@ -1525,7 +1524,7 @@ async function normalizeFilesystemPath(pathValue: string): Promise<string | unde
   try {
     return await realpath(pathValue);
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -1536,7 +1535,7 @@ function isValidToolName(name: string): boolean {
 function resolveExecutableFromPath(name: string): string | undefined {
   const pathValue = process.env.PATH;
   if (typeof pathValue !== "string" || pathValue.length === 0) {
-    return undefined;
+    return ;
   }
   for (const directory of pathValue.split(":")) {
     const candidate = join(directory, name);
@@ -1546,10 +1545,9 @@ function resolveExecutableFromPath(name: string): string | undefined {
         return candidate;
       }
     } catch {
-      continue;
     }
   }
-  return undefined;
+  return ;
 }
 
 function normalizePositiveInt(value: number | undefined, fallback: number): number {

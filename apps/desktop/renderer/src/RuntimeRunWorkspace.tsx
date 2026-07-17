@@ -285,7 +285,7 @@ function formatDuration(startedAt: string, completedAt: string | undefined): str
   if (Number.isFinite(start) === false || Number.isFinite(end) === false || end < start) {
     return "Unknown";
   }
-  const seconds = Math.floor((end - start) / 1_000);
+  const seconds = Math.floor((end - start) / 1000);
   if (seconds < 60) {
     return `${seconds}s`;
   }

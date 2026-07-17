@@ -74,9 +74,7 @@ export async function recordAppOperationApprovalRequest(input: {
     (candidate) => candidate.key === input.binding.capabilityKey
   );
   if (
-    !thread ||
-    !execution ||
-    !resource ||
+    !((thread &&execution ) &&resource ) ||
     access?.environmentId !== input.binding.environmentId ||
     access.connectionId !== input.binding.connectionId ||
     capability?.approvalMode !== "ask"

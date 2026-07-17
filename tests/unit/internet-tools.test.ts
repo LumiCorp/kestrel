@@ -276,8 +276,7 @@ test("internet.extract and internet.crawl pass docs-supported chunksPerSource up
   const crawlCalls: Array<Record<string, unknown> | undefined> = [];
   const provider = createTavilyInternetProvider({
     client: createFakeClient({
-      async extract() {
-        const options = arguments[1] as Record<string, unknown> | undefined;
+      async extract(_urls, options) {
         extractCalls.push(options);
         return {
           responseTime: 1,
@@ -286,8 +285,7 @@ test("internet.extract and internet.crawl pass docs-supported chunksPerSource up
           failedResults: [],
         };
       },
-      async crawl() {
-        const options = arguments[1] as Record<string, unknown> | undefined;
+      async crawl(_url, options) {
         crawlCalls.push(options);
         return {
           baseUrl: "https://example.com",
@@ -319,8 +317,7 @@ test("internet.extract and internet.crawl strip chunksPerSource when Tavily prer
   const crawlCalls: Array<Record<string, unknown> | undefined> = [];
   const provider = createTavilyInternetProvider({
     client: createFakeClient({
-      async extract() {
-        const options = arguments[1] as Record<string, unknown> | undefined;
+      async extract(_urls, options) {
         extractCalls.push(options);
         return {
           responseTime: 1,
@@ -329,8 +326,7 @@ test("internet.extract and internet.crawl strip chunksPerSource when Tavily prer
           failedResults: [],
         };
       },
-      async crawl() {
-        const options = arguments[1] as Record<string, unknown> | undefined;
+      async crawl(_url, options) {
         crawlCalls.push(options);
         return {
           baseUrl: "https://example.com",
@@ -1283,7 +1279,7 @@ test("internet.extract strips navigation blocks before rating quality", async ()
 
   const result = (await handler({
     url: "https://example.com/clean-news",
-    maxChars: 2_000,
+    maxChars: 2000,
   })) as {
     truncated?: boolean;
     quality?: string;

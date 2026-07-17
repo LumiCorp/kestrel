@@ -249,21 +249,21 @@ function shouldSeedInitialTaskMessage(input: {
   userMessage: string;
 }): string | undefined {
   if (readActiveTaskGoalFromTranscript(input.transcript) !== undefined) {
-    return undefined;
+    return ;
   }
   const goal = input.goal.trim();
   if (goal.length === 0) {
-    return undefined;
+    return ;
   }
   if (goal === input.userMessage.trim()) {
-    return undefined;
+    return ;
   }
   return goal;
 }
 
 function renderSystemPromptMessage(systemPrompt: KestrelAgentSystemPromptInput | undefined): ModelMessage | undefined {
   if (systemPrompt === undefined) {
-    return undefined;
+    return ;
   }
   if (systemPrompt.kind === "reference-react-deliberator") {
     return {
@@ -279,11 +279,11 @@ function readUserMessage(eventPayload: Record<string, unknown>): string | undefi
 
 function buildRecoveryContext(reactState: Record<string, unknown>): Record<string, unknown> | undefined {
   if (asRecord(reactState.waitingFor) !== undefined) {
-    return undefined;
+    return ;
   }
   const loopStall = asRecord(reactState.loopStall);
   if (loopStall?.reason !== "loop_visit_stall" || loopStall.status !== "resumed") {
-    return undefined;
+    return ;
   }
   const blockedAction = asRecord(loopStall.blockedAction);
   const diagnostic = asRecord(loopStall.diagnostic);
@@ -295,7 +295,7 @@ function buildRecoveryContext(reactState: Record<string, unknown>): Record<strin
     target === undefined &&
     resumeInstruction === undefined
   ) {
-    return undefined;
+    return ;
   }
   return {
     reason: "loop_visit_stall",

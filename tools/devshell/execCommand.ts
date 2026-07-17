@@ -262,14 +262,14 @@ function validateExecCommandInput(body: Record<string, unknown>): void {
       { fields: ["command", "sessionId"] },
     );
   }
-  if (hasCommand && (Object.prototype.hasOwnProperty.call(body, "stdin") || body.stop === true)) {
+  if (hasCommand && (Object.hasOwn(body, "stdin") || body.stop === true)) {
     throw createToolInputError(
       "exec_command",
       "'command' cannot be combined with 'stdin' or 'stop'.",
       { fields: ["command", "stdin", "stop"] },
     );
   }
-  if (body.stop === true && Object.prototype.hasOwnProperty.call(body, "stdin")) {
+  if (body.stop === true && Object.hasOwn(body, "stdin")) {
     throw createToolInputError(
       "exec_command",
       "'stop' cannot be combined with 'stdin'.",

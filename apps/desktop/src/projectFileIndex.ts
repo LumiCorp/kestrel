@@ -74,7 +74,7 @@ export class DesktopProjectFileIndex {
         candidates: gitFiles.map((relativePath) => {
           const absolutePath = path.resolve(normalizedRoot, relativePath);
           if (isPathWithinRoot(normalizedRoot, absolutePath) === false) {
-            return undefined;
+            return ;
           }
           return {
             path: absolutePath,
@@ -162,7 +162,7 @@ async function readGitFiles(rootPath: string): Promise<string[] | undefined> {
       .split("\0")
       .filter((entry) => entry.length > 0);
   } catch {
-    return undefined;
+    return ;
   }
 }
 

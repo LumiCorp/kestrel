@@ -193,7 +193,7 @@ export class RemoteRunnerTransport implements ProtocolTransport {
             return false;
           }
           this.emitEvent(event);
-          return undefined;
+          return ;
         }
         streamSettled = true;
         this.emitEvent(makeSyntheticRunnerError(commandId, {

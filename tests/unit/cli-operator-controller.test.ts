@@ -89,22 +89,22 @@ function createOperatorHarness(input: {
     selectors: createUiDerivedSelectors(),
     getRuntimeSettings: () => ({ version: 1, defaults: {} }),
     getSessionsFile: () => ({ version: 1, active: "default", sessions: [activeSession] }),
-    setSessionsFile: () => undefined,
-    getActiveWorkspace: () => undefined,
-    setActiveWorkspace: () => undefined,
-    getLaunchWorkspace: () => undefined,
-    setLaunchWorkspace: () => undefined,
+    setSessionsFile: () => {},
+    getActiveWorkspace: () => {},
+    setActiveWorkspace: () => {},
+    getLaunchWorkspace: () => {},
+    setLaunchWorkspace: () => {},
     appendHistoryLine: async (_role: "system" | "assistant" | "user", text: string) => {
       historyLines.push(text);
     },
-    persistSessionAndUi: async () => undefined,
-    persistUiState: async () => undefined,
-    persistActiveProfile: async () => undefined,
+    persistSessionAndUi: async () => {},
+    persistUiState: async () => {},
+    persistActiveProfile: async () => {},
     getActiveRunnerMetadata: () => ({ profile: uiStore.getState().activeProfile }),
-    setActiveSessionState: async () => undefined,
-    navigateToView: () => undefined,
+    setActiveSessionState: async () => {},
+    navigateToView: () => {},
     withMcpSummary: (statusLine: string) => statusLine,
-    recordPersistenceFailure: () => undefined,
+    recordPersistenceFailure: () => {},
     cancelActiveRun: async () => {
       commands.push({
         type: "run.cancel",
@@ -116,9 +116,9 @@ function createOperatorHarness(input: {
     applyOperatorControlResponse: async (action: OperatorControlApplyAction, payload: OperatorControlledEventPayload) => {
       applied.push({ action, payload });
     },
-    refreshCurrentSessionDescribe: async () => undefined,
-    refreshWorkspaceCheckpointList: async () => undefined,
-    beginChildMissionJourney: async () => undefined,
+    refreshCurrentSessionDescribe: async () => {},
+    refreshWorkspaceCheckpointList: async () => {},
+    beginChildMissionJourney: async () => {},
   } as unknown as ConstructorParameters<typeof OperatorController>[0] & TuiAppContext;
 
   return {

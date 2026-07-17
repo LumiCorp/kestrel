@@ -46,7 +46,7 @@ export function parseFinalizePayload(value: unknown): FinalizePayloadResult {
 
 export function buildFinalizePlainText(data: Record<string, unknown> | undefined): string | undefined {
   if (data === undefined) {
-    return undefined;
+    return ;
   }
 
   const explicit = readNonEmptyString(data.plainText);
@@ -56,7 +56,7 @@ export function buildFinalizePlainText(data: Record<string, unknown> | undefined
 
   const ui = asRecord(data.ui);
   if (ui === undefined) {
-    return undefined;
+    return ;
   }
 
   const blocks = Array.isArray(ui.blocks) ? ui.blocks : [];
@@ -64,7 +64,7 @@ export function buildFinalizePlainText(data: Record<string, unknown> | undefined
     .map((block) => renderPlainTextBlock(block))
     .filter((value): value is string => value !== undefined && value.length > 0);
   if (rendered.length === 0) {
-    return undefined;
+    return ;
   }
 
   return rendered.join("\n\n").trim();
@@ -74,7 +74,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
   const block = asRecord(value);
   const kind = readNonEmptyString(block?.kind);
   if (block === undefined || kind === undefined) {
-    return undefined;
+    return ;
   }
 
   if (kind === "summary") {
@@ -93,7 +93,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
           .filter((entry): entry is string => entry !== undefined && entry.length > 0)
       : [];
     if (items.length === 0) {
-      return undefined;
+      return ;
     }
     return joinPlainTextSections(readNonEmptyString(block.title), items.join("\n"));
   }
@@ -107,14 +107,14 @@ function renderPlainTextBlock(value: unknown): string | undefined {
             const left = readNonEmptyString(record?.left);
             const right = readNonEmptyString(record?.right);
             if (label === undefined || left === undefined || right === undefined) {
-              return undefined;
+              return ;
             }
             return `- ${label}: ${left} | ${right}`;
           })
           .filter((entry): entry is string => entry !== undefined)
       : [];
     if (rows.length === 0) {
-      return undefined;
+      return ;
     }
     return joinPlainTextSections(readNonEmptyString(block.title), rows.join("\n"));
   }
@@ -122,7 +122,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
   if (kind === "code_preview") {
     const code = readNonEmptyString(block.code) ?? readNonEmptyString(block.text);
     if (code === undefined) {
-      return undefined;
+      return ;
     }
     const label = [readNonEmptyString(block.title), readNonEmptyString(block.filename)]
       .filter((entry): entry is string => entry !== undefined)
@@ -133,7 +133,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
   if (kind === "status") {
     const valueText = readNonEmptyString(block.value) ?? readNonEmptyString(block.status);
     if (valueText === undefined) {
-      return undefined;
+      return ;
     }
     const detail = readNonEmptyString(block.detail) ?? readNonEmptyString(block.description);
     return joinPlainTextSections(readNonEmptyString(block.title), [valueText, detail].filter(Boolean).join("\n"));
@@ -148,14 +148,14 @@ function renderPlainTextBlock(value: unknown): string | undefined {
             const valueText = readNonEmptyString(record?.value);
             const detail = readNonEmptyString(record?.detail);
             if (label === undefined || valueText === undefined) {
-              return undefined;
+              return ;
             }
             return detail !== undefined ? `- ${label}: ${valueText} (${detail})` : `- ${label}: ${valueText}`;
           })
           .filter((entry): entry is string => entry !== undefined)
       : [];
     if (metrics.length === 0) {
-      return undefined;
+      return ;
     }
     return joinPlainTextSections(readNonEmptyString(block.title), metrics.join("\n"));
   }
@@ -169,7 +169,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
             const url = readNonEmptyString(record?.url);
             const description = readNonEmptyString(record?.description);
             if (label === undefined || url === undefined) {
-              return undefined;
+              return ;
             }
             return description !== undefined
               ? `- ${label}: ${url} - ${description}`
@@ -178,7 +178,7 @@ function renderPlainTextBlock(value: unknown): string | undefined {
           .filter((entry): entry is string => entry !== undefined)
       : [];
     if (links.length === 0) {
-      return undefined;
+      return ;
     }
     return joinPlainTextSections(readNonEmptyString(block.title), links.join("\n"));
   }
@@ -186,14 +186,14 @@ function renderPlainTextBlock(value: unknown): string | undefined {
   if (kind === "web_preview") {
     const url = readNonEmptyString(block.url);
     if (url === undefined) {
-      return undefined;
+      return ;
     }
     const title = readNonEmptyString(block.title);
     const summary = readNonEmptyString(block.summary) ?? readNonEmptyString(block.description);
     return joinPlainTextSections(title ?? url, summary);
   }
 
-  return undefined;
+  return ;
 }
 
 function renderPlainTextStep(value: unknown): string | undefined {
@@ -208,7 +208,7 @@ function renderPlainTextStep(value: unknown): string | undefined {
     readNonEmptyString(record?.label) ??
     readNonEmptyString(record?.text);
   if (title === undefined) {
-    return undefined;
+    return ;
   }
 
   const status = readNonEmptyString(record?.status);
@@ -222,21 +222,21 @@ function joinPlainTextSections(...parts: Array<string | undefined>): string | un
     .map((part) => readNonEmptyString(part))
     .filter((part): part is string => part !== undefined);
   if (filtered.length === 0) {
-    return undefined;
+    return ;
   }
   return filtered.join("\n");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

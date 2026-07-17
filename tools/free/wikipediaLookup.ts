@@ -64,7 +64,7 @@ function readInputString(
 ): string | undefined {
   const field = value?.[key];
   if (typeof field !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = field.trim();
   return trimmed.length > 0 ? trimmed : undefined;

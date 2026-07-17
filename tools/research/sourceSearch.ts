@@ -118,7 +118,7 @@ function readInputString(
 ): string | undefined {
   const value = body?.[key];
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -137,7 +137,7 @@ function stripHtml(value: string): string {
 
 function parseRetryAfterSeconds(value: string | null): number | undefined {
   if (value === null || value.trim().length === 0) {
-    return undefined;
+    return ;
   }
 
   const asNumber = Number.parseInt(value, 10);
@@ -147,7 +147,7 @@ function parseRetryAfterSeconds(value: string | null): number | undefined {
 
   const retryDateMs = Date.parse(value);
   if (Number.isNaN(retryDateMs)) {
-    return undefined;
+    return ;
   }
   const deltaSeconds = Math.ceil((retryDateMs - Date.now()) / 1000);
   return deltaSeconds > 0 ? deltaSeconds : 0;

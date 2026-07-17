@@ -579,7 +579,7 @@ function requireProjectBoardLane(value: unknown, field: string): ProductBoardLan
 
 function optionalProjectBoardString(value: unknown, field: string): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "string") {
     throw new Error(`project board action ${field} must be a string`);
@@ -593,7 +593,7 @@ function optionalProjectBoardNonEmptyString(value: unknown, field: string): stri
 
 function optionalProjectBoardBoolean(value: unknown, field: string): boolean | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "boolean") {
     throw new Error(`project board action ${field} must be a boolean`);
@@ -603,7 +603,7 @@ function optionalProjectBoardBoolean(value: unknown, field: string): boolean | u
 
 function optionalProjectBoardNonNegativeInteger(value: unknown, field: string): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isInteger(value) === false || value < 0) {
     throw new Error(`project board action ${field} must be a non-negative integer`);
@@ -621,7 +621,7 @@ function optionalProjectBoardPositiveInteger(value: unknown, field: string): num
 
 function optionalProjectBoardFiniteNumber(value: unknown, field: string): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "number" || Number.isFinite(value) === false) {
     throw new Error(`project board action ${field} must be a finite number`);
@@ -633,7 +633,7 @@ function optionalProjectBoardEvidenceSource(
   value: unknown,
 ): ProductBoardEvidenceSource | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (
     value !== "autopilot"

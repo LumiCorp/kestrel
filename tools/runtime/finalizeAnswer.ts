@@ -106,7 +106,7 @@ function assertFinalizeProvenance(input: unknown): void {
     artifacts
       .map((value) => {
         if (typeof value !== "object" || value === null || Array.isArray(value)) {
-          return undefined;
+          return ;
         }
         const artifact = value as Record<string, unknown>;
         return typeof artifact.id === "string" ? artifact.id : undefined;

@@ -310,7 +310,7 @@ function resolveBundledLoadPath(
   }
   const resolvedPath = firstExistingPath(candidates);
   if (resolvedPath === undefined || isInside(resolvedPath, bundleLibDir) === false) {
-    return undefined;
+    return ;
   }
   return resolvedPath;
 }
@@ -376,7 +376,7 @@ function firstExistingPath(candidates: string[]): string | undefined {
       return realpathSync(candidate);
     }
   }
-  return undefined;
+  return ;
 }
 
 function isInside(candidatePath: string, rootPath: string): boolean {

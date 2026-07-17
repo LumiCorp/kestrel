@@ -137,7 +137,7 @@ function parseRunTurnInput(value: unknown): RunTurnInput {
 
 function parseOptionalProfile(value: unknown): TuiProfile | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("job input profile must be an object when present");
@@ -160,7 +160,7 @@ function parseOptionalProfile(value: unknown): TuiProfile | undefined {
 
 function parseOptionalStoreDriver(value: unknown): StoreDriverId | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === "auto" || value === "postgres" || value === "sqlite") {
     return value;
@@ -170,7 +170,7 @@ function parseOptionalStoreDriver(value: unknown): StoreDriverId | undefined {
 
 function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;
@@ -180,7 +180,7 @@ function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId |
 
 function readOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
-    return undefined;
+    return ;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;

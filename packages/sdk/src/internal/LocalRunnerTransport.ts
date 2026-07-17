@@ -199,7 +199,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
               return false;
             }
             this.emitEvent(event);
-            return undefined;
+            return ;
           }
           streamSettled = true;
           this.emitEvent(makeSyntheticRunnerError(command.id, {

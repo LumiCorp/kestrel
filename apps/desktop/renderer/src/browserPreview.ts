@@ -90,7 +90,7 @@ export function ensureBrowserPreviewBridge(): void {
   };
   const getPreviewRuntimeStatus = () => ({
     running: true,
-    pid: 43103,
+    pid: 43_103,
     recentStdout: ["Runner service listening on 127.0.0.1", "Local Core connected"],
     recentStderr: [],
     logPath: "/tmp/kestrel-preview/runtime.log",
@@ -102,7 +102,7 @@ export function ensureBrowserPreviewBridge(): void {
     initialized: true,
     running: true,
     host: "127.0.0.1",
-    port: 54329,
+    port: 54_329,
     database: "kestrel",
     logPath: "/tmp/kestrel-preview/database.log",
   });
@@ -254,7 +254,7 @@ export function ensureBrowserPreviewBridge(): void {
       };
     },
     onRuntimeHealth() {
-      return () => undefined;
+      return () => {};
     },
     onRunnerEvent(listener: (event: DesktopRunnerEvent) => void) {
       runnerListeners.add(listener);
@@ -377,16 +377,16 @@ export function ensureBrowserPreviewBridge(): void {
       };
     },
     async openDiagnostics() {
-      return undefined;
+      return ;
     },
     async revealDatabaseFiles() {
-      return undefined;
+      return ;
     },
     async restartApp() {
-      return undefined;
+      return ;
     },
     async pickProjectFolder() {
-      return undefined;
+      return ;
     },
     async listDirectory(rootPath: string, directoryPath?: string) {
       const resolvedDirectory = directoryPath ?? rootPath;
@@ -418,16 +418,16 @@ export function ensureBrowserPreviewBridge(): void {
       };
     },
     async watchProjectFiles() {
-      return undefined;
+      return ;
     },
     async unwatchProjectFiles() {
-      return undefined;
+      return ;
     },
     onProjectFilesChanged() {
-      return () => undefined;
+      return () => {};
     },
     async openFileEditor() {
-      return undefined;
+      return ;
     },
     async readProjectLauncher(projectPath: string) {
       return {
@@ -487,7 +487,7 @@ export function ensureBrowserPreviewBridge(): void {
       return () => projectRunListeners.delete(listener);
     },
     async openProjectRunPreview() {
-      return undefined;
+      return ;
     },
     async discoverMcpServers() {
       return {
@@ -551,7 +551,7 @@ export function ensureBrowserPreviewBridge(): void {
       };
     },
     async openPath(_input: DesktopPathTargetInput) {
-      return undefined;
+      return ;
     },
   } as unknown as DesktopBridge;
 
@@ -894,7 +894,7 @@ function createPreviewRuntimeRunInspection(runId: string): DesktopRuntimeRunInsp
           actionable: false,
           latestReasoning: {
             message: "Runtime inspection is moving behind the runner-owned protocol before the legacy Web route is removed.",
-            at: new Date(Date.now() - 9_000).toISOString(),
+            at: new Date(Date.now() - 9000).toISOString(),
           },
         },
     modelProvenance: {
@@ -926,7 +926,7 @@ function createPreviewRuntimeRunInspection(runId: string): DesktopRuntimeRunInsp
       },
       {
         seq: 2,
-        at: new Date(new Date(startedAt).getTime() + 2_000).toISOString(),
+        at: new Date(new Date(startedAt).getTime() + 2000).toISOString(),
         label: "step started",
         detail: "from=runtime to=exec status=RUNNING",
         source: "engine",

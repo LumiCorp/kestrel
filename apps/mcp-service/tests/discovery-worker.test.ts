@@ -92,7 +92,7 @@ test("MCP discovery gives colliding readable tool names distinct projections", a
   const client = {
     getServerCapabilities: () => ({ tools: {} }),
     getServerVersion: () => ({ name: "collision-test", version: "1" }),
-    getInstructions: () => undefined,
+    getInstructions: () => {},
     listTools: async () => ({
       tools: [
         { name: "write/path", inputSchema: { type: "object" } },

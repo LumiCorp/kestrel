@@ -742,18 +742,18 @@ export class RunReplayService {
   ): Promise<ReplayRuntimePlanSummary | undefined> {
     const runId = query.runId ?? [...events].reverse().map((event) => event.runId).find((value) => value !== undefined);
     if (runId === undefined) {
-      return undefined;
+      return ;
     }
     const runState = await this.store.getRunState(runId);
     if (runState === null) {
-      return undefined;
+      return ;
     }
     const state = asRecord(runState.state);
     const react = asRecord(state?.react);
     const workingPlan = asRecord(react?.workingPlan);
     const commandProcessor = asRecord(react?.commandProcessor);
     if (workingPlan === undefined && commandProcessor === undefined) {
-      return undefined;
+      return ;
     }
     const lastCheckpoint = asRecord(commandProcessor?.lastCheckpoint);
     const checkpoint =
@@ -1082,7 +1082,7 @@ export class RunReplayService {
     compaction: CompactionReport,
   ): Promise<ReplayEvidenceRecoverySummary | undefined> {
     if (focusThread === undefined) {
-      return undefined;
+      return ;
     }
     const session = await this.store.getSession(focusThread.sessionId);
     const reactState = asRecord(session?.state)?.react;
@@ -1125,7 +1125,7 @@ export class RunReplayService {
     if (compactionEvidence !== undefined) {
       return compactionEvidence;
     }
-    return undefined;
+    return ;
   }
 
   private buildAdaptationSummary(
@@ -1210,7 +1210,7 @@ export class RunReplayService {
         return { active, segments };
       }
     }
-    return undefined;
+    return ;
   }
 
   private async buildModelProvenanceReport(input: {
@@ -1465,7 +1465,7 @@ export class RunReplayService {
         ],
       };
     }
-    return undefined;
+    return ;
   }
 
   private async buildDelegationReports(
@@ -1610,7 +1610,7 @@ export class RunReplayService {
     }
     const dominant = selectDominantBlocker(delegations);
     if (dominant === undefined) {
-      return undefined;
+      return ;
     }
     return delegations.find(
       (entry) => entry.delegation.delegationId === dominant.delegationId,
@@ -1638,7 +1638,7 @@ export class RunReplayService {
     const lastEventAt = replay.summary.lastEventAt;
     if (lastEventAt !== undefined) {
       const ageMs = Date.now() - Date.parse(lastEventAt);
-      if (Number.isFinite(ageMs) && ageMs > 5 * 60 * 1_000) {
+      if (Number.isFinite(ageMs) && ageMs > 5 * 60 * 1000) {
         return "STALLED";
       }
     }
@@ -1722,24 +1722,24 @@ export class RunReplayService {
         message: wait.detail ?? "Run is stalled in the scheduler.",
       };
     }
-    return undefined;
+    return ;
   }
 
   private findCapabilityLossPrunedToolFailure(
     replay: ReplayResult,
   ): { toolName: string; bundleId?: string | undefined } | undefined {
     if (replay.summary.terminalStatus !== "FAILED") {
-      return undefined;
+      return ;
     }
     const failedRunEvent = [...replay.events].reverse().find((event) => event.type === "run.failed");
     const failedMetadata = asRecord(failedRunEvent?.metadata);
     if (failedMetadata?.code !== "TOOL_LOOKUP_FAILED") {
-      return undefined;
+      return ;
     }
     const failedDetails = asRecord(failedMetadata.details);
     const toolName = typeof failedDetails?.toolName === "string" ? failedDetails.toolName : undefined;
     if (toolName === undefined) {
-      return undefined;
+      return ;
     }
 
     for (const entry of replay.assembly.history) {
@@ -1759,7 +1759,7 @@ export class RunReplayService {
       };
     }
 
-    return undefined;
+    return ;
   }
 
   private buildDoctorAssemblySummary(
@@ -1778,7 +1778,7 @@ export class RunReplayService {
       };
     }
     if (active === undefined) {
-      return undefined;
+      return ;
     }
     const compatibility = this.buildCompatibilitySummary(active);
     return {
@@ -1850,7 +1850,7 @@ export class RunReplayService {
       compatibility.downgradeReason === undefined &&
       compatibility.capabilityLossReason === undefined
     ) {
-      return undefined;
+      return ;
     }
 
     return {
@@ -1881,11 +1881,11 @@ export class RunReplayService {
       return typeof asRecord(event.metadata)?.message === "string";
     });
     if (latest === undefined) {
-      return undefined;
+      return ;
     }
     const metadata = asRecord(latest.metadata);
     if (typeof metadata?.message !== "string") {
-      return undefined;
+      return ;
     }
     return {
       message: summarizeReasoningMessage(metadata.message),
@@ -2127,11 +2127,9 @@ export class RunReplayService {
         return `eventType=${waitFor.eventType}`;
       }
     }
-    if (transition.eventType.startsWith("region.scheduler.")) {
-      if (typeof transition.metadata?.region === "string") {
+    if (transition.eventType.startsWith("region.scheduler.") && typeof transition.metadata?.region === "string") {
         return `region=${String(transition.metadata.region)}`;
       }
-    }
     if (
       transition.eventType === "interaction.requested" ||
       transition.eventType === "interaction.resolved" ||
@@ -2164,11 +2162,9 @@ export class RunReplayService {
       ].filter((value): value is string => value !== undefined);
       return parts.length > 0 ? parts.join(" ") : undefined;
     }
-    if (transition.eventType === "context.compaction_applied") {
-      if (typeof transition.metadata?.summaryArtifactId === "string") {
+    if (transition.eventType === "context.compaction_applied" && typeof transition.metadata?.summaryArtifactId === "string") {
         return `summaryArtifactId=${String(transition.metadata.summaryArtifactId)}`;
       }
-    }
     if (transition.eventType === "context.adaptation_applied") {
       const parts = [
         typeof transition.metadata?.action === "string"
@@ -2216,7 +2212,7 @@ export class RunReplayService {
     if (transition.eventType === "reasoning.update" && typeof transition.metadata?.message === "string") {
       return summarizeReasoningMessage(String(transition.metadata.message));
     }
-    return undefined;
+    return ;
   }
 }
 
@@ -2265,7 +2261,7 @@ function extractEvidenceRecoverySummary(
 ): ReplayEvidenceRecoverySummary | undefined {
   const normalized = normalizeEvidenceRecoverySummary(value);
   if (normalized === undefined) {
-    return undefined;
+    return ;
   }
   const base = toReplayEvidenceRecoverySummary(normalized, terminalOutcome);
   const latest = asRecord(asRecord(value)?.latest);
@@ -2385,7 +2381,7 @@ function selectAdaptationSummary(
     };
   }
 
-  return undefined;
+  return ;
 }
 
 function groupKindFromTransition(
@@ -2725,7 +2721,7 @@ function readFanInDecision(metadata: Record<string, unknown> | undefined): strin
   if (metadata?.fanIn === true || readString(metadata?.decisionType) === "fan_in") {
     return readString(metadata?.decision);
   }
-  return undefined;
+  return ;
 }
 
 function dedupeFanInDecisions(decisions: DelegationFanInDecision[]): DelegationFanInDecision[] {
@@ -2790,7 +2786,7 @@ function selectDominantBlocker(
       return right.delegation.updatedAt.localeCompare(left.delegation.updatedAt);
     })[0];
   if (winner === undefined) {
-    return undefined;
+    return ;
   }
   return {
     delegationId: winner.delegation.delegationId,
@@ -2855,7 +2851,7 @@ function sanitizeModelProvenanceMetadata(value: Record<string, unknown> | undefi
   } | undefined;
 } | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const promptDump = asRecord(value.promptDump);
   const sanitizedPromptDump = {

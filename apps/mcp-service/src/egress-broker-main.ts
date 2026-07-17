@@ -3,7 +3,7 @@ import { createOciEgressBroker } from "./egress-broker.js";
 const allowlist = JSON.parse(
   process.env.KESTREL_MCP_EGRESS_ALLOWLIST ?? "[]"
 ) as unknown;
-if (!Array.isArray(allowlist) || !allowlist.every((entry) => typeof entry === "string")) {
+if (!(Array.isArray(allowlist) && allowlist.every((entry) => typeof entry === "string"))) {
   throw new Error("KESTREL_MCP_EGRESS_ALLOWLIST must be a JSON string array.");
 }
 const port = Number.parseInt(process.env.PORT ?? "8080", 10);

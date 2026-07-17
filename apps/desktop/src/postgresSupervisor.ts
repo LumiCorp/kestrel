@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createServer } from "node:net";
@@ -224,7 +224,7 @@ export class DesktopPostgresSupervisor {
       return false;
     }
     try {
-      await (this.options.probeTcpPortImpl ?? probeTcpPort)("127.0.0.1", port, 1_000);
+      await (this.options.probeTcpPortImpl ?? probeTcpPort)("127.0.0.1", port, 1000);
       return true;
     } catch {
       await (this.options.rmImpl ?? rm)(pidPath, { force: true });
@@ -250,7 +250,7 @@ export class DesktopPostgresSupervisor {
       });
     }
     try {
-      await (this.options.probeTcpPortImpl ?? probeTcpPort)("127.0.0.1", port, 2_500);
+      await (this.options.probeTcpPortImpl ?? probeTcpPort)("127.0.0.1", port, 2500);
     } catch (error) {
       throw this.raiseFailure("DESKTOP_POSTGRES_HEALTHCHECK_FAILED", `Bundled database did not become ready on 127.0.0.1:${port}.`, {
         port,
@@ -374,7 +374,7 @@ export class DesktopPostgresSupervisor {
 
 function appendCommandOutput(current: string, chunk: unknown): string {
   const next = `${current}${String(chunk)}`;
-  return next.length > 4_000 ? next.slice(-4_000) : next;
+  return next.length > 4000 ? next.slice(-4000) : next;
 }
 
 function summarizeCommandOutput(stdout: string, stderr: string, code: number | null): string {

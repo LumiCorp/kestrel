@@ -218,7 +218,7 @@ export class ToolJobQueue {
       }
     | undefined {
     if (this.runOrder.length === 0) {
-      return undefined;
+      return ;
     }
 
     for (let i = 0; i < this.runOrder.length; i += 1) {
@@ -246,7 +246,7 @@ export class ToolJobQueue {
       };
     }
 
-    return undefined;
+    return ;
   }
 
   private ensureRun(runId: string): RunQueueState {
@@ -314,7 +314,7 @@ export class ToolJobQueue {
 
 function resolveRetryDelayMs(attempt: number): number {
   const baseMs = 250;
-  const maxMs = 4_000;
+  const maxMs = 4000;
   const raw = Math.min(maxMs, baseMs * 2 ** attempt);
   const jitter = 0.8 + Math.random() * 0.4;
   return Math.floor(raw * jitter);

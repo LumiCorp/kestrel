@@ -198,7 +198,7 @@ export function normalizeShellPresetId(value: unknown): ShellPresetId | undefine
 
 export function normalizeCapabilityPackIds(value: unknown): CapabilityPackId[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const packs = value.filter(
     (entry): entry is CapabilityPackId =>
@@ -294,7 +294,7 @@ function applyCapabilityPackToolRequirements(input: {
 
 function normalizeToolAllowlist(value: unknown): string[] | undefined {
   if (Array.isArray(value) === false) {
-    return undefined;
+    return ;
   }
   const next = value
     .filter((entry): entry is string => typeof entry === "string")
@@ -310,7 +310,7 @@ function normalizeIdentityLabel(...values: Array<string | undefined>): string | 
       return trimmed;
     }
   }
-  return undefined;
+  return ;
 }
 
 function sortCapabilityPacks(capabilityPacks: CapabilityPackId[]): CapabilityPackId[] {

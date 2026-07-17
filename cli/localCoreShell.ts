@@ -140,6 +140,6 @@ function readLocalCoreApiToken(homePath: string): string | undefined {
     const token = readFileSync(tokenPath, "utf8").trim();
     return token.length > 0 ? token : undefined;
   } catch {
-    return undefined;
+    return ;
   }
 }

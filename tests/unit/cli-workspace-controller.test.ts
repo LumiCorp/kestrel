@@ -87,8 +87,8 @@ async function createWorkspaceControllerHarness(): Promise<{
     appendHistoryLine: async (_role: TranscriptLine["role"], text: string) => {
       historyLines.push(text);
     },
-    persistSessionAndUi: async () => undefined,
-    persistUiState: async () => undefined,
+    persistSessionAndUi: async () => {},
+    persistUiState: async () => {},
     persistActiveProfile: async (profile: TuiProfile) => {
       uiStore.patch({ activeProfile: profile });
     },
@@ -107,8 +107,8 @@ async function createWorkspaceControllerHarness(): Promise<{
       uiStore.patch({ activeView: view });
     },
     withMcpSummary: (statusLine: string) => statusLine,
-    recordPersistenceFailure: () => undefined,
-    recordStartupNotices: () => undefined,
+    recordPersistenceFailure: () => {},
+    recordStartupNotices: () => {},
   } as unknown as WorkspaceControllerContext;
 
   return {

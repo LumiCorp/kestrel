@@ -274,11 +274,11 @@ export function readBlockedApprovalCapability(input: {
 }): ApprovalCapabilityClass | undefined {
   const requiredCapabilities = input.requiredCapabilities?.filter(isApprovalCapabilityClass) ?? [];
   if (requiredCapabilities.length === 0) {
-    return undefined;
+    return ;
   }
   const capabilityPolicy = input.executionPolicy?.capabilityPolicy;
   if (capabilityPolicy === undefined) {
-    return undefined;
+    return ;
   }
   return requiredCapabilities.find((capability) => capabilityPolicy[capability] !== true);
 }

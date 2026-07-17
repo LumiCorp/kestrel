@@ -22,11 +22,9 @@ import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } f
 import { resolveKestrelHome } from "./config/kestrelHome.js";
 import type { JobInputV1, JobOutputV1 } from "./job/contracts.js";
 import { parseJobInputV1 } from "./job/contracts.js";
-import { buildJobReplayPointer } from "./job/contracts.js";
 import type {
   JobRunCommandPayload,
   OperatorControlCommandPayload,
-  RunnerEvent,
 } from "./protocol/contracts.js";
 import { formatDoctorInspection, formatReplayInspection } from "./runtime/inspectionFormatting.js";
 import { runWebCommand } from "./webCommand.js";
@@ -670,7 +668,7 @@ function hasFlagOrAssignment(args: string[], flag: string): boolean {
 function readFlag(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index === -1) {
-    return undefined;
+    return ;
   }
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
@@ -723,7 +721,7 @@ function parseToolClasses(values: string[]): ToolExecutionClass[] {
 
 function readOptionalInteger(value: string | undefined): number | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   const parsed = Number.parseInt(value, 10);
   if (Number.isFinite(parsed) === false || parsed <= 0) {
@@ -734,7 +732,7 @@ function readOptionalInteger(value: string | undefined): number | undefined {
 
 function readOptionalApprovalPack(value: string | undefined): "dev" | "ci_bot" | "production" | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;

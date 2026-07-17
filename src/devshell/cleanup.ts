@@ -41,7 +41,7 @@ export async function cleanupDevShellServices(input: {
 } = {}): Promise<DevShellCleanupResult> {
   const roots = input.roots ?? defaultCleanupRoots();
   const maxDepth = input.maxDepth ?? 7;
-  const maxEntries = input.maxEntries ?? 5_000;
+  const maxEntries = input.maxEntries ?? 5000;
   const statusPaths: string[] = [];
   for (const root of roots) {
     await collectStatusPaths(root, {
@@ -119,11 +119,11 @@ async function readCleanupCandidate(
 ): Promise<DevShellCleanupCandidate | undefined> {
   const status = await readBootstrapStatus(statusPath);
   if (status === undefined) {
-    return undefined;
+    return ;
   }
   const staleReason = classifyStaleReason(status);
   if (staleReason === undefined) {
-    return undefined;
+    return ;
   }
   const baseCandidate = {
     statusPath,
@@ -183,7 +183,7 @@ function classifyStaleReason(status: BootstrapStatus): DevShellCleanupCandidate[
   if (isPidRunning(status.ownerPid) === false) {
     return "owner_process_exited";
   }
-  return undefined;
+  return ;
 }
 
 interface BootstrapStatus {
@@ -203,7 +203,7 @@ async function readBootstrapStatus(statusPath: string): Promise<BootstrapStatus 
       ...(typeof parsed.socketPath === "string" ? { socketPath: parsed.socketPath } : {}),
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 
@@ -222,7 +222,7 @@ async function verifyDevShellServiceProcess(input: {
 }): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("ps", ["-p", String(input.pid), "-o", "command="], {
-      timeout: 1_000,
+      timeout: 1000,
       maxBuffer: 16_384,
     });
     const command = stdout.trim();

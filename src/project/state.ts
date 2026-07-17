@@ -351,7 +351,7 @@ function normalizeActivityItem(value: unknown): ProductActivityItem | undefined 
     typeof record.detail !== "string" ||
     typeof record.timestamp !== "string"
   ) {
-    return undefined;
+    return ;
   }
   return {
     id: record.id,
@@ -412,7 +412,7 @@ function normalizeDecisionRecord(value: unknown): ProductProjectPolicyState["rec
     typeof record.timestamp !== "string" ||
     typeof record.summary !== "string"
   ) {
-    return undefined;
+    return ;
   }
   return {
     id: record.id,

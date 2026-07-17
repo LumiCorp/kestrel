@@ -1,3 +1,4 @@
+"use strict";
 const { MakerZIP } = require("@electron-forge/maker-zip");
 
 module.exports = {

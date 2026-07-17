@@ -35,8 +35,6 @@ export async function getMobileV2ThreadSnapshot(input: {
   organizationId: string;
   userId: string;
 }) {
-  const window = await getMobileV2MessageWindow(input);
-  if (!window) return null;
   const thread = await knowledgeDb.query.threads.findFirst({
     where: eq(schema.threads.id, input.threadId),
   });
@@ -71,6 +69,12 @@ export async function getMobileV2ThreadSnapshot(input: {
   const presentationByTurn = new Map(
     presentations.map((presentation) => [presentation.turnId, presentation])
   );
+  // A waiting persistence transaction publishes its assistant message, turn state,
+  // and interaction together. Read the message window after the durable state so a
+  // snapshot cannot report a waiting turn while retaining a pre-commit window.
+  // The window lookup also enforces the thread access boundary before we return it.
+  const window = await getMobileV2MessageWindow(input);
+  if (!window) return null;
   const latestTurnRevision = visibleTurns.reduce(
     (latest, turn) =>
       turn.updatedAt.getTime() > latest.getTime() ? turn.updatedAt : latest,

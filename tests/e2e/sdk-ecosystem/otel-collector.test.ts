@@ -153,7 +153,7 @@ process.exit(0);
 
 async function isJaegerAvailable(baseUrl: string): Promise<boolean> {
   const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), 2_000);
+  const timeoutHandle = setTimeout(() => controller.abort(), 2000);
   try {
     const response = await fetch(`${baseUrl}/api/services`, {
       signal: controller.signal,

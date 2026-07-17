@@ -208,7 +208,7 @@ export function verifyPreparedDesktopPostgresBundle(input: {
   });
   if (audit.scannedBinaries !== manifest.scannedBinaries) {
     throw new Error(
-      `Prepared Desktop Postgres manifest scannedBinaries mismatch: expected `
+      "Prepared Desktop Postgres manifest scannedBinaries mismatch: expected "
         + `${manifest.scannedBinaries}, audited ${audit.scannedBinaries}.`,
     );
   }

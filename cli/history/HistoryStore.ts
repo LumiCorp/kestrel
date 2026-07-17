@@ -171,7 +171,7 @@ function shouldMergeAssistantSegment(
     return false;
   }
 
-  return currentTime - previousTime >= 0 && currentTime - previousTime <= 1_000;
+  return currentTime - previousTime >= 0 && currentTime - previousTime <= 1000;
 }
 
 function isNonFatalFsError(error: unknown, extraCodes: string[] = []): boolean {
@@ -188,32 +188,32 @@ function safeParseRecord(line: string): TuiHistoryRecord | undefined {
   try {
     const parsed = JSON.parse(line);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return undefined;
+      return ;
     }
 
     const value = parsed as Record<string, unknown>;
     if (typeof value.sessionId !== "string") {
-      return undefined;
+      return ;
     }
     if (value.source !== "runner") {
-      return undefined;
+      return ;
     }
     if (typeof value.eventId !== "string") {
-      return undefined;
+      return ;
     }
     if (typeof value.timestamp !== "string") {
-      return undefined;
+      return ;
     }
     if (typeof value.role !== "string") {
-      return undefined;
+      return ;
     }
     if (typeof value.text !== "string") {
-      return undefined;
+      return ;
     }
 
     return parsed as TuiHistoryRecord;
   } catch {
-    return undefined;
+    return ;
   }
 }
 

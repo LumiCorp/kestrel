@@ -262,9 +262,9 @@ test("reference harness pivots from weak headlines to soft handoff without loopi
         nextAction: {
           kind: "tool_batch",
           items: [
-            { name: "internet.extract", input: { url: "https://nbc.example.com/story-1", maxChars: 12000 } },
-            { name: "internet.extract", input: { url: "https://ap.example.com/story-2", maxChars: 12000 } },
-            { name: "internet.extract", input: { url: "https://reuters.example.com/story-3", maxChars: 12000 } },
+            { name: "internet.extract", input: { url: "https://nbc.example.com/story-1", maxChars: 12_000 } },
+            { name: "internet.extract", input: { url: "https://ap.example.com/story-2", maxChars: 12_000 } },
+            { name: "internet.extract", input: { url: "https://reuters.example.com/story-3", maxChars: 12_000 } },
           ],
         },
         reason: "The current results identify candidate stories but need article-body evidence before drafting.",

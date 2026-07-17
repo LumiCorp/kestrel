@@ -29,14 +29,14 @@ import {
   decorateOperatorAffordance,
 } from "../runtime/operatorAffordances.js";
 import { getSkillPackById } from "../runtime/skillPacks.js";
-import {
-  type ResolvedWorkspace,
-  type SessionsFile,
-  type SplashPreflightState,
-  type TranscriptLine,
-  type TuiProfile,
-  type TuiSessionMeta,
-  type UiState,
+import type {
+  ResolvedWorkspace,
+  SessionsFile,
+  SplashPreflightState,
+  TranscriptLine,
+  TuiProfile,
+  TuiSessionMeta,
+  UiState,
 } from "../contracts.js";
 import {
   formatOperatorLaunchSummary,
@@ -295,8 +295,8 @@ export async function runSplashDatabasePreflight(input: {
     selfHealDefaultEnabled: input.selfHealDefaultEnabled ?? true,
     allowAutoStart: true,
     autoStart: input.autoStart ?? attemptLocalDatabaseSelfHeal,
-    timeoutMs: 1_200,
-    retryTimeoutMs: 2_500,
+    timeoutMs: 1200,
+    retryTimeoutMs: 2500,
   });
   if (result.ok) {
     input.updateCheck("database", {

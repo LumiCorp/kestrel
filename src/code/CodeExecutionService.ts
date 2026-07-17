@@ -1,9 +1,9 @@
-import {
-  type CodeExecutionRequest,
-  type CodeExecutionResult,
-  type CodeModeProfileConfig,
-  type SandboxExecutionOutput,
-  type SandboxExecutor,
+import type {
+  CodeExecutionRequest,
+  CodeExecutionResult,
+  CodeModeProfileConfig,
+  SandboxExecutionOutput,
+  SandboxExecutor,
 } from "./contracts.js";
 import { DockerSandboxExecutor, DockerUnavailableError } from "./DockerSandboxExecutor.js";
 import { evaluateExecutionPolicy } from "./PolicyEngine.js";

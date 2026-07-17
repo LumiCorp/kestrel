@@ -19,7 +19,7 @@ export async function startOciEgressBroker(input: {
 }): Promise<OciEgressLease | undefined> {
   if (input.server.egressAllowlist.length === 0) return;
   const brokerImage = input.brokerImage?.trim();
-  if (!brokerImage || !DIGEST_PINNED_IMAGE.test(brokerImage)) {
+  if (!(brokerImage && DIGEST_PINNED_IMAGE.test(brokerImage))) {
     throw new Error(
       "KESTREL_MCP_EGRESS_BROKER_IMAGE must be a digest-pinned image when OCI egress is enabled."
     );

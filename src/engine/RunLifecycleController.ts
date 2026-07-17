@@ -204,7 +204,7 @@ export class RunLifecycleController {
     qualityMetadata?: Record<string, unknown> | undefined;
   }): Promise<NormalizedOutput | undefined> {
     if (input.transition.status === "RUNNING") {
-      return undefined;
+      return ;
     }
 
     const status = input.transition.status;
@@ -522,7 +522,7 @@ export class RunLifecycleController {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return ;
   }
   return value as Record<string, unknown>;
 }
@@ -542,7 +542,7 @@ function readFailedTransitionError(transition: Transition): RuntimeError | undef
     asString(terminal?.message) ??
     asString(lastActionError?.message);
   if (code === undefined && message === undefined) {
-    return undefined;
+    return ;
   }
   const terminalStatus = asString(terminal?.status);
   const decisionReason = asString(agent?.decisionReason);

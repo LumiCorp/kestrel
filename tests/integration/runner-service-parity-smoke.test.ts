@@ -267,7 +267,7 @@ async function createHttpServerOrSkip(
   } catch (error) {
     if (isListenPermissionError(error)) {
       context?.skip("sandbox denied localhost listener setup for runner-service parity smoke test");
-      return undefined;
+      return ;
     }
     throw error;
   }

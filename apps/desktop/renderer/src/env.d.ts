@@ -5,5 +5,3 @@ declare global {
     kestrelDesktop: DesktopBridge;
   }
 }
-
-export {};

@@ -15,7 +15,7 @@ export const internetExtractTool: SharedToolModule = {
           items: { type: "string", minLength: 1, description: "Public absolute http or https URL." },
         },
         url: { type: "string", minLength: 1, description: "Public absolute http or https URL. Alias for a single-item urls array." },
-        maxChars: { type: "number", minimum: 500, maximum: 200000 },
+        maxChars: { type: "number", minimum: 500, maximum: 200_000 },
         query: { type: "string" },
         chunksPerSource: {
           type: "number",
