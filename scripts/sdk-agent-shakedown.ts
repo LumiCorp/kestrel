@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -47,7 +47,7 @@ interface ScenarioReport {
 
 async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
-  await loadShellAndDotEnv(resolvePrimaryCheckoutRoot(process.cwd()), {
+  await loadShellAndDotEnv(process.cwd(), {
     preferDotEnvKeys: [
       "OPENROUTER_API_KEY",
       "OPENROUTER_BASE_URL",
@@ -143,23 +143,6 @@ async function main(): Promise<void> {
   );
   if (failed.length > 0) {
     process.exitCode = 1;
-  }
-}
-
-function resolvePrimaryCheckoutRoot(cwd: string): string {
-  try {
-    const commonGitDir = execFileSync(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      },
-    ).trim();
-    return commonGitDir.length > 0 ? path.dirname(commonGitDir) : cwd;
-  } catch {
-    return cwd;
   }
 }
 

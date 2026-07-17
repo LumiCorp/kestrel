@@ -235,6 +235,7 @@ const CI_OWNERSHIP_RULES: OwnershipRule[] = [
       ".env.example",
       ".gitattributes",
       ".gitignore",
+      ".worktreeinclude",
       ".vercelignore",
       "docker-compose.yml"
     ),

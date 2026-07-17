@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -11,6 +12,24 @@ import {
   type SdkAgentShakedownScenario,
   type SdkAgentShakedownToolObservation,
 } from "../../scripts/lib/sdk-agent-shakedown.js";
+
+test("SDK agent shake-down receives the project environment in managed worktrees", async () => {
+  const worktreeIncludes = (await readFile(
+    new URL("../../.worktreeinclude", import.meta.url),
+    "utf8",
+  ))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && line.startsWith("#") === false);
+  const script = await readFile(
+    new URL("../../scripts/sdk-agent-shakedown.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(worktreeIncludes.includes(".env"));
+  assert.match(script, /loadShellAndDotEnv\(process\.cwd\(\),/u);
+  assert.doesNotMatch(script, /git-common-dir|resolvePrimaryCheckoutRoot/u);
+});
 
 test("SDK agent shake-down uses the mini model and explicit core scenario matrix", () => {
   assert.equal(SDK_AGENT_SHAKEDOWN_DEFAULT_MODEL, "openai/gpt-5.4-mini");

@@ -89,6 +89,7 @@ test("representative repository paths have explicit ownership", () => {
   for (const path of [
     "AGENTS.md",
     ".env.example",
+    ".worktreeinclude",
     "apps/cli/.gitignore",
     "benchmarks/terminal.json",
     "deploy/fly.toml",
