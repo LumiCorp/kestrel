@@ -259,6 +259,8 @@ export type CiGateId =
   | "web-unit"
   | "web-build"
   | "service-contracts"
+  | "postgres-integration"
+  | "kestrel-one-product"
   | "docs-contracts"
   | "desktop-contracts"
   | "package-macos";

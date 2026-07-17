@@ -13,7 +13,9 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(process.cwd());
 const profileSettingsPath = "/tmp/kestrel-ops-web-profile.json";
 const inheritedEnv = Object.fromEntries(
-  Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  Object.entries(process.env).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string"
+  )
 );
 const webServerEnv: Record<string, string> = {
   ...inheritedEnv,
@@ -45,14 +47,14 @@ export default defineConfig({
   globalSetup: fileURLToPath(new URL("./global-setup.ts", import.meta.url)),
   webServer: [
     {
-      command: `node --import tsx tests/ops/helpers/fakeOpenRouter.ts --port ${fakeOpenRouterPort}`,
+      command: `node --import tsx tests/ops/helpers/fake-open-router.ts --port ${fakeOpenRouterPort}`,
       cwd: repoRoot,
       url: `http://127.0.0.1:${fakeOpenRouterPort}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
     {
-      command: `node --import tsx cli/runner/service.ts`,
+      command: "node --import tsx cli/runner/service.ts",
       cwd: repoRoot,
       url: `http://127.0.0.1:${runnerServicePort}/health`,
       reuseExistingServer: !process.env.CI,

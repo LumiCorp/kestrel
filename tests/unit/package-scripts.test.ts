@@ -33,6 +33,10 @@ test("root package exposes public product scripts and a broad monorepo test gate
   );
   assert.equal(scripts["desktop:postgres-smoke"], undefined);
   assert.equal(
+    scripts["ci:postgres:local"],
+    "node --import tsx scripts/ci/postgres-local.ts"
+  );
+  assert.equal(
     scripts["desktop:package-smoke"],
     "node --import tsx scripts/desktop-package-smoke.ts"
   );
@@ -90,6 +94,7 @@ test("root package exposes public product scripts and a broad monorepo test gate
   assert.equal(scripts["ci:runtime"]?.match(/prompt-suite/gu)?.length, 1);
   assert.match(scripts["ci:docs"] ?? "", /pnpm run ci:build:shared/u);
   assert.match(scripts["ci:desktop"] ?? "", /pnpm run ci:build:shared/u);
+  assert.match(scripts["ci:postgres"] ?? "", /pnpm run ci:build:shared/u);
 });
 
 test("runtime package publishes only the public executable boundary", async () => {
@@ -331,10 +336,13 @@ test("public CI packages and verifies macOS release artifacts from a clean check
   assert.match(workflow, /^ {2}package-macos:$/mu);
   assert.match(workflow, /^ {4}runs-on: macos-15$/mu);
   assert.match(workflow, /brew install postgresql@14/u);
-  assert.match(workflow, /pnpm run cli:package && pnpm run cli:release-check/u);
   assert.match(
     workflow,
-    /pnpm run desktop:package && pnpm run desktop:release-check/u
+    /package-macos\/cli -- pnpm run cli:package && pnpm run ci:run-gate -- package-macos\/cli-release -- pnpm run cli:release-check/u
+  );
+  assert.match(
+    workflow,
+    /package-macos\/desktop -- pnpm run desktop:package && pnpm run ci:run-gate -- package-macos\/desktop-release -- pnpm run desktop:release-check/u
   );
 });
 

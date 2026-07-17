@@ -430,10 +430,10 @@ test(
         )
     );
     assert.equal(recovered?.status, "failed");
-    assert.equal(recovered?.failureCode, "RUNTIME_FAILED");
-    assert.match(
-      recovered?.failureMessage ?? "",
-      /Hosted Environment configuration is incomplete/u
+    assert.equal(recovered?.failureCode, "TURN_WORKER_FAILED");
+    assert.equal(
+      recovered?.failureMessage,
+      "No approved gateway model is configured for the chat surface."
     );
     const recoveryEvents = await store.listDurableTurnEvents({
       turnId: recovery.turn.id,
@@ -442,9 +442,12 @@ test(
       recoveryEvents
         .map((event) => event.type)
         .filter((type) => type !== "ui.message"),
-      ["turn.queued", "turn.running", "turn.failed"]
+      ["turn.queued", "turn.running", "turn.activity", "turn.failed"]
     );
-    assert.ok(recoveryEvents.some((event) => event.type === "ui.message"));
+    assert.deepEqual(
+      recoveryEvents.find((event) => event.type === "turn.activity")?.data,
+      { message: "Reading context", stage: "reading_context" }
+    );
 
     await Promise.all([
       queue.enqueueDurableThreadTurn(recovery.turn.id),

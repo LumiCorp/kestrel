@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
 
-test("prepareKestrelRuntimeMessagesForPersistence keeps visible runtime failure text unchanged", () => {
+test("live failure visibility cannot waive canonical durable failure text", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -17,11 +17,11 @@ test("prepareKestrelRuntimeMessagesForPersistence keeps visible runtime failure 
     }
   );
 
-  assert.deepEqual(messages, [
+  assert.deepEqual(messages[0]?.parts, [
+    { type: "text", text: "Runner failed." },
     {
-      id: "assistant_failed",
-      role: "assistant",
-      parts: [{ type: "text", text: "Runner failed." }],
+      type: "text",
+      text: "The previous response failed before completion. Reason: Runner failed. You can retry the request.",
     },
   ]);
 });
@@ -52,7 +52,10 @@ test("prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback 
     parts: Array<{ type: string; text?: string }>;
   };
 
-  assert.equal(assistant.parts.some((part) => part.type === "text"), true);
+  assert.equal(
+    assistant.parts.some((part) => part.type === "text"),
+    true
+  );
 });
 
 test("prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
@@ -79,5 +82,7 @@ test("prepareKestrelRuntimeMessagesForPersistence never retains provider reasoni
     }
   );
 
-  assert.deepEqual(messages[0]?.parts, [{ type: "text", text: "Final answer." }]);
+  assert.deepEqual(messages[0]?.parts, [
+    { type: "text", text: "Final answer." },
+  ]);
 });

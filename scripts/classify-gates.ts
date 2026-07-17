@@ -35,9 +35,25 @@ function git(args: string[]): string {
 }
 
 function readChanges(base: string, head: string): CiChangedPath[] {
-  return parseCiNameStatus(
+  const changes = parseCiNameStatus(
     git(["diff", "--name-status", "-z", "--find-renames", base, head])
   );
+  if (head === "HEAD") {
+    changes.push(
+      ...parseCiNameStatus(
+        git(["diff", "--name-status", "-z", "--find-renames", "HEAD"])
+      ),
+      ...git(["ls-files", "--others", "--exclude-standard", "-z"])
+        .split("\0")
+        .filter(Boolean)
+        .map((path) => ({ status: "A" as const, path }))
+    );
+  }
+  return [
+    ...new Map(
+      changes.map((change) => [JSON.stringify(change), change])
+    ).values(),
+  ];
 }
 
 function verifyTrackedOwnership(): string[] {
