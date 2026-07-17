@@ -60,4 +60,21 @@ test("product-contract bootstrap waits for Compose health before database setup"
     bootstrap,
     /docker compose up -d --wait --wait-timeout 60 postgres/u
   );
+  assert.match(bootstrap, /KESTREL_TURN_WORKER_READY_FILE/u);
+});
+
+test("product-contract browser proof waits for the durable worker before test timeouts", async () => {
+  const productConfig = await readFile(
+    path.join(ROOT, "apps", "web", "playwright.product.config.ts"),
+    "utf8"
+  );
+  const setup = await readFile(
+    path.join(ROOT, "apps", "web", "tests", "product", "global-setup.ts"),
+    "utf8"
+  );
+
+  assert.match(productConfig, /globalSetup: "\.\/tests\/product\/global-setup\.ts"/u);
+  assert.match(productConfig, /KESTREL_TURN_WORKER_READY_FILE/u);
+  assert.match(setup, /waitForWorkerReady/u);
+  assert.match(setup, /\/api\/mobile\/v2\/threads/u);
 });
