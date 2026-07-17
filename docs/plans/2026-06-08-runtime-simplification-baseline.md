@@ -30,8 +30,7 @@ This note records the PR 0 branch and gate baseline for the runtime simplificati
   - `docs/references/workspace-checkpoint-thread-id-contract.md`
   - `docs/runbooks/2026-04-22-studio-cutover-baseline-ledger.md`
   - `docs/runbooks/2026-04-22-studio-runner-service-operations-runbook.md`
-  - `docs/superpowers/plans/2026-04-21-agent-admin-stage-model-timeout-implementation.md`
-  - `docs/superpowers/specs/2026-04-21-agent-admin-stage-model-settings-design.md`
+  - two since-retired Agent Admin Superpowers records
 - `pnpm run test`: failed before edits. Core tests progressed to the web package; `@kestrel/web` failed in [ui-smoke.test.ts](../../apps/web/tests/ui-smoke.test.ts) while matching settings page source output.
 - `pnpm run prompt-suite`: passed, `total=84 passed=84 failed=0 passRate=1 composite=97`.
 - `pnpm run evals:release-check`: passed all listed evaluation cases.
