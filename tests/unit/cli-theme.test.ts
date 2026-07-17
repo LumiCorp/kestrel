@@ -60,7 +60,7 @@ test("resolveThemeModePreference uses env override before system detection", () 
     resolveThemeModePreference("light", {
       env: { KESTREL_TUI_COLOR_MODE: "dark" },
       platform: "darwin",
-      readMacOsAppearance: () => {},
+      readMacOsAppearance: (): undefined => void 0,
     }),
     "dark",
   );
@@ -79,7 +79,7 @@ test("resolveThemeModePreference resolves macOS appearance for system mode", () 
     resolveThemeModePreference("system", {
       env: {},
       platform: "darwin",
-      readMacOsAppearance: () => {},
+      readMacOsAppearance: (): undefined => void 0,
     }),
     "light",
   );

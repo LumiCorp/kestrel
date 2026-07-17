@@ -184,10 +184,10 @@ function createRuntimeIO(input: {
     }),
     buildModelTimeoutMetadata: () => ({}),
     summarizePromptInput: () => ({}),
-    persistModelPromptDump: async () => {},
+    persistModelPromptDump: async (): Promise<undefined> => void 0,
     persistModelResponseDump: async () => {},
-    extractModelUsage: () => {},
-    extractModelMetadata: () => {},
+    extractModelUsage: (): undefined => void 0,
+    extractModelMetadata: (): undefined => void 0,
     callTool: async <T>() => {
       const result = input.toolCall === undefined ? { ok: true } : await input.toolCall();
       return result as T;

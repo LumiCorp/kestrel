@@ -157,6 +157,26 @@ test("runtime package publishes only the public executable boundary", async () =
       `runtime package files must exclude '${forbidden}'`
     );
   }
+
+  for (const exclusion of [
+    "!dist/**/*.test.*",
+    "!dist/**/*.spec.*",
+    "!src/**/*.test.*",
+    "!src/**/*.spec.*",
+    "!agents/**/*.test.*",
+    "!agents/**/*.spec.*",
+    "!models/**/*.test.*",
+    "!models/**/*.spec.*",
+    "!tools/**/*.test.*",
+    "!tools/**/*.spec.*",
+    "!cli/**/*.test.*",
+    "!cli/**/*.spec.*",
+  ]) {
+    assert.ok(
+      files.includes(exclusion),
+      `runtime package files must exclude '${exclusion}'`
+    );
+  }
 });
 
 test("canonical apps/web uses exact public packages and keeps sibling builds at the root", async () => {

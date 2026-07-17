@@ -26,7 +26,19 @@
     "scripts/install-cli.sh",
     "tsconfig.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!dist/**/*.test.*",
+    "!dist/**/*.spec.*",
+    "!src/**/*.test.*",
+    "!src/**/*.spec.*",
+    "!agents/**/*.test.*",
+    "!agents/**/*.spec.*",
+    "!models/**/*.test.*",
+    "!models/**/*.spec.*",
+    "!tools/**/*.test.*",
+    "!tools/**/*.spec.*",
+    "!cli/**/*.test.*",
+    "!cli/**/*.spec.*"
   ],
   "scripts": {
     "start": "node --import tsx scripts/start.ts",
