@@ -188,8 +188,8 @@ Required final gates:
 Latest required-gate result:
 - `pnpm run governance:check`: failed on four stale documents outside this slice:
   `docs/cli/contract-matrix.md`, `docs/cli/workspaces.md`,
-  `docs/plans/2026-05-20-managed-worktree-source-promotion-design.md`, and
-  `docs/superpowers/plans/2026-05-22-runtime-turn-coordinator-shell-parity.md`.
+  `docs/plans/2026-05-20-managed-worktree-source-promotion-design.md`, and a
+  since-retired runtime-turn-coordinator shell-parity record.
 - `CI=true pnpm run test`: passed after the active-task durability fix. Core TAP summaries include
   2112/2112 pass, 262/262 pass, 97/97 pass, 60/60 pass, 17/17 pass, 13/13 pass, 5/5 pass,
   and 5/5 pass; package suites finished with 351 test files passed, 3 skipped, 1646 tests passed,
