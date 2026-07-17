@@ -17,10 +17,18 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=20" },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/sdk": "workspace:*"
@@ -33,8 +41,10 @@
   },
   "scripts": {
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run clean && tsc -p tsconfig.json",
-    "test": "pnpm --filter @kestrel-agents/sdk build && node --import tsx --test tests/**/*.test.ts",
+    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run build:self",
+    "build:self": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kestrel-agents/sdk build && pnpm run test:self",
+    "test:self": "node --import tsx --test tests/**/*.test.ts",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ createKestrelPresentationAccumulator }) => { void createKestrelPresentationAccumulator; })\"",
     "release:check": "pnpm run build && pnpm run smoke:import"
   }

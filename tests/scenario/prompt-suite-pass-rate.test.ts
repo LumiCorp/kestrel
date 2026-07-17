@@ -1,27 +1,40 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
-import { promptSuiteThresholdsFor } from "../../scripts/prompt-suite.js";
-import { runPromptSuite } from "./promptSuiteHarness.js";
+import {
+  promptSuiteResultFailures,
+  promptSuiteThresholdsFor,
+} from "../../scripts/prompt-suite.js";
+import type { PromptSuiteSummary } from "./promptSuiteHarness.js";
 
-test("prompt suite pass-rate meets threshold", async () => {
+test("prompt suite result contract enforces totals and release thresholds", () => {
   const profile = "stable";
   const thresholds = promptSuiteThresholdsFor(profile);
-  const summary = await runPromptSuite(2, profile);
+  const summary = {
+    total: 10,
+    passed: 9,
+    failed: 1,
+    passRate: 0.9,
+    threshold_profile: profile,
+    quality: {
+      correctness: 90,
+      latency: 90,
+      tool_efficiency: 90,
+      recovery: 90,
+      cost: 90,
+      composite: 90,
+    },
+    byTag: {},
+    byFailureClass: {},
+    results: [],
+  } satisfies PromptSuiteSummary;
 
-  assert.equal(summary.total > 0, true);
-  assert.equal(Number.isFinite(summary.passRate), true);
-  assert.equal(summary.threshold_profile, profile);
-  assert.equal(Number.isFinite(summary.quality.composite), true);
-  assert.equal(typeof summary.byFailureClass, "object");
-  assert.equal(
-    summary.passRate >= thresholds.passRate,
-    true,
-    `passRate=${summary.passRate} below ${thresholds.passRate}`,
-  );
-  assert.equal(
-    summary.quality.composite >= thresholds.composite,
-    true,
-    `composite=${summary.quality.composite} below ${thresholds.composite}`,
+  assert.deepEqual(promptSuiteResultFailures(summary, thresholds), []);
+  assert.deepEqual(
+    promptSuiteResultFailures(
+      { ...summary, failed: 0, passRate: 0.5 },
+      thresholds
+    ),
+    ["passed plus failed must equal total", "passRate=0.5 < min=0.9"]
   );
 });

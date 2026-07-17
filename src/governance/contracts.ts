@@ -38,10 +38,12 @@ export interface LintInvariant {
   message_template: string;
   autofix_available: boolean;
   severity: "error" | "warn";
-  severity_overrides?: Array<{
-    path_prefix: string;
-    severity: "error" | "warn";
-  }> | undefined;
+  severity_overrides?:
+    | Array<{
+        path_prefix: string;
+        severity: "error" | "warn";
+      }>
+    | undefined;
 }
 
 export interface ReplayBaseline {
@@ -120,22 +122,24 @@ export interface RunDiagnosticsView {
   totalEvents: number;
   slowestStep?: string | undefined;
   failureSummary?: FailureDiagnosticsSummary | undefined;
-  decisionSummary?: {
-    interactionMode?: string | undefined;
-    allowedToolClasses: string[];
-    executionLane?: string | undefined;
-    routeReason?: string | undefined;
-    routeConfidence?: number | undefined;
-    toolUseIntent?: string | undefined;
-    toolIntentObjective?: string | undefined;
-    candidateTools: Array<{ name: string; allowlisted: boolean }>;
-    plannerAction?: string | undefined;
-    plannerToolName?: string | undefined;
-    requiredCapabilities: string[];
-    requiredToolClasses: string[];
-    blockedByMode: boolean;
-    finalizeBlocked: boolean;
-  } | undefined;
+  decisionSummary?:
+    | {
+        interactionMode?: string | undefined;
+        allowedToolClasses: string[];
+        executionLane?: string | undefined;
+        routeReason?: string | undefined;
+        routeConfidence?: number | undefined;
+        toolUseIntent?: string | undefined;
+        toolIntentObjective?: string | undefined;
+        candidateTools: Array<{ name: string; allowlisted: boolean }>;
+        plannerAction?: string | undefined;
+        plannerToolName?: string | undefined;
+        requiredCapabilities: string[];
+        requiredToolClasses: string[];
+        blockedByMode: boolean;
+        finalizeBlocked: boolean;
+      }
+    | undefined;
   stepDiagnostics: StepDiagnosticsView[];
   errorClusters: Array<{ eventType: string; count: number }>;
   toolHotspots: Array<{ toolName: string; count: number }>;
@@ -246,6 +250,41 @@ export type RiskTier = "low" | "medium" | "high" | "critical";
 export interface GateProfile {
   tier: RiskTier;
   required_checks: string[];
+}
+
+export type CiGateId =
+  | "static-policy"
+  | "runtime-unit"
+  | "package-contracts"
+  | "web-unit"
+  | "web-build"
+  | "service-contracts"
+  | "docs-contracts"
+  | "desktop-contracts"
+  | "package-macos";
+
+export type CiChangeStatus = "A" | "C" | "D" | "M" | "R" | "T" | "U";
+
+export interface CiChangedPath {
+  path: string;
+  previousPath?: string | undefined;
+  status: CiChangeStatus;
+}
+
+export interface CiGateSelection {
+  selected: boolean;
+  reasons: string[];
+}
+
+export interface CiGatePlan {
+  version: 1;
+  base: string;
+  head: string;
+  full: boolean;
+  risk: RiskTier;
+  changes: CiChangedPath[];
+  unownedPaths: string[];
+  gates: Record<CiGateId, CiGateSelection>;
 }
 
 export interface QualityScoreDomain {
