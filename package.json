@@ -68,6 +68,7 @@
     "sdk:build": "pnpm --filter @kestrel-agents/sdk build",
     "sdk:test": "pnpm --filter @kestrel-agents/sdk test",
     "sdk:smoke": "pnpm --filter @kestrel-agents/sdk smoke:import",
+    "sdk:shakedown": "pnpm run sdk:build && node --import tsx scripts/sdk-agent-shakedown.ts",
     "sdk:release-check": "pnpm --filter @kestrel-agents/sdk release:check",
     "ai-sdk:build": "pnpm --filter @kestrel-agents/ai-sdk build",
     "ai-sdk:test": "pnpm --filter @kestrel-agents/ai-sdk test",
