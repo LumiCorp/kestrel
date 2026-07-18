@@ -423,7 +423,7 @@ export async function verifySdkAgentShakedownCodingWorkspace(workspaceRoot: stri
     "git",
     ["status", "--short", "--untracked-files=all"],
     workspaceRoot,
-    5_000,
+    5000,
   );
   const changedPaths = statusResult.stdout
     .split("\n")
@@ -463,7 +463,7 @@ export async function verifySdkAgentShakedownCodingWorkspace(workspaceRoot: stri
     process.execPath,
     ["--input-type=module", "--eval", oracleSource, sourcePath],
     codingRoot,
-    5_000,
+    5000,
   );
   if (oracleResult.code !== 0 || oracleResult.stdout !== "ORACLE_OK") {
     errors.push(`Coding fixture hidden behavior check failed: ${renderFixtureProcess(oracleResult)}`);
