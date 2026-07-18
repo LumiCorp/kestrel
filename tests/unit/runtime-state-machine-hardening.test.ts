@@ -1465,7 +1465,7 @@ test("cancelActiveRun releases persisted managed worktree leases and records ter
   assert.equal(result.runId, "run-cancel-managed");
   assert.deepEqual(cleanupCalls, [{
     name: "exec_command",
-    input: { sessionId: "proc-cancel-owned", stop: true, yieldTimeMs: 1_000 },
+    input: { sessionId: "proc-cancel-owned", stop: true, yieldTimeMs: 1000 },
   }]);
   const retry = await managedTaskWorktreeService.provision({
     sessionId: "cancel-managed-session-next",

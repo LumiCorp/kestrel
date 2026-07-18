@@ -1669,7 +1669,7 @@ export class ExecutionEngine {
       try {
         const result = await this.callToolWithWorkspaceCheckpoint({
           name: "exec_command",
-          input: { sessionId: processId, stop: true, yieldTimeMs: 1_000 },
+          input: { sessionId: processId, stop: true, yieldTimeMs: 1000 },
           sessionId: session.sessionId,
           runId,
           stepIndex: latestStepIndex + 1,

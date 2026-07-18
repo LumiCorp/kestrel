@@ -16,7 +16,7 @@ test("exec_command clamps only its observation wait and preserves the absolute t
 
   assert.deepEqual(result.input, {
     command: "pnpm test",
-    yieldTimeMs: 5_000,
+    yieldTimeMs: 5000,
     timeoutMs: 120_000,
   });
   assert.equal(result.shortCircuitResult, undefined);
