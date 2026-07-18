@@ -857,67 +857,22 @@ export class RuntimeIO {
     durationMs?: number | undefined;
   }): Promise<void> {
     const { progress } = this.options;
-    const update: RunToolUpdateV1 = {
-      version: "v1",
+    const update = buildRunToolUpdate({
       runId: progress.runId,
       sessionId: progress.sessionId,
-      ts: new Date().toISOString(),
       seq: progress.sequence(),
-      toolCallId: input.toolCallId,
-      toolName: input.toolName,
-      phase: input.phase,
       stepIndex: progress.stepIndex,
       stepAgent: progress.stepAgent,
-      displayName: formatToolDisplayName(input.toolName),
-      toolFamily: readToolFamily(input.toolName),
-      provider: readToolProvider(input.toolName),
-      ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
-      ...(input.output !== undefined ? { output: sanitizeToolActivityValue(input.output) } : {}),
-      ...(input.output?.presentation !== undefined
-        ? { presentation: input.output.presentation }
-        : {}),
-      ...(input.error !== undefined
-        ? {
-            error: {
-              code: input.error.code,
-              message: input.error.message,
-              ...(input.error.details !== undefined
-                ? { details: sanitizeToolActivityValue(input.error.details) as Record<string, unknown> }
-                : {}),
-            },
-          }
-        : {}),
-      ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
-    };
+      ...input,
+    });
+    const event = buildRunToolEvent(update);
 
     await this.options.appendRunEvent(
       progress.runId,
       progress.sessionId,
-      input.phase === "started"
-        ? "run.tool.started"
-        : input.phase === "completed"
-          ? "run.tool.completed"
-          : "run.tool.failed",
-      input.phase === "failed" ? "ERROR" : "INFO",
-      {
-        version: update.version,
-        seq: update.seq,
-        ts: update.ts,
-        toolCallId: update.toolCallId,
-        toolName: update.toolName,
-        phase: update.phase,
-        stepAgent: update.stepAgent,
-        displayName: update.displayName,
-        toolFamily: update.toolFamily,
-        provider: update.provider,
-        ...(update.input !== undefined ? { input: update.input } : {}),
-        ...(update.output !== undefined ? { output: update.output } : {}),
-        ...(update.presentation !== undefined
-          ? { presentation: update.presentation }
-          : {}),
-        ...(update.error !== undefined ? { error: update.error } : {}),
-        ...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
-      },
+      event.type,
+      event.level,
+      event.metadata,
       progress.stepIndex,
     );
   }
@@ -1022,6 +977,87 @@ function throwIfRuntimeIOAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
     throw new RunCancelledError();
   }
+}
+
+export function buildRunToolUpdate(input: {
+  runId: string;
+  sessionId: string;
+  seq: number;
+  toolCallId: string;
+  toolName: string;
+  phase: RunToolPhase;
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
+  input?: unknown;
+  output?: unknown;
+  error?: RuntimeError | undefined;
+  durationMs?: number | undefined;
+}): RunToolUpdateV1 {
+  const outputRecord = asPlainRecord(input.output);
+  return {
+    version: "v1",
+    runId: input.runId,
+    sessionId: input.sessionId,
+    ts: new Date().toISOString(),
+    seq: input.seq,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    phase: input.phase,
+    ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
+    ...(input.stepAgent !== undefined ? { stepAgent: input.stepAgent } : {}),
+    displayName: formatToolDisplayName(input.toolName),
+    toolFamily: readToolFamily(input.toolName),
+    provider: readToolProvider(input.toolName),
+    ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
+    ...(input.output !== undefined ? { output: sanitizeToolActivityValue(input.output) } : {}),
+    ...(asPlainRecord(outputRecord?.presentation) !== undefined
+      ? { presentation: outputRecord?.presentation as RunToolUpdateV1["presentation"] }
+      : {}),
+    ...(input.error !== undefined
+      ? {
+          error: {
+            code: input.error.code,
+            message: input.error.message,
+            ...(input.error.details !== undefined
+              ? { details: sanitizeToolActivityValue(input.error.details) as Record<string, unknown> }
+              : {}),
+          },
+        }
+      : {}),
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+  };
+}
+
+export function buildRunToolEvent(update: RunToolUpdateV1): {
+  type: "run.tool.started" | "run.tool.completed" | "run.tool.failed";
+  level: "INFO" | "ERROR";
+  metadata: Record<string, unknown>;
+} {
+  return {
+    type: update.phase === "started"
+      ? "run.tool.started"
+      : update.phase === "completed"
+        ? "run.tool.completed"
+        : "run.tool.failed",
+    level: update.phase === "failed" ? "ERROR" : "INFO",
+    metadata: {
+      version: update.version,
+      seq: update.seq,
+      ts: update.ts,
+      toolCallId: update.toolCallId,
+      toolName: update.toolName,
+      phase: update.phase,
+      ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
+      ...(update.displayName !== undefined ? { displayName: update.displayName } : {}),
+      ...(update.toolFamily !== undefined ? { toolFamily: update.toolFamily } : {}),
+      ...(update.provider !== undefined ? { provider: update.provider } : {}),
+      ...(update.input !== undefined ? { input: update.input } : {}),
+      ...(update.output !== undefined ? { output: update.output } : {}),
+      ...(update.presentation !== undefined ? { presentation: update.presentation } : {}),
+      ...(update.error !== undefined ? { error: update.error } : {}),
+      ...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
+    },
+  };
 }
 
 const TOOL_ACTIVITY_MAX_DEPTH = 4;

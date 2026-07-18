@@ -9,6 +9,8 @@ import path from "node:path";
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
 import { createAgent } from "../packages/sdk/src/index.js";
 import { KestrelClient } from "../packages/sdk/src/runner.js";
+import { resolveKestrelCoreHome } from "../src/localCore/home.js";
+import { ModelPolicyStore } from "../src/profile/modelPolicy.js";
 import type {
   KestrelRequestContext,
   RunnerRunStreamEvent,
@@ -41,6 +43,8 @@ interface ScenarioReport {
   outputStatus?: string | undefined;
   assistantText?: string | null | undefined;
   telemetry?: Record<string, unknown> | undefined;
+  visibleTodos?: unknown;
+  runtimeError?: unknown;
   tools: SdkAgentShakedownToolObservation[];
   errors: string[];
 }
@@ -101,7 +105,7 @@ async function main(): Promise<void> {
     });
     try {
       for (const scenario of scenarios) {
-        const report = await runScenario({ agent, scenario, context, workspaceRoot });
+        const report = await runScenario({ agent, client, scenario, context, workspaceRoot });
         reports.push(report);
         process.stdout.write(
           `[sdk-shakedown] ${report.status === "passed" ? "PASS" : "FAIL"} ${scenario.id} durationMs=${report.durationMs} modelCalls=${readTelemetryNumber(report.telemetry, "modelCalls")} toolCalls=${readTelemetryNumber(report.telemetry, "toolCalls")}\n`,
@@ -148,6 +152,7 @@ async function main(): Promise<void> {
 
 async function runScenario(input: {
   agent: ReturnType<typeof createAgent>;
+  client: KestrelClient;
   scenario: SdkAgentShakedownScenario;
   context: KestrelRequestContext;
   workspaceRoot: string;
@@ -159,6 +164,8 @@ async function runScenario(input: {
   const tools: SdkAgentShakedownToolObservation[] = [];
   let terminal: RunnerRunTerminalEvent | undefined;
   let thrownError: unknown;
+  let visibleTodos: unknown;
+  let sessionDescriptionError: unknown;
 
   process.stdout.write(`[sdk-shakedown] START ${input.scenario.id} ${input.scenario.title}\n`);
   try {
@@ -195,18 +202,38 @@ async function runScenario(input: {
     clearTimeout(timeout);
   }
 
+  if (terminal !== undefined) {
+    try {
+      const session = await input.client.describeSession(sessionId, input.context);
+      visibleTodos = (session as Record<string, unknown>).visibleTodos;
+    } catch (error) {
+      sessionDescriptionError = error;
+    }
+  }
+
   const terminalRecord = terminal as RunnerRunTerminalEvent | undefined;
   const result = terminalRecord?.payload.result;
+  const runtimeError = terminalRecord?.type === "run.failed"
+    ? terminalRecord.payload.error
+    : undefined;
   const observationErrors = terminalRecord === undefined
     ? [formatError(thrownError ?? new Error("SDK stream ended without a terminal event."))]
     : validateSdkAgentShakedownObservation(input.scenario, {
         terminalType: terminalRecord.type,
         outputStatus: result.output.status,
         assistantText: result.assistantText,
+        visibleTodos,
         tools,
       });
   const workspaceErrors = await verifyScenarioWorkspace(input.scenario.id, input.workspaceRoot);
-  const errors = [...observationErrors, ...workspaceErrors];
+  const errors = [
+    ...(runtimeError !== undefined ? [`Runtime failed: ${formatError(runtimeError)}`] : []),
+    ...observationErrors,
+    ...(sessionDescriptionError !== undefined
+      ? [`Could not describe final session state: ${formatError(sessionDescriptionError)}`]
+      : []),
+    ...workspaceErrors,
+  ];
   return {
     id: input.scenario.id,
     title: input.scenario.title,
@@ -217,6 +244,8 @@ async function runScenario(input: {
     ...(result?.output.status !== undefined ? { outputStatus: result.output.status } : {}),
     ...(result !== undefined ? { assistantText: result.assistantText } : {}),
     ...(result?.output.telemetry !== undefined ? { telemetry: result.output.telemetry } : {}),
+    ...(visibleTodos !== undefined ? { visibleTodos } : {}),
+    ...(runtimeError !== undefined ? { runtimeError } : {}),
     tools,
     errors,
   };
@@ -282,7 +311,7 @@ async function verifyScenarioWorkspace(
     path.join(workspaceRoot, ".kestrel-shakedown", "exec.json"),
     errors,
   );
-  if (JSON.stringify(execJson) !== JSON.stringify({ status: "ok" })) {
+  if (JSON.stringify(execJson) !== JSON.stringify({ items: [{ status: "ok" }] })) {
     errors.push("exec.json did not contain the expected status payload.");
   }
   return errors;
@@ -308,18 +337,38 @@ async function startIsolatedWebRunner(model: string): Promise<{
   close(): Promise<void>;
 }> {
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-sdk-shakedown-home-"));
+  const runnerEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    KESTREL_HOME: kestrelHome,
+    KESTREL_CORE_HOME: undefined,
+    KESTREL_LOCAL_CORE_API_SOCKET: undefined,
+    KESTREL_LOCAL_CORE_API_TOKEN: undefined,
+    KESTREL_DEV_SHELL_SOCKET_PATH: undefined,
+    KESTREL_DEV_SHELL_LOG_PATH: undefined,
+    KESTREL_DEV_SHELL_STATUS_PATH: undefined,
+    KESTREL_DATABASE_URL_SOURCE: undefined,
+    KESTREL_STORE_DRIVER: "sqlite",
+    DATABASE_URL: undefined,
+    OPENROUTER_MODEL: model,
+    FORCE_COLOR: "0",
+  };
+  const isolatedCoreHome = resolveKestrelCoreHome(runnerEnv, process.platform).homePath;
+  new ModelPolicyStore(isolatedCoreHome).write({
+    version: 1,
+    provider: "openrouter",
+    model,
+    modelByStage: {},
+    modelCapabilities: {
+      visionInputEnabled: false,
+    },
+  });
   const port = await reservePort();
   const child = spawn(
     process.execPath,
     ["--import", "tsx", path.resolve(process.cwd(), "cli/tui.ts"), "web", "--port", String(port)],
     {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        KESTREL_HOME: kestrelHome,
-        OPENROUTER_MODEL: model,
-        FORCE_COLOR: "0",
-      },
+      env: runnerEnv,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -488,7 +537,15 @@ function timestampKey(): string {
 }
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.stack ?? error.message : String(error);
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  if (typeof error === "object" && error !== null) {
+    try {
+      return JSON.stringify(error);
+    } catch {}
+  }
+  return String(error);
 }
 
 void main().catch((error) => {

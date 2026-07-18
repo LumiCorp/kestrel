@@ -334,6 +334,15 @@ export interface EffectRunner {
       stepIndex: number;
       runtimeBudgetRemainingMs?: number | undefined;
       signal?: AbortSignal | undefined;
+      onToolActivity?: ((activity: {
+        phase: "started" | "completed" | "failed";
+        toolCallId: string;
+        toolName: string;
+        input?: unknown;
+        output?: unknown;
+        error?: RuntimeError | undefined;
+        durationMs?: number | undefined;
+      }) => Promise<void>) | undefined;
     },
   ): Promise<{
     stop: boolean;

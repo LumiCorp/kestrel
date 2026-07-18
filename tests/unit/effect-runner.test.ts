@@ -8,6 +8,54 @@ import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 
+test("Effect runner reports compiled tool activity", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  registry.register("execute_tool_call", async () => buildAgentToolSuccessResult({
+    toolName: "fs.write_text",
+    input: { path: "result.txt", text: "done" },
+    output: { changedFiles: ["result.txt"] },
+  }));
+  const activities: Array<Record<string, unknown>> = [];
+  const runner = new InlineEffectRunner(store, registry);
+
+  const outcome = await runner.runEffects(
+    [{
+      runId: "run-tool-activity",
+      sessionId: "session-tool-activity",
+      stepIndex: 2,
+      type: "execute_tool_call",
+      payload: {
+        toolName: "fs.write_text",
+        toolInput: { path: "result.txt", text: "done" },
+      },
+      idempotencyKey: "tool-activity-1",
+      failurePolicy: "STOP",
+      status: "PENDING",
+      createdAt: new Date().toISOString(),
+    }],
+    {
+      runId: "run-tool-activity",
+      sessionId: "session-tool-activity",
+      stepIndex: 2,
+      onToolActivity: async (activity) => {
+        activities.push(activity);
+      },
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.deepEqual(activities.map((activity) => ({
+    phase: activity.phase,
+    toolCallId: activity.toolCallId,
+    toolName: activity.toolName,
+  })), [
+    { phase: "started", toolCallId: "tool-activity-1", toolName: "fs.write_text" },
+    { phase: "completed", toolCallId: "tool-activity-1", toolName: "fs.write_text" },
+  ]);
+  assert.equal((activities[1]?.output as { status?: string }).status, "OK");
+});
+
 test("Effect runner STOP policy halts on failure", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

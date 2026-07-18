@@ -30,6 +30,7 @@ export interface SdkAgentShakedownObservation {
   terminalType: string;
   outputStatus?: string | undefined;
   assistantText?: string | null | undefined;
+  visibleTodos?: unknown;
   tools: SdkAgentShakedownToolObservation[];
 }
 
@@ -58,11 +59,10 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       "4. Call fs.read_text on 'seed/readme.txt' and confirm it contains SHAKEDOWN_NEEDLE=alpha.",
       "5. Call fs.search_text on '.' for SHAKEDOWN_NEEDLE.",
       "6. Call repo.trace on '.' with the seed SHAKEDOWN_NEEDLE.",
-      "7. Mark the todo items done and finalize.",
+      "7. In the same final model turn, call kestrel.todo_update with every item status done and call kestrel.finalize.",
       "Your final message must include the exact marker SHAKEDOWN_READ_OK.",
     ].join("\n"),
     requiredTools: [
-      { toolName: "kestrel.todo_update", phase: "completed", resultStatus: "OK" },
       { toolName: "free.time.current", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.list", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.read_text", phase: "completed", resultStatus: "OK" },
@@ -86,11 +86,10 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       "7. Call fs.move from copy.json to final.json.",
       "8. Call fs.search_text in '.kestrel-shakedown/work' for beta.",
       "9. Last, call fs.verify_json on final.json with arrayPath 'items', minLength 1, requiredStringFields ['id'], and requiredAbsoluteUrlFields ['url'].",
-      "10. Mark the todo items done and finalize only after verification passes.",
+      "10. After verification passes, in the same final model turn call kestrel.todo_update with every item status done and call kestrel.finalize.",
       "Your final message must include the exact marker SHAKEDOWN_FILESYSTEM_OK.",
     ].join("\n"),
     requiredTools: [
-      { toolName: "kestrel.todo_update", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.mkdir", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.write_text", phase: "completed", resultStatus: "OK", minCount: 2 },
       { toolName: "fs.delete", phase: "completed", resultStatus: "OK" },
@@ -112,17 +111,16 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       "2. Start exec_command with `node -e \"console.log('QUICK_OK')\"` and yieldTimeMs 1000. Confirm it returns completed.",
       "3. Start exec_command with `node -e \"process.stderr.write('EXPECTED_FAIL');process.exit(7)\"` and yieldTimeMs 1000. This nonzero exit is expected; do not retry it.",
       "4. Start exec_command with `node -e \"console.log('SESSION_START');setTimeout(()=>console.log('SESSION_OK'),400)\"` and yieldTimeMs 25. It must return running. Reuse that exact sessionId with exec_command and no command until it becomes terminal.",
-      "5. Start exec_command with `printf '{\"status\":\"ok\"}\\n' > .kestrel-shakedown/exec.json` and yieldTimeMs 1000.",
-      "6. Last, call fs.verify_json on '.kestrel-shakedown/exec.json' with requiredStringFields ['status'].",
-      "7. Mark the todo items done and finalize only after the live session is terminal and JSON verification passes.",
+      "5. Start exec_command with `printf '{\"items\":[{\"status\":\"ok\"}]}\\n' > .kestrel-shakedown/exec.json` and yieldTimeMs 1000.",
+      "6. Last, call fs.verify_json on '.kestrel-shakedown/exec.json' with arrayPath 'items', minLength 1, and requiredStringFields ['status'].",
+      "7. After the live session is terminal and JSON verification passes, in the same final model turn call kestrel.todo_update with every item status done and call kestrel.finalize.",
       "Your final message must include the exact marker SHAKEDOWN_EXEC_OK.",
     ].join("\n"),
     requiredTools: [
-      { toolName: "kestrel.todo_update", phase: "completed", resultStatus: "OK" },
       { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "completed", minCount: 2 },
-      { toolName: "exec_command", phase: "completed", resultStatus: "FAILED", outputStatus: "failed" },
+      { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "failed" },
       { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "running" },
-      { toolName: "fs.verify_json", phase: "completed", resultStatus: "OK" },
+      { toolName: "fs.verify_json", phase: "completed", resultStatus: "OK", outputStatus: "passed" },
     ],
   },
 ];
@@ -158,6 +156,13 @@ export function validateSdkAgentShakedownObservation(
   }
   if (observation.assistantText?.includes(scenario.marker) !== true) {
     errors.push(`Final assistant text is missing ${scenario.marker}.`);
+  }
+  const visibleTodos = asRecord(observation.visibleTodos);
+  const todoItems = Array.isArray(visibleTodos?.items) ? visibleTodos.items : [];
+  if (typeof visibleTodos?.objective !== "string" || visibleTodos.objective.trim().length === 0 || todoItems.length === 0) {
+    errors.push("Expected a non-empty visible todo plan in final session state.");
+  } else if (todoItems.some((item) => asRecord(item)?.status !== "done")) {
+    errors.push("Expected every visible todo item to be done before finalization.");
   }
 
   for (const requirement of scenario.requiredTools) {
@@ -195,14 +200,29 @@ export function readSdkAgentShakedownToolObservation(value: unknown): SdkAgentSh
   const event = asRecord(value);
   const payload = asRecord(event?.payload);
   const update = asRecord(payload?.update);
-  const toolName = asString(update?.toolName);
+  let toolName = asString(update?.toolName);
   const phase = asToolPhase(update?.phase);
   if (toolName === undefined || phase === undefined) {
     return ;
   }
-  const result = asRecord(update?.output);
-  const auditRecord = asRecord(result?.auditRecord);
-  const output = asRecord(auditRecord?.output);
+  let result = asRecord(update?.output);
+  let auditRecord = asRecord(result?.auditRecord);
+  let output = asRecord(auditRecord?.output);
+  let durationMs = typeof update?.durationMs === "number" ? update.durationMs : undefined;
+  if (toolName === "effect_result_lookup" && phase === "completed") {
+    const effectToolResult = asRecord(output?.output);
+    const effectAuditRecord = asRecord(effectToolResult?.auditRecord);
+    const effectToolName = asString(effectToolResult?.toolName) ?? asString(effectAuditRecord?.toolName);
+    if (effectToolName !== undefined && effectAuditRecord !== undefined) {
+      toolName = effectToolName;
+      result = effectToolResult;
+      auditRecord = effectAuditRecord;
+      output = asRecord(effectAuditRecord.output);
+      durationMs = typeof effectAuditRecord.durationMs === "number"
+        ? effectAuditRecord.durationMs
+        : durationMs;
+    }
+  }
   const changedFiles = Array.isArray(output?.changedFiles)
     ? output.changedFiles.filter((entry): entry is string => typeof entry === "string")
     : undefined;
@@ -215,7 +235,7 @@ export function readSdkAgentShakedownToolObservation(value: unknown): SdkAgentSh
     ...(asString(output?.status) !== undefined
       ? { outputStatus: asString(output?.status)?.toLowerCase() }
       : {}),
-    ...(typeof update?.durationMs === "number" ? { durationMs: update.durationMs } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
     ...(asString(output?.sessionId) !== undefined ? { sessionId: asString(output?.sessionId) } : {}),
     ...(changedFiles !== undefined && changedFiles.length > 0 ? { changedFiles } : {}),
   };

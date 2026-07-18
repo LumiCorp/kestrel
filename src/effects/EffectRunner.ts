@@ -30,6 +30,15 @@ export class InlineEffectRunner implements EffectRunner {
       stepIndex: number;
       runtimeBudgetRemainingMs?: number | undefined;
       signal?: AbortSignal | undefined;
+      onToolActivity?: ((activity: {
+        phase: "started" | "completed" | "failed";
+        toolCallId: string;
+        toolName: string;
+        input?: unknown;
+        output?: unknown;
+        error?: RuntimeError | undefined;
+        durationMs?: number | undefined;
+      }) => Promise<void>) | undefined;
     },
   ): Promise<{ stop: boolean; terminalStatus?: TransitionStatus; errors: RuntimeError[] }> {
     const errors: RuntimeError[] = [];
@@ -59,6 +68,16 @@ export class InlineEffectRunner implements EffectRunner {
         };
       }
 
+      const toolActivity = readEffectToolActivity(effect);
+      const startedAt = Date.now();
+      if (toolActivity !== undefined) {
+        await notifyToolActivity(context.onToolActivity, {
+          phase: "started",
+          toolCallId: effect.idempotencyKey,
+          toolName: toolActivity.toolName,
+          input: toolActivity.toolInput,
+        });
+      }
       try {
         const handler = this.registry.resolve(effect.type);
         const output = await handler(effect, {
@@ -73,6 +92,16 @@ export class InlineEffectRunner implements EffectRunner {
           timestamp: new Date().toISOString(),
         });
         await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
+        if (toolActivity !== undefined) {
+          await notifyToolActivity(context.onToolActivity, {
+            phase: "completed",
+            toolCallId: effect.idempotencyKey,
+            toolName: toolActivity.toolName,
+            input: toolActivity.toolInput,
+            output,
+            durationMs: Date.now() - startedAt,
+          });
+        }
       } catch (error) {
         const runtimeError: RuntimeError = createEffectExecutionError(
           effect.type,
@@ -88,6 +117,16 @@ export class InlineEffectRunner implements EffectRunner {
           timestamp: new Date().toISOString(),
         });
         await this.store.markEffectStatus(effect.idempotencyKey, "FAILED");
+        if (toolActivity !== undefined) {
+          await notifyToolActivity(context.onToolActivity, {
+            phase: "failed",
+            toolCallId: effect.idempotencyKey,
+            toolName: toolActivity.toolName,
+            input: toolActivity.toolInput,
+            error: runtimeError,
+            durationMs: Date.now() - startedAt,
+          });
+        }
 
         if (effect.failurePolicy === "CONTINUE") {
           continue;
@@ -114,4 +153,37 @@ export class InlineEffectRunner implements EffectRunner {
       errors,
     };
   }
+}
+
+function readEffectToolActivity(effect: PersistedEffect): {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+} | undefined {
+  if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") {
+    return ;
+  }
+  const payload = parseOptionalRecord(effect.payload);
+  const toolName = typeof payload?.toolName === "string" && payload.toolName.trim().length > 0
+    ? payload.toolName.trim()
+    : undefined;
+  const toolInput = parseOptionalRecord(payload?.toolInput);
+  return toolName === undefined || toolInput === undefined
+    ? undefined
+    : { toolName, toolInput };
+}
+
+async function notifyToolActivity(
+  observer: Parameters<EffectRunner["runEffects"]>[1]["onToolActivity"],
+  activity: Parameters<NonNullable<Parameters<EffectRunner["runEffects"]>[1]["onToolActivity"]>>[0],
+): Promise<void> {
+  if (observer === undefined) {
+    return;
+  }
+  await observer(activity).catch(() => {});
+}
+
+function parseOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && Array.isArray(value) === false
+    ? value as Record<string, unknown>
+    : undefined;
 }

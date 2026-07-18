@@ -28,6 +28,9 @@ test("SDK agent shake-down receives the project environment in managed worktrees
 
   assert.ok(worktreeIncludes.includes(".env"));
   assert.match(script, /loadShellAndDotEnv\(process\.cwd\(\),/u);
+  assert.match(script, /KESTREL_CORE_HOME: undefined/u);
+  assert.match(script, /KESTREL_STORE_DRIVER: "sqlite"/u);
+  assert.match(script, /new ModelPolicyStore\(isolatedCoreHome\)\.write\(/u);
   assert.doesNotMatch(script, /git-common-dir|resolvePrimaryCheckoutRoot/u);
 });
 
@@ -62,6 +65,7 @@ test("SDK agent shake-down requires each exact public tool contract", () => {
       terminalType: "run.completed",
       outputStatus: "COMPLETED",
       assistantText: scenario.marker,
+      visibleTodos: completedVisibleTodos(),
       tools,
     }),
     [],
@@ -73,6 +77,7 @@ test("SDK agent shake-down requires each exact public tool contract", () => {
       terminalType: "run.completed",
       outputStatus: "COMPLETED",
       assistantText: scenario.marker,
+      visibleTodos: completedVisibleTodos(),
       tools: withoutTrace,
     }).join("\n"),
     /Expected 1 repo\.trace observation/u,
@@ -156,6 +161,56 @@ test("SDK agent shake-down reads canonical result and process status from public
     },
   );
 });
+
+test("SDK agent shake-down unwraps compiled effect tool results", () => {
+  assert.deepEqual(
+    readSdkAgentShakedownToolObservation({
+      type: "run.tool.completed",
+      payload: {
+        update: {
+          toolName: "effect_result_lookup",
+          phase: "completed",
+          durationMs: 2,
+          output: {
+            status: "OK",
+            auditRecord: {
+              output: {
+                status: "DONE",
+                output: {
+                  toolName: "exec_command",
+                  status: "OK",
+                  auditRecord: {
+                    toolName: "exec_command",
+                    durationMs: 18,
+                    output: {
+                      status: "running",
+                      sessionId: "process-2",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    {
+      toolName: "exec_command",
+      phase: "completed",
+      resultStatus: "OK",
+      outputStatus: "running",
+      durationMs: 18,
+      sessionId: "process-2",
+    },
+  );
+});
+
+function completedVisibleTodos() {
+  return {
+    objective: "Run the systems check",
+    items: [{ id: "check", text: "Complete the check", status: "done" }],
+  };
+}
 
 function readScenario(): SdkAgentShakedownScenario {
   return scenarioById("read");
