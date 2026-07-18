@@ -713,7 +713,6 @@ export class LoopGuardCoordinator {
       return ;
     }
 
-    const completedVisibleTodos = readiness.completedVisibleTodos ?? visibleTodos;
     const residualTodoIds = readiness.residualOpenItems.map((item) => item.id);
     const message = asString(finalizeInput?.message)?.trim() ??
       buildDocumentedFinalizeGapMessage(residualGap);
@@ -771,7 +770,6 @@ export class LoopGuardCoordinator {
       statePatch: {
         agent: clearRuntimeWaitState({
           ...reactState,
-          ...(completedVisibleTodos !== undefined ? { visibleTodos: completedVisibleTodos } : {}),
           nextAction,
           assistantText: message,
           finalOutput,
@@ -797,7 +795,6 @@ export class LoopGuardCoordinator {
         status: "COMPLETED",
         statePatch: {
           agent: {
-            ...(completedVisibleTodos !== undefined ? { visibleTodos: completedVisibleTodos } : {}),
             nextAction,
             assistantText: message,
             finalOutput,

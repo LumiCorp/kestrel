@@ -219,6 +219,25 @@ test("DevShellSupervisor returns nonzero command exits as failed process results
   }
 });
 
+test("DevShellSupervisor observes through the initial window after early output", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const result = await supervisor.startProcess({
+      workspaceRoot,
+      command: "printf 'starting\\n'; sleep 0.02; printf 'done\\n'",
+      yieldTimeMs: 500,
+      maxOutputBytes: 4096,
+    });
+
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.processId, undefined);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.text, "starting\ndone\n");
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("DevShellSupervisor fails fast for multiline run commands", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
@@ -753,6 +772,32 @@ test("DevShellSupervisor returns timed-out one-shot runs as failed process resul
   }
 });
 
+test("DevShellSupervisor keeps an explicit timeout active after startProcess returns", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "printf 'ready\\n'; sleep 5",
+      yieldTimeMs: 20,
+      timeoutMs: 100,
+      maxOutputBytes: 4096,
+    });
+    assert.equal(started.status, "RUNNING");
+    assert.equal(typeof started.processId, "string");
+
+    const settled = await readProcessUntilTerminal({
+      supervisor,
+      processId: started.processId!,
+      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+    });
+    assert.equal(settled.status, "FAILED");
+    assert.equal(settled.exitCode, 124);
+    assert.match(settled.failureReason ?? "", /timed out after 100 ms/u);
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("InMemoryDevShellStore deep clones source-write guard results", async () => {
   const store = new InMemoryDevShellStore();
   const now = new Date().toISOString();
@@ -889,6 +934,62 @@ test("DevShellSupervisor writes stdin and reads resulting output in one process 
       waitMs: 500,
       maxBytes: 4096,
     });
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor delivers unread output once when a process exits between observations", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'",
+      yieldTimeMs: 75,
+      maxOutputBytes: 4096,
+    });
+    assert.equal(started.status, "RUNNING");
+    assert.equal(started.text, "first\n");
+    const processId = started.processId!;
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const terminal = await supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 });
+    assert.equal(terminal.status, "COMPLETED");
+    assert.equal(terminal.text, "second\n");
+
+    const empty = await supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 });
+    assert.equal(empty.text, "");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor never regresses a fast terminal process back to running", async () => {
+  const { supervisor, workspaceRoot, store } = await createSupervisor();
+  try {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const started = await supervisor.startProcess({
+        workspaceRoot,
+        command: "printf 'missing runner\\n' >&2; sleep 0.01; exit 1",
+        yieldTimeMs: 1,
+        maxOutputBytes: 4096,
+        sourceWriteGuard: { enabled: true },
+      });
+      const processId = started.processId;
+      const terminal = processId !== undefined
+        ? await readProcessUntilTerminal({
+            supervisor,
+            processId,
+            timeoutMs: 1000,
+            pollWaitMs: 25,
+          })
+        : started;
+      assert.equal(terminal.status, "FAILED");
+      if (processId !== undefined) {
+        const stored = await store.getProcess(processId);
+        assert.notEqual(stored?.status, "RUNNING");
+      }
+    }
   } finally {
     await supervisor.close();
   }

@@ -2,6 +2,10 @@ import {
   renderVisibleTodosForModel,
   type VisibleTodoState,
 } from "../visibleTodos.js";
+import type {
+  WorkspaceFreshnessEvidenceRef,
+  WorkspaceFreshnessSummary,
+} from "../workspaceFreshness.js";
 
 export interface ActiveWorkspaceContext {
   workspaceId: string;
@@ -57,6 +61,8 @@ export function buildRuntimeContextFragment(input: {
   projectTaskQueueContext?: string | undefined;
   recoveryContext?: unknown;
   visibleTodos?: VisibleTodoState | undefined;
+  workspaceFreshness?: WorkspaceFreshnessSummary | undefined;
+  activeExecCommandSessions?: WorkspaceFreshnessEvidenceRef[] | undefined;
   correction?: string | undefined;
   activeWait?: unknown;
 }): string {
@@ -94,6 +100,13 @@ export function buildRuntimeContextFragment(input: {
   if (workState !== undefined) {
     lines.push("", workState);
   }
+  const workspaceStatus = renderWorkspaceStatus(
+    input.workspaceFreshness,
+    input.activeExecCommandSessions,
+  );
+  if (workspaceStatus !== undefined) {
+    lines.push("", workspaceStatus);
+  }
   const evidence = renderEvidence({
     activeProcessEvidence: input.activeProcessEvidence,
     recentFilesystemEvidence: input.recentFilesystemEvidence,
@@ -117,6 +130,53 @@ export function buildRuntimeContextFragment(input: {
   }
   if (input.correction !== undefined && input.correction.trim().length > 0) {
     lines.push("", `Correction needed: ${input.correction.trim()}`);
+  }
+  return lines.join("\n");
+}
+
+function renderWorkspaceStatus(
+  freshness: WorkspaceFreshnessSummary | undefined,
+  activeSessions: WorkspaceFreshnessEvidenceRef[] | undefined,
+): string | undefined {
+  const live = activeSessions ?? [];
+  if (
+    live.length === 0 &&
+    freshness?.status !== "stale" &&
+    freshness?.status !== "attempted_unresolved"
+  ) {
+    return ;
+  }
+  const lines = ["Workspace status:"];
+  if (live.length > 0) {
+    const sessionIds = live.map((item) => item.processId).filter((item): item is string => Boolean(item));
+    lines.push(
+      `- live exec_command sessions: ${sessionIds.join(", ")}`,
+      "- successful finalization is blocked until each session exits or is stopped and its final result is collected.",
+      ...sessionIds.map((sessionId) =>
+        `- next action for ${sessionId}: call exec_command with {"sessionId":"${sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Use {"sessionId":"${sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} only if the process is no longer needed.`
+      ),
+    );
+  }
+  const mutation = freshness?.latestMutation;
+  if (mutation !== undefined) {
+    lines.push(
+      `- latest mutation: ${mutation.summary}`,
+      ...(mutation.changedFiles !== undefined && mutation.changedFiles.length > 0
+        ? [`- changed files: ${mutation.changedFiles.join(", ")}`]
+        : []),
+    );
+  }
+  if (freshness?.status === "stale") {
+    lines.push(
+      "- validation state: stale. Earlier checks predate the current workspace.",
+      "- next action: update the visible plan as needed, then run or read back the planned validation after the final mutation.",
+    );
+  } else if (freshness?.status === "attempted_unresolved") {
+    lines.push(
+      "- validation state: attempted but unresolved.",
+      ...((freshness.unresolvedEvidence ?? []).map((item) => `- unresolved: ${item.summary}`)),
+      "- next action: resolve or rerun the check, or explicitly report the remaining unverified result if no actionable work remains.",
+    );
   }
   return lines.join("\n");
 }

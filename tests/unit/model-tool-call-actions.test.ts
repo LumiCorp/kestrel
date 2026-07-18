@@ -104,17 +104,10 @@ test("finalize control tool description stays prose closeout guidance", () => {
   const statusSchema = properties?.status as Record<string, unknown> | undefined;
 
   assert.match(finalizeTool?.description ?? "", /Finish the run with a user-facing answer/u);
-  assert.match(finalizeTool?.description ?? "", /use status goal_satisfied only after/u);
-  assert.match(finalizeTool?.description ?? "", /final edited state was checked after the last relevant mutation/u);
-  assert.match(finalizeTool?.description ?? "", /main requested result passed/u);
-  assert.match(finalizeTool?.description ?? "", /every explicit task constraint was checked/u);
-  assert.match(finalizeTool?.description ?? "", /identified existing test\/assertion or behavior check passed/u);
-  assert.match(finalizeTool?.description ?? "", /A proxy check, build, test, or command exit code is not enough/u);
-  assert.match(finalizeTool?.description ?? "", /specific final output, command, API\/function call, score, ranking, artifact, format/u);
-  assert.match(finalizeTool?.description ?? "", /allowed edit scope, preserved behavior, or content constraint/u);
-  assert.match(finalizeTool?.description ?? "", /Final messages may claim only checks actually observed after the last relevant mutation/u);
-  assert.match(finalizeTool?.description ?? "", /including constraints and existing behavior checks/u);
-  assert.match(finalizeTool?.description ?? "", /keep working or report the blocker instead/u);
+  assert.match(finalizeTool?.description ?? "", /requested outcome and explicit constraints are supported by observed evidence/u);
+  assert.match(finalizeTool?.description ?? "", /Claim only checks that actually ran/u);
+  assert.match(finalizeTool?.description ?? "", /data\.openGap or data\.knownWarnings/u);
+  assert.match(finalizeTool?.description ?? "", /otherwise keep working or report the concrete blocker/u);
   assert.doesNotMatch(finalizeTool?.description ?? "", /swe-verified|sweValidation|benchmark|validation proof|edited tests/i);
   assert.deepEqual(statusSchema?.enum, ["goal_satisfied", "out_of_scope"]);
   assert.equal(properties?.assistantProgress, undefined);
@@ -233,11 +226,9 @@ test("todo update description explains code-change notes without benchmark polic
   const todoTool = registry.requestTools.find((tool) => tool.name === "kestrel_todo_update");
 
   assert.match(todoTool?.description ?? "", /Update the visible live checklist for multi-step work/u);
-  assert.match(todoTool?.description ?? "", /objective, concrete work items, item statuses/u);
-  assert.match(todoTool?.description ?? "", /planned checks, observed results, and blockers/u);
-  assert.match(todoTool?.description ?? "", /keep a check-work item open until the final state is reviewed after the last mutation/u);
-  assert.match(todoTool?.description ?? "", /Mark items complete only after the corresponding work or check has been observed/u);
-  assert.match(todoTool?.description ?? "", /Detailed closeout requirements live in kestrel\.finalize/u);
+  assert.match(todoTool?.description ?? "", /objective, concrete work, planned checks/u);
+  assert.match(todoTool?.description ?? "", /observed results, and blockers/u);
+  assert.match(todoTool?.description ?? "", /combine final completed updates with kestrel\.finalize/u);
   assert.doesNotMatch(todoTool?.description ?? "", /what must be true at the end/u);
   assert.doesNotMatch(todoTool?.description ?? "", /existing test file and assertion found when available/u);
   assert.doesNotMatch(todoTool?.description ?? "", /Command exited 0 is not enough/u);

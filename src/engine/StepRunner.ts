@@ -7,6 +7,7 @@ import type { StepCommitPipeline } from "./StepCommitPipeline.js";
 import { validateTransition } from "./TransitionValidator.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { asPlainRecord, buildStateTransitionLogMetadata } from "./ExecutionEngineSupport.js";
+import { buildRunToolEvent, buildRunToolUpdate } from "./RuntimeIO.js";
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { ProgressCode, ProgressPhase, RunEvent, RunLogEntry, RuntimeEvent, RuntimeEventIntent } from "../kestrel/contracts/events.js";
 import type { NormalizedOutput, RegionWorkItem, RuntimeDependencies, StepCommit, StepContext, StepIO, StepTransition } from "../kestrel/contracts/execution.js";
@@ -931,6 +932,26 @@ export class StepRunner {
         stepIndex: input.state.stepIndex,
         runtimeBudgetRemainingMs: input.guardrails.budgetSnapshot().remainingMs,
         signal: input.signal,
+        onToolActivity: async (activity) => {
+          input.state.progressSeq += 1;
+          const update = buildRunToolUpdate({
+            runId: input.runId,
+            sessionId: input.state.session.sessionId,
+            seq: input.state.progressSeq,
+            stepIndex: input.state.stepIndex,
+            stepAgent: stepName,
+            ...activity,
+          });
+          const event = buildRunToolEvent(update);
+          await this.deps.appendRunEvent(
+            input.runId,
+            input.state.session.sessionId,
+            event.type,
+            event.level,
+            event.metadata,
+            input.state.stepIndex,
+          );
+        },
       });
     } finally {
       await this.deps.sampleHeap({

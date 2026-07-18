@@ -215,7 +215,8 @@ test("model transcript renders running exec_command with session continuation", 
   assert.match(rendered, /- sessionId: tb-proc-1/u);
   assert.match(rendered, /- status: RUNNING/u);
   assert.match(rendered, /- cursor: 23/u);
-  assert.match(rendered, /use exec_command with sessionId "tb-proc-1" and stdin to continue it/u);
+  assert.match(rendered, /call exec_command with \{"sessionId":"tb-proc-1","assistantProgress":"I am checking the running process\."\} and no command/u);
+  assert.match(rendered, /Repeat if it returns running/u);
   assert.match(rendered, /command starts a new independent process/u);
   assert.doesNotMatch(rendered, /dev\.process/u);
 });

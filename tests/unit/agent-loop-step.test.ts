@@ -2273,6 +2273,7 @@ test("agent loop routes premature visible-todo finalization back to open work", 
     interactionMode: "build",
     message: "Build static newsletter artifacts.",
   };
+  buildContext.session.state.evidenceLedger = [successfulReadInputTexEvidence()];
   buildContext.session.state.agent = {
     interactionMode: "build",
     goal: "Stale follow-up.",
@@ -2353,6 +2354,7 @@ test("agent loop accepts visible todo closure with finalization in one model tur
     interactionMode: "build",
     message: "Build static newsletter artifacts.",
   };
+  buildContext.session.state.evidenceLedger = [successfulReadInputTexEvidence()];
   buildContext.session.state.agent = {
     interactionMode: "build",
     visibleTodos: {
@@ -2421,7 +2423,28 @@ test("agent loop accepts documented residual gap finalization without another re
   };
   buildContext.session.state = {
     runtime: { schemaVersion: 1 },
-    evidenceLedger: successfulFileMutationEvidence(),
+    evidenceLedger: [
+      {
+        ...successfulFileMutationEvidence()[0],
+        stepIndex: 1,
+      },
+      {
+        id: "ev-browser-e2e-failed",
+        version: "v1",
+        createdAt: "2026-06-15T00:00:02.000Z",
+        stepIndex: 2,
+        source: "tool",
+        kind: "process_result",
+        status: "failed",
+        summary: "Browser E2E could not be completed.",
+        target: { type: "tool", value: "exec_command" },
+        facts: {
+          toolName: "exec_command",
+          command: "pnpm run test:browser",
+          exitCode: 1,
+        },
+      },
+    ],
     agent: {
       interactionMode: "build",
       visibleTodos: {
@@ -2476,7 +2499,7 @@ test("agent loop accepts documented residual gap finalization without another re
 
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  assert.equal(items[1]?.status, "done");
+  assert.equal(items[1]?.status, "blocked");
   assert.equal(items[1]?.note, "Browser E2E was not directly exercised.");
   assert.deepEqual(agent.nextAction, {
     kind: "finalize",
@@ -2492,7 +2515,7 @@ test("agent loop accepts documented residual gap finalization without another re
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop accepts same-turn todo closure after file mutation when the closed item has a validation note", async () => {
+test("agent loop rejects same-turn todo closure after file mutation because a note is not validation evidence", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2538,21 +2561,10 @@ test("agent loop accepts same-turn todo closure after file mutation when the clo
   } satisfies StepIO);
 
   const agent = transition.statePatch?.agent as Record<string, unknown>;
-  const visibleTodos = agent.visibleTodos as Record<string, unknown>;
-  const items = visibleTodos.items as Record<string, unknown>[];
-
   assert.equal(transition.status, "RUNNING");
-  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  assert.deepEqual(agent.nextAction, {
-    kind: "finalize",
-    finalizeReason: "goal_satisfied",
-    input: {
-      message: "Done.",
-    },
-  });
-  assert.equal(items[0]?.status, "done");
-  assert.equal(items[0]?.note, "Read back newsletter-report.json and confirmed it contains the requested stories.");
-  assert.equal(agent.retryContext, undefined);
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(agent.nextAction, undefined);
+  assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
 test("agent loop accepts finalization when a shell-changed file is read after the mutation", async () => {
@@ -2608,7 +2620,7 @@ test("agent loop accepts finalization when a shell-changed file is read after th
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop accepts finalization when shell changes a generated file that was not previously read", async () => {
+test("agent loop rejects finalization when shell changes a generated file that was not later validated", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2648,18 +2660,12 @@ test("agent loop accepts finalization when shell changes a generated file that w
   const agent = transition.statePatch?.agent as Record<string, unknown>;
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  assert.deepEqual(agent.nextAction, {
-    kind: "finalize",
-    finalizeReason: "goal_satisfied",
-    input: {
-      message: "Done.",
-    },
-  });
-  assert.equal(agent.retryContext, undefined);
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(agent.nextAction, undefined);
+  assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop accepts finalization after token-changing replace_text with a validation note when no prior read is stale", async () => {
+test("agent loop rejects finalization after token-changing replace_text when only a todo note claims validation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2697,18 +2703,12 @@ test("agent loop accepts finalization after token-changing replace_text with a v
   const agent = transition.statePatch?.agent as Record<string, unknown>;
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  assert.deepEqual(agent.nextAction, {
-    kind: "finalize",
-    finalizeReason: "goal_satisfied",
-    input: {
-      message: "Done.",
-    },
-  });
-  assert.equal(agent.retryContext, undefined);
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(agent.nextAction, undefined);
+  assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop accepts finalization after token-preserving replace_text with ordinary validation note", async () => {
+test("agent loop rejects finalization after token-preserving replace_text when only a todo note claims validation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2746,15 +2746,9 @@ test("agent loop accepts finalization after token-preserving replace_text with o
   const agent = transition.statePatch?.agent as Record<string, unknown>;
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  assert.deepEqual(agent.nextAction, {
-    kind: "finalize",
-    finalizeReason: "goal_satisfied",
-    input: {
-      message: "Done.",
-    },
-  });
-  assert.equal(agent.retryContext, undefined);
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(agent.nextAction, undefined);
+  assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
 test("agent loop accepts deliberator output without understanding", async () => {

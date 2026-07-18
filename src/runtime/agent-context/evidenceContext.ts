@@ -340,7 +340,7 @@ function formatActiveProcessEvidence(input: {
     input.stdin !== undefined ? `last stdin=${quoteEvidenceValue(input.stdin)}` : undefined,
     input.cursor !== undefined ? `cursor=${input.cursor}` : undefined,
     input.preview !== undefined ? `text=${quoteEvidenceValue(input.preview)}` : undefined,
-    "continue with exec_command sessionId + stdin; do not start a fresh command unless intentionally resetting or starting unrelated work.",
+    `call exec_command with {"sessionId":${JSON.stringify(input.sessionId)},"assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state; repeat if it returns running. Add stdin only when the process is waiting for input, or use stop=true with assistantProgress if it is no longer needed.`,
   ].filter((item): item is string => item !== undefined).join(" ");
 }
 

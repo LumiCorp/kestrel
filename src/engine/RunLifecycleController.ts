@@ -63,6 +63,10 @@ interface RunLifecycleControllerOptions {
     session: SessionRecord,
     terminalStatus?: TransitionStatus,
   ) => Promise<void>;
+  settleOwnedExecCommandProcesses: (
+    runId: string,
+    session: SessionRecord,
+  ) => Promise<void>;
   resolveRuntimeBudget: (
     event: RuntimeEvent,
   ) => { externalDeadlineMs?: number | undefined } | undefined;
@@ -218,6 +222,14 @@ export class RunLifecycleController {
     const failedReasonCode = status === "FAILED"
       ? terminalErrors[0]?.code ?? readFailedTransitionReasonCode(input.transition)
       : undefined;
+    if (status === "FAILED") {
+      const activeSession = this.options.normalizeLegacyExecutionSession(
+        await this.options.deps.store.getSession(input.sessionId),
+      );
+      if (activeSession !== undefined) {
+        await this.options.settleOwnedExecCommandProcesses(input.runId, activeSession);
+      }
+    }
     await this.options.deps.store.completeRun(input.runId, status, terminalErrors[0]);
     const terminalSessionForLease = await this.options.deps.store.getSession(input.sessionId);
     const terminalSession = this.options.normalizeLegacyExecutionSession(terminalSessionForLease);
@@ -431,6 +443,9 @@ export class RunLifecycleController {
         ...(input.runtimeError.details !== undefined ? { details: input.runtimeError.details } : {}),
       });
     }
+    if (input.session !== undefined) {
+      await this.options.settleOwnedExecCommandProcesses(input.runId, input.session);
+    }
     await this.options.deps.store.completeRun(input.runId, "FAILED", input.runtimeError);
     if (input.session !== undefined) {
       await this.options.releaseManagedWorktreeLeaseForRun(input.runId, input.session, "FAILED");
@@ -497,6 +512,7 @@ export class RunLifecycleController {
     }
 
     if (session !== undefined) {
+      await this.options.settleOwnedExecCommandProcesses(result.runId, session);
       await this.options.releaseManagedWorktreeLeaseForRun(result.runId, session, "FAILED");
     }
 

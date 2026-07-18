@@ -1619,12 +1619,7 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
     ...(finalizeData !== undefined ? { residualGap: finalizeData } : {}),
   });
   if (analysis.complete) {
-    return {
-      kind: "allow",
-      ...(analysis.residualOpenItems.length > 0 && analysis.completedVisibleTodos !== undefined
-        ? { visibleTodos: analysis.completedVisibleTodos }
-        : {}),
-    };
+    return { kind: "allow" };
   }
   const openItem = analysis.blockingOpenItems[0];
   if (openItem === undefined) {

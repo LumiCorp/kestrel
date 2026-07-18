@@ -108,6 +108,32 @@ export function buildAgentToolSuccessResult(input: AgentToolResultInput): AgentT
   };
 }
 
+export function replaceAgentToolResultOutput(
+  result: AgentToolResult,
+  nextOutput: unknown,
+): AgentToolResult {
+  const output = sanitizeJsonValue(nextOutput);
+  const error = result.auditRecord.error;
+  const rawOutputRef = rawOutputRefFor(
+    result.status === "FAILED" ? { error, output } : output,
+  );
+  return {
+    ...result,
+    modelContext: buildModelContext({
+      toolName: result.toolName,
+      input: result.auditRecord.input,
+      output,
+      rawOutputRef,
+      status: result.status,
+      ...(error !== undefined ? { error } : {}),
+    }),
+    auditRecord: {
+      ...result.auditRecord,
+      output,
+    },
+  };
+}
+
 export function buildAgentToolFailureResult(input: AgentToolFailureInput): AgentToolResult {
   const startedAt = input.startedAt ?? new Date().toISOString();
   const completedAt = input.completedAt ?? new Date().toISOString();

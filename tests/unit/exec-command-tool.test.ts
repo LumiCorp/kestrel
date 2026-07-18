@@ -21,11 +21,12 @@ import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 
 test("exec_command maps one-shot process completion to completed output", async () => {
   const service = new CapturingExecCommandService({
-    runResult: {
+    startResult: {
       status: "COMPLETED",
-      stdout: "done\n",
       text: "done\n",
       truncated: false,
+      cursor: 0,
+      nextCursor: 5,
       exitCode: 0,
     },
   });
@@ -45,23 +46,24 @@ test("exec_command maps one-shot process completion to completed output", async 
   assert.equal(output.output, "done\n");
   assert.equal(output.exitCode, 0);
   assert.equal(output.sessionId, undefined);
-  assert.equal(output.cursor, undefined);
-  assert.equal(service.runInputs.length, 1);
-  assert.equal(service.startInputs.length, 0);
-  assert.equal(service.runInputs[0]?.workspaceRoot, "/repo");
-  assert.equal(service.runInputs[0]?.cwd, "/repo/app");
-  assert.equal(service.runInputs[0]?.command, "printf done");
-  assert.equal(service.runInputs[0]?.strictMultiline, true);
+  assert.equal(output.cursor, 5);
+  assert.equal(service.runInputs.length, 0);
+  assert.equal(service.startInputs.length, 1);
+  assert.equal(service.startInputs[0]?.workspaceRoot, "/repo");
+  assert.equal(service.startInputs[0]?.cwd, "/repo/app");
+  assert.equal(service.startInputs[0]?.command, "printf done");
+  assert.equal(service.startInputs[0]?.yieldTimeMs, 25);
 });
 
-test("exec_command command shape uses bounded runCommand instead of starting a live process", async () => {
+test("exec_command command shape returns a reusable session when the process is still running", async () => {
   const service = new CapturingExecCommandService({
-    runResult: {
-      status: "COMPLETED",
-      stdout: "ready\n",
+    startResult: {
+      processId: "proc-live",
+      status: "RUNNING",
       text: "ready\n",
       truncated: false,
-      exitCode: 0,
+      cursor: 0,
+      nextCursor: 6,
     },
   });
 
@@ -70,14 +72,14 @@ test("exec_command command shape uses bounded runCommand instead of starting a l
     devShellService: service,
   }, { command: "./maze_game.sh" });
 
-  assert.equal(output.status, "completed");
-  assert.equal(output.sessionId, undefined);
+  assert.equal(output.status, "running");
+  assert.equal(output.sessionId, "proc-live");
   assert.equal(output.output, "ready\n");
-  assert.equal(service.runInputs.length, 1);
-  assert.equal(service.startInputs.length, 0);
+  assert.equal(service.runInputs.length, 0);
+  assert.equal(service.startInputs.length, 1);
 });
 
-test("exec_command observes new commands even when caller passes zero yield time", async () => {
+test("exec_command respects an explicit zero initial observation window", async () => {
   const service = new CapturingExecCommandService();
 
   await runExecCommandForTest({
@@ -88,9 +90,9 @@ test("exec_command observes new commands even when caller passes zero yield time
     yieldTimeMs: 0,
   });
 
-  assert.equal(service.startInputs.length, 0);
-  assert.equal(service.runInputs.length, 1);
-  assert.equal(service.runInputs[0]?.yieldTimeMs, 5000);
+  assert.equal(service.startInputs.length, 1);
+  assert.equal(service.runInputs.length, 0);
+  assert.equal(service.startInputs[0]?.yieldTimeMs, 0);
 });
 
 test("exec_command sends stdin through the existing process and reads the response", async () => {

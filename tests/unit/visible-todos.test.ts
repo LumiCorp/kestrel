@@ -104,8 +104,8 @@ test("visible todo finalize readiness treats documented blocked gaps as residual
 
   assert.equal(analysis.complete, true);
   assert.equal(analysis.residualOpenItems[0]?.id, "browser");
-  assert.equal(analysis.completedVisibleTodos?.items[1]?.status, "done");
-  assert.equal(analysis.completedVisibleTodos?.items[1]?.note, "Browser E2E was not directly exercised.");
+  assert.equal(todos?.items[1]?.status, "blocked");
+  assert.equal(todos?.items[1]?.note, "Browser E2E was not directly exercised.");
 });
 
 test("visible todo finalize readiness keeps actionable work blocking", () => {

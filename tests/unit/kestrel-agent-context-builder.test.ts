@@ -94,6 +94,7 @@ test("Kestrel agent context builder records deterministic section order", () => 
       "projectTaskQueue",
       "recovery",
       "visibleTodos",
+      "workspaceFreshness",
       "correction",
       "activeWait",
       "transcript",
@@ -278,7 +279,7 @@ test("Kestrel agent context builder promotes active exec_command process evidenc
   assert.match(runtimeContext, /Evidence:\nActive process evidence:/u);
   assert.match(runtimeContext, /exec_command running sessionId="tb-proc-123"/u);
   assert.match(runtimeContext, /command="\.\/maze_game\.sh"/u);
-  assert.match(runtimeContext, /continue with exec_command sessionId \+ stdin/u);
+  assert.match(runtimeContext, /call exec_command with \{"sessionId":"tb-proc-123","assistantProgress":"I am checking the running process\."\} and no command/u);
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
 });
 
@@ -324,8 +325,64 @@ test("Kestrel agent context builder promotes active exec_command evidence from t
   assert.match(runtimeContext, /exec_command running sessionId="tb-proc-456"/u);
   assert.match(runtimeContext, /last stdin="move N"/u);
   assert.match(runtimeContext, /text="hit wall >"/u);
-  assert.match(runtimeContext, /do not start a fresh command unless intentionally resetting/u);
+  assert.match(runtimeContext, /call exec_command with \{"sessionId":"tb-proc-456","assistantProgress":"I am checking the running process\."\} and no command/u);
+  assert.match(runtimeContext, /Add stdin only when the process is waiting for input/u);
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
+});
+
+test("workspace status is rederived from the ledger after compaction and clears when fresh", () => {
+  const mutation = {
+    id: "mutation-1",
+    version: "v1",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    stepIndex: 1,
+    source: "tool",
+    kind: "file_write",
+    status: "passed",
+    summary: "Changed app/page.tsx.",
+    target: { type: "path", value: "app/page.tsx" },
+    facts: { toolName: "fs.write_text", changedFiles: ["app/page.tsx"] },
+  };
+  const stale = buildKestrelAgentContext({
+    reactState: {
+      evidenceLedger: [mutation],
+      modelTranscript: [{ kind: "compaction", text: "Earlier transcript compacted." }],
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "system.resume",
+    goal: "Update the page.",
+    interactionMode: "build",
+  });
+
+  const staleRuntimeContext = String(stale.contextMessages[0]?.content ?? "");
+  assert.match(staleRuntimeContext, /validation state: stale/u);
+  assert.match(staleRuntimeContext, /app\/page\.tsx/u);
+
+  const fresh = buildKestrelAgentContext({
+    reactState: {
+      evidenceLedger: [
+        mutation,
+        {
+          id: "readback-2",
+          version: "v1",
+          createdAt: "2026-07-17T00:00:01.000Z",
+          stepIndex: 2,
+          source: "tool",
+          kind: "file_content",
+          status: "passed",
+          summary: "Read app/page.tsx.",
+          target: { type: "path", value: "app/page.tsx" },
+          facts: { toolName: "fs.read_text", path: "app/page.tsx" },
+        },
+      ],
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "system.resume",
+    goal: "Update the page.",
+    interactionMode: "build",
+  });
+
+  assert.doesNotMatch(String(fresh.contextMessages[0]?.content ?? ""), /Workspace status:/u);
 });
 
 test("Kestrel agent context builder owns deliberator system message placement", () => {
@@ -1169,7 +1226,7 @@ test("Kestrel agent context builder renders structured Terminal-Bench benchmark 
   assert.match(String(context.modelInput.taskInstruction), /Kestrel Terminal-Bench execution contract/u);
   assert.match(String(context.modelInput.taskInstruction), /Do not read, execute, copy, or infer answers from \/protected/u);
   assert.match(String(context.modelInput.taskInstruction), /Use exec_command for terminal work/u);
-  assert.match(String(context.modelInput.taskInstruction), /Continue that same process with \{ sessionId, stdin \}/u);
+  assert.match(String(context.modelInput.taskInstruction), /reuse that sessionId to read, send stdin, or stop/u);
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.shell\.run/u);
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.process\.write/u);
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.process\.read/u);

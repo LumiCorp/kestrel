@@ -40,6 +40,38 @@ test("runAgentTool wraps successful output in model context and audit evidence",
   assert.equal(typeof result.auditRecord.durationMs, "number");
 });
 
+test("model-facing mutation feedback names changed files and stale validation only for observed changes", () => {
+  const changed = buildAgentToolSuccessResult({
+    toolName: "exec_command",
+    input: { command: "node generator.js" },
+    output: {
+      status: "running",
+      sessionId: "proc-1",
+      output: "generated\n",
+      durationMs: 50,
+      truncated: false,
+      changedFiles: ["generated.json"],
+    },
+  });
+  assert.match(changed.modelContext.text, /changed files: generated\.json/u);
+  assert.match(changed.modelContext.text, /observed so far/u);
+  assert.match(changed.modelContext.text, /Earlier validation predates the current workspace/u);
+
+  const unchanged = buildAgentToolSuccessResult({
+    toolName: "exec_command",
+    input: { command: "git status --short" },
+    output: {
+      status: "completed",
+      output: "",
+      durationMs: 10,
+      truncated: false,
+      exitCode: 0,
+    },
+  });
+  assert.doesNotMatch(unchanged.modelContext.text, /workspace mutation/u);
+  assert.doesNotMatch(unchanged.modelContext.text, /validation predates/u);
+});
+
 test("runAgentTool returns FAILED envelope for recoverable runtime failures", async () => {
   const result = await runAgentTool({
     toolName: "dev.shell.run",

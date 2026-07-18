@@ -2,7 +2,7 @@ import type {
   AgentToolModelContext,
   ModelToolSpec,
 } from "../../kestrel/contracts/model-io.js";
-import { normalizeDevShellLifecycle } from "../devshellLifecycle.js";
+import { isDevShellLifecycleTool, normalizeDevShellLifecycle } from "../devshellLifecycle.js";
 import { sanitizeJsonValue, stringifySanitizedJson } from "../jsonSanitizer.js";
 import { VISIBLE_TODOS_SCHEMA } from "../visibleTodos.js";
 
@@ -72,7 +72,7 @@ const WEATHER_HOURLY_ENTRY_LIMIT = 12;
 const CONTROL_TOOLS: ModelToolSpec[] = [
   {
     name: "kestrel.finalize",
-    description: "Finish the run with a user-facing answer. For code or artifact changes, use status goal_satisfied only after the final edited state was checked after the last relevant mutation, the main requested result passed, every explicit task constraint was checked, and any identified existing test/assertion or behavior check passed. A proxy check, build, test, or command exit code is not enough when the task names a specific final output, command, API/function call, score, ranking, artifact, format, allowed edit scope, preserved behavior, or content constraint. Final messages may claim only checks actually observed after the last relevant mutation, including constraints and existing behavior checks. If validation passed but a remaining check was not directly exercised, report that as a residual risk in the message and data.openGap or data.knownWarnings; do not leave the related visible todo open unless actionable work remains. If validation was inconclusive, failed, or could not run, keep working or report the blocker instead.",
+    description: "Finish the run with a user-facing answer. Use status goal_satisfied only when the requested outcome and explicit constraints are supported by observed evidence. Claim only checks that actually ran. Report any unverified result in the message and data.openGap or data.knownWarnings; otherwise keep working or report the concrete blocker.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -151,7 +151,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.todo_update",
-    description: "Update the visible live checklist for multi-step work. Emit this update alongside the related executable action instead of spending a separate turn on bookkeeping. After successful validation, emit completed checklist updates together with kestrel.finalize in the same decision. Use a standalone checklist update only when waiting or blocked and no executable or terminal action can accompany it. Track objective, concrete work items, item statuses, planned checks, observed results, and blockers. For file or artifact changes, keep a check-work item open until the final state is reviewed after the last mutation. Mark items complete only after the corresponding work or check has been observed. When validation passed and the remaining issue is only a documented residual risk, mark the item done with a note and report the risk through kestrel.finalize data.openGap or data.knownWarnings. Detailed closeout requirements live in kestrel.finalize.",
+    description: "Update the visible live checklist for multi-step work. Track the objective, concrete work, planned checks, observed results, and blockers. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. Use a standalone update only when waiting or blocked with no executable or terminal action.",
     inputSchema: VISIBLE_TODOS_SCHEMA,
   },
 ];
@@ -164,7 +164,7 @@ export function buildKestrelAgentToolSurface(
     : new Set(input.controlToolNames);
   const controlTools = buildControlToolsForSurface(input);
   const workspaceTools = input.workspaceTools.filter((tool) =>
-    tool.name.startsWith("dev.shell.") === false
+    tool.name === "exec_command" || isDevShellLifecycleTool(tool.name) === false
   );
   const entries = [
     ...workspaceTools.map((tool) => toToolAliasEntry(tool, "workspace" as const)),
@@ -438,22 +438,49 @@ function renderToolFacts(
   if (record === undefined) {
     return renderGenericFacts(output, status, error);
   }
+  let facts: string[];
   if (toolName.startsWith("fs.")) {
-    return renderFilesystemFacts(toolName, input, record, status, error);
+    facts = renderFilesystemFacts(toolName, input, record, status, error);
+  } else if (toolName === "repo.trace") {
+    facts = renderRepoTraceFacts(record, status, error);
+  } else if (normalizeDevShellLifecycle(toolName, input, record) !== undefined) {
+    facts = renderDevShellFacts(toolName, input, record, status, error);
+  } else if (toolName.startsWith("internet.")) {
+    facts = renderInternetFacts(toolName, record, status, error);
+  } else if (toolName === "free.weather.current" || toolName === "free.weather.forecast") {
+    facts = renderWeatherFacts(toolName, record, status, error);
+  } else {
+    facts = renderGenericObjectFacts(record, status, error);
   }
-  if (toolName === "repo.trace") {
-    return renderRepoTraceFacts(record, status, error);
+  return [...facts, ...renderWorkspaceMutationGuidance(toolName, record)];
+}
+
+function renderWorkspaceMutationGuidance(
+  toolName: string,
+  output: Record<string, unknown>,
+): string[] {
+  const changedFiles = asArray(output.changedFiles)
+    .map((item) => asString(item)?.trim())
+    .filter((item): item is string => item !== undefined && item.length > 0);
+  if (changedFiles.length === 0) {
+    return [];
   }
-  if (normalizeDevShellLifecycle(toolName, input, record) !== undefined) {
-    return renderDevShellFacts(toolName, input, record, status, error);
-  }
-  if (toolName.startsWith("internet.")) {
-    return renderInternetFacts(toolName, record, status, error);
-  }
-  if (toolName === "free.weather.current" || toolName === "free.weather.forecast") {
-    return renderWeatherFacts(toolName, record, status, error);
-  }
-  return renderGenericObjectFacts(record, status, error);
+  const lifecycleStatus = normalizeDevShellLifecycleStatusForGuidance(toolName, output);
+  return [
+    "- workspace mutation:",
+    `  changed files: ${changedFiles.join(", ")}`,
+    lifecycleStatus === "RUNNING"
+      ? "  these changes are observed so far; the process is still running and may change more files."
+      : "  these are the changed files observed when this action settled.",
+    "  Earlier validation predates the current workspace. Current-state validation remains pending before finalization.",
+  ];
+}
+
+function normalizeDevShellLifecycleStatusForGuidance(
+  toolName: string,
+  output: Record<string, unknown>,
+): string | undefined {
+  return normalizeDevShellLifecycle(toolName, undefined, output)?.status;
 }
 
 function renderWeatherFacts(
@@ -748,7 +775,7 @@ function renderDevShellFacts(
       lifecycle.sessionId !== undefined
     ? [
       "- continuation:",
-      `  process is still running; use exec_command with sessionId "${lifecycle.sessionId}" and stdin to continue it. command starts a new independent process.`,
+      `  process is still running; call exec_command with {"sessionId":"${lifecycle.sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Add stdin only when the process is waiting for input, or use {"sessionId":"${lifecycle.sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} if it is no longer needed. A command starts a new independent process.`,
     ]
     : [];
   return [

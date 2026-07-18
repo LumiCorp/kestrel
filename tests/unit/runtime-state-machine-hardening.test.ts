@@ -15,7 +15,7 @@ import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { ManagedTaskWorktreeService } from "../../src/workspace/ManagedTaskWorktreeService.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
-import { buildAgentToolSuccessResult, unwrapAgentToolOutput } from "../../tools/toolResult.js";
+import { buildAgentToolSuccessResult, rawOutputRefFor, unwrapAgentToolOutput } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 const execFileAsync = promisify(execFile);
@@ -192,10 +192,17 @@ test("managed mutation tools capture pre/post workspace checkpoints and expose c
   });
 
   const session = await store.getSession("checkpoint-tool-session");
-  const shellOutput = unwrapAgentToolOutput((session?.state.agent as Record<string, unknown>).shellOutput) as Record<string, unknown>;
+  const shellResult = (session?.state.agent as Record<string, unknown>).shellOutput as {
+    modelContext: { text: string; rawOutputRef: string };
+    auditRecord: { output: unknown };
+  };
+  const shellOutput = shellResult.auditRecord.output as Record<string, unknown>;
   assert.deepEqual(shellOutput.changedFiles, ["app/page.tsx"]);
   assert.equal((shellOutput.workspaceCheckpoint as Record<string, unknown>).preActionCheckpointId, "cp-1");
   assert.equal((shellOutput.workspaceCheckpoint as Record<string, unknown>).postActionCheckpointId, "cp-2");
+  assert.match(shellResult.modelContext.text, /changed files: app\/page\.tsx/u);
+  assert.match(shellResult.modelContext.text, /Earlier validation predates the current workspace/u);
+  assert.equal(shellResult.modelContext.rawOutputRef, rawOutputRefFor(shellResult.auditRecord.output));
   assert.deepEqual(captures, [
     "pre_mutation:Pre-action checkpoint for dev.shell.run",
     "pre_mutation:Post-action checkpoint for dev.shell.run",
@@ -1413,6 +1420,15 @@ test("cancelActiveRun releases persisted managed worktree leases and records ter
       agent: {
         exec: {
           managedWorktreeBinding: provisioned.binding,
+          devShell: {
+            processes: {
+              "proc-cancel-owned": {
+                processId: "proc-cancel-owned",
+                ownerRunId: "run-cancel-managed",
+                status: "RUNNING",
+              },
+            },
+          },
         },
       },
     },
@@ -1424,13 +1440,33 @@ test("cancelActiveRun releases persisted managed worktree leases and records ter
     stepAgent: "agent.exec.dispatch",
     payload: {},
   });
+  const cleanupCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
+    toolGateway: {
+      call: async (name, input) => {
+        cleanupCalls.push({ name, input });
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: {
+            status: "stopped",
+            sessionId: "proc-cancel-owned",
+            text: "final output\n",
+            truncated: false,
+          },
+        });
+      },
+    },
   });
 
   const result = await kestrel.cancelActiveRun("cancel-managed-session");
 
   assert.equal(result.runId, "run-cancel-managed");
+  assert.deepEqual(cleanupCalls, [{
+    name: "exec_command",
+    input: { sessionId: "proc-cancel-owned", stop: true, yieldTimeMs: 1000 },
+  }]);
   const retry = await managedTaskWorktreeService.provision({
     sessionId: "cancel-managed-session-next",
     runId: "run-after-cancel-managed",

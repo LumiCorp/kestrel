@@ -6,7 +6,7 @@ import type { Transition } from "../kestrel/contracts/execution.js";
 import type { ModelBudgetClass, ModelRequest } from "../kestrel/contracts/model-io.js";
 
 import { DEFAULT_MODEL_TIMING_POLICY } from "../io/ModelTimingPolicy.js";
-import { deriveShellRunTimeoutDecision } from "../io/ToolTimingPolicy.js";
+import { DEFAULT_TOOL_TIMING_POLICY, deriveShellRunTimeoutDecision } from "../io/ToolTimingPolicy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { readHighConfidenceApprovalDecision, readUserReplyIntent } from "../runtime/userReplyIntent.js";
 import {
@@ -329,6 +329,9 @@ export function applyExternalDeadlineToolBudget(input: {
   metadata: Record<string, unknown>;
   shortCircuitResult?: unknown | undefined;
 } {
+  if (input.toolName === "exec_command") {
+    return applyExecCommandObservationBudget(input.input, input.runtimeBudgetRemainingMs);
+  }
   if (input.toolName !== "dev.shell.run") {
     return { input: input.input, metadata: {} };
   }
@@ -375,6 +378,66 @@ export function applyExternalDeadlineToolBudget(input: {
       toolDeadlineAdmission: "deadline_exhausted",
     },
     shortCircuitResult: buildDevShellRunDeadlineFailureResult(record, decision.failureReason),
+  };
+}
+
+function applyExecCommandObservationBudget(
+  value: unknown,
+  runtimeBudgetRemainingMs: number,
+): {
+  input: unknown;
+  metadata: Record<string, unknown>;
+  shortCircuitResult?: unknown | undefined;
+} {
+  const record = asPlainRecord(value);
+  if (record === undefined || record.stop === true || Number.isFinite(runtimeBudgetRemainingMs) === false) {
+    return { input: value, metadata: {} };
+  }
+  const remainingMs = Math.max(0, Math.floor(runtimeBudgetRemainingMs));
+  const availableMs = Math.max(0, remainingMs - DEFAULT_TOOL_TIMING_POLICY.closeoutReserveMs);
+  if (availableMs < DEFAULT_TOOL_TIMING_POLICY.minDispatchMs) {
+    const failureReason =
+      "Not enough external runtime budget remains to dispatch exec_command " +
+      `(${remainingMs}ms remaining, ${DEFAULT_TOOL_TIMING_POLICY.closeoutReserveMs}ms reserved for closeout).`;
+    return {
+      input: value,
+      metadata: {
+        runtimeBudgetRemainingMs: remainingMs,
+        toolCloseoutReserveMs: DEFAULT_TOOL_TIMING_POLICY.closeoutReserveMs,
+        minToolDispatchMs: DEFAULT_TOOL_TIMING_POLICY.minDispatchMs,
+        toolDeadlineAdmission: "deadline_exhausted",
+      },
+      shortCircuitResult: {
+        status: "failed",
+        output: `${failureReason}\n`,
+        durationMs: 0,
+        truncated: false,
+        exitCode: 124,
+        failureReason,
+        ...(typeof record.command === "string" ? { command: record.command } : {}),
+        ...(typeof record.sessionId === "string" ? { sessionId: record.sessionId } : {}),
+      },
+    };
+  }
+  const defaultObservationMs = typeof record.command === "string" ? 5000 : 1000;
+  const requestedObservationMs = typeof record.yieldTimeMs === "number" && Number.isFinite(record.yieldTimeMs)
+    ? Math.max(0, Math.floor(record.yieldTimeMs))
+    : defaultObservationMs;
+  const adjustedObservationMs = Math.min(requestedObservationMs, availableMs);
+  if (adjustedObservationMs === requestedObservationMs) {
+    return { input: value, metadata: {} };
+  }
+  return {
+    input: {
+      ...record,
+      yieldTimeMs: adjustedObservationMs,
+    },
+    metadata: {
+      requestedYieldTimeMs: requestedObservationMs,
+      deadlineAdjustedYieldTimeMs: adjustedObservationMs,
+      runtimeBudgetRemainingMs: remainingMs,
+      toolCloseoutReserveMs: DEFAULT_TOOL_TIMING_POLICY.closeoutReserveMs,
+    },
   };
 }
 

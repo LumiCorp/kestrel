@@ -113,11 +113,34 @@ test("RuntimeIO.tool does not emit completion when aborted after tool return", a
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
 });
 
+test("RuntimeIO never retries exec_command after dispatch", async () => {
+  const emitted: string[] = [];
+  let calls = 0;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    toolQueueEnabled: true,
+    toolCallRetryCount: 3,
+    retryableToolErrors: true,
+    toolCall: async () => {
+      calls += 1;
+      throw new Error("temporary transport failure");
+    },
+  });
+
+  await assert.rejects(() => io.tool("exec_command", { command: "pnpm test" }));
+  assert.equal(calls, 1);
+  assert.equal(emitted.includes("tool_retry"), false);
+});
+
 function createRuntimeIO(input: {
   signal: AbortSignal;
   emitted: string[];
   modelCall?: (() => Promise<unknown>) | undefined;
   toolCall?: (() => Promise<unknown>) | undefined;
+  toolQueueEnabled?: boolean | undefined;
+  toolCallRetryCount?: number | undefined;
+  retryableToolErrors?: boolean | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -142,10 +165,16 @@ function createRuntimeIO(input: {
       toolGateway,
       consoleReporter: undefined,
     },
-    guardrailConfig,
+    guardrailConfig: {
+      ...guardrailConfig,
+      ...(input.toolCallRetryCount !== undefined ? { toolCallRetryCount: input.toolCallRetryCount } : {}),
+    },
     toolJobQueue: new ToolJobQueue(),
-    toolQueueEnabled: false,
-    guardrails: new Guardrails(guardrailConfig),
+    toolQueueEnabled: input.toolQueueEnabled ?? false,
+    guardrails: new Guardrails({
+      ...guardrailConfig,
+      ...(input.toolCallRetryCount !== undefined ? { toolCallRetryCount: input.toolCallRetryCount } : {}),
+    }),
     progress: {
       runId: "run-runtime-io",
       sessionId: "session-runtime-io",
@@ -193,7 +222,7 @@ function createRuntimeIO(input: {
       return result as T;
     },
     afterToolResult: async () => {},
-    isRetryableToolError: () => false,
+    isRetryableToolError: () => input.retryableToolErrors === true,
   });
 }
 
