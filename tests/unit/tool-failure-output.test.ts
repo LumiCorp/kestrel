@@ -102,7 +102,8 @@ test("model transcript renders failed dev.shell.run compactly with failure detai
 
   assert.match(rendered, /Tool result: dev\.shell\.run/u);
   assert.match(rendered, /- command: python -m pytest sympy\/printing\/tests\/test_conventions\.py -q/u);
-  assert.match(rendered, /- cwd: \/testbed/u);
+  assert.match(rendered, /- cwd: \./u);
+  assert.doesNotMatch(rendered, /- cwd: \/testbed/u);
   assert.match(rendered, /- commandKind: multi_line/u);
   assert.match(rendered, /- status: FAILED/u);
   assert.match(rendered, /- exitCode: 1/u);

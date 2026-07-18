@@ -107,7 +107,7 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       { toolName: "fs.mkdir", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.write_text", phase: "completed", resultStatus: "OK", minCount: 2 },
       { toolName: "fs.delete", phase: "completed", resultStatus: "OK" },
-      { toolName: "fs.replace_text", phase: "completed", resultStatus: "OK" },
+      { toolName: "fs.replace_text", phase: "completed", resultStatus: "OK", outputStatus: "ok" },
       { toolName: "fs.copy", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.move", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.search_text", phase: "completed", resultStatus: "OK" },
@@ -148,7 +148,7 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       "Treat this like a small coding task: inspect the repository, keep a visible todo plan current, diagnose the failure, make the smallest correct change, and validate the final state.",
       "Execution lifecycle requirements for this systems check:",
       "1. Before changing source code, call exec_command with command 'npm test', cwd 'coding-fixture', and yieldTimeMs 25. It must return running. Reuse that exact sessionId until the baseline test reaches terminal status failed.",
-      "2. Fix the implementation with fs.replace_text. Preserve the existing regression tests.",
+      "2. Fix the implementation with fs.replace_text. Preserve the existing regression tests. The fs.replace_text result must report status OK; if it reports NO_CHANGE, reread the exact source and retry fs.replace_text instead of overwriting the source with fs.write_text.",
       "3. After the source mutation, call exec_command again with command 'npm test', cwd 'coding-fixture', and yieldTimeMs 25. The cwd must stay the exact relative string 'coding-fixture'; do not replace it with an absolute path. Reuse its returned sessionId until the test reaches terminal status completed.",
       `4. Only after that passing test, use fs.write_text in append mode to add the exact line '${SDK_AGENT_SHAKEDOWN_CODING_CHANGELOG_ENTRY}' to 'coding-fixture/CHANGELOG.md'.`,
       "5. After the changelog mutation has returned, use fs.read_text on 'coding-fixture/CHANGELOG.md' in a later action. Do not issue the write and read in parallel. This proves that the post-test mutation received later current-state evidence.",
@@ -160,7 +160,7 @@ export const SDK_AGENT_SHAKEDOWN_SCENARIOS: readonly SdkAgentShakedownScenario[]
       { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "running", minCount: 2 },
       { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "failed" },
       { toolName: "exec_command", phase: "completed", resultStatus: "OK", outputStatus: "completed" },
-      { toolName: "fs.replace_text", phase: "completed", resultStatus: "OK" },
+      { toolName: "fs.replace_text", phase: "completed", resultStatus: "OK", outputStatus: "ok" },
       { toolName: "fs.write_text", phase: "completed", resultStatus: "OK" },
       { toolName: "fs.read_text", phase: "completed", resultStatus: "OK" },
     ],
@@ -246,16 +246,24 @@ export function summarizeSdkAgentShakedownLifecycle(
 ): SdkAgentShakedownLifecycleDiagnostics {
   return {
     execStarts: tools.filter((tool) =>
-      tool.toolName === "exec_command" && asString(tool.input?.command) !== undefined
+      tool.phase === "completed" &&
+      tool.toolName === "exec_command" &&
+      asString(tool.input?.command) !== undefined
     ).length,
     execContinuations: tools.filter((tool) =>
-      tool.toolName === "exec_command" && asString(tool.input?.sessionId) !== undefined
+      tool.phase === "completed" &&
+      tool.toolName === "exec_command" &&
+      asString(tool.input?.sessionId) !== undefined
     ).length,
     runningObservations: tools.filter((tool) =>
-      tool.toolName === "exec_command" && tool.outputStatus === "running"
+      tool.phase === "completed" &&
+      tool.toolName === "exec_command" &&
+      tool.outputStatus === "running"
     ).length,
     terminalSettlements: tools.filter((tool) =>
-      tool.toolName === "exec_command" && isTerminalProcessStatus(tool.outputStatus)
+      tool.phase === "completed" &&
+      tool.toolName === "exec_command" &&
+      isTerminalProcessStatus(tool.outputStatus)
     ).length,
     observedMutationEvents: tools.filter((tool) => observedMutationPaths(tool).length > 0).length,
   };
@@ -285,33 +293,45 @@ export function validateCodingLifecycleObservation(
   }
 
   const baselineTerminalIndex = baselineTerminal?.index ?? baselineRunning.index;
-  const sourceMutation = completed.find(({ tool, index }) =>
+  const sourceMutations = completed.filter(({ tool, index }) =>
     index > baselineTerminalIndex && changedPathEndsWith(tool, "coding-fixture/src/inventory.mjs")
   );
-  if (sourceMutation === undefined) {
+  if (sourceMutations.length === 0) {
     errors.push("No observed inventory source mutation followed the failed baseline test.");
   }
+  const forbiddenSourceOverwrite = sourceMutations.find(({ tool }) => tool.toolName === "fs.write_text");
+  if (forbiddenSourceOverwrite !== undefined) {
+    errors.push("Inventory source was overwritten with fs.write_text; the scenario requires a successful targeted fs.replace_text repair.");
+  }
 
-  const sourceMutationIndex = sourceMutation?.index ?? baselineTerminalIndex;
-  const passingRunning = completed.find(({ tool, index }) =>
+  const finalSourceMutation = sourceMutations.at(-1);
+  const sourceMutationIndex = finalSourceMutation?.index ?? baselineTerminalIndex;
+  const postMutationTestStarts = completed.filter(({ tool, index }) =>
     index > sourceMutationIndex &&
     isCodingTestStart(tool) &&
     tool.outputStatus === "running" &&
     tool.sessionId !== undefined
   );
-  if (passingRunning === undefined) {
+  if (postMutationTestStarts.length === 0) {
     errors.push("No delayed running test session followed the inventory source mutation.");
   }
 
-  const passingTerminal = passingRunning === undefined
-    ? undefined
-    : completed.find(({ tool, index }) =>
-        index > passingRunning.index &&
-        isExecContinuationFor(tool, passingRunning.tool.sessionId) &&
-        tool.outputStatus === "completed"
-      );
-  if (passingRunning !== undefined && passingTerminal === undefined) {
-    errors.push(`Post-fix test session ${passingRunning.tool.sessionId} was not continued to terminal completed status.`);
+  let passingRunning: (typeof postMutationTestStarts)[number] | undefined;
+  let passingTerminal: (typeof completed)[number] | undefined;
+  for (const candidate of postMutationTestStarts) {
+    const terminal = completed.find(({ tool, index }) =>
+      index > candidate.index &&
+      isExecContinuationFor(tool, candidate.tool.sessionId) &&
+      tool.outputStatus === "completed"
+    );
+    if (terminal !== undefined) {
+      passingRunning = candidate;
+      passingTerminal = terminal;
+      break;
+    }
+  }
+  if (postMutationTestStarts.length > 0 && passingTerminal === undefined) {
+    errors.push("No test session after the final inventory source mutation was continued to terminal completed status.");
   }
 
   const passingTerminalIndex = passingTerminal?.index ?? passingRunning?.index ?? sourceMutationIndex;
@@ -443,6 +463,9 @@ function observedMutationPaths(tool: SdkAgentShakedownToolObservation): string[]
     (tool.toolName !== "fs.replace_text" && tool.toolName !== "fs.write_text")
   ) {
     return changedFiles;
+  }
+  if (tool.toolName === "fs.replace_text" && tool.outputStatus !== "ok" && changedFiles.length === 0) {
+    return [];
   }
   const path = asString(tool.input?.path);
   return path === undefined ? changedFiles : [...new Set([...changedFiles, path])];

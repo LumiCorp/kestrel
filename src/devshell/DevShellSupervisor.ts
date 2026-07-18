@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import { statSync } from "node:fs";
-import { delimiter, dirname, join, resolve, sep } from "node:path";
+import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -78,6 +78,7 @@ interface RunningProcess {
 export class DevShellSupervisor {
   private readonly processes = new Map<string, RunningProcess>();
   private readonly deliveredOffsets = new Map<string, number>();
+  private readonly deliveredTerminalResults = new Set<string>();
   private readonly pnpmBuildApprovalWorkspaces = new Set<string>();
   private readonly idleInterval: NodeJS.Timeout;
 
@@ -141,6 +142,7 @@ export class DevShellSupervisor {
       await this.releaseManagedWorktreeProcessLease(process.record);
     }
     this.deliveredOffsets.clear();
+    this.deliveredTerminalResults.clear();
   }
 
   async runCommand(input: DevShellRunInput, options: DevShellCommandOptions = {}): Promise<DevShellRunResult> {
@@ -278,7 +280,7 @@ export class DevShellSupervisor {
     const requestedWorkspaceRoot = input.workspaceRoot ?? ".";
     const workspaceRoot = resolve(requestedWorkspaceRoot);
     const requestedCwd = resolve(workspaceRoot, input.cwd ?? ".");
-    const cwd = await constrainPathWithinWorkspace(workspaceRoot, requestedCwd);
+    const cwd = await requirePathWithinWorkspace(workspaceRoot, requestedCwd, input.cwd ?? ".");
     const idleTimeoutMs = normalizePositiveInt(input.idleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS);
     const maxReadBytes = normalizePositiveInt(input.maxReadBytes, DEFAULT_MAX_READ_BYTES);
     const envMode = input.envMode ?? "allowlist";
@@ -298,18 +300,22 @@ export class DevShellSupervisor {
     if (readiness.workspaceRootExists === false) {
       throw createRuntimeFailure(
         "DEV_SHELL_WORKSPACE_NOT_FOUND",
-        `Workspace root '${workspaceRoot}' does not exist.`,
+        "The active workspace is unavailable in the execution environment.",
         {
           subsystem: "dev_shell",
           workspaceRoot,
+          nextSuggestedAction: "Refresh the workspace binding before retrying exec_command.",
         },
       );
     }
     if (readiness.cwdExists === false) {
-      throw createRuntimeFailure("DEV_SHELL_CWD_NOT_FOUND", `cwd '${cwd}' does not exist.`, {
+      const requestedCwd = input.cwd ?? ".";
+      throw createRuntimeFailure("DEV_SHELL_CWD_NOT_FOUND", `cwd '${requestedCwd}' does not exist inside the active workspace.`, {
         subsystem: "dev_shell",
-        cwd,
+        cwd: requestedCwd,
+        resolvedCwd: cwd,
         workspaceRoot,
+        nextSuggestedAction: "Inspect workspace-relative directories and retry with an existing cwd.",
       });
     }
     if (readiness.shellResolved === false) {
@@ -662,6 +668,7 @@ export class DevShellSupervisor {
     });
     process.deliveredOffset = Math.max(process.deliveredOffset, result.nextCursor);
     this.deliveredOffsets.set(process.record.processId, process.deliveredOffset);
+    this.recordTerminalResultDelivery(process.record.processId, result);
     return result;
   }
 
@@ -672,6 +679,7 @@ export class DevShellSupervisor {
       maxBytes?: number | undefined;
     },
   ): Promise<DevProcessReadResult> {
+    this.requireUndeliveredTerminalResult(record, input.cursor);
     const result = await this.collectStoredProcessResult(record, {
       ...input,
       cursor: normalizeNonNegativeInt(
@@ -683,7 +691,42 @@ export class DevShellSupervisor {
       record.processId,
       Math.max(this.deliveredOffsets.get(record.processId) ?? 0, result.nextCursor),
     );
+    this.recordTerminalResultDelivery(record.processId, result);
     return result;
+  }
+
+  private requireUndeliveredTerminalResult(
+    record: DevShellProcessRecord,
+    requestedCursor: number | undefined,
+  ): void {
+    if (
+      record.status === "RUNNING" ||
+      requestedCursor !== undefined ||
+      this.deliveredTerminalResults.has(record.processId) === false
+    ) {
+      return;
+    }
+    throw createRuntimeFailure(
+      "DEV_SHELL_PROCESS_NOT_RUNNING",
+      this.renderProcessRecoveryMessage(
+        record.processId,
+        `Developer shell process '${record.processId}' is not running. It settled with status '${record.status}', and its terminal result was already delivered. Start a new exec_command with command to run fresh validation. Do not reuse the settled sessionId.`,
+      ),
+      {
+        subsystem: "dev_shell",
+        processId: record.processId,
+        status: record.status,
+        terminalResultDelivered: true,
+        ...this.buildProcessRecoveryDetails(record.processId),
+        nextSuggestedAction: "Start a new exec_command with command to run fresh validation. Do not reuse the settled sessionId.",
+      },
+    );
+  }
+
+  private recordTerminalResultDelivery(processId: string, result: DevProcessReadResult): void {
+    if (result.status !== "RUNNING") {
+      this.deliveredTerminalResults.add(processId);
+    }
   }
 
   private async collectStoredProcessResult(
@@ -834,20 +877,22 @@ export class DevShellSupervisor {
       if (record !== null && record.status !== "RUNNING") {
         throw createRuntimeFailure(
           "DEV_SHELL_PROCESS_NOT_RUNNING",
-          `Developer shell process '${processId}' is not running.`,
+          this.renderProcessRecoveryMessage(processId, `Developer shell process '${processId}' is not running.`),
           {
             subsystem: "dev_shell",
             processId,
             status: record.status,
+            ...this.buildProcessRecoveryDetails(processId),
           },
         );
       }
       throw createRuntimeFailure(
         "DEV_SHELL_PROCESS_NOT_FOUND",
-        `Unknown developer shell process '${processId}'.`,
+        this.renderProcessRecoveryMessage(processId, `Unknown developer shell process '${processId}'.`),
         {
           subsystem: "dev_shell",
           processId,
+          ...this.buildProcessRecoveryDetails(processId),
         },
       );
     }
@@ -863,10 +908,11 @@ export class DevShellSupervisor {
     if (record === null) {
       throw createRuntimeFailure(
         "DEV_SHELL_PROCESS_NOT_FOUND",
-        `Unknown developer shell process '${processId}'.`,
+        this.renderProcessRecoveryMessage(processId, `Unknown developer shell process '${processId}'.`),
         {
           subsystem: "dev_shell",
           processId,
+          ...this.buildProcessRecoveryDetails(processId),
         },
       );
     }
@@ -894,6 +940,39 @@ export class DevShellSupervisor {
       return lostRecord;
     }
     return record;
+  }
+
+  private buildProcessRecoveryDetails(requestedSessionId: string): Record<string, unknown> {
+    const activeSessions = [...this.processes.values()]
+      .map(({ record }) => ({
+        sessionId: record.processId,
+        command: record.command,
+        cwd: renderWorkspaceRelativePath(record.workspaceRoot, record.cwd),
+        status: "running",
+      }))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+    const soleSession = activeSessions.length === 1 ? activeSessions[0] : undefined;
+    return {
+      requestedSessionId,
+      activeSessions,
+      nextSuggestedAction: soleSession !== undefined
+        ? `Retry exec_command with sessionId '${soleSession.sessionId}' and no command to collect unread output and current status.`
+        : activeSessions.length > 1
+          ? `Retry exec_command with one of the listed active sessionIds and no command. Match the command and cwd before continuing.`
+          : "No exec_command session is currently active. Start a new command only if the prior process no longer needs to be continued.",
+    };
+  }
+
+  private renderProcessRecoveryMessage(requestedSessionId: string, prefix: string): string {
+    const recovery = this.buildProcessRecoveryDetails(requestedSessionId);
+    const activeSessions = recovery.activeSessions as Array<{ sessionId: string; command: string; cwd: string }>;
+    if (activeSessions.length === 0) {
+      return `${prefix} No exec_command session is currently active.`;
+    }
+    const rendered = activeSessions
+      .map((session) => `'${session.sessionId}' (${session.command}, cwd '${session.cwd}')`)
+      .join(", ");
+    return `${prefix} Active exec_command session${activeSessions.length === 1 ? "" : "s"}: ${rendered}. Reuse the matching sessionId with no command.`;
   }
 
   private async touchProcess(process: RunningProcess): Promise<void> {
@@ -950,7 +1029,11 @@ export class DevShellSupervisor {
     }
 
     const workspaceRoot = resolve(input.workspaceRoot ?? ".");
-    const cwd = await constrainPathWithinWorkspace(workspaceRoot, resolve(workspaceRoot, input.cwd ?? "."));
+    const cwd = await requirePathWithinWorkspace(
+      workspaceRoot,
+      resolve(workspaceRoot, input.cwd ?? "."),
+      input.cwd ?? ".",
+    );
     const packageInfo = await findPackageInfo({ workspaceRoot, cwd });
     if (packageInfo === undefined) {
       return {
@@ -1308,11 +1391,28 @@ function resolveShellPath(): string {
   return "/bin/sh";
 }
 
-async function constrainPathWithinWorkspace(workspaceRoot: string, target: string): Promise<string> {
+async function requirePathWithinWorkspace(
+  workspaceRoot: string,
+  target: string,
+  requestedTarget: string,
+): Promise<string> {
   if (await isWithinWorkspace(workspaceRoot, target)) {
     return target;
   }
-  return workspaceRoot;
+  throw createRuntimeFailure(
+    "DEV_SHELL_CWD_OUTSIDE_WORKSPACE",
+    `cwd '${requestedTarget}' resolves outside the active workspace. Use '.' or a workspace-relative subdirectory.`,
+    {
+      subsystem: "dev_shell",
+      requestedCwd: requestedTarget,
+      nextSuggestedAction: "Retry with cwd '.' or a relative directory that exists inside the active workspace.",
+    },
+  );
+}
+
+function renderWorkspaceRelativePath(workspaceRoot: string, target: string): string {
+  const rendered = relative(workspaceRoot, target);
+  return rendered.length === 0 ? "." : rendered;
 }
 
 function assertSourceWriteAuthority(input: {

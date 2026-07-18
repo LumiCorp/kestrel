@@ -242,6 +242,34 @@ test("exec_command rejects ambiguous lifecycle input", async () => {
   await assert.rejects(() => handler({ sessionId: "proc-1", stdin: "x\n", stop: true }), /cannot be combined/u);
 });
 
+test("exec_command accepts only workspace-relative cwd and keeps the workspace root authoritative", async () => {
+  const service = new CapturingExecCommandService();
+  const handler = execCommandTool.createHandler({
+    fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
+    devShell: { enabled: true },
+    devShellService: service,
+  });
+
+  await handler({ command: "pwd", cwd: "coding-fixture" });
+  assert.equal(service.startInputs[0]?.workspaceRoot, "/repo");
+  assert.equal(service.startInputs[0]?.cwd, "coding-fixture");
+
+  await assert.rejects(
+    () => handler({ command: "pwd", cwd: "/host-only/worktree" }),
+    /cwd must be relative to the active workspace/u,
+  );
+  await assert.rejects(
+    () => handler({ command: "pwd", cwd: "../outside" }),
+    /must not escape it/u,
+  );
+  assert.equal(service.startInputs.length, 1);
+});
+
+test("exec_command model schema does not expose host workspaceRoot input", () => {
+  assert.doesNotMatch(JSON.stringify(execCommandTool.definition.inputSchema), /workspaceRoot/u);
+  assert.match(JSON.stringify(execCommandTool.definition.inputSchema), /Workspace-relative working directory/u);
+});
+
 async function runExecCommandForTest(
   context: Parameters<typeof execCommandTool.createHandler>[0],
   input: Record<string, unknown>,

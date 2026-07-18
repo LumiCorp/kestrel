@@ -87,7 +87,7 @@ test("DevShellSupervisor rejects missing workspace roots during exec preflight",
         command: "echo nope",
         allowedEnvNames: [],
       }),
-      /does not exist/u,
+      /active workspace is unavailable/u,
     );
   } finally {
     await supervisor.close();
@@ -112,19 +112,44 @@ test("DevShellSupervisor returns completed command output without a processId", 
   }
 });
 
-test("DevShellSupervisor clamps requested cwd outside the workspace root to the workspace root", async () => {
+test("DevShellSupervisor rejects requested cwd outside the workspace root", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
-    const result = await supervisor.runCommand({
+    await assert.rejects(
+      () => supervisor.runCommand({
+        workspaceRoot,
+        cwd: "../outside-workspace",
+        command: "pwd",
+        timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: 4096,
+      }),
+      /resolves outside the active workspace/u,
+    );
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor points an invalid sessionId to the active command and cwd", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
       workspaceRoot,
-      cwd: "../outside-workspace",
-      command: "pwd",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
+      command: "sleep 30",
+      yieldTimeMs: 10,
     });
-    assert.equal(result.status, "COMPLETED");
-    assert.equal(result.cwd, workspaceRoot);
-    assert.match(result.text.trim(), new RegExp(`^${workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+    assert.equal(started.status, "RUNNING");
+    await assert.rejects(
+      () => supervisor.readProcess({ processId: "mistyped-session", waitMs: 0 }),
+      (error: unknown) => {
+        assert.match(String(error), new RegExp(started.processId!));
+        assert.match(String(error), /sleep 30/u);
+        assert.match(String(error), /cwd '\.'/u);
+        assert.match(String(error), /Reuse the matching sessionId/u);
+        return true;
+      },
+    );
+    await supervisor.stopProcess({ processId: started.processId!, waitMs: 100 });
   } finally {
     await supervisor.close();
   }
@@ -939,7 +964,7 @@ test("DevShellSupervisor writes stdin and reads resulting output in one process 
   }
 });
 
-test("DevShellSupervisor delivers unread output once when a process exits between observations", async () => {
+test("DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -957,8 +982,19 @@ test("DevShellSupervisor delivers unread output once when a process exits betwee
     assert.equal(terminal.status, "COMPLETED");
     assert.equal(terminal.text, "second\n");
 
-    const empty = await supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 });
-    assert.equal(empty.text, "");
+    await assert.rejects(
+      () => supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 }),
+      (error: unknown) => {
+        assert.match(String(error), /terminal result was already delivered/u);
+        assert.match(String(error), /Start a new exec_command with command/u);
+        assert.match(String(error), /Do not reuse the settled sessionId/u);
+        return true;
+      },
+    );
+
+    const replay = await supervisor.readProcess({ processId, cursor: 0, waitMs: 0, maxBytes: 4096 });
+    assert.equal(replay.status, "COMPLETED");
+    assert.equal(replay.text, "first\nsecond\n");
   } finally {
     await supervisor.close();
   }

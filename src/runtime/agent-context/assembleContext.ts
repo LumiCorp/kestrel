@@ -168,6 +168,7 @@ export function buildKestrelAgentContext(
   const recentToolResultEvidence = buildRecentToolResultEvidence({
     lastActionResult: input.reactState.lastActionResult,
     transcript,
+    omitRunningExecCommand: activeProcessEvidence !== undefined,
   });
   const projectTaskQueueContext = buildProjectTaskQueueContext(input.projectSnapshot);
   const recoveryContext = buildRecoveryContext(input.reactState);

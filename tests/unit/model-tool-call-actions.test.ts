@@ -95,6 +95,27 @@ test("provider aliases are transport-only and canonical tool names stay dotted",
   });
 });
 
+test("missing assistant progress does not reject an otherwise valid action", () => {
+  const registry = buildModelToolAliasRegistry(workspaceTools);
+  const normalized = normalizeModelToolCallsToAgentTurnRaw({
+    aliasRegistry: registry,
+    sourceRunId: "run_1",
+    toolIntents: [
+      {
+        name: "fs_read_text",
+        input: { path: "package.json" },
+      },
+    ],
+  });
+
+  assert.deepEqual(normalized.action, {
+    kind: "tool",
+    name: "fs.read_text",
+    input: { path: "package.json" },
+  });
+  assert.equal(normalized.assistantProgress, "I’m continuing the requested work.");
+});
+
 test("finalize control tool description stays prose closeout guidance", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const finalizeTool = registry.requestTools.find((tool) => tool.name === "kestrel_finalize");
@@ -102,12 +123,15 @@ test("finalize control tool description stays prose closeout guidance", () => {
   const properties = inputSchema?.properties as Record<string, unknown> | undefined;
   const required = inputSchema?.required as string[] | undefined;
   const statusSchema = properties?.status as Record<string, unknown> | undefined;
+  const dataSchema = properties?.data as Record<string, unknown> | undefined;
 
   assert.match(finalizeTool?.description ?? "", /Finish the run with a user-facing answer/u);
   assert.match(finalizeTool?.description ?? "", /requested outcome and explicit constraints are supported by observed evidence/u);
   assert.match(finalizeTool?.description ?? "", /Claim only checks that actually ran/u);
   assert.match(finalizeTool?.description ?? "", /data\.openGap or data\.knownWarnings/u);
   assert.match(finalizeTool?.description ?? "", /otherwise keep working or report the concrete blocker/u);
+  assert.match(finalizeTool?.description ?? "", /Do not put changedFiles, checksRun, or checksFailed in data/u);
+  assert.match(String(dataSchema?.description), /runtime evidence owns those facts/u);
   assert.doesNotMatch(finalizeTool?.description ?? "", /swe-verified|sweValidation|benchmark|validation proof|edited tests/i);
   assert.deepEqual(statusSchema?.enum, ["goal_satisfied", "out_of_scope"]);
   assert.equal(properties?.assistantProgress, undefined);
@@ -226,8 +250,17 @@ test("todo update description explains code-change notes without benchmark polic
   const todoTool = registry.requestTools.find((tool) => tool.name === "kestrel_todo_update");
 
   assert.match(todoTool?.description ?? "", /Update the visible live checklist for multi-step work/u);
-  assert.match(todoTool?.description ?? "", /objective, concrete work, planned checks/u);
-  assert.match(todoTool?.description ?? "", /observed results, and blockers/u);
+  assert.match(todoTool?.description ?? "", /concrete task work, checks, results, and blockers/u);
+  assert.match(todoTool?.description ?? "", /do not add finalization or reporting itself as a todo item/u);
+  const todoSchema = todoTool?.inputSchema as Record<string, unknown>;
+  const todoProperties = todoSchema.properties as Record<string, unknown>;
+  const itemsSchema = todoProperties.items as Record<string, unknown>;
+  const itemSchema = itemsSchema.items as Record<string, unknown>;
+  const itemProperties = itemSchema.properties as Record<string, unknown>;
+  assert.match(
+    String((itemProperties.text as Record<string, unknown>).description),
+    /Never use a todo item for closing todos, finalization, or reporting itself/u,
+  );
   assert.match(todoTool?.description ?? "", /combine final completed updates with kestrel\.finalize/u);
   assert.doesNotMatch(todoTool?.description ?? "", /what must be true at the end/u);
   assert.doesNotMatch(todoTool?.description ?? "", /existing test file and assertion found when available/u);

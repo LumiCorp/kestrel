@@ -31,13 +31,11 @@ import {
   buildToolIntentContext,
 } from "../toolIntent.js";
 import {
-  buildContextRequest,
-} from "../context/ContextRequestBuilder.js";
-import {
   buildInternalDecisionContext,
   type InternalDecisionContext,
 } from "../context/InternalDecisionContext.js";
 import {
+  buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
   buildKestrelAgentValidationFeedbackMessage,
@@ -1645,6 +1643,28 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
       },
       schemaCategory: "visible_todos",
     },
+    requiredCorrection: {
+      visibleTodoBeforeFinalize: {
+        action: "advance_or_close_visible_todo_before_finalize",
+        openItem: {
+          id: openItem.id,
+          text: openItem.text,
+          status: openItem.status,
+          ...(openItem.note !== undefined ? { note: openItem.note } : {}),
+        },
+        forbiddenActionWhileOpen: "kestrel_finalize by itself",
+        allowedNextActions: [
+          "call a workspace tool that directly advances the open item",
+          "if observed evidence already proves the item complete, combine kestrel_todo_update marking that exact item done with an evidence note and kestrel_finalize",
+        ],
+        ...(openItem.status === "blocked"
+          ? {
+              blockedItemRecovery:
+                "If this is a documented residual risk instead of actionable work, include it in finalize data.openGap or data.knownWarnings and close the exact item with a note in the same turn.",
+            }
+          : {}),
+      },
+    },
   };
   const traces = [
     ...input.traces,
@@ -1699,7 +1719,7 @@ function buildVisibleTodoFinalizeContinuationCorrection(input: {
   const residualGuidance = input.itemStatus === "blocked"
     ? " If this is a residual risk rather than actionable work, document it in kestrel_finalize data.openGap or data.knownWarnings, mark the item done with a note, and finalize."
     : "";
-  return `Still open: ${input.itemText}.${blocker} Continue actionable work, or if existing evidence proves it is complete, call kestrel_todo_update with item '${input.itemId}' marked done and note the observed validation result before calling kestrel_finalize.${residualGuidance}`;
+  return `Still open: ${input.itemText}.${blocker} Do not call kestrel_finalize by itself again while this item remains open. Continue actionable work with a workspace tool, or if existing evidence proves it is complete, combine kestrel_todo_update with item '${input.itemId}' marked done and a note naming the observed validation result in the same response as kestrel_finalize.${residualGuidance}`;
 }
 
 function resolveBlockedActionPolicy(input: {
@@ -3220,6 +3240,7 @@ function buildThinkerRequiredCorrection(
           },
         },
         correction:
+          asString(details?.requiredCorrection) ??
           "Call kestrel_finalize with status and a user-facing message. Do not emit runtime-only finalizeReason or nested input.message.",
       },
     };

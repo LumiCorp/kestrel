@@ -11,20 +11,13 @@ export interface KestrelBenchmarkContext {
 }
 
 const SWE_VERIFIED_GUIDANCE = [
-  "Work only from the issue text, repository state, and evidence you gather in this workspace.",
   "You are running inside the SWE-bench testbed at /testbed.",
   "Treat issue hints and proposed causes as hypotheses, not requirements.",
   "When the issue touches emitted values, paths, serialized output, API returns, or user-visible strings, preserve the observed emitted semantics unless direct evidence shows the requested fix requires changing them.",
   "Validate the exact emitted value or behavior at risk, not only a nearby reproduction or ordering check.",
   "Before editing, find the relevant source file and existing tests for that behavior.",
-  "Edit the checked-out repository directly under /testbed and leave the final candidate fix as a git diff.",
-  "Use exec_command for focused validation; it runs in this SWE-bench testbed.",
-  "Run the focused existing test before finalizing.",
-  "If the first test command fails because the runner is unavailable, find the repo-native test command and try that.",
-  "Use a reproduction script only when no relevant test exists or no runnable project test command can be found.",
-  "Keep the patch focused. Do not remove unrelated tests.",
-  "Do not create benchmark bookkeeping files inside the candidate repository.",
-  "Finalize only after the relevant check passes.",
+  "Run a focused existing test for the changed behavior; if its runner is unavailable, use the repository's native command or an asserting reproduction.",
+  "Leave a focused candidate git diff under /testbed and do not create benchmark bookkeeping files in the repository.",
 ];
 
 const TERMINAL_BENCH_TASK_CONTRACT = [

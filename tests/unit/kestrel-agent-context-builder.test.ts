@@ -3,9 +3,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { buildContextRequest } from "../../agents/reference-react/src/context/ContextRequestBuilder.js";
 import { buildModelToolAliasRegistry } from "../../agents/reference-react/src/modelToolCallActions.js";
 import {
+  buildActiveProcessEvidence,
+  buildRecentToolResultEvidence,
+} from "../../src/runtime/agent-context/evidenceContext.js";
+import {
+  buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactionMessages,
   buildKestrelAgentContext,
   buildKestrelAgentCompactedTranscript,
@@ -280,6 +284,8 @@ test("Kestrel agent context builder promotes active exec_command process evidenc
   assert.match(runtimeContext, /exec_command running sessionId="tb-proc-123"/u);
   assert.match(runtimeContext, /command="\.\/maze_game\.sh"/u);
   assert.match(runtimeContext, /call exec_command with \{"sessionId":"tb-proc-123","assistantProgress":"I am checking the running process\."\} and no command/u);
+  assert.doesNotMatch(runtimeContext, /Recent tool-result evidence:[\s\S]*exec_command running/u);
+  assert.equal(countOccurrences(runtimeContext, "call exec_command with"), 1);
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
 });
 
@@ -327,7 +333,47 @@ test("Kestrel agent context builder promotes active exec_command evidence from t
   assert.match(runtimeContext, /text="hit wall >"/u);
   assert.match(runtimeContext, /call exec_command with \{"sessionId":"tb-proc-456","assistantProgress":"I am checking the running process\."\} and no command/u);
   assert.match(runtimeContext, /Add stdin only when the process is waiting for input/u);
+  assert.doesNotMatch(runtimeContext, /Recent tool-result evidence:[\s\S]*exec_command running/u);
+  assert.equal(countOccurrences(runtimeContext, "call exec_command with"), 1);
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
+});
+
+test("Kestrel agent context builder clears transcript process evidence after terminal settlement", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {
+      modelTranscript: {
+        version: 1,
+        windowId: 1,
+        items: [
+          {
+            id: "tool_result_running",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            kind: "tool_result",
+            toolName: "exec_command",
+            toolInput: { command: "npm test", cwd: "coding-fixture" },
+            toolOutput: { status: "running", sessionId: "proc-settled", output: "TAP version 13" },
+          },
+          {
+            id: "tool_result_terminal",
+            createdAt: "2026-07-06T00:00:01.000Z",
+            kind: "tool_result",
+            toolName: "exec_command",
+            toolInput: { sessionId: "proc-settled" },
+            toolOutput: { status: "failed", exitCode: 1, output: "test failed" },
+          },
+        ],
+      },
+    },
+    eventPayload: { message: "Fix the test." },
+    eventType: "job.run",
+    goal: "Fix the test.",
+    interactionMode: "build",
+  });
+
+  const runtimeContext = String(context.contextMessages[0]?.content ?? "");
+  assert.doesNotMatch(runtimeContext, /Active process evidence:/u);
+  assert.doesNotMatch(runtimeContext, /exec_command running sessionId="proc-settled"/u);
+  assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, false);
 });
 
 test("workspace status is rederived from the ledger after compaction and clears when fresh", () => {
@@ -456,17 +502,17 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
   const systemPrompt = String(context.messages[0]?.content ?? "");
 
   assert.match(systemPrompt, /Core operating contract:/u);
-  assert.match(systemPrompt, /Treat runtime context as the current control packet/u);
+  assert.match(systemPrompt, /Runtime context is the authoritative control packet/u);
   assert.match(systemPrompt, /Build-mode operating loop:/u);
   assert.match(systemPrompt, /implementation-first/u);
-  assert.match(systemPrompt, /treat that concrete file\/path\/artifact as the primary edit target/u);
-  assert.match(systemPrompt, /treat it as validation evidence unless the task explicitly asks you to edit that thing/u);
+  assert.match(systemPrompt, /primary edit target/u);
   assert.match(systemPrompt, /1\. Orient just enough to act\./u);
-  assert.match(systemPrompt, /2\. Make the first candidate change\./u);
-  assert.match(systemPrompt, /Do not keep investigating while the primary edit target remains untouched/u);
-  assert.match(systemPrompt, /3\. Validate immediately and iterate\./u);
-  assert.match(systemPrompt, /4\. Review the final diff\./u);
-  assert.match(systemPrompt, /For stateful, interactive, or protocol-driven tasks, maintain a concise observed state model/u);
+  assert.match(systemPrompt, /2\. Make the smallest plausible candidate change early\./u);
+  assert.match(systemPrompt, /3\. Validate the exact requested behavior after the latest mutation\./u);
+  assert.match(systemPrompt, /4\. Review the final diff and user-visible output\./u);
+  assert.match(systemPrompt, /continue that exact sessionId without command/u);
+  assert.match(systemPrompt, /settle every live process before finalizing/u);
+  assert.match(systemPrompt, /visible plan agent-owned/u);
   assert.match(systemPrompt, /User-facing control tools:/u);
 });
 
@@ -547,6 +593,10 @@ test("Kestrel agent context builder owns the provider-facing tool surface", () =
     direct.requestTools.find((tool) => tool.name === "kestrel_finalize")?.description ?? "",
     /Finish the run with a user-facing answer/u,
   );
+  assert.match(
+    direct.requestTools.find((tool) => tool.name === "kestrel_finalize")?.description ?? "",
+    /Preserve any user-required literal marker or output token exactly, including capitalization/u,
+  );
 });
 
 test("Kestrel agent context builder owns tool-result summaries and model context", () => {
@@ -574,7 +624,8 @@ test("Kestrel agent context builder owns tool-result summaries and model context
 
   assert.match(context.text, /Tool result: fs\.read_text/u);
   assert.match(context.text, /- path: src\/file\.ts/u);
-  assert.match(context.text, /- content:/u);
+  assert.match(context.text, /- content \(exact; boundary markers are not file content\):/u);
+  assert.match(context.text, /<<<KESTREL_EXACT_FILE_CONTENT\nhello\nKESTREL_EXACT_FILE_CONTENT/u);
   assert.match(context.text, /Raw output ref: tool-output:abc123/u);
 
   const genericContext = buildKestrelAgentToolModelContext({
@@ -585,6 +636,39 @@ test("Kestrel agent context builder owns tool-result summaries and model context
     status: "OK",
   });
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
+});
+
+test("agent evidence resolves relative process cwd from the recorded workspace root", () => {
+  const runningResult = {
+    kind: "tool",
+    name: "exec_command",
+    toolName: "exec_command",
+    input: { command: "npm test", cwd: "missing" },
+    output: {
+      status: "running",
+      sessionId: "proc-relative",
+      cwd: "missing",
+      workspaceRoot: "/repo",
+    },
+  };
+  const activeEvidence = buildActiveProcessEvidence({ lastActionResult: runningResult });
+  assert.equal(activeEvidence?.length, 1);
+  assert.match(activeEvidence?.[0] ?? "", /cwd="missing"/u);
+  assert.doesNotMatch(activeEvidence?.[0] ?? "", /outside-active-workspace/u);
+
+  const completedResult = {
+    ...runningResult,
+    status: "ok",
+    output: {
+      ...runningResult.output,
+      status: "completed",
+      exitCode: 0,
+    },
+  };
+  const recentEvidence = buildRecentToolResultEvidence({ lastActionResult: completedResult });
+  assert.equal(recentEvidence?.length, 1);
+  assert.match(recentEvidence?.[0] ?? "", /cwd="missing"/u);
+  assert.doesNotMatch(recentEvidence?.[0] ?? "", /outside-active-workspace/u);
 });
 
 test("Kestrel agent context builder keeps bounded weather facts model-visible", () => {
@@ -998,6 +1082,98 @@ test("Kestrel agent context builder renders the exact rejected structured respon
   assert.match(providerText, /package\.json/u);
 });
 
+test("Kestrel agent context builder gives exact legacy finalize data recovery", () => {
+  const requiredCorrection =
+    "Call kestrel_finalize again with the same status and user-facing message, but omit changedFiles, checksRun, and checksFailed from data. The runtime derives changed files and validation evidence from observed tool results.";
+  const feedback = buildKestrelAgentValidationFeedbackMessage({
+    code: "DECISION_SCHEMA_FAILED",
+    message: "Finalize data must not include legacy closeout evidence fields.",
+    schemaCategory: "schema",
+    details: {
+      reason: "legacy_finalize_evidence_fields_removed",
+      path: "nextAction.data",
+      legacyFields: ["changedFiles", "checksRun", "checksFailed"],
+      requiredCorrection,
+    },
+  });
+  const context = buildKestrelAgentContext({
+    reactState: {},
+    retryContext: {
+      failure: {
+        code: "DECISION_SCHEMA_FAILED",
+        message: "Finalize data must not include legacy closeout evidence fields.",
+        schemaCategory: "schema",
+        details: {
+          reason: "legacy_finalize_evidence_fields_removed",
+          path: "nextAction.data",
+          legacyFields: ["changedFiles", "checksRun", "checksFailed"],
+          requiredCorrection,
+          modelFeedback: feedback,
+        },
+      },
+      previousResponse: {
+        toolCalls: [{
+          name: "kestrel_finalize",
+          input: {
+            status: "goal_satisfied",
+            message: "Done.",
+            data: { changedFiles: ["file.ts"] },
+          },
+        }],
+      },
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "job.run",
+    goal: "Fix the benchmark task.",
+    interactionMode: "build",
+  });
+
+  const providerText = JSON.stringify(context.messages);
+  assert.match(feedback, /omit changedFiles, checksRun, and checksFailed/u);
+  assert.match(providerText, /runtime derives changed files and validation evidence/u);
+  assert.match(providerText, /Previous rejected structured response/u);
+});
+
+test("Kestrel agent context builder gives an exact visible todo continuation action", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {},
+    retryContext: {
+      failure: {
+        code: "DECISION_POLICY_FAILED",
+        message: "Visible checklist still has open work.",
+        schemaCategory: "visible_todos",
+        details: {
+          reason: "visible_todo_finalize_continuation",
+          openVisibleTodoItemId: "validate-fix",
+          openVisibleTodoItemStatus: "in_progress",
+        },
+      },
+      requiredCorrection: {
+        visibleTodoBeforeFinalize: {
+          action: "advance_or_close_visible_todo_before_finalize",
+          openItem: {
+            id: "validate-fix",
+            text: "Run the focused regression test",
+            status: "in_progress",
+          },
+          forbiddenActionWhileOpen: "kestrel_finalize by itself",
+        },
+      },
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "job.run",
+    goal: "Fix the benchmark task.",
+    interactionMode: "build",
+  });
+
+  const providerText = JSON.stringify(context.messages);
+  assert.match(providerText, /Do not call kestrel_finalize by itself again/u);
+  assert.match(providerText, /workspace tool that directly advances that item/u);
+  assert.match(providerText, /kestrel_todo_update to mark that exact item done/u);
+  assert.match(providerText, /validate-fix/u);
+  assert.match(providerText, /Run the focused regression test/u);
+});
+
 test("Kestrel agent context builder renders duplicate exec_command start correction", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_POLICY_FAILED",
@@ -1196,7 +1372,8 @@ test("Kestrel agent context builder renders structured SWE Verified benchmark co
   assert.match(String(context.modelInput.taskInstruction), /Treat issue hints and proposed causes as hypotheses/u);
   assert.match(String(context.modelInput.taskInstruction), /preserve the observed emitted semantics/u);
   assert.match(String(context.modelInput.taskInstruction), /Validate the exact emitted value or behavior at risk/u);
-  assert.match(String(context.modelInput.taskInstruction), /Use exec_command for focused validation/u);
+  assert.match(String(context.modelInput.taskInstruction), /Run a focused existing test for the changed behavior/u);
+  assert.match(String(context.modelInput.taskInstruction), /do not create benchmark bookkeeping files/u);
   assert.equal(context.metadata.sections.find((section) => section.id === "benchmarkContext")?.rendered, true);
 });
 
@@ -1230,17 +1407,6 @@ test("Kestrel agent context builder renders structured Terminal-Bench benchmark 
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.shell\.run/u);
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.process\.write/u);
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.process\.read/u);
-});
-
-test("ContextRequestBuilder remains a compatibility facade", () => {
-  const source = readFileSync(
-    path.join(process.cwd(), "agents/reference-react/src/context/ContextRequestBuilder.ts"),
-    "utf8",
-  );
-
-  assert.match(source, /buildKestrelAgentContext/u);
-  assert.doesNotMatch(source, /buildRuntimeContextFragment/u);
-  assert.doesNotMatch(source, /renderModelTranscriptMessages/u);
 });
 
 test("deliberator model requests use builder-rendered system messages", () => {

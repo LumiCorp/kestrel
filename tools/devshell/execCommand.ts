@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
 import type {
   DevProcessReadResult,
   DevProcessStartInput,
@@ -63,14 +65,18 @@ export const execCommandTool: SharedToolModule = {
           additionalProperties: false,
           required: ["command"],
           properties: {
-            workspaceRoot: { type: "string", minLength: 1 },
             command: {
               type: "string",
               minLength: 1,
               description:
                 "Command shape only: start one command and observe it. It returns a terminal result if the process exits, otherwise status running with sessionId. Do not include sessionId, stdin, or stop.",
             },
-            cwd: { type: "string", minLength: 1 },
+            cwd: {
+              type: "string",
+              minLength: 1,
+              description:
+                "Workspace-relative working directory such as '.' or 'apps/web'. Absolute paths and paths that escape the active workspace are rejected with recovery guidance.",
+            },
             requiredTools: {
               type: "array",
               items: { type: "string", minLength: 1 },
@@ -130,14 +136,18 @@ export const execCommandTool: SharedToolModule = {
         },
       ],
       properties: {
-        workspaceRoot: { type: "string", minLength: 1 },
         command: {
           type: "string",
           minLength: 1,
           description:
             "Command shape only: start one managed process and observe it briefly. When command is present, omit sessionId, stdin, and stop.",
         },
-        cwd: { type: "string", minLength: 1 },
+        cwd: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Workspace-relative working directory such as '.' or 'apps/web'. Absolute paths and paths that escape the active workspace are invalid.",
+        },
         sessionId: {
           type: "string",
           minLength: 1,
@@ -300,14 +310,16 @@ function buildStartProcessInput(
       requiredCorrection: commandSafetyIssue.correction,
     });
   }
-  const workspaceRoot = readString(body, "workspaceRoot")?.trim() ??
-    context.fileSystem?.workspaceRoot ??
-    ".";
+  const workspaceRoot = context.fileSystem?.workspaceRoot ?? ".";
+  const requestedCwd = readString(body, "cwd")?.trim();
+  if (requestedCwd !== undefined) {
+    validateWorkspaceRelativeCwd(workspaceRoot, requestedCwd);
+  }
   const defaultCwd = resolveWorkspaceAppCwd(workspaceRoot, context.workspace?.appRoot);
   return {
     workspaceRoot,
     command: normalizedCommand,
-    cwd: readString(body, "cwd")?.trim() ?? defaultCwd,
+    cwd: requestedCwd ?? defaultCwd,
     ...(parseStringArrayField("exec_command", body, "requiredTools") !== undefined
       ? { requiredTools: parseStringArrayField("exec_command", body, "requiredTools") }
       : {}),
@@ -327,6 +339,29 @@ function buildStartProcessInput(
     ...(sourceWriteAuthority !== undefined ? { sourceWriteAuthority } : {}),
     ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
   };
+}
+
+function validateWorkspaceRelativeCwd(workspaceRoot: string, cwd: string): void {
+  const resolvedWorkspaceRoot = resolve(workspaceRoot);
+  const resolvedCwd = resolve(resolvedWorkspaceRoot, cwd);
+  const relativeCwd = relative(resolvedWorkspaceRoot, resolvedCwd);
+  if (
+    isAbsolute(cwd) === false &&
+    relativeCwd !== ".." &&
+    relativeCwd.startsWith(`..${sep}`) === false
+  ) {
+    return;
+  }
+  throw createToolInputError(
+    "exec_command",
+    `Invalid cwd '${cwd}'. cwd must be relative to the active workspace and must not escape it.`,
+    {
+      field: "cwd",
+      code: "EXEC_COMMAND_CWD_NOT_WORKSPACE_RELATIVE",
+      requestedCwd: cwd,
+      requiredCorrection: "Use '.' for the workspace root or a relative directory such as 'apps/web'.",
+    },
+  );
 }
 
 function resolveStartObservationMs(body: Record<string, unknown>): number {

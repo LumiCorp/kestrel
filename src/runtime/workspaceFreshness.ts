@@ -1,3 +1,5 @@
+import { renderWorkspaceRelativeTarget } from "./workspaceCoordinates.js";
+
 export type WorkspaceFreshnessStatus =
   | "not_applicable"
   | "stale"
@@ -9,6 +11,9 @@ export interface WorkspaceFreshnessEvidenceRef {
   stepIndex?: number | undefined;
   toolName?: string | undefined;
   processId?: string | undefined;
+  command?: string | undefined;
+  cwd?: string | undefined;
+  status?: string | undefined;
   changedFiles?: string[] | undefined;
   summary: string;
 }
@@ -182,8 +187,22 @@ function toEvidenceRef(entry: LedgerEntry): WorkspaceFreshnessEvidenceRef {
     ...(entry.stepIndex !== undefined ? { stepIndex: entry.stepIndex } : {}),
     ...(asString(entry.facts.toolName) !== undefined ? { toolName: asString(entry.facts.toolName) } : {}),
     ...(readProcessId(entry) !== undefined ? { processId: readProcessId(entry) } : {}),
+    ...(asString(entry.facts.command) !== undefined ? { command: asString(entry.facts.command) } : {}),
+    ...(renderWorkspaceRelativeCwd(entry.facts) !== undefined
+      ? { cwd: renderWorkspaceRelativeCwd(entry.facts) }
+      : {}),
+    ...(entry.status !== undefined ? { status: entry.status } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
   };
+}
+
+function renderWorkspaceRelativeCwd(facts: Record<string, unknown>): string | undefined {
+  const cwd = asString(facts.cwd);
+  const workspaceRoot = asString(facts.workspaceRoot);
+  if (cwd === undefined || workspaceRoot === undefined) {
+    return cwd;
+  }
+  return renderWorkspaceRelativeTarget(workspaceRoot, cwd);
 }
 
 function readChangedFiles(entry: LedgerEntry): string[] {

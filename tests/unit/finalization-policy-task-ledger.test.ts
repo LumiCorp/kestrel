@@ -106,9 +106,17 @@ test("goal-satisfied finalization rejects legacy closeout evidence fields", () =
           },
         },
       }),
-    (error) =>
-      error instanceof DecisionCompileError &&
-      error.code === "DECISION_SCHEMA_FAILED" &&
-      error.diagnostics?.reason === "legacy_finalize_evidence_fields_removed",
+    (error) => {
+      assert.equal(error instanceof DecisionCompileError, true);
+      if (!(error instanceof DecisionCompileError)) {
+        return false;
+      }
+      assert.equal(error.code, "DECISION_SCHEMA_FAILED");
+      assert.equal(error.diagnostics?.reason, "legacy_finalize_evidence_fields_removed");
+      assert.equal(error.diagnostics?.path, "nextAction.data");
+      assert.match(String(error.diagnostics?.requiredCorrection), /omit changedFiles, checksRun, and checksFailed/u);
+      assert.match(String(error.diagnostics?.requiredCorrection), /runtime derives changed files and validation evidence/u);
+      return true;
+    },
   );
 });

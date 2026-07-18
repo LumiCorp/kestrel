@@ -148,12 +148,17 @@ function renderWorkspaceStatus(
   }
   const lines = ["Workspace status:"];
   if (live.length > 0) {
-    const sessionIds = live.map((item) => item.processId).filter((item): item is string => Boolean(item));
+    const sessions = live.filter((item): item is WorkspaceFreshnessEvidenceRef & { processId: string } =>
+      typeof item.processId === "string" && item.processId.length > 0
+    );
     lines.push(
-      `- live exec_command sessions: ${sessionIds.join(", ")}`,
+      `- live exec_command sessions: ${sessions.length}`,
+      ...sessions.map((session) =>
+        `- sessionId: ${session.processId}; status: ${session.status ?? "running"}; command: ${JSON.stringify(session.command ?? "unknown")}; cwd: ${JSON.stringify(session.cwd ?? ".")}`
+      ),
       "- successful finalization is blocked until each session exits or is stopped and its final result is collected.",
-      ...sessionIds.map((sessionId) =>
-        `- next action for ${sessionId}: call exec_command with {"sessionId":"${sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Use {"sessionId":"${sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} only if the process is no longer needed.`
+      ...sessions.map((session) =>
+        `- next action for ${session.processId}: call exec_command with {"sessionId":"${session.processId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Use {"sessionId":"${session.processId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} only if the process is no longer needed.`
       ),
     );
   }
@@ -208,7 +213,10 @@ export function buildWorkspaceModelContext(
   }
   return {
     workspaceId: workspace.workspaceId,
-    workspaceRoot: workspace.workspaceRoot,
+    // The runtime root can be a host-only path. Model-facing tools operate in a
+    // workspace-relative coordinate system, so do not teach the model to reuse
+    // the host path as tool input.
+    workspaceRoot: ".",
     appRoot: workspace.appRoot,
     ...(workspace.packageManager !== undefined ? { packageManager: workspace.packageManager } : {}),
     commands: workspace.commands,
@@ -289,7 +297,6 @@ function renderEvidence(input: {
     lines.push(
       "Active process evidence:",
       ...input.activeProcessEvidence.map((item) => `- ${item}`),
-      "Use exec_command with the listed sessionId and stdin/read to continue; do not start a fresh command unless intentionally resetting or starting unrelated work.",
     );
   }
   if (input.recentFilesystemEvidence !== undefined && input.recentFilesystemEvidence.length > 0) {
@@ -313,15 +320,16 @@ function renderEvidence(input: {
 }
 
 function renderWorkspaceContext(value: unknown): string | undefined {
-  const workspace = readActiveWorkspaceContext(value);
+  const workspace = buildWorkspaceModelContext(value);
   if (workspace === undefined) {
     return ;
   }
 
   return [
     `Workspace: ${workspace.workspaceId}${workspace.label !== undefined ? ` (${workspace.label})` : ""}.`,
-    `- root: ${workspace.workspaceRoot}`,
+    `- usable root: ${workspace.workspaceRoot}`,
     `- appRoot: ${workspace.appRoot}`,
+    "- Use workspace-relative paths for file tools and exec_command cwd. Host-absolute paths are not valid tool input.",
     ...(workspace.packageManager !== undefined ? [`- packageManager: ${workspace.packageManager}`] : []),
     ...formatWorkspaceCommands(workspace.commands),
   ].join("\n");

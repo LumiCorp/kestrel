@@ -1948,7 +1948,7 @@ test("ThreadRuntime records replay-aware compaction artifacts when compaction is
       finalizedPayload: {
         message: "Compacted result",
         decisions: ["Keep recent history until the prompt budget requires clipping."],
-        artifactsFiles: ["agents/reference-react/src/context/ContextRequestBuilder.ts"],
+        artifactsFiles: ["src/runtime/KestrelAgentContextBuilder.ts"],
       },
     },
     {

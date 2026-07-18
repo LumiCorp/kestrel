@@ -82,6 +82,9 @@ function retryInstructionForValidationFeedback(input: {
   if (toolName === "exec_command" && reason === "live_dev_process_start_replay_requires_process_continuation") {
     return "Continue the live exec_command session with sessionId + stdin/read, or stop it before starting a new process. Use fresh command only when intentionally resetting or starting unrelated work.";
   }
+  if (reason === "legacy_finalize_evidence_fields_removed") {
+    return "Call kestrel_finalize again with the same status and user-facing message, but omit changedFiles, checksRun, and checksFailed from data. The runtime derives changed files and validation evidence from observed tool results.";
+  }
   if (
     input.schemaCategory === "tool_call" &&
     (input.code === "DECISION_SCHEMA_FAILED" || input.code === "DECISION_PARSE_FAILED")
@@ -150,6 +153,8 @@ function retryInstructionForAction(action: string | undefined): string | undefin
       return "Choose a valid build-mode tool action, ask_user, cannot_satisfy, or grounded goal_satisfied closeout.";
     case "choose_available_tool_or_concrete_blocker":
       return "Continue with an available tool action, especially any availableToolHints in the retry details, ask for a concrete decision, or use a concrete external-blocker reason.";
+    case "advance_or_close_visible_todo_before_finalize":
+      return "Do not call kestrel_finalize by itself again while the named visible todo remains open. Call a workspace tool that directly advances that item, or, only when observed evidence already proves it complete, call kestrel_todo_update to mark that exact item done with an evidence note in the same response as kestrel_finalize.";
     case "call_finalize_with_user_facing_message":
       return "Call kestrel_finalize with status and a direct user-facing message.";
     case "call_available_tool":

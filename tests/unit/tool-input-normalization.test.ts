@@ -928,7 +928,7 @@ test("normalizeToolActionInput clamps dev.process.start workspaceRoot and cwd to
 test("normalizeToolActionInput keeps exec_command lifecycle fields visible for validation", () => {
   const start = normalizeToolActionInput("exec_command", {
     workspaceRoot: "../outside-workspace",
-    cwd: "../outside-workspace/tmp",
+    cwd: "coding-fixture",
     command: "```bash\n./maze_game.sh\n```",
     requiredTools: "bash,python3",
     envNames: ["OPENROUTER_API_KEY", "  "],
@@ -936,7 +936,6 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
     yieldTimeMs: "100",
     timeoutMs: "1000",
     maxOutputBytes: "4096",
-    stdin: "drop-me",
   }, "/home/sandbox/workspace");
   const session = normalizeToolActionInput("exec_command", {
     sessionId: " proc-123 ",
@@ -948,13 +947,11 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
   });
 
   assert.deepEqual(start, {
-    workspaceRoot: "/home/sandbox/workspace",
     command: "./maze_game.sh",
-    cwd: "/home/sandbox/workspace",
+    cwd: "coding-fixture",
     requiredTools: ["bash", "python3"],
     envNames: ["OPENROUTER_API_KEY"],
     envMode: "inherit",
-    stdin: "drop-me",
     yieldTimeMs: 100,
     timeoutMs: 1000,
     maxOutputBytes: 4096,
@@ -985,6 +982,20 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
       },
       DEV_SHELL_TOOLS,
     ),
+  );
+});
+
+test("normalizeToolActionInput preserves invalid exec_command cwd for explicit boundary rejection", () => {
+  assert.deepEqual(
+    normalizeToolActionInput("exec_command", {
+      command: "pwd",
+      cwd: "../outside-workspace",
+      workspaceRoot: "/host-only/worktree",
+    }, "/home/sandbox/workspace"),
+    {
+      command: "pwd",
+      cwd: "../outside-workspace",
+    },
   );
 });
 

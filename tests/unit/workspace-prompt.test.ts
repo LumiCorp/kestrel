@@ -20,11 +20,13 @@ test("workspace prompt helper reads lean runtime context", () => {
   const messages = buildWorkspaceSystemMessages(context);
   assert.equal(messages.length, 1);
   assert.match(messages[0] ?? "", /Workspace: ws-1 \(Project\)/u);
-  assert.match(messages[0] ?? "", /- root: \/tmp\/project/u);
+  assert.match(messages[0] ?? "", /- usable root: \./u);
+  assert.match(messages[0] ?? "", /Use workspace-relative paths/u);
+  assert.doesNotMatch(messages[0] ?? "", /\/tmp\/project/u);
   assert.doesNotMatch(messages[0] ?? "", /Workspace core instructions/u);
   assert.deepEqual(buildWorkspaceModelContext(context), {
     workspaceId: "ws-1",
-    workspaceRoot: "/tmp/project",
+    workspaceRoot: ".",
     appRoot: ".",
     commands: {},
     label: "Project",
