@@ -56,6 +56,9 @@ const webServerEnv = {
 };
 
 export default defineConfig({
+  metadata: {
+    fakeOpenRouterUrl: `http://127.0.0.1:${fakeOpenRouterPort}`,
+  },
   globalSetup: "./tests/product/global-setup.ts",
   testDir: "./tests/product",
   fullyParallel: false,

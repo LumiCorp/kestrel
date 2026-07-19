@@ -3,7 +3,19 @@ import { expect, type Page, type TestInfo, test } from "@playwright/test";
 
 type JsonRecord = Record<string, any>;
 
-test.beforeEach(async ({ page }) => {
+const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+test.beforeEach(async ({ page, request }, testInfo) => {
+  const fakeOpenRouterUrl = testInfo.config.metadata.fakeOpenRouterUrl;
+  if (typeof fakeOpenRouterUrl !== "string" || fakeOpenRouterUrl.length === 0) {
+    throw new Error("Product contract requires fakeOpenRouterUrl metadata.");
+  }
+  const resetResponse = await request.post(`${fakeOpenRouterUrl}/test/reset`);
+  if (!resetResponse.ok()) {
+    throw new Error(
+      `Failed to reset fake OpenRouter scenarios: ${resetResponse.status()} ${await resetResponse.text()}`
+    );
+  }
   await page.goto("/dashboard");
 });
 
@@ -214,7 +226,7 @@ async function waitForTurn(
       (candidate: JsonRecord) => candidate.id === turnId
     );
     if (turn && statuses.includes(turn.status)) return latest;
-    if (turn && ["failed", "cancelled"].includes(turn.status)) {
+    if (turn && TERMINAL_TURN_STATUSES.has(turn.status)) {
       throw new Error(
         `Turn ${turnId} reached unexpected ${turn.status}: ${JSON.stringify(latest)}`
       );

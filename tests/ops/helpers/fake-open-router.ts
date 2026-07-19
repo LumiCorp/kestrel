@@ -8,14 +8,16 @@ export interface FakeOpenRouterServer {
   close(): Promise<void>;
 }
 
+interface FakeOpenRouterScenarioState {
+  failedAttempts: number;
+  waitingCallId?: string | undefined;
+}
+
 export async function startFakeOpenRouterServer(
   input: { port?: number | undefined } = {}
 ): Promise<FakeOpenRouterServer> {
   const requests: Array<{ schemaName: string; userMessage: string }> = [];
-  const scenarios: {
-    failedAttempts: number;
-    waitingCallId?: string | undefined;
-  } = { failedAttempts: 0 };
+  const scenarios: FakeOpenRouterScenarioState = { failedAttempts: 0 };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
     void handleFakeOpenRouterRequest(request, response, requests, scenarios);
@@ -64,14 +66,19 @@ async function handleFakeOpenRouterRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requests: Array<{ schemaName: string; userMessage: string }>,
-  scenarios: {
-    failedAttempts: number;
-    waitingCallId?: string | undefined;
-  }
+  scenarios: FakeOpenRouterScenarioState
 ): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (request.url === "/test/reset" && request.method === "POST") {
+    scenarios.failedAttempts = 0;
+    delete scenarios.waitingCallId;
+    response.writeHead(204, { connection: "close" });
+    response.end();
     return;
   }
 
