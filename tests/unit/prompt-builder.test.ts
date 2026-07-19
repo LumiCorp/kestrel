@@ -168,7 +168,7 @@ test("build-mode deliberator prompt stays compact and generic", () => {
   assert.match(act, /visible plan agent-owned/u);
   assert.match(act, /Never create a todo whose work is closing todos, finalizing, or reporting itself/u);
   assert.match(act, /do not finalize by itself while an item remains open/u);
-  assert.ok(act.length < 6_000, `Expected compact build prompt, received ${act.length} characters.`);
+  assert.ok(act.length < 6000, `Expected compact build prompt, received ${act.length} characters.`);
 });
 
 test("shared deliberator prompt keeps authoritative evidence and structured response guidance across modes", () => {

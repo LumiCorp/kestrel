@@ -961,7 +961,7 @@ export class DevShellSupervisor {
       nextSuggestedAction: soleSession !== undefined
         ? `Retry exec_command with sessionId '${soleSession.sessionId}' and no command to collect unread output and current status.`
         : activeSessions.length > 1
-          ? `Retry exec_command with one of the listed active sessionIds and no command. Match the command and cwd before continuing.`
+          ? "Retry exec_command with one of the listed active sessionIds and no command. Match the command and cwd before continuing."
           : "No exec_command session is currently active. Start a new command only if the prior process no longer needs to be continued.",
     };
   }

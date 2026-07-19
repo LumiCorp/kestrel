@@ -58,11 +58,11 @@ test("fs.read_text preserves source indentation in model-visible content", () =>
 
   assert.match(
     result.modelContext.text,
-    /<<<KESTREL_EXACT_FILE_CONTENT\n  return items\n    \.filter\(\(item\) => item\.quantity\)\n\nKESTREL_EXACT_FILE_CONTENT/u,
+    /<<<KESTREL_EXACT_FILE_CONTENT\n {2}return items\n {4}\.filter\(\(item\) => item\.quantity\)\n\nKESTREL_EXACT_FILE_CONTENT/u,
   );
   assert.doesNotMatch(
     result.modelContext.text,
-    /<<<KESTREL_EXACT_FILE_CONTENT\n    return items\n      \.filter/u,
+    /<<<KESTREL_EXACT_FILE_CONTENT\n {4}return items\n {6}\.filter/u,
   );
 });
 

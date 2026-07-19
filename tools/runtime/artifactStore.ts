@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-const MAX_ARTIFACT_COUNT = 1_000;
+const MAX_ARTIFACT_COUNT = 1000;
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 
 interface StoredArtifact {
@@ -74,7 +74,7 @@ function validateJsonArtifactValue(value: unknown): string {
 export function readTextArtifact(ref: string): StoredArtifact | undefined {
   const artifact = artifacts.get(ref);
   if (artifact === undefined) {
-    return undefined;
+    return;
   }
   artifacts.delete(ref);
   artifacts.set(ref, artifact);

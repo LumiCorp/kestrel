@@ -677,7 +677,7 @@ function renderFilesystemFacts(
 
   if (toolName === "fs.create_text" || toolName === "fs.edit_text" || toolName === "fs.apply_patch") {
     const diff = asString(output.diff) ?? asString(output.patch);
-    const diffEnd = diff === undefined ? 0 : resolveExactContentEnd(diff, 8_000);
+    const diffEnd = diff === undefined ? 0 : resolveExactContentEnd(diff, 8000);
     const visibleDiff = diff?.slice(0, diffEnd);
     return [
       ...field("status", asString(output.status) ?? status),
@@ -1093,10 +1093,10 @@ function resolveExactContentEnd(value: string, maxChars: number): number {
   const lastCodeUnit = value.charCodeAt(candidateEnd - 1);
   const nextCodeUnit = value.charCodeAt(candidateEnd);
   const splitsSurrogatePair =
-    lastCodeUnit >= 0xD800 &&
-    lastCodeUnit <= 0xDBFF &&
-    nextCodeUnit >= 0xDC00 &&
-    nextCodeUnit <= 0xDFFF;
+    lastCodeUnit >= 0xD8_00 &&
+    lastCodeUnit <= 0xDB_FF &&
+    nextCodeUnit >= 0xDC_00 &&
+    nextCodeUnit <= 0xDF_FF;
   return splitsSurrogatePair ? candidateEnd - 1 : candidateEnd;
 }
 

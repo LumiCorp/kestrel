@@ -232,7 +232,7 @@ export const execCommandTool: SharedToolModule = {
         );
         if (sourceMutation === "capture" && result.status === "RUNNING" && result.processId !== undefined) {
           const stopped = await service.stopProcess(
-            { processId: result.processId, waitMs: 1_000, ...(maxBytes !== undefined ? { maxBytes } : {}) },
+            { processId: result.processId, waitMs: 1000, ...(maxBytes !== undefined ? { maxBytes } : {}) },
             buildDevShellCommandOptions(context),
           );
           const mapped = mapProcessResult(stopped, startedAt, result.processId);

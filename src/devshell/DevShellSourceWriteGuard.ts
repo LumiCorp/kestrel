@@ -333,7 +333,7 @@ async function collectCurrentFileStates(
   const files = new Map<string, FileState>();
   if (config.gitVisibleOnly) {
     for (const absolutePath of await listGitVisiblePaths(config.workspaceRoot)) {
-      const info = await lstat(absolutePath).catch(() => undefined);
+      const info = await lstat(absolutePath).catch(() => {});
       if (info === undefined) continue;
       if (info.isSymbolicLink()) {
         files.set(absolutePath, { type: "symlink", hash: hashString(await readlink(absolutePath)) });
