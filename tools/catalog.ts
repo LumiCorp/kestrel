@@ -28,6 +28,9 @@ import { fsListTool } from "./filesystem/list.js";
 import { fsMkdirTool } from "./filesystem/mkdir.js";
 import { fsMoveTool } from "./filesystem/move.js";
 import { fsReadTextTool } from "./filesystem/readText.js";
+import { fsCreateTextTool } from "./filesystem/createText.js";
+import { fsEditTextTool } from "./filesystem/editText.js";
+import { fsApplyPatchTool } from "./filesystem/applyPatch.js";
 import { fsReplaceTextTool } from "./filesystem/replaceText.js";
 import { fsSearchTextTool } from "./filesystem/searchText.js";
 import { fsVerifyJsonTool } from "./filesystem/verifyJson.js";
@@ -45,6 +48,7 @@ import { execCommandTool } from "./devshell/execCommand.js";
 import { effectResultLookupTool } from "./runtime/effectResultLookup.js";
 import { finalizeAnswerTool } from "./runtime/finalizeAnswer.js";
 import { planningWriteDocumentTool } from "./runtime/planningWriteDocument.js";
+import { artifactReadTool } from "./runtime/artifactRead.js";
 import { agentSpawnTool } from "./runtime/agentSpawn.js";
 import { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 import { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
@@ -99,6 +103,9 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   evidenceExtractTool,
   fsListTool,
   fsReadTextTool,
+  fsCreateTextTool,
+  fsEditTextTool,
+  fsApplyPatchTool,
   fsVerifyJsonTool,
   fsSearchTextTool,
   repoTraceTool,
@@ -117,6 +124,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   devProcessReadTool,
   devProcessStopTool,
   effectResultLookupTool,
+  artifactReadTool,
   finalizeAnswerTool,
   planningWriteDocumentTool,
   agentSpawnTool,

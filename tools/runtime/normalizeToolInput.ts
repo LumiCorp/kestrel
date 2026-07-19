@@ -573,16 +573,10 @@ export function normalizeToolActionInput(
     const command = normalizeDevShellExecCommand(input.command);
     const sessionId = normalizeOptionalString(input.sessionId);
     if (command !== undefined) {
-      const resolvedPaths = resolveDevShellPaths(
-        workspaceRoot,
-        normalizeOptionalString(input.workspaceRoot),
-        normalizeOptionalString(input.cwd),
-      );
       return {
-        ...(resolvedPaths.workspaceRoot !== undefined ? { workspaceRoot: resolvedPaths.workspaceRoot } : { workspaceRoot }),
         command,
         ...(normalizeOptionalString(input.cwd) !== undefined
-          ? { cwd: resolvedPaths.cwd }
+          ? { cwd: normalizeOptionalString(input.cwd) }
           : {}),
         ...(normalizeOptionalStringArray(input.requiredTools) !== undefined
           ? { requiredTools: normalizeOptionalStringArray(input.requiredTools) }

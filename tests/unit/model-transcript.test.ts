@@ -14,7 +14,7 @@ import {
   renderModelTranscriptMessages,
 } from "../../src/runtime/modelTranscript.js";
 import { buildManagedScratchpadFromRuntime } from "../../src/runtime/workspaceScratchpad.js";
-import { buildContextRequest } from "../../agents/reference-react/src/context/ContextRequestBuilder.js";
+import { buildKestrelAgentContext as buildContextRequest } from "../../src/runtime/KestrelAgentContextBuilder.js";
 
 test("tool result transcript renders fresh read content into next model messages", () => {
   let transcript = appendUserTurnToTranscript({

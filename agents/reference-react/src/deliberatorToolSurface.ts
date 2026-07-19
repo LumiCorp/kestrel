@@ -193,6 +193,10 @@ export function isHelperWorkTool(toolName: string): boolean {
     toolName === "fs.list" ||
     toolName === "fs.search_text" ||
     toolName === "repo.trace" ||
+    toolName === "artifact.read" ||
+    toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
     toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.mkdir" ||
@@ -212,7 +216,11 @@ export function isHelperSourceInspectionTool(toolName: string): boolean {
 }
 
 export function isHelperSourceEditTool(toolName: string): boolean {
-  return toolName === "fs.write_text" || toolName === "fs.replace_text";
+  return toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
+    toolName === "fs.write_text" ||
+    toolName === "fs.replace_text";
 }
 
 export function isHelperRepairCheckTool(toolName: string): boolean {
@@ -220,7 +228,10 @@ export function isHelperRepairCheckTool(toolName: string): boolean {
 }
 
 export function isArtifactDerivationTool(toolName: string): boolean {
-  return toolName === "fs.write_text" ||
+  return toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
+    toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "code.execute";
 }

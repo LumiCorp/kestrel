@@ -1,4 +1,5 @@
 import type { ModelTranscript, ModelTranscriptItem } from "../modelTranscript.js";
+import { renderWorkspaceRelativeTarget } from "../workspaceCoordinates.js";
 
 const MAX_RECENT_FILESYSTEM_EVIDENCE_ITEMS = 4;
 const MAX_RECENT_FILESYSTEM_PREVIEW_CHARS = 1200;
@@ -7,6 +8,11 @@ const MAX_ACTIVE_PROCESS_EVIDENCE_ITEMS = 2;
 const MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS = 360;
 const MAX_PROJECT_QUEUE_TASKS_PER_STATUS = 8;
 const PROJECT_TASK_STATUSES = ["proposed", "queued", "running", "needs_attention", "ready_for_review"] as const;
+
+interface ActiveProcessEvidenceItem {
+  sessionId: string;
+  text: string;
+}
 
 export function buildProjectTaskQueueContext(projectSnapshot: unknown): string | undefined {
   const snapshot = asRecord(projectSnapshot);
@@ -57,6 +63,7 @@ export function buildRecentFilesystemEvidence(reactState: Record<string, unknown
 export function buildRecentToolResultEvidence(input: {
   lastActionResult?: unknown;
   transcript?: ModelTranscript | undefined;
+  omitRunningExecCommand?: boolean | undefined;
 }): string[] | undefined {
   const lastAction = asRecord(input.lastActionResult);
   const lastToolName = asString(lastAction?.toolName) ?? asString(lastAction?.name);
@@ -68,6 +75,7 @@ export function buildRecentToolResultEvidence(input: {
   const latest = describeLastActionToolResult(
     input.lastActionResult,
     latestTranscriptCopy?.rawOutputRef ?? asString(asRecord(latestTranscriptCopy?.toolOutput)?.rawOutputRef),
+    input.omitRunningExecCommand === true,
   );
   let skippedLatestTranscriptCopy = false;
   const historical = transcriptItems
@@ -80,7 +88,7 @@ export function buildRecentToolResultEvidence(input: {
         skippedLatestTranscriptCopy = true;
         return ;
       }
-      return describeTranscriptToolResult(item);
+      return describeTranscriptToolResult(item, input.omitRunningExecCommand === true);
     })
     .filter((item): item is string => item !== undefined);
   const evidence = uniqueStrings([
@@ -94,11 +102,23 @@ export function buildActiveProcessEvidence(
   reactState: Record<string, unknown>,
   transcript?: ModelTranscript | undefined,
 ): string[] | undefined {
-  const evidence = uniqueStrings([
+  const candidates = [
     ...collectActiveProcessResultRecords(reactState.lastActionResult).map(describeActiveProcessResult),
     ...collectActiveProcessTranscriptRecords(transcript).map(describeActiveProcessResult),
     ...buildLedgerActiveProcessEvidence(reactState.evidenceLedger),
-  ].filter((item): item is string => item !== undefined)).slice(0, MAX_ACTIVE_PROCESS_EVIDENCE_ITEMS);
+  ].filter((item): item is ActiveProcessEvidenceItem => item !== undefined);
+  const seenSessionIds = new Set<string>();
+  const evidence: string[] = [];
+  for (const candidate of candidates) {
+    if (seenSessionIds.has(candidate.sessionId)) {
+      continue;
+    }
+    seenSessionIds.add(candidate.sessionId);
+    evidence.push(candidate.text);
+    if (evidence.length >= MAX_ACTIVE_PROCESS_EVIDENCE_ITEMS) {
+      break;
+    }
+  }
   return evidence.length > 0 ? evidence : undefined;
 }
 
@@ -143,28 +163,36 @@ function collectActiveProcessResultRecords(value: unknown): Record<string, unkno
 }
 
 function collectActiveProcessTranscriptRecords(transcript: ModelTranscript | undefined): Record<string, unknown>[] {
-  return [...(transcript?.items ?? [])]
-    .reverse()
-    .filter((item) => item.kind === "tool_result" && item.toolName === "exec_command")
-    .map((item) => ({
-      toolName: item.toolName,
-      input: item.toolInput,
-      output: item.toolOutput,
-    }))
-    .filter((item) => {
-      const output = asRecord(item.output);
-      return isRunningStatus(output?.status);
-    });
+  const seenSessionIds = new Set<string>();
+  const active: Record<string, unknown>[] = [];
+  for (const item of [...(transcript?.items ?? [])].reverse()) {
+    if (item.kind !== "tool_result" || item.toolName !== "exec_command") {
+      continue;
+    }
+    const input = asRecord(item.toolInput);
+    const output = asRecord(item.toolOutput);
+    const sessionId = asString(output?.sessionId) ??
+      asString(output?.processId) ??
+      asString(input?.sessionId);
+    if (sessionId === undefined || seenSessionIds.has(sessionId)) {
+      continue;
+    }
+    seenSessionIds.add(sessionId);
+    if (isRunningStatus(output?.status)) {
+      active.push({ toolName: item.toolName, input, output });
+    }
+  }
+  return active;
 }
 
-function buildLedgerActiveProcessEvidence(value: unknown): string[] {
+function buildLedgerActiveProcessEvidence(value: unknown): ActiveProcessEvidenceItem[] {
   return asArray(value)
     .map(asRecord)
     .filter((entry): entry is Record<string, unknown> => entry !== undefined)
     .slice(-16)
     .reverse()
     .map(describeLedgerActiveProcessEntry)
-    .filter((item): item is string => item !== undefined);
+    .filter((item): item is ActiveProcessEvidenceItem => item !== undefined);
 }
 
 function buildLedgerFilesystemEvidence(value: unknown): string[] {
@@ -177,7 +205,7 @@ function buildLedgerFilesystemEvidence(value: unknown): string[] {
     .filter((item): item is string => item !== undefined);
 }
 
-function describeLedgerActiveProcessEntry(entry: Record<string, unknown>): string | undefined {
+function describeLedgerActiveProcessEntry(entry: Record<string, unknown>): ActiveProcessEvidenceItem | undefined {
   const kind = asString(entry.kind);
   const status = asString(entry.status);
   if (kind !== "process_state" || isRunningStatus(status) === false) {
@@ -194,17 +222,25 @@ function describeLedgerActiveProcessEntry(entry: Record<string, unknown>): strin
   }
   const toolName = asString(facts?.toolName) ?? "exec_command";
   const command = asString(facts?.command);
+  const cwd = renderWorkspaceRelativeCwd(
+    asString(facts?.cwd),
+    asString(facts?.workspaceRoot),
+  );
   const stdin = asString(facts?.stdin) ?? asString(facts?.sentInput);
   const cursor = typeof facts?.cursor === "number" ? Math.trunc(facts.cursor) : undefined;
   const preview = asString(facts?.outputPreview) ?? asString(facts?.text);
-  return formatActiveProcessEvidence({
-    toolName,
+  return {
     sessionId,
-    command,
-    stdin,
-    cursor,
-    preview,
-  });
+    text: formatActiveProcessEvidence({
+      toolName,
+      sessionId,
+      command,
+      cwd,
+      stdin,
+      cursor,
+      preview,
+    }),
+  };
 }
 
 function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string | undefined {
@@ -236,6 +272,14 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
         previews.length > 0 ? `: ${previews}` : ".",
       ].join(" ");
     }
+  }
+  if (toolName === "fs.create_text" || toolName === "fs.edit_text" || toolName === "fs.apply_patch") {
+    const changedFiles = asArray(facts.changedFiles)
+      .map((item) => asString(item)?.trim())
+      .filter((item): item is string => item !== undefined && item.length > 0);
+    const files = changedFiles.length > 0 ? changedFiles.join(", ") : targetPath ?? ".";
+    const afterRevision = asString(facts.afterRevision) ?? asString(facts.revision);
+    return `${toolName} changed ${files}${afterRevision !== undefined ? ` at ${afterRevision}` : ""}.`;
   }
   if (toolName === "fs.replace_text") {
     const find = asString(facts.find);
@@ -306,7 +350,7 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
   return ;
 }
 
-function describeActiveProcessResult(record: Record<string, unknown>): string | undefined {
+function describeActiveProcessResult(record: Record<string, unknown>): ActiveProcessEvidenceItem | undefined {
   const toolName = asString(record.toolName) ?? asString(record.name) ?? "exec_command";
   const input = asRecord(record.input);
   const output = asRecord(record.output);
@@ -316,20 +360,28 @@ function describeActiveProcessResult(record: Record<string, unknown>): string | 
   }
   const cursor = typeof output?.cursor === "number" ? Math.trunc(output.cursor) : undefined;
   const preview = asString(output?.output) ?? asString(output?.text);
-  return formatActiveProcessEvidence({
-    toolName,
+  return {
     sessionId,
-    command: asString(input?.command),
-    stdin: asString(input?.stdin),
-    cursor,
-    preview,
-  });
+    text: formatActiveProcessEvidence({
+      toolName,
+      sessionId,
+      command: asString(input?.command),
+      cwd: renderWorkspaceRelativeCwd(
+        asString(output?.cwd) ?? asString(input?.cwd),
+        asString(output?.workspaceRoot) ?? asString(input?.workspaceRoot),
+      ),
+      stdin: asString(input?.stdin),
+      cursor,
+      preview,
+    }),
+  };
 }
 
 function formatActiveProcessEvidence(input: {
   toolName: string;
   sessionId: string;
   command?: string | undefined;
+  cwd?: string | undefined;
   stdin?: string | undefined;
   cursor?: number | undefined;
   preview?: string | undefined;
@@ -337,6 +389,7 @@ function formatActiveProcessEvidence(input: {
   return [
     `${input.toolName} running sessionId=${quoteEvidenceValue(input.sessionId)}`,
     input.command !== undefined ? `command=${quoteEvidenceValue(input.command)}` : undefined,
+    input.cwd !== undefined ? `cwd=${quoteEvidenceValue(input.cwd)}` : undefined,
     input.stdin !== undefined ? `last stdin=${quoteEvidenceValue(input.stdin)}` : undefined,
     input.cursor !== undefined ? `cursor=${input.cursor}` : undefined,
     input.preview !== undefined ? `text=${quoteEvidenceValue(input.preview)}` : undefined,
@@ -393,7 +446,11 @@ function isRunningStatus(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "running";
 }
 
-function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: string): string | undefined {
+function describeLastActionToolResult(
+  value: unknown,
+  transcriptRawOutputRef?: string,
+  omitRunningExecCommand = false,
+): string | undefined {
   const result = asRecord(value);
   if (result === undefined || asString(result.kind) !== "tool") {
     return ;
@@ -408,8 +465,14 @@ function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: s
     asString(result.status) ?? asString(output?.status),
     result.ok,
   );
+  if (omitRunningExecCommand && toolName === "exec_command" && status === "running") {
+    return ;
+  }
   const command = asString(output?.command) ?? asString(input?.command);
-  const cwd = asString(output?.cwd) ?? asString(input?.cwd);
+  const cwd = renderWorkspaceRelativeCwd(
+    asString(output?.cwd) ?? asString(input?.cwd),
+    asString(output?.workspaceRoot) ?? asString(input?.workspaceRoot),
+  );
   const path = asString(output?.path) ?? asString(input?.path);
   const exitCode = readFiniteNumber(output?.exitCode);
   const error = asRecord(result.error);
@@ -433,7 +496,10 @@ function describeLastActionToolResult(value: unknown, transcriptRawOutputRef?: s
   });
 }
 
-function describeTranscriptToolResult(item: ModelTranscriptItem): string | undefined {
+function describeTranscriptToolResult(
+  item: ModelTranscriptItem,
+  omitRunningExecCommand = false,
+): string | undefined {
   if (item.kind !== "tool_result") {
     return ;
   }
@@ -443,6 +509,13 @@ function describeTranscriptToolResult(item: ModelTranscriptItem): string | undef
     return ;
   }
   const status = readRenderedToolFact(text, "status");
+  if (
+    omitRunningExecCommand &&
+    item.toolName === "exec_command" &&
+    normalizeObservedToolStatus(status) === "running"
+  ) {
+    return ;
+  }
   const toolInput = asRecord(item.toolInput);
   const command = asString(toolInput?.command) ?? readRenderedToolFact(text, "command");
   const cwd = asString(toolInput?.cwd) ?? readRenderedToolFact(text, "cwd");
@@ -563,6 +636,16 @@ function readRenderedToolBlock(text: string, fieldName: string): string | undefi
 
 function quoteEvidenceValue(value: string): string {
   return JSON.stringify(clampEvidencePreview(value, MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS));
+}
+
+function renderWorkspaceRelativeCwd(
+  cwd: string | undefined,
+  workspaceRoot: string | undefined,
+): string | undefined {
+  if (cwd === undefined || workspaceRoot === undefined) {
+    return cwd;
+  }
+  return renderWorkspaceRelativeTarget(workspaceRoot, cwd);
 }
 
 function firstString(...values: unknown[]): string | undefined {

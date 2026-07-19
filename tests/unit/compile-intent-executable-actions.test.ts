@@ -383,7 +383,7 @@ test("compileIntent rejects duplicate fresh exec_command start while matching li
             name: "exec_command",
             input: {
               command: "bash",
-              cwd: "/app",
+              cwd: ".",
             },
           },
         },

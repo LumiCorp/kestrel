@@ -14,7 +14,11 @@ test("CLI defaults resolve to the local developer preset", () => {
 
   assert.equal(resolved.presetId, "cli_dev_local");
   assert.deepEqual(resolved.capabilityPacks, ["balanced", "filesystem", "dev_shell"]);
-  assert.equal(resolved.toolAllowlist.includes("fs.write_text"), true);
+  assert.equal(resolved.toolAllowlist.includes("fs.write_text"), false);
+  assert.equal(resolved.toolAllowlist.includes("fs.create_text"), true);
+  assert.equal(resolved.toolAllowlist.includes("fs.edit_text"), true);
+  assert.equal(resolved.toolAllowlist.includes("fs.apply_patch"), true);
+  assert.equal(resolved.toolAllowlist.includes("artifact.read"), true);
   assert.equal(resolved.toolAllowlist.includes("repo.trace"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.process.write"), true);
@@ -92,8 +96,12 @@ test("explicit capability packs restore required tool families even when startin
   });
 
   for (const toolName of FILESYSTEM_TOOL_NAMES) {
-    assert.equal(resolved.toolAllowlist.includes(toolName), true);
+    assert.equal(
+      resolved.toolAllowlist.includes(toolName),
+      toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+    );
   }
+  assert.equal(resolved.toolAllowlist.includes("artifact.read"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.process.write"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.process.read"), true);

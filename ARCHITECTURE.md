@@ -159,6 +159,26 @@ Workspace mutation and checkpoint behavior are operator-visible actions. Error
 results remain structured so callers can distinguish a rejected request, a tool
 failure, a waiting state, and a runtime failure.
 
+### Source observation and mutation
+
+Model-visible source reads are revisioned pages. Every page states its exact byte
+range, total size, completeness, continuation offset, and content revision;
+presentation limits must never silently reduce the authority of a later write.
+
+Coding profiles create files with `fs.create_text` and change existing files
+with revision-bound `fs.edit_text` or `fs.apply_patch`. Existing-file replacement
+is not part of the coding-model surface. Patch application validates every path
+and base revision before applying the complete change.
+
+`exec_command` is an execution boundary, not an alternate editor. Source writes
+are rejected and restored by default. Explicit capture mode restores the active
+workspace and returns an immutable patch artifact plus its base revisions; the
+caller commits that proposal through `fs.apply_patch`. Large tool output,
+terminal transcripts, and patches are retrievable through `artifact.read`.
+
+Workspace checkpoints remain recovery and replay evidence. They do not by
+themselves prove that a mutation was semantically safe.
+
 ## Persistence, Recovery, and Replay
 
 Runs, events, logs, artifacts, checkpoints, and operator decisions are durable

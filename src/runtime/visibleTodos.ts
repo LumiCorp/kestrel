@@ -55,7 +55,12 @@ export const VISIBLE_TODOS_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
   properties: {
-    objective: { type: "string", minLength: 1, maxLength: MAX_TODO_TEXT_LENGTH },
+    objective: {
+      type: "string",
+      minLength: 1,
+      maxLength: MAX_TODO_TEXT_LENGTH,
+      description: "The concrete requested outcome tracked by this checklist.",
+    },
     items: {
       type: "array",
       minItems: 1,
@@ -65,7 +70,12 @@ export const VISIBLE_TODOS_SCHEMA: Record<string, unknown> = {
         additionalProperties: false,
         properties: {
           id: { type: "string", minLength: 1, maxLength: 120 },
-          text: { type: "string", minLength: 1, maxLength: MAX_TODO_TEXT_LENGTH },
+          text: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_TODO_TEXT_LENGTH,
+            description: "Concrete task work, validation, a result, or a blocker. Never use a todo item for closing todos, finalization, or reporting itself.",
+          },
           status: { type: "string", enum: ["pending", "in_progress", "done", "blocked"] },
           note: { type: "string", minLength: 1, maxLength: MAX_TODO_NOTE_LENGTH },
         },

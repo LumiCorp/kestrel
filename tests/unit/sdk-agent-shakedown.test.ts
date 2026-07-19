@@ -38,9 +38,11 @@ test("SDK agent shake-down receives the project environment in managed worktrees
   assert.ok(worktreeIncludes.includes(".env"));
   assert.match(script, /loadShellAndDotEnv\(process\.cwd\(\),/u);
   assert.match(script, /KESTREL_CORE_HOME: undefined/u);
-  assert.match(script, /KESTREL_LOCAL_CORE_DIRECT: "1"/u);
+  assert.match(script, /KESTREL_LOCAL_CORE_DIRECT: "0"/u);
+  assert.match(script, /KESTREL_CORE_PLATFORM: "linux"/u);
   assert.match(script, /KESTREL_STORE_DRIVER: "sqlite"/u);
   assert.match(script, /new ModelPolicyStore\(isolatedCoreHome\)\.write\(/u);
+  assert.match(script, /stopLocalCoreFromLock\(isolatedCorePaths\.lockPath\)/u);
   assert.doesNotMatch(script, /git-common-dir|resolvePrimaryCheckoutRoot/u);
 });
 
@@ -254,6 +256,48 @@ test("SDK agent shake-down validates the ordered coding lifecycle", () => {
   assert.equal(summarizeSdkAgentShakedownLifecycle(directFilesystemResults).observedMutationEvents, 2);
 });
 
+test("SDK agent shake-down allows settled failed iterations but requires the final source repair to be targeted and validated", () => {
+  const tools = successfulCodingLifecycle();
+  const firstSourceMutationIndex = tools.findIndex((tool) => tool.toolName === "fs.replace_text");
+  assert.notEqual(firstSourceMutationIndex, -1);
+  const iterative = [
+    ...tools.slice(0, firstSourceMutationIndex + 1),
+    codingTestStart("failed-repair-session", 5),
+    {
+      toolName: "exec_command",
+      phase: "completed",
+      stepIndex: 6,
+      input: { sessionId: "failed-repair-session" },
+      resultStatus: "OK",
+      outputStatus: "failed",
+    } satisfies SdkAgentShakedownToolObservation,
+    {
+      toolName: "fs.replace_text",
+      phase: "completed",
+      stepIndex: 7,
+      input: { path: "coding-fixture/src/inventory.mjs" },
+      resultStatus: "OK",
+      outputStatus: "ok",
+      changedFiles: ["coding-fixture/src/inventory.mjs"],
+    } satisfies SdkAgentShakedownToolObservation,
+    ...tools.slice(firstSourceMutationIndex + 1).map((tool) => ({
+      ...tool,
+      stepIndex: (tool.stepIndex ?? 0) + 4,
+    })),
+  ];
+  assert.deepEqual(validateCodingLifecycleObservation(iterative), []);
+
+  const overwritten = iterative.map((tool, index) =>
+    index === firstSourceMutationIndex + 3
+      ? { ...tool, toolName: "fs.write_text" }
+      : tool
+  );
+  assert.match(
+    validateCodingLifecycleObservation(overwritten).join("\n"),
+    /requires a successful targeted fs\.replace_text repair/u,
+  );
+});
+
 test("SDK agent shake-down rejects unsettled and same-step coding lifecycle evidence", () => {
   const sameStepRead = successfulCodingLifecycle().map((tool) =>
     tool.toolName === "fs.read_text" ? { ...tool, stepIndex: 7 } : tool
@@ -263,11 +307,31 @@ test("SDK agent shake-down rejects unsettled and same-step coding lifecycle evid
     /later runtime step/u,
   );
 
+  const noChangeRepair = successfulCodingLifecycle().map((tool) =>
+    tool.toolName === "fs.replace_text"
+      ? { ...tool, outputStatus: "no_change", changedFiles: undefined }
+      : tool
+  );
+  assert.match(
+    validateCodingLifecycleObservation(noChangeRepair).join("\n"),
+    /source mutation/u,
+  );
+  assert.match(
+    validateSdkAgentShakedownObservation(scenarioById("coding"), {
+      terminalType: "run.completed",
+      outputStatus: "COMPLETED",
+      assistantText: "SHAKEDOWN_CODING_OK",
+      visibleTodos: completedVisibleTodos(),
+      tools: noChangeRepair,
+    }).join("\n"),
+    /fs\.replace_text observation.*OK\/ok/u,
+  );
+
   const unsettled = successfulCodingLifecycle().filter((tool) =>
     tool.input?.sessionId !== "passing-session"
   );
   const unsettledErrors = validateCodingLifecycleObservation(unsettled).join("\n");
-  assert.match(unsettledErrors, /not continued to terminal completed status/u);
+  assert.match(unsettledErrors, /No test session after the final inventory source mutation was continued to terminal completed status/u);
   assert.match(unsettledErrors, /has no later terminal continuation/u);
 });
 
@@ -317,6 +381,7 @@ function successfulCodingLifecycle(): SdkAgentShakedownToolObservation[] {
       stepIndex: 4,
       input: { path: "coding-fixture/src/inventory.mjs" },
       resultStatus: "OK",
+      outputStatus: "ok",
       changedFiles: ["coding-fixture/src/inventory.mjs"],
     },
     codingTestStart("passing-session", 5),

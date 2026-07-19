@@ -67,6 +67,11 @@ must pass through typed, policy-aware boundaries.
 **In practice:** parse input before use, return machine-readable outcomes, and
 leave evidence for workspace mutations and operator-sensitive actions.
 
+Mutation authority must not exceed observation authority. Partial source reads
+remain explicitly partial and continuable; edits to existing source are bound to
+the observed revision. Shell-produced source changes re-enter the same patch
+validation boundary instead of bypassing the editor contract.
+
 ## 7. Build One Runtime, Many Surfaces
 
 Desktop, Kestrel One, CLI/TUI, SDK, and framework adapters should share the

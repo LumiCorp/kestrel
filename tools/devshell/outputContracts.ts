@@ -114,5 +114,8 @@ export const EXEC_COMMAND_OUTPUT_CONTRACT: ModelToolContract = {
     sourceWriteGuard: { type: "object" },
     unauthorizedSourceWrites: { type: "array" },
     changedFiles: { type: "array" },
+    patchRef: { type: "string" },
+    baseRevisions: { type: "object" },
+    failureReason: { type: "string" },
   },
 };

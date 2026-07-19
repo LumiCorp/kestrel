@@ -1842,7 +1842,8 @@ test("agent loop sends workspace, Project, and skill pack context in the user pr
   assert.equal(typeof userMessage, "string");
   assert.match(userMessage as string, /<runtime_context>/u);
   assert.match(userMessage as string, /Workspace: workspace-1 \(Project\)\./u);
-  assert.match(userMessage as string, /- root: \/repo/u);
+  assert.match(userMessage as string, /- usable root: \./u);
+  assert.doesNotMatch(userMessage as string, /- root: \/repo/u);
   assert.match(userMessage as string, /Project context:/u);
   assert.match(userMessage as string, /- projectId: project-atlas/u);
   assert.match(userMessage as string, /- contextRevision: 7/u);
@@ -2330,9 +2331,11 @@ test("agent loop routes premature visible-todo finalization back to open work", 
   assert.equal(readActiveTaskGoalFromTranscript(agent.modelTranscript), "Build static newsletter artifacts.");
   assert.equal(agent.commandBatch, undefined);
   assert.match(String(agent.decisionReason), /Still open: Write file: newsletter-report\.json/u);
+  assert.match(String(agent.decisionReason), /Do not call kestrel_finalize by itself again/u);
   assert.match(String(agent.decisionReason), /kestrel_todo_update/u);
   assert.match(String(agent.decisionReason), /write-newsletter-report-json' marked done/u);
   assert.match(String(agent.decisionReason), /observed validation result/u);
+  assert.match(String(agent.decisionReason), /same response as kestrel_finalize/u);
   assert.match(String(agent.decisionReason), /kestrel_finalize/u);
   const retryContext = agent.retryContext as Record<string, unknown>;
   const failure = retryContext.failure as Record<string, unknown>;
@@ -2344,6 +2347,13 @@ test("agent loop routes premature visible-todo finalization back to open work", 
   assert.equal(details.openVisibleTodoItemId, "write-newsletter-report-json");
   assert.equal(details.openVisibleTodoItemText, "Write file: newsletter-report.json");
   assert.equal(details.openVisibleTodoItemStatus, "in_progress");
+  const requiredCorrection = retryContext.requiredCorrection as Record<string, unknown>;
+  const todoCorrection = requiredCorrection.visibleTodoBeforeFinalize as Record<string, unknown>;
+  const openItem = todoCorrection.openItem as Record<string, unknown>;
+  assert.equal(todoCorrection.action, "advance_or_close_visible_todo_before_finalize");
+  assert.equal(todoCorrection.forbiddenActionWhileOpen, "kestrel_finalize by itself");
+  assert.equal(openItem.id, "write-newsletter-report-json");
+  assert.equal(openItem.status, "in_progress");
   assert.equal((agent.lastActionResult as Record<string, unknown> | undefined)?.kind, undefined);
 });
 
@@ -2978,7 +2988,6 @@ test("agent loop dispatches repeated cached fs.read_text", async () => {
 
 test("agent loop rejects repeated failed shell action before engine loop guard", async () => {
   const shellContext = context();
-  const shellRoot = process.cwd();
   shellContext.event.payload = {
     message: "Build the app.",
     interactionMode: "build",
@@ -2992,8 +3001,7 @@ test("agent loop rejects repeated failed shell action before engine loop guard",
       name: "exec_command",
       input: {
         command: "npm run lint",
-        cwd: shellRoot,
-        workspaceRoot: shellRoot,
+        cwd: ".",
       },
     },
     lastActionResult: {
@@ -3004,8 +3012,7 @@ test("agent loop rejects repeated failed shell action before engine loop guard",
       status: "failed",
       input: {
         command: "npm run lint",
-        cwd: shellRoot,
-        workspaceRoot: shellRoot,
+        cwd: ".",
       },
       inputHash: "failed-lint-root",
       error: {
@@ -3041,8 +3048,7 @@ test("agent loop rejects repeated failed shell action before engine loop guard",
         name: "exec_command",
         input: {
           command: "npm run lint",
-          cwd: shellRoot,
-          workspaceRoot: shellRoot,
+          cwd: ".",
         },
       },
     }),
@@ -3063,7 +3069,6 @@ test("agent loop rejects repeated failed shell action before engine loop guard",
 
 test("agent loop rejects repeated mixed batch when one item failed", async () => {
   const shellContext = context();
-  const shellRoot = process.cwd();
   const repeatedBatch = {
     kind: "tool_batch",
     items: [
@@ -3075,8 +3080,7 @@ test("agent loop rejects repeated mixed batch when one item failed", async () =>
         name: "exec_command",
         input: {
           command: "npm run test",
-          cwd: shellRoot,
-          workspaceRoot: shellRoot,
+          cwd: ".",
         },
       },
     ],
@@ -3636,7 +3640,7 @@ test("agent loop mode-blocked transition does not restamp stale goal when transc
   assert.equal(metadata.reason, "planner_mode_blocked");
 });
 
-test("agent loop repairs missing assistantProgress within the bounded deliberator retry", async () => {
+test("agent loop accepts missing assistantProgress with a neutral fallback", async () => {
   let modelCallCount = 0;
   let retryRequest: ModelRequest | undefined;
   const transition = await buildStep({
@@ -3652,9 +3656,7 @@ test("agent loop repairs missing assistantProgress within the bounded deliberato
   })(context(), {
     useModel: async (request: ModelRequest) => {
       modelCallCount += 1;
-      if (modelCallCount === 2) {
-        retryRequest = request;
-      }
+      retryRequest = request;
       return {
         output: {
           understanding: {
@@ -3671,9 +3673,7 @@ test("agent loop repairs missing assistantProgress within the bounded deliberato
             name: "fs_read_text",
             input: {
               path: "package.json",
-              ...(modelCallCount === 1
-                ? {}
-                : { assistantProgress: "I’m reading the package metadata now." }),
+              ...(modelCallCount === 1 ? {} : { assistantProgress: "I’m reading the package metadata now." }),
             },
           },
         ],
@@ -3686,29 +3686,17 @@ test("agent loop repairs missing assistantProgress within the bounded deliberato
     },
   } satisfies StepIO);
 
-  assert.equal(modelCallCount, 2);
+  assert.equal(modelCallCount, 1);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
-  const retryMessages = JSON.stringify(retryRequest?.messages);
-  assert.match(retryMessages, /invalid_assistant_progress/u);
-  assert.match(retryMessages, /assistantProgress/u);
-  assert.match(retryMessages, /minimumLength/u);
-  assert.match(retryMessages, /maximumLength/u);
-  assert.match(retryMessages, /600/u);
-  assert.match(retryMessages, /concrete work/u);
-  assert.match(retryMessages, /corrected structured tool call only/u);
-  assert.match(retryMessages, /Repeat the exact rejected tool call shown below/u);
-  assert.match(retryMessages, /Previous rejected structured response/u);
-  assert.match(retryMessages, /fs_read_text/u);
-  assert.match(retryMessages, /package\.json/u);
-  assert.deepEqual(retryRequest?.tools?.map((tool) => tool.name), ["fs_read_text"]);
-  assert.equal(retryRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  assert.deepEqual(retryRequest?.tools?.map((tool) => tool.name).includes("fs_read_text"), true);
   const agent = transition.statePatch?.agent as Record<string, unknown>;
   assert.deepEqual(agent.nextAction, {
     kind: "tool",
     name: "fs.read_text",
     input: { path: "package.json" },
   });
+  assert.equal(transition.agentProgress, "I’m continuing the requested work.");
 });
 
 test("agent loop advertises assistantProgress inside every exec_command lifecycle branch", async () => {
@@ -3771,7 +3759,7 @@ test("agent loop advertises assistantProgress inside every exec_command lifecycl
   }
 });
 
-test("agent loop terminates with the decision contract failure after assistantProgress retries are exhausted", async () => {
+test("agent loop does not spend retries on missing assistantProgress", async () => {
   let modelCallCount = 0;
   const transition = await buildStep({
     tools: [READ_TEXT_TOOL],
@@ -3812,24 +3800,16 @@ test("agent loop terminates with the decision contract failure after assistantPr
     },
   } satisfies StepIO);
 
-  assert.equal(modelCallCount, 4);
-  assert.equal(transition.status, "FAILED");
-  assert.equal(transition.nextStepAgent, undefined);
+  assert.equal(modelCallCount, 1);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
   const agent = transition.statePatch?.agent as Record<string, unknown>;
-  const terminal = agent.terminal as Record<string, unknown>;
-  const retryContext = agent.retryContext as Record<string, unknown>;
-  const failure = retryContext.failure as Record<string, unknown>;
-  const details = failure.details as Record<string, unknown>;
-  const observations = agent.observations as Array<Record<string, unknown>>;
-  assert.equal(terminal.reasonCode, "DECISION_SCHEMA_FAILED");
-  assert.match(String(terminal.message), /contract remained invalid after 4 attempts/u);
-  assert.equal(failure.code, "DECISION_SCHEMA_FAILED");
-  assert.equal(details.reason, "invalid_assistant_progress");
-  assert.equal(details.attemptCount, 4);
-  assert.equal(retryContext.exhausted, true);
-  assert.equal(observations.at(-1)?.kind, "model_contract_failure");
-  assert.equal(observations.at(-1)?.errorCode, "DECISION_SCHEMA_FAILED");
-  assert.doesNotMatch(JSON.stringify(agent), /NO_PROGRESS_REASONING_LOOP/u);
+  assert.deepEqual(agent.nextAction, {
+    kind: "tool",
+    name: "fs.read_text",
+    input: { path: "package.json" },
+  });
+  assert.equal(transition.agentProgress, "I’m continuing the requested work.");
 });
 
 test("agent loop rejects plan-mode external side-effect choices instead of asking for full-auto", async () => {

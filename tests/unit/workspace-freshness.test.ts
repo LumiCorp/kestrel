@@ -191,12 +191,23 @@ test("active exec_command sessions use the latest process evidence", () => {
     kind: "process_state",
     status: "running",
     toolName: "exec_command",
-    facts: { sessionId: "proc-1" },
+    facts: {
+      sessionId: "proc-1",
+      command: "npm test",
+      cwd: "/host/workspace/coding-fixture",
+      workspaceRoot: "/host/workspace",
+    },
   });
-  assert.deepEqual(
-    deriveActiveExecCommandSessions([running]).map((item) => item.processId),
-    ["proc-1"],
-  );
+  assert.deepEqual(deriveActiveExecCommandSessions([running]), [{
+    evidenceId: "running",
+    stepIndex: 1,
+    toolName: "exec_command",
+    processId: "proc-1",
+    command: "npm test",
+    cwd: "coding-fixture",
+    status: "running",
+    summary: "running",
+  }]);
   const stopped = entry({
     id: "stopped",
     stepIndex: 2,
@@ -206,4 +217,31 @@ test("active exec_command sessions use the latest process evidence", () => {
     facts: { sessionId: "proc-1" },
   });
   assert.deepEqual(deriveActiveExecCommandSessions([running, stopped]), []);
+});
+
+test("active exec_command sessions resolve relative cwd from the evidence workspace root", () => {
+  const running = entry({
+    id: "running-relative-cwd",
+    stepIndex: 1,
+    kind: "process_state",
+    status: "running",
+    toolName: "exec_command",
+    facts: {
+      sessionId: "proc-relative",
+      command: "npm test",
+      cwd: "coding-fixture",
+      workspaceRoot: "/host/workspace",
+    },
+  });
+
+  assert.deepEqual(deriveActiveExecCommandSessions([running]), [{
+    evidenceId: "running-relative-cwd",
+    stepIndex: 1,
+    toolName: "exec_command",
+    processId: "proc-relative",
+    command: "npm test",
+    cwd: "coding-fixture",
+    status: "running",
+    summary: "running-relative-cwd",
+  }]);
 });

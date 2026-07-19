@@ -1,4 +1,7 @@
 export const MUTATION_CAPABLE_TOOL_NAMES = new Set([
+  "fs.create_text",
+  "fs.edit_text",
+  "fs.apply_patch",
   "fs.write_text",
   "fs.replace_text",
   "fs.copy",

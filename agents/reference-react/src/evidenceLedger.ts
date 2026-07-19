@@ -460,7 +460,10 @@ function isSuccessfulFileMutationEvidence(entry: EvidenceLedgerEntry): boolean {
 }
 
 function isFileMutationToolName(toolName: string | undefined): boolean {
-  return toolName === "fs.write_text" ||
+  return toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
+    toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.patch_text";
 }
@@ -852,6 +855,9 @@ function buildToolFacts(
     ...(asString(output?.cwd) !== undefined ? { cwd: asString(output?.cwd) } : {}),
     ...(asString(output?.workspaceRoot) !== undefined ? { workspaceRoot: asString(output?.workspaceRoot) } : {}),
     ...(readChangedFiles(output).length > 0 ? { changedFiles: readChangedFiles(output) } : {}),
+    ...(asString(output?.revision) !== undefined ? { revision: asString(output?.revision) } : {}),
+    ...(asString(output?.beforeRevision) !== undefined ? { beforeRevision: asString(output?.beforeRevision) } : {}),
+    ...(asString(output?.afterRevision) !== undefined ? { afterRevision: asString(output?.afterRevision) } : {}),
     ...(asRecord(output?.workspaceCheckpoint) !== undefined
       ? { workspaceCheckpoint: asRecord(output?.workspaceCheckpoint) }
       : {}),
@@ -1409,7 +1415,10 @@ function isArtifactWriteEvidence(entry: EvidenceLedgerEntry): boolean {
   ) {
     return false;
   }
-  return toolName === "fs.write_text" ||
+  return toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
+    toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.patch_text";
 }

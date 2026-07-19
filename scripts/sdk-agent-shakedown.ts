@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
 import { createAgent } from "../packages/sdk/src/index.js";
 import { KestrelClient } from "../packages/sdk/src/runner.js";
-import { resolveKestrelCoreHome } from "../src/localCore/home.js";
+import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../src/localCore/home.js";
 import { ModelPolicyStore } from "../src/profile/modelPolicy.js";
 import type {
   KestrelRequestContext,
@@ -548,13 +548,15 @@ async function startIsolatedWebRunner(model: string): Promise<{
     KESTREL_DEV_SHELL_LOG_PATH: undefined,
     KESTREL_DEV_SHELL_STATUS_PATH: undefined,
     KESTREL_DATABASE_URL_SOURCE: undefined,
-    KESTREL_LOCAL_CORE_DIRECT: "1",
+    KESTREL_LOCAL_CORE_DIRECT: "0",
+    KESTREL_CORE_PLATFORM: "linux",
     KESTREL_STORE_DRIVER: "sqlite",
     DATABASE_URL: undefined,
     OPENROUTER_MODEL: model,
     FORCE_COLOR: "0",
   };
   const isolatedCoreHome = resolveKestrelCoreHome(runnerEnv, process.platform).homePath;
+  const isolatedCorePaths = resolveLocalCorePaths(isolatedCoreHome);
   new ModelPolicyStore(isolatedCoreHome).write({
     version: 1,
     provider: "openrouter",
@@ -592,6 +594,7 @@ async function startIsolatedWebRunner(model: string): Promise<{
       async close() {
         child.kill("SIGINT");
         const exit = await exitPromise;
+        await stopLocalCoreFromLock(isolatedCorePaths.lockPath);
         await rm(kestrelHome, { recursive: true, force: true });
         assert.equal(exit.code, 0, `Kestrel web exited unexpectedly: ${stderr.join("")}`);
       },
@@ -599,9 +602,38 @@ async function startIsolatedWebRunner(model: string): Promise<{
   } catch (error) {
     child.kill("SIGINT");
     await exitPromise;
+    await stopLocalCoreFromLock(isolatedCorePaths.lockPath);
     await rm(kestrelHome, { recursive: true, force: true });
     throw new Error(`${formatError(error)}\n${stderr.join("")}`.trim());
   }
+}
+
+async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
+  let ownerPid: number | undefined;
+  try {
+    const lock = JSON.parse(await readFile(lockPath, "utf8")) as { ownerPid?: unknown };
+    ownerPid = typeof lock.ownerPid === "number" ? lock.ownerPid : undefined;
+  } catch {
+    return;
+  }
+  if (ownerPid === undefined) {
+    return;
+  }
+  try {
+    process.kill(ownerPid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    try {
+      process.kill(ownerPid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  throw new Error(`Local Core pid ${ownerPid} did not stop.`);
 }
 
 async function waitForOutput(chunks: string[], pattern: RegExp, timeoutMs = 30_000): Promise<string> {

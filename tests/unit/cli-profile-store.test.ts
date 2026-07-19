@@ -35,9 +35,13 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.input"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.status"), false);
-  for (const toolName of FILESYSTEM_TOOL_NAMES) {
+  for (const toolName of FILESYSTEM_TOOL_NAMES.filter(
+    (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+  )) {
     assert.equal(profiles[0]?.toolAllowlist?.includes(toolName), true);
   }
+  assert.equal(profiles[0]?.toolAllowlist?.includes("fs.write_text"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("fs.replace_text"), false);
 
   const persisted = parseProfilesFile(await readFile(path.join(tempDir, "profiles.json"), "utf8"));
   assert.equal(persisted.profiles[0]?.modelProvider, undefined);
@@ -257,9 +261,13 @@ test("ProfileStore backfills guardrail defaults for existing profiles", async ()
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
-  for (const toolName of FILESYSTEM_TOOL_NAMES) {
+  for (const toolName of FILESYSTEM_TOOL_NAMES.filter(
+    (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+  )) {
     assert.equal(profiles[0]?.toolAllowlist?.includes(toolName), true);
   }
+  assert.equal(profiles[0]?.toolAllowlist?.includes("fs.write_text"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("fs.replace_text"), false);
 });
 
 test("ProfileStore restores balanced planning tools for stale canonical profiles", async () => {

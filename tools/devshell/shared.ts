@@ -58,6 +58,7 @@ export function buildDevShellCommandOptions(context: SharedToolContext): DevShel
 
 export function buildDevShellSourceWriteGuardRequest(
   config: DevShellProfileConfig,
+  mutationPolicy?: "reject" | "capture" | "direct" | undefined,
 ): DevShellSourceWriteGuardRequest | undefined {
   if (config.enabled !== true) {
     return ;
@@ -68,6 +69,7 @@ export function buildDevShellSourceWriteGuardRequest(
   }
   return {
     enabled: true,
+    ...(mutationPolicy !== undefined ? { mutationPolicy } : {}),
     ...(guard?.managedWorktree === true ? { managedWorktree: true } : {}),
     ...(guard?.sourceRoots !== undefined ? { sourceRoots: [...guard.sourceRoots] } : {}),
     ...(guard?.allowedWriteRoots !== undefined ? { allowedWriteRoots: [...guard.allowedWriteRoots] } : {}),

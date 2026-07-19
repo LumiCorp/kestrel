@@ -68,6 +68,8 @@ export function buildModelToolAliasRegistry(
 
 export const providerToolAliasForCanonicalName = providerToolAliasForCanonicalNameFromContext;
 
+const DEFAULT_ASSISTANT_PROGRESS = "I’m continuing the requested work.";
+
 export function normalizeModelToolCallsToAgentTurn(input: {
   toolIntents: ModelToolIntent[];
   aliasRegistry: ModelToolAliasRegistry;
@@ -105,20 +107,14 @@ export function normalizeModelToolCallsToAgentTurn(input: {
     const requiresAssistantProgress = entry.canonicalName !== "kestrel.finalize" &&
       entry.canonicalName !== "kestrel.cannot_satisfy" &&
       entry.canonicalName !== "kestrel.ask_user";
-    if (
-      requiresAssistantProgress &&
-      (progress === undefined || progress.length === 0 || progress.length > 600)
-    ) {
-      throw new ModelToolCallActionError("Every model action tool call requires assistantProgress between 1 and 600 characters.", {
-        reason: "invalid_assistant_progress",
-        index,
-        providerName: intent.name,
-        canonicalName: entry.canonicalName,
-        receivedInputKeys: Object.keys(intent.input).sort(),
-      });
-    }
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
-    if (assistantProgress === undefined && requiresAssistantProgress) {
+    if (
+      assistantProgress === undefined &&
+      requiresAssistantProgress &&
+      progress !== undefined &&
+      progress.length > 0 &&
+      progress.length <= 600
+    ) {
       assistantProgress = progress;
     }
     transcriptToolCalls.push({
@@ -189,6 +185,10 @@ export function normalizeModelToolCallsToAgentTurn(input: {
       reason: "no_executable_action",
       canonicalNames,
     });
+  }
+
+  if (assistantProgress === undefined && terminalAction === undefined) {
+    assistantProgress = DEFAULT_ASSISTANT_PROGRESS;
   }
 
   return {

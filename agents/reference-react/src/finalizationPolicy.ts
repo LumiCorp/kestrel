@@ -66,7 +66,10 @@ export function validateFinalizationDecision(input: {
       "schema",
       {
         reason: "legacy_finalize_evidence_fields_removed",
+        path: "nextAction.data",
         legacyFields,
+        requiredCorrection:
+          "Call kestrel_finalize again with the same status and user-facing message, but omit changedFiles, checksRun, and checksFailed from data. The runtime derives changed files and validation evidence from observed tool results.",
       },
     );
   }

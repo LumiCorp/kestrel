@@ -2,6 +2,7 @@ import type {
   AgentToolModelContext,
   ModelToolSpec,
 } from "../../kestrel/contracts/model-io.js";
+import { renderWorkspaceRelativeTarget } from "../workspaceCoordinates.js";
 import { isDevShellLifecycleTool, normalizeDevShellLifecycle } from "../devshellLifecycle.js";
 import { sanitizeJsonValue, stringifySanitizedJson } from "../jsonSanitizer.js";
 import { VISIBLE_TODOS_SCHEMA } from "../visibleTodos.js";
@@ -63,7 +64,7 @@ export type KestrelAgentCannotSatisfyReasonCode =
 
 const MODEL_CONTEXT_TEXT_LIMIT = 12_000;
 const GENERIC_VALUE_PREVIEW_CHARS = 2000;
-const READ_TEXT_CONTENT_LIMIT = 10_000;
+const LEGACY_READ_TEXT_CONTENT_LIMIT = 10_000;
 const LIST_ENTRY_LIMIT = 80;
 const SEARCH_MATCH_LIMIT = 40;
 const WEATHER_DAILY_ENTRY_LIMIT = 10;
@@ -72,14 +73,17 @@ const WEATHER_HOURLY_ENTRY_LIMIT = 12;
 const CONTROL_TOOLS: ModelToolSpec[] = [
   {
     name: "kestrel.finalize",
-    description: "Finish the run with a user-facing answer. Use status goal_satisfied only when the requested outcome and explicit constraints are supported by observed evidence. Claim only checks that actually ran. Report any unverified result in the message and data.openGap or data.knownWarnings; otherwise keep working or report the concrete blocker.",
+    description: "Finish the run with a user-facing answer. Use status goal_satisfied only when the requested outcome and explicit constraints are supported by observed evidence. Before finalizing, every visible todo must be done; if evidence already proves the last item complete, combine its kestrel.todo_update closure with this call. Do not call this tool by itself while a visible todo remains open. Claim only checks that actually ran. Preserve any user-required literal marker or output token exactly, including capitalization. Report any unverified result in the message and data.openGap or data.knownWarnings; otherwise keep working or report the concrete blocker. Do not put changedFiles, checksRun, or checksFailed in data; the runtime derives those facts from observed tool results.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         status: { type: "string", enum: ["goal_satisfied", "out_of_scope"] },
         message: { type: "string", minLength: 1 },
-        data: { type: "object" },
+        data: {
+          type: "object",
+          description: "Optional caller-facing structured data. Do not include changedFiles, checksRun, or checksFailed; runtime evidence owns those facts.",
+        },
       },
       required: ["status", "message"],
     },
@@ -151,7 +155,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.todo_update",
-    description: "Update the visible live checklist for multi-step work. Track the objective, concrete work, planned checks, observed results, and blockers. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. Use a standalone update only when waiting or blocked with no executable or terminal action.",
+    description: "Update the visible live checklist for multi-step work. Items track concrete task work, checks, results, and blockers; do not add finalization or reporting itself as a todo item. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. Use a standalone update only when waiting or blocked with no executable or terminal action.",
     inputSchema: VISIBLE_TODOS_SCHEMA,
   },
 ];
@@ -640,16 +644,57 @@ function renderFilesystemFacts(
 ): string[] {
   if (toolName === "fs.read_text") {
     const content = asString(output.content) ?? "";
-    const clipped = clipText(content, READ_TEXT_CONTENT_LIMIT);
+    const contentEnd = resolveExactContentEnd(content, LEGACY_READ_TEXT_CONTENT_LIMIT);
+    const visibleContent = content.slice(0, contentEnd);
+    const modelContextTruncated = contentEnd < content.length;
     return [
       ...field("status", asString(output.status) ?? status),
       ...field("path", firstString(asRecord(input)?.path, output.path)),
       ...field("encoding", asString(output.encoding)),
+      ...field("revision", asString(output.revision)),
+      ...field("range", output.range),
+      ...field("totalBytes", output.totalBytes),
+      ...field("complete", output.complete),
+      ...field("nextOffsetBytes", output.nextOffsetBytes),
       ...field("truncated", output.truncated),
       ...field("contentBytes", Buffer.byteLength(content, "utf8")),
-      "- content:",
-      indentBlock(clipped.text.length > 0 ? clipped.text : "<empty>"),
-      ...(clipped.truncated ? ["[content clipped for model context]"] : []),
+      output.complete === false || output.truncated === true || modelContextTruncated
+        ? "- content page (exact returned range; incomplete file; boundary markers are not file content):"
+        : "- content (exact complete file; boundary markers are not file content):",
+      "<<<KESTREL_EXACT_FILE_CONTENT",
+      visibleContent,
+      "KESTREL_EXACT_FILE_CONTENT",
+      ...(visibleContent.length === 0 ? ["- contentState: empty"] : []),
+      ...(modelContextTruncated
+        ? [
+          "- contentContextTruncated: true",
+          `- omittedContentChars: ${content.length - contentEnd}`,
+        ]
+        : []),
+      ...renderErrorFacts(error),
+    ];
+  }
+
+  if (toolName === "fs.create_text" || toolName === "fs.edit_text" || toolName === "fs.apply_patch") {
+    const diff = asString(output.diff) ?? asString(output.patch);
+    const diffEnd = diff === undefined ? 0 : resolveExactContentEnd(diff, 8000);
+    const visibleDiff = diff?.slice(0, diffEnd);
+    return [
+      ...field("status", asString(output.status) ?? status),
+      ...field("path", firstString(asRecord(input)?.path, output.path)),
+      ...field("changed", output.changed),
+      ...field("created", output.created),
+      ...field("changedFiles", output.changedFiles),
+      ...field("beforeRevision", output.beforeRevision),
+      ...field("afterRevision", output.afterRevision ?? output.revision),
+      ...field("beforeRevisions", output.beforeRevisions),
+      ...field("afterRevisions", output.afterRevisions),
+      ...(visibleDiff !== undefined && visibleDiff.length > 0
+        ? ["- applied diff (exact returned prefix; boundary markers are not diff content):", "<<<KESTREL_EXACT_DIFF", visibleDiff, "KESTREL_EXACT_DIFF"]
+        : []),
+      ...(diff !== undefined && diffEnd < diff.length
+        ? ["- diffContextTruncated: true", `- omittedDiffChars: ${diff.length - diffEnd}`]
+        : []),
       ...renderErrorFacts(error),
     ];
   }
@@ -715,12 +760,18 @@ function renderFilesystemFacts(
   }
 
   if (toolName === "fs.replace_text") {
+    const noChangeRecovery = output.changed === false || asString(output.status)?.toUpperCase() === "NO_CHANGE"
+      ? [
+        "- nextSuggestedAction: reread the target file, then retry fs.replace_text with a smaller exact literal copied from the latest content. Avoid leading indentation when a shorter unique substring is sufficient; do not silently switch to a whole-file overwrite.",
+      ]
+      : [];
     return [
       ...field("path", firstString(asRecord(input)?.path, output.path)),
       ...field("all", asRecord(input)?.all),
       ...field("status", asString(output.status) ?? status),
       ...field("changed", output.changed),
       ...field("replacements", output.replacements),
+      ...field("message", output.message),
       ...beforeAfter("bytes", output.bytesBefore, output.bytesAfter),
       ...beforeAfter("lines", output.lineCountBefore, output.lineCountAfter, output.lineCountDelta),
       ...beforeAfter(
@@ -730,6 +781,7 @@ function renderFilesystemFacts(
         output.whitespaceTokenCountDelta,
       ),
       ...renderErrorFacts(error),
+      ...noChangeRecovery,
     ];
   }
 
@@ -770,17 +822,22 @@ function renderDevShellFacts(
   const stderr = asString(output.stderr);
   const outputText = lifecycle?.outputText;
   const text = renderNonDuplicateText(asString(output.text) ?? outputText, stdout, stderr);
-  const continuation = toolName === "exec_command" &&
-      lifecycle?.status === "RUNNING" &&
-      lifecycle.sessionId !== undefined
+  const modelCwd = renderWorkspaceRelativeCwd(
+    lifecycle?.cwd ?? firstString(output.cwd, asRecord(input)?.cwd),
+    lifecycle?.workspaceRoot ?? asString(output.workspaceRoot),
+  );
+  const continuation = toolName === "exec_command" && lifecycle?.sessionId !== undefined &&
+      (lifecycle.status === "RUNNING" || lifecycle.truncated === true)
     ? [
       "- continuation:",
-      `  process is still running; call exec_command with {"sessionId":"${lifecycle.sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Add stdin only when the process is waiting for input, or use {"sessionId":"${lifecycle.sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} if it is no longer needed. A command starts a new independent process.`,
+      lifecycle.status === "RUNNING"
+        ? `  process is still running; call exec_command with {"sessionId":"${lifecycle.sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Add stdin only when the process is waiting for input, or use {"sessionId":"${lifecycle.sessionId}","stop":true} if it is no longer needed. A command starts a new independent process.`
+        : `  terminal output is incomplete; call exec_command with {"sessionId":"${lifecycle.sessionId}"} and no command to collect the remaining transcript.`,
     ]
     : [];
   return [
     ...field("command", lifecycle?.command ?? firstString(output.command, asRecord(input)?.command)),
-    ...field("cwd", lifecycle?.cwd ?? firstString(output.cwd, asRecord(input)?.cwd)),
+    ...field("cwd", modelCwd),
     ...field("processId", lifecycle?.processId ?? firstString(output.processId, asRecord(input)?.processId)),
     ...field("sessionId", lifecycle?.sessionId),
     ...field("stdin", lifecycle?.stdin),
@@ -790,10 +847,13 @@ function renderDevShellFacts(
     ...field("exitCode", lifecycle?.exitCode ?? output.exitCode),
     ...field("truncated", lifecycle?.truncated ?? output.truncated),
     ...field("cursor", lifecycle?.cursor),
+    ...field("patchRef", output.patchRef),
+    ...field("baseRevisions", output.baseRevisions),
     ...field("errorCode", output.errorCode),
     ...field("failurePhase", output.failurePhase),
     ...field("failureReason", output.failureReason),
     ...field("nextSuggestedAction", output.nextSuggestedAction),
+    ...field("activeSessions", output.activeSessions),
     ...field("strictModeReason", output.strictModeReason),
     ...(text !== undefined ? ["- text:", indentBlock(text)] : []),
     ...(stdout !== undefined ? ["- stdout:", indentBlock(stdout.length > 0 ? stdout : "<empty>")] : []),
@@ -801,6 +861,16 @@ function renderDevShellFacts(
     ...continuation,
     ...renderErrorFacts(error),
   ];
+}
+
+function renderWorkspaceRelativeCwd(
+  cwd: string | undefined,
+  workspaceRoot: string | undefined,
+): string | undefined {
+  if (cwd === undefined || workspaceRoot === undefined) {
+    return cwd;
+  }
+  return renderWorkspaceRelativeTarget(workspaceRoot, cwd);
 }
 
 function renderInternetFacts(
@@ -1013,6 +1083,21 @@ function clipText(value: string, maxChars: number): { text: string; truncated: b
     text: `${value.slice(0, maxChars)}\n[omitted ${value.length - maxChars} chars]`,
     truncated: true,
   };
+}
+
+function resolveExactContentEnd(value: string, maxChars: number): number {
+  if (value.length <= maxChars) {
+    return value.length;
+  }
+  const candidateEnd = maxChars;
+  const lastCodeUnit = value.charCodeAt(candidateEnd - 1);
+  const nextCodeUnit = value.charCodeAt(candidateEnd);
+  const splitsSurrogatePair =
+    lastCodeUnit >= 0xD8_00 &&
+    lastCodeUnit <= 0xDB_FF &&
+    nextCodeUnit >= 0xDC_00 &&
+    nextCodeUnit <= 0xDF_FF;
+  return splitsSurrogatePair ? candidateEnd - 1 : candidateEnd;
 }
 
 function indentBlock(value: string): string {

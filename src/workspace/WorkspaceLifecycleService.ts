@@ -151,6 +151,9 @@ export function isAutoProvisionedDevWorkspaceTool(toolName: string): boolean {
 
 export function isAutoProvisionedSourceWorkspaceTool(toolName: string): boolean {
   return (
+    toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
     toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.copy" ||

@@ -17,6 +17,7 @@ import {
   deriveActiveExecCommandSessions,
   deriveWorkspaceFreshness,
 } from "../../../../src/runtime/workspaceFreshness.js";
+import { resolveWorkspaceTarget } from "../../../../src/runtime/workspaceCoordinates.js";
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import { isShellFilesystemInspectionCommand } from "../filesystemInspection.js";
 export {
@@ -954,7 +955,11 @@ function toolMatchesOperationIntent(
     | "inspect_repo",
 ): boolean {
   if (operationKind === "write_file") {
-    return toolName === "fs.write_text" || toolName === "fs.replace_text";
+    return toolName === "fs.create_text" ||
+      toolName === "fs.edit_text" ||
+      toolName === "fs.apply_patch" ||
+      toolName === "fs.write_text" ||
+      toolName === "fs.replace_text";
   }
   if (operationKind === "scaffold_app") {
     return toolName === "exec_command";
@@ -1253,8 +1258,17 @@ function findMatchingLiveProcessForCommand(
     if (live !== true || processId === undefined || processCommand !== requestedCommand) {
       continue;
     }
-    if (requestedCwd !== undefined && processCwd !== undefined && requestedCwd !== processCwd) {
-      continue;
+    if (requestedCwd !== undefined && processCwd !== undefined) {
+      const comparisonRoot = requestedWorkspaceRoot ?? processWorkspaceRoot;
+      const requestedResolvedCwd = comparisonRoot === undefined
+        ? requestedCwd
+        : resolveWorkspaceTarget(comparisonRoot, requestedCwd);
+      const processResolvedCwd = processWorkspaceRoot === undefined
+        ? processCwd
+        : resolveWorkspaceTarget(processWorkspaceRoot, processCwd);
+      if (requestedResolvedCwd !== processResolvedCwd) {
+        continue;
+      }
     }
     if (
       requestedWorkspaceRoot !== undefined &&

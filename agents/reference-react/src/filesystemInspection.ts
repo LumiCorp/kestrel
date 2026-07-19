@@ -145,6 +145,9 @@ export function isFilesystemInspectionCacheInvalidatingTool(
   executionClass?: ToolExecutionClass | undefined,
 ): boolean {
   if (
+    toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
     toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.patch_text" ||

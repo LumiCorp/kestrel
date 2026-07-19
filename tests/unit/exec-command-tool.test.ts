@@ -18,6 +18,7 @@ import type {
 } from "../../src/devshell/contracts.js";
 import { execCommandTool } from "../../tools/devshell/execCommand.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import { artifactReadTool } from "../../tools/runtime/artifactRead.js";
 
 test("exec_command maps one-shot process completion to completed output", async () => {
   const service = new CapturingExecCommandService({
@@ -53,6 +54,46 @@ test("exec_command maps one-shot process completion to completed output", async 
   assert.equal(service.startInputs[0]?.cwd, "/repo/app");
   assert.equal(service.startInputs[0]?.command, "printf done");
   assert.equal(service.startInputs[0]?.yieldTimeMs, 25);
+  assert.deepEqual(service.startInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    mutationPolicy: "reject",
+  });
+});
+
+test("exec_command capture mode returns an applicable immutable patch artifact", async () => {
+  const patch = "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+  const service = new CapturingExecCommandService({
+    startResult: {
+      processId: "proc-capture",
+      status: "COMPLETED",
+      text: "",
+      truncated: false,
+      cursor: 0,
+      nextCursor: 0,
+      exitCode: 0,
+      sourceWriteGuard: {
+        enabled: true,
+        mode: "captured_source_write",
+        sourceRoots: ["."],
+        allowedWriteRoots: [],
+        unauthorizedSourceWrites: [{ path: "app.ts", kind: "modified", restored: true }],
+        restored: true,
+        capturedPatch: patch,
+        capturedBaseRevisions: { "app.ts": "sha256:base" },
+      },
+    },
+  });
+  const output = await runExecCommandForTest({ devShell: { enabled: true }, devShellService: service }, {
+    command: "formatter app.ts",
+    sourceMutation: "capture",
+  });
+  assert.match(String(output.patchRef), /^patch:/u);
+  assert.deepEqual(output.baseRevisions, { "app.ts": "sha256:base" });
+  assert.equal((output.sourceWriteGuard as { capturedPatch?: unknown }).capturedPatch, undefined);
+  assert.equal(service.startInputs[0]?.sourceWriteGuard?.mutationPolicy, "capture");
+
+  const artifact = await artifactReadTool.createHandler({})({ ref: output.patchRef });
+  assert.equal((artifact as { content?: string }).content, patch);
 });
 
 test("exec_command command shape returns a reusable session when the process is still running", async () => {
@@ -240,6 +281,34 @@ test("exec_command rejects ambiguous lifecycle input", async () => {
   await assert.rejects(() => handler({ command: "echo ok", sessionId: "proc-1" }), /Expected exactly one/u);
   await assert.rejects(() => handler({ command: "echo ok", stdin: "x\n" }), /cannot be combined/u);
   await assert.rejects(() => handler({ sessionId: "proc-1", stdin: "x\n", stop: true }), /cannot be combined/u);
+});
+
+test("exec_command accepts only workspace-relative cwd and keeps the workspace root authoritative", async () => {
+  const service = new CapturingExecCommandService();
+  const handler = execCommandTool.createHandler({
+    fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
+    devShell: { enabled: true },
+    devShellService: service,
+  });
+
+  await handler({ command: "pwd", cwd: "coding-fixture" });
+  assert.equal(service.startInputs[0]?.workspaceRoot, "/repo");
+  assert.equal(service.startInputs[0]?.cwd, "coding-fixture");
+
+  await assert.rejects(
+    () => handler({ command: "pwd", cwd: "/host-only/worktree" }),
+    /cwd must be relative to the active workspace/u,
+  );
+  await assert.rejects(
+    () => handler({ command: "pwd", cwd: "../outside" }),
+    /must not escape it/u,
+  );
+  assert.equal(service.startInputs.length, 1);
+});
+
+test("exec_command model schema does not expose host workspaceRoot input", () => {
+  assert.doesNotMatch(JSON.stringify(execCommandTool.definition.inputSchema), /workspaceRoot/u);
+  assert.match(JSON.stringify(execCommandTool.definition.inputSchema), /Workspace-relative working directory/u);
 });
 
 async function runExecCommandForTest(

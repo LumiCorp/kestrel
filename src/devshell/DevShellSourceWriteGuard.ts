@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   lstat,
+  mkdtemp,
   mkdir,
   readFile,
   readdir,
@@ -11,7 +12,10 @@ import {
   writeFile,
   chmod,
 } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import type {
   DevShellSourceWriteApprovalGrant,
@@ -49,7 +53,10 @@ interface NormalizedGuardConfig {
   allowedWriteRoots: string[];
   mode: DevShellSourceWriteMode;
   approvedGrantId?: string | undefined;
+  gitVisibleOnly: boolean;
 }
+
+const execFileAsync = promisify(execFile);
 
 export interface ActiveDevShellSourceWriteGuard {
   config: NormalizedGuardConfig;
@@ -70,7 +77,8 @@ export async function createDevShellSourceWriteGuard(input: {
   const workspaceRoot = path.resolve(input.workspaceRoot);
   const cwd = path.resolve(input.cwd);
   const sourceRoots = normalizeRoots(workspaceRoot, input.request.sourceRoots, [workspaceRoot]);
-  if (input.request.managedWorktree === true) {
+  const mutationPolicy = input.request.mutationPolicy ?? "direct";
+  if (input.request.managedWorktree === true && mutationPolicy === "direct") {
     return {
       config: {
         enabled: true,
@@ -80,6 +88,7 @@ export async function createDevShellSourceWriteGuard(input: {
         sourceRoots,
         allowedWriteRoots: sourceRoots,
         mode: "checkpoint_worktree",
+        gitVisibleOnly: false,
       },
       snapshot: new Map(),
       directorySnapshot: new Set(),
@@ -107,10 +116,15 @@ export async function createDevShellSourceWriteGuard(input: {
     cwd,
     command: input.command,
     sourceRoots,
-    allowedWriteRoots: [...new Set(allowedWriteRoots)],
-    mode: approval === undefined && hasExplicitSourceWriteAllowance === false
-      ? "source_readonly"
-      : "approved_source_write",
+    allowedWriteRoots: mutationPolicy === "direct" ? [...new Set(allowedWriteRoots)] : [],
+    mode: mutationPolicy === "capture"
+      ? "captured_source_write"
+      : mutationPolicy === "reject"
+        ? "source_readonly"
+        : approval === undefined && hasExplicitSourceWriteAllowance === false
+          ? "source_readonly"
+          : "approved_source_write",
+    gitVisibleOnly: input.request.managedWorktree === true && mutationPolicy !== "direct",
     ...(approval !== undefined ? { approvedGrantId: approval.grantId } : {}),
   };
 
@@ -139,6 +153,9 @@ export async function enforceDevShellSourceWriteGuard(
   }
 
   const after = await collectCurrentFileStates(guard.config);
+  const capturedPatch = guard.config.mode === "captured_source_write"
+    ? await buildCapturedPatch(guard, after)
+    : undefined;
   const unauthorized: DevShellUnauthorizedSourceWrite[] = [];
   const seen = new Set<string>();
 
@@ -219,13 +236,20 @@ export async function enforceDevShellSourceWriteGuard(
     allowedWriteRoots: guard.config.allowedWriteRoots.map((root) => displayPath(guard.config.workspaceRoot, root)),
     unauthorizedSourceWrites: unauthorized,
     restored: unauthorized.every((item) => item.restored),
+    ...(capturedPatch !== undefined && capturedPatch.patch.length > 0
+      ? {
+        capturedPatch: capturedPatch.patch,
+        capturedBaseRevisions: capturedPatch.baseRevisions,
+        changedFiles: unauthorized.map((item) => item.path),
+      }
+      : {}),
   };
 }
 
 export function hasUnauthorizedSourceWrites(
   result: DevShellSourceWriteGuardResult | undefined,
 ): boolean {
-  return (result?.unauthorizedSourceWrites.length ?? 0) > 0;
+  return result?.mode !== "captured_source_write" && (result?.unauthorizedSourceWrites.length ?? 0) > 0;
 }
 
 function consumeMatchingApprovalGrant(input: {
@@ -267,36 +291,31 @@ async function snapshotSourceRoots(
   config: NormalizedGuardConfig,
 ): Promise<Map<string, SnapshotEntry>> {
   const snapshot = new Map<string, SnapshotEntry>();
+  if (config.gitVisibleOnly) {
+    for (const absolutePath of await listGitVisiblePaths(config.workspaceRoot)) {
+      await snapshotPath(absolutePath, snapshot);
+    }
+    return snapshot;
+  }
   for (const root of config.sourceRoots) {
     await visitSourceFiles(config, root, async (absolutePath, type) => {
-      if (type === "file") {
-        const content = await readFile(absolutePath);
-        const info = await lstat(absolutePath);
-        snapshot.set(absolutePath, {
-          type: "file",
-          path: absolutePath,
-          content,
-          hash: hashBuffer(content),
-          mode: info.mode,
-        });
-        return;
-      }
-      const target = await readlink(absolutePath);
-      snapshot.set(absolutePath, {
-        type: "symlink",
-        path: absolutePath,
-        target,
-      });
+      await snapshotPath(absolutePath, snapshot, type);
     });
   }
   return snapshot;
 }
 
 async function snapshotSourceDirectories(config: NormalizedGuardConfig): Promise<Set<string>> {
+  if (config.gitVisibleOnly) {
+    return new Set();
+  }
   return collectCurrentDirectories(config);
 }
 
 async function collectCurrentDirectories(config: NormalizedGuardConfig): Promise<Set<string>> {
+  if (config.gitVisibleOnly) {
+    return new Set();
+  }
   const directories = new Set<string>();
   for (const root of config.sourceRoots) {
     await visitSourcePaths(config, root, {
@@ -312,6 +331,18 @@ async function collectCurrentFileStates(
   config: NormalizedGuardConfig,
 ): Promise<Map<string, FileState>> {
   const files = new Map<string, FileState>();
+  if (config.gitVisibleOnly) {
+    for (const absolutePath of await listGitVisiblePaths(config.workspaceRoot)) {
+      const info = await lstat(absolutePath).catch(() => {});
+      if (info === undefined) continue;
+      if (info.isSymbolicLink()) {
+        files.set(absolutePath, { type: "symlink", hash: hashString(await readlink(absolutePath)) });
+      } else if (info.isFile()) {
+        files.set(absolutePath, { type: "file", hash: hashBuffer(await readFile(absolutePath)) });
+      }
+    }
+    return files;
+  }
   for (const root of config.sourceRoots) {
     await visitSourceFiles(config, root, async (absolutePath, type) => {
       if (type === "file") {
@@ -446,4 +477,103 @@ function hashBuffer(buffer: Buffer): string {
 
 function hashString(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function snapshotPath(
+  absolutePath: string,
+  snapshot: Map<string, SnapshotEntry>,
+  knownType?: "file" | "symlink",
+): Promise<void> {
+  const info = await lstat(absolutePath);
+  const type = knownType ?? (info.isSymbolicLink() ? "symlink" : "file");
+  if (type === "file") {
+    const content = await readFile(absolutePath);
+    snapshot.set(absolutePath, { type: "file", path: absolutePath, content, hash: hashBuffer(content), mode: info.mode });
+    return;
+  }
+  const target = await readlink(absolutePath);
+  snapshot.set(absolutePath, { type: "symlink", path: absolutePath, target });
+}
+
+async function listGitVisiblePaths(workspaceRoot: string): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["-C", workspaceRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    encoding: "buffer",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return stdout.toString("utf8").split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => path.join(workspaceRoot, entry));
+}
+
+async function buildCapturedPatch(
+  guard: ActiveDevShellSourceWriteGuard,
+  after: Map<string, FileState>,
+): Promise<{ patch: string; baseRevisions: Record<string, string> }> {
+  const changed = new Set<string>();
+  for (const [absolutePath, before] of guard.snapshot) {
+    const current = after.get(absolutePath);
+    const beforeHash = before.type === "file" ? before.hash : hashString(before.target);
+    if (current === undefined || current.type !== before.type || current.hash !== beforeHash) changed.add(absolutePath);
+  }
+  for (const absolutePath of after.keys()) {
+    if (guard.snapshot.has(absolutePath) === false) changed.add(absolutePath);
+  }
+  if (changed.size === 0) return { patch: "", baseRevisions: {} };
+
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-shell-capture-"));
+  const beforeRoot = path.join(tempRoot, "before");
+  const afterRoot = path.join(tempRoot, "after");
+  const baseRevisions: Record<string, string> = {};
+  try {
+    await mkdir(beforeRoot, { recursive: true });
+    await mkdir(afterRoot, { recursive: true });
+    for (const absolutePath of changed) {
+      const relativePath = displayPath(guard.config.workspaceRoot, absolutePath);
+      const before = guard.snapshot.get(absolutePath);
+      if (before !== undefined) {
+        await materializeSnapshotEntry(before, path.join(beforeRoot, relativePath));
+        baseRevisions[relativePath] = `sha256:${before.type === "file" ? before.hash : hashString(before.target)}`;
+      }
+      if (after.has(absolutePath)) {
+        await copyCurrentEntry(absolutePath, path.join(afterRoot, relativePath));
+      }
+    }
+    let stdout = "";
+    try {
+      stdout = (await execFileAsync("git", ["diff", "--no-index", "--binary", "--src-prefix=a/", "--dst-prefix=b/", "--", beforeRoot, afterRoot], {
+        maxBuffer: 16 * 1024 * 1024,
+      })).stdout;
+    } catch (error) {
+      const record = error as { code?: number | string; stdout?: string };
+      if (record.code !== 1 || typeof record.stdout !== "string") throw error;
+      stdout = record.stdout;
+    }
+    return {
+      patch: stdout.replaceAll(`a${beforeRoot}/`, "a/").replaceAll(`b${afterRoot}/`, "b/"),
+      baseRevisions,
+    };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function materializeSnapshotEntry(entry: SnapshotEntry, destination: string): Promise<void> {
+  await mkdir(path.dirname(destination), { recursive: true });
+  if (entry.type === "file") {
+    await writeFile(destination, entry.content);
+    await chmod(destination, entry.mode).catch(() => {});
+  } else {
+    await symlink(entry.target, destination);
+  }
+}
+
+async function copyCurrentEntry(source: string, destination: string): Promise<void> {
+  await mkdir(path.dirname(destination), { recursive: true });
+  const info = await lstat(source);
+  if (info.isSymbolicLink()) {
+    await symlink(await readlink(source), destination);
+  } else {
+    await writeFile(destination, await readFile(source));
+    await chmod(destination, info.mode).catch(() => {});
+  }
 }
