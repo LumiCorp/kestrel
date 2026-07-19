@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { InMemoryDevShellStore } from "../../src/devshell/InMemoryDevShellStore.js";
 import { DevShellSupervisor } from "../../src/devshell/DevShellSupervisor.js";
@@ -12,6 +14,7 @@ import {
 } from "../../src/devshell/contracts.js";
 
 const TEST_COMMAND_TIMEOUT_MS = 5000;
+const execFileAsync = promisify(execFile);
 
 async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
@@ -720,6 +723,38 @@ test("DevShellSupervisor allows source writes in managed checkpoint worktree mod
     assert.equal(result.sourceWriteGuard?.mode, "checkpoint_worktree");
     assert.deepEqual(result.unauthorizedSourceWrites, undefined);
     assert.equal(await readFile(pagePath, "utf8"), "changed");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor capture mode restores source and returns an exact patch", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  const appDir = path.join(workspaceRoot, "app");
+  const pagePath = path.join(appDir, "page.tsx");
+  await mkdir(appDir, { recursive: true });
+  await execFileAsync("git", ["init", "-q"], { cwd: workspaceRoot });
+  await writeFile(pagePath, "original\n", "utf8");
+  await execFileAsync("git", ["add", "app/page.tsx"], { cwd: workspaceRoot });
+  try {
+    const result = await supervisor.runCommand({
+      workspaceRoot,
+      command: "printf 'changed\\n' > app/page.tsx",
+      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+      maxOutputBytes: 4096,
+      sourceWriteGuard: {
+        enabled: true,
+        managedWorktree: true,
+        mutationPolicy: "capture",
+      },
+    });
+
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.sourceWriteGuard?.mode, "captured_source_write");
+    assert.equal(await readFile(pagePath, "utf8"), "original\n");
+    assert.match(result.sourceWriteGuard?.capturedPatch ?? "", /a\/app\/page\.tsx/u);
+    assert.match(result.sourceWriteGuard?.capturedPatch ?? "", /\+changed/u);
+    assert.match(result.sourceWriteGuard?.capturedBaseRevisions?.["app/page.tsx"] ?? "", /^sha256:/u);
   } finally {
     await supervisor.close();
   }

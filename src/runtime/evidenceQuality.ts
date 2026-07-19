@@ -752,6 +752,9 @@ function inferEvidenceRecoveryFamily(toolName: string | undefined): EvidenceReco
 
 function isFilesystemMutationTool(toolName: string | undefined): boolean {
   return (
+    toolName === "fs.create_text" ||
+    toolName === "fs.edit_text" ||
+    toolName === "fs.apply_patch" ||
     toolName === "fs.write_text" ||
     toolName === "fs.replace_text" ||
     toolName === "fs.mkdir" ||

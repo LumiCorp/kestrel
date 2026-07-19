@@ -29,6 +29,7 @@ import {
   resolveWorkspaceAppCwd,
 } from "./shared.js";
 import { EXEC_COMMAND_OUTPUT_CONTRACT } from "./outputContracts.js";
+import { storeTextArtifact } from "../runtime/artifactStore.js";
 
 type ExecCommandStatus = "completed" | "running" | "timeout" | "failed" | "stopped";
 
@@ -49,13 +50,16 @@ interface ExecCommandOutput {
   sourceWriteGuard?: DevShellSourceWriteGuardResult | undefined;
   unauthorizedSourceWrites?: DevShellUnauthorizedSourceWrite[] | undefined;
   changedFiles?: string[] | undefined;
+  patchRef?: string | undefined;
+  baseRevisions?: Record<string, string> | undefined;
+  failureReason?: string | undefined;
 }
 
 export const execCommandTool: SharedToolModule = {
   definition: {
     name: "exec_command",
     description:
-      "Start one shell command and observe it briefly. If it exits, the result is terminal; if it is still alive, the result has status running and a sessionId. Command shape: use command for ordinary inspection, build, test, validation, long-running, and interactive commands; do not include sessionId, stdin, or stop. Quote or escape shell glob metacharacters in path segments, especially bracketed framework routes such as 'src/app/[id]' or src/app/\\[id\\]. Continue/read shape: only use sessionId returned by a running result, plus optional stdin to send raw input or no stdin to read new output, and do not include command. Include the newline a terminal user would press in stdin. Stop shape: use sessionId with stop=true and do not include command or stdin. Never invent sessionId.",
+      "Start one shell command and observe it briefly. Command shape: use command and do not include sessionId, stdin, or stop. Source writes are rejected and restored by default. For a formatter, generator, or codemod, set sourceMutation to capture; the command must settle in the initial observation window and returns a patchRef that must be committed with fs.apply_patch. If a command remains alive, the result has status running and a sessionId. Continue/read shape: only use sessionId returned by a running result, with optional stdin as raw input; include the newline a terminal user would press. Stop shape uses sessionId with stop=true. Never invent sessionId.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -91,6 +95,11 @@ export const execCommandTool: SharedToolModule = {
             envMode: {
               type: "string",
               enum: ["inherit", "allowlist"],
+            },
+            sourceMutation: {
+              type: "string",
+              enum: ["reject", "capture"],
+              description: "Source mutation policy. reject is the default. capture restores source changes and returns an immutable patchRef for later fs.apply_patch.",
             },
           },
         },
@@ -178,6 +187,11 @@ export const execCommandTool: SharedToolModule = {
           type: "string",
           enum: ["inherit", "allowlist"],
         },
+        sourceMutation: {
+          type: "string",
+          enum: ["reject", "capture"],
+          description: "Command shape only. reject is the default; capture returns source changes as a patch artifact without keeping them in the workspace.",
+        },
       },
     },
     outputContract: EXEC_COMMAND_OUTPUT_CONTRACT,
@@ -211,10 +225,25 @@ export const execCommandTool: SharedToolModule = {
       const maxBytes = typeof maxOutputBytes === "number" ? maxOutputBytes : undefined;
 
       if (command !== undefined) {
+        const sourceMutation = readSourceMutation(body);
         const result = await service.startProcess(
           buildStartProcessInput(context, body, command),
           buildDevShellCommandOptions(context),
         );
+        if (sourceMutation === "capture" && result.status === "RUNNING" && result.processId !== undefined) {
+          const stopped = await service.stopProcess(
+            { processId: result.processId, waitMs: 1_000, ...(maxBytes !== undefined ? { maxBytes } : {}) },
+            buildDevShellCommandOptions(context),
+          );
+          const mapped = mapProcessResult(stopped, startedAt, result.processId);
+          return {
+            ...mapped,
+            status: "failed",
+            patchRef: undefined,
+            baseRevisions: undefined,
+            failureReason: "sourceMutation capture commands must settle within the initial observation window; the process was stopped and its changes were restored.",
+          };
+        }
         return mapProcessResult(result, startedAt);
       }
 
@@ -293,7 +322,8 @@ function buildStartProcessInput(
 ): DevProcessStartInput {
   const config = readDevShellConfig(context);
   const envMode = resolveDevShellEnvMode(config, "exec_command", body);
-  const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config);
+  const requestedMutation = readSourceMutation(body);
+  const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config, requestedMutation);
   const sourceWriteAuthority = buildDevShellSourceWriteAuthority(config);
   const normalizedCommand = normalizeDevShellExecCommand(command);
   if (normalizedCommand === undefined) {
@@ -341,6 +371,14 @@ function buildStartProcessInput(
   };
 }
 
+function readSourceMutation(body: Record<string, unknown>): "reject" | "capture" {
+  const requestedMutation = readString(body, "sourceMutation") ?? "reject";
+  if (requestedMutation !== "reject" && requestedMutation !== "capture") {
+    throw createToolInputError("exec_command", "sourceMutation must be 'reject' or 'capture'.", { field: "sourceMutation" });
+  }
+  return requestedMutation;
+}
+
 function validateWorkspaceRelativeCwd(workspaceRoot: string, cwd: string): void {
   const resolvedWorkspaceRoot = resolve(workspaceRoot);
   const resolvedCwd = resolve(resolvedWorkspaceRoot, cwd);
@@ -386,9 +424,19 @@ function mapProcessResult(
   fallbackSessionId?: string | undefined,
 ): ExecCommandOutput {
   const status = mapStatus(result.status, result.exitCode, result.failureReason);
-  const sessionId = status === "running"
+  const sessionId = status === "running" || result.truncated
     ? result.processId ?? fallbackSessionId
     : undefined;
+  const capturedPatch = result.sourceWriteGuard?.capturedPatch;
+  const patchArtifact = capturedPatch !== undefined && capturedPatch.length > 0
+    ? storeTextArtifact({ content: capturedPatch, contentType: "text/x-diff; charset=utf-8", namespace: "patch" })
+    : undefined;
+  const visibleSourceWriteGuard = result.sourceWriteGuard === undefined
+    ? undefined
+    : {
+      ...result.sourceWriteGuard,
+      capturedPatch: undefined,
+    };
   return {
     status,
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -400,10 +448,14 @@ function mapProcessResult(
     ...(result.command !== undefined ? { command: result.command } : {}),
     ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     ...(result.workspaceRoot !== undefined ? { workspaceRoot: result.workspaceRoot } : {}),
-    ...(result.sourceWriteGuard !== undefined ? { sourceWriteGuard: result.sourceWriteGuard } : {}),
+    ...(visibleSourceWriteGuard !== undefined ? { sourceWriteGuard: visibleSourceWriteGuard } : {}),
     ...(result.unauthorizedSourceWrites !== undefined ? { unauthorizedSourceWrites: result.unauthorizedSourceWrites } : {}),
     ...(result.sourceWriteGuard?.changedFiles !== undefined
       ? { changedFiles: result.sourceWriteGuard.changedFiles }
+      : {}),
+    ...(patchArtifact !== undefined ? { patchRef: patchArtifact.ref } : {}),
+    ...(result.sourceWriteGuard?.capturedBaseRevisions !== undefined
+      ? { baseRevisions: result.sourceWriteGuard.capturedBaseRevisions }
       : {}),
   };
 }

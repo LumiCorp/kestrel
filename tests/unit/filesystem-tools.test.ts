@@ -11,6 +11,8 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { isToolClassAllowed } from "../../src/mode/contracts.js";
 import type { AgentToolResult } from "../../src/kestrel/contracts/model-io.js";
@@ -20,6 +22,9 @@ import { isAgentToolResult, unwrapAgentToolOutput } from "../../tools/toolResult
 interface FsTestHandlers {
   "fs.list": (input: unknown) => Promise<unknown>;
   "fs.read_text": (input: unknown) => Promise<unknown>;
+  "fs.create_text": (input: unknown) => Promise<unknown>;
+  "fs.edit_text": (input: unknown) => Promise<unknown>;
+  "fs.apply_patch": (input: unknown) => Promise<unknown>;
   "fs.verify_json": (input: unknown) => Promise<unknown>;
   "fs.search_text": (input: unknown) => Promise<unknown>;
   "fs.write_text": (input: unknown) => Promise<unknown>;
@@ -29,6 +34,8 @@ interface FsTestHandlers {
   "fs.move": (input: unknown) => Promise<unknown>;
   "fs.delete": (input: unknown) => Promise<unknown>;
 }
+
+const execFileAsync = promisify(execFile);
 
 test("filesystem tools allow workspace-relative and temp-root paths and reject escapes", async () => {
   const { handlers, policyRoots } = await createFsHarness();
@@ -87,6 +94,88 @@ test("filesystem read_text returns bounded content and read metadata", async () 
   assert.equal(result.truncated, true);
   assert.equal(result.bytesRead, 5);
   assert.equal(result.maxBytes, 5);
+});
+
+test("filesystem read_text pages a large file without losing mutation authority", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  const content = `${"x".repeat(14_750)}\nsetup()\n`;
+  await writeFile(path.join(policyRoots.workspaceRoot, "sphinx.py"), content, "utf8");
+
+  const first = await rawToolOutput<{
+    content: string;
+    revision: string;
+    complete: boolean;
+    nextOffsetBytes: number;
+    totalBytes: number;
+  }>(handlers["fs.read_text"]({ path: "sphinx.py", maxBytes: 20_000 }));
+  assert.equal(first.complete, false);
+  assert.equal(first.content.length, 8 * 1024);
+  assert.equal(first.totalBytes, Buffer.byteLength(content));
+
+  const second = await rawToolOutput<{
+    content: string;
+    revision: string;
+    complete: boolean;
+  }>(handlers["fs.read_text"]({
+    path: "sphinx.py",
+    offsetBytes: first.nextOffsetBytes,
+    expectedRevision: first.revision,
+  }));
+  assert.equal(second.complete, true);
+  assert.equal(second.revision, first.revision);
+  assert.equal(first.content + second.content, content);
+  assert.match(second.content, /setup\(\)/u);
+});
+
+test("structured text tools reject collisions, ambiguity, and stale revisions", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  await handlers["fs.create_text"]({ path: "source.txt", content: "alpha alpha\n" });
+  const collision = await failedToolResult(handlers["fs.create_text"]({ path: "source.txt", content: "lost\n" }));
+  assert.match(String((collision.auditRecord.error as { message?: unknown }).message), /already exists/u);
+
+  const read = await rawToolOutput<{ revision: string }>(handlers["fs.read_text"]({ path: "source.txt" }));
+  const ambiguous = await failedToolResult(handlers["fs.edit_text"]({
+    path: "source.txt",
+    expectedRevision: read.revision,
+    edits: [{ find: "alpha", replace: "beta" }],
+  }));
+  assert.match(String((ambiguous.auditRecord.error as { message?: unknown }).message), /ambiguous/u);
+  assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "source.txt"), "utf8"), "alpha alpha\n");
+
+  await writeFile(path.join(policyRoots.workspaceRoot, "source.txt"), "newer\n", "utf8");
+  const stale = await failedToolResult(handlers["fs.edit_text"]({
+    path: "source.txt",
+    expectedRevision: read.revision,
+    edits: [{ find: "newer", replace: "changed" }],
+  }));
+  assert.match(String((stale.auditRecord.error as { message?: unknown }).message), /stale revision/u);
+  assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "source.txt"), "utf8"), "newer\n");
+});
+
+test("filesystem apply_patch validates revisions and applies an exact unified diff", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  await execFileAsync("git", ["init", "-q"], { cwd: policyRoots.workspaceRoot });
+  await writeFile(path.join(policyRoots.workspaceRoot, "patch.txt"), "alpha\n", "utf8");
+  const read = await rawToolOutput<{ revision: string }>(handlers["fs.read_text"]({ path: "patch.txt" }));
+  const patch = [
+    "diff --git a/patch.txt b/patch.txt",
+    "--- a/patch.txt",
+    "+++ b/patch.txt",
+    "@@ -1 +1 @@",
+    "-alpha",
+    "+beta",
+    "",
+  ].join("\n");
+  const rawResult = await handlers["fs.apply_patch"]({
+    patch,
+    expectedRevisions: [{ path: "patch.txt", revision: read.revision }],
+  });
+  assert.equal(isAgentToolResult(rawResult), true);
+  assert.equal((rawResult as AgentToolResult).status, "OK", JSON.stringify((rawResult as AgentToolResult).auditRecord.error));
+  const result = unwrapAgentToolOutput(rawResult) as { changed: boolean; afterRevisions: Record<string, string> };
+  assert.equal(result.changed, true);
+  assert.match(result.afterRevisions["patch.txt"] ?? "", /^sha256:/u);
+  assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "patch.txt"), "utf8"), "beta\n");
 });
 
 test("filesystem list semantic facts do not follow hidden control symlinks outside allowed roots", async () => {

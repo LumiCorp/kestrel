@@ -30,6 +30,9 @@ import { asRecord, readNumber, readString, requireStringField } from "../helpers
 export const FILESYSTEM_TOOL_NAMES = [
   "fs.list",
   "fs.read_text",
+  "fs.create_text",
+  "fs.edit_text",
+  "fs.apply_patch",
   "fs.verify_json",
   "fs.search_text",
   "repo.trace",

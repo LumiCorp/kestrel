@@ -137,10 +137,12 @@ const SWE_VERIFIED_BASELINE_OUTPUT_FILE = "workspace-baseline-output.txt";
 const ORACLE_FIELDS = new Set(["patch", "test_patch", "FAIL_TO_PASS", "PASS_TO_PASS"]);
 const SWE_VERIFIED_REQUIRED_PROFILE_TOOLS = [
   "FinalizeAnswer",
+  "artifact.read",
   "fs.read_text",
   "repo.trace",
-  "fs.write_text",
-  "fs.replace_text",
+  "fs.create_text",
+  "fs.edit_text",
+  "fs.apply_patch",
   "exec_command",
 ];
 
@@ -372,10 +374,12 @@ export function buildSweVerifiedJobInput(input: {
       toolAllowlist: [
         "FinalizeAnswer",
         "effect_result_lookup",
+        "artifact.read",
         "fs.read_text",
         "repo.trace",
-        "fs.write_text",
-        "fs.replace_text",
+        "fs.create_text",
+        "fs.edit_text",
+        "fs.apply_patch",
         "exec_command",
       ],
     },

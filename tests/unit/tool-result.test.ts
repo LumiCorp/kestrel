@@ -31,7 +31,7 @@ test("runAgentTool wraps successful output in model context and audit evidence",
   assert.match(result.modelContext.text, /- contentBytes: 6/u);
   assert.match(
     result.modelContext.text,
-    /- content \(exact; boundary markers are not file content\):\n<<<KESTREL_EXACT_FILE_CONTENT\nhello\n\nKESTREL_EXACT_FILE_CONTENT/u,
+    /- content \(exact complete file; boundary markers are not file content\):\n<<<KESTREL_EXACT_FILE_CONTENT\nhello\n\nKESTREL_EXACT_FILE_CONTENT/u,
   );
   assert.match(result.modelContext.text, /Raw output ref: tool-output:[a-f0-9]{16}/u);
   assert.equal(result.modelContext.rawOutputRef, result.modelContext.text.match(/tool-output:[a-f0-9]{16}/u)?.[0]);
@@ -89,7 +89,7 @@ test("fs.read_text keeps empty and clipping annotations outside exact content de
   )?.[1];
   assert.equal(clippedRegion, content.slice(0, 10_000));
   assert.doesNotMatch(clippedRegion ?? "", /<empty>|\[omitted/u);
-  assert.match(clipped.modelContext.text, /- content excerpt \(exact returned prefix; incomplete;/u);
+  assert.match(clipped.modelContext.text, /- content page \(exact returned range; incomplete file;/u);
   assert.match(clipped.modelContext.text, /- omittedContentChars: 50/u);
 });
 

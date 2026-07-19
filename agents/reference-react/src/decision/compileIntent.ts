@@ -955,7 +955,11 @@ function toolMatchesOperationIntent(
     | "inspect_repo",
 ): boolean {
   if (operationKind === "write_file") {
-    return toolName === "fs.write_text" || toolName === "fs.replace_text";
+    return toolName === "fs.create_text" ||
+      toolName === "fs.edit_text" ||
+      toolName === "fs.apply_patch" ||
+      toolName === "fs.write_text" ||
+      toolName === "fs.replace_text";
   }
   if (operationKind === "scaffold_app") {
     return toolName === "exec_command";

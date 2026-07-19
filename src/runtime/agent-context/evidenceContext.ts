@@ -273,6 +273,14 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
       ].join(" ");
     }
   }
+  if (toolName === "fs.create_text" || toolName === "fs.edit_text" || toolName === "fs.apply_patch") {
+    const changedFiles = asArray(facts.changedFiles)
+      .map((item) => asString(item)?.trim())
+      .filter((item): item is string => item !== undefined && item.length > 0);
+    const files = changedFiles.length > 0 ? changedFiles.join(", ") : targetPath ?? ".";
+    const afterRevision = asString(facts.afterRevision) ?? asString(facts.revision);
+    return `${toolName} changed ${files}${afterRevision !== undefined ? ` at ${afterRevision}` : ""}.`;
+  }
   if (toolName === "fs.replace_text") {
     const find = asString(facts.find);
     const replace = asString(facts.replace);

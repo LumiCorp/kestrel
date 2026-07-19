@@ -806,6 +806,9 @@ export class DevShellSupervisor {
   }
 
   private async enforceSourceWriteGuardOnce(process: RunningProcess): Promise<void> {
+    if (process.sourceWriteGuard?.config.mode === "captured_source_write" && isProcessRunning(process.child)) {
+      return;
+    }
     const result = await enforceDevShellSourceWriteGuard(process.sourceWriteGuard);
     if (result === undefined) {
       return;

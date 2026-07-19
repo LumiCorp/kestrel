@@ -94,6 +94,10 @@ export {
 } from "./filesystem/shared.js";
 export { fsListTool } from "./filesystem/list.js";
 export { fsReadTextTool } from "./filesystem/readText.js";
+export { fsCreateTextTool } from "./filesystem/createText.js";
+export { fsEditTextTool } from "./filesystem/editText.js";
+export { fsApplyPatchTool } from "./filesystem/applyPatch.js";
+export { artifactReadTool } from "./runtime/artifactRead.js";
 export { fsVerifyJsonTool } from "./filesystem/verifyJson.js";
 export { fsSearchTextTool } from "./filesystem/searchText.js";
 export { repoTraceTool } from "./repo/trace.js";

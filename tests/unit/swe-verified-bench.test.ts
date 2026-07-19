@@ -213,10 +213,12 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
     toolAllowlist: [
       "FinalizeAnswer",
       "effect_result_lookup",
+      "artifact.read",
       "fs.read_text",
       "repo.trace",
-      "fs.write_text",
-      "fs.replace_text",
+      "fs.create_text",
+      "fs.edit_text",
+      "fs.apply_patch",
       "exec_command",
     ],
   });

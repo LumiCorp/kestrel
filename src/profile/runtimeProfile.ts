@@ -58,9 +58,13 @@ const PACK_ORDER: CapabilityPackId[] = [
   "sandbox_code",
 ];
 
+const CODING_FILESYSTEM_TOOL_NAMES: string[] = FILESYSTEM_TOOL_NAMES.filter(
+  (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+);
+
 const PACK_TOOL_NAMES: Record<CapabilityPackId, string[]> = {
   balanced: [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
-  filesystem: [...FILESYSTEM_TOOL_NAMES],
+  filesystem: [...CODING_FILESYSTEM_TOOL_NAMES, "artifact.read"],
   dev_shell: [...DEV_SHELL_TOOL_NAMES],
   sandbox_code: ["code.execute"],
 };
@@ -264,12 +268,21 @@ function applyCapabilityPackToolRequirements(input: {
 
   for (const toolName of FILESYSTEM_TOOL_NAMES) {
     if (hasFilesystem) {
-      if (next.includes(toolName) === false) {
+      if (CODING_FILESYSTEM_TOOL_NAMES.includes(toolName) && next.includes(toolName) === false) {
         next.push(toolName);
+      }
+      if (CODING_FILESYSTEM_TOOL_NAMES.includes(toolName) === false) {
+        removeTool(next, toolName);
       }
       continue;
     }
     removeTool(next, toolName);
+  }
+  if (hasFilesystem && next.includes("artifact.read") === false) {
+    next.push("artifact.read");
+  }
+  if (hasFilesystem === false) {
+    removeTool(next, "artifact.read");
   }
 
   if (hasSandboxCode && next.includes("code.execute") === false) {

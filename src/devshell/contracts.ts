@@ -260,7 +260,8 @@ export interface DevShellPnpmBuildApprovalPreflight {
   timedOut?: boolean | undefined;
 }
 
-export type DevShellSourceWriteMode = "source_readonly" | "approved_source_write" | "checkpoint_worktree";
+export type DevShellSourceWriteMode = "source_readonly" | "captured_source_write" | "approved_source_write" | "checkpoint_worktree";
+export type DevShellSourceMutationPolicy = "reject" | "capture" | "direct";
 
 export interface DevShellSourceWriteApprovalGrant {
   grantId: string;
@@ -280,6 +281,7 @@ export interface DevShellSourceWriteGuardProfile {
 
 export interface DevShellSourceWriteGuardRequest {
   enabled: boolean;
+  mutationPolicy?: DevShellSourceMutationPolicy | undefined;
   managedWorktree?: boolean | undefined;
   sourceRoots?: string[] | undefined;
   allowedWriteRoots?: string[] | undefined;
@@ -304,6 +306,8 @@ export interface DevShellSourceWriteGuardResult {
   changedFiles?: string[] | undefined;
   preActionCheckpointId?: string | undefined;
   postActionCheckpointId?: string | undefined;
+  capturedPatch?: string | undefined;
+  capturedBaseRevisions?: Record<string, string> | undefined;
 }
 
 export type DevShellOutputChannel = "stdout" | "stderr" | "merged";

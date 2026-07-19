@@ -7,6 +7,7 @@ import type {
 import { buildKestrelAgentToolModelContext } from "../src/runtime/KestrelAgentContextBuilder.js";
 import { RunCancelledError, RuntimeFailure } from "../src/runtime/RuntimeFailure.js";
 import { sanitizeJsonValue, stringifySanitizedJson } from "../src/runtime/jsonSanitizer.js";
+import { storeJsonArtifact } from "./runtime/artifactStore.js";
 
 export type AgentToolRawHandler = (input: unknown) => Promise<unknown>;
 
@@ -83,6 +84,7 @@ export function buildAgentToolSuccessResult(input: AgentToolResultInput): AgentT
   const completedAt = input.completedAt ?? new Date().toISOString();
   const output = sanitizeJsonValue(input.output);
   const rawOutputRef = rawOutputRefFor(output);
+  storeJsonArtifact(rawOutputRef, output);
   return {
     toolName: input.toolName,
     status: "OK",
@@ -117,6 +119,7 @@ export function replaceAgentToolResultOutput(
   const rawOutputRef = rawOutputRefFor(
     result.status === "FAILED" ? { error, output } : output,
   );
+  storeJsonArtifact(rawOutputRef, result.status === "FAILED" ? { error, output } : output);
   return {
     ...result,
     modelContext: buildModelContext({
@@ -140,6 +143,7 @@ export function buildAgentToolFailureResult(input: AgentToolFailureInput): Agent
   const error = normalizeToolError(input.error);
   const output = buildVisibleFailureOutput(input.toolName, input.input, error);
   const rawOutputRef = rawOutputRefFor({ error, output });
+  storeJsonArtifact(rawOutputRef, { error, output });
   return {
     toolName: input.toolName,
     status: "FAILED",
@@ -177,6 +181,7 @@ export function buildAgentToolFailedOutputResult(input: AgentToolFailedOutputInp
       "Tool execution failed.",
   });
   const rawOutputRef = rawOutputRefFor({ error, output });
+  storeJsonArtifact(rawOutputRef, { error, output });
   return {
     toolName: input.toolName,
     status: "FAILED",

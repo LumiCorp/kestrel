@@ -64,7 +64,7 @@ export type KestrelAgentCannotSatisfyReasonCode =
 
 const MODEL_CONTEXT_TEXT_LIMIT = 12_000;
 const GENERIC_VALUE_PREVIEW_CHARS = 2000;
-const READ_TEXT_CONTENT_LIMIT = 10_000;
+const LEGACY_READ_TEXT_CONTENT_LIMIT = 10_000;
 const LIST_ENTRY_LIMIT = 80;
 const SEARCH_MATCH_LIMIT = 40;
 const WEATHER_DAILY_ENTRY_LIMIT = 10;
@@ -644,18 +644,23 @@ function renderFilesystemFacts(
 ): string[] {
   if (toolName === "fs.read_text") {
     const content = asString(output.content) ?? "";
-    const contentEnd = resolveExactContentEnd(content, READ_TEXT_CONTENT_LIMIT);
+    const contentEnd = resolveExactContentEnd(content, LEGACY_READ_TEXT_CONTENT_LIMIT);
     const visibleContent = content.slice(0, contentEnd);
     const modelContextTruncated = contentEnd < content.length;
     return [
       ...field("status", asString(output.status) ?? status),
       ...field("path", firstString(asRecord(input)?.path, output.path)),
       ...field("encoding", asString(output.encoding)),
+      ...field("revision", asString(output.revision)),
+      ...field("range", output.range),
+      ...field("totalBytes", output.totalBytes),
+      ...field("complete", output.complete),
+      ...field("nextOffsetBytes", output.nextOffsetBytes),
       ...field("truncated", output.truncated),
       ...field("contentBytes", Buffer.byteLength(content, "utf8")),
-      output.truncated === true || modelContextTruncated
-        ? "- content excerpt (exact returned prefix; incomplete; boundary markers are not file content):"
-        : "- content (exact; boundary markers are not file content):",
+      output.complete === false || output.truncated === true || modelContextTruncated
+        ? "- content page (exact returned range; incomplete file; boundary markers are not file content):"
+        : "- content (exact complete file; boundary markers are not file content):",
       "<<<KESTREL_EXACT_FILE_CONTENT",
       visibleContent,
       "KESTREL_EXACT_FILE_CONTENT",
@@ -665,6 +670,30 @@ function renderFilesystemFacts(
           "- contentContextTruncated: true",
           `- omittedContentChars: ${content.length - contentEnd}`,
         ]
+        : []),
+      ...renderErrorFacts(error),
+    ];
+  }
+
+  if (toolName === "fs.create_text" || toolName === "fs.edit_text" || toolName === "fs.apply_patch") {
+    const diff = asString(output.diff) ?? asString(output.patch);
+    const diffEnd = diff === undefined ? 0 : resolveExactContentEnd(diff, 8_000);
+    const visibleDiff = diff?.slice(0, diffEnd);
+    return [
+      ...field("status", asString(output.status) ?? status),
+      ...field("path", firstString(asRecord(input)?.path, output.path)),
+      ...field("changed", output.changed),
+      ...field("created", output.created),
+      ...field("changedFiles", output.changedFiles),
+      ...field("beforeRevision", output.beforeRevision),
+      ...field("afterRevision", output.afterRevision ?? output.revision),
+      ...field("beforeRevisions", output.beforeRevisions),
+      ...field("afterRevisions", output.afterRevisions),
+      ...(visibleDiff !== undefined && visibleDiff.length > 0
+        ? ["- applied diff (exact returned prefix; boundary markers are not diff content):", "<<<KESTREL_EXACT_DIFF", visibleDiff, "KESTREL_EXACT_DIFF"]
+        : []),
+      ...(diff !== undefined && diffEnd < diff.length
+        ? ["- diffContextTruncated: true", `- omittedDiffChars: ${diff.length - diffEnd}`]
         : []),
       ...renderErrorFacts(error),
     ];
@@ -797,12 +826,13 @@ function renderDevShellFacts(
     lifecycle?.cwd ?? firstString(output.cwd, asRecord(input)?.cwd),
     lifecycle?.workspaceRoot ?? asString(output.workspaceRoot),
   );
-  const continuation = toolName === "exec_command" &&
-      lifecycle?.status === "RUNNING" &&
-      lifecycle.sessionId !== undefined
+  const continuation = toolName === "exec_command" && lifecycle?.sessionId !== undefined &&
+      (lifecycle.status === "RUNNING" || lifecycle.truncated === true)
     ? [
       "- continuation:",
-      `  process is still running; call exec_command with {"sessionId":"${lifecycle.sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Add stdin only when the process is waiting for input, or use {"sessionId":"${lifecycle.sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} if it is no longer needed. A command starts a new independent process.`,
+      lifecycle.status === "RUNNING"
+        ? `  process is still running; call exec_command with {"sessionId":"${lifecycle.sessionId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Add stdin only when the process is waiting for input, or use {"sessionId":"${lifecycle.sessionId}","stop":true} if it is no longer needed. A command starts a new independent process.`
+        : `  terminal output is incomplete; call exec_command with {"sessionId":"${lifecycle.sessionId}"} and no command to collect the remaining transcript.`,
     ]
     : [];
   return [
@@ -817,6 +847,8 @@ function renderDevShellFacts(
     ...field("exitCode", lifecycle?.exitCode ?? output.exitCode),
     ...field("truncated", lifecycle?.truncated ?? output.truncated),
     ...field("cursor", lifecycle?.cursor),
+    ...field("patchRef", output.patchRef),
+    ...field("baseRevisions", output.baseRevisions),
     ...field("errorCode", output.errorCode),
     ...field("failurePhase", output.failurePhase),
     ...field("failureReason", output.failureReason),

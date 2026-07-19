@@ -624,7 +624,7 @@ test("Kestrel agent context builder owns tool-result summaries and model context
 
   assert.match(context.text, /Tool result: fs\.read_text/u);
   assert.match(context.text, /- path: src\/file\.ts/u);
-  assert.match(context.text, /- content \(exact; boundary markers are not file content\):/u);
+  assert.match(context.text, /- content \(exact complete file; boundary markers are not file content\):/u);
   assert.match(context.text, /<<<KESTREL_EXACT_FILE_CONTENT\nhello\nKESTREL_EXACT_FILE_CONTENT/u);
   assert.match(context.text, /Raw output ref: tool-output:abc123/u);
 
