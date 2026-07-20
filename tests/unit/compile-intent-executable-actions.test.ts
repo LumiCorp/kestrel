@@ -2903,6 +2903,137 @@ test("compileIntent rejects build-mode goal_satisfied with a live exec_command s
   );
 });
 
+test("compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session", () => {
+  const compiled = compileIntent({
+    phase: "deliberator",
+    interactionMode: "build",
+    output: {
+      version: "v2",
+      reason: "The requested server is ready and remains running.",
+      plan: { intent: "Start the app.", successCriteria: ["The app remains running."] },
+      requiredCapabilities: [],
+      nextAction: {
+        kind: "finalize",
+        status: "goal_satisfied",
+        message: "The app remains running at http://localhost:3000.",
+        data: { keepRunningSessionIds: ["proc-live"] },
+      },
+      confidence: 0.95,
+      verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+    },
+    observedCapabilities: ["dev.shell"],
+    capabilityManifest: [],
+    devShellProcesses: [{ processId: "proc-live", status: "RUNNING", workspaceRoot: "/tmp/project" }],
+  });
+
+  assert.equal(compiled.action.kind, "finalize");
+  assert.deepEqual(
+    (compiled.action.kind === "finalize" ? compiled.action.input.data : undefined),
+    { keepRunningSessionIds: ["proc-live"] },
+  );
+});
+
+test("compileIntent rejects retained sessions that are not active", () => {
+  assert.throws(
+    () => compileIntent({
+      phase: "deliberator",
+      interactionMode: "build",
+      output: {
+        version: "v2",
+        reason: "The requested server is ready.",
+        plan: { intent: "Start the app.", successCriteria: ["The app remains running."] },
+        requiredCapabilities: [],
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "The app remains running.",
+          data: { keepRunningSessionIds: ["proc-settled"] },
+        },
+        confidence: 0.95,
+        verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+      },
+      observedCapabilities: ["dev.shell"],
+      capabilityManifest: [],
+      devShellProcesses: [{ processId: "proc-settled", status: "COMPLETED", workspaceRoot: "/tmp/project" }],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.equal(cast.details?.reason, "keep_running_session_not_active");
+      assert.deepEqual(cast.details?.invalidSessionIds, ["proc-settled"]);
+      return true;
+    },
+  );
+});
+
+test("compileIntent rejects inactive retained sessions outside build mode", () => {
+  assert.throws(
+    () => compileIntent({
+      phase: "deliberator",
+      interactionMode: "chat",
+      output: {
+        version: "v2",
+        reason: "The process remains running.",
+        plan: { intent: "Report the process.", successCriteria: ["Report its state."] },
+        requiredCapabilities: [],
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "The process remains running.",
+          data: { keepRunningSessionIds: ["proc-invented"] },
+        },
+        confidence: 0.95,
+        verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+      },
+      observedCapabilities: [],
+      capabilityManifest: [],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.equal(cast.details?.reason, "keep_running_session_not_active");
+      assert.deepEqual(cast.details?.invalidSessionIds, ["proc-invented"]);
+      return true;
+    },
+  );
+});
+
+test("compileIntent rejects partial declaration when another exec_command session remains live", () => {
+  assert.throws(
+    () => compileIntent({
+      phase: "deliberator",
+      interactionMode: "build",
+      output: {
+        version: "v2",
+        reason: "The requested server is ready but a validation watcher is also running.",
+        plan: { intent: "Start the app.", successCriteria: ["The app remains running."] },
+        requiredCapabilities: [],
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "The app remains running.",
+          data: { keepRunningSessionIds: ["proc-app"] },
+        },
+        confidence: 0.95,
+        verification: { missingCapabilities: [], actionNovelty: true, expectedEvidenceDelta: "low" },
+      },
+      observedCapabilities: ["dev.shell"],
+      capabilityManifest: [],
+      devShellProcesses: [
+        { processId: "proc-app", status: "RUNNING", workspaceRoot: "/tmp/project" },
+        { processId: "proc-watcher", status: "RUNNING", workspaceRoot: "/tmp/project" },
+      ],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.equal(cast.details?.reason, "build_goal_satisfied_with_live_exec_command");
+      assert.deepEqual(cast.details?.sessionIds, ["proc-watcher"]);
+      return true;
+    },
+  );
+});
+
 test("compileIntent allows explicitly warned unresolved validation when no todo remains", () => {
   const compiled = compileIntent({
     phase: "deliberator",

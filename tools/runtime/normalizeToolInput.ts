@@ -505,6 +505,23 @@ export function normalizeToolActionInput(
     };
   }
 
+  if (name === "desktop.host.open") {
+    return {
+      ...(normalizeOptionalString(input.kind) !== undefined
+        ? { kind: normalizeOptionalString(input.kind) }
+        : {}),
+      ...(normalizeOptionalString(input.application) !== undefined
+        ? { application: normalizeOptionalString(input.application) }
+        : {}),
+      ...(normalizeOptionalString(input.path) !== undefined
+        ? { path: normalizeOptionalString(input.path) }
+        : {}),
+      ...(normalizeOptionalString(input.url) !== undefined
+        ? { url: normalizeOptionalString(input.url) }
+        : {}),
+    };
+  }
+
   if (name === "dev.shell.run") {
     const resolvedPaths = resolveDevShellPaths(
       workspaceRoot,
@@ -527,6 +544,9 @@ export function normalizeToolActionInput(
         : {}),
       ...(normalizeOptionalString(input.envMode) !== undefined
         ? { envMode: normalizeOptionalString(input.envMode) }
+        : {}),
+      ...(normalizeOptionalInteger(input.yieldTimeMs) !== undefined
+        ? { yieldTimeMs: normalizeOptionalInteger(input.yieldTimeMs) }
         : {}),
       ...(normalizeOptionalInteger(input.timeoutMs) !== undefined
         ? { timeoutMs: normalizeOptionalInteger(input.timeoutMs) }
@@ -586,6 +606,9 @@ export function normalizeToolActionInput(
           : {}),
         ...(normalizeOptionalString(input.envMode) !== undefined
           ? { envMode: normalizeOptionalString(input.envMode) }
+          : {}),
+        ...(normalizeOptionalString(input.sourceMutation) !== undefined
+          ? { sourceMutation: normalizeOptionalString(input.sourceMutation) }
           : {}),
         ...(sessionId !== undefined ? { sessionId } : {}),
         ...(typeof input.stdin === "string" ? { stdin: input.stdin } : {}),

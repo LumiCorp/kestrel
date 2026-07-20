@@ -374,6 +374,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         kind: "reference-react-deliberator",
         interactionMode: modeResolution.interactionMode,
         promptVariant: resolvedPromptVariant,
+        ...readRuntimeShellKind(eventPayload),
         ...readSystemInstructions(eventPayload),
       },
       retryContext: asRecord(reactState.retryContext),
@@ -515,6 +516,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           kind: "reference-react-deliberator",
           interactionMode: modeResolution.interactionMode,
           promptVariant: resolvedPromptVariant,
+          ...readRuntimeShellKind(eventPayload),
           ...readSystemInstructions(eventPayload),
         },
         retryContext,
@@ -1097,6 +1099,7 @@ async function compactContextRequestIfNeeded(input: {
       kind: "reference-react-deliberator",
       interactionMode: input.interactionMode,
       promptVariant: input.promptVariant,
+      ...readRuntimeShellKind(input.eventPayload),
       ...readSystemInstructions(input.eventPayload),
     },
     activeWorkspace: input.activeWorkspace,
@@ -1147,6 +1150,18 @@ function readRuntimeAssemblyPromptVariant(eventPayload: Record<string, unknown>)
     asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
     asRecord(eventPayload.runtimeAssembly);
   return asString(runtimeAssembly?.promptVariant);
+}
+
+function readRuntimeShellKind(
+  eventPayload: Record<string, unknown>,
+): { environmentShellKind?: "cli" | "web" | "desktop" | undefined } {
+  const runtimeAssembly =
+    asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
+    asRecord(eventPayload.runtimeAssembly);
+  const shellKind = asString(runtimeAssembly?.environmentShellKind);
+  return shellKind === "cli" || shellKind === "web" || shellKind === "desktop"
+    ? { environmentShellKind: shellKind }
+    : {};
 }
 
 function readProjectSnapshotContext(sessionState: Record<string, unknown>): unknown {

@@ -120,3 +120,78 @@ test("goal-satisfied finalization rejects legacy closeout evidence fields", () =
     },
   );
 });
+
+test("goal-satisfied finalization accepts unique non-empty keep-running session ids", () => {
+  assert.doesNotThrow(() =>
+    validateFinalizationDecision({
+      action: {
+        ...FINALIZE_ACTION,
+        input: {
+          message: "The app remains running at http://localhost:3000.",
+          data: {
+            keepRunningSessionIds: ["proc-app", "proc-worker"],
+          },
+        },
+      },
+    }),
+  );
+});
+
+function assertKeepRunningSessionIdsRejected(value: unknown, reason: string): void {
+  assert.throws(
+    () =>
+      validateFinalizationDecision({
+        action: {
+          ...FINALIZE_ACTION,
+          input: {
+            message: "Done.",
+            data: { keepRunningSessionIds: value },
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DecisionCompileError &&
+      error.code === "DECISION_SCHEMA_FAILED" &&
+      error.diagnostics?.reason === reason,
+  );
+}
+
+test("finalization rejects non-array keep-running session ids", () => {
+  assertKeepRunningSessionIdsRejected("proc-app", "keep_running_sessions_must_be_array");
+});
+
+test("finalization rejects empty keep-running session ids", () => {
+  assertKeepRunningSessionIdsRejected([""], "keep_running_session_id_invalid");
+});
+
+test("finalization rejects whitespace-padded keep-running session ids", () => {
+  assertKeepRunningSessionIdsRejected([" proc-app "], "keep_running_session_id_invalid");
+});
+
+test("finalization rejects non-string keep-running session ids", () => {
+  assertKeepRunningSessionIdsRejected([123], "keep_running_session_id_invalid");
+});
+
+test("finalization rejects duplicate keep-running session ids", () => {
+  assertKeepRunningSessionIdsRejected(["proc-app", "proc-app"], "keep_running_session_ids_duplicate");
+});
+
+test("out-of-scope finalization cannot retain a running session", () => {
+  assert.throws(
+    () =>
+      validateFinalizationDecision({
+        action: {
+          kind: "finalize",
+          finalizeReason: "out_of_scope",
+          input: {
+            message: "That request is outside the current scope.",
+            data: { keepRunningSessionIds: ["proc-app"] },
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DecisionCompileError &&
+      error.code === "DECISION_SCHEMA_FAILED" &&
+      error.diagnostics?.reason === "keep_running_sessions_require_goal_satisfied",
+  );
+});

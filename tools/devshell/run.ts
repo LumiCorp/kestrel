@@ -22,7 +22,7 @@ export const devShellRunTool: SharedToolModule = {
   definition: {
     name: "dev.shell.run",
     description:
-      "Run one bounded shell command in the workspace and return its final output and status. Multi-line commands run fail-fast, so an earlier failed setup step cannot be hidden by a later passing command. Quote or escape shell glob metacharacters in path segments, especially bracketed framework routes such as 'src/app/[id]' or src/app/\\[id\\]. Use this for scaffolding, installs, builds, tests, inspections, dev servers, and smoke checks.",
+      "Run one bounded shell command in the workspace and return its final output and status. Use desktop.host.open, not this internal transport, for explicitly requested Desktop application, file, or URL launches. Multi-line commands run fail-fast, so an earlier failed setup step cannot be hidden by a later passing command. Quote or escape shell glob metacharacters in path segments, especially bracketed framework routes such as 'src/app/[id]' or src/app/\\[id\\]. Use this for scaffolding, installs, builds, tests, inspections, dev servers, and smoke checks.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
