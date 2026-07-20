@@ -21,8 +21,8 @@ not in this source-controlled baseline.
 
 | Disposition  | Tests | Reason                                                                                    |
 | ------------ | ----: | ----------------------------------------------------------------------------------------- |
-| Before audit | 3,439 | Statically discoverable automated test declarations                                       |
-| Retained     | 3,377 | Registered to an executable contract and a required lane                                  |
+| Before audit | 3,446 | Statically discoverable automated test declarations                                       |
+| Retained     | 3,384 | Registered to an executable contract and a required lane                                  |
 | Merged       |     0 | No pair was equivalent enough to merge without weakening its counterexample               |
 | Deleted      |    62 | Optional, synthetic, configuration-shape, stale browser, or non-current operations checks |
 
@@ -37,14 +37,14 @@ Retained tests by required lane:
 | Lane                | Tests | Required environment |
 | ------------------- | ----: | -------------------- |
 | policy and registry |    15 | Linux                |
-| runtime             | 2,495 | Linux                |
+| runtime             | 2,496 | Linux                |
 | public packages     |    84 | Linux                |
 | web                 |   543 | Linux                |
 | hosted services     |    65 | Linux                |
 | PostgreSQL          |    15 | Linux and PostgreSQL |
 | Chromium product    |     9 | Linux and Chromium   |
 | Desktop             |   125 | Linux                |
-| documentation       |    25 | Linux                |
+| documentation       |    31 | Linux                |
 | macOS packaging     |     1 | macOS                |
 
 ## Removed ceremony

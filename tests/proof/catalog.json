@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3377,
+  "testCount": 3384,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -1881,7 +1881,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: all seven product screenshots exist and have descriptive alt text and captions",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 132,
+      "line": 150,
       "ancestors": [],
       "title": "all seven product screenshots exist and have descriptive alt text and captions",
       "contractId": "docs.contract",
@@ -1896,7 +1896,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: consumer onboarding excludes repository contributor setup",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 204,
+      "line": 253,
       "ancestors": [],
       "title": "consumer onboarding excludes repository contributor setup",
       "contractId": "docs.contract",
@@ -1926,7 +1926,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: every public page has an explicit consumer content model",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 79,
+      "line": 91,
       "ancestors": [],
       "title": "every public page has an explicit consumer content model",
       "contractId": "docs.contract",
@@ -1941,7 +1941,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: journey progress resolves in order without skipping public pages",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 90,
+      "line": 102,
       "ancestors": [],
       "title": "journey progress resolves in order without skipping public pages",
       "contractId": "docs.contract",
@@ -1956,7 +1956,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: Kestrel One documentation uses the owned product routes",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 102,
+      "line": 114,
       "ancestors": [],
       "title": "Kestrel One documentation uses the owned product routes",
       "contractId": "docs.contract",
@@ -1984,16 +1984,16 @@
       "environment": "linux"
     },
     {
-      "identity": "apps/docs/tests/content.test.ts :: public code fences name their language and package installs pin the Beta version",
+      "identity": "apps/docs/tests/content.test.ts :: public code fences name their language and package installs pin the stable version",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 151,
+      "line": 169,
       "ancestors": [],
-      "title": "public code fences name their language and package installs pin the Beta version",
+      "title": "public code fences name their language and package installs pin the stable version",
       "contractId": "docs.contract",
       "owner": "documentation",
       "risk": "low",
-      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: public code fences name their language and package installs pin the Beta version",
-      "dimension": "public code fences name their language and package installs pin the Beta version",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: public code fences name their language and package installs pin the stable version",
+      "dimension": "public code fences name their language and package installs pin the stable version",
       "role": "variant",
       "lane": "docs",
       "environment": "linux"
@@ -2001,7 +2001,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: public copy does not expose documentation planning or repository validation commentary",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 182,
+      "line": 231,
       "ancestors": [],
       "title": "public copy does not expose documentation planning or repository validation commentary",
       "contractId": "docs.contract",
@@ -2016,7 +2016,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: public copy does not reuse the retired universal template headings",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 175,
+      "line": 224,
       "ancestors": [],
       "title": "public copy does not reuse the retired universal template headings",
       "contractId": "docs.contract",
@@ -2029,16 +2029,16 @@
       "environment": "linux"
     },
     {
-      "identity": "apps/docs/tests/content.test.ts :: release-sensitive public copy uses the 0.6 beta version",
+      "identity": "apps/docs/tests/content.test.ts :: release-sensitive public copy uses stable 0.6.0",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 125,
+      "line": 141,
       "ancestors": [],
-      "title": "release-sensitive public copy uses the 0.6 beta version",
+      "title": "release-sensitive public copy uses stable 0.6.0",
       "contractId": "docs.contract",
       "owner": "documentation",
       "risk": "low",
-      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: release-sensitive public copy uses the 0.6 beta version",
-      "dimension": "release-sensitive public copy uses the 0.6 beta version",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: release-sensitive public copy uses stable 0.6.0",
+      "dimension": "release-sensitive public copy uses stable 0.6.0",
       "role": "variant",
       "lane": "docs",
       "environment": "linux"
@@ -2046,7 +2046,7 @@
     {
       "identity": "apps/docs/tests/content.test.ts :: released packages and compatibility are first-class public reference pages",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 115,
+      "line": 131,
       "ancestors": [],
       "title": "released packages and compatibility are first-class public reference pages",
       "contractId": "docs.contract",
@@ -2059,9 +2059,39 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/docs/tests/content.test.ts :: retired automation tutorials are absent and permanently redirected",
+      "file": "apps/docs/tests/content.test.ts",
+      "line": 203,
+      "ancestors": [],
+      "title": "retired automation tutorials are absent and permanently redirected",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: retired automation tutorials are absent and permanently redirected",
+      "dimension": "retired automation tutorials are absent and permanently redirected",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/docs/tests/content.test.ts :: the Build journey uses only the shipped Reference profile",
+      "file": "apps/docs/tests/content.test.ts",
+      "line": 193,
+      "ancestors": [],
+      "title": "the Build journey uses only the shipped Reference profile",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: the Build journey uses only the shipped Reference profile",
+      "dimension": "the Build journey uses only the shipped Reference profile",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/docs/tests/content.test.ts :: the complete 0.6 public baseline is represented",
       "file": "apps/docs/tests/content.test.ts",
-      "line": 55,
+      "line": 64,
       "ancestors": [],
       "title": "the complete 0.6 public baseline is represented",
       "contractId": "docs.contract",
@@ -2074,9 +2104,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/docs/tests/contracts.test.ts :: CLI reference covers every command-mode family",
+      "file": "apps/docs/tests/contracts.test.ts",
+      "line": 88,
+      "ancestors": [],
+      "title": "CLI reference covers every command-mode family",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: CLI reference covers every command-mode family",
+      "dimension": "CLI reference covers every command-mode family",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/docs/tests/contracts.test.ts :: event reference lists every exported public stream event",
       "file": "apps/docs/tests/contracts.test.ts",
-      "line": 34,
+      "line": 37,
       "ancestors": [],
       "title": "event reference lists every exported public stream event",
       "contractId": "docs.contract",
@@ -2089,9 +2134,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/docs/tests/contracts.test.ts :: every registered source reference exists",
+      "file": "apps/docs/tests/contracts.test.ts",
+      "line": 76,
+      "ancestors": [],
+      "title": "every registered source reference exists",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: every registered source reference exists",
+      "dimension": "every registered source reference exists",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/docs/tests/contracts.test.ts :: release metadata names only real public packages with reference coverage",
       "file": "apps/docs/tests/contracts.test.ts",
-      "line": 44,
+      "line": 47,
       "ancestors": [],
       "title": "release metadata names only real public packages with reference coverage",
       "contractId": "docs.contract",
@@ -2104,9 +2164,39 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/docs/tests/contracts.test.ts :: resume documentation names the current SDK input",
+      "file": "apps/docs/tests/contracts.test.ts",
+      "line": 120,
+      "ancestors": [],
+      "title": "resume documentation names the current SDK input",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: resume documentation names the current SDK input",
+      "dimension": "resume documentation names the current SDK input",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/docs/tests/contracts.test.ts :: runner ping documentation uses a valid canonical command envelope",
+      "file": "apps/docs/tests/contracts.test.ts",
+      "line": 97,
+      "ancestors": [],
+      "title": "runner ping documentation uses a valid canonical command envelope",
+      "contractId": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: runner ping documentation uses a valid canonical command envelope",
+      "dimension": "runner ping documentation uses a valid canonical command envelope",
+      "role": "variant",
+      "lane": "docs",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/docs/tests/contracts.test.ts :: terminal-result examples stay backed by the exported parser",
       "file": "apps/docs/tests/contracts.test.ts",
-      "line": 15,
+      "line": 18,
       "ancestors": [],
       "title": "terminal-result examples stay backed by the exported parser",
       "contractId": "docs.contract",
@@ -39236,6 +39326,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: shouldCopyDesktopResourceEntry excludes local env and generated output files",
       "dimension": "shouldCopyDesktopResourceEntry excludes local env and generated output files",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract ports are unique and outside the default Linux ephemeral range",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 5,
+      "ancestors": [],
+      "title": "product contract ports are unique and outside the default Linux ephemeral range",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract ports are unique and outside the default Linux ephemeral range",
+      "dimension": "product contract ports are unique and outside the default Linux ephemeral range",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
