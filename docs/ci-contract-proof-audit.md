@@ -103,6 +103,28 @@ the implementation worktree. Observed local runner time is diagnostic only:
 | macOS CLI and Desktop packaging               |                       80 s | Passed                      |
 | Proof-system unit tests                       |                        3 s | Passed, 15 tests            |
 
-The pull request's all-lanes run is the authoritative runner-time and critical-path
-measurement. `ci-plan` and `ci-required` are dependency-free Node programs;
-`ci-required` consumes job results directly and performs no checkout or setup.
+## First GitHub all-lanes run
+
+Pull request #66 exercised every required lane on GitHub Actions after the
+Linux-only Local Core process-contention failure was repaired:
+
+| Job                            | GitHub duration | Result |
+| ------------------------------ | --------------: | ------ |
+| Contract-proof plan            |             4 s | Passed |
+| Policy and proof registry      |       1 min 1 s | Passed |
+| Runtime unit and integration   |      4 min 33 s | Passed |
+| Public packages                |      1 min 50 s | Passed |
+| Web unit, typecheck, and build |      4 min 58 s | Passed |
+| Hosted services                |       1 min 2 s | Passed |
+| PostgreSQL                     |      2 min 43 s | Passed |
+| Chromium product               |      6 min 20 s | Passed |
+| Desktop                        |      1 min 52 s | Passed |
+| Documentation                  |      1 min 36 s | Passed |
+| macOS packaging                |      4 min 15 s | Passed |
+| `ci-required`                  |             2 s | Passed |
+
+Chromium was the critical lane at 6 minutes 20 seconds. Including the planner
+and aggregate, the proof system's observed critical path was approximately 6
+minutes 26 seconds. `ci-plan` and `ci-required` are dependency-free Node
+programs; `ci-required` consumed job results directly and performed no checkout
+or setup.
