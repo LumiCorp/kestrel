@@ -54,5 +54,4 @@ present and release-verified.
 ## Validation
 
 - Focused provider and App-policy tests per slice.
-- `pnpm run governance:check`, `pnpm run test`, `pnpm run prompt-suite`, and
-  `pnpm run evals:release-check` for runtime/core changes.
+- `pnpm run governance:check`, `pnpm run test`, and `pnpm run test-proofs:check`.

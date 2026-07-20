@@ -22,11 +22,8 @@ async function waitFor<T>(
 
 test(
   "durable turns converge across claims, dispatch failure, and worker recovery",
-  {
-    skip: databaseUrl ? false : "KESTREL_TURN_DB_TEST_URL is not configured",
-  },
   async (context) => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     process.env.POSTGRES_URL = databaseUrl;
 

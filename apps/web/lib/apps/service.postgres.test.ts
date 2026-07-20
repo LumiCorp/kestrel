@@ -8,11 +8,8 @@ const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
 test(
   "Environment Apps persist encrypted named connections and capability ceilings",
-  {
-    skip: databaseUrl ? false : "KESTREL_APPS_DB_TEST_URL is not configured",
-  },
   async (context) => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
     process.env.KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID = "test-key";

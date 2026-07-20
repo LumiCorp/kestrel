@@ -55,6 +55,7 @@ task instead of reading the repository as one long manual.
 - [Architecture](../ARCHITECTURE.md)
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
+- [CI contract-proof audit](ci-contract-proof-audit.md)
 - [Contributor guardrails](../AGENTS.md)
 
 ## Root Truth Docs
@@ -78,7 +79,6 @@ Use the [Plans index](PLANS.md) as the canonical current delivery inventory.
 
 - [Architecture rules](references/architecture-rules.json)
 - [Heuristic hotspots](references/heuristic-hotspots.md)
-- [Release tracks](references/release-tracks.json)
 
 ## Documentation Ownership
 

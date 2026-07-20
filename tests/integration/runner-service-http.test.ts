@@ -829,49 +829,24 @@ test("runner service http tolerates OpenAI-compatible disconnect after progress 
 });
 
 async function createHttpServerOrSkip(
-  context: TestContext | undefined,
+  _context: TestContext | undefined,
   options: Parameters<typeof createRunnerServiceServer>[0],
 ) {
-  try {
-    return await createRunnerServiceServer(options);
-  } catch (error) {
-    if (isListenPermissionError(error)) {
-      context?.skip("sandbox denied localhost listener setup for runner-service HTTP smoke test");
-      return ;
-    }
-    throw error;
-  }
-}
-
-function isListenPermissionError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as Error & { code?: string }).code === "EPERM" &&
-    /listen/i.test(error.message)
-  );
+  return await createRunnerServiceServer(options);
 }
 
 async function mountRunnerHandlerOrSkip(
-  context: TestContext,
+  _context: TestContext,
   handler: http.RequestListener,
-): Promise<{ server: http.Server; url: string } | undefined> {
+): Promise<{ server: http.Server; url: string }> {
   const server = http.createServer(handler);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        server.off("error", reject);
-        resolve();
-      });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
     });
-  } catch (error) {
-    if (isListenPermissionError(error)) {
-      context.skip("sandbox denied localhost listener setup for shared runner-service handler test");
-      return ;
-    }
-    throw error;
-  }
+  });
   const address = server.address();
   assert.ok(address !== null && typeof address !== "string");
   return {

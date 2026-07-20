@@ -113,8 +113,7 @@ status, or lexical heuristic.
 ## Validation
 
 - Focused artifact, context, final-answer, wait/resume, and partial-batch tests.
-- `pnpm run governance:check`, `pnpm run test`, `pnpm run prompt-suite`, and
-  `pnpm run evals:release-check`.
+- `pnpm run governance:check`, `pnpm run test`, and `pnpm run test-proofs:check`.
 
 ### 2026-07-17 implementation evidence
 

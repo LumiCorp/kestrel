@@ -7,13 +7,8 @@ const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
 test(
   "GitHub action approval consumption is exact and single-use",
-  {
-    skip: databaseUrl
-      ? false
-      : "KESTREL_ENVIRONMENT_DB_TEST_URL is not configured",
-  },
   async () => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     const sql = postgres(databaseUrl, { max: 1 });
     const suffix = crypto.randomUUID();
     const ids = {

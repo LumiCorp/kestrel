@@ -1,9 +1,0 @@
-{
-  "scenario_id": "runtime-default",
-  "strict_events": ["step.selected", "step.transitioned", "terminal.normalized"],
-  "tolerant_metrics": {
-    "stepsObservedDelta": 1,
-    "progressToolCallsDelta": 2
-  },
-  "approved_at": "2026-03-12T00:00:00.000Z"
-}

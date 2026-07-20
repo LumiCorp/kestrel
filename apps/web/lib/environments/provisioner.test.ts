@@ -509,16 +509,21 @@ test("Environment deletion removes the owning Fly App idempotently", async () =>
   ]);
 });
 
-for (const code of ["ENVIRONMENT_IS_DEFAULT", "ENVIRONMENT_HAS_PROJECTS"]) {
-  test(`Environment deletion stops before provider teardown for ${code}`, async () => {
-    const { repository, provider, calls } = fixture("environment.delete");
-    repository.setEnvironmentDeleting = async () => {
-      throw Object.assign(new Error("Deletion blocked."), { code });
-    };
-    provider.deleteEnvironmentApp = async () => {
-      calls.push("provider:delete-app");
-    };
-    await createProvisioner(repository, provider).process("operation-id");
-    assert.deepEqual(calls, [`operation:failed:${code}`]);
-  });
-}
+const assertBlockedEnvironmentDeletion = async (
+  code: "ENVIRONMENT_IS_DEFAULT" | "ENVIRONMENT_HAS_PROJECTS",
+) => {
+  const { repository, provider, calls } = fixture("environment.delete");
+  repository.setEnvironmentDeleting = async () => {
+    throw Object.assign(new Error("Deletion blocked."), { code });
+  };
+  provider.deleteEnvironmentApp = async () => {
+    calls.push("provider:delete-app");
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [`operation:failed:${code}`]);
+};
+
+test("Environment deletion stops before provider teardown for ENVIRONMENT_IS_DEFAULT", () =>
+  assertBlockedEnvironmentDeletion("ENVIRONMENT_IS_DEFAULT"));
+test("Environment deletion stops before provider teardown for ENVIRONMENT_HAS_PROJECTS", () =>
+  assertBlockedEnvironmentDeletion("ENVIRONMENT_HAS_PROJECTS"));

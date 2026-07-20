@@ -86,8 +86,8 @@
       "replacement": "independent prompt-injection and tool-grounding test",
       "replacementTests": [
         {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "adversarial_forbid_tools_weather"
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode"
         }
       ],
       "parityStatus": "passed"
@@ -98,8 +98,8 @@
       "replacement": "independent unavailable-capability finalization test",
       "replacementTests": [
         {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "capability_unavailable"
+          "path": "tests/unit/agent-loop-step.test.ts",
+          "testName": "agent loop accepts a concrete unavailable build capability with blocker provenance"
         }
       ],
       "parityStatus": "passed"
@@ -117,8 +117,8 @@
       "replacement": "independent extraction-degradation fallback test",
       "replacementTests": [
         {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "research_fetch_timeout_recovery"
+          "path": "tests/integration/reference-thinker-followup-grounding.test.ts",
+          "testName": "reference thinker avoids ungrounded fetch actions when follow-up grounding is insufficient"
         }
       ],
       "parityStatus": "passed"
@@ -136,8 +136,8 @@
       "replacement": "independent insufficient-evidence policy test",
       "replacementTests": [
         {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "agent_loop_finalize_requires_evidence"
+          "path": "tests/unit/execution-loop-guard.test.ts",
+          "testName": "ExecutionEngine completes with partial output instead of requesting continuation for stalled research"
         }
       ],
       "parityStatus": "passed"
@@ -148,8 +148,8 @@
       "replacement": "independent chat-mode tool-block test",
       "replacementTests": [
         {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "chat_mode_weather_wait"
+          "path": "tests/integration/reference-weather-tool-recovery.test.ts",
+          "testName": "reference harness uses read-only tools directly in Chat mode"
         }
       ],
       "parityStatus": "passed"
@@ -159,10 +159,6 @@
       "disposition": "runtime_test",
       "replacement": "independent plan-to-build escalation and resume test",
       "replacementTests": [
-        {
-          "path": "tests/scenario/promptSuiteHarness.ts",
-          "promptSuiteCase": "policy_mode_block_filesystem"
-        },
         {
           "path": "tests/unit/agent-loop-step.test.ts",
           "testName": "agent loop resumes a mode-blocked continuation offer after structural mode-switch reply"

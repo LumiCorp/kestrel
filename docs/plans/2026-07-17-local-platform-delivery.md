@@ -59,5 +59,4 @@ runner.
 
 - Focused protocol, lifecycle, credential, and recovery tests per milestone.
 - Clean-machine install, update, rollback, and uninstall evidence before release.
-- `pnpm run governance:check`, `pnpm run test`, `pnpm run prompt-suite`, and
-  `pnpm run evals:release-check`.
+- `pnpm run governance:check`, `pnpm run test`, and `pnpm run test-proofs:check`.

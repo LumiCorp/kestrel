@@ -20,8 +20,8 @@ List the commands you ran, for example:
 ```bash
 pnpm run governance:check
 pnpm run test
-pnpm run prompt-suite
-pnpm run evals:release-check
+pnpm run test-proofs:check
+pnpm run ci:local -- --base origin/main
 pnpm --filter @kestrel/desktop test
 pnpm --filter @kestrel/desktop build
 ```

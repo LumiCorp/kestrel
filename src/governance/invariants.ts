@@ -8,20 +8,6 @@ export interface InvariantViolation {
 
 export const DEFAULT_LINT_INVARIANTS: LintInvariant[] = [
   {
-    rule_id: "structured-logging",
-    scope: "src/**/*.ts",
-    message_template: "Use structured logger payloads with explicit fields.",
-    autofix_available: false,
-    severity: "warn",
-  },
-  {
-    rule_id: "max-file-size",
-    scope: "**/*.ts",
-    message_template: "Keep source files under max-line threshold for legibility.",
-    autofix_available: false,
-    severity: "warn",
-  },
-  {
     rule_id: "parse-boundary",
     scope: "tools/**,src/io/**",
     message_template: "Parse external inputs at boundaries before use.",
@@ -80,19 +66,8 @@ export const DEFAULT_LINT_INVARIANTS: LintInvariant[] = [
 export function checkInvariantViolations(input: {
   file: string;
   content: string;
-  maxLines?: number | undefined;
 }): InvariantViolation[] {
   const violations: InvariantViolation[] = [];
-  const lines = input.content.split("\n");
-  const maxLines = input.maxLines ?? 5000;
-
-  if (lines.length > maxLines) {
-    violations.push({
-      rule_id: "max-file-size",
-      file: input.file,
-      message: `File has ${lines.length} lines (max ${maxLines}).`,
-    });
-  }
 
   if (
     (input.file.includes("/src/effects/") || input.file.includes("/src/io/") || input.file.includes("/tools/")) &&

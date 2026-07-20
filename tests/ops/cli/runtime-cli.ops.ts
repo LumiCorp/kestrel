@@ -27,7 +27,7 @@ before(async () => {
 after(async () => {
   await core?.close();
   if (coreHome.length > 0) {
-    await rm(coreHome, { recursive: true, force: true });
+    await rm(coreHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });
 

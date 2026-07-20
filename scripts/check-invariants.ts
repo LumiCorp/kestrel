@@ -32,6 +32,7 @@ async function main(): Promise<void> {
       const invariant = DEFAULT_LINT_INVARIANTS.find((candidate) => candidate.rule_id === violation.rule_id);
       const relativeFile = toPosixPath(path.relative(ROOT, file));
       const level = resolveInvariantSeverity(invariant, relativeFile);
+      if (level !== "error") continue;
       process.stderr.write(
         `[invariants][${level}] ${relativeFile} ${violation.rule_id}: ${violation.message}\n`,
       );

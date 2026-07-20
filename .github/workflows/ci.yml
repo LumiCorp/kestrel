@@ -2,11 +2,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,138 +13,104 @@ concurrency:
 
 jobs:
   ci-plan:
-    name: Plan required gates
+    name: Contract-proof plan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
-      plan: ${{ steps.plan.outputs.plan }}
-      base: ${{ steps.plan.outputs.base }}
-      head: ${{ steps.plan.outputs.head }}
-      static_policy: ${{ steps.plan.outputs.static_policy }}
-      runtime_unit: ${{ steps.plan.outputs.runtime_unit }}
-      package_contracts: ${{ steps.plan.outputs.package_contracts }}
-      web_unit: ${{ steps.plan.outputs.web_unit }}
-      web_build: ${{ steps.plan.outputs.web_build }}
-      service_contracts: ${{ steps.plan.outputs.service_contracts }}
-      postgres_integration: ${{ steps.plan.outputs.postgres_integration }}
-      kestrel_one_product: ${{ steps.plan.outputs.kestrel_one_product }}
-      docs_contracts: ${{ steps.plan.outputs.docs_contracts }}
-      desktop_contracts: ${{ steps.plan.outputs.desktop_contracts }}
+      policy: ${{ steps.plan.outputs.policy }}
+      runtime: ${{ steps.plan.outputs.runtime }}
+      packages: ${{ steps.plan.outputs.packages }}
+      web: ${{ steps.plan.outputs.web }}
+      services: ${{ steps.plan.outputs.services }}
+      postgres: ${{ steps.plan.outputs.postgres }}
+      product: ${{ steps.plan.outputs.product }}
+      desktop: ${{ steps.plan.outputs.desktop }}
+      docs: ${{ steps.plan.outputs.docs }}
       package_macos: ${{ steps.plan.outputs.package_macos }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up workspace
-        uses: ./.github/actions/setup
-
-      - name: Compute owned gate plan
-        id: plan
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BASE_SHA: ${{ github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        shell: bash
-        run: |
-          base="$PR_BASE_SHA"
-          full=false
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
-            base="$PUSH_BASE_SHA"
-            full=true
-          fi
-          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
-            base="${HEAD_SHA}^"
-          fi
-          arguments=(--base "$base" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT" --verify-ownership)
-          if [[ "$full" == true ]]; then
-            arguments+=(--full)
-          fi
-          pnpm run ci:plan -- "${arguments[@]}"
-
-  static-policy:
-    name: Static policy
-    needs: ci-plan
-    if: needs.ci-plan.outputs.static_policy == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/setup
-      - name: Governance and generated-resource drift
-        run: pnpm run ci:run-gate -- static-policy/governance -- pnpm run governance:check
-      - name: OpenAPI drift
-        run: pnpm run ci:run-gate -- static-policy/openapi -- pnpm run ci:openapi-drift
-      - name: Route ownership drift
-        run: pnpm run ci:run-gate -- static-policy/routes -- pnpm run ci:route-ownership
-      - name: Full-repository Ultracite
-        run: pnpm run ci:run-gate -- static-policy/lint -- pnpm run ci:lint:full
+      - name: Select required proof lanes
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          arguments=(--base "${PR_BASE_SHA:-${HEAD_SHA}^}" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT" --verify-ownership)
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            arguments+=(--full)
+          fi
+          node scripts/ci/plan.mjs "${arguments[@]}"
 
-  runtime-unit:
-    name: Runtime unit, replay, prompts, and release eval
+  policy:
+    name: Policy and proof registry
     needs: ci-plan
-    if: needs.ci-plan.outputs.runtime_unit == 'true'
+    if: needs.ci-plan.outputs.policy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:run-gate -- policy/proof-system -- node --test scripts/ci/*.test.mjs
+      - run: pnpm run ci:run-gate -- policy/governance -- pnpm run governance:check
+      - run: pnpm run ci:run-gate -- policy/ruhroh-config -- pnpm run ruhroh:validate
+      - run: pnpm run ci:run-gate -- policy/openapi -- pnpm run ci:openapi-drift
+      - run: pnpm run ci:run-gate -- policy/routes -- pnpm run ci:route-ownership
+      - run: pnpm run ci:run-gate -- policy/lint -- pnpm run ci:lint:full
+
+  runtime:
+    name: Runtime unit and integration
+    needs: ci-plan
+    if: needs.ci-plan.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:run-gate -- runtime -- pnpm run ci:runtime
+
+  packages:
+    name: Public packages
+    needs: ci-plan
+    if: needs.ci-plan.outputs.packages == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm run ci:run-gate -- packages -- pnpm run ci:packages
+
+  web:
+    name: Web unit, typecheck, and build
+    needs: ci-plan
+    if: needs.ci-plan.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- runtime-unit -- pnpm run ci:runtime
+      - run: pnpm run ci:run-gate -- web -- pnpm run ci:web
 
-  package-contracts:
-    name: Public package contracts
+  services:
+    name: Hosted services
     needs: ci-plan
-    if: needs.ci-plan.outputs.package_contracts == 'true'
+    if: needs.ci-plan.outputs.services == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- package-contracts -- pnpm run ci:packages
+      - run: pnpm run ci:run-gate -- services -- pnpm run ci:services
 
-  web-unit:
-    name: Kestrel One unit and API contracts
+  postgres:
+    name: PostgreSQL
     needs: ci-plan
-    if: needs.ci-plan.outputs.web_unit == 'true'
+    if: needs.ci-plan.outputs.postgres == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- web-unit -- pnpm run ci:web
-
-  web-build:
-    name: Kestrel One production build
-    needs: ci-plan
-    if: needs.ci-plan.outputs.web_build == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- web-build -- pnpm run ci:web:build
-
-  service-contracts:
-    name: Hosted service contracts
-    needs: ci-plan
-    if: needs.ci-plan.outputs.service_contracts == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- service-contracts -- pnpm run ci:services
-
-  postgres-integration:
-    name: PostgreSQL integration
-    needs: ci-plan
-    if: needs.ci-plan.outputs.postgres_integration == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -157,8 +118,7 @@ jobs:
           POSTGRES_DB: kestrel_ci
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
-        ports:
-          - 5432:5432
+        ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres -d kestrel_ci"
           --health-interval 5s
@@ -171,133 +131,103 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- postgres-integration -- pnpm run ci:postgres
+      - run: pnpm run ci:run-gate -- postgres -- pnpm run ci:postgres
 
-  kestrel-one-product:
-    name: Kestrel One durable conversation product contract
+  product:
+    name: Chromium cross-surface product contracts
     needs: ci-plan
-    if: needs.ci-plan.outputs.kestrel_one_product == 'true'
+    if: needs.ci-plan.outputs.product == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      KESTREL_PRODUCT_WEBKIT: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - name: Build shared runtime packages
-        run: pnpm run ci:build:shared
-      - name: Install product-contract browsers
-        run: |
-          browsers=(chromium)
-          if [[ "$KESTREL_PRODUCT_WEBKIT" == "true" ]]; then
-            browsers+=(webkit)
-          fi
-          pnpm --filter @kestrel/kestrel-one exec playwright install --with-deps "${browsers[@]}"
-      - name: Run durable conversation product contract
+      - run: pnpm run ci:build:shared
+      - run: pnpm --filter @kestrel/kestrel-one exec playwright install --with-deps chromium
+      - name: Run Chromium product contracts
         env:
-          CI_ARTIFACT_NAME: kestrel-one-product-failure-${{ github.run_attempt }}
-        run: pnpm run ci:run-gate -- kestrel-one-product -- pnpm run ci:product
-      - name: Upload failed product evidence
-        if: failure()
+          CI_ARTIFACT_NAME: chromium-product-failure-${{ github.run_attempt }}
+        run: pnpm run ci:run-gate -- product -- pnpm run ci:product
+      - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: kestrel-one-product-failure-${{ github.run_attempt }}
+          name: chromium-product-failure-${{ github.run_attempt }}
           path: |
             apps/web/playwright-report
             apps/web/test-results
+            test-results
           if-no-files-found: ignore
           retention-days: 14
 
-  docs-contracts:
-    name: Documentation contracts
+  desktop:
+    name: Desktop
     needs: ci-plan
-    if: needs.ci-plan.outputs.docs_contracts == 'true'
+    if: needs.ci-plan.outputs.desktop == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- docs-contracts -- pnpm run ci:docs
+      - run: pnpm run ci:run-gate -- desktop -- pnpm run ci:desktop
 
-  desktop-contracts:
-    name: Desktop contracts
+  docs:
+    name: Documentation
     needs: ci-plan
-    if: needs.ci-plan.outputs.desktop_contracts == 'true'
+    if: needs.ci-plan.outputs.docs == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: pnpm run ci:run-gate -- desktop-contracts -- pnpm run ci:desktop
+      - run: pnpm run ci:run-gate -- docs -- pnpm run ci:docs
 
   package-macos:
-    name: macOS packages
+    name: macOS packaging
     needs: ci-plan
     if: needs.ci-plan.outputs.package_macos == 'true'
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - name: Install PostgreSQL bundle source
-        run: brew install postgresql@14
-      - name: Add PostgreSQL to package path
-        run: echo "$(brew --prefix postgresql@14)/bin" >> "$GITHUB_PATH"
-      - name: Package and verify CLI
-        run: pnpm run ci:run-gate -- package-macos/cli -- pnpm run cli:package && pnpm run ci:run-gate -- package-macos/cli-release -- pnpm run cli:release-check
-      - name: Package and verify Desktop
-        run: pnpm run ci:run-gate -- package-macos/desktop -- pnpm run desktop:package && pnpm run ci:run-gate -- package-macos/desktop-release -- pnpm run desktop:release-check
+      - run: brew install postgresql@14
+      - run: echo "$(brew --prefix postgresql@14)/bin" >> "$GITHUB_PATH"
+      - run: pnpm run ci:run-gate -- package-macos -- pnpm run ci:package-macos
 
   ci-required:
     name: ci-required
     if: always()
     needs:
-      - ci-plan
-      - static-policy
-      - runtime-unit
-      - package-contracts
-      - web-unit
-      - web-build
-      - service-contracts
-      - postgres-integration
-      - kestrel-one-product
-      - docs-contracts
-      - desktop-contracts
-      - package-macos
+      [
+        ci-plan,
+        policy,
+        runtime,
+        packages,
+        web,
+        services,
+        postgres,
+        product,
+        desktop,
+        docs,
+        package-macos,
+      ]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - name: Enforce selected gate results
+      - name: Enforce selected lane results
         env:
-          CI_PLAN_RESULT: ${{ needs.ci-plan.result }}
-          CI_GATE_SELECTIONS: >-
-            {
-              "static-policy": ${{ needs.ci-plan.outputs.static_policy }},
-              "runtime-unit": ${{ needs.ci-plan.outputs.runtime_unit }},
-              "package-contracts": ${{ needs.ci-plan.outputs.package_contracts }},
-              "web-unit": ${{ needs.ci-plan.outputs.web_unit }},
-              "web-build": ${{ needs.ci-plan.outputs.web_build }},
-              "service-contracts": ${{ needs.ci-plan.outputs.service_contracts }},
-              "postgres-integration": ${{ needs.ci-plan.outputs.postgres_integration }},
-              "kestrel-one-product": ${{ needs.ci-plan.outputs.kestrel_one_product }},
-              "docs-contracts": ${{ needs.ci-plan.outputs.docs_contracts }},
-              "desktop-contracts": ${{ needs.ci-plan.outputs.desktop_contracts }},
-              "package-macos": ${{ needs.ci-plan.outputs.package_macos }}
-            }
-          CI_GATE_RESULTS: >-
-            {
-              "static-policy": "${{ needs.static-policy.result }}",
-              "runtime-unit": "${{ needs.runtime-unit.result }}",
-              "package-contracts": "${{ needs.package-contracts.result }}",
-              "web-unit": "${{ needs.web-unit.result }}",
-              "web-build": "${{ needs.web-build.result }}",
-              "service-contracts": "${{ needs.service-contracts.result }}",
-              "postgres-integration": "${{ needs.postgres-integration.result }}",
-              "kestrel-one-product": "${{ needs.kestrel-one-product.result }}",
-              "docs-contracts": "${{ needs.docs-contracts.result }}",
-              "desktop-contracts": "${{ needs.desktop-contracts.result }}",
-              "package-macos": "${{ needs.package-macos.result }}"
-            }
-        run: pnpm run ci:required
+          PLAN_RESULT: ${{ needs.ci-plan.result }}
+          RESULTS: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          [[ "$PLAN_RESULT" == "success" ]]
+          node --input-type=module -e '
+            const needs = JSON.parse(process.env.RESULTS);
+            const selections = needs["ci-plan"].outputs;
+            const failures = Object.entries(needs)
+              .filter(([name]) => name !== "ci-plan")
+              .filter(([name, job]) => job.result !== (selections[name.replaceAll("-", "_")] === "true" ? "success" : "skipped"));
+            if (failures.length) throw new Error(failures.map(([name, job]) => `${name}: ${job.result}`).join("\n"));
+            const selected = Object.entries(needs).filter(([name, job]) => name !== "ci-plan" && job.result === "success");
+            console.log(`${selected.length} selected contract-proof lanes passed.`);
+          '

@@ -252,43 +252,6 @@ export interface GateProfile {
   required_checks: string[];
 }
 
-export type CiGateId =
-  | "static-policy"
-  | "runtime-unit"
-  | "package-contracts"
-  | "web-unit"
-  | "web-build"
-  | "service-contracts"
-  | "postgres-integration"
-  | "kestrel-one-product"
-  | "docs-contracts"
-  | "desktop-contracts"
-  | "package-macos";
-
-export type CiChangeStatus = "A" | "C" | "D" | "M" | "R" | "T" | "U";
-
-export interface CiChangedPath {
-  path: string;
-  previousPath?: string | undefined;
-  status: CiChangeStatus;
-}
-
-export interface CiGateSelection {
-  selected: boolean;
-  reasons: string[];
-}
-
-export interface CiGatePlan {
-  version: 1;
-  base: string;
-  head: string;
-  full: boolean;
-  risk: RiskTier;
-  changes: CiChangedPath[];
-  unownedPaths: string[];
-  gates: Record<CiGateId, CiGateSelection>;
-}
-
 export interface QualityScoreDomain {
   domain: string;
   score: number;

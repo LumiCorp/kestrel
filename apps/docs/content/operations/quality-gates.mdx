@@ -1,6 +1,6 @@
 ---
 title: Quality gates
-summary: Run the checks that catch code, prompt, replay, and evaluation regressions before a Kestrel release.
+summary: Run the contract proofs selected for a Kestrel change.
 section: operate
 audience: integrators
 status: stable
@@ -12,30 +12,25 @@ updatedAt: 2026-03-20
 These checks protect the contracts used to plan, execute, stream, and record Kestrel work.
 </GuideNote>
 
-Use the standard checks together so a passing unit test does not hide a prompt, replay, or evaluation regression.
+Every retained automated test belongs to a named contract and a required CI lane.
 
 ## Core gates
 
 ```bash
 pnpm run governance:check
 pnpm run test
-pnpm run prompt-suite
-```
-
-For runtime and determinism work:
-
-```bash
-pnpm run evals:release-check
+pnpm run test-proofs:check
+pnpm run ci:local -- --base origin/main
 ```
 
 ## What each gate protects
 
 | Gate | Protects |
 | --- | --- |
-| `governance:check` | required architecture and package rules |
-| `test` | code-level behavior |
-| `prompt-suite` | reference-agent prompt behavior |
-| `evals:release-check` | released Ruhroh scenarios and evaluation metadata |
+| `governance:check` | architecture, ownership, and proof-registry validity |
+| selected CI lanes | executable contract counterexamples in their declared environments |
+| `test-proofs:mutations` | current killed mutations for high- and critical-risk contracts |
+| `ruhroh:validate` | Ruhroh configuration validity, not evaluation execution |
 
 ## When a check fails
 

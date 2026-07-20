@@ -162,19 +162,26 @@ const ambiguousCases: Array<{
   },
 ];
 
-for (const scenario of ambiguousCases) {
-  test(`Workspace reconciliation degrades on ${scenario.name}`, () => {
-    const assessment = assessWorkspaceVolumeBinding({
-      workspaceId,
-      environmentRegion: "iad",
-      expectedVolumeName,
-      recordedVolumeId: "volume-missing",
-      machine: scenario.machine,
-      inventory: scenario.inventory,
-    });
-    assert.equal(assessment.status, "degraded");
+const assertAmbiguousWorkspaceReconciliation = (
+  scenario: (typeof ambiguousCases)[number],
+) => {
+  const assessment = assessWorkspaceVolumeBinding({
+    workspaceId,
+    environmentRegion: "iad",
+    expectedVolumeName,
+    recordedVolumeId: "volume-missing",
+    machine: scenario.machine,
+    inventory: scenario.inventory,
   });
-}
+  assert.equal(assessment.status, "degraded");
+};
+
+test("Workspace reconciliation degrades when the recorded Machine is missing", () =>
+  assertAmbiguousWorkspaceReconciliation(ambiguousCases[0]!));
+test("Workspace reconciliation degrades when the recorded Volume is attached elsewhere", () =>
+  assertAmbiguousWorkspaceReconciliation(ambiguousCases[1]!));
+test("Workspace reconciliation degrades when the recorded Volume still exists", () =>
+  assertAmbiguousWorkspaceReconciliation(ambiguousCases[2]!));
 
 test("orphan cleanup protection includes every mounted inventory Volume", () => {
   assert.deepEqual(

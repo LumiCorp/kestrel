@@ -12,9 +12,7 @@ import {
   type LocalCoreStatus,
 } from "../../src/localCore/index.js";
 
-test("Local Core connection manager restarts Core after it exits between Desktop UI reads", {
-  skip: process.platform === "win32",
-}, async () => {
+test("Local Core connection manager restarts Core after it exits between Desktop UI reads", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-reconnect-"));
   let server: LocalCoreApiServer | undefined = await startServer(home);
   let reconnects = 0;
@@ -170,9 +168,7 @@ test("Local Core connection manager coalesces concurrent recovery onto one conne
   assert.equal(reconnects, 1);
 });
 
-test("Local Core project run subscriptions report daemon shutdown as a stale connection", {
-  skip: process.platform === "win32",
-}, async () => {
+test("Local Core project run subscriptions report daemon shutdown as a stale connection", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kestrel-core-stream-close-"));
   const server = await startServer(home);

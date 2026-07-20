@@ -15,13 +15,11 @@ changes that could alter user-visible behavior.
 ## Core commands
 
 ```bash
-pnpm run evals:validate
-pnpm run evals:release-check
-pnpm run check:evals
+pnpm run ruhroh:validate
 ```
 
-All three commands use the Ruhroh version recorded by this Kestrel release so
-results stay comparable between machines.
+This command validates the Ruhroh configuration recorded by Kestrel. It does
+not execute an evaluation.
 
 ## What the gate validates
 
@@ -46,7 +44,7 @@ Ruhroh scenarios or Kestrel tests rather than editing old results.
 ## Workflow
 
 1. change the Kestrel runtime or an evaluation definition
-2. run `pnpm run evals:release-check`
+2. run `pnpm run ruhroh:validate`
 3. inspect any failing Ruhroh validation output
 4. update the scenario, suite, or Kestrel test that describes the intended behavior
 5. rerun the check and review the comparison before release
