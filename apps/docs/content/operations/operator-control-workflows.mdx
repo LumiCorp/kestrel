@@ -47,7 +47,7 @@ const context = {
   tenantId: "acme",
 };
 
-const inbox = await client.getOperatorInbox({ sessionId: "workspace-copilot-nightly" }, context);
+const inbox = await client.getOperatorInbox({ sessionId: "reference-session-001" }, context);
 const view = await client.getOperatorThread("thread-main", context);
 
 const controlled = await client.controlOperator(
@@ -125,9 +125,9 @@ For task graphs, project snapshots, and reviews, continue to [Review and state w
 3. confirm whether a child thread or fan-in checkpoint is involved
 4. pick the narrowest control action that moves the workflow forward
 
-## What this means for Workspace Copilot
+## Continue the original work
 
-Workspace Copilot is usually shown as a clean build tutorial, but the useful production lesson is this: if the nightly report blocks on evidence, operator control should steer the existing thread instead of creating a brand-new disconnected run.
+If a run blocks on evidence, operator control can steer the existing thread instead of creating a disconnected replacement run.
 
 ## Continue with operator state
 

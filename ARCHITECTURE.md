@@ -3,7 +3,7 @@ id: architecture-root
 domain: runtime
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-07-16
+last_verified_at: 2026-07-20
 depends_on:
   - docs/index.md
   - docs/references/architecture-rules.json
@@ -12,114 +12,183 @@ depends_on:
 
 # Kestrel Architecture
 
-Kestrel is one durable execution system with several product and integration
-surfaces. Desktop, Kestrel One, the CLI/TUI, and public packages may present
-different workflows, but they must not invent different meanings for runs,
-sessions, events, tools, waiting, cancellation, or terminal results.
+Kestrel is a runtime for agent work that may take multiple steps, use tools,
+wait for input, survive interruptions, and produce durable results. You can use
+it through Kestrel Desktop, the CLI and TUI, Kestrel One, or server-side
+packages.
 
-This document defines the high-level ownership and authority model. Exact
-machine-enforced dependency rules live in
-[`docs/references/architecture-rules.json`](docs/references/architecture-rules.json).
+These products provide different experiences, but they share the same model for
+runs, sessions, events, tools, persistence, cancellation, recovery, and terminal
+results. In this document, **one runtime** means one execution architecture and
+one set of contracts—not one global process serving every Kestrel installation.
 
-## System Model
+## One Runtime, Two Deployment Forms
+
+Kestrel runs locally through **Local Core** or remotely through a **runner
+service**. Both expose the same **Execution Protocol** and use the same runtime
+implementation.
 
 ```mermaid
 flowchart TB
-    subgraph Products["Product and integration surfaces"]
+    subgraph Local["Local deployment"]
       D["Kestrel Desktop"]
-      O["Kestrel One"]
       C["CLI and TUI"]
-      A["Application server using SDK or HTTP"]
+      LA["Server application using a local SDK target"]
+      LC["Local Core"]
+      D --> LC
+      C --> LC
+      LA --> LC
     end
 
-    D --> B["Authenticated runner boundary"]
-    O --> B
-    C --> B
-    A --> B
+    subgraph Remote["Remote deployment"]
+      O["Kestrel One"]
+      RA["Server application using a remote SDK target"]
+      RS["Runner service"]
+      O --> RS
+      RA --> RS
+    end
 
-    B --> X["Execution and orchestration"]
-    X --> I["Model and tool I/O"]
-    X --> P["Persistence, checkpoints, and replay evidence"]
-    I --> M["Model providers"]
-    I --> T["Typed tools and MCP services"]
-    X --> R["Events and terminal results"]
-    R --> Products
+    LC --> P["Execution Protocol"]
+    RS --> P
+    P --> R["Kestrel runtime"]
+    R --> M["Model providers"]
+    R --> T["Allowed tools and MCP services"]
+    R --> E["Runs, events, results, artifacts, and checkpoints"]
 ```
 
-The runner boundary is the shared entrance to execution. Hosted deployments
-mount it as a service. Local Core mounts it behind an authenticated Unix socket.
-Browsers call an application server; they do not hold runner or provider
-credentials directly.
+Local Core is the runtime host for work on a user's machine. It exposes an
+authenticated Unix socket, manages local configuration and credentials, and
+uses embedded PGlite by default. An external PostgreSQL database is available
+as an advanced configuration.
 
-## Authority and Ownership
+A runner service is the network-hosted form. It exposes the Execution Protocol
+through authenticated HTTP and streaming endpoints so trusted application
+servers can reach Kestrel without depending on a user's computer.
 
-| Area | Owner | Contract |
-| --- | --- | --- |
-| Canonical runtime types | [`src/kestrel/contracts/`](src/kestrel/contracts) | Run, step, effect, error, and model-I/O contract families |
-| Execution | [`src/engine/`](src/engine) | Step progression, transition validation, scheduling, and guardrails |
-| Orchestration | [`src/orchestration/`](src/orchestration) | Thread runtime, supervision, operator control, and assembly policy |
-| External I/O | [`src/io/`](src/io) | Validated model and tool gateways |
-| Persistence and replay | [`src/store/`](src/store), [`src/replay/`](src/replay) | Durable state, logs, artifacts, checkpoints, and replay material |
-| Local execution service | [`src/localCore/`](src/localCore) | Local authority, authenticated transport, and PGlite or explicit external PostgreSQL |
-| Commands | [`cli/`](cli) | CLI/TUI and runner-service entry points |
-| Public wire contract | [`packages/protocol/`](packages/protocol) | Versioned runner events and terminal result parsing |
-| Application API | [`packages/sdk/`](packages/sdk) | Typed server-side run, stream, resume, memory, and subscription operations |
-| Framework adapters | [`packages/next/`](packages/next), [`packages/ai-sdk/`](packages/ai-sdk) | Server-route and UI-message translation over the public SDK/protocol |
-| Observability | [`packages/observability/`](packages/observability) | Application-facing Kestrel traces and OTEL export |
-| Product UX | [`apps/desktop/`](apps/desktop), [`apps/web/`](apps/web) | Local and hosted workflows over shared contracts |
-| Evaluation specifications | [`evals/`](evals) | Declarative scenarios, suites, targets, and ownership evidence |
+The `kestrel web` command does not start a second local runtime. It exposes the
+existing Local Core execution endpoint through an authenticated loopback HTTP
+bridge for local server applications. Browser code should call its application
+server, never Local Core or a runner service directly.
 
-Ownership follows the first component that makes behavior wrong. A downstream
-validator may reject bad data without becoming the owner of the upstream bug.
+## Core Components
 
-## Request Lifecycle
+### Execution Protocol
 
-1. A trusted product surface or application server establishes actor, tenant,
-   session, model access, and requested work.
-2. The runner boundary parses unknown input, authenticates the caller, and
-   validates the request before mutation or tool execution.
-3. Orchestration creates or continues the durable session and run.
-4. The execution core advances typed steps, applies transition rules, and
-   delegates model or tool effects through explicit gateways.
-5. Events are emitted as work progresses and persisted with artifacts,
-   checkpoints, and operator evidence.
-6. The run reaches an explicit terminal state: completed, failed, cancelled, or
-   waiting for a person or external condition.
-7. The terminal contract keeps human-facing `assistantText` separate from
-   structured `finalizedPayload` data.
+The Execution Protocol defines the commands and events shared by local and
+remote clients. It covers starting and controlling runs, live streams, durable
+subscriptions, session inspection, and terminal results. A local SDK target
+uses the protocol over Local Core's Unix socket; a remote target uses it over a
+runner-service URL.
 
-Live streaming is request-scoped. Durable subscriptions and replay consume
-persisted state; they are not aliases for an unbounded global event stream.
+### Runtime
 
-## Product Boundaries
+The runtime creates and continues sessions, advances runs through validated
+steps, coordinates model and tool calls, and records explicit outcomes. It does
+not depend on which product initiated the work.
 
-### Local Core
+### Model and tool gateways
 
-Local Core is the target sole authority for local execution and durable runner
-events. The 0.6 default store is embedded PGlite. External PostgreSQL is an
-explicit advanced mode, not an implicit dependency.
+Models, filesystems, shells, networks, code execution, and MCP services are
+reached through validated gateways. Tool definitions describe the available
+operation and its inputs; runtime policy determines whether a requested effect
+is allowed.
 
-The CLI is a Local Core client. Desktop is moving to the same authority model;
-any remaining compatibility path is migration work, not a second intended
-runtime architecture.
+### Persistence and evidence
+
+The store retains sessions, runs, events, artifacts, checkpoints, and operator
+decisions. That durable record supports continuation, diagnosis, recovery,
+replay, and evaluation after the original request has ended.
+
+## What Happens During a Run
+
+1. A product or trusted application server identifies the person or service
+   making the request, the session to use, and the work to perform.
+2. Local Core or the runner service authenticates the caller and validates the
+   request before execution begins.
+3. The runtime creates or continues the session and starts a run.
+4. The execution engine advances the work through model and tool steps.
+5. Progress events, tool outcomes, artifacts, and checkpoints are persisted as
+   the run proceeds.
+6. The run completes, fails, is cancelled, or waits for a person or external
+   condition.
+7. The terminal result keeps the human-facing response separate from structured
+   application data.
+
+A live stream follows the request that opened it. Durable subscriptions and
+replay read persisted events, so they can continue or inspect work after that
+request disconnects.
+
+## Products and Integration Surfaces
 
 ### Kestrel Desktop
 
-Desktop owns the packaged local experience, Electron lifecycle, typed IPC,
-workspace selection, local diagnostics, and operator-facing views. It does not
-own a separate execution engine, Kestrel One source, hosted credentials, or a
-browser-accessible runner token.
+Desktop is the packaged local experience. It starts or reconnects to Local Core
+and uses it for agent execution and durable runtime state. The Electron
+application remains responsible for its windows, typed IPC bridge, workspace
+selection, local diagnostics, and other desktop-specific interactions; it does
+not contain a separate execution engine.
+
+### CLI and TUI
+
+The CLI and TUI use Local Core for local sessions, runs, history, and operator
+controls. Commands may provide different workflows, but they use the same
+execution and result contracts as Desktop and the SDK.
 
 ### Kestrel One
 
-Kestrel One owns hosted authentication, organizations, Threads, Projects,
-Knowledge, streaming, artifacts, sharing, administration, billing, and managed
-model access. It consumes the public Kestrel package boundaries and uses the
-runner service for execution.
+Kestrel One is the hosted product for shared Threads, Projects, Knowledge,
+artifacts, access control, and managed model access. Its trusted server routes
+send work to remote runner-service targets on behalf of authenticated users and
+organizations.
 
-### Public packages
+### Server applications
 
-Public packages form a layered contract:
+Server applications use the SDK, framework adapters, or compatible HTTP routes.
+They choose an explicit execution target: Local Core for a local Node.js process
+or a runner-service URL for a remote deployment. Browser and renderer code do
+not receive runner or provider credentials.
+
+## What the Runtime Guarantees
+
+- Every run and session has a stable identity.
+- Unknown boundary input is parsed and validated before use.
+- Completed, failed, cancelled, and waiting outcomes are explicit.
+- Human-facing text and structured result data remain separate.
+- Tool and effect outcomes are available in machine-readable forms.
+- Steering, approval, cancellation, retry, and recovery stay attached to the
+  original work.
+- Live streaming remains request-scoped while durable evidence supports later
+  subscription and replay.
+- Credentials remain in Local Core, the Electron main process, or trusted
+  application-server boundaries rather than browsers and renderers.
+
+## Persistence, Recovery, and Replay
+
+Kestrel treats runs as durable work rather than disposable requests. Closing a
+window or losing a stream does not erase the session, its recorded events, or
+its terminal result.
+
+Recovery continues or repairs existing work when its contract permits that
+action. Replay reads recorded evidence to explain or compare what happened; it
+does not rerun the model or silently replace the original result.
+
+## Tools and Trust Boundaries
+
+Filesystem, development-shell, network, provider, code-execution, and MCP
+capabilities are explicit tools. Inputs are validated before the effect occurs,
+and results remain structured so a caller can distinguish a rejected request,
+a tool failure, a waiting state, and a runtime failure.
+
+For source changes, Kestrel records which revision the model observed and
+validates edits against that revision. Partial reads remain visibly partial,
+and workspace mutations leave inspectable results and checkpoint evidence. See
+[I/O and tools](apps/docs/content/runtime/io-and-tools.mdx) for the detailed
+runtime behavior.
+
+## Public Packages
+
+Kestrel's public packages share the Execution Protocol while serving different
+integration needs:
 
 ```text
 @kestrel-agents/protocol
@@ -129,88 +198,25 @@ Public packages form a layered contract:
        └─ @kestrel-agents/observability
 ```
 
-Framework helpers translate the SDK and protocol; they do not copy runtime
-internals. Consumers should use exact compatible release lines.
+- `protocol` defines commands, events, and terminal results.
+- `sdk` provides typed local and remote clients, agents, sessions, streams, and
+  operator controls.
+- `next` and `ai-sdk` adapt those contracts to application frameworks.
+- `observability` adds application-facing traces and OpenTelemetry export.
 
-## Runtime Invariants
+Use compatible release lines across the runtime and public packages.
 
-- Parse and validate unknown boundary input before use.
-- Keep lifecycle transitions and guardrails inside runtime control flow.
-- Keep credentials in trusted server, Local Core, or Electron main-process
-  boundaries—not in browsers or renderers.
-- Expose tool and effect outcomes in machine-readable shapes.
-- Preserve request-scoped streaming and deterministic replay semantics.
-- Attach steering, approval, cancellation, retry, and recovery to the original
-  run or session.
-- Persist enough evidence to explain terminal state without reconstructing it
-  from UI text.
-- Release cross-repository contracts before downstream products consume them.
-- Prefer model-visible prompts, schemas, validators, retries, and result shaping
-  before adding hidden heuristic policy.
+## Evaluation with Ruhroh
 
-## Effects and Trust Boundaries
-
-Filesystem, development shell, network, code execution, provider calls, and MCP
-capabilities are typed tool families. A tool definition carries the contract;
-runtime policy decides whether a requested effect is allowed. Product surfaces
-must not bypass that boundary through ad hoc capability access.
-
-Workspace mutation and checkpoint behavior are operator-visible actions. Error
-results remain structured so callers can distinguish a rejected request, a tool
-failure, a waiting state, and a runtime failure.
-
-### Source observation and mutation
-
-Model-visible source reads are revisioned pages. Every page states its exact byte
-range, total size, completeness, continuation offset, and content revision;
-presentation limits must never silently reduce the authority of a later write.
-
-Coding profiles create files with `fs.create_text` and change existing files
-with revision-bound `fs.edit_text` or `fs.apply_patch`. Existing-file replacement
-is not part of the coding-model surface. Patch application validates every path
-and base revision before applying the complete change.
-
-`exec_command` is an execution boundary, not an alternate editor. Source writes
-are rejected and restored by default. Explicit capture mode restores the active
-workspace and returns an immutable patch artifact plus its base revisions; the
-caller commits that proposal through `fs.apply_patch`. Large tool output,
-terminal transcripts, and patches are retrievable through `artifact.read`.
-
-Workspace checkpoints remain recovery and replay evidence. They do not by
-themselves prove that a mutation was semantically safe.
-
-## Persistence, Recovery, and Replay
-
-Runs, events, logs, artifacts, checkpoints, and operator decisions are durable
-evidence. Recovery continues existing work when the contract allows it. Replay
-uses recorded evidence to inspect behavior; it is not a second evaluator hidden
-inside the runtime.
-
-Ruhroh is the separate evaluation system that executes and compares the
-declarative specifications owned in this repository.
-
-## Outside This Repository
-
-- **Ruhroh** owns evaluation execution, reports, comparison, and the maintained
-  Kestrel adapter.
-
-## Making Architecture Changes
-
-Before proposing a runtime fix or boundary change, identify:
-
-1. the observed wrong behavior
-2. the component that first made it wrong
-3. the existing surface that owns the repair
-4. the contract and evidence that prove the repair
-
-Schema migrations, irreversible data moves, new policy, and new heuristic
-runtime behavior require explicit escalation. Validate architecture work with
-the repository gates in [Reliability](RELIABILITY.md).
+Kestrel records the execution evidence needed for inspection and replay. Ruhroh
+is the separate evaluation system that runs and compares Kestrel's declarative
+evaluation specifications and maintains the Kestrel evaluation adapter.
 
 ## Read Next
 
-- [Design principles](DESIGN.md)
-- [Published architecture overview](apps/docs/content/docs/architecture-overview.mdx)
-- [Architecture rules](docs/references/architecture-rules.json)
+- [Core concepts](apps/docs/content/docs/core-concepts.mdx)
+- [Kestrel Desktop](apps/docs/content/apps/desktop.mdx)
+- [Build your first agent](apps/docs/content/build/building-your-first-agent.mdx)
+- [Terminology](apps/docs/content/reference/terminology.mdx)
 - [Reliability](RELIABILITY.md)
 - [Security](SECURITY.md)

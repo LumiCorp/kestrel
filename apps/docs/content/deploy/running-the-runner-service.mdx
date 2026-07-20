@@ -1,41 +1,54 @@
 ---
-title: Running the runner service
-summary: Start the local runner service, confirm it is healthy, and connect your application routes.
+title: Connect to a runner service
+summary: Connect an application to Local Core during development or to a remote runner service in a hosted environment.
 section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Deploy step 1">
-Start the runner that receives work from the Workspace Copilot application routes.
-</WorkspaceCopilotDemo>
+<GuideNote step="Execution target">
+Connect a trusted application server to an explicit local bridge or remote runner-service target.
+</GuideNote>
 
-The runner service gives your application one HTTP endpoint for starting and observing Kestrel work. Your browser continues to call your application, and your application keeps the runner credential private.
+A trusted application server can reach Kestrel in two ways:
 
-## Keep the application and runtime separate
+- During local development, `kestrel web` exposes Local Core through an
+  authenticated loopback HTTP bridge.
+- In a hosted environment, the application server connects to a remote runner
+  service.
+
+Both connections expose the same Execution Protocol. They differ in where the
+runtime is hosted, not in how runs and results behave.
+
+## Keep the browser outside the execution boundary
 
 This arrangement keeps three responsibilities clear:
 
-- the browser only speaks to the app
-- the app server owns user auth and service credentials
-- the runtime owns durable execution, storage, and replay evidence
+- the browser only speaks to the application
+- the application server owns user authentication and runner credentials
+- Local Core or the remote runner service owns durable execution
 
-Do not call the runner directly from browser code. Doing so would expose the runner credential and allow browser input to define trusted user or tenant information.
+Do not call either execution target from browser code. Doing so would expose
+the runner credential and allow browser input to define trusted user or tenant
+information.
 
-## Start the service locally
+## Expose Local Core to a local application
+
+Make sure Local Core is ready, then run:
 
 ```bash
 kestrel web
 ```
 
-That command starts the runner service and prints copy-paste-ready values for:
+This command starts an HTTP bridge to the existing Local Core runtime. It does
+not start another runtime or copy Local Core state. The command prints:
 
 - `KESTREL_RUNNER_SERVICE_URL`
 - `KESTREL_RUNNER_SERVICE_TOKEN`
 
-## Connect Workspace Copilot
+Use those values in the trusted server process for your local application:
 
 ```bash
 export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
@@ -49,33 +62,54 @@ With those values in place, the shared `workspaceCopilotAgent` can serve:
 - `/api/copilot/stream`
 - `/api/copilot/webhook`
 
-## Request flow
+The local request path is:
 
 ```text
 Browser
-  -> POST /api/copilot/stream
-    -> Next.js server route
-      -> workspaceCopilotAgent.stream()
-        -> runner service
-          -> runtime
-            -> store/events/tools/model
+  -> Next.js server route
+    -> workspaceCopilotAgent
+      -> kestrel web bridge
+        -> Local Core
+          -> Execution Protocol and runtime
 ```
+
+## Connect to a remote runner service
+
+In a hosted environment, set the same variables to the authenticated URL and
+token issued for the remote runner service. The application code and Execution
+Protocol remain the same:
+
+```text
+Browser
+  -> application server
+    -> SDK or framework adapter
+      -> remote runner service
+        -> Execution Protocol and runtime
+```
+
+`kestrel web` is the local bridge, not a production runner deployment recipe.
+Provision, authenticate, monitor, and recover a remote runner service as part
+of the hosted environment described in the [production operating
+model](/operate/deployment).
 
 ## Check runner health
 
-Use these quick checks before you debug the application routes:
+Use these checks before debugging application routes:
 
 ```bash
 echo "$KESTREL_RUNNER_SERVICE_URL"
 echo "$KESTREL_RUNNER_SERVICE_TOKEN"
-curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+curl -sS "$KESTREL_RUNNER_SERVICE_URL/health"
 ```
 
-The health check should succeed before you spend time on route-level debugging. A healthy app with an unhealthy runner is still a broken Kestrel deployment.
+The health check should succeed before you spend time on route-level debugging.
+A healthy application with an unreachable execution target is still a broken
+Kestrel deployment.
 
 ## Send a test command
 
-After the health check succeeds, verify both the OpenAI-compatible endpoint and the command endpoint:
+After the health check succeeds, verify both the OpenAI-compatible endpoint and
+the command endpoint:
 
 ```bash
 curl -sS "$KESTREL_RUNNER_SERVICE_URL/v1/models" \
@@ -84,12 +118,20 @@ curl -sS "$KESTREL_RUNNER_SERVICE_URL/v1/models" \
 curl -sS "$KESTREL_RUNNER_SERVICE_URL/commands" \
   -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "x-kestrel-actor-id: user-123" \
-  -H "x-kestrel-actor-type: end_user" \
-  -H "x-kestrel-actor-name: Taylor Example" \
-  -H "x-kestrel-tenant-id: acme" \
   -d '{
-    "command": "runner.ping"
+    "id": "cmd-health-check",
+    "type": "runner.ping",
+    "metadata": {
+      "actor": {
+        "actorId": "operator-check",
+        "actorType": "operator",
+        "tenantId": "acme"
+      },
+      "tenantId": "acme"
+    },
+    "payload": {
+      "nonce": "docs-check"
+    }
   }'
 ```
 
@@ -97,57 +139,40 @@ Example `runner.ping` response:
 
 ```json
 {
+  "id": "event-id",
   "type": "runner.pong",
-  "status": "ok"
+  "ts": "2026-07-20T12:00:00.000Z",
+  "payload": {
+    "nonce": "docs-check"
+  }
 }
 ```
 
-If `/health` works but `/commands` fails, check the token and actor headers. If `/commands` works but `/api/copilot/run` fails, inspect the application route and its environment settings.
+For raw Execution Protocol commands, actor and tenant context belongs in the
+envelope's `metadata`. The `x-kestrel-actor-*` headers apply to the
+OpenAI-compatible HTTP surface, not `/commands`.
 
-## Check the local request path
+If `/health` works but `/commands` fails, check the token and command metadata. If
+`/commands` works but the application route fails, inspect the application route
+and its environment settings.
 
-- Workspace Copilot now has a live runner
-- the Next.js routes can proxy browser requests safely
-- the browser still never sees runner credentials
-- health, command, and application-route failures can be checked separately
+## What to inspect first
 
-## Failure mode: runner unavailable
+Use this order when the application looks broken:
 
-If the runner is down:
+1. confirm the configured runner URL points to the intended local or remote target
+2. confirm `/health`
+3. confirm `GET /v1/models`
+4. confirm `/commands` with `runner.ping`
+5. only then inspect the application routes
 
-- `/api/copilot/run` fails even though the app is healthy
-- `/api/copilot/stream` can close early or emit an upstream error
-- `kcron` cannot launch the nightly review job successfully
+For a local bridge failure, inspect Local Core before restarting the
+application. For a remote failure, inspect the deployed runner service and its
+dependencies.
 
-Monitor the runner as you would any service that your application depends on.
-
-## What to inspect first when the app looks broken
-
-Use this order:
-
-1. confirm `/health`
-2. confirm `GET /v1/models`
-3. confirm `/commands` with `runner.ping`
-4. only then inspect `/api/copilot/*` routes
-
-This order helps you find whether the problem begins in the runner, its credentials, or the application route.
-
-## Minimal local operator loop
-
-Use this sequence to check the complete local request path before debugging application behavior:
-
-```bash
-kestrel web
-export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
-export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
-pnpm dev
-curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
-curl -sS "$KESTREL_RUNNER_SERVICE_URL/v1/models" \
-  -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN"
-```
-
-## Continue toward production
+## Continue
 
 - [Environment and auth](/operate/environment-and-auth)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Runner service CLI](/cli/runner-service)
+- [Local Core HTTP bridge CLI](/cli/runner-service)
+- [Production operating model](/operate/deployment)

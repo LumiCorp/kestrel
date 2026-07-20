@@ -1,113 +1,55 @@
 ---
 title: Build your first agent
-summary: Send a real request to Kestrel, read the answer, and keep the session ready for a follow-up.
+summary: Connect server-side TypeScript to Local Core, run the built-in Reference profile, and keep the session for a follow-up.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Step 1">
-Build a small Workspace Copilot that reviews a project and returns a useful answer you can show in your application.
-</WorkspaceCopilotDemo>
+<GuideNote step="Step 1" title="Use the shipped Reference profile">
+This tutorial sends one request to the built-in `reference` profile, whose runtime agent is `reference-react`.
+</GuideNote>
 
-By the end of this tutorial, you will have a TypeScript script that asks Kestrel to review a workspace. The response includes readable text for your user and the identifiers your application needs to continue the same session later.
-
-You do not need a web framework for this first step. Starting with a script makes it easier to see the request, the response, and the few values that connect them.
+By the end of this tutorial, a Node.js script will send a request to Kestrel and
+read its terminal result. The script uses `kestrel web`, the authenticated
+loopback HTTP bridge to Local Core.
 
 ## Before you start
 
-You need Node.js 20 or newer and a running Kestrel runner service. Start your local runner with `kestrel web`; the command prints the URL and token you will use below.
-
-You also need a runner profile named `workspace-copilot`. A profile tells Kestrel which model, tools, and working environment this agent may use.
-
-## 1. Install the SDK
-
-Install the Kestrel SDK and a TypeScript runner for the script:
+You need Node.js 20 or newer and a configured local Kestrel installation. Run:
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.6.0-beta.0
+kestrel setup --profile reference
+kestrel web
+```
+
+`kestrel web` prints `KESTREL_RUNNER_SERVICE_URL` and
+`KESTREL_RUNNER_SERVICE_TOKEN`. Export those values in the terminal that will
+run the script. Keep the token in server-side code.
+
+The profile ID used by the SDK is `reference`. Its implementation is
+`reference-react`. Applications select the profile; they do not invent a new
+agent implementation name.
+
+## Install the SDK
+
+```bash
+pnpm add @kestrel-agents/sdk@0.6.0
 pnpm add -D tsx
 ```
 
-## 2. Add your local connection settings
+## Create and run the agent
 
-Copy the values printed by `kestrel web` into your terminal. A typical local setup looks like this:
-
-```bash
-export KESTREL_RUNNER_SERVICE_URL=http://127.0.0.1:4010
-export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
-```
-
-Keep the token on your server. It allows code to submit work to your runner, so it should never be included in browser JavaScript or accepted from an end user.
-
-## 3. Create the agent
-
-Create `lib/workspace-copilot.ts`:
+Create `scripts/reference-agent-smoke.ts`:
 
 ```ts
 import { createAgent } from "@kestrel-agents/sdk";
 
-export const workspaceCopilotAgent = createAgent({
-  id: "workspace-copilot",
-  profileId: "workspace-copilot",
-  target: {
-    kind: "remote",
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
-  },
-});
-
-export const workspaceCopilotContext = {
-  actor: {
-    actorId: "user-123",
-    actorType: "end_user" as const,
-    displayName: "Taylor Example",
-  },
-  tenantId: "acme",
-};
-```
-
-The agent definition gives this assistant a name inside your application and connects it to the `workspace-copilot` runner profile. The context identifies who is asking and which organization they belong to. Kestrel records that information with the run so later activity can be attributed to the right person and tenant.
-
-You can use these values for the first request. In an application, replace `user-123` and `acme` with the identity and organization from your authenticated server session.
-
-## 4. Ask Kestrel to review the workspace
-
-Create `scripts/workspace-copilot-smoke.ts`. This script sends a concrete task and prints the complete response so you can see what Kestrel gives your application:
-
-```ts
-import {
-  workspaceCopilotAgent,
-  workspaceCopilotContext,
-} from "../lib/workspace-copilot.js";
-
-const terminal = await workspaceCopilotAgent.run(
-  {
-    sessionId: "workspace-copilot-session-001",
-    message: "Summarize the changes in this workspace and list the next review tasks.",
-  },
-  workspaceCopilotContext,
-);
-
-console.log(terminal.type);
-```
-
-This is enough to prove the runner boundary is wired correctly.
-
-## 4a. Full smoke-test file
-
-Put the setup and the first run into one server-only script so the initial integration is copy-pasteable:
-
-```ts
-import "server-only";
-
-import { createAgent } from "@kestrel-agents/sdk";
-
-const workspaceCopilotAgent = createAgent({
-  id: "workspace-copilot",
-  profileId: "workspace-copilot",
+const agent = createAgent({
+  id: "reference-agent",
+  profileId: "reference",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
@@ -120,76 +62,48 @@ const context = {
     actorId: "user-123",
     actorType: "end_user" as const,
     displayName: "Taylor Example",
+    tenantId: "acme",
   },
   tenantId: "acme",
 };
 
-const terminal = await workspaceCopilotAgent.run(
+const terminal = await agent.run(
   {
-    sessionId: "workspace-copilot-session-001",
-    message: "Summarize the changes in this workspace and list the next review tasks.",
+    sessionId: "reference-session-001",
+    message: "Summarize the current project and identify the next useful task.",
   },
   context,
 );
-console.log(JSON.stringify(terminal, null, 2));
+
+console.log(terminal.type);
+console.log(terminal.payload.result.assistantText);
+await agent.close();
 ```
 
-Run it from the root of your project:
+Run it from the project directory:
 
 ```bash
-pnpm exec tsx scripts/workspace-copilot-smoke.ts
+pnpm exec tsx scripts/reference-agent-smoke.ts
 ```
 
-Kestrel uses `workspace-copilot-session-001` to keep this request connected to future requests. Reuse that session id when you want the agent to continue the same piece of work; choose a new one when you want to start a separate conversation.
+`kind: "remote"` selects HTTP because the script is using the loopback bridge.
+The bridge forwards the request to Local Core, which remains responsible for
+execution and durable state. An explicit local SDK target instead uses Local
+Core's Unix socket and token.
 
-<Callout title="Why there is no server-only import">
-  <p><code>server-only</code> is an optional Next.js guard that catches accidental imports into Client Components. This standalone script does not need it, and the Kestrel SDK does not add that build-time warning for you. Keep the SDK and runner token in scripts, server routes, or other server-owned modules.</p>
-</Callout>
+## Read the terminal result
 
-## 5. Read the result
+`terminal.type` identifies whether the run completed, failed, was cancelled, or
+is waiting. For a completed run, `terminal.payload.result.assistantText` is the
+canonical text to show a person. Structured application data remains in
+`terminal.payload.result.output`.
 
-A successful response has this general shape. The assistant's wording will change with the contents of your workspace.
-
-```json
-{
-  "type": "run.completed",
-  "runId": "run_01workspacecopilot",
-  "sessionId": "workspace-copilot-session-001",
-  "payload": {
-    "result": {
-      "assistantText": "The highest-risk changes are in the runner route and session persistence. Review those files first.",
-      "output": {
-        "status": "COMPLETED",
-        "sessionId": "workspace-copilot-session-001",
-        "runId": "run_01workspacecopilot",
-        "errors": []
-      }
-    }
-  }
-}
-```
-
-The fields serve different parts of your application:
-
-| Field | What it gives you |
-| --- | --- |
-| `payload.result.assistantText` | The answer you can present to the user |
-| `type` | Whether the run completed, paused, failed, or was cancelled |
-| `sessionId` | The conversation to reuse for a follow-up request |
-| `runId` | The individual run to find in logs and observability tools |
-| `payload.result.output` | Structured result data for application logic |
-
-If the response is not `run.completed`, keep the output: it usually contains the information you need to find the problem. First confirm that the runner is still running, the URL and token match the values it printed, and the `workspace-copilot` profile exists. Then use [Troubleshooting](/operate/troubleshooting) to work from the response you received. A `run.waiting` response is different from a failure—it means the agent needs input or approval before it can continue.
+Reuse `reference-session-001` for a follow-up that belongs to the same
+conversation. Choose a new session ID for unrelated work.
 
 <Outcome>
-  <p>You can now send a task to Kestrel, read the answer intended for your user, and retain the session id for the next turn.</p>
+  <p>Your server-side script can run the built-in Reference profile, display the canonical answer, and retain the session identity for the next turn.</p>
 </Outcome>
 
-## Where to go next
-
-Choose the next step that matches the experience you are building:
-
-- [Stream the next request](/build/running-your-first-streamed-request) when users should see progress while the agent works.
-- [Add session memory](/build/adding-session-memory) when the agent should carry useful context across runs.
-- [Integrate with Next.js](/build/integrating-with-nextjs) when you are ready to call the agent from an application route.
-- [Review terminal results](/reference/terminal-results) when your application needs to handle completed, waiting, failed, and cancelled runs.
+Continue with [your first streamed request](/build/running-your-first-streamed-request)
+or review [terminal results](/reference/terminal-results).

@@ -1,104 +1,59 @@
 ---
-title: Adding session memory
-summary: Carry findings, decisions, next actions, and report links from one Workspace Copilot run to the next.
+title: Add session memory
+summary: Store versioned findings, decisions, questions, next actions, and artifact links for later turns in one session.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Step 3">
-Give Workspace Copilot a memory record that later interactive and scheduled runs can read and update.
-</WorkspaceCopilotDemo>
+<GuideNote step="Step 3">
+Session memory gives later turns an inspectable application-owned summary without reconstructing continuity from prompt text.
+</GuideNote>
 
-Session memory gives your application a readable record of what should carry forward. Each update has a revision number, so concurrent changes cannot silently overwrite one another.
+Each memory snapshot has a revision. Updates name the revision they observed so
+concurrent writes cannot silently overwrite one another.
 
-For **Workspace Copilot**, memory is the bridge between a daytime review and a nightly automated report.
-
-## Connect interactive and scheduled work
-
-Workspace Copilot does work in two ways:
-
-- an interactive daytime request from `/api/copilot/run` or `/api/copilot/stream`
-- a nightly review launched by `kcron`
-
-Session memory lets both kinds of work share useful context without keeping one browser request open indefinitely.
-
-## Read the current memory snapshot
+## Read memory
 
 ```ts
-const session = workspaceCopilotAgent.session("workspace-copilot-session-001");
-const memory = await session.memory.get(workspaceCopilotContext);
+const session = agent.session("reference-session-001");
+const memory = await session.memory.get(context);
+
+console.log(memory.revision, memory.value.nextAction);
 ```
 
-The returned value includes a revision number and a structured snapshot. That revision is what protects the update path from silent overwrites.
-
-## Update memory with a versioned patch
+## Update memory
 
 ```ts
-await session.memory.update(
+const updated = await session.memory.update(
   {
     expectedRevision: memory.revision,
     patch: {
-      findings: "Docs and runtime pages changed in the last review cycle.",
-      decisions: "Nightly review should focus on operator impact first.",
-      openQuestions: "Do the stream and webhook routes still return the same correlation headers?",
-      nextAction: "Write the nightly report to ./reports/nightly-review.md.",
-      linkedArtifacts: ["reports/nightly-review.md"],
+      goal: "Understand the current project",
+      findings: "The runner boundary and package contracts need review.",
+      decisions: "Keep the next change limited to public documentation.",
+      openQuestions: "Which integration should be verified first?",
+      nextAction: "Review the runner service example.",
+      linkedArtifacts: ["docs/review-notes.md"],
     },
   },
-  workspaceCopilotContext,
+  context,
 );
+
+console.log(updated.revision);
 ```
 
-## Memory fields that matter
+The supported memory fields are `goal`, `currentPlan`, `findings`, `decisions`,
+`openQuestions`, `nextAction`, and `linkedArtifacts`.
 
-| Field | What it remembers |
-| --- | --- |
-| `findings` | captures the current state of the workspace |
-| `decisions` | records choices a later run should respect |
-| `openQuestions` | carries unresolved questions into later work |
-| `nextAction` | keeps the next run anchored in real work |
-| `linkedArtifacts` | points to project outputs like `reports/nightly-review.md` |
-
-## How the memory path works
-
-```text
-session()
-  -> read the current memory snapshot
-    -> apply versioned patch
-      -> persist next revision
-        -> a later run or person can inspect it
-```
-
-## Resolve a revision conflict
-
-If two processes update the same session at once, the revision check rejects the later write instead of silently overwriting newer information. Read the latest revision, review the competing change, and apply the intended update again.
+If another process updates the session first, read the newest snapshot, review
+the competing change, and submit an intentional patch using the new revision.
 
 <Outcome>
-  <p>A later run can read the new memory revision and its linked report without reconstructing continuity from prompt text.</p>
+  <p>A later turn can read a structured, versioned memory snapshot and the artifacts associated with it.</p>
 </Outcome>
 
-## Use the saved memory
-
-- Workspace Copilot now has readable, versioned memory
-- later nightly runs can reuse saved context instead of relying only on prompt text
-- people can inspect and correct what the next run will remember
-- `linkedArtifacts` connects the memory record to `reports/nightly-review.md`
-
-## Investigate an incorrect result
-
-If a nightly report is wrong, inspect:
-
-- what memory existed before the run
-- which revision was current
-- which file the previous run intended to update
-
-The memory record gives you a concrete place to understand and correct continuity when a later result is wrong.
-
-## Add the next capability
-
-- [Workspaces and automation](/build/workspaces-and-automation)
-- [Automating common tasks](/build/automating-common-tasks)
-- [SDK reference](/reference/sdk)
+Continue with [Next.js integration](/build/integrating-with-nextjs) or the
+[SDK reference](/reference/sdk).

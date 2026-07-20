@@ -57,7 +57,7 @@ export const PRODUCT_SURFACES = [
 export type ProductSurface = (typeof PRODUCT_SURFACES)[number];
 export type ExperienceLevel = "beginner" | "intermediate" | "advanced";
 export type TocMode = "none" | "auto" | "full";
-export type DocsJourneyId = "desktop-first-success" | "kestrel-one-collaboration" | "workspace-copilot-build";
+export type DocsJourneyId = "desktop-first-success" | "kestrel-one-collaboration" | "reference-agent-build";
 
 export interface JourneyMeta {
   id: DocsJourneyId;
@@ -74,7 +74,8 @@ export type SearchCapability =
   | "task graph"
   | "project snapshot"
   | "scene replay"
-  | "workspace automation"
+  | "apps"
+  | "environments"
   | "cli"
   | "profiles, code mode, and mcp"
   | "runner service"

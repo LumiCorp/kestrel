@@ -1,179 +1,72 @@
 ---
 title: CLI terminal client
-summary: The interactive CLI client for Kestrel, built around append-only history, local sessions, profile resolution, operator control, and workspace-aware flows.
+summary: Work with durable local Kestrel sessions, live activity, and operator controls from a terminal.
 section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-07-20
 ---
 
-The CLI is the quickest way to work with local Kestrel sessions from a terminal. Use it to open a workspace, continue a session, inspect current work, steer or stop a run, and review durable history without opening Desktop.
-
-For `0.6.0-beta.0`, the release CLI path is a separate macOS ARM64 tarball shaped for future Homebrew installation. It includes `kestrel`, `ks`, and beta `kcron` launchers plus a bundled `libexec` runtime. It uses the system Node runtime. Native single binaries, bundled Node, Homebrew formula installation, and non-macOS CLI artifacts are outside this first beta.
-
-## What it gives you
-
-- interactive terminal chat
-- session metadata in `~/.kestrel/sessions.json`
-- append-only transcript history in `~/.kestrel/history.jsonl`
-- workspace catalog binding when you launch from a project directory
-- operator control commands over the same control plane used by richer app surfaces
-- profile-driven tool, code-mode, and MCP behavior
-- typed live provider reasoning and durable, committed Agent progress
-
-## The cockpit layout
-
-The CLI opens with a branded splash and then shifts into an editorial terminal cockpit. The main regions are:
-
-- `conversation`: assistant, user, and system cards
-- `status and updates`: current session state, activity, and operator hints
-- `compose`: anchored multiline prompt entry
-
-Advanced screens stay behind the palette:
-
-- `sessions`
-- `activity feed`
-
-That makes the CLI more than a bare REPL. It is the local operator cockpit.
-
-The status surface keeps runtime lifecycle and tool telemetry separate from
-conversation history. Provider-returned content is labeled by its declared
-format and remains live-only by default. Only validated, committed
-`run.agent_progress` updates are added to durable assistant history; generic
-`run.progress` events remain diagnostics.
-
-## Workflow
-
-The most useful way to think about the CLI is as a loop:
-
-1. open or resume a durable session
-2. inspect workspace, profile, and runner state
-3. chat, steer, retry, or stop work in flight
-4. inspect activity and control-plane updates
-5. leave behind enough local history for the next operator
-
-That is why the page matters. The CLI is where Kestrel stops feeling like a package and starts feeling like a product.
-
-## Daily workflow
+Run `kestrel` or its `ks` alias to open the interactive terminal client. The
+client connects to Local Core, so sessions, runs, events, and terminal results
+use the same durable execution model as Desktop.
 
 ```bash
-kestrel
+kestrel --profile reference
 ```
 
-Or use the short alias:
+## Start in the intended workspace
 
-```bash
-ks
-```
-
-Contributor checkout shims installed with `pnpm run install:cli` remain available for local development, but they are not the v0.5 external release path.
-
-## Workspace-first startup sequence
-
-For Workspace Copilot, this is the shortest end-to-end local workflow:
+From a project folder, inspect the binding before opening the client:
 
 ```bash
 kestrel workspace status
-kestrel workspace list
-kestrel
+kestrel --profile reference
 ```
 
-Then immediately confirm what the session is actually bound to:
+Inside the client, `/status` shows the active profile, session, workspace,
+mode, waiting state, and relevant tool configuration. Do not infer those values
+from a sample prompt or folder name.
 
-```text
-/status
-Profile=workspace-copilot Session=workspace-copilot-session-001 Workspace=workspace-copilot-acme
-Runner=http://127.0.0.1:4010 MCP=enabled CodeMode=ask-first
-```
+## Sessions and history
 
-## Operator workflow
+Use `/sessions`, `/switch`, `/resume`, and `/new` to move among durable local
+sessions. Closing the terminal does not erase the recorded session or its runs.
+Local Core owns their persistence under the platform-specific state root
+described in [Command suite](/cli/command-suite).
 
-The most important commands are not only chat commands:
+## Operator control
 
-| Command | Use it for |
+These commands act on recorded work rather than creating an unrelated session:
+
+| Command | Purpose |
 | --- | --- |
-| `/sessions` | inspect and switch durable sessions |
-| `/resume <name>` | continue a prior session |
-| `/status` | inspect profile, workspace, wait state, runner, and MCP state |
-| `/stop [message]` | cancel an active run and queue a stop-and-wait steer |
-| `/steer <message>` | inject durable follow-up guidance for the focused thread |
-| `/retry [reason]` | retry the current thread through operator control |
-| `/mcp ...` | inspect or change MCP servers and allowlists |
-| `/code ...` | inspect or toggle codeMode policy |
+| `/status` | Inspect the current session and wait state |
+| `/resume <name>` | Continue a saved session |
+| `/reply <message>` | Answer a pending interaction |
+| `/approve` or `/deny` | Resolve a pending approval |
+| `/steer <message>` | Add durable guidance to focused work |
+| `/retry [reason]` | Retry through operator control |
+| `/stop [message]` | Cancel active work and record the operator action |
+| `/operator` | Open operator-focused inspection and recovery commands |
 
-These commands act on the same saved runs and threads that other Kestrel clients can inspect.
+Inspect before acting so a reply, approval, retry, or cancellation stays
+attached to the correct run.
 
-## Workflow: from blocked thread to controlled resolution
+## Activity and progress
 
-This is the sort of flow that makes the CLI feel like a cockpit instead of a chat shell:
+The terminal keeps conversation content separate from runtime and tool
+telemetry. Provider-exposed reasoning is live-only by default. Validated
+`run.agent_progress` events can become durable progress, while generic
+`run.progress` events remain runtime diagnostics.
 
-```text
-/status
-Profile=workspace-copilot Session=nightly-review Workspace=acme Mode=chat WaitFor=user.reply
+## Profiles and tools
 
-/resume nightly-review
+Use `/profiles`, `/model`, `/mode`, `/code`, and `/mcp` to inspect the current
+configuration. These controls change runtime behavior and tool availability;
+they are not display preferences.
 
-/steer collect one more source before finalizing the report
-
-/stop hold for review after evidence refresh
-
-/mcp status
-
-/code policy
-```
-
-Inspect the current state first, resume the existing session, add guidance to the active thread, and stop it only if the work should not continue. Check tool or code permissions when the run needs a capability it does not currently have.
-
-Example resolution output:
-
-```text
-operator.control accepted
-thread-main -> waiting
-next action: review state through /api/kchat/control or resume after evidence refresh
-```
-
-That loop matters because a blocked run is not treated as a dead end. The operator can inspect the real thread, steer the real work, and keep the state attached to the same session line instead of starting over with a disconnected prompt.
-
-## Palette-driven screens
-
-The command palette exposes the richer inspection screens:
-
-- `sessions` for browsing and switching continuity
-- `activity feed` for run log events such as step lifecycle, terminal outcomes, checkpoints, and quality summaries
-
-That split is important. Live chat handles the immediate operator loop. The palette screens handle inspection after or during the run.
-
-## Profiles, code mode, and MCP in practice
-
-The CLI is where the profile model becomes tangible:
-
-- global profiles come from `~/.kestrel/profiles.json`
-- workspace catalog entries do not override global profile selection
-- `/code status` and `/code policy` reveal codeMode behavior
-- `/mcp status`, `/mcp tools`, `/mcp add`, and `/mcp remove` expose MCP-backed tool control
-
-That means a terminal session can move between narrative work, code-capable work, and MCP-extended work without hiding the policy change.
-
-## Why it matters
-
-The CLI is useful when you prefer terminal work but still need sessions, workspaces, operator controls, and history that survive beyond one process. It is also a direct way to learn the control workflow before adding it to an application.
-
-## Key distinctions
-
-| Decision | Use this |
-| --- | --- |
-| interactive terminal work | `kestrel` or `ks` |
-| browser-based operator experience | Kestrel One |
-| app-integrated runtime behavior | SDK or Next.js route helpers |
-| request streaming | active chat session |
-| filtered background subscriptions | SDK or service-side observers |
-| replay-style inspection | runtime replay and operator evidence pages |
-
-## Continue with local operation
-
-- [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
-- [Operator control workflows](/operate/operator-control)
-- [Workspace workflows](/cli/workspace-workflows)
-- [Workspaces and automation](/build/workspaces-and-automation)
-- [Desktop app](/desktop)
+Read [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp) before
+creating a custom profile, and [Operator control workflows](/operate/operator-control)
+for server-side equivalents.

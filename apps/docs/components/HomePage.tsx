@@ -9,7 +9,7 @@ const pathways = [
     title: "Use Kestrel Desktop",
     description: "Run agents locally. Pick up exactly where you left off.",
     href: "/desktop/install",
-    action: "Get Desktop Beta",
+    action: "Get Desktop",
     Icon: Desktop,
   },
   {

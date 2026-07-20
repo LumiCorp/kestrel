@@ -1,18 +1,18 @@
 ---
 title: Configuration reference
-summary: Identify which Kestrel setting belongs to the application server, runner service, provider, Desktop, or Kestrel One.
+summary: Identify which Kestrel setting belongs to the application server, Local Core bridge, remote runner service, provider, Desktop, or Kestrel One.
 section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
 ## Application-to-runner settings
 
 | Variable | Set it in | Purpose |
 | --- | --- | --- |
-| `KESTREL_RUNNER_SERVICE_URL` | Trusted application server or local client | Address of the runner service |
+| `KESTREL_RUNNER_SERVICE_URL` | Trusted application server or local client | Address of the Local Core HTTP bridge or remote runner service |
 | `KESTREL_RUNNER_SERVICE_TOKEN` | Trusted application server only | Authenticates calls to the runner |
 
 Never expose the runner token through a public environment variable or browser bundle.

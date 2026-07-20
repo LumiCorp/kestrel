@@ -124,11 +124,11 @@ function DesktopDownload() {
   return (
     <aside className="download-panel">
       <div>
-        <span className="download-panel-kicker">Kestrel Desktop {DOCS_RELEASE.channel}</span>
-        <strong>{DOCS_RELEASE.version} for {access.supportedPlatforms.join(", ")} is coming soon</strong>
+        <span className="download-panel-kicker">Kestrel Desktop {DOCS_RELEASE.version}</span>
+        <strong>Download for {access.supportedPlatforms.join(", ")}</strong>
         <p>{access.trustNote}</p>
       </div>
-      <a href={access.releasesUrl}>View current releases</a>
+      <a href={access.downloadUrl}>Download Kestrel Desktop</a>
     </aside>
   );
 }
@@ -141,14 +141,14 @@ function KestrelOneAccess() {
   );
 }
 
-interface WorkspaceCopilotDemoProps {
+interface GuideNoteProps {
   step?: string;
   title?: string;
   children?: React.ReactNode;
 }
 
-function WorkspaceCopilotDemo(props: WorkspaceCopilotDemoProps) {
-  const { step, title = "Workspace Copilot guide", children } = props;
+function GuideNote(props: GuideNoteProps) {
+  const { step, title = "Guide note", children } = props;
   return (
     <aside className="workspace-demo-callout">
       <div className="workspace-demo-kicker">{step ?? "Canonical example"}</div>
@@ -170,7 +170,7 @@ export const mdxComponents = {
   Callout,
   Outcome,
   ProductFigure,
-  WorkspaceCopilotDemo,
+  GuideNote,
   ReleaseCompatibilityTable,
   ReleaseStatusTable,
   DesktopDownload,

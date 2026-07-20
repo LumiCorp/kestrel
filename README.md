@@ -16,7 +16,7 @@
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
-  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.6%20Beta-c66a2b.svg" alt="Kestrel 0.6 Beta" /></a>
+  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.6.0-2f7d32.svg" alt="Kestrel 0.6.0" /></a>
 </p>
 
 Kestrel is an open runtime platform for agent work that cannot be reduced to a
@@ -29,8 +29,8 @@ product, a CLI/TUI, or typed server-side packages. Every surface shares the
 same execution and result contracts.
 
 > **Release status:** this repository and its documentation describe the
-> `0.6.0-beta.0` contract line. Package and product availability may be staged.
-> Check [0.6 Beta release status](apps/docs/content/start/release-status.mdx)
+> `0.6.0` contract line. Package and product availability may differ by surface.
+> Check [0.6 release status](apps/docs/content/start/release-status.mdx)
 > before distributing an installer or pinning a production dependency.
 
 [Read the docs](https://docs.kestrelagents.dev) ·
@@ -72,31 +72,37 @@ as a chat transcript.
 ## How It Fits Together
 
 ```mermaid
-flowchart LR
-    U["Person or product"] --> S["Desktop, Kestrel One, CLI, or app server"]
-    S --> R["Authenticated runner boundary"]
-    R --> K["Durable Kestrel runtime"]
+flowchart TB
+    subgraph Local["Local deployment"]
+      L["Desktop, CLI/TUI, or local SDK target"] --> C["Local Core"]
+    end
+    subgraph Remote["Remote deployment"]
+      H["Kestrel One or remote SDK target"] --> S["Runner service"]
+    end
+    C --> P["Execution Protocol"]
+    S --> P
+    P --> K["Durable Kestrel runtime"]
     K --> M["Model providers"]
     K --> T["Allowed tools and MCP services"]
     K --> E["Events, results, artifacts, and checkpoints"]
-    E --> S
 ```
 
-Credentials and trusted identity stay on controlled clients or application
-servers. The runtime owns execution state and effects. Product surfaces own
-their user experience; they do not reconstruct a second runtime.
+Local Core and remote runner services expose the same Execution Protocol and
+use the same runtime implementation. Credentials and trusted identity stay in
+Local Core, the Electron main process, or application servers—not browsers or
+renderers.
 
-Read [Kestrel Architecture](ARCHITECTURE.md) for authority, data flow, and
-package boundaries.
+Read [Kestrel Architecture](ARCHITECTURE.md) for the local and remote deployment
+model, request lifecycle, trust boundaries, and public packages.
 
 ## Build With Kestrel
 
 The application-facing SDK talks to an explicit Local Core or remote runner
-target. It does not run agents in the browser or infer execution authority from
-ambient process state.
+target. It does not run agents in the browser or choose an execution target
+from ambient process state.
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/sdk@0.6.0
 ```
 
 ```ts
@@ -104,7 +110,7 @@ import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
   id: "support-agent",
-  profileId: "support",
+  profileId: "reference",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
@@ -162,7 +168,7 @@ Model-backed development requires a configured provider. Start from
 | Path | Responsibility |
 | --- | --- |
 | [`src/`](src) | Runtime contracts, execution, orchestration, persistence, replay, Local Core, and shared adapters |
-| [`cli/`](cli) | `kestrel`, `ks`, `kcron`, TUI, and runner-service commands |
+| [`cli/`](cli) | `kestrel`, `ks`, `kcron`, TUI, Local Core, and app-facing HTTP commands |
 | [`apps/desktop/`](apps/desktop) | Electron desktop application over Local Core |
 | [`apps/web/`](apps/web) | Kestrel One hosted product |
 | [`apps/docs/`](apps/docs) | Public Next.js/MDX documentation site |

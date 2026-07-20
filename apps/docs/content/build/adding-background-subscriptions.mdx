@@ -1,37 +1,24 @@
 ---
-title: Adding background subscriptions
-summary: Watch selected Workspace Copilot activity after the original request has ended.
+title: Add a background subscription
+summary: Observe selected durable Reference-agent events after the request that started the work has ended.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Step 4">
-Add a subscription for activity that should remain observable after a browser request ends.
-</WorkspaceCopilotDemo>
-
-Use `stream()` while someone is waiting for one request. Use `subscribe()` when another part of your application needs selected updates from a session, run, or thread.
-
-## Observe work outside one request
-
-Workspace Copilot eventually needs two kinds of updates:
-
-- the end user wants live output while an interactive request is running
-- a background process needs important session updates after the original request has ended
-
-Use a subscription for the second case so background monitoring does not depend on the original browser connection.
-
-## Open a filtered subscription
+<GuideNote step="Step 4">
+Use `stream()` for one active request and `subscribe()` for filtered observation that has its own lifetime.
+</GuideNote>
 
 ```ts
-const events = workspaceCopilotAgent.subscribe(
+const events = agent.subscribe(
   {
-    sessionId: "workspace-copilot-session-001",
+    sessionId: "reference-session-001",
     eventTypes: ["task.updated"],
   },
-  workspaceCopilotContext,
+  context,
 );
 
 for await (const event of events) {
@@ -39,36 +26,19 @@ for await (const event of events) {
 }
 ```
 
-Every subscription needs a session, run, thread, or event filter. The root SDK does not provide an unfiltered global event stream.
+Every subscription must include a session, run, thread, or event filter. The
+root SDK does not expose an unfiltered global event stream.
 
-## When to scope the filter
-
-| Scope | Use it when |
+| Filter | Use it for |
 | --- | --- |
-| `sessionId` | you want the whole Workspace Copilot conversation or job lifecycle |
-| `runId` | you care about one specific run |
-| `threadId` | you are watching one thread lineage in a larger session |
-| `eventTypes` | you only need particular background updates |
+| `sessionId` | Events associated with one durable session |
+| `runId` | One specific run |
+| `threadId` | One thread lineage within a session |
+| `eventTypes` | Only named event families needed by the observer |
 
-## Request stream vs background subscription
+The subscription observes persisted events independently of the browser or
+request that started the work. It does not replace the live stream used to
+respond to that request.
 
-| Method | Best for | Avoid using it for |
-| --- | --- | --- |
-| `stream()` | one active request | long-lived session monitoring |
-| `subscribe()` | filtered background observation | replacing user-facing request streaming |
-
-## Use streams and subscriptions together
-
-- Workspace Copilot now has a request stream and a separate background subscription
-- an app can watch session-level changes without binding everything to one browser request
-- monitoring tools can watch `workspace-copilot` without holding the original request open
-
-## Why the separation helps
-
-Once you add automation and scheduled reports, important work can continue after a user leaves the page. Subscriptions let your application observe that work without misusing a request stream.
-
-## Build on the subscription
-
-- [Adding observability](/build/adding-observability)
-- [Integrating with Next.js](/build/integrating-with-nextjs)
-- [Observability package](/reference/observability)
+Continue with [observability](/build/adding-observability) or the
+[SDK reference](/reference/sdk).

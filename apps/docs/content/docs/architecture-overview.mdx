@@ -1,39 +1,68 @@
 ---
 title: Architecture overview
-summary: See how a Kestrel product request reaches the durable runtime while credentials and policy remain on trusted servers.
+summary: Understand how local and remote Kestrel products reach the same durable runtime.
 section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
-Kestrel separates the product a person uses from the runtime that executes agent work. That separation lets Desktop, Kestrel One, the SDK, Next.js helpers, and compatible HTTP routes share the same run and result behavior.
+Kestrel has one execution architecture with two deployment forms. Desktop,
+CLI/TUI, Kestrel One, and SDK applications provide different experiences, but
+they share the same contracts for runs, events, tools, persistence, recovery,
+and terminal results.
 
-## The request path
+## Local and remote deployments
 
 ```text
-person or browser
-  → Desktop or your application server
-  → authenticated runner service
-  → durable runtime
-  → model and allowed tools
-  → events, terminal result, and persisted evidence
+local
+  Desktop, CLI/TUI, or a local SDK target
+    -> Local Core
+      -> Execution Protocol
+        -> Kestrel runtime
+
+remote
+  Kestrel One or a remote SDK target
+    -> runner service
+      -> Execution Protocol
+        -> Kestrel runtime
 ```
 
-Browser code never needs the runner token or provider credentials. The product server establishes the user, organization, session, model access, and other trusted context before asking the runner to execute.
+**Local Core** is the runtime host on a user's computer. It manages local
+configuration, credentials, persistence, and an authenticated Unix socket.
+Desktop starts or reconnects to Local Core automatically.
+
+A **runner service** is the network-hosted form. Trusted application servers
+reach it through authenticated HTTP and streaming endpoints. Browser code calls
+the application server and never receives runner or provider credentials.
+
+Both hosts expose the same **Execution Protocol** and use the same runtime
+implementation. They are different deployments, not different execution
+systems.
 
 ## The durable runtime
 
-The runtime coordinates run and step lifecycle, model and tool input/output, persistence, waiting, cancellation, events, artifacts, and replay evidence. It does not need to know which user interface initiated the request.
+The runtime coordinates run and step lifecycle, model and tool input/output,
+persistence, waiting, cancellation, events, artifacts, and replay evidence. It
+does not need to know which user interface initiated the request.
+
+Every run ends with an explicit completed, failed, cancelled, or waiting
+outcome. Live streams follow individual requests, while persisted events make
+later subscription, diagnosis, and replay possible.
 
 ## Product and integration surfaces
 
-- Desktop packages a local application, Local Core, and managed persistence.
-- Kestrel One owns hosted accounts, organizations, Projects, Threads, Knowledge, and model access.
-- The SDK provides typed server-side agent and session methods.
-- Next.js helpers adapt those methods to application routes.
-- OpenAI-compatible HTTP supports applications that already use familiar request shapes.
-- The CLI exposes local and operational controls.
+- Desktop provides the packaged local experience over Local Core.
+- The CLI and TUI provide local workflows and operator controls over Local Core.
+- Kestrel One sends authenticated organization and user work to remote runner
+  targets.
+- The SDK supports explicit local and remote execution targets.
+- Next.js and AI SDK helpers adapt the SDK for application routes and UI
+  messages.
 
-Read [Running the runner service](/operate/runner-service) when you are ready to deploy the application-to-runtime connection.
+For local application development, `kestrel web` exposes Local Core through an
+authenticated loopback HTTP bridge. It does not start another runtime.
+
+Read [Core concepts](/start/concepts) for the shared vocabulary or [Running the
+runner service](/operate/runner-service) for local and remote connection models.

@@ -1,77 +1,46 @@
 ---
-title: Adding observability
-summary: Trace Workspace Copilot runs, streams, resumes, and subscriptions before depending on them in production.
+title: Add observability
+summary: Trace Reference-agent runs, streams, resumptions, and subscriptions by their durable identities.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Step 6">
-Add tracing to the existing `workspace-copilot` agent without changing how callers use it.
-</WorkspaceCopilotDemo>
+<GuideNote step="Step 6">
+Wrap the same Reference-agent client so callers keep the same API while traces record its run and session identities.
+</GuideNote>
 
-Tracing helps you answer what happened after a request has finished, especially when the result is missing, late, or unexpected.
-
-## Decide what your traces should answer
-
-Once Workspace Copilot streams, remembers context, and runs on a schedule, you need to answer practical questions:
-
-- did the run fail, cancel, or complete?
-- which session and thread did it touch?
-- which route or integration started it?
-- which actor and tenant were attached?
-
-The observability package records those details consistently across runs, streams, resumes, and subscriptions.
-
-## Install the package
+## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/observability@0.6.0 @kestrel-agents/sdk@0.6.0
 ```
 
-## Create a tracer
+## Create a tracer and wrap the agent
 
 ```ts
-import { createTracer, InMemoryTraceProcessor } from "@kestrel-agents/observability";
+import {
+  createTracer,
+  InMemoryTraceProcessor,
+} from "@kestrel-agents/observability";
 
 const tracer = createTracer({
   processors: [new InMemoryTraceProcessor()],
 });
+
+const tracedAgent = tracer.wrapAgent(agent);
 ```
 
-## Wrap the agent
+The wrapper instruments `run()`, `stream()`, `resume()`, and `subscribe()` while
+preserving their SDK contracts. Traces carry the Kestrel identities needed to
+connect a request with its session, run, actor, tenant, and terminal outcome.
 
-```ts
-import { workspaceCopilotAgent } from "@/lib/workspace-copilot";
+## OpenTelemetry export
 
-export const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
-```
-
-That wrapper instruments:
-
-| Method | Span kind |
-| --- | --- |
-| `run()` | `run` |
-| `stream()` | `stream` |
-| `resume()` | `resume` |
-| `subscribe()` | `subscription` |
-
-## Use the traced agent in a route
-
-```ts
-export const POST = createStreamRunRouteHandler({
-  agent: tracedWorkspaceCopilotAgent,
-  resolveContext: async () => workspaceCopilotContext,
-});
-```
-
-The route uses the wrapped agent exactly as it used the original one.
-
-## OTEL export bridge
-
-Kestrel keeps the primary trace model Kestrel-native, then bridges outward when you need vendor-neutral export:
+Kestrel's trace model can be exported through the package's OpenTelemetry
+bridge:
 
 ```ts
 import { OpenTelemetryTraceExporter } from "@kestrel-agents/observability";
@@ -79,32 +48,13 @@ import { OpenTelemetryTraceExporter } from "@kestrel-agents/observability";
 const exporter = new OpenTelemetryTraceExporter();
 ```
 
-Your application continues to work with Kestrel runs, streams, and subscriptions while the exporter translates those traces for OpenTelemetry tools.
+The export layer does not replace Kestrel's durable run events or terminal
+results. It makes the same operation easier to find in an external tracing
+system.
 
 <Outcome>
-  <p>A completed, failed, cancelled, or waiting run can be located by session and run identity without reconstructing the story from unrelated console messages.</p>
+  <p>A completed, waiting, failed, or cancelled run can be located by its durable session and run identities.</p>
 </Outcome>
 
-## What tracing now covers
-
-- `workspace-copilot` now emits traces for `run`, `stream`, `resume`, and `subscribe`
-- the same trace model can cover daytime requests and nightly `kcron` runs
-- you can investigate failures without assembling the story from unrelated logs
-
-## Investigate a missing report
-
-When a nightly report is missing, a trace should help you answer whether the failure lived in:
-
-- route entry
-- runner communication
-- runtime execution
-- cancellation
-- downstream export or processing
-
-That information tells you where to investigate instead of searching unrelated logs.
-
-## Put the traces to work
-
-- [Observability package](/reference/observability)
-- [Production operating model](/operate/deployment)
-- [Reliability](/operate/reliability)
+Read the [Observability reference](/reference/observability) and
+[Reliability guide](/operate/reliability) next.
