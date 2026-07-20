@@ -103,7 +103,7 @@
     "ci:services": "pnpm run ci:build:shared && pnpm -r --workspace-concurrency=3 --filter @kestrel/environment-router --filter @kestrel/workspace-runtime --filter @kestrel/mcp-service run build:self && pnpm -r --parallel --filter @lumi/kestrel-environment-auth --filter @kestrel/environment-router --filter @kestrel/workspace-runtime --filter @kestrel/mcp-service run test:self",
     "ci:postgres": "pnpm run ci:build:shared && node --import tsx scripts/ci/postgres-integration.ts",
     "ci:postgres:local": "node --import tsx scripts/ci/postgres-local.ts",
-    "ci:product": "pnpm --filter @kestrel/kestrel-one exec playwright test --config playwright.product.config.ts",
+    "ci:product": "node --import tsx apps/web/scripts/run-product-contract.ts",
     "ci:docs": "pnpm run ci:build:shared && pnpm run docs:test && pnpm run docs:build",
     "ci:desktop": "pnpm run ci:build:shared && pnpm run desktop:test && pnpm run desktop:build",
     "ci:plan": "node --import tsx scripts/classify-gates.ts",

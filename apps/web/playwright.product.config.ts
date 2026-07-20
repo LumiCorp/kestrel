@@ -1,12 +1,38 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = 43_123;
-const fakeOpenRouterPort = 43_116;
-const postgresPort = 58_433;
-const redisPort = 56_380;
-const minioApiPort = 59_002;
-const minioConsolePort = 59_003;
-const workerReadyFile = "/tmp/kestrel-one-product-contract-worker.ready";
+function requiredPort(name: string): number {
+  const value = process.env[name];
+  if (!(value && /^\d+$/u.test(value))) {
+    throw new Error(`${name} must be set by the product contract launcher.`);
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name} must be a valid TCP port.`);
+  }
+  return port;
+}
+
+const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
+const fakeOpenRouterPort = requiredPort(
+  "KESTREL_PRODUCT_FAKE_OPENROUTER_PORT"
+);
+const postgresPort = requiredPort("KESTREL_PRODUCT_POSTGRES_PORT");
+const redisPort = requiredPort("KESTREL_PRODUCT_REDIS_PORT");
+const minioApiPort = requiredPort("KESTREL_PRODUCT_MINIO_API_PORT");
+const minioConsolePort = requiredPort("KESTREL_PRODUCT_MINIO_CONSOLE_PORT");
+const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
+const workerReadyFile = process.env.KESTREL_PRODUCT_WORKER_READY_FILE;
+if (!workerReadyFile) {
+  throw new Error(
+    "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher."
+  );
+}
+const composeProjectName = process.env.COMPOSE_PROJECT_NAME;
+if (!composeProjectName) {
+  throw new Error(
+    "COMPOSE_PROJECT_NAME must be set by the product contract launcher."
+  );
+}
 const baseURL = `http://127.0.0.1:${port}`;
 const databaseUrl = `postgresql://postgres:postgres@127.0.0.1:${postgresPort}/kestrel_product_contract`;
 const inheritedEnv = Object.fromEntries(
@@ -34,11 +60,12 @@ const webServerEnv = {
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
   KESTREL_TURN_WORKER_READY_FILE: workerReadyFile,
-  COMPOSE_PROJECT_NAME: "kestrel-one-product-contract",
+  COMPOSE_PROJECT_NAME: composeProjectName,
   LOCAL_POSTGRES_PORT: String(postgresPort),
   LOCAL_REDIS_PORT: String(redisPort),
   LOCAL_MINIO_API_PORT: String(minioApiPort),
   LOCAL_MINIO_CONSOLE_PORT: String(minioConsolePort),
+  KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
   KESTREL_RUNNER_DATABASE_URL: `postgresql://postgres:postgres@127.0.0.1:${postgresPort}/kestrel_product_runtime`,
   KESTREL_SKIP_RAG_FIXTURES: "true",
   NEXT_PUBLIC_APP_URL: baseURL,
@@ -82,6 +109,7 @@ export default defineConfig({
     {
       command: "./scripts/product-dev-all.sh",
       url: `${baseURL}/api/health`,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
       reuseExistingServer: false,
       timeout: 180_000,
       env: webServerEnv,
