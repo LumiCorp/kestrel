@@ -187,7 +187,8 @@ test("build-mode deliberator prompt stays compact and generic", () => {
   assert.match(act, /continue that exact sessionId without command/u);
   assert.match(act, /Do not start a duplicate command/u);
   assert.match(act, /A mutation makes earlier validation stale/u);
-  assert.match(act, /settle every live process before finalizing/u);
+  assert.match(act, /settle every live process before finalizing unless a running process is itself part of the requested completed result/u);
+  assert.match(act, /data\.keepRunningSessionIds/u);
   assert.match(act, /visible plan agent-owned/u);
   assert.match(act, /Never create a todo whose work is closing todos, finalizing, or reporting itself/u);
   assert.match(act, /do not finalize by itself while an item remains open/u);

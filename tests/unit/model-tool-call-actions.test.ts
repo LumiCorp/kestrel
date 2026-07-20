@@ -130,8 +130,14 @@ test("finalize control tool description stays prose closeout guidance", () => {
   assert.match(finalizeTool?.description ?? "", /Claim only checks that actually ran/u);
   assert.match(finalizeTool?.description ?? "", /data\.openGap or data\.knownWarnings/u);
   assert.match(finalizeTool?.description ?? "", /otherwise keep working or report the concrete blocker/u);
+  assert.match(finalizeTool?.description ?? "", /data\.keepRunningSessionIds/u);
+  assert.match(finalizeTool?.description ?? "", /Do not retain tests, installers, validation commands, or accidental watchers/u);
   assert.match(finalizeTool?.description ?? "", /Do not put changedFiles, checksRun, or checksFailed in data/u);
   assert.match(String(dataSchema?.description), /runtime evidence owns those facts/u);
+  const dataProperties = dataSchema?.properties as Record<string, unknown> | undefined;
+  const keepRunningSchema = dataProperties?.keepRunningSessionIds as Record<string, unknown> | undefined;
+  assert.equal(keepRunningSchema?.type, "array");
+  assert.equal(keepRunningSchema?.uniqueItems, true);
   assert.doesNotMatch(finalizeTool?.description ?? "", /swe-verified|sweValidation|benchmark|validation proof|edited tests/i);
   assert.deepEqual(statusSchema?.enum, ["goal_satisfied", "out_of_scope"]);
   assert.equal(properties?.assistantProgress, undefined);
