@@ -7,7 +7,7 @@ import type {
   DesktopSettings,
 } from "./contracts.js";
 
-const VERIFICATION_TIMEOUT_MS = 5_000;
+const VERIFICATION_TIMEOUT_MS = 5000;
 
 export class DesktopModelProviderVerificationError extends Error {
   readonly code = "DESKTOP_MODEL_PROVIDER_VERIFICATION_FAILED";

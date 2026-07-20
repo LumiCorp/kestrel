@@ -119,7 +119,7 @@ export function SettingsWorkspace({
     if (isConfigurable(capability)) return () => openEditor(capability);
     if (capability.id === "data.workspace") return onAddProject;
     if (capability.id === "permission.microphone") return onRequestMicrophone;
-    return undefined;
+    return;
   }
 
   function openEditor(capability: DesktopCapability): void {
@@ -322,11 +322,13 @@ export function SettingsWorkspace({
             ) : null}
             {editing.settings.map((field, index) => {
               const credentialStored = field.secret && editing.requirements.some((requirement) => requirement.kind === "credential" && requirement.satisfied);
+              const controlId = `capability-setting-${field.key}`;
               return (
-                <label className="provider-dialog-field" key={field.key}>
+                <label className="provider-dialog-field" htmlFor={controlId} key={field.key}>
                   <span>{field.label}{field.required && credentialStored === false ? " *" : ""}{credentialStored ? <small>Stored securely</small> : null}</span>
                   {field.kind === "select" ? (
                     <select
+                      id={controlId}
                       data-autofocus={supportsEnablement(editing) === false && index === 0 ? true : undefined}
                       value={String(draft[field.key] ?? field.value ?? "")}
                       onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
@@ -335,6 +337,7 @@ export function SettingsWorkspace({
                     </select>
                   ) : (
                     <input
+                      id={controlId}
                       data-autofocus={supportsEnablement(editing) === false && index === 0 ? true : undefined}
                       type={field.secret ? "password" : field.kind === "url" ? "url" : "text"}
                       value={field.secret ? credential : String(draft[field.key] ?? "")}

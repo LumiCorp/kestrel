@@ -103,7 +103,7 @@ class CoreOwnedDesktopDatabaseController implements DesktopDatabaseController {
       && coreStatus.database.initialized
       && coreStatus.database.running
       && coreStatus.database.identityVerified;
-    if (coreStatus.state === "blocked" || (!pgliteReady && !externalReady)) {
+    if (coreStatus.state === "blocked" || !(pgliteReady || externalReady)) {
       throw createRuntimeFailure(
         coreStatus.lastError?.code ?? coreStatus.database.lastError?.code ?? "LOCAL_CORE_DATABASE_UNAVAILABLE",
         coreStatus.lastError?.message ?? coreStatus.database.lastError?.message ?? coreStatus.summary,

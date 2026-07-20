@@ -1927,7 +1927,7 @@ async function readConfiguredMcpCredentialBindings(homePath: string): Promise<{
         if (credentialId.startsWith(`mcp.${server.id}.`) === false) continue;
         bindings.set(binding.envKey, { credentialId, envKey: binding.envKey });
       } catch {
-        continue;
+        // Ignore invalid credential references while retaining valid bindings.
       }
     }
   }

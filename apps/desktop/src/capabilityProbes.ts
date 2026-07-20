@@ -56,7 +56,7 @@ async function probeLocalModel(
   settings: DesktopSettings,
 ): Promise<boolean> {
   try {
-    await verifyDesktopModelCapability({ provider, settings, timeoutMs: 1_200 });
+    await verifyDesktopModelCapability({ provider, settings, timeoutMs: 1200 });
     return true;
   } catch {
     return false;
@@ -93,7 +93,7 @@ async function probeDocker(env: NodeJS.ProcessEnv): Promise<{ installed: boolean
   const requiredImages = ["node:20-alpine", "python:3.12-alpine", "bash:5.2"];
   try {
     await execFileAsync("docker", ["version", "--format", "{{.Client.Version}}"], {
-      timeout: 2_500,
+      timeout: 2500,
       windowsHide: true,
       env,
     });
@@ -102,11 +102,11 @@ async function probeDocker(env: NodeJS.ProcessEnv): Promise<{ installed: boolean
   }
   try {
     await execFileAsync("docker", ["info", "--format", "{{.ServerVersion}}"], {
-      timeout: 3_500,
+      timeout: 3500,
       windowsHide: true,
       env,
     });
-    const { stdout } = await execFileAsync("docker", ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], { timeout: 3_500, windowsHide: true, env });
+    const { stdout } = await execFileAsync("docker", ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], { timeout: 3500, windowsHide: true, env });
     const available = new Set(stdout.split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean));
     return { installed: true, daemonReachable: true, images: requiredImages.map((name) => ({ name, available: available.has(name) })) };
   } catch {
@@ -117,7 +117,7 @@ async function probeDocker(env: NodeJS.ProcessEnv): Promise<{ installed: boolean
 async function probeExecutables(names: string[], env: NodeJS.ProcessEnv): Promise<{ name: string; available: boolean }[]> {
   return await Promise.all(names.map(async (name) => {
     try {
-      await execFileAsync(name, ["--version"], { timeout: 1_500, windowsHide: true, env });
+      await execFileAsync(name, ["--version"], { timeout: 1500, windowsHide: true, env });
       return { name, available: true };
     } catch {
       return { name, available: false };

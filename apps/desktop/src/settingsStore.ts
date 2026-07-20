@@ -701,7 +701,7 @@ function normalizeDesktopMcpServers(
           ...(typeof candidate.verifiedAt === "string" && Number.isNaN(Date.parse(candidate.verifiedAt)) === false ? { verifiedAt: new Date(candidate.verifiedAt).toISOString() } : {}),
         });
       } catch {
-        continue;
+        // Ignore invalid remote URLs while retaining other managed servers.
       }
     }
   }

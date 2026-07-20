@@ -554,7 +554,6 @@ export interface DesktopProviderCredentialInput {
     apiKey: string;
 }
 export type DesktopToolCredentialProvider = "visual-crossing";
-export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
 export interface DesktopToolCredentialStatus {
     provider: DesktopToolCredentialProvider;
     configured: boolean;

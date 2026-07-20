@@ -235,7 +235,7 @@ function readStringSetting(
   key: string,
 ): string | undefined {
   const value = values?.[key];
-  if (value === undefined || value === null) return undefined;
+  if (value === undefined || value === null) return;
   if (typeof value !== "string") throw new Error(`Capability setting '${key}' must be text.`);
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;

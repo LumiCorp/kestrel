@@ -46,7 +46,7 @@ export function ensureBrowserPreviewBridge(): void {
     setupCompletedAt: new Date().toISOString(),
   };
   let entries: DesktopLegacyUiStateEntries = {};
-  let modelPolicy: ModelPolicyV1 = {
+  const modelPolicy: ModelPolicyV1 = {
     version: 1,
     provider: "openrouter",
     model: "openai/gpt-5.2",
