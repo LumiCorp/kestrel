@@ -127,6 +127,7 @@ const DESKTOP_PRESET_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
   "balanced",
   "filesystem",
   "dev_shell",
+  "desktop_host",
   "sandbox_code",
 ];
 
@@ -140,11 +141,13 @@ function normalizeDesktopCapabilityPacks(
       pack === "balanced" ||
       pack === "filesystem" ||
       pack === "dev_shell" ||
+      pack === "desktop_host" ||
       pack === "sandbox_code"
     ) {
       next.add(pack);
     }
   }
+  next.add("desktop_host");
   return next.size > 0 ? [...next] : [...DESKTOP_PRESET_CAPABILITY_PACKS];
 }
 
@@ -470,6 +473,7 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
           entry === "balanced" ||
           entry === "filesystem" ||
           entry === "dev_shell" ||
+          entry === "desktop_host" ||
           entry === "sandbox_code",
       )
         ? parsed.capabilityPacks

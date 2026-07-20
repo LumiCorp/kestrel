@@ -888,6 +888,12 @@ function createPreviewRuntimeThreadInspection(threadId: string): DesktopRuntimeT
       at: now,
       runId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
     },
+    activeRun: {
+      runId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
+      status: isChild ? "WAITING" : "RUNNING",
+    },
+    followUpQueue: { state: "ready", items: [] },
+    inboxItems: [],
   };
 }
 

@@ -18,3 +18,13 @@ test("the Next.js cookie bridge is the final Better Auth plugin", () => {
   assert.ok(pluginsEnd > pluginsStart);
   assert.match(plugins, /lastLoginMethod\(\),\s+nextCookies\(\),\s*$/u);
 });
+
+test("personal API keys use x-api-key and cannot consume Better Auth Bearer sessions", () => {
+  const apiKeyStart = authSource.indexOf("apiKey({");
+  const apiKeyEnd = authSource.indexOf("openAPI()", apiKeyStart);
+  const apiKeyConfiguration = authSource.slice(apiKeyStart, apiKeyEnd);
+
+  assert.match(apiKeyConfiguration, /headers\?\.get\("x-api-key"\)/u);
+  assert.doesNotMatch(apiKeyConfiguration, /authorization|Bearer/u);
+  assert.match(authSource, /openAPI\(\),\s+bearer\(\)/u);
+});

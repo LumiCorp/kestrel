@@ -13,7 +13,7 @@ export async function POST(
   context: { params: Promise<{ turnId: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { turnId } = paramsSchema.parse(await context.params);
     const turn = await requestDurableTurnStop({
       turnId,

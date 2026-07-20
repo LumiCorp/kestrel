@@ -10,11 +10,11 @@ import { listThreadsForUser } from "@/lib/threads/store";
 const paramsSchema = z.object({ id: routeIdSchema });
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const access = await requireProjectRole({
       projectId: id,

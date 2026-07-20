@@ -4,6 +4,7 @@ import type {
   DesktopCapabilityView,
   DesktopCapabilityConfigurationInput,
   DesktopCapabilityConfigurationResult,
+  DesktopAttachmentMetadata,
   DesktopDatabaseStatus,
   DesktopDirectoryListing,
   DesktopFileContent,
@@ -12,6 +13,7 @@ import type {
   DesktopPathTargetInput,
   DesktopFileWriteInput,
   DesktopFileSearchResponse,
+  DesktopFollowUpQueueEntry,
   DesktopManagedProjectRun,
   DesktopLegacyUiStateEntries,
   DesktopMicrophoneAccess,
@@ -34,6 +36,8 @@ import type {
   DesktopRuntimeRunIndexQuery,
   DesktopRuntimeRunInspection,
   DesktopRuntimeThreadInspection,
+  DesktopOperatorControlRequest,
+  DesktopOperatorInboxItem,
   DesktopRuntimeStoreReset,
   DesktopSupportBundle,
   DesktopUiStateSyncResult,
@@ -49,6 +53,7 @@ export {
   DESKTOP_UI_STATE_VERSION,
 } from "../../../src/desktopShell/contracts.js";
 export type {
+  DesktopAttachmentMetadata,
   DesktopCapabilityPackId,
   DesktopCredentialedModelProvider,
   DesktopBridgeCapabilityId,
@@ -76,6 +81,7 @@ export type {
   DesktopFileWriteInput,
   DesktopFileSearchResult,
   DesktopFileSearchResponse,
+  DesktopFollowUpQueueEntry,
   DesktopManagedProjectRun,
   DesktopManagedProjectRunPreviewUrl,
   DesktopLegacyUiStateEntries,
@@ -115,6 +121,8 @@ export type {
   DesktopRuntimeSessionIndexEntry,
   DesktopRuntimeThreadBlocker,
   DesktopRuntimeThreadInspection,
+  DesktopOperatorControlRequest,
+  DesktopOperatorInboxItem,
   DesktopRuntimeThreadNextAction,
   DesktopRuntimeThreadPlan,
   DesktopRuntimeThreadStatus,
@@ -175,6 +183,10 @@ export interface DesktopBridge {
   syncLegacyUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
   saveUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent>;
+  selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
+  listAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
+  removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
+  submitOperatorControl(request: DesktopOperatorControlRequest): Promise<DesktopRuntimeThreadInspection>;
   cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;

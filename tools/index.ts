@@ -122,6 +122,7 @@ export { createTavilyClient } from "./internet/client.js";
 export { createTavilyInternetProvider } from "./internet/provider.js";
 export { codeExecuteTool } from "./code/execute.js";
 export { DEV_SHELL_TOOL_NAMES } from "./devshell/shared.js";
+export { desktopHostOpenTool } from "./desktop/hostOpen.js";
 export { execCommandTool } from "./devshell/execCommand.js";
 export { devShellRunTool } from "./devshell/run.js";
 export { devProcessStartTool } from "./devshell/processStart.js";

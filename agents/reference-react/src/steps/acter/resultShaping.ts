@@ -2099,7 +2099,11 @@ function normalizeDevShellCommandContext(value: unknown): Record<string, unknown
   const cwd = asString(record.cwd);
   const workspaceRoot = asString(record.workspaceRoot);
   const envMode = asString(record.envMode);
+  const sourceMutation = asString(record.sourceMutation);
   const requiredTools = asArray(record.requiredTools)
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+  const envNames = asArray(record.envNames)
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
   const context: Record<string, unknown> = {
@@ -2107,7 +2111,9 @@ function normalizeDevShellCommandContext(value: unknown): Record<string, unknown
     ...(cwd !== undefined ? { cwd } : {}),
     ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
     ...(envMode !== undefined ? { envMode } : {}),
+    ...(sourceMutation !== undefined ? { sourceMutation } : {}),
     ...(requiredTools.length > 0 ? { requiredTools } : {}),
+    ...(envNames.length > 0 ? { envNames } : {}),
   };
   return Object.keys(context).length > 0 ? context : undefined;
 }

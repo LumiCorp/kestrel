@@ -130,7 +130,7 @@ test("writeDesktopSettings persists provider options without serializing credent
   assert.equal(saved.selectedProvider, "openai");
   assert.equal(saved.databaseMode, "default");
   assert.equal(saved.presetId, "desktop_dev_local");
-  assert.deepEqual(saved.capabilityPacks, ["balanced", "filesystem", "dev_shell", "sandbox_code"]);
+  assert.deepEqual(saved.capabilityPacks, ["balanced", "filesystem", "dev_shell", "sandbox_code", "desktop_host"]);
   assert.deepEqual(saved.projects, [
     { path: path.resolve("../workspace-a"), label: "Workspace A" },
     { path: "/tmp/workspace-b", label: "workspace-b" },

@@ -51,6 +51,7 @@ import {
   DesktopProjectRunRegistry,
 } from "./desktopProjectRuns.js";
 import { DesktopUiStateStore } from "./desktopUiState.js";
+import { DesktopAttachmentStore, DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES } from "./desktopAttachments.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
@@ -93,6 +94,7 @@ import {
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
+const MAX_DESKTOP_ATTACHMENT_BODY_BYTES = Math.ceil(DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES * 4 / 3) + 1024 * 1024;
 
 export interface LocalCoreApiServer {
   status: LocalCoreStatus;
@@ -176,6 +178,7 @@ export async function startLocalCoreApiServer(
   const projectRunEventClients = new Set<ProjectRunEventClient>();
 
   try {
+    await new DesktopAttachmentStore(home.homePath).cleanup();
     const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
     let status = await ensureLocalCoreReady({
       ...readyOptions,
@@ -662,6 +665,7 @@ async function createExecutionBundle(input: {
     });
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
+      homePath: input.status.home.homePath,
     });
   }
   const handler = createRunnerServiceHttpHandler({
@@ -1063,6 +1067,59 @@ async function handleRequest(input: {
           { runtimeConfiguration },
         ),
       });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/desktop/attachments") {
+      const threadId = normalizeString(url.searchParams.get("threadId"));
+      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
+      writeJson(input.response, 200, { ok: true, attachments: await new DesktopAttachmentStore(input.status.home.homePath).list(threadId) });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/desktop/attachments") {
+      const body = await readJsonBody(input.request, MAX_DESKTOP_ATTACHMENT_BODY_BYTES);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment body must be an object.");
+      }
+      const record = body as Record<string, unknown>;
+      const threadId = normalizeString(record.threadId);
+      const filename = normalizeString(record.filename);
+      const data = normalizeString(record.data);
+      if (threadId === undefined || filename === undefined || data === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, filename, and data are required.");
+      }
+      const attachment = await new DesktopAttachmentStore(input.status.home.homePath).import({
+        threadId,
+        filename,
+        data: decodeStrictBase64(data),
+        ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
+        ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
+      });
+      writeJson(input.response, 201, { ok: true, attachment });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/desktop/attachments/resolve") {
+      const body = await readJsonBody(input.request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment resolution body must be an object.");
+      }
+      const record = body as Record<string, unknown>;
+      const threadId = normalizeString(record.threadId);
+      const attachmentIds = Array.isArray(record.attachmentIds)
+        ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
+        : undefined;
+      if (threadId === undefined || attachmentIds === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId and attachmentIds are required.");
+      }
+      const attachments = await new DesktopAttachmentStore(input.status.home.homePath).resolve(threadId, attachmentIds);
+      writeJson(input.response, 200, { ok: true, attachments });
+      return;
+    }
+    const attachmentMatch = url.pathname.match(/^\/v1\/desktop\/attachments\/([^/]+)$/u);
+    if (method === "DELETE" && attachmentMatch?.[1] !== undefined) {
+      const threadId = normalizeString(url.searchParams.get("threadId"));
+      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
+      const removed = await new DesktopAttachmentStore(input.status.home.homePath).remove(threadId, decodeURIComponent(attachmentMatch[1]));
+      writeJson(input.response, 200, { ok: true, removed });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/ui-state") {
@@ -2158,6 +2215,18 @@ function asError(error: unknown): Error {
 
 function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function decodeStrictBase64(value: string): Buffer {
+  const normalized = value.replace(/\s/gu, "");
+  if (normalized.length === 0 || normalized.length % 4 !== 0 || /^[A-Za-z0-9+/]+={0,2}$/u.test(normalized) === false) {
+    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be valid base64.");
+  }
+  const decoded = Buffer.from(normalized, "base64");
+  if (decoded.toString("base64") !== normalized) {
+    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be canonical base64.");
+  }
+  return decoded;
 }
 
 function isNotFoundError(error: unknown): boolean {
