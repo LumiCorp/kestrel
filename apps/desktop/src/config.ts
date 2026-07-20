@@ -6,6 +6,7 @@ import { createDesktopError } from "./errors.js";
 export interface DesktopPathConfig {
   repoRoot: string;
   bootHtmlPath: string;
+  iconPath: string;
   rendererHtmlPath: string;
   runtimeLogPath: string;
   runtimeHomePath: string;
@@ -42,12 +43,16 @@ export function resolveDesktopPathConfig(input: {
   const staticPath = input.isPackaged
     ? path.join(input.resourcesPath ?? input.cwd, "static")
     : path.join(resolveRepoRoot(input.cwd), "apps", "desktop", "static");
+  const iconPath = input.isPackaged
+    ? path.join(input.resourcesPath ?? input.cwd, "kestrel-head.png")
+    : path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png");
   const stateRoot = input.localCoreHomePath ?? input.userDataPath;
   const localCorePaths = resolveLocalCorePaths(stateRoot);
 
   return {
     repoRoot,
     bootHtmlPath: path.join(staticPath, "boot.html"),
+    iconPath,
     rendererHtmlPath: path.join(staticPath, "renderer", "index.html"),
     runtimeLogPath: path.join(localCorePaths.logsPath, "desktop-runtime.log"),
     runtimeHomePath: stateRoot,

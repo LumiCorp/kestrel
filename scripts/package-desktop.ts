@@ -17,6 +17,7 @@ const resourcesDir = path.join(repoRoot, "apps", "desktop", "resources");
 const extraResources = [
   path.join(resourcesDir, "kestrel-repo"),
   path.join(repoRoot, "apps", "desktop", "static"),
+  path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png"),
 ];
 const releaseBuild = process.env.KESTREL_DESKTOP_RELEASE === "1";
 const darwinSigning = packagerConfig.platform === "darwin"
@@ -44,6 +45,7 @@ const packagedPaths = await electronPackager({
   dir: packagerConfig.stageDir,
   executableName: packagerConfig.executableName,
   extraResource: extraResources,
+  icon: packagerConfig.iconPath,
   name: packagerConfig.appName,
   out: packagerConfig.outDir,
   overwrite: true,
