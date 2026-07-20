@@ -37,10 +37,14 @@ export function validateFinalizationDecision(input: {
       userVisibleViolation.details,
     );
   }
-  if (input.action.kind !== "finalize" || input.action.finalizeReason !== "goal_satisfied") {
+  if (input.action.kind !== "finalize") {
     return;
   }
   const data = asRecord(actionInput?.data);
+  validateKeepRunningSessionIds(input.action, data);
+  if (input.action.finalizeReason !== "goal_satisfied") {
+    return;
+  }
   const artifactContradiction = readArtifactVerificationContradiction({
     completionState: asString(data?.completionState),
     artifactVerification: data?.artifactVerification,
@@ -73,6 +77,66 @@ export function validateFinalizationDecision(input: {
       },
     );
   }
+}
+
+export function readKeepRunningSessionIds(action: ReactAction): string[] {
+  if (action.kind !== "finalize") {
+    return [];
+  }
+  const data = asRecord(asRecord(action.input)?.data);
+  const value = data?.keepRunningSessionIds;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => asString(item)?.trim())
+    .filter((item): item is string => item !== undefined && item.length > 0);
+}
+
+function validateKeepRunningSessionIds(
+  action: Extract<ReactAction, { kind: "finalize" }>,
+  data: Record<string, unknown> | undefined,
+): void {
+  const value = data?.keepRunningSessionIds;
+  if (value === undefined) {
+    return;
+  }
+  if (action.finalizeReason !== "goal_satisfied") {
+    throw new DecisionCompileError(
+      "DECISION_SCHEMA_FAILED",
+      "Finalize data.keepRunningSessionIds is only valid with status goal_satisfied.",
+      "schema",
+      {
+        reason: "keep_running_sessions_require_goal_satisfied",
+        path: "nextAction.data.keepRunningSessionIds",
+      },
+    );
+  }
+  if (!Array.isArray(value)) {
+    throw invalidKeepRunningSessionIds("keep_running_sessions_must_be_array");
+  }
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.trim().length === 0 || item !== item.trim()) {
+      throw invalidKeepRunningSessionIds("keep_running_session_id_invalid");
+    }
+    normalized.push(item);
+  }
+  if (new Set(normalized).size !== normalized.length) {
+    throw invalidKeepRunningSessionIds("keep_running_session_ids_duplicate");
+  }
+}
+
+function invalidKeepRunningSessionIds(reason: string): DecisionCompileError {
+  return new DecisionCompileError(
+    "DECISION_SCHEMA_FAILED",
+    "Finalize data.keepRunningSessionIds must be an array of unique, non-empty exec_command session IDs.",
+    "schema",
+    {
+      reason,
+      path: "nextAction.data.keepRunningSessionIds",
+    },
+  );
 }
 
 function readArtifactVerificationContradiction(input: {

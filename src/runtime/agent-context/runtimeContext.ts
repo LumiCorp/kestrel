@@ -156,7 +156,7 @@ function renderWorkspaceStatus(
       ...sessions.map((session) =>
         `- sessionId: ${session.processId}; status: ${session.status ?? "running"}; command: ${JSON.stringify(session.command ?? "unknown")}; cwd: ${JSON.stringify(session.cwd ?? ".")}`
       ),
-      "- successful finalization is blocked until each session exits or is stopped and its final result is collected.",
+      "- successful finalization is blocked until each session exits, is stopped and its final result is collected, or is explicitly listed in finalize data.keepRunningSessionIds because it is itself part of the requested completed result.",
       ...sessions.map((session) =>
         `- next action for ${session.processId}: call exec_command with {"sessionId":"${session.processId}","assistantProgress":"I am checking the running process."} and no command to collect unread output and the current process state. Repeat if it returns running. Use {"sessionId":"${session.processId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} only if the process is no longer needed.`
       ),

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3407,
+  "testCount": 3420,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -25863,7 +25863,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileAgentAction rejects policy_blocked finalize as a deliberator closeout",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 3161,
+      "line": 3292,
       "ancestors": [],
       "title": "compileAgentAction rejects policy_blocked finalize as a deliberator closeout",
       "contractId": "runtime.behavior",
@@ -25936,6 +25936,21 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session",
+      "file": "tests/unit/compile-intent-executable-actions.test.ts",
+      "line": 2906,
+      "ancestors": [],
+      "title": "compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session",
+      "dimension": "compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent allows default-t5 style repeated read after post-mutation cache is fresh",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
       "line": 547,
@@ -25968,7 +25983,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent allows explicitly warned unresolved validation when no todo remains",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 2906,
+      "line": 3037,
       "ancestors": [],
       "title": "compileIntent allows explicitly warned unresolved validation when no todo remains",
       "contractId": "runtime.behavior",
@@ -26013,7 +26028,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent allows more tool work without hidden progress gates",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 2955,
+      "line": 3086,
       "ancestors": [],
       "title": "compileIntent allows more tool work without hidden progress gates",
       "contractId": "runtime.behavior",
@@ -26523,7 +26538,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent keeps non-build insufficient_horizon compatibility",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 3203,
+      "line": 3334,
       "ancestors": [],
       "title": "compileIntent keeps non-build insufficient_horizon compatibility",
       "contractId": "runtime.behavior",
@@ -26613,7 +26628,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects build-mode insufficient_horizon cannot_satisfy",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 3023,
+      "line": 3154,
       "ancestors": [],
       "title": "compileIntent rejects build-mode insufficient_horizon cannot_satisfy",
       "contractId": "runtime.behavior",
@@ -26628,7 +26643,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects build-mode need_user_choice cannot_satisfy",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 3069,
+      "line": 3200,
       "ancestors": [],
       "title": "compileIntent rejects build-mode need_user_choice cannot_satisfy",
       "contractId": "runtime.behavior",
@@ -26673,7 +26688,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects generic build blocker when executable tools are available",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 3108,
+      "line": 3239,
       "ancestors": [],
       "title": "compileIntent rejects generic build blocker when executable tools are available",
       "contractId": "runtime.behavior",
@@ -26688,7 +26703,7 @@
     {
       "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence",
       "file": "tests/unit/compile-intent-executable-actions.test.ts",
-      "line": 2972,
+      "line": 3103,
       "ancestors": [],
       "title": "compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence",
       "contractId": "runtime.behavior",
@@ -26696,6 +26711,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence",
       "dimension": "compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects inactive retained sessions outside build mode",
+      "file": "tests/unit/compile-intent-executable-actions.test.ts",
+      "line": 2969,
+      "ancestors": [],
+      "title": "compileIntent rejects inactive retained sessions outside build mode",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent rejects inactive retained sessions outside build mode",
+      "dimension": "compileIntent rejects inactive retained sessions outside build mode",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -26726,6 +26756,36 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent rejects mixed exec_command start and continuation input before dispatch",
       "dimension": "compileIntent rejects mixed exec_command start and continuation input before dispatch",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects partial declaration when another exec_command session remains live",
+      "file": "tests/unit/compile-intent-executable-actions.test.ts",
+      "line": 3001,
+      "ancestors": [],
+      "title": "compileIntent rejects partial declaration when another exec_command session remains live",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent rejects partial declaration when another exec_command session remains live",
+      "dimension": "compileIntent rejects partial declaration when another exec_command session remains live",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/compile-intent-executable-actions.test.ts :: compileIntent rejects retained sessions that are not active",
+      "file": "tests/unit/compile-intent-executable-actions.test.ts",
+      "line": 2936,
+      "ancestors": [],
+      "title": "compileIntent rejects retained sessions that are not active",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: compileIntent rejects retained sessions that are not active",
+      "dimension": "compileIntent rejects retained sessions that are not active",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -30346,6 +30406,81 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization rejects duplicate keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 175,
+      "ancestors": [],
+      "title": "finalization rejects duplicate keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization rejects duplicate keep-running session ids",
+      "dimension": "finalization rejects duplicate keep-running session ids",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization rejects empty keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 163,
+      "ancestors": [],
+      "title": "finalization rejects empty keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization rejects empty keep-running session ids",
+      "dimension": "finalization rejects empty keep-running session ids",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization rejects non-array keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 159,
+      "ancestors": [],
+      "title": "finalization rejects non-array keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization rejects non-array keep-running session ids",
+      "dimension": "finalization rejects non-array keep-running session ids",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization rejects non-string keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 171,
+      "ancestors": [],
+      "title": "finalization rejects non-string keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization rejects non-string keep-running session ids",
+      "dimension": "finalization rejects non-string keep-running session ids",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization rejects whitespace-padded keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 167,
+      "ancestors": [],
+      "title": "finalization rejects whitespace-padded keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization rejects whitespace-padded keep-running session ids",
+      "dimension": "finalization rejects whitespace-padded keep-running session ids",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: finalization still requires a non-empty user-facing message",
       "file": "tests/unit/finalization-policy-task-ledger.test.ts",
       "line": 75,
@@ -30356,6 +30491,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: finalization still requires a non-empty user-facing message",
       "dimension": "finalization still requires a non-empty user-facing message",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: goal-satisfied finalization accepts unique non-empty keep-running session ids",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 124,
+      "ancestors": [],
+      "title": "goal-satisfied finalization accepts unique non-empty keep-running session ids",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: goal-satisfied finalization accepts unique non-empty keep-running session ids",
+      "dimension": "goal-satisfied finalization accepts unique non-empty keep-running session ids",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -30401,6 +30551,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: goal-satisfied finalization rejects legacy closeout evidence fields",
       "dimension": "goal-satisfied finalization rejects legacy closeout evidence fields",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalization-policy-task-ledger.test.ts :: out-of-scope finalization cannot retain a running session",
+      "file": "tests/unit/finalization-policy-task-ledger.test.ts",
+      "line": 179,
+      "ancestors": [],
+      "title": "out-of-scope finalization cannot retain a running session",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: out-of-scope finalization cannot retain a running session",
+      "dimension": "out-of-scope finalization cannot retain a running session",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -30461,6 +30626,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: buildFinalizePayload omits recovered validation feedback from final report data",
       "dimension": "buildFinalizePayload omits recovered validation feedback from final report data",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/finalize-payload.test.ts :: buildFinalizePayload preserves intentional live session ids for downstream clients",
+      "file": "tests/unit/finalize-payload.test.ts",
+      "line": 190,
+      "ancestors": [],
+      "title": "buildFinalizePayload preserves intentional live session ids for downstream clients",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: buildFinalizePayload preserves intentional live session ids for downstream clients",
+      "dimension": "buildFinalizePayload preserves intentional live session ids for downstream clients",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -32118,7 +32298,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: agent evidence resolves relative process cwd from the recorded workspace root",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 641,
+      "line": 642,
       "ancestors": [],
       "title": "agent evidence resolves relative process cwd from the recorded workspace root",
       "contractId": "runtime.behavior",
@@ -32133,7 +32313,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: deliberator model requests use builder-rendered system messages",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1412,
+      "line": 1413,
       "ancestors": [],
       "title": "deliberator model requests use builder-rendered system messages",
       "contractId": "runtime.behavior",
@@ -32163,7 +32343,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder does not duplicate persisted validation feedback",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1233,
+      "line": 1234,
       "ancestors": [],
       "title": "Kestrel agent context builder does not duplicate persisted validation feedback",
       "contractId": "runtime.behavior",
@@ -32193,7 +32373,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder gives an exact visible todo continuation action",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1137,
+      "line": 1138,
       "ancestors": [],
       "title": "Kestrel agent context builder gives an exact visible todo continuation action",
       "contractId": "runtime.behavior",
@@ -32208,7 +32388,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder gives exact legacy finalize data recovery",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1085,
+      "line": 1086,
       "ancestors": [],
       "title": "Kestrel agent context builder gives exact legacy finalize data recovery",
       "contractId": "runtime.behavior",
@@ -32223,7 +32403,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder keeps bounded weather facts model-visible",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 674,
+      "line": 675,
       "ancestors": [],
       "title": "Kestrel agent context builder keeps bounded weather facts model-visible",
       "contractId": "runtime.behavior",
@@ -32238,7 +32418,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder keeps unrelated correction history visible",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1286,
+      "line": 1287,
       "ancestors": [],
       "title": "Kestrel agent context builder keeps unrelated correction history visible",
       "contractId": "runtime.behavior",
@@ -32253,7 +32433,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder owns compaction prompt messages",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 519,
+      "line": 520,
       "ancestors": [],
       "title": "Kestrel agent context builder owns compaction prompt messages",
       "contractId": "runtime.behavior",
@@ -32283,7 +32463,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder owns the provider-facing tool surface",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 553,
+      "line": 554,
       "ancestors": [],
       "title": "Kestrel agent context builder owns the provider-facing tool surface",
       "contractId": "runtime.behavior",
@@ -32298,7 +32478,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder owns tool-result summaries and model context",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 602,
+      "line": 603,
       "ancestors": [],
       "title": "Kestrel agent context builder owns tool-result summaries and model context",
       "contractId": "runtime.behavior",
@@ -32313,7 +32493,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder presents the latest successful result before older failures",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 830,
+      "line": 831,
       "ancestors": [],
       "title": "Kestrel agent context builder presents the latest successful result before older failures",
       "contractId": "runtime.behavior",
@@ -32328,7 +32508,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder preserves running and partial latest tool results",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 939,
+      "line": 940,
       "ancestors": [],
       "title": "Kestrel agent context builder preserves running and partial latest tool results",
       "contractId": "runtime.behavior",
@@ -32388,7 +32568,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder promotes recent failed tool results as compact evidence",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 749,
+      "line": 750,
       "ancestors": [],
       "title": "Kestrel agent context builder promotes recent failed tool results as compact evidence",
       "contractId": "runtime.behavior",
@@ -32418,7 +32598,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders duplicate exec_command start correction",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1177,
+      "line": 1178,
       "ancestors": [],
       "title": "Kestrel agent context builder renders duplicate exec_command start correction",
       "contractId": "runtime.behavior",
@@ -32433,7 +32613,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders exec_command lifecycle correction",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1002,
+      "line": 1003,
       "ancestors": [],
       "title": "Kestrel agent context builder renders exec_command lifecycle correction",
       "contractId": "runtime.behavior",
@@ -32448,7 +32628,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders plan document handoff correction",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1197,
+      "line": 1198,
       "ancestors": [],
       "title": "Kestrel agent context builder renders plan document handoff correction",
       "contractId": "runtime.behavior",
@@ -32478,7 +32658,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders structured SWE Verified benchmark context",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1345,
+      "line": 1346,
       "ancestors": [],
       "title": "Kestrel agent context builder renders structured SWE Verified benchmark context",
       "contractId": "runtime.behavior",
@@ -32493,7 +32673,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders structured Terminal-Bench benchmark context",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1380,
+      "line": 1381,
       "ancestors": [],
       "title": "Kestrel agent context builder renders structured Terminal-Bench benchmark context",
       "contractId": "runtime.behavior",
@@ -32508,7 +32688,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders structured validation and repair prompts",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 975,
+      "line": 976,
       "ancestors": [],
       "title": "Kestrel agent context builder renders structured validation and repair prompts",
       "contractId": "runtime.behavior",
@@ -32523,7 +32703,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: Kestrel agent context builder renders the exact rejected structured response for contract repair",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1050,
+      "line": 1051,
       "ancestors": [],
       "title": "Kestrel agent context builder renders the exact rejected structured response for contract repair",
       "contractId": "runtime.behavior",
@@ -32583,7 +32763,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: model tool action parsing delegates provider-facing tool rendering to the builder",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1428,
+      "line": 1429,
       "ancestors": [],
       "title": "model tool action parsing delegates provider-facing tool rendering to the builder",
       "contractId": "runtime.behavior",
@@ -32598,7 +32778,7 @@
     {
       "identity": "tests/unit/kestrel-agent-context-builder.test.ts :: tool-result and benchmark repair renderers delegate model-visible text to the builder",
       "file": "tests/unit/kestrel-agent-context-builder.test.ts",
-      "line": 1440,
+      "line": 1441,
       "ancestors": [],
       "title": "tool-result and benchmark repair renderers delegate model-visible text to the builder",
       "contractId": "runtime.behavior",
@@ -36423,7 +36603,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: cannot_satisfy description rejects unfinished build progress as a blocker",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 154,
+      "line": 160,
       "ancestors": [],
       "title": "cannot_satisfy description rejects unfinished build progress as a blocker",
       "contractId": "runtime.behavior",
@@ -36438,7 +36618,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: cannot_satisfy parser honors advertised narrowed reason enum",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 166,
+      "line": 172,
       "ancestors": [],
       "title": "cannot_satisfy parser honors advertised narrowed reason enum",
       "contractId": "runtime.behavior",
@@ -36468,7 +36648,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: finalize control tool rejects model-facing policy_blocked status",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 341,
+      "line": 347,
       "ancestors": [],
       "title": "finalize control tool rejects model-facing policy_blocked status",
       "contractId": "runtime.behavior",
@@ -36483,7 +36663,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: handoff_to_build preserves optional handoff data",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 216,
+      "line": 222,
       "ancestors": [],
       "title": "handoff_to_build preserves optional handoff data",
       "contractId": "runtime.behavior",
@@ -36513,7 +36693,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: multiple workspace tool calls become an ordered canonical tool batch",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 276,
+      "line": 282,
       "ancestors": [],
       "title": "multiple workspace tool calls become an ordered canonical tool batch",
       "contractId": "runtime.behavior",
@@ -36543,7 +36723,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: terminal control tools are exclusive",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 325,
+      "line": 331,
       "ancestors": [],
       "title": "terminal control tools are exclusive",
       "contractId": "runtime.behavior",
@@ -36558,7 +36738,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: todo update can be combined with workspace work",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 297,
+      "line": 303,
       "ancestors": [],
       "title": "todo update can be combined with workspace work",
       "contractId": "runtime.behavior",
@@ -36573,7 +36753,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: todo update description explains code-change notes without benchmark policy",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 248,
+      "line": 254,
       "ancestors": [],
       "title": "todo update description explains code-change notes without benchmark policy",
       "contractId": "runtime.behavior",
@@ -36588,7 +36768,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: unknown provider aliases fail before dispatch",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 356,
+      "line": 362,
       "ancestors": [],
       "title": "unknown provider aliases fail before dispatch",
       "contractId": "runtime.behavior",
@@ -39798,7 +39978,7 @@
     {
       "identity": "tests/unit/prompt-builder.test.ts :: plan-mode deliberator prompt requires session plan before handoff for execution-ready software build requests",
       "file": "tests/unit/prompt-builder.test.ts",
-      "line": 191,
+      "line": 192,
       "ancestors": [],
       "title": "plan-mode deliberator prompt requires session plan before handoff for execution-ready software build requests",
       "contractId": "runtime.behavior",
@@ -39873,7 +40053,7 @@
     {
       "identity": "tests/unit/prompt-builder.test.ts :: shared deliberator prompt keeps authoritative evidence and structured response guidance across modes",
       "file": "tests/unit/prompt-builder.test.ts",
-      "line": 174,
+      "line": 175,
       "ancestors": [],
       "title": "shared deliberator prompt keeps authoritative evidence and structured response guidance across modes",
       "contractId": "runtime.behavior",
@@ -43233,7 +43413,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: approval resume rejects corrupted persisted nextAction before executing the resumed step",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1857,
+      "line": 1921,
       "ancestors": [],
       "title": "approval resume rejects corrupted persisted nextAction before executing the resumed step",
       "contractId": "runtime.behavior",
@@ -43248,7 +43428,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: approval resume rejects malformed pendingApproval before executing the resumed step",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1913,
+      "line": 1977,
       "ancestors": [],
       "title": "approval resume rejects malformed pendingApproval before executing the resumed step",
       "contractId": "runtime.behavior",
@@ -43263,7 +43443,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: auto-provisioned dev tools block on invalid deterministic worktree collisions",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1594,
+      "line": 1658,
       "ancestors": [],
       "title": "auto-provisioned dev tools block on invalid deterministic worktree collisions",
       "contractId": "runtime.behavior",
@@ -43278,7 +43458,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: auto-provisioned dev tools block orphan reclaim while the previous run lease owner is still active",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1768,
+      "line": 1832,
       "ancestors": [],
       "title": "auto-provisioned dev tools block orphan reclaim while the previous run lease owner is still active",
       "contractId": "runtime.behavior",
@@ -43293,7 +43473,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: auto-provisioned dev tools reclaim orphaned deterministic worktrees",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1678,
+      "line": 1742,
       "ancestors": [],
       "title": "auto-provisioned dev tools reclaim orphaned deterministic worktrees",
       "contractId": "runtime.behavior",
@@ -43308,7 +43488,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: cancelActiveRun releases persisted managed worktree leases and records terminal events",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1400,
+      "line": 1464,
       "ancestors": [],
       "title": "cancelActiveRun releases persisted managed worktree leases and records terminal events",
       "contractId": "runtime.behavior",
@@ -43323,7 +43503,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: COMPLETED transitions normalize react.terminal and force phase DONE",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2392,
+      "line": 2456,
       "ancestors": [],
       "title": "COMPLETED transitions normalize react.terminal and force phase DONE",
       "contractId": "runtime.behavior",
@@ -43338,7 +43518,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: continuation approval fails hard when committed continuation state is stale",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3666,
+      "line": 3730,
       "ancestors": [],
       "title": "continuation approval fails hard when committed continuation state is stale",
       "contractId": "runtime.behavior",
@@ -43353,7 +43533,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: continuation approval resumes and completes with cumulative step counting",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3430,
+      "line": 3494,
       "ancestors": [],
       "title": "continuation approval resumes and completes with cumulative step counting",
       "contractId": "runtime.behavior",
@@ -43368,7 +43548,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: continuation approval tolerates corrupted wait metadata when terminal reason is preserved",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3552,
+      "line": 3616,
       "ancestors": [],
       "title": "continuation approval tolerates corrupted wait metadata when terminal reason is preserved",
       "contractId": "runtime.behavior",
@@ -43383,7 +43563,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: continuation decline leaves terminal session without stale active wait",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3503,
+      "line": 3567,
       "ancestors": [],
       "title": "continuation decline leaves terminal session without stale active wait",
       "contractId": "runtime.behavior",
@@ -43398,7 +43578,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: continuation requests continue past the former third-grant cap",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3613,
+      "line": 3677,
       "ancestors": [],
       "title": "continuation requests continue past the former third-grant cap",
       "contractId": "runtime.behavior",
@@ -43473,7 +43653,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: dev shell tools clear missing persisted managed worktree bindings before auto-provisioning",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1485,
+      "line": 1549,
       "ancestors": [],
       "title": "dev shell tools clear missing persisted managed worktree bindings before auto-provisioning",
       "contractId": "runtime.behavior",
@@ -43548,7 +43728,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: fresh turn reset clears stale pending continuation offers and canonical plan handoff wait state",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2915,
+      "line": 2979,
       "ancestors": [],
       "title": "fresh turn reset clears stale pending continuation offers and canonical plan handoff wait state",
       "contractId": "runtime.behavior",
@@ -43563,7 +43743,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: fresh turn reset preserves executable intent state for explicit blocked-resume lineage",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2729,
+      "line": 2793,
       "ancestors": [],
       "title": "fresh turn reset preserves executable intent state for explicit blocked-resume lineage",
       "contractId": "runtime.behavior",
@@ -43578,7 +43758,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: fresh user turns clear stale finalized control state before routing",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2432,
+      "line": 2496,
       "ancestors": [],
       "title": "fresh user turns clear stale finalized control state before routing",
       "contractId": "runtime.behavior",
@@ -43593,7 +43773,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: legacy execution sessions are normalized to react.exec.* steps at run start",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3009,
+      "line": 3073,
       "ancestors": [],
       "title": "legacy execution sessions are normalized to react.exec.* steps at run start",
       "contractId": "runtime.behavior",
@@ -43608,7 +43788,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: managed failed mutation tools roll back changed files to the pre-action checkpoint",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2039,
+      "line": 2103,
       "ancestors": [],
       "title": "managed failed mutation tools roll back changed files to the pre-action checkpoint",
       "contractId": "runtime.behavior",
@@ -43683,7 +43863,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal fresh-turn failure",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3227,
+      "line": 3291,
       "ancestors": [],
       "title": "MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal fresh-turn failure",
       "contractId": "runtime.behavior",
@@ -43698,7 +43878,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3176,
+      "line": 3240,
       "ancestors": [],
       "title": "MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion",
       "contractId": "runtime.behavior",
@@ -43713,7 +43893,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: model-call continuation approval preserves cumulative model-call accounting",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3359,
+      "line": 3423,
       "ancestors": [],
       "title": "model-call continuation approval preserves cumulative model-call accounting",
       "contractId": "runtime.behavior",
@@ -43728,7 +43908,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: reference-react registration uses source filesystem mutations from runtime service by default",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 1981,
+      "line": 2045,
       "ancestors": [],
       "title": "reference-react registration uses source filesystem mutations from runtime service by default",
       "contractId": "runtime.behavior",
@@ -43743,7 +43923,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: reference-react transitions keep working plan without narration memory",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2335,
+      "line": 2399,
       "ancestors": [],
       "title": "reference-react transitions keep working plan without narration memory",
       "contractId": "runtime.behavior",
@@ -43758,7 +43938,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: repeated mode-blocked waits stay waiting instead of tripping the loop guard",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3119,
+      "line": 3183,
       "ancestors": [],
       "title": "repeated mode-blocked waits stay waiting instead of tripping the loop guard",
       "contractId": "runtime.behavior",
@@ -43773,7 +43953,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max steps",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3069,
+      "line": 3133,
       "ancestors": [],
       "title": "repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max steps",
       "contractId": "runtime.behavior",
@@ -43788,7 +43968,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: run-scoped historical state reconstructs the target run snapshot",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 3703,
+      "line": 3767,
       "ancestors": [],
       "title": "run-scoped historical state reconstructs the target run snapshot",
       "contractId": "runtime.behavior",
@@ -43816,6 +43996,21 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: successful finalization leaves an intentionally retained exec_command session running",
+      "file": "tests/unit/runtime-state-machine-hardening.test.ts",
+      "line": 1400,
+      "ancestors": [],
+      "title": "successful finalization leaves an intentionally retained exec_command session running",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: successful finalization leaves an intentionally retained exec_command session running",
+      "dimension": "successful finalization leaves an intentionally retained exec_command session running",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: terminal managed worktree runs emit fan-in candidates for changed files",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
       "line": 916,
@@ -43833,7 +44028,7 @@
     {
       "identity": "tests/unit/runtime-state-machine-hardening.test.ts :: WAITING transitions persist normalized react.wait envelope and replay waiting/resumed events",
       "file": "tests/unit/runtime-state-machine-hardening.test.ts",
-      "line": 2273,
+      "line": 2337,
       "ancestors": [],
       "title": "WAITING transitions persist normalized react.wait envelope and replay waiting/resumed events",
       "contractId": "runtime.behavior",
