@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import type { Session } from "@/lib/auth-types";
+import { getSessionCookie } from "better-auth/cookies";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
@@ -36,7 +37,10 @@ export type MobileSessionDependencies = {
 
 const dependencies: MobileSessionDependencies = {
   getSession: async ({ headers }) =>
-    (await auth.api.getSession({ headers })) as Session | null,
+    (await auth.api.getSession({
+      headers,
+      query: { disableCookieCache: true },
+    })) as Session | null,
   findMembership: async ({ organizationId, userId }) => {
     const member = await knowledgeDb.query.members.findFirst({
       where: (table, { and, eq }) =>
@@ -146,6 +150,7 @@ export function mobileSessionFailureFacts(request: Request, error: unknown) {
     status,
     code,
     hasCookie: request.headers.has("cookie"),
+    hasBetterAuthSessionCookie: Boolean(getSessionCookie(request.headers)),
     hasAuthorization: request.headers.has("authorization"),
     hasApiKey: request.headers.has("x-api-key"),
   };
