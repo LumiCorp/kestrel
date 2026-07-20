@@ -79,11 +79,19 @@ the current supported versions.
 
 ## Verification and evidence
 
-Kestrel uses deterministic tests, prompt scenarios, evaluation specifications,
-package checks, and product-specific validation to detect regressions before a
-release. The generated [quality scorecard](docs/generated/quality-scorecard.json)
-summarizes accumulating risk, while direct tests and release checks determine
-whether a particular revision is ready.
+Kestrel uses registered executable contracts, package checks, and
+product-specific validation to detect regressions before a release. Every
+retained automated test belongs to a required proof lane; high- and
+critical-risk contracts also carry current killed-mutation evidence. Run the
+same selection locally with `pnpm run ci:local -- --base origin/main` and verify
+the registry with `pnpm run test-proofs:check`.
+
+Ruhroh owns model-quality evaluation. Kestrel's `pnpm run ruhroh:validate`
+command validates evaluation configuration only; it does not claim to execute
+an evaluation. The generated
+[quality scorecard](docs/generated/quality-scorecard.json) summarizes
+accumulating risk, while direct contract proofs determine whether a particular
+revision is ready.
 
 ## Read Next
 

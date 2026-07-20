@@ -78,14 +78,13 @@ Repository baseline:
 ```bash
 pnpm run governance:check
 pnpm run test
-pnpm run prompt-suite
+pnpm run test-proofs:check
 ```
 
-Runtime/core work also requires:
-
-```bash
-pnpm run evals:release-check
-```
+Use `pnpm run ci:local -- --base origin/main` to execute the lanes selected by
+the same ownership planner as pull-request CI. Evaluation configuration changes
+also require `pnpm run ruhroh:validate`; high- or critical-risk changes require
+fresh `pnpm run test-proofs:mutations` evidence.
 
 Docs work:
 

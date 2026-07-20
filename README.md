@@ -186,14 +186,14 @@ is considered ready, run the shared gates:
 ```bash
 pnpm run governance:check
 pnpm run test
-pnpm run prompt-suite
-pnpm run evals:release-check
+pnpm run test-proofs:check
+pnpm run ruhroh:validate # only when evaluation configuration changes
 ```
 
-These gates protect architecture boundaries, public contracts, deterministic
-replay, model-visible behavior, package compatibility, and declarative Ruhroh
-evaluation inputs. See [Reliability](RELIABILITY.md) for the verification and
-incident model.
+The proof registry assigns every retained automated test to a named contract
+and required CI lane. High- and critical-risk contracts also carry current
+killed-mutation evidence. Ruhroh owns model-quality evaluation execution;
+Kestrel validates only its declarative Ruhroh configuration.
 
 ## Project Boundaries
 

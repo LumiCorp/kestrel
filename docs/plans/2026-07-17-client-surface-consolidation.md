@@ -70,6 +70,5 @@ component or a static control catalog.
 ## Validation
 
 - Focused settings, composer, palette, and accessibility tests for each slice.
-- `pnpm run governance:check`, `pnpm run test`, and `pnpm run prompt-suite`.
-- Run `pnpm run evals:release-check` when a slice changes shared runtime or
-  protocol behavior.
+- `pnpm run governance:check`, `pnpm run test`, and `pnpm run test-proofs:check`.
+- Refresh mutation evidence when a slice changes high- or critical-risk behavior.

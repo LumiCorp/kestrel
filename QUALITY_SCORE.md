@@ -48,6 +48,11 @@ broad conclusion.
 The scorecard answers “where might risk be accumulating?” It does not make an
 automatic product or release decision.
 
+Direct readiness is established by the required contract-proof lanes. Locally,
+run `pnpm run governance:check`, `pnpm run test`, and
+`pnpm run test-proofs:check`; evaluation configuration changes also run
+`pnpm run ruhroh:validate`.
+
 ## Current data
 
 The generated scorecard is available at

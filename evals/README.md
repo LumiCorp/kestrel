@@ -11,12 +11,11 @@ overrides are rejected.
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm run evals:validate
-pnpm run evals:release-check
-pnpm run check:evals
+pnpm run ruhroh:validate
 ```
 
-The gate is credential-free. It verifies:
+This is configuration validation, not evaluation execution. It is
+credential-free and verifies:
 
 - complete behavior coverage in `migration/ownership-ledger.json`
 - concrete test evidence for every runtime-owned replacement
