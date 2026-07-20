@@ -407,6 +407,11 @@ async function createTransport(input: {
     return new ctor({
       command: server.command,
       args: server.args ?? [],
+      env: Object.fromEntries(
+        Object.entries(input.env).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      ),
     });
   }
 

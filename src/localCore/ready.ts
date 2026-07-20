@@ -240,7 +240,6 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     dbMode: database.mode,
     database,
     ...(migrations !== undefined ? { migrations } : {}),
-    databaseUrl: database.databaseUrl,
     databaseSocketPath: database.socketPath,
     settingsReady: true,
     workspaceRegistryReady: true,
@@ -287,7 +286,6 @@ async function resolveDatabaseStatus(
         initialized: true,
         running: true,
         identityVerified: true,
-        databaseUrl,
       };
     } catch (error) {
       return {
@@ -298,7 +296,6 @@ async function resolveDatabaseStatus(
         initialized: false,
         running: false,
         identityVerified: false,
-        databaseUrl,
         lastError: {
           code: "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED",
           message: error instanceof Error ? error.message : String(error),

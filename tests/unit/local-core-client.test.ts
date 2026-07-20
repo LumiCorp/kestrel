@@ -94,6 +94,7 @@ test("LocalCoreClient strictly parses nested runtime configuration and credentia
           { id: "provider.anthropic.default", configured: false },
           { id: "tool.tavily.default", configured: false },
           { id: "tool.visual-crossing.default", configured: false },
+          { id: "data.database.external", configured: false },
         ],
       },
     };
