@@ -1665,13 +1665,18 @@ function validateOperatorControlPayload(
     record.action !== "reply" &&
     record.action !== "steer" &&
     record.action !== "retry" &&
+    record.action !== "continue_waiting" &&
     record.action !== "focus_thread" &&
     record.action !== "resolve_context_checkpoint" &&
     record.action !== "approve_assembly_change" &&
     record.action !== "reject_assembly_change" &&
     record.action !== "spawn_child_thread" &&
     record.action !== "supersede_child_thread" &&
-    record.action !== "resolve_fan_in_checkpoint"
+    record.action !== "resolve_fan_in_checkpoint" &&
+    record.action !== "enqueue_follow_up" &&
+    record.action !== "edit_follow_up" &&
+    record.action !== "cancel_follow_up" &&
+    record.action !== "resume_follow_up_queue"
   ) {
     throw new Error("operator.control payload.action is invalid");
   }
@@ -1687,6 +1692,9 @@ function validateOperatorControlPayload(
     throw new Error(
       "operator.control payload.requestId must be a string when present"
     );
+  }
+  if (record.followUpId !== undefined && typeof record.followUpId !== "string") {
+    throw new Error("operator.control payload.followUpId must be a string when present");
   }
   if (
     record.proposalId !== undefined &&
@@ -1729,6 +1737,18 @@ function validateOperatorControlPayload(
     throw new Error(
       "operator.control payload.message must be a string when present"
     );
+  }
+  if (
+    record.attachmentIds !== undefined &&
+    (Array.isArray(record.attachmentIds) === false || record.attachmentIds.some((id) => typeof id !== "string" || id.trim().length === 0))
+  ) {
+    throw new Error("operator.control payload.attachmentIds must contain non-empty strings");
+  }
+  if (record.interactionMode !== undefined && record.interactionMode !== "chat" && record.interactionMode !== "plan" && record.interactionMode !== "build") {
+    throw new Error("operator.control payload.interactionMode is invalid");
+  }
+  if (record.actSubmode !== undefined && record.actSubmode !== "strict" && record.actSubmode !== "safe" && record.actSubmode !== "full_auto") {
+    throw new Error("operator.control payload.actSubmode is invalid");
   }
   if (record.title !== undefined && typeof record.title !== "string") {
     throw new Error(

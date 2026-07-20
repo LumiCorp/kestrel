@@ -9,6 +9,10 @@ import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
 const THEME_STORAGE_KEY = "kchat:web:theme-mode";
+const INTERACTION_STATE_STORAGE_KEY = "kestrel:desktop-interaction-state:v1";
+const LEGACY_DRAFTS_STORAGE_KEY = "kchat:web:composer-drafts:v1";
+const LEGACY_HISTORY_STORAGE_KEY = "kchat:web:prompt-history:v1";
+export const MAX_PROMPT_HISTORY = 100;
 export const MAX_PERSISTED_TRANSCRIPT_BYTES = 6 * 1024 * 1024;
 export const MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD = 500;
 const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
@@ -32,6 +36,9 @@ export interface RendererThread {
   transcript: RendererTranscriptLine[];
   pendingWaitEventType?: string | undefined;
   mode: RendererMode;
+  draft: string;
+  draftAttachmentIds: string[];
+  promptHistory: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
 }
@@ -48,7 +55,18 @@ export function readDesktopRendererState(
 ): DesktopRendererState {
   const entries = { ...(uiState?.entries ?? {}) };
   const store = parseThreadStore(entries[THREADS_STORAGE_KEY]);
-  const threads = collectThreads(store);
+  const interactionState = parseInteractionState(entries[INTERACTION_STATE_STORAGE_KEY]);
+  const legacyDrafts = parseLegacyStringMap(entries[LEGACY_DRAFTS_STORAGE_KEY]);
+  const legacyHistory = parseLegacyHistory(entries[LEGACY_HISTORY_STORAGE_KEY]);
+  const threads = collectThreads(store).map((thread) => {
+    const interaction = interactionState[thread.id] ?? interactionState[thread.sessionId];
+    return {
+      ...thread,
+      draft: interaction?.draft ?? legacyDrafts[thread.id] ?? legacyDrafts[thread.sessionId] ?? "",
+      draftAttachmentIds: interaction?.attachmentIds ?? [],
+      promptHistory: interaction?.promptHistory ?? legacyHistory[thread.id] ?? legacyHistory[thread.sessionId] ?? [],
+    };
+  });
   const normalizedThreads = threads.length > 0 ? threads : [createRendererThread()];
   const requestedActive = entries[ACTIVE_THREAD_STORAGE_KEY];
   const activeThreadId = normalizedThreads.some((thread) => thread.id === requestedActive)
@@ -73,6 +91,9 @@ export function createRendererThread(input: { projectPath?: string | undefined }
     updatedAt: now,
     transcript: [],
     mode: "build",
+    draft: "",
+    draftAttachmentIds: [],
+    promptHistory: [],
     rawSummary: {},
     rawState: {},
   };
@@ -130,6 +151,36 @@ export function selectRendererThread(
   return state.threads.some((thread) => thread.id === threadId)
     ? { ...state, activeThreadId: threadId }
     : state;
+}
+
+export function updateRendererDraft(
+  state: DesktopRendererState,
+  threadId: string,
+  draft: string,
+): DesktopRendererState {
+  return updateRendererThread(state, threadId, (thread) => ({ ...thread, draft }));
+}
+
+export function updateRendererDraftAttachments(
+  state: DesktopRendererState,
+  threadId: string,
+  attachmentIds: string[],
+): DesktopRendererState {
+  return updateRendererThread(state, threadId, (thread) => ({ ...thread, draftAttachmentIds: attachmentIds }));
+}
+
+export function acceptRendererPrompt(
+  state: DesktopRendererState,
+  threadId: string,
+  prompt: string,
+): DesktopRendererState {
+  return updateRendererThread(state, threadId, (thread) => {
+    const trimmed = prompt.trim();
+    const history = thread.promptHistory.at(-1) === trimmed
+      ? thread.promptHistory
+      : [...thread.promptHistory, trimmed].slice(-MAX_PROMPT_HISTORY);
+    return { ...thread, draft: "", draftAttachmentIds: [], promptHistory: history };
+  });
 }
 
 export function resolveRendererThreadProjectPath(input: {
@@ -195,6 +246,14 @@ export function serializeDesktopRendererState(
     [THREADS_STORAGE_KEY]: JSON.stringify({ summaries, states }),
     [ACTIVE_THREAD_STORAGE_KEY]: state.activeThreadId,
     [THEME_STORAGE_KEY]: state.theme,
+    [INTERACTION_STATE_STORAGE_KEY]: JSON.stringify({
+      version: "desktop-interaction-state-v1",
+      threads: Object.fromEntries(state.threads.map((thread) => [thread.id, {
+        draft: thread.draft,
+        attachmentIds: thread.draftAttachmentIds,
+        promptHistory: thread.promptHistory.slice(-MAX_PROMPT_HISTORY),
+      }])),
+    }),
   };
 }
 
@@ -283,6 +342,52 @@ function parseThreadStore(raw: string | undefined): {
   }
 }
 
+interface ParsedInteractionState {
+  draft: string;
+  attachmentIds: string[];
+  promptHistory: string[];
+}
+
+function parseInteractionState(raw: string | undefined): Record<string, ParsedInteractionState> {
+  if (raw === undefined) return {};
+  try {
+    const root = asRecord(JSON.parse(raw));
+    if (root?.version !== "desktop-interaction-state-v1") return {};
+    const threads = asRecord(root.threads) ?? {};
+    return Object.fromEntries(Object.entries(threads).flatMap(([id, value]) => {
+      const record = asRecord(value);
+      if (record === undefined) return [];
+      return [[id, {
+        draft: typeof record.draft === "string" ? record.draft : "",
+        attachmentIds: parseStringArray(record.attachmentIds, 8),
+        promptHistory: parseStringArray(record.promptHistory, MAX_PROMPT_HISTORY),
+      }]];
+    }));
+  } catch { return {}; }
+}
+
+function parseLegacyStringMap(raw: string | undefined): Record<string, string> {
+  if (raw === undefined) return {};
+  try {
+    const value = asRecord(JSON.parse(raw));
+    return Object.fromEntries(Object.entries(value ?? {}).flatMap(([key, entry]) => typeof entry === "string" ? [[key, entry]] : []));
+  } catch { return {}; }
+}
+
+function parseLegacyHistory(raw: string | undefined): Record<string, string[]> {
+  if (raw === undefined) return {};
+  try {
+    const value = asRecord(JSON.parse(raw));
+    return Object.fromEntries(Object.entries(value ?? {}).map(([key, entry]) => [key, parseStringArray(entry, MAX_PROMPT_HISTORY)]));
+  } catch { return {}; }
+}
+
+function parseStringArray(value: unknown, max: number): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => typeof entry === "string" && entry.trim().length > 0 ? [entry] : []).slice(-max)
+    : [];
+}
+
 function collectThreads(store: {
   summaries: unknown[];
   states: Record<string, unknown>;
@@ -326,6 +431,9 @@ function collectThreads(store: {
         ? { pendingWaitEventType: rawState.pendingWaitEventType.trim() }
         : {}),
       mode,
+      draft: "",
+      draftAttachmentIds: [],
+      promptHistory: [],
       rawSummary,
       rawState,
     }];

@@ -170,6 +170,7 @@ export interface KestrelRuntimeEnvironment {
 
 export interface RuntimeFactoryWithStoreOptions {
   resolveEnvironment?: ((profile: TuiProfile) => KestrelRuntimeEnvironment) | undefined;
+  resolveAttachments?: ((threadId: string, attachmentIds: string[]) => Promise<RunTurnAttachment[]>) | undefined;
 }
 
 export interface KestrelChatRuntimeOptions {
@@ -648,14 +649,20 @@ export class KestrelChatRuntime {
       | "reply"
       | "steer"
       | "retry"
+      | "continue_waiting"
       | "focus_thread"
       | "resolve_context_checkpoint"
       | "approve_assembly_change"
       | "reject_assembly_change"
       | "spawn_child_thread"
       | "supersede_child_thread"
-      | "resolve_fan_in_checkpoint";
+      | "resolve_fan_in_checkpoint"
+      | "enqueue_follow_up"
+      | "edit_follow_up"
+      | "cancel_follow_up"
+      | "resume_follow_up_queue";
     threadId: string;
+    followUpId?: string | undefined;
     requestId?: string | undefined;
     proposalId?: string | undefined;
     checkpointId?: string | undefined;
@@ -672,6 +679,9 @@ export class KestrelChatRuntime {
       | undefined;
     message?: string | undefined;
     attachments?: RunTurnAttachment[] | undefined;
+    attachmentIds?: string[] | undefined;
+    interactionMode?: "chat" | "plan" | "build" | undefined;
+    actSubmode?: "strict" | "safe" | "full_auto" | undefined;
     title?: string | undefined;
     rolePrompt?: string | undefined;
     goal?: string | undefined;
@@ -721,6 +731,7 @@ export class KestrelChatRuntime {
         message: input.message ?? (input.action === "reject" ? "Rejected." : "Approved."),
         issuedBy: operatorIssuedBy,
         approve: input.action !== "reject",
+        ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
         ...(input.allowToolClasses !== undefined ? { allowedToolClasses: input.allowToolClasses } : {}),
         ...(input.allowCapabilities !== undefined ? { allowedCapabilities: input.allowCapabilities } : {}),
       });
@@ -737,6 +748,8 @@ export class KestrelChatRuntime {
         threadId: input.threadId,
         reason: input.message,
       });
+    } else if (input.action === "continue_waiting") {
+      await threadRuntime.continueWaiting({ threadId: input.threadId });
     } else if (input.action === "focus_thread") {
       await threadRuntime.focusThread({
         threadId: input.threadId,
@@ -843,6 +856,40 @@ export class KestrelChatRuntime {
         disposition: input.actionValue,
         issuedBy: operatorIssuedBy,
       });
+    } else if (input.action === "enqueue_follow_up") {
+      const followUpId = input.followUpId?.trim();
+      const message = input.message?.trim();
+      if (followUpId === undefined || followUpId.length === 0 || message === undefined || message.length === 0) {
+        throw createRuntimeFailure(
+          "OPERATOR_FOLLOW_UP_INPUT_INVALID",
+          "Enqueuing a follow-up requires followUpId and message.",
+          { threadId: input.threadId },
+        );
+      }
+      await threadRuntime.enqueueFollowUp({
+        threadId: input.threadId,
+        followUpId,
+        message: input.message!,
+        ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
+        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+        issuedBy: operatorIssuedBy,
+      });
+    } else if (input.action === "edit_follow_up") {
+      const followUpId = input.followUpId?.trim();
+      const message = input.message?.trim();
+      if (followUpId === undefined || followUpId.length === 0 || message === undefined || message.length === 0) {
+        throw createRuntimeFailure("OPERATOR_FOLLOW_UP_INPUT_INVALID", "Editing a follow-up requires followUpId and message.");
+      }
+      await threadRuntime.editFollowUp({ threadId: input.threadId, followUpId, message });
+    } else if (input.action === "cancel_follow_up") {
+      const followUpId = input.followUpId?.trim();
+      if (followUpId === undefined || followUpId.length === 0) {
+        throw createRuntimeFailure("OPERATOR_FOLLOW_UP_INPUT_INVALID", "Cancelling a follow-up requires followUpId.");
+      }
+      await threadRuntime.cancelFollowUp({ threadId: input.threadId, followUpId });
+    } else if (input.action === "resume_follow_up_queue") {
+      await threadRuntime.resumeFollowUpQueue({ threadId: input.threadId });
     } else if (input.action === "resolve_context_checkpoint") {
       const checkpointAction = input.actionValue;
       if (
@@ -886,7 +933,12 @@ export class KestrelChatRuntime {
   }
 
   async cancelActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
-    return this.kestrel.cancelActiveRun(sessionId);
+    const result = await this.kestrel.cancelActiveRun(sessionId);
+    const thread = await this.ensureMainThread(sessionId);
+    if (thread !== undefined && this.threadRuntime !== undefined) {
+      await this.threadRuntime.pauseFollowUpQueue({ threadId: thread.threadId, reason: "cancelled" });
+    }
+    return result;
   }
 
   async getRetainedProviderReasoning(input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) {
@@ -998,6 +1050,7 @@ export function createRuntimeFactoryWithStore(
         store,
         async () => {},
         environment,
+        options.resolveAttachments,
       );
     },
   };
@@ -1015,6 +1068,7 @@ function createRuntimeWithStore(
   store: SessionStore,
   closeStore: () => Promise<void>,
   environment?: KestrelRuntimeEnvironment | undefined,
+  resolveAttachments?: RuntimeFactoryWithStoreOptions["resolveAttachments"],
 ): RuntimeBootstrap {
   const runtimeEnv = environment?.runtimeEnv ?? process.env;
   const modelEnv = environment?.modelEnv ?? process.env;
@@ -1182,6 +1236,7 @@ function createRuntimeWithStore(
       getSession: (sessionId) => kestrel.getSession(sessionId),
     }),
     profile,
+    ...(resolveAttachments !== undefined ? { resolveAttachments } : {}),
     onTaskUpdate: (update) => {
       void persistDelegationTaskUpdateToGraph(taskGraphStore, update).catch(() => {
         // Task graph persistence is additive and should not block runtime task updates.

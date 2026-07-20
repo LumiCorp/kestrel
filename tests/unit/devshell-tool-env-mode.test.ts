@@ -17,6 +17,7 @@ import type {
   DevProcessWriteResult,
 } from "../../src/devshell/contracts.js";
 import { devProcessStartTool } from "../../tools/devshell/processStart.js";
+import { execCommandTool } from "../../tools/devshell/execCommand.js";
 import { devShellRunTool } from "../../tools/devshell/run.js";
 
 test("dev.shell.run allows per-call envMode down-scope from inherited profiles", async () => {
@@ -158,6 +159,30 @@ test("dev.shell.run carries managed worktree guard mode from runtime context", a
   });
 
   assert.deepEqual(service.execInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    managedWorktree: true,
+  });
+});
+
+test("exec_command preserves direct checkpoint guard mode in managed worktrees", async () => {
+  const service = new CapturingDevShellService();
+  const context = {
+    devShell: {
+      enabled: true,
+      sourceWriteAuthority: "source_write" as const,
+      sourceWriteGuard: {
+        managedWorktree: true,
+      },
+    },
+    devShellService: service,
+  };
+
+  await execCommandTool.createHandler(context)({
+    command: "pnpm run dev",
+  });
+
+  assert.equal(service.startInputs[0]?.sourceWriteAuthority, "source_write");
+  assert.deepEqual(service.startInputs[0]?.sourceWriteGuard, {
     enabled: true,
     managedWorktree: true,
   });

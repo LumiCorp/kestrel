@@ -64,6 +64,18 @@ const desktopBridge: DesktopBridge = {
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent> {
     return ipcRenderer.invoke("desktop:run-turn", request);
   },
+  selectAttachments(threadId) {
+    return ipcRenderer.invoke("desktop:select-attachments", threadId);
+  },
+  listAttachments(threadId) {
+    return ipcRenderer.invoke("desktop:list-attachments", threadId);
+  },
+  removeAttachment(threadId, attachmentId) {
+    return ipcRenderer.invoke("desktop:remove-attachment", threadId, attachmentId);
+  },
+  submitOperatorControl(request) {
+    return ipcRenderer.invoke("desktop:operator-control", request);
+  },
   cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent> {
     return ipcRenderer.invoke("desktop:cancel-run", request);
   },

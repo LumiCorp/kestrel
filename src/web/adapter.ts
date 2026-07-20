@@ -564,6 +564,7 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         const response = await sendCommand(activeClient, "operator.control", {
           action: command.action,
           threadId: command.threadId,
+          ...(command.followUpId !== undefined ? { followUpId: command.followUpId } : {}),
           ...(command.requestId !== undefined ? { requestId: command.requestId } : {}),
           ...(command.proposalId !== undefined ? { proposalId: command.proposalId } : {}),
           ...(command.checkpointId !== undefined ? { checkpointId: command.checkpointId } : {}),
@@ -571,6 +572,9 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           ...(command.actionValue !== undefined ? { actionValue: command.actionValue } : {}),
           ...(command.message !== undefined ? { message: command.message } : {}),
           ...(command.attachments !== undefined ? { attachments: command.attachments } : {}),
+          ...(command.attachmentIds !== undefined ? { attachmentIds: command.attachmentIds } : {}),
+          ...(command.interactionMode !== undefined ? { interactionMode: command.interactionMode } : {}),
+          ...(command.actSubmode !== undefined ? { actSubmode: command.actSubmode } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.rolePrompt !== undefined ? { rolePrompt: command.rolePrompt } : {}),
           ...(command.goal !== undefined ? { goal: command.goal } : {}),

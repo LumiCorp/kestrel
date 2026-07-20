@@ -189,14 +189,20 @@ export interface OperatorControlCommandPayload {
     | "reply"
     | "steer"
     | "retry"
+    | "continue_waiting"
     | "focus_thread"
     | "resolve_context_checkpoint"
     | "approve_assembly_change"
     | "reject_assembly_change"
     | "spawn_child_thread"
     | "supersede_child_thread"
-    | "resolve_fan_in_checkpoint";
+    | "resolve_fan_in_checkpoint"
+    | "enqueue_follow_up"
+    | "edit_follow_up"
+    | "cancel_follow_up"
+    | "resume_follow_up_queue";
   threadId: string;
+  followUpId?: string | undefined;
   requestId?: string | undefined;
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
@@ -213,6 +219,9 @@ export interface OperatorControlCommandPayload {
     | undefined;
   message?: string | undefined;
   attachments?: RunTurnAttachment[] | undefined;
+  attachmentIds?: string[] | undefined;
+  interactionMode?: "chat" | "plan" | "build" | undefined;
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
   title?: string | undefined;
   rolePrompt?: string | undefined;
   goal?: string | undefined;

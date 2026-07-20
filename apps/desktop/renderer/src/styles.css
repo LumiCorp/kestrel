@@ -1206,6 +1206,40 @@ button:disabled {
   font-size: 10px;
 }
 
+.attachment-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+.attachment-chip button, .queue-item button { display: inline-grid; place-items: center; padding: 2px; border: 0; background: transparent; color: inherit; }
+.follow-up-queue, .operator-action-card { margin: 0 18px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); }
+.queue-heading, .queue-item, .operator-action-buttons { display: flex; align-items: center; gap: 8px; }
+.queue-heading { justify-content: space-between; }
+.queue-item p { flex: 1; margin: 5px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operator-action-card p { margin: 4px 0; }
+.operator-action-card small { color: var(--muted); }
+.operator-action-buttons { margin-top: 8px; flex-wrap: wrap; }
+
+.run-stream-item {
+  margin: 8px 18px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text);
+}
+
+.run-stream-reasoning {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.run-stream-tool {
+  padding-block: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-stream-failed {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
 .primary-icon-button {
   border: 1px solid var(--accent);
   background: var(--accent);

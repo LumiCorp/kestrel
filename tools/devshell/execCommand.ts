@@ -59,7 +59,7 @@ export const execCommandTool: SharedToolModule = {
   definition: {
     name: "exec_command",
     description:
-      "Start one shell command and observe it briefly. Command shape: use command and do not include sessionId, stdin, or stop. Source writes are rejected and restored by default. For a formatter, generator, or codemod, set sourceMutation to capture; the command must settle in the initial observation window and returns a patchRef that must be committed with fs.apply_patch. If a command remains alive, the result has status running and a sessionId. Continue/read shape: only use sessionId returned by a running result, with optional stdin as raw input; include the newline a terminal user would press. Stop shape uses sessionId with stop=true. Never invent sessionId.",
+      "Start one shell command and observe it briefly. Command shape: use command and do not include sessionId, stdin, or stop. In managed worktrees, commands run directly under the worktree checkpoint guard. Outside managed worktrees, source writes are rejected and restored by default. For a formatter, generator, or codemod outside a managed worktree, set sourceMutation to capture; the command must settle in the initial observation window and returns a patchRef that must be committed with fs.apply_patch. If a command remains alive, the result has status running and a sessionId. Continue/read shape: only use sessionId returned by a running result, with optional stdin as raw input; include the newline a terminal user would press. Stop shape uses sessionId with stop=true. Never invent sessionId.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -322,7 +322,8 @@ function buildStartProcessInput(
 ): DevProcessStartInput {
   const config = readDevShellConfig(context);
   const envMode = resolveDevShellEnvMode(config, "exec_command", body);
-  const requestedMutation = readSourceMutation(body);
+  const requestedMutation = readSourceMutation(body)
+    ?? (config.sourceWriteGuard?.managedWorktree === true ? undefined : "reject");
   const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config, requestedMutation);
   const sourceWriteAuthority = buildDevShellSourceWriteAuthority(config);
   const normalizedCommand = normalizeDevShellExecCommand(command);
@@ -371,8 +372,9 @@ function buildStartProcessInput(
   };
 }
 
-function readSourceMutation(body: Record<string, unknown>): "reject" | "capture" {
-  const requestedMutation = readString(body, "sourceMutation") ?? "reject";
+function readSourceMutation(body: Record<string, unknown>): "reject" | "capture" | undefined {
+  const requestedMutation = readString(body, "sourceMutation");
+  if (requestedMutation === undefined) return;
   if (requestedMutation !== "reject" && requestedMutation !== "capture") {
     throw createToolInputError("exec_command", "sourceMutation must be 'reject' or 'capture'.", { field: "sourceMutation" });
   }
