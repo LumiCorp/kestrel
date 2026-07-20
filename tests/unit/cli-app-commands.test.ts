@@ -2992,7 +2992,7 @@ test("startup resolves a unique session id fragment to the matching session", as
 });
 
 test("fresh-session startup ignores restored active session and creates a new active session", async () => {
-  const { app, cwd } = await createAppHarness({ freshSessionName: "mountaintop" });
+  const { app, cwd } = await createAppHarness({ freshSessionName: "fresh-session" });
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
   const profiles = await (appState.profileStore as ProfileStore).load();
@@ -3010,18 +3010,18 @@ test("fresh-session startup ignores restored active session and creates a new ac
   }>)(profiles);
 
   const sessionsFile = appState.sessionsFile as { activeSessionName?: string; sessions: TuiSessionMeta[] };
-  assert.equal(selection.session.name, "mountaintop");
+  assert.equal(selection.session.name, "fresh-session");
   assert.equal(selection.workspace?.rootPath, workspace.rootPath);
   assert.equal(selection.session.workspaceRoot, workspace.rootPath);
   assert.equal(sessionsFile.activeSessionName, selection.session.name);
   assert.equal(sessionsFile.sessions.some((session) => session.name === "default"), true);
-  assert.equal(sessionsFile.sessions.some((session) => session.name === "mountaintop"), true);
-  assert.equal(sessionStore.getActive(sessionsFile)?.name, "mountaintop");
+  assert.equal(sessionsFile.sessions.some((session) => session.name === "fresh-session"), true);
+  assert.equal(sessionStore.getActive(sessionsFile)?.name, "fresh-session");
 });
 
 test("scripted fresh-session startup forces initial chat view without mutating other persisted state", async () => {
   const derived = deriveStartupPersistedUiState(
-    { freshSessionName: "mountaintop", scripted: true },
+    { freshSessionName: "fresh-session", scripted: true },
     {
       activeView: "workspace",
       activeRegion: "sessions",
@@ -3039,7 +3039,7 @@ test("scripted fresh-session startup forces initial chat view without mutating o
 
 test("non-scripted fresh-session startup preserves persisted navigation state", async () => {
   const derived = deriveStartupPersistedUiState(
-    { freshSessionName: "mountaintop" },
+    { freshSessionName: "fresh-session" },
     {
       activeView: "workspace",
       activeRegion: "sessions",

@@ -32,9 +32,9 @@ test("parseArgs defaults scripted mode to false when omitted", () => {
 });
 
 test("parseArgs accepts explicit fresh-session startup", () => {
-  const parsed = parseArgs(["--new-session", "mountaintop"]);
+  const parsed = parseArgs(["--new-session", "fresh-session"]);
 
-  assert.equal(parsed.freshSessionName, "mountaintop");
+  assert.equal(parsed.freshSessionName, "fresh-session");
   assert.equal(parsed.sessionName, undefined);
 });
 

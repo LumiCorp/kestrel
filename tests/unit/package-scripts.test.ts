@@ -11,7 +11,15 @@ test("root package exposes public product scripts and a broad monorepo test gate
 
   assert.equal(
     scripts["test:core"],
-    "pnpm run protocol:build && pnpm run test:core:self"
+    "pnpm run protocol:build && pnpm run test:core:self && pnpm run test:dev-shell-smoke"
+  );
+  assert.equal(
+    scripts["test:dev-shell-smoke"],
+    "KESTREL_LOCAL_CORE_DIRECT=1 node --import tsx --test --test-concurrency=1 tests/smoke/local-dev-shell-service.smoke.ts"
+  );
+  assert.equal(
+    scripts["ci:runtime"],
+    "pnpm run protocol:build && pnpm run test:core:self && pnpm run test:dev-shell-smoke && pnpm run prompt-suite && pnpm run evals:release-check"
   );
   assert.equal(
     scripts.build,
