@@ -31,7 +31,7 @@ export const desktopHostOpenTool: SharedToolModule = {
         kind: { type: "string", enum: ["application", "workspace_path", "url"] },
         application: { type: "string", minLength: 1, maxLength: 200 },
         path: { type: "string", minLength: 1 },
-        url: { type: "string", minLength: 1, maxLength: 4_096 },
+        url: { type: "string", minLength: 1, maxLength: 4096 },
       },
       oneOf: [
         {
@@ -63,7 +63,7 @@ export const desktopHostOpenTool: SharedToolModule = {
           required: ["kind", "url"],
           properties: {
             kind: { type: "string", enum: ["url"] },
-            url: { type: "string", minLength: 1, maxLength: 4_096 },
+            url: { type: "string", minLength: 1, maxLength: 4096 },
             application: { type: "string", minLength: 1, maxLength: 200 },
           },
         },

@@ -256,7 +256,7 @@ function detectImageMime(data: Buffer): string | undefined {
   const header = data.subarray(0, 6).toString("ascii");
   if (header === "GIF87a" || header === "GIF89a") return "image/gif";
   if (data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  return undefined;
+  return;
 }
 
 function sanitizeFilename(value: string): string {

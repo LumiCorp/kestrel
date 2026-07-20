@@ -109,7 +109,7 @@ test("macOS host-open uses argument execution for every typed variant", async ()
 });
 
 test("host-open failures are typed and redact host targets", async () => {
-  const unsupported = new MacOsDesktopHostOpenService("linux", async () => undefined);
+  const unsupported = new MacOsDesktopHostOpenService("linux", async () => {});
   await assert.rejects(
     unsupported.open({ kind: "application", application: "Safari" }),
     (error: unknown) => {

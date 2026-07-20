@@ -76,7 +76,7 @@ test("Desktop attachment store enforces the aggregate message limit", async () =
 
 test("Desktop attachment cleanup removes only expired unsubmitted references", async () => {
   await withStore(async (store) => {
-    const old = new Date(Date.now() - DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS - 1_000);
+    const old = new Date(Date.now() - DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS - 1000);
     const expired = await store.import({ threadId: "thread-1", filename: "expired.txt", data: Buffer.from("expired"), now: old });
     const retained = await store.import({ threadId: "thread-1", filename: "retained.txt", data: Buffer.from("retained"), now: old });
     await store.resolve("thread-1", [retained.attachmentId]);

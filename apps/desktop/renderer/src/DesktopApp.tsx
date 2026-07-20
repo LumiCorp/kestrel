@@ -185,41 +185,39 @@ export function DesktopApp() {
       const rendererThread = event.sessionId === undefined
         ? undefined
         : threadsRef.current.find((thread) => thread.sessionId === event.sessionId);
-      if (event.type === "run.started") {
-        if (rendererThread !== undefined) {
-          const pendingSubmission = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-          if (pendingSubmission !== undefined) {
-            delete pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-            acceptedTurnSessionsRef.current.add(rendererThread.sessionId);
-            setState((current) => {
-              if (current === undefined) return current;
-              const accepted = acceptRendererPrompt(current, pendingSubmission.threadId, pendingSubmission.message);
-              const withUser = appendRendererTranscript(accepted, pendingSubmission.threadId, {
-                role: "user",
-                text: pendingSubmission.message,
-                timestamp: pendingSubmission.submittedAt,
-              });
-              return updateRendererThread(withUser, pendingSubmission.threadId, (thread) => ({
-                ...thread,
-                pendingWaitEventType: undefined,
-                ...(pendingSubmission.projectPath !== undefined ? { projectPath: pendingSubmission.projectPath } : {}),
-              }));
+      if (event.type === "run.started" && rendererThread !== undefined) {
+        const pendingSubmission = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
+        if (pendingSubmission !== undefined) {
+          delete pendingTurnSubmissionsRef.current[rendererThread.sessionId];
+          acceptedTurnSessionsRef.current.add(rendererThread.sessionId);
+          setState((current) => {
+            if (current === undefined) return current;
+            const accepted = acceptRendererPrompt(current, pendingSubmission.threadId, pendingSubmission.message);
+            const withUser = appendRendererTranscript(accepted, pendingSubmission.threadId, {
+              role: "user",
+              text: pendingSubmission.message,
+              timestamp: pendingSubmission.submittedAt,
             });
-            setHistoryNavigation((current) => {
-              const next = { ...current };
-              delete next[pendingSubmission.threadId];
-              return next;
-            });
-          }
-          setActiveRuns((current) => ({
-            ...current,
-            [rendererThread.id]: {
-              threadId: rendererThread.id,
-              sessionId: rendererThread.sessionId,
-              ...(event.runId !== undefined ? { runId: event.runId } : {}),
-            },
-          }));
+            return updateRendererThread(withUser, pendingSubmission.threadId, (thread) => ({
+              ...thread,
+              pendingWaitEventType: undefined,
+              ...(pendingSubmission.projectPath !== undefined ? { projectPath: pendingSubmission.projectPath } : {}),
+            }));
+          });
+          setHistoryNavigation((current) => {
+            const next = { ...current };
+            delete next[pendingSubmission.threadId];
+            return next;
+          });
         }
+        setActiveRuns((current) => ({
+          ...current,
+          [rendererThread.id]: {
+            threadId: rendererThread.id,
+            sessionId: rendererThread.sessionId,
+            ...(event.runId !== undefined ? { runId: event.runId } : {}),
+          },
+        }));
       }
       if (rendererThread !== undefined) {
         setRunStreams((current) => ({
@@ -915,7 +913,7 @@ export function DesktopApp() {
                   <strong>{entry.line.role === "user" ? "You" : entry.line.role === "assistant" ? "Kestrel" : "System"}</strong>
                   <time>{formatMessageTime(entry.line.timestamp)}</time>
                 </div>
-                <MessageContent role={entry.line.role} text={entry.line.text} />
+                <MessageContent messageRole={entry.line.role} text={entry.line.text} />
               </article>
             ) : (
               <article className={`run-stream-item run-stream-${entry.item.kind} run-stream-${entry.item.status}`} key={entry.id}>
@@ -923,7 +921,7 @@ export function DesktopApp() {
                   <strong>{entry.item.label}</strong>
                   <time>{formatMessageTime(entry.item.timestamp)}</time>
                 </div>
-                <MessageContent role="assistant" text={entry.item.text.length > 0 ? entry.item.text : "Reasoning…"} />
+                <MessageContent messageRole="assistant" text={entry.item.text.length > 0 ? entry.item.text : "Reasoning…"} />
               </article>
             ))}
             <div ref={transcriptEndRef} />

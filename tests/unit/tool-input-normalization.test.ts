@@ -1006,8 +1006,8 @@ test("normalizeToolActionInput preserves every advertised dev-shell command fiel
     envNames: ["CI"],
     envMode: "allowlist",
     yieldTimeMs: 250,
-    timeoutMs: 5_000,
-    maxOutputBytes: 8_192,
+    timeoutMs: 5000,
+    maxOutputBytes: 8192,
   };
   const execInput = {
     command: "pnpm test",
@@ -1017,8 +1017,8 @@ test("normalizeToolActionInput preserves every advertised dev-shell command fiel
     envMode: "allowlist",
     sourceMutation: "capture",
     yieldTimeMs: 250,
-    timeoutMs: 5_000,
-    maxOutputBytes: 8_192,
+    timeoutMs: 5000,
+    maxOutputBytes: 8192,
   };
 
   assert.deepEqual(normalizeToolActionInput("dev.shell.run", runInput), runInput);

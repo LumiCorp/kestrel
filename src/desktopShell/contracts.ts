@@ -516,7 +516,7 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
 }
 
 function parseDesktopStringArray(value: unknown, field: string, max: number): string[] | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) return;
   if (Array.isArray(value) === false || value.length > max) throw new Error(`Desktop request field '${field}' must be an array with at most ${max} entries.`);
   const parsed = value.map((entry, index) => parseRequiredDesktopString(entry, `${field}[${index}]`));
   if (new Set(parsed).size !== parsed.length) throw new Error(`Desktop request field '${field}' cannot contain duplicates.`);
