@@ -67,8 +67,7 @@ const catalogTests = discovered.map((item) => {
     return { ...item, contractId: "unowned" };
   }
   const contract = matches[0];
-  const count = contractCounts.get(contract.id) ?? 0;
-  contractCounts.set(contract.id, count + 1);
+  contractCounts.set(contract.id, (contractCounts.get(contract.id) ?? 0) + 1);
   return {
     ...item,
     contractId: contract.id,
@@ -76,7 +75,6 @@ const catalogTests = discovered.map((item) => {
     risk: contract.risk,
     counterexample: `${contract.counterexample} Executable counterexample: ${item.title}`,
     dimension: item.title,
-    role: count === 0 ? "primary" : "variant",
     lane: contract.lane,
     environment: contract.environment,
   };
@@ -99,7 +97,7 @@ const catalog = {
   version: 1,
   generatedFrom: "tracked static test declarations",
   testCount: catalogTests.length,
-  tests: catalogTests.sort((left, right) => left.identity.localeCompare(right.identity)),
+  tests: assignStableRoles(catalogTests),
 };
 const rendered = `${JSON.stringify(catalog, null, 2)}\n`;
 if (writeCatalog) {
@@ -223,6 +221,18 @@ function staticTitle(node) {
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(path.join(root, file))).digest("hex");
+}
+
+function assignStableRoles(tests) {
+  const primaryContracts = new Set();
+  return tests
+    .sort((left, right) => left.identity.localeCompare(right.identity))
+    .map((item) => {
+      const role = primaryContracts.has(item.contractId) ? "variant" : "primary";
+      primaryContracts.add(item.contractId);
+      const { lane, environment, ...identity } = item;
+      return { ...identity, role, lane, environment };
+    });
 }
 
 function verifyMutationEvidence(input, mutationInput, evidenceInput, violations) {

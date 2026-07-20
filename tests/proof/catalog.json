@@ -1889,7 +1889,7 @@
       "risk": "low",
       "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: all seven product screenshots exist and have descriptive alt text and captions",
       "dimension": "all seven product screenshots exist and have descriptive alt text and captions",
-      "role": "variant",
+      "role": "primary",
       "lane": "docs",
       "environment": "linux"
     },
@@ -1979,7 +1979,7 @@
       "risk": "low",
       "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent. Executable counterexample: navigation exposes exactly six ordered public journeys",
       "dimension": "navigation exposes exactly six ordered public journeys",
-      "role": "primary",
+      "role": "variant",
       "lane": "docs",
       "environment": "linux"
     },
@@ -2264,7 +2264,7 @@
       "risk": "medium",
       "counterexample": "A hosted authentication, routing, workspace-runtime, or MCP service boundary changes unexpectedly. Executable counterexample: Environment gateway reports a bounded error when the Workspace is unavailable",
       "dimension": "Environment gateway reports a bounded error when the Workspace is unavailable",
-      "role": "variant",
+      "role": "primary",
       "lane": "services",
       "environment": "linux"
     },
@@ -2279,7 +2279,7 @@
       "risk": "medium",
       "counterexample": "A hosted authentication, routing, workspace-runtime, or MCP service boundary changes unexpectedly. Executable counterexample: Environment gateway streams authorized HTTP requests to the private Workspace",
       "dimension": "Environment gateway streams authorized HTTP requests to the private Workspace",
-      "role": "primary",
+      "role": "variant",
       "lane": "services",
       "environment": "linux"
     },
@@ -2864,7 +2864,7 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: Kestrel-One API route classes have matching app-boundary guards",
       "dimension": "Kestrel-One API route classes have matching app-boundary guards",
-      "role": "variant",
+      "role": "primary",
       "lane": "web",
       "environment": "linux"
     },
@@ -2969,7 +2969,7 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: Workspace activation reports each pending stage before ready",
       "dimension": "Workspace activation reports each pending stage before ready",
-      "role": "primary",
+      "role": "variant",
       "lane": "web",
       "environment": "linux"
     },
@@ -5489,7 +5489,7 @@
       "risk": "critical",
       "counterexample": "The hosted product loses durable queue, interaction, retry, or authorization state when backed by PostgreSQL. Executable counterexample: Environment Apps persist encrypted named connections and capability ceilings",
       "dimension": "Environment Apps persist encrypted named connections and capability ceilings",
-      "role": "variant",
+      "role": "primary",
       "lane": "postgres",
       "environment": "linux-postgres"
     },
@@ -7724,7 +7724,7 @@
       "risk": "critical",
       "counterexample": "The hosted product loses durable queue, interaction, retry, or authorization state when backed by PostgreSQL. Executable counterexample: Postgres schema readiness executes the required-relation lookup",
       "dimension": "Postgres schema readiness executes the required-relation lookup",
-      "role": "primary",
+      "role": "variant",
       "lane": "postgres",
       "environment": "linux-postgres"
     },
@@ -11101,7 +11101,7 @@
       "risk": "medium",
       "counterexample": "A user-visible hosted workflow no longer works through the Chromium browser boundary. Executable counterexample: Apps endpoint requires auth",
       "dimension": "Apps endpoint requires auth",
-      "role": "variant",
+      "role": "primary",
       "lane": "product",
       "environment": "linux-chromium"
     },
@@ -11118,7 +11118,7 @@
       "risk": "medium",
       "counterexample": "A user-visible hosted workflow no longer works through the Chromium browser boundary. Executable counterexample: health endpoint is reachable",
       "dimension": "health endpoint is reachable",
-      "role": "primary",
+      "role": "variant",
       "lane": "product",
       "environment": "linux-chromium"
     },
@@ -11591,7 +11591,7 @@
       "risk": "medium",
       "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers. Executable counterexample: AI SDK stream and persisted message are emitted from the same accumulator",
       "dimension": "AI SDK stream and persisted message are emitted from the same accumulator",
-      "role": "variant",
+      "role": "primary",
       "lane": "packages",
       "environment": "linux"
     },
@@ -11606,7 +11606,7 @@
       "risk": "medium",
       "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers. Executable counterexample: completed output becomes canonical assistant text",
       "dimension": "completed output becomes canonical assistant text",
-      "role": "primary",
+      "role": "variant",
       "lane": "packages",
       "environment": "linux"
     },
@@ -12791,7 +12791,7 @@
       "risk": "medium",
       "counterexample": "A changed component selects the wrong required proof lane or the stable aggregate accepts an invalid result. Executable counterexample: aggregate accepts exactly the selected successful lanes",
       "dimension": "aggregate accepts exactly the selected successful lanes",
-      "role": "variant",
+      "role": "primary",
       "lane": "policy",
       "environment": "linux"
     },
@@ -12851,7 +12851,7 @@
       "risk": "medium",
       "counterexample": "A changed component selects the wrong required proof lane or the stable aggregate accepts an invalid result. Executable counterexample: documentation changes select only policy and documentation proofs",
       "dimension": "documentation changes select only policy and documentation proofs",
-      "role": "primary",
+      "role": "variant",
       "lane": "policy",
       "environment": "linux"
     },
@@ -13016,7 +13016,7 @@
       "risk": "medium",
       "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: operator shell derives deterministic bootstrap and next actions across journeys",
       "dimension": "operator shell derives deterministic bootstrap and next actions across journeys",
-      "role": "variant",
+      "role": "primary",
       "lane": "runtime",
       "environment": "linux"
     },
@@ -13031,7 +13031,7 @@
       "risk": "medium",
       "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch",
       "dimension": "operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch",
-      "role": "primary",
+      "role": "variant",
       "lane": "runtime",
       "environment": "linux"
     },
@@ -15491,7 +15491,7 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Kestrel One GitHub mutations fail closed without an approval ID",
       "dimension": "Kestrel One GitHub mutations fail closed without an approval ID",
-      "role": "variant",
+      "role": "primary",
       "lane": "runtime",
       "environment": "linux"
     },
@@ -15506,7 +15506,7 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Kestrel One GitHub mutations send the pending approval ID",
       "dimension": "Kestrel One GitHub mutations send the pending approval ID",
-      "role": "primary",
+      "role": "variant",
       "lane": "runtime",
       "environment": "linux"
     },
@@ -15656,7 +15656,7 @@
       "risk": "medium",
       "counterexample": "The TUI cannot render or navigate persisted operator state through a real PostgreSQL store. Executable counterexample: TUI Code journey opens from slash command and returns to chat with Esc",
       "dimension": "TUI Code journey opens from slash command and returns to chat with Esc",
-      "role": "variant",
+      "role": "primary",
       "lane": "postgres",
       "environment": "linux-postgres-pty"
     },
@@ -15731,7 +15731,7 @@
       "risk": "medium",
       "counterexample": "The TUI cannot render or navigate persisted operator state through a real PostgreSQL store. Executable counterexample: TUI workspace journey can be opened and exited back to chat deterministically",
       "dimension": "TUI workspace journey can be opened and exited back to chat deterministically",
-      "role": "primary",
+      "role": "variant",
       "lane": "postgres",
       "environment": "linux-postgres-pty"
     },
@@ -30656,7 +30656,7 @@
       "risk": "high",
       "counterexample": "Replay accepts missing ordered events, terminal-state drift, or required evidence loss. Executable counterexample: diffCapturedReplayBundle enforces required browser artifact inventory",
       "dimension": "diffCapturedReplayBundle enforces required browser artifact inventory",
-      "role": "variant",
+      "role": "primary",
       "lane": "runtime",
       "environment": "linux"
     },
@@ -30671,7 +30671,7 @@
       "risk": "high",
       "counterexample": "Replay accepts missing ordered events, terminal-state drift, or required evidence loss. Executable counterexample: diffReplayAgainstBaseline catches missing strict events",
       "dimension": "diffReplayAgainstBaseline catches missing strict events",
-      "role": "primary",
+      "role": "variant",
       "lane": "runtime",
       "environment": "linux"
     },
