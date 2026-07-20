@@ -14,14 +14,28 @@ const files = execFileSync(
   .sort();
 
 if (files.length === 0) throw new Error("No runtime tests were discovered.");
-const result = spawnSync(
-  "node",
-  ["--import", "tsx", "--test", "--test-concurrency=4", ...files],
-  {
-    encoding: "utf8",
-    env: { ...process.env, ...(process.platform === "darwin" ? { TMPDIR: "/tmp" } : {}) },
-  },
-);
-process.stdout.write(result.stdout ?? "");
-process.stderr.write(result.stderr ?? "");
-process.exitCode = result.status ?? 1;
+
+const isolatedProcessContracts = new Set(["tests/unit/local-core-api.test.ts"]);
+const concurrentFiles = files.filter((file) => !isolatedProcessContracts.has(file));
+const isolatedFiles = files.filter((file) => isolatedProcessContracts.has(file));
+
+run(concurrentFiles, 4, "runtime unit and integration contracts");
+run(isolatedFiles, 1, "isolated Local Core process contracts");
+
+function run(selectedFiles, concurrency, label) {
+  if (selectedFiles.length === 0) return;
+  process.stdout.write(
+    `[runtime-tests] ${label}: files=${selectedFiles.length} concurrency=${concurrency}\n`,
+  );
+  const result = spawnSync(
+    "node",
+    ["--import", "tsx", "--test", `--test-concurrency=${concurrency}`, ...selectedFiles],
+    {
+      encoding: "utf8",
+      env: { ...process.env, ...(process.platform === "darwin" ? { TMPDIR: "/tmp" } : {}) },
+    },
+  );
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
