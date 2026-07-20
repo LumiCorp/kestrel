@@ -83,6 +83,7 @@ import {
   buildExecutionPolicyFromPack,
 } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { MacOsDesktopHostOpenService } from "../../src/desktopShell/hostOpen.js";
 import { createTerminalBenchDevShellServiceFromEnv } from "../../src/devshell/TerminalBenchDevShellService.js";
 import { createRuntimeHeapDiagnosticsFromEnv } from "../../src/runtime/heapDiagnostics.js";
 import type {
@@ -1078,7 +1079,7 @@ function createRuntimeWithStore(
   const projectStore = new ProductProjectStateStore(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const managedTaskWorktreeService =
-    resolveManagedWorktreesEnabledForRuntime(runtimeEnv)
+    profile.shellKind === "desktop" || resolveManagedWorktreesEnabledForRuntime(runtimeEnv)
       ? new ManagedTaskWorktreeService()
       : undefined;
   const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
@@ -1096,6 +1097,9 @@ function createRuntimeWithStore(
       internetEnv ?? process.env,
     ),
     ...(devShellService !== undefined ? { devShellService } : {}),
+    ...(profile.shellKind === "desktop"
+      ? { desktopHostOpenService: new MacOsDesktopHostOpenService() }
+      : {}),
     ...(managedTaskWorktreeService !== undefined ? { managedTaskWorktreeService } : {}),
     projectActions: createProductProjectActionToolAdapter({ taskGraphStore, projectStore }),
     delegationService: undefined,

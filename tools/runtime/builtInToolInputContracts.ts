@@ -51,6 +51,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "dev.process.read": { mode: "schema-only" },
   "dev.process.stop": { mode: "schema-only" },
   exec_command: { mode: "schema-only" },
+  "desktop.host.open": { mode: "schema-only" },
   effect_result_lookup: { mode: "schema-only" },
   FinalizeAnswer: { mode: "schema-only" },
   "agent.spawn": { mode: "schema-only" },

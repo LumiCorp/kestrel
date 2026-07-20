@@ -847,6 +847,7 @@ export type DesktopCapabilityPackId =
   | "balanced"
   | "filesystem"
   | "dev_shell"
+  | "desktop_host"
   | "sandbox_code";
 
 export interface DesktopAgentStageConfig {

@@ -185,6 +185,7 @@ test("exec_command preserves direct checkpoint guard mode in managed worktrees",
   assert.deepEqual(service.startInputs[0]?.sourceWriteGuard, {
     enabled: true,
     managedWorktree: true,
+    mutationPolicy: "direct",
   });
 });
 

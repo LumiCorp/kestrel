@@ -45,6 +45,7 @@ import { devProcessWriteAndReadTool } from "./devshell/processWriteAndRead.js";
 import { devProcessWriteTool } from "./devshell/processWrite.js";
 import { devShellRunTool } from "./devshell/run.js";
 import { execCommandTool } from "./devshell/execCommand.js";
+import { desktopHostOpenTool } from "./desktop/hostOpen.js";
 import { effectResultLookupTool } from "./runtime/effectResultLookup.js";
 import { finalizeAnswerTool } from "./runtime/finalizeAnswer.js";
 import { planningWriteDocumentTool } from "./runtime/planningWriteDocument.js";
@@ -117,6 +118,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   fsDeleteTool,
   codeExecuteTool,
   execCommandTool,
+  desktopHostOpenTool,
   devShellRunTool,
   devProcessStartTool,
   devProcessWriteTool,

@@ -27,13 +27,14 @@ test("CLI defaults resolve to the local developer preset", () => {
   assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
 });
 
-test("desktop defaults match the CLI local developer capability surface", () => {
+test("desktop defaults add the host-open capability without exposing it to CLI", () => {
   const cli = resolveRuntimeProfileSelection({ shellKind: "cli" });
   const desktop = resolveRuntimeProfileSelection({ shellKind: "desktop" });
 
   assert.equal(desktop.presetId, "desktop_dev_local");
-  assert.deepEqual(desktop.capabilityPacks, cli.capabilityPacks);
-  assert.deepEqual(desktop.toolAllowlist, cli.toolAllowlist);
+  assert.deepEqual(desktop.capabilityPacks, ["balanced", "filesystem", "dev_shell", "desktop_host"]);
+  assert.equal(desktop.toolAllowlist.includes("desktop.host.open"), true);
+  assert.equal(cli.toolAllowlist.includes("desktop.host.open"), false);
 });
 
 test("web defaults stay narrow and do not expose local mutation tools", () => {
@@ -47,6 +48,7 @@ test("web defaults stay narrow and do not expose local mutation tools", () => {
   assert.equal(resolved.toolAllowlist.includes("repo.trace"), false);
   assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), false);
   assert.equal(resolved.toolAllowlist.includes("dev.process.write"), false);
+  assert.equal(resolved.toolAllowlist.includes("desktop.host.open"), false);
   assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
 });
 

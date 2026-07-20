@@ -969,22 +969,33 @@ button:disabled {
 
 .message {
   width: min(780px, 100%);
-  margin: 0 auto;
-  padding: 17px 0;
-  border-bottom: 1px solid var(--border);
+  margin: 0 auto 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
 .message:last-of-type {
-  border-bottom-color: transparent;
+  margin-bottom: 24px;
+}
+
+.message-assistant {
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
 }
 
 .message-user {
-  padding-left: 18px;
-  border-left: 3px solid var(--focus);
+  width: min(620px, 88%);
+  margin-right: max(0px, calc((100% - 780px) / 2));
+  margin-left: auto;
+  padding: 14px 18px;
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
 }
 
 .message-system {
   color: var(--warning);
+  background: var(--surface-raised);
 }
 
 .message-meta {
@@ -998,6 +1009,14 @@ button:disabled {
 .message-meta strong {
   font-size: 12px;
   font-weight: 680;
+}
+
+.message-assistant .message-meta strong {
+  color: var(--accent);
+}
+
+.message-user .message-meta strong {
+  color: var(--text);
 }
 
 .message-meta time {
@@ -1218,9 +1237,12 @@ button:disabled {
 .operator-action-buttons { margin-top: 8px; flex-wrap: wrap; }
 
 .run-stream-item {
-  margin: 8px 18px;
-  padding: 10px 12px;
-  border-left: 2px solid var(--border);
+  width: min(780px, 100%);
+  margin: 0 auto 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 12px;
   color: var(--text);
 }
 

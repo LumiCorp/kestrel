@@ -139,7 +139,7 @@ declare global {
   var __kestrelDesktopProfileOverride:
     | {
         presetId?: "desktop_dev_local" | undefined;
-        capabilityPacks?: Array<"balanced" | "filesystem" | "dev_shell" | "sandbox_code"> | undefined;
+        capabilityPacks?: Array<"balanced" | "filesystem" | "dev_shell" | "desktop_host" | "sandbox_code"> | undefined;
         version: number;
       }
     | undefined;

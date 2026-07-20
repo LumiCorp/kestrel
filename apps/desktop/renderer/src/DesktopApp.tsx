@@ -46,7 +46,12 @@ import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { getDesktopComposerSubmissionPolicy } from "./composerPolicy";
-import { projectDesktopRunStream, type DesktopRunStreamItem } from "./runStream";
+import {
+  describeDesktopRunnerActivity,
+  projectDesktopConversationTimeline,
+  projectDesktopRunStream,
+  type DesktopRunStreamItem,
+} from "./runStream";
 import {
   addRendererThread,
   appendRendererTranscript,
@@ -134,6 +139,9 @@ export function DesktopApp() {
     runActive: activeRun !== undefined,
   });
   const activeRunStream = activeThread === undefined ? [] : runStreams[activeThread.id] ?? [];
+  const conversationTimeline = activeThread === undefined
+    ? []
+    : projectDesktopConversationTimeline(activeThread.transcript, activeRunStream);
 
   useEffect(() => {
     threadsRef.current = state?.threads ?? [];
@@ -896,27 +904,26 @@ export function DesktopApp() {
         {surface === "chat" ? (
           <main className="conversation-pane" id="app-main">
           <section className="transcript" aria-label="Conversation transcript">
-            {activeThread.transcript.length === 0 ? (
+            {conversationTimeline.length === 0 ? (
               <div className="empty-transcript">
                 <span className="brand-mark large">K</span>
                 <h1>New conversation</h1>
               </div>
-            ) : activeThread.transcript.map((line, index) => (
-              <article className={`message message-${line.role}`} key={`${line.timestamp}-${index}`}>
+            ) : conversationTimeline.map((entry) => entry.type === "transcript" ? (
+              <article className={`message message-${entry.line.role}`} key={entry.id}>
                 <div className="message-meta">
-                  <strong>{line.role === "user" ? "You" : line.role === "assistant" ? "Kestrel" : "System"}</strong>
-                  <time>{formatMessageTime(line.timestamp)}</time>
+                  <strong>{entry.line.role === "user" ? "You" : entry.line.role === "assistant" ? "Kestrel" : "System"}</strong>
+                  <time>{formatMessageTime(entry.line.timestamp)}</time>
                 </div>
-                <MessageContent role={line.role} text={line.text} />
+                <MessageContent role={entry.line.role} text={entry.line.text} />
               </article>
-            ))}
-            {activeRunStream.map((item) => (
-              <article className={`run-stream-item run-stream-${item.kind} run-stream-${item.status}`} key={item.id}>
+            ) : (
+              <article className={`run-stream-item run-stream-${entry.item.kind} run-stream-${entry.item.status}`} key={entry.id}>
                 <div className="message-meta">
-                  <strong>{item.label}</strong>
-                  <time>{formatMessageTime(item.timestamp)}</time>
+                  <strong>{entry.item.label}</strong>
+                  <time>{formatMessageTime(entry.item.timestamp)}</time>
                 </div>
-                <MessageContent role="assistant" text={item.text.length > 0 ? item.text : "Reasoning…"} />
+                <MessageContent role="assistant" text={entry.item.text.length > 0 ? entry.item.text : "Reasoning…"} />
               </article>
             ))}
             <div ref={transcriptEndRef} />
@@ -1524,12 +1531,9 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
   if (event.type === "run.started") {
     return "Running";
   }
-  if (event.type === "run.progress") {
-    return "Runtime active";
-  }
-  if (event.type === "run.agent_progress") {
-    const update = asRecord(event.payload.update);
-    return `Agent progress: ${readString(update?.message) ?? "Working"}`;
+  const liveActivity = describeDesktopRunnerActivity(event);
+  if (liveActivity.length > 0) {
+    return liveActivity;
   }
   if (event.type === "run.model.reasoning.delta") {
     const update = asRecord(event.payload.update);
