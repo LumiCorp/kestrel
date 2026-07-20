@@ -72,7 +72,7 @@ export function getDesktopAppDefinition(
     definition === undefined
     || (contractVersion !== undefined && definition.contractVersion !== contractVersion)
   ) {
-    return undefined;
+    return;
   }
   return { ...definition, toolNames: [...definition.toolNames] };
 }
