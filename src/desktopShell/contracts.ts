@@ -36,6 +36,8 @@ export type DesktopBridgeCapabilityId =
   | "project_run_preview"
   | "mission_control"
   | "runtime_inspection"
+  | "attachments"
+  | "operator_control"
   | "external_open"
   | "path_open"
   | "microphone"
@@ -71,6 +73,8 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "project_run_preview",
   "mission_control",
   "runtime_inspection",
+  "attachments",
+  "operator_control",
   "external_open",
   "path_open",
   "microphone",
@@ -85,6 +89,7 @@ export const DESKTOP_UI_STATE_MAX_BYTES = 12 * 1024 * 1024;
 export const DESKTOP_LEGACY_UI_STORAGE_KEYS = [
   "kchat:web:composer-drafts:v1",
   "kchat:web:prompt-history:v1",
+  "kestrel:desktop-interaction-state:v1",
   "kchat:web:theme-mode",
   "kchat:web:task-graph:v1",
   "kchat:web:threads:v2",
@@ -135,6 +140,7 @@ export type DesktopRunHistoryLine = DesktopRunHistoryLineBase & (
 
 export interface DesktopRunTurnRequest {
   sessionId: string;
+  threadId?: string | undefined;
   message: string;
   eventType: string;
   projectPath?: string | undefined;
@@ -143,6 +149,100 @@ export interface DesktopRunTurnRequest {
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
   resumeFromWait?: boolean | undefined;
   resumeBlockedRun?: boolean | undefined;
+  attachmentIds?: string[] | undefined;
+}
+
+export interface DesktopAttachmentMetadata {
+  attachmentId: string;
+  threadId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  kind: "image" | "text";
+  createdAt: string;
+  submittedAt?: string | undefined;
+}
+
+export interface DesktopOperatorInboxItem {
+  itemId: string;
+  kind: "approval_request" | "user_input_request" | "context_checkpoint" | "child_thread_blocker" | "stalled_thread_attention" | "assembly_change_proposal" | "compatibility_downgrade_attention" | "fan_in_checkpoint" | "child_outcome_review";
+  threadId: string;
+  sessionId: string;
+  title: string;
+  actionable: boolean;
+  createdAt: string;
+  requestId?: string | undefined;
+  checkpointId?: string | undefined;
+  delegationId?: string | undefined;
+  childThreadId?: string | undefined;
+  recommendedAction?: string | undefined;
+  detail?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+export interface DesktopFollowUpQueueEntry {
+  followUpId: string;
+  message: string;
+  attachmentIds: string[];
+  interactionMode?: "chat" | "plan" | "build" | undefined;
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  createdAt: string;
+  state: "queued" | "starting";
+}
+
+export interface DesktopOperatorControlRequest {
+  action: "approve" | "reject" | "reply" | "steer" | "retry" | "continue_waiting" | "focus_thread" | "resolve_context_checkpoint" | "approve_assembly_change" | "reject_assembly_change" | "supersede_child_thread" | "resolve_fan_in_checkpoint" | "enqueue_follow_up" | "edit_follow_up" | "cancel_follow_up" | "resume_follow_up_queue";
+  threadId: string;
+  followUpId?: string | undefined;
+  requestId?: string | undefined;
+  proposalId?: string | undefined;
+  checkpointId?: string | undefined;
+  delegationId?: string | undefined;
+  actionValue?: "continue" | "compact" | "summarize_forward" | "handoff" | "split_into_child_thread" | "operator_checkpoint" | "accept" | "defer" | undefined;
+  message?: string | undefined;
+  attachmentIds?: string[] | undefined;
+  interactionMode?: "chat" | "plan" | "build" | undefined;
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+}
+
+export function parseDesktopOperatorControlRequest(value: unknown): DesktopOperatorControlRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Desktop operator control request must be an object.");
+  const input = value as Record<string, unknown>;
+  const actions = new Set<DesktopOperatorControlRequest["action"]>([
+    "approve", "reject", "reply", "steer", "retry", "continue_waiting", "focus_thread", "resolve_context_checkpoint",
+    "approve_assembly_change", "reject_assembly_change", "supersede_child_thread", "resolve_fan_in_checkpoint",
+    "enqueue_follow_up", "edit_follow_up", "cancel_follow_up", "resume_follow_up_queue",
+  ]);
+  if (typeof input.action !== "string" || actions.has(input.action as DesktopOperatorControlRequest["action"]) === false) {
+    throw new Error("Desktop operator control action is invalid.");
+  }
+  const action = input.action as DesktopOperatorControlRequest["action"];
+  const result: DesktopOperatorControlRequest = {
+    action,
+    threadId: parseRequiredDesktopString(input.threadId, "threadId"),
+  };
+  for (const field of ["followUpId", "requestId", "proposalId", "checkpointId", "delegationId", "message"] as const) {
+    if (input[field] !== undefined) result[field] = parseRequiredDesktopString(input[field], field);
+  }
+  const actionValue = input.actionValue;
+  if (actionValue !== undefined) {
+    if (actionValue !== "continue" && actionValue !== "compact" && actionValue !== "summarize_forward" && actionValue !== "handoff" && actionValue !== "split_into_child_thread" && actionValue !== "operator_checkpoint" && actionValue !== "accept" && actionValue !== "defer") {
+      throw new Error("Desktop operator control actionValue is invalid.");
+    }
+    result.actionValue = actionValue;
+  }
+  const attachmentIds = parseDesktopStringArray(input.attachmentIds, "attachmentIds", 8);
+  if (attachmentIds !== undefined) result.attachmentIds = attachmentIds;
+  if (input.interactionMode !== undefined) {
+    if (input.interactionMode !== "chat" && input.interactionMode !== "plan" && input.interactionMode !== "build") throw new Error("Desktop operator control interactionMode is invalid.");
+    result.interactionMode = input.interactionMode;
+  }
+  if (input.actSubmode !== undefined) {
+    if (input.actSubmode !== "strict" && input.actSubmode !== "safe" && input.actSubmode !== "full_auto") throw new Error("Desktop operator control actSubmode is invalid.");
+    result.actSubmode = input.actSubmode;
+  }
+  return result;
 }
 
 export interface DesktopRunCancelRequest {
@@ -230,6 +330,13 @@ export interface DesktopRuntimeThreadInspection {
   blocker?: DesktopRuntimeThreadBlocker | undefined;
   nextAction?: DesktopRuntimeThreadNextAction | undefined;
   runtimePlan?: DesktopRuntimeThreadPlan | undefined;
+  activeRun?: { runId: string; status: "RUNNING" | "WAITING" } | undefined;
+  followUpQueue: {
+    state: "ready" | "paused";
+    pauseReason?: "waiting" | "failed" | "cancelled" | "operator" | undefined;
+    items: DesktopFollowUpQueueEntry[];
+  };
+  inboxItems: DesktopOperatorInboxItem[];
   latestSteering?: {
     message: string;
     issuedBy?: string | undefined;
@@ -364,6 +471,7 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
   }
   const input = value as Record<string, unknown>;
   const sessionId = parseRequiredDesktopString(input.sessionId, "sessionId");
+  const threadId = input.threadId === undefined ? undefined : parseRequiredDesktopString(input.threadId, "threadId");
   const message = parseRequiredDesktopText(input.message, "message");
   const eventType = parseRequiredDesktopString(input.eventType, "eventType");
   const projectPath = input.projectPath === undefined
@@ -393,8 +501,10 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
   const history = input.history === undefined
     ? undefined
     : input.history.map((line, index) => parseDesktopRunHistoryLine(line, index));
+  const attachmentIds = parseDesktopStringArray(input.attachmentIds, "attachmentIds", 8);
   return {
     sessionId,
+    ...(threadId !== undefined ? { threadId } : {}),
     message,
     eventType,
     ...(projectPath !== undefined ? { projectPath } : {}),
@@ -403,7 +513,16 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
     ...(actSubmode !== undefined ? { actSubmode } : {}),
     ...(input.resumeFromWait === true ? { resumeFromWait: true } : {}),
     ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
+    ...(attachmentIds !== undefined ? { attachmentIds } : {}),
   };
+}
+
+function parseDesktopStringArray(value: unknown, field: string, max: number): string[] | undefined {
+  if (value === undefined) return;
+  if (Array.isArray(value) === false || value.length > max) throw new Error(`Desktop request field '${field}' must be an array with at most ${max} entries.`);
+  const parsed = value.map((entry, index) => parseRequiredDesktopString(entry, `${field}[${index}]`));
+  if (new Set(parsed).size !== parsed.length) throw new Error(`Desktop request field '${field}' cannot contain duplicates.`);
+  return parsed;
 }
 
 export function parseDesktopRunCancelRequest(value: unknown): DesktopRunCancelRequest {
@@ -730,6 +849,7 @@ export type DesktopCapabilityPackId =
   | "balanced"
   | "filesystem"
   | "dev_shell"
+  | "desktop_host"
   | "sandbox_code";
 
 export type DesktopCapabilityCategory =

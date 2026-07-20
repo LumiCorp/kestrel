@@ -17,7 +17,7 @@ const bodySchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const body = bodySchema.parse(await request.json());
     const now = new Date();
     const [device] = await knowledgeDb
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { session } = await requireActiveOrganization();
+    const { session } = await requireActiveOrganization(request);
     const id = routeIdSchema.parse(request.nextUrl.searchParams.get("id"));
     const [device] = await knowledgeDb
       .update(schema.mobileDeviceRegistrations)

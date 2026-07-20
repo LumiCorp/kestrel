@@ -4,6 +4,8 @@ import { ZodError } from "zod";
 type PublicErrorCode =
   | "BAD_REQUEST"
   | "UNAUTHORIZED"
+  | "ORGANIZATION_MEMBERSHIP_REQUIRED"
+  | "ORGANIZATION_CONFIGURATION_ERROR"
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
@@ -13,6 +15,10 @@ type PublicErrorCode =
 const publicMessages: Record<PublicErrorCode, string> = {
   BAD_REQUEST: "The request could not be completed.",
   UNAUTHORIZED: "Please sign in again.",
+  ORGANIZATION_MEMBERSHIP_REQUIRED:
+    "You are not a member of the requested organization.",
+  ORGANIZATION_CONFIGURATION_ERROR:
+    "The organization is not configured for mobile access.",
   FORBIDDEN: "You do not have access to this resource.",
   NOT_FOUND: "The requested resource is unavailable.",
   CONFLICT: "This resource changed before the request completed.",
@@ -29,13 +35,15 @@ export function mobileErrorResponse(error: unknown, fallbackStatus = 500) {
   let status = fallbackStatus;
   let code: PublicErrorCode = "INTERNAL_ERROR";
 
-  if (
-    message === "Unauthorized" ||
-    message === "Invalid API key." ||
-    internalCode === "UNAUTHORIZED"
-  ) {
+  if (internalCode === "UNAUTHORIZED") {
     status = 401;
     code = "UNAUTHORIZED";
+  } else if (internalCode === "ORGANIZATION_MEMBERSHIP_REQUIRED") {
+    status = 403;
+    code = "ORGANIZATION_MEMBERSHIP_REQUIRED";
+  } else if (internalCode === "ORGANIZATION_CONFIGURATION_ERROR") {
+    status = 503;
+    code = "ORGANIZATION_CONFIGURATION_ERROR";
   } else if (internalCode?.endsWith("_FORBIDDEN") || message === "Forbidden") {
     status = 403;
     code = "FORBIDDEN";

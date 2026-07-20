@@ -46,6 +46,12 @@ export type ThreadEventType =
   | "thread.turn_completed"
   | "thread.waiting"
   | "thread.failed"
+  | "thread.follow_up_queued"
+  | "thread.follow_up_cancelled"
+  | "thread.follow_up_edited"
+  | "thread.follow_up_queue_paused"
+  | "thread.follow_up_queue_resumed"
+  | "thread.follow_up_failed"
   | "delegation.requested"
   | "delegation.spawned"
   | "delegation.waiting"
@@ -608,6 +614,40 @@ export interface OperatorThreadView {
   latestEvidenceRecovery?: OperatorEvidenceRecoverySummary | undefined;
   nextAction?: OperatorNextActionSummary | undefined;
   runtimePlan?: OperatorRuntimePlanSummary | undefined;
+  activeRun?: {
+    runId: string;
+    status: "RUNNING" | "WAITING";
+  } | undefined;
+  followUpQueue?: FollowUpQueueView | undefined;
+  inboxItems?: OperatorInboxItem[] | undefined;
+}
+
+export type FollowUpQueuePauseReason = "waiting" | "failed" | "cancelled" | "operator";
+
+export interface FollowUpQueueEntry {
+  followUpId: string;
+  message: string;
+  attachmentIds: string[];
+  interactionMode?: InteractionMode | undefined;
+  actSubmode?: ActSubmode | undefined;
+  createdAt: string;
+  state: "queued" | "starting";
+}
+
+export interface FollowUpQueueView {
+  state: "ready" | "paused";
+  pauseReason?: FollowUpQueuePauseReason | undefined;
+  items: FollowUpQueueEntry[];
+}
+
+export interface EnqueueFollowUpInput {
+  threadId: string;
+  followUpId: string;
+  message: string;
+  attachmentIds?: string[] | undefined;
+  interactionMode?: InteractionMode | undefined;
+  actSubmode?: ActSubmode | undefined;
+  issuedBy?: string | undefined;
 }
 
 export interface PendingSteerRecord {
@@ -741,7 +781,13 @@ export interface ThreadRuntimePort {
   getOperatorThreadView(threadId: string): Promise<OperatorThreadView | null>;
   getOperatorRunView?(runId: string): Promise<OperatorRunView | null>;
   steerThread(input: SteerThreadInput): Promise<SteerThreadResult>;
+  enqueueFollowUp(input: EnqueueFollowUpInput): Promise<OperatorThreadView>;
+  editFollowUp(input: { threadId: string; followUpId: string; message: string }): Promise<OperatorThreadView>;
+  cancelFollowUp(input: { threadId: string; followUpId: string }): Promise<OperatorThreadView>;
+  pauseFollowUpQueue(input: { threadId: string; reason: FollowUpQueuePauseReason }): Promise<OperatorThreadView>;
+  resumeFollowUpQueue(input: { threadId: string }): Promise<OperatorThreadView>;
   retryThread(input: RetryThreadInput): Promise<SubmitTurnResult>;
+  continueWaiting(input: { threadId: string }): Promise<ThreadStatusSnapshot>;
   focusThread(input: FocusThreadInput): Promise<ThreadStatusSnapshot>;
   approveAssemblyChange(input: ResolveAssemblyProposalInput): Promise<SubmitTurnResult>;
   rejectAssemblyChange(input: ResolveAssemblyProposalInput): Promise<ThreadStatusSnapshot>;

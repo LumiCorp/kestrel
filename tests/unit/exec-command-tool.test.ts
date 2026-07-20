@@ -60,6 +60,75 @@ test("exec_command maps one-shot process completion to completed output", async 
   });
 });
 
+test("exec_command directs Desktop launches to the typed host-open capability", () => {
+  assert.match(execCommandTool.definition.description, /Use desktop\.host\.open/u);
+  assert.match(execCommandTool.definition.description, /Build-mode/u);
+});
+
+test("exec_command resolves direct, read-only, capture, and managed-worktree authority coherently", async () => {
+  const directService = new CapturingExecCommandService();
+  await runExecCommandForTest({
+    fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
+    devShell: {
+      enabled: true,
+      sourceWriteAuthority: "source_write",
+      sourceWriteGuard: { enabled: true, allowedWriteRoots: ["/repo"] },
+    },
+    devShellService: directService,
+  }, { command: "pnpm test" });
+  assert.equal(directService.startInputs[0]?.sourceWriteAuthority, "source_write");
+  assert.deepEqual(directService.startInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    mutationPolicy: "direct",
+    allowedWriteRoots: ["/repo"],
+  });
+
+  const rejectService = new CapturingExecCommandService();
+  await runExecCommandForTest({
+    devShell: { enabled: true, sourceWriteAuthority: "source_write" },
+    devShellService: rejectService,
+  }, { command: "pnpm test", sourceMutation: "reject" });
+  assert.equal(rejectService.startInputs[0]?.sourceWriteAuthority, undefined);
+  assert.equal(rejectService.startInputs[0]?.sourceWriteGuard?.mutationPolicy, "reject");
+
+  const captureService = new CapturingExecCommandService({
+    startResult: {
+      status: "COMPLETED",
+      text: "",
+      truncated: false,
+      cursor: 0,
+      nextCursor: 0,
+      exitCode: 0,
+      sourceWriteGuard: {
+        enabled: true,
+        mode: "captured_source_write",
+        allowedWriteRoots: [],
+        sourceRoots: ["."],
+        unauthorizedSourceWrites: [],
+        restored: true,
+      },
+    },
+  });
+  await runExecCommandForTest({
+    devShell: { enabled: true, sourceWriteAuthority: "source_write" },
+    devShellService: captureService,
+  }, { command: "pnpm test", sourceMutation: "capture" });
+  assert.equal(captureService.startInputs[0]?.sourceWriteAuthority, undefined);
+  assert.equal(captureService.startInputs[0]?.sourceWriteGuard?.mutationPolicy, "capture");
+
+  const managedService = new CapturingExecCommandService();
+  await runExecCommandForTest({
+    devShell: { enabled: true, sourceWriteGuard: { enabled: true, managedWorktree: true } },
+    devShellService: managedService,
+  }, { command: "pnpm test" });
+  assert.equal(managedService.startInputs[0]?.sourceWriteAuthority, undefined);
+  assert.deepEqual(managedService.startInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    mutationPolicy: "direct",
+    managedWorktree: true,
+  });
+});
+
 test("exec_command capture mode returns an applicable immutable patch artifact", async () => {
   const patch = "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
   const service = new CapturingExecCommandService({

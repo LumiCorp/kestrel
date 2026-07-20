@@ -103,6 +103,35 @@ test("OpenRouter streams summary details without folding them into answer text",
   ]);
 });
 
+test("OpenRouter emits one reasoning delta when chat aliases carry the same fragment", async () => {
+  const events: ModelGatewayStreamEvent[] = [];
+  const invoker = createOpenRouterInvoker({
+    env: { apiKey: "key", model: "z-ai/glm-5.2", baseUrl: "https://openrouter.ai" },
+    fetchImpl: (async () => sse([
+      {
+        model: "z-ai/glm-5.2",
+        choices: [{
+          delta: {
+            reasoning: "Let me gather content.",
+            reasoning_details: [{ type: "reasoning.text", text: "Let me gather content." }],
+          },
+        }],
+      },
+      { choices: [{ delta: { content: "Done." } }] },
+      "[DONE]",
+    ])) as typeof fetch,
+  });
+
+  await invoker({ input: "compare birds", reasoning: { mode: "provider_visible" } }, {
+    onEvent: (event) => { events.push(event); },
+  });
+
+  assert.deepEqual(
+    events.flatMap((event) => event.type === "reasoning.delta" ? [event.delta] : []),
+    ["Let me gather content."],
+  );
+});
+
 test("the SSE reader preserves frames when CRLF separators are split across chunks", async () => {
   const encoder = new TextEncoder();
   const chunks = [

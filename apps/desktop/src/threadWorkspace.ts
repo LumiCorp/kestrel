@@ -24,6 +24,13 @@ export function resolveDesktopThreadWorkspace(input: {
   return {
     workspaceId: deriveDesktopWorkspaceId(workspaceRoot),
     workspaceRoot,
+    ...(requestedProjectPath !== undefined
+      ? {
+          sourceWorkspaceRoot: workspaceRoot,
+          managedWorktreeRequired: true,
+          managedWorktreeIsolation: "session" as const,
+        }
+      : {}),
     launchCwd: workspaceRoot,
     appRoot: ".",
     commands: {},

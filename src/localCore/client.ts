@@ -23,6 +23,8 @@ import {
   type LocalCoreRuntimeStoreResetResult,
   type LocalCoreStatus,
 } from "./contracts.js";
+import type { DesktopAttachmentMetadata } from "./desktopAttachments.js";
+import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import {
   parseLocalCoreCredentialId,
   parseLocalCoreCredentialSecret,
@@ -236,6 +238,35 @@ export class LocalCoreClient {
       state: parseDesktopUiStateV1(record.state),
       updated: record.updated,
     };
+  }
+
+  async importDesktopAttachment(input: {
+    threadId: string;
+    filename: string;
+    mimeType?: string | undefined;
+    data: string;
+    sha256?: string | undefined;
+  }): Promise<DesktopAttachmentMetadata> {
+    const response = await this.post("/v1/desktop/attachments", input);
+    return readObjectField<DesktopAttachmentMetadata>(response, "attachment", "Desktop attachment");
+  }
+
+  async listDesktopAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]> {
+    const response = await this.get(`/v1/desktop/attachments?threadId=${encodeURIComponent(threadId)}`) as { attachments?: unknown };
+    if (Array.isArray(response.attachments) === false) throw new Error("Local Core Desktop attachment response is invalid.");
+    return response.attachments as DesktopAttachmentMetadata[];
+  }
+
+  async removeDesktopAttachment(threadId: string, attachmentId: string): Promise<boolean> {
+    const response = await this.delete(`/v1/desktop/attachments/${encodeURIComponent(attachmentId)}?threadId=${encodeURIComponent(threadId)}`) as { removed?: unknown };
+    if (typeof response.removed !== "boolean") throw new Error("Local Core Desktop attachment removal response is invalid.");
+    return response.removed;
+  }
+
+  async resolveDesktopAttachments(threadId: string, attachmentIds: string[]): Promise<RunTurnAttachment[]> {
+    const response = await this.post("/v1/desktop/attachments/resolve", { threadId, attachmentIds }) as { attachments?: unknown };
+    if (Array.isArray(response.attachments) === false) throw new Error("Local Core Desktop attachment resolution response is invalid.");
+    return response.attachments as RunTurnAttachment[];
   }
 
   async readDesktopProjectLauncher(input: {

@@ -11,7 +11,7 @@ const bodySchema = z.object({ expectedVersion: z.number().int().nonnegative(), o
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     await reorderDurableThreadQueue({ threadId: id, organizationId, userId: session.user.id, ...body });

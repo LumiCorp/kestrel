@@ -186,3 +186,22 @@ test("buildFinalizePayload does not use stale agent goal when transcript lacks a
 
   assert.equal(payload.payload.data.goal, undefined);
 });
+
+test("buildFinalizePayload preserves intentional live session ids for downstream clients", () => {
+  const payload = buildFinalizePayload(
+    {},
+    {
+      message: "The app remains running at http://localhost:3000.",
+      data: {
+        keepRunningSessionIds: ["proc-app"],
+      },
+    },
+  );
+
+  assert.deepEqual(payload.payload.data.keepRunningSessionIds, ["proc-app"]);
+  const finalizeInput = payload.payload.data.finalizeInput as Record<string, unknown>;
+  assert.deepEqual(
+    (finalizeInput.data as Record<string, unknown>).keepRunningSessionIds,
+    ["proc-app"],
+  );
+});

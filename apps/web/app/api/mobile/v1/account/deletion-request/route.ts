@@ -9,9 +9,9 @@ import { mobileErrorResponse } from "@/lib/mobile/http";
 
 const requestSchema = z.object({ confirmation: z.literal("DELETE") });
 
-export async function GET() {
+export async function GET(incomingRequest: Request) {
   try {
-    const session = await requireSession();
+    const session = await requireSession(incomingRequest);
     const request = await knowledgeDb.query.accountDeletionRequests.findFirst({
       where: eq(schema.accountDeletionRequests.userId, session.user.id),
       orderBy: desc(schema.accountDeletionRequests.createdAt),
@@ -40,7 +40,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await requireSession();
+    const session = await requireSession(request);
     requestSchema.parse(await request.json());
     const existing = await knowledgeDb.query.accountDeletionRequests.findFirst({
       where: and(

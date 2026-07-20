@@ -2621,9 +2621,9 @@ function compactToolInputForDecision(
     "fs.create_text": ["path"],
     "fs.edit_text": ["path", "expectedRevision", "edits"],
     "fs.apply_patch": ["patch", "patchRef", "expectedRevisions"],
-    "exec_command": ["command", "cwd", "workspaceRoot", "sessionId", "stdin", "stop", "yieldTimeMs", "timeoutMs", "maxOutputBytes"],
-    "dev.shell.run": ["command", "cwd", "workspaceRoot", "timeoutMs", "maxOutputBytes"],
-    "dev.process.start": ["command", "cwd", "workspaceRoot", "yieldTimeMs", "maxOutputBytes"],
+    "exec_command": ["command", "cwd", "workspaceRoot", "sessionId", "stdin", "stop", "requiredTools", "envNames", "envMode", "sourceMutation", "yieldTimeMs", "timeoutMs", "maxOutputBytes"],
+    "dev.shell.run": ["command", "cwd", "workspaceRoot", "requiredTools", "envNames", "envMode", "yieldTimeMs", "timeoutMs", "maxOutputBytes"],
+    "dev.process.start": ["command", "cwd", "workspaceRoot", "requiredTools", "envNames", "envMode", "yieldTimeMs", "maxOutputBytes"],
     "dev.process.read": ["processId", "cursor", "waitMs", "maxBytes"],
     "dev.process.write": ["processId", "data"],
     "dev.process.write_and_read": ["processId", "data", "cursor", "waitMs", "maxBytes"],
@@ -3385,7 +3385,11 @@ function normalizeDevShellCommandContext(value: unknown): Record<string, unknown
   const cwd = asString(record.cwd);
   const workspaceRoot = asString(record.workspaceRoot);
   const envMode = asString(record.envMode);
+  const sourceMutation = asString(record.sourceMutation);
   const requiredTools = asArray(record.requiredTools)
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+  const envNames = asArray(record.envNames)
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
   const context: Record<string, unknown> = {
@@ -3393,7 +3397,9 @@ function normalizeDevShellCommandContext(value: unknown): Record<string, unknown
     ...(cwd !== undefined ? { cwd } : {}),
     ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
     ...(envMode !== undefined ? { envMode } : {}),
+    ...(sourceMutation !== undefined ? { sourceMutation } : {}),
     ...(requiredTools.length > 0 ? { requiredTools } : {}),
+    ...(envNames.length > 0 ? { envNames } : {}),
   };
   return Object.keys(context).length > 0 ? context : undefined;
 }

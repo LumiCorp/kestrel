@@ -114,15 +114,22 @@ async function readOpenRouterStream(
     const plainReasoning = typeof delta?.reasoning === "string" ? delta.reasoning : undefined;
     const details = asArray(delta?.reasoning_details);
     const visibleDeltas: Array<{ format: "summary" | "provider_reasoning_text"; text: string }> = [];
+    const visibleDeltaKeys = new Set<string>();
+    const addVisibleDelta = (visible: { format: "summary" | "provider_reasoning_text"; text: string }) => {
+      const key = `${visible.format}\u0000${visible.text}`;
+      if (visibleDeltaKeys.has(key)) return;
+      visibleDeltaKeys.add(key);
+      visibleDeltas.push(visible);
+    };
     if (plainReasoning !== undefined) {
-      visibleDeltas.push({ format: "provider_reasoning_text", text: plainReasoning });
+      addVisibleDelta({ format: "provider_reasoning_text", text: plainReasoning });
     }
     for (const item of details) {
       const detail = asRecord(item);
       if (detail?.type === "reasoning.text" && typeof detail.text === "string") {
-        visibleDeltas.push({ format: "provider_reasoning_text", text: detail.text });
+        addVisibleDelta({ format: "provider_reasoning_text", text: detail.text });
       } else if (detail?.type === "reasoning.summary" && typeof detail.summary === "string") {
-        visibleDeltas.push({ format: "summary", text: detail.summary });
+        addVisibleDelta({ format: "summary", text: detail.summary });
       }
     }
     for (const visible of visibleDeltas) {

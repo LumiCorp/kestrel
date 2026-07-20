@@ -2,12 +2,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DESKTOP_BRIDGE_CAPABILITIES,
+  DESKTOP_BRIDGE_VERSION,
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
+  parseDesktopOperatorControlRequest,
   parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
+
+test("Desktop bridge v4 exposes attachment and typed operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "4");
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
+  assert.deepEqual(parseDesktopOperatorControlRequest({
+    action: "reply",
+    threadId: "thread-1",
+    requestId: "request-1",
+    message: "Use these files",
+    attachmentIds: ["attachment-1"],
+  }), {
+    action: "reply",
+    threadId: "thread-1",
+    requestId: "request-1",
+    message: "Use these files",
+    attachmentIds: ["attachment-1"],
+  });
+  assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
+});
 
 test("Desktop UI state accepts only the versioned legacy storage contract", () => {
   const state = parseDesktopUiStateV1({

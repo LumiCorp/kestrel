@@ -59,7 +59,7 @@ test("dev shell tool descriptions distinguish unified exec lifecycle from intern
   const execTool = tools.find((tool) => tool.name === "dev.shell.run");
   const writeTool = tools.find((tool) => tool.name === "dev.process.write");
 
-  assert.match(unifiedTool?.description ?? "", /Start one shell command and observe it briefly/u);
+  assert.match(unifiedTool?.description ?? "", /Start one Build-mode shell command and observe it briefly/u);
   assert.match(unifiedTool?.description ?? "", /Command shape: use command/u);
   assert.match(unifiedTool?.description ?? "", /status running and a sessionId/u);
   assert.match(unifiedTool?.description ?? "", /do not include sessionId, stdin, or stop/u);
