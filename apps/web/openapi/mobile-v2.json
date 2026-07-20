@@ -16,6 +16,9 @@
     },
     {
       "sessionBearer": []
+    },
+    {
+      "personalApiKey": []
     }
   ],
   "paths": {
@@ -734,6 +737,11 @@
   },
   "components": {
     "securitySchemes": {
+      "personalApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      },
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",

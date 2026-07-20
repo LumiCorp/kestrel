@@ -12,7 +12,7 @@ export async function GET(
   context: { params: Promise<{ turnId: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { turnId } = paramsSchema.parse(await context.params);
     const turn = await getDurableTurnForUser({
       turnId,

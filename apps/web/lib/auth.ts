@@ -9,7 +9,6 @@ import { nextCookies } from "better-auth/next-js";
 import {
   admin,
   bearer,
-  customSession,
   lastLoginMethod,
   multiSession,
   openAPI,
@@ -25,7 +24,6 @@ import { isDisallowedToolProviderSignIn } from "./auth-policy";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
 import { reactResetPasswordEmail } from "./email/reset-password";
-import { ensureSessionHasActiveOrganization } from "./personal-workspace";
 
 function deliveryKey(kind: string, value: string) {
   return `${kind}-${createHash("sha256").update(value).digest("hex")}`;
@@ -223,19 +221,8 @@ export const auth = betterAuth({
       rateLimit: {
         enabled: false,
       },
-      customAPIKeyGetter: (ctx) => {
-        const xApiKey = ctx.headers?.get("x-api-key");
-        if (xApiKey) {
-          return xApiKey;
-        }
-
-        const authHeader = ctx.headers?.get("authorization");
-        if (authHeader?.startsWith("Bearer ")) {
-          return authHeader.slice(7);
-        }
-
-        return null;
-      },
+      customAPIKeyGetter: (ctx) =>
+        ctx.headers?.get("x-api-key")?.trim() || null,
     }),
     openAPI(),
     bearer(),
@@ -243,9 +230,6 @@ export const auth = betterAuth({
       adminUserIds,
     }),
     multiSession(),
-    customSession(async (session) =>
-      session ? await ensureSessionHasActiveOrganization(session) : session
-    ),
     ...(stripeEnvConfigured
       ? [
           stripe({

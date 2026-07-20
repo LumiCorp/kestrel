@@ -5,6 +5,7 @@ import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
+import { requireMobileSession } from "@/lib/mobile/session";
 import { ensurePersonalOrganizationByUserId } from "@/lib/personal-workspace";
 
 type SessionLike = Session | null;
@@ -41,10 +42,13 @@ export function isAdminUser(
   return user?.role === "admin" || (user?.id ? adminIds.has(user.id) : false);
 }
 
-export async function requireSession() {
+export async function requireSession(request?: Request) {
+  if (request && new URL(request.url).pathname.startsWith("/api/mobile/v2/")) {
+    return (await requireMobileSession(request)).session;
+  }
   const session = await getServerSessionStrict();
   if (!session?.user?.id) {
-    throw new Error("Unauthorized");
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
   }
   return session;
 }
@@ -81,7 +85,10 @@ async function getRequestedOrganizationId(
   return member ? requestedOrganizationId : null;
 }
 
-export async function requireActiveOrganization() {
+export async function requireActiveOrganization(request?: Request) {
+  if (request && new URL(request.url).pathname.startsWith("/api/mobile/v2/")) {
+    return requireMobileSession(request);
+  }
   const session = await requireSession();
   const organizationId =
     (await getRequestedOrganizationId(session)) ??
