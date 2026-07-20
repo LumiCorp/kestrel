@@ -10,6 +10,8 @@ import {
 } from "../devshell/contracts.js";
 import { DEFAULT_BALANCED_TOOL_ALLOWLIST } from "../../tools/createDefaultToolGateway.js";
 import { DEV_SHELL_TOOL_NAMES, FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
+import { DEFAULT_MODEL_BY_PROVIDER } from "./modelDefaults.js";
+export { DEFAULT_MODEL_BY_PROVIDER } from "./modelDefaults.js";
 
 export type ShellKind = "cli" | "web" | "desktop";
 export type CapabilityPackId =
@@ -67,14 +69,6 @@ const PACK_TOOL_NAMES: Record<CapabilityPackId, string[]> = {
   filesystem: [...CODING_FILESYSTEM_TOOL_NAMES, "artifact.read"],
   dev_shell: [...DEV_SHELL_TOOL_NAMES],
   sandbox_code: ["code.execute"],
-};
-
-export const DEFAULT_MODEL_BY_PROVIDER: Record<ModelProviderId, string> = {
-  openrouter: "z-ai/glm-5.2",
-  openai: "gpt-5.4-2026-03-05",
-  anthropic: "claude-3-5-haiku-latest",
-  ollama: "llama3.2:3b",
-  lmstudio: "local-model",
 };
 
 export const SHELL_PRESET_PACKS: Record<ShellPresetId, CapabilityPackId[]> = {

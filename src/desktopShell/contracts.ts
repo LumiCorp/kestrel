@@ -17,6 +17,7 @@ export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/suppo
 export type DesktopBridgeCapabilityId =
   | "app_info"
   | "settings"
+  | "capability_registry"
   | "provider_credentials"
   | "ui_state"
   | "runner_commands"
@@ -46,11 +47,12 @@ export interface DesktopBridgeInfo {
   capabilities: DesktopBridgeCapabilityId[];
 }
 
-export const DESKTOP_BRIDGE_VERSION = "3";
+export const DESKTOP_BRIDGE_VERSION = "4";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",
   "settings",
+  "capability_registry",
   "provider_credentials",
   "ui_state",
   "runner_commands",
@@ -730,6 +732,176 @@ export type DesktopCapabilityPackId =
   | "dev_shell"
   | "sandbox_code";
 
+export type DesktopCapabilityCategory =
+  | "models"
+  | "tools_services"
+  | "local_capabilities"
+  | "connections"
+  | "workspace_data"
+  | "permissions";
+
+export type DesktopCapabilityId =
+  | "model.openrouter"
+  | "model.openai"
+  | "model.anthropic"
+  | "model.ollama"
+  | "model.lmstudio"
+  | "tools.internet.tavily"
+  | "tools.weather"
+  | "tools.network.free"
+  | "local.filesystem"
+  | "local.developer_shell"
+  | "local.sandbox_code"
+  | "connections.mcp"
+  | "data.workspace"
+  | "data.database"
+  | "permission.microphone";
+
+export type DesktopCapabilityReadiness =
+  | "ready"
+  | "optional"
+  | "setup_required"
+  | "unavailable"
+  | "verification_failed"
+  | "disabled";
+
+export type DesktopCapabilityRequirementKind =
+  | "credential"
+  | "configuration"
+  | "connectivity"
+  | "local_prerequisite"
+  | "permission";
+
+export interface DesktopCapabilityRequirement {
+  kind: DesktopCapabilityRequirementKind;
+  label: string;
+  satisfied: boolean;
+  detail?: string | undefined;
+}
+
+export interface DesktopCapabilitySettingField {
+  key: string;
+  label: string;
+  kind: "text" | "url" | "secret" | "boolean" | "select";
+  required: boolean;
+  secret: boolean;
+  value?: string | boolean | undefined;
+  placeholder?: string | undefined;
+  options?: Array<{ value: string; label: string }> | undefined;
+}
+
+/** Renderer-safe capability status. Secret values are never represented here. */
+export interface DesktopCapability {
+  id: DesktopCapabilityId;
+  category: DesktopCapabilityCategory;
+  name: string;
+  description: string;
+  toolNames: string[];
+  enabled: boolean;
+  readiness: DesktopCapabilityReadiness;
+  detail: string;
+  requirements: DesktopCapabilityRequirement[];
+  settings: DesktopCapabilitySettingField[];
+  verificationStrategy: string;
+  runtimeApplication: string;
+  settingsSection: string;
+  lastVerifiedAt?: string | undefined;
+}
+
+export interface DesktopCapabilityView {
+  capabilities: DesktopCapability[];
+  credentialStore: {
+    available: boolean;
+    backend: DesktopCredentialBackend;
+  };
+  refreshedAt: string;
+}
+
+export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
+
+export type DesktopCapabilitySettingValue = string | boolean | null;
+
+export interface DesktopCapabilityConfigurationInput {
+  capabilityId: DesktopCapabilityId;
+  enabled?: boolean | undefined;
+  settings?: Record<string, DesktopCapabilitySettingValue> | undefined;
+  /** Write-only. A string replaces the credential; null removes it. */
+  credential?: string | null | undefined;
+}
+
+export interface DesktopCapabilityConfigurationResult {
+  capabilityId: DesktopCapabilityId;
+  applied: boolean;
+  runtimeRestarted: boolean;
+  view: DesktopCapabilityView;
+}
+
+export function parseDesktopCapabilityConfigurationInput(
+  value: unknown,
+): DesktopCapabilityConfigurationInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop capability configuration must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const allowed = new Set(["capabilityId", "enabled", "settings", "credential"]);
+  const unsupported = Object.keys(input).find((key) => allowed.has(key) === false);
+  if (unsupported !== undefined) {
+    throw new Error(`Desktop capability configuration includes unsupported field '${unsupported}'.`);
+  }
+  const capabilityId = parseDesktopCapabilityId(input.capabilityId);
+  if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
+    throw new Error("Desktop capability configuration enabled must be a boolean.");
+  }
+  if (
+    input.credential !== undefined
+    && input.credential !== null
+    && (typeof input.credential !== "string" || input.credential.trim().length === 0)
+  ) {
+    throw new Error("Desktop capability credential must be a non-empty string or null.");
+  }
+  let settings: Record<string, DesktopCapabilitySettingValue> | undefined;
+  if (input.settings !== undefined) {
+    if (typeof input.settings !== "object" || input.settings === null || Array.isArray(input.settings)) {
+      throw new Error("Desktop capability settings must be an object.");
+    }
+    settings = {};
+    for (const [key, setting] of Object.entries(input.settings as Record<string, unknown>)) {
+      if (key.trim().length === 0 || key.length > 80) {
+        throw new Error("Desktop capability setting keys must be non-empty and bounded.");
+      }
+      if (
+        setting !== null
+        && typeof setting !== "boolean"
+        && (typeof setting !== "string" || setting.length > 4096)
+      ) {
+        throw new Error(`Desktop capability setting '${key}' is invalid.`);
+      }
+      settings[key] = setting as DesktopCapabilitySettingValue;
+    }
+  }
+  return {
+    capabilityId,
+    ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+    ...(settings !== undefined ? { settings } : {}),
+    ...(input.credential !== undefined
+      ? { credential: input.credential as string | null }
+      : {}),
+  };
+}
+
+function parseDesktopCapabilityId(value: unknown): DesktopCapabilityId {
+  const ids: DesktopCapabilityId[] = [
+    "model.openrouter", "model.openai", "model.anthropic", "model.ollama", "model.lmstudio",
+    "tools.internet.tavily", "tools.weather", "tools.network.free",
+    "local.filesystem", "local.developer_shell", "local.sandbox_code",
+    "connections.mcp", "data.workspace", "data.database", "permission.microphone",
+  ];
+  if (typeof value !== "string" || ids.includes(value as DesktopCapabilityId) === false) {
+    throw new Error("Desktop capability ID is not supported.");
+  }
+  return value as DesktopCapabilityId;
+}
+
 export interface DesktopAgentStageConfig {
   modelByStage?: Record<string, string> | undefined;
 }
@@ -740,6 +912,13 @@ export interface DesktopSettings {
   presetId: DesktopShellPresetId;
   capabilityPacks: DesktopCapabilityPackId[];
   projects: DesktopProjectRegistration[];
+  mcpServers: DesktopMcpServerConfig[];
+  capabilityVerifications: Partial<Record<DesktopCapabilityId, string>>;
+  developerShellPath?: string | undefined;
+  developerPath?: string | undefined;
+  developerShellEnvMode: "inherit" | "allowlist";
+  developerShellAllowedEnvNames: string[];
+  approvalPolicyPackId: "dev" | "ci_bot" | "production";
   agentStageConfig?: DesktopAgentStageConfig | undefined;
   modelTimeoutMs?: number | undefined;
   databaseUrl?: string | undefined;
@@ -777,38 +956,16 @@ export interface DesktopRendererSettings {
   presetId: DesktopShellPresetId;
   capabilityPacks: DesktopCapabilityPackId[];
   projects: DesktopProjectRegistration[];
-  providerCredentialConfigured: boolean;
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled: boolean;
 }
 
 export interface DesktopRendererSettingsUpdate {
-  selectedProvider?: DesktopModelProvider | undefined;
   projects?: DesktopProjectRegistration[] | undefined;
 }
 
 export type DesktopCredentialedModelProvider = "openrouter" | "openai" | "anthropic";
-
-export interface DesktopProviderCredentialInput {
-  provider: DesktopCredentialedModelProvider;
-  apiKey: string;
-}
-
-export type DesktopToolCredentialProvider = "visual-crossing";
-export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
-
-export interface DesktopToolCredentialStatus {
-  provider: DesktopToolCredentialProvider;
-  configured: boolean;
-  available: boolean;
-  backend: DesktopCredentialBackend;
-}
-
-export interface DesktopToolCredentialInput {
-  provider: DesktopToolCredentialProvider;
-  apiKey: string;
-}
 
 export function parseDesktopRendererSettingsUpdate(
   value: unknown,
@@ -817,16 +974,13 @@ export function parseDesktopRendererSettingsUpdate(
     throw new Error("Desktop settings update must be an object.");
   }
   const input = value as Record<string, unknown>;
-  const supportedKeys = new Set(["selectedProvider", "projects"]);
+  const supportedKeys = new Set(["projects"]);
   const unsupportedKey = Object.keys(input).find((key) => supportedKeys.has(key) === false);
   if (unsupportedKey !== undefined) {
     throw new Error(`Desktop settings update includes unsupported field '${unsupportedKey}'.`);
   }
 
   const update: DesktopRendererSettingsUpdate = {};
-  if (input.selectedProvider !== undefined) {
-    update.selectedProvider = parseDesktopModelProvider(input.selectedProvider);
-  }
   if (input.projects !== undefined) {
     if (Array.isArray(input.projects) === false) {
       throw new Error("Desktop settings update projects must be an array.");
@@ -843,73 +997,6 @@ export function parseDesktopRendererSettingsUpdate(
     });
   }
   return update;
-}
-
-export function parseDesktopProviderCredentialInput(
-  value: unknown,
-): DesktopProviderCredentialInput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Desktop provider credential must be an object.");
-  }
-  const input = value as Record<string, unknown>;
-  const unsupportedKey = Object.keys(input).find(
-    (key) => key !== "provider" && key !== "apiKey",
-  );
-  if (unsupportedKey !== undefined) {
-    throw new Error(`Desktop provider credential includes unsupported field '${unsupportedKey}'.`);
-  }
-  if (
-    input.provider !== "openrouter"
-    && input.provider !== "openai"
-    && input.provider !== "anthropic"
-  ) {
-    throw new Error("Desktop provider credential provider must require an API key.");
-  }
-  return {
-    provider: input.provider,
-    apiKey: parseRequiredDesktopString(input.apiKey, "apiKey"),
-  };
-}
-
-export function parseDesktopToolCredentialProvider(
-  value: unknown,
-): DesktopToolCredentialProvider {
-  if (value !== "visual-crossing") {
-    throw new Error("Desktop tool credential provider is not supported.");
-  }
-  return value;
-}
-
-export function parseDesktopToolCredentialInput(
-  value: unknown,
-): DesktopToolCredentialInput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Desktop tool credential must be an object.");
-  }
-  const input = value as Record<string, unknown>;
-  const unsupportedKey = Object.keys(input).find(
-    (key) => key !== "provider" && key !== "apiKey",
-  );
-  if (unsupportedKey !== undefined) {
-    throw new Error(`Desktop tool credential includes unsupported field '${unsupportedKey}'.`);
-  }
-  return {
-    provider: parseDesktopToolCredentialProvider(input.provider),
-    apiKey: parseRequiredDesktopString(input.apiKey, "apiKey"),
-  };
-}
-
-function parseDesktopModelProvider(value: unknown): DesktopModelProvider {
-  if (
-    value === "openrouter"
-    || value === "openai"
-    || value === "anthropic"
-    || value === "ollama"
-    || value === "lmstudio"
-  ) {
-    return value;
-  }
-  throw new Error("Desktop settings update selectedProvider is invalid.");
 }
 
 export type DesktopShellCommand =
@@ -991,11 +1078,31 @@ export interface DesktopProjectFilesChangedEvent {
 }
 
 export type DesktopMcpTransport = "stdio" | "http" | "sse";
-export type DesktopMcpDiscoverySourceKind = "config-file" | "docker-toolkit";
+export type DesktopMcpDiscoverySourceKind = "desktop-managed" | "config-file" | "docker-toolkit";
 
 export interface DesktopMcpToolSummary {
   name: string;
   description?: string | undefined;
+  approvalMode?: "auto" | "ask" | undefined;
+  allowedInteractionModes?: ("chat" | "plan" | "build")[] | undefined;
+}
+
+export type DesktopMcpCredentialKind = "bearer" | "header" | "environment";
+
+export interface DesktopMcpCredentialBinding {
+  kind: DesktopMcpCredentialKind;
+  name?: string | undefined;
+  credentialId: `mcp.${string}`;
+  envKey: string;
+  configured: boolean;
+}
+
+export interface DesktopMcpCredentialMutationInput {
+  kind: DesktopMcpCredentialKind;
+  name?: string | undefined;
+  credentialId?: `mcp.${string}` | undefined;
+  envKey?: string | undefined;
+  secret?: string | undefined;
 }
 
 export interface DesktopMcpServerConfig {
@@ -1013,7 +1120,9 @@ export interface DesktopMcpServerConfig {
   sourcePath?: string | undefined;
   toolCount?: number | undefined;
   tools?: DesktopMcpToolSummary[] | undefined;
+  credentials?: DesktopMcpCredentialBinding[] | undefined;
   setupWarning?: string | undefined;
+  verifiedAt?: string | undefined;
 }
 
 export interface DesktopMcpDiscoveryDiagnostic {
@@ -1027,6 +1136,95 @@ export interface DesktopMcpDiscoveryResult {
   servers: DesktopMcpServerConfig[];
   diagnostics: DesktopMcpDiscoveryDiagnostic[];
   discoveredAt: string;
+}
+
+export interface DesktopMcpServerMutationInput {
+  id: string;
+  name: string;
+  transport: DesktopMcpTransport;
+  command?: string | undefined;
+  args?: string[] | undefined;
+  url?: string | undefined;
+  credentials?: DesktopMcpCredentialMutationInput[] | undefined;
+  toolPolicies?: Record<string, {
+    approvalMode: "auto" | "ask";
+    allowedInteractionModes: ("chat" | "plan" | "build")[];
+  }> | undefined;
+  enabled: boolean;
+}
+
+export function parseDesktopMcpServerMutationInput(value: unknown): DesktopMcpServerMutationInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop MCP server configuration must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const supported = new Set(["id", "name", "transport", "command", "args", "url", "credentials", "toolPolicies", "enabled"]);
+  const unsupported = Object.keys(input).find((key) => supported.has(key) === false);
+  if (unsupported !== undefined) throw new Error(`Desktop MCP server includes unsupported field '${unsupported}'.`);
+  const id = parseRequiredDesktopString(input.id, "id");
+  if (/^[a-zA-Z0-9._-]+$/u.test(id) === false) throw new Error("Desktop MCP server id must match [a-zA-Z0-9._-]+.");
+  const name = parseRequiredDesktopString(input.name, "name");
+  if (input.transport !== "stdio" && input.transport !== "http" && input.transport !== "sse") {
+    throw new Error("Desktop MCP server transport is unsupported.");
+  }
+  if (typeof input.enabled !== "boolean") throw new Error("Desktop MCP server enabled must be a boolean.");
+  const credentials = parseDesktopMcpCredentialInputs(input.credentials, id);
+  const toolPolicies = parseDesktopMcpToolPolicies(input.toolPolicies);
+  if (input.transport === "stdio") {
+    const command = parseRequiredDesktopString(input.command, "command");
+    if (input.args !== undefined && (Array.isArray(input.args) === false || input.args.some((arg) => typeof arg !== "string"))) {
+      throw new Error("Desktop MCP server args must be an array of strings.");
+    }
+    if (credentials.some((binding) => binding.kind !== "environment")) throw new Error("Desktop MCP stdio servers only support environment credential bindings.");
+    return { id, name, transport: "stdio", command, ...(input.args !== undefined ? { args: input.args as string[] } : {}), ...(credentials.length > 0 ? { credentials } : {}), ...(toolPolicies !== undefined ? { toolPolicies } : {}), enabled: input.enabled };
+  }
+  const url = parseRequiredDesktopString(input.url, "url");
+  const parsedUrl = new URL(url);
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") throw new Error("Desktop MCP server URL must use HTTP or HTTPS.");
+  if (parsedUrl.username.length > 0 || parsedUrl.password.length > 0) {
+    throw new Error("Desktop MCP credentials cannot be embedded in the server URL.");
+  }
+  if (credentials.some((binding) => binding.kind === "environment")) throw new Error("Remote MCP servers support bearer and header credentials, not process environment bindings.");
+  if (credentials.filter((binding) => binding.kind === "bearer").length > 1) throw new Error("Desktop MCP server can have at most one bearer credential.");
+  return { id, name, transport: input.transport, url: parsedUrl.toString(), ...(credentials.length > 0 ? { credentials } : {}), ...(toolPolicies !== undefined ? { toolPolicies } : {}), enabled: input.enabled };
+}
+
+function parseDesktopMcpCredentialInputs(value: unknown, serverId: string): DesktopMcpCredentialMutationInput[] {
+  if (value === undefined) return [];
+  if (Array.isArray(value) === false) throw new Error("Desktop MCP credentials must be an array.");
+  const seen = new Set<string>();
+  return value.map((raw) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("Desktop MCP credential binding must be an object.");
+    const binding = raw as Record<string, unknown>;
+    const unsupported = Object.keys(binding).find((key) => new Set(["kind", "name", "credentialId", "envKey", "secret"]).has(key) === false);
+    if (unsupported !== undefined) throw new Error(`Desktop MCP credential includes unsupported field '${unsupported}'.`);
+    if (binding.kind !== "bearer" && binding.kind !== "header" && binding.kind !== "environment") throw new Error("Desktop MCP credential kind is invalid.");
+    const name = binding.kind === "bearer" ? undefined : parseRequiredDesktopString(binding.name, "credential name");
+    if (binding.kind === "header" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name!) === false) throw new Error("Desktop MCP header credential name is invalid.");
+    if (binding.kind === "environment" && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name!) === false) throw new Error("Desktop MCP environment credential name is invalid.");
+    const identity = `${binding.kind}:${name ?? ""}`.toLowerCase();
+    if (seen.has(identity)) throw new Error("Desktop MCP credential bindings must be unique.");
+    seen.add(identity);
+    const credentialId = binding.credentialId === undefined ? undefined : String(binding.credentialId);
+    if (credentialId !== undefined && (credentialId.startsWith(`mcp.${serverId}.`) === false || /^mcp\.[a-zA-Z0-9._-]+$/u.test(credentialId) === false)) throw new Error("Desktop MCP credential id is invalid for this server.");
+    const envKey = binding.envKey === undefined ? undefined : String(binding.envKey);
+    if (envKey !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(envKey) === false) throw new Error("Desktop MCP credential environment key is invalid.");
+    const secret = binding.secret === undefined ? undefined : String(binding.secret);
+    if (secret !== undefined && (secret.length === 0 || secret.trim() !== secret || /[\u0000-\u001f\u007f]/u.test(secret))) throw new Error("Desktop MCP credential value is invalid.");
+    return { kind: binding.kind, ...(name !== undefined ? { name } : {}), ...(credentialId !== undefined ? { credentialId: credentialId as `mcp.${string}` } : {}), ...(envKey !== undefined ? { envKey } : {}), ...(secret !== undefined ? { secret } : {}) };
+  });
+}
+
+function parseDesktopMcpToolPolicies(value: unknown): DesktopMcpServerMutationInput["toolPolicies"] {
+  if (value === undefined) return ;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Desktop MCP tool policies must be an object.");
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([toolName, raw]) => {
+    if (toolName.trim().length === 0 || typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("Desktop MCP tool policy is invalid.");
+    const policy = raw as Record<string, unknown>;
+    if (policy.approvalMode !== "auto" && policy.approvalMode !== "ask") throw new Error(`Desktop MCP tool '${toolName}' approval mode is invalid.`);
+    if (Array.isArray(policy.allowedInteractionModes) === false || policy.allowedInteractionModes.length === 0 || policy.allowedInteractionModes.some((mode) => mode !== "chat" && mode !== "plan" && mode !== "build")) throw new Error(`Desktop MCP tool '${toolName}' interaction modes are invalid.`);
+    return [toolName, { approvalMode: policy.approvalMode, allowedInteractionModes: [...new Set(policy.allowedInteractionModes)] as ("chat" | "plan" | "build")[] }] as const;
+  }));
 }
 
 export type DesktopMicrophoneAccessState =
