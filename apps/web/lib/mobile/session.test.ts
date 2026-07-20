@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Session } from "@/lib/auth-types";
-import { MobileSessionError, resolveMobileSession } from "./session";
+import {
+  MobileSessionError,
+  mobileSessionFailureFacts,
+  resolveMobileSession,
+} from "./session";
 
 const validSession = {
   user: { id: "user-1", name: "Mobile User", email: "mobile@example.test" },
@@ -130,3 +134,33 @@ test("environment configuration failures remain configuration errors", () =>
   assertConfigurationFailure(
     dependencies({ environmentError: new Error("config") })
   ));
+
+test("failure telemetry records only safe authentication-presence facts", () => {
+  const request = new Request(
+    "https://kestrel.one/api/mobile/v2/threads/thread-secret",
+    {
+      headers: {
+        authorization: "Bearer signed-session-secret",
+        cookie: "better-auth.session_token=cookie-secret",
+        "x-api-key": "personal-api-key-secret",
+      },
+    }
+  );
+  const facts = mobileSessionFailureFacts(
+    request,
+    new MobileSessionError("UNAUTHORIZED", "Mobile session required")
+  );
+
+  assert.deepEqual(facts, {
+    path: "/api/mobile/v2/threads/thread-secret",
+    status: 401,
+    code: "UNAUTHORIZED",
+    hasCookie: true,
+    hasAuthorization: true,
+    hasApiKey: true,
+  });
+  const serialized = JSON.stringify(facts);
+  assert.doesNotMatch(serialized, /signed-session-secret/u);
+  assert.doesNotMatch(serialized, /cookie-secret/u);
+  assert.doesNotMatch(serialized, /personal-api-key-secret/u);
+});

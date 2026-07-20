@@ -131,6 +131,34 @@ export async function resolveMobileSession(
   return { session, organizationId };
 }
 
+export function mobileSessionFailureFacts(request: Request, error: unknown) {
+  const code =
+    error instanceof MobileSessionError ? error.code : "INTERNAL_ERROR";
+  const status =
+    code === "UNAUTHORIZED"
+      ? 401
+      : code === "ORGANIZATION_MEMBERSHIP_REQUIRED"
+        ? 403
+        : 503;
+
+  return {
+    path: new URL(request.url).pathname,
+    status,
+    code,
+    hasCookie: request.headers.has("cookie"),
+    hasAuthorization: request.headers.has("authorization"),
+    hasApiKey: request.headers.has("x-api-key"),
+  };
+}
+
 export async function requireMobileSession(request: Request) {
-  return resolveMobileSession(request, dependencies);
+  try {
+    return await resolveMobileSession(request, dependencies);
+  } catch (error) {
+    console.warn(
+      "[mobile-session] request rejected",
+      mobileSessionFailureFacts(request, error)
+    );
+    throw error;
+  }
 }
