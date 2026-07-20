@@ -45,6 +45,18 @@ test("Core-owned Desktop database still rejects unavailable PGlite", async () =>
   );
 });
 
+test("Core-owned Desktop database accepts verified external storage without returning its URL", async () => {
+  const controller = createCoreOwnedDesktopDatabaseController({
+    async ensureReady() {
+      return { ...pgliteStatus(), dbMode: "external", database: { mode: "external", state: "healthy", summary: "External ready", managed: false, initialized: true, running: true, identityVerified: true } };
+    },
+  });
+  const ready = await controller.prepare();
+  assert.equal(ready.databaseUrl, undefined);
+  assert.equal(ready.status.managed, false);
+  assert.equal(ready.status.running, true);
+});
+
 function pgliteStatus(
   databaseOverrides: Partial<LocalCoreStatus["database"]> = {},
 ): LocalCoreStatus {

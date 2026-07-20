@@ -1,4 +1,3 @@
-import { hasConfiguredDesktopProviderCredential } from "../../../src/desktopShell/onboarding.js";
 import type {
   DesktopRendererSettings,
   DesktopSettings,
@@ -6,7 +5,6 @@ import type {
 
 export function toDesktopRendererSettings(
   settings: DesktopSettings,
-  providerCredentialConfigured = hasConfiguredDesktopProviderCredential(settings),
 ): DesktopRendererSettings {
   return {
     selectedProvider: settings.selectedProvider,
@@ -14,7 +12,6 @@ export function toDesktopRendererSettings(
     presetId: settings.presetId,
     capabilityPacks: [...settings.capabilityPacks],
     projects: settings.projects.map((project) => ({ ...project })),
-    providerCredentialConfigured,
     ...(settings.providerSelectionCompletedAt !== undefined
       ? { providerSelectionCompletedAt: settings.providerSelectionCompletedAt }
       : {}),

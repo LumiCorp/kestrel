@@ -22,9 +22,8 @@ import {
   DESKTOP_UI_STATE_RENDERER_SOURCE,
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
-  parseDesktopProviderCredentialInput,
-  parseDesktopToolCredentialInput,
-  parseDesktopToolCredentialProvider,
+  parseDesktopCapabilityConfigurationInput,
+  parseDesktopMcpServerMutationInput,
   parseDesktopRendererSettingsUpdate,
   parseDesktopRunCancelRequest,
   parseDesktopRunTurnRequest,
@@ -40,15 +39,14 @@ import { LocalCoreConnectionManager } from "../../../src/localCore/connectionMan
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import type {
   LocalCoreCredentialId,
-  LocalCoreCredentialStoreStatus,
 } from "../../../src/localCore/credentialStore.js";
-import { verifyVisualCrossingCredential } from "../../../tools/free/visualCrossingWeather.js";
 import {
   createWebRunnerAdapter,
   type WebRunnerAdapter,
   type WebRunnerRequestContext,
 } from "../../../src/web/index.js";
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
+import { resolveDesktopCapabilityView } from "../../../src/desktopShell/capabilityRegistry.js";
 import {
   deriveDesktopOnboardingState,
   describeDesktopProviderRequirement,
@@ -57,11 +55,12 @@ import {
   createDefaultModelPolicy,
   type ResolvedModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
-import { DEFAULT_MODEL_BY_PROVIDER } from "../../../src/profile/runtimeProfile.js";
 import { resolveDesktopLibexecRoot, resolveDesktopPathConfig } from "./config.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
+  DesktopCapabilityConfigurationResult,
+  DesktopCapabilityView,
   DesktopDatabaseStatus,
   DesktopDirectoryListing,
   DesktopFileContent,
@@ -74,13 +73,11 @@ import type {
   DesktopLegacyUiStateEntries,
   DesktopUiStateV1,
   DesktopMcpDiscoveryResult,
+  DesktopMcpServerConfig,
+  DesktopMcpServerMutationInput,
   DesktopMicrophoneAccess,
   DesktopProjectRegistration,
   DesktopProjectFilesChangedEvent,
-  DesktopProviderCredentialInput,
-  DesktopToolCredentialInput,
-  DesktopToolCredentialProvider,
-  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopProtocolTransport,
@@ -119,8 +116,16 @@ import {
   prepareDesktopProjectRegistrations as prepareProjectRegistrationsForSettings,
 } from "./projectGitBootstrap.js";
 import { discoverMcpServersFromKnownConfigFiles } from "./mcpDiscovery.js";
+import {
+  completeDesktopMcpVerification,
+  prepareDesktopMcpVerification,
+} from "./mcpVerification.js";
 import { DesktopProjectFileIndex } from "./projectFileIndex.js";
 import { toDesktopRendererSettings } from "./rendererSettings.js";
+import { probeDesktopCapabilities } from "./capabilityProbes.js";
+import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
+import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
+import { buildDesktopCapabilityConfigurationPlan } from "./capabilityConfiguration.js";
 import { resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
 import {
   getDesktopProjectSnapshot,
@@ -585,6 +590,129 @@ function registerIpcHandlers(
     });
   });
   ipcMain.handle("desktop:get-settings", async () => await readDesktopRendererSettings());
+  ipcMain.handle("desktop:get-capabilities", async () => await readDesktopCapabilityView());
+  ipcMain.handle("desktop:configure-capability", async (_event, input: unknown): Promise<DesktopCapabilityConfigurationResult> => {
+    let configuration;
+    let credentialAppliedDuringVerification = false;
+    try {
+      configuration = parseDesktopCapabilityConfigurationInput(input);
+    } catch (error) {
+      throw createDesktopError({
+        code: "desktop.invalid_capability_configuration",
+        message: "Desktop capability configuration is invalid.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const previousSettings = structuredClone(desktopSettings);
+    const previousModelPolicy = structuredClone(desktopModelPolicy);
+    let plan: ReturnType<typeof buildDesktopCapabilityConfigurationPlan>;
+    try {
+      plan = buildDesktopCapabilityConfigurationPlan({
+        currentSettings: desktopSettings,
+        currentModelPolicy: desktopModelPolicy,
+        configuration,
+      });
+      if (plan.requiresVerification && plan.registration.modelProvider !== undefined) {
+        await verifyDesktopModelCapability({
+          provider: plan.registration.modelProvider,
+          settings: plan.settings,
+          ...(typeof plan.credential?.value === "string" ? { apiKey: plan.credential.value } : {}),
+        });
+      } else if (
+        plan.requiresVerification
+        && (configuration.capabilityId === "tools.internet.tavily" || configuration.capabilityId === "tools.weather")
+      ) {
+        if (typeof plan.credential?.value !== "string") {
+          throw new Error("A credential is required to verify this provider configuration.");
+        }
+        await verifyDesktopToolProvider({
+          capabilityId: configuration.capabilityId,
+          credential: plan.credential.value,
+          settings: plan.settings,
+        });
+      } else if (
+        plan.requiresVerification
+        && configuration.capabilityId === "data.database"
+        && plan.settings.databaseMode === "external"
+      ) {
+        if (typeof plan.credential?.value !== "string") {
+          throw new Error("Enter the PostgreSQL connection URL to verify external storage.");
+        }
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => await client.verifyExternalDatabase(plan.credential!.value as string),
+        );
+        credentialAppliedDuringVerification = true;
+      }
+    } catch (error) {
+      throw createDesktopError({
+        code: "desktop.capability_verification_failed",
+        message: "Desktop could not verify this capability configuration.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const capabilityVerifications = { ...plan.settings.capabilityVerifications };
+    if (plan.credential?.value === null) {
+      delete capabilityVerifications[configuration.capabilityId];
+    } else if (plan.requiresVerification) {
+      capabilityVerifications[configuration.capabilityId] = new Date().toISOString();
+    }
+    const appliedSettings = {
+      ...plan.settings,
+      capabilityVerifications,
+      ...(plan.registration.modelProvider !== undefined && configuration.enabled === true
+        ? {
+            providerSelectionCompletedAt:
+              plan.settings.providerSelectionCompletedAt ?? new Date().toISOString(),
+          }
+        : {}),
+      modelPolicy: plan.modelPolicy,
+    };
+    await saveDesktopCoreSettings(appliedSettings);
+    try {
+      if (plan.credential?.value === null) {
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => await client.deleteCredential(plan.credential!.id),
+        );
+      } else if (typeof plan.credential?.value === "string" && credentialAppliedDuringVerification === false) {
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => await client.setCredential(plan.credential!.id, plan.credential!.value as string),
+        );
+      }
+    } catch (error) {
+      await saveDesktopCoreSettings({ ...previousSettings, modelPolicy: previousModelPolicy });
+      throw createDesktopError({
+        code: "desktop.capability_credential_apply_failed",
+        message: "Desktop could not apply the verified credential. The previous configuration was preserved.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    syncDesktopWebEnvironment(desktopSettings);
+    applyDesktopProfileOverride(desktopSettings);
+    await resetDesktopRunnerAdapter();
+    let runtimeRestarted = false;
+    if (plan.restartRuntime) {
+      updateBootState({
+        phase: "starting_runtime",
+        message: `Applying ${configuration.capabilityId} configuration…`,
+        database: databaseStatus,
+      }, mainWindow?.webContents);
+      await runnerTransport.restart();
+      runtimeRestarted = true;
+      if (configuration.capabilityId === "data.database") {
+        await reconfigureDatabaseController(desktopSettings);
+      }
+      updateBootState({ phase: "ready", message: "Desktop ready.", database: databaseStatus }, mainWindow?.webContents);
+    }
+    runtimeHealth = deriveRuntimeHealth(bootState);
+    mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
+    return {
+      capabilityId: configuration.capabilityId,
+      applied: true,
+      runtimeRestarted,
+      view: await readDesktopCapabilityView(),
+    };
+  });
   ipcMain.handle("desktop:get-ui-state", async () => await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.getDesktopUiState(),
     ));
@@ -684,50 +812,6 @@ function registerIpcHandlers(
     );
   });
   ipcMain.handle("desktop:get-model-policy", async () => desktopModelPolicy);
-  ipcMain.handle("desktop:save-model-policy", async (_event, nextPolicy: unknown) => {
-    if (desktopConfig === undefined) {
-      throw createDesktopError({
-        code: "desktop.config_unavailable",
-        message: "Desktop model policy is unavailable.",
-      });
-    }
-    await saveDesktopCoreSettings({
-      ...desktopSettings,
-      modelPolicy: nextPolicy,
-    });
-    if (desktopSettings.selectedProvider !== desktopModelPolicy.provider) {
-      await saveDesktopCoreSettings({
-        ...desktopSettings,
-        selectedProvider: desktopModelPolicy.provider,
-        providerSelectionCompletedAt:
-          desktopSettings.providerSelectionCompletedAt ??
-          new Date().toISOString(),
-      });
-      syncDesktopWebEnvironment(desktopSettings);
-    } else if (desktopSettings.providerSelectionCompletedAt === undefined) {
-      await saveDesktopCoreSettings({
-        ...desktopSettings,
-        providerSelectionCompletedAt: new Date().toISOString(),
-      });
-      syncDesktopWebEnvironment(desktopSettings);
-    }
-    applyDesktopProfileOverride(desktopSettings);
-    await resetDesktopRunnerAdapter();
-    updateBootState({
-      phase: "starting_runtime",
-      message: "Applying model policy…",
-      database: databaseStatus,
-    }, mainWindow?.webContents);
-    await runnerTransport.restart();
-    runtimeHealth = deriveRuntimeHealth(bootState);
-    mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
-    updateBootState({
-      phase: "ready",
-      message: "Desktop ready.",
-      database: databaseStatus,
-    }, mainWindow?.webContents);
-    return desktopModelPolicy;
-  });
   ipcMain.handle("desktop:save-settings", async (_event, nextSettings: unknown) => {
     let update: DesktopRendererSettingsUpdate;
     try {
@@ -739,128 +823,18 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    const selectedProvider = update.selectedProvider ?? desktopSettings.selectedProvider;
-    const providerChanged =
-      selectedProvider !== desktopSettings.selectedProvider
-      || selectedProvider !== desktopModelPolicy.provider;
     const nextProjects = update.projects ?? desktopSettings.projects;
     const preparedProjects = await prepareDesktopSettingsProjectRegistrations(nextProjects);
-    const providerSelectionCompletedAt =
-      update.selectedProvider !== undefined
-      && desktopSettings.providerSelectionCompletedAt === undefined
-        ? new Date().toISOString()
-        : desktopSettings.providerSelectionCompletedAt;
     const normalized = normalizeDesktopSettings({
       ...desktopSettings,
-      selectedProvider,
       projects: preparedProjects,
-      ...(providerSelectionCompletedAt !== undefined ? { providerSelectionCompletedAt } : {}),
     });
     return persistDesktopRendererConfiguration(runnerTransport, {
-      settings: {
-        ...normalized,
-        ...(providerChanged
-          ? {
-              modelPolicy: {
-                ...desktopModelPolicy,
-                provider: selectedProvider,
-                model: DEFAULT_MODEL_BY_PROVIDER[selectedProvider],
-              },
-            }
-          : {}),
-      },
-      restartRuntime: providerChanged,
-      resetRunnerProfile: providerChanged,
-      restartMessage: "Applying model provider…",
+      settings: normalized,
+      restartRuntime: false,
+      resetRunnerProfile: false,
+      restartMessage: "Applying project settings…",
     });
-  });
-  ipcMain.handle("desktop:save-provider-credential", async (_event, input: unknown) => {
-    let credential: DesktopProviderCredentialInput;
-    try {
-      credential = parseDesktopProviderCredentialInput(input);
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_provider_credential",
-        message: "Desktop provider credential is invalid.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    await requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.setCredential(
-        modelProviderCredentialId(credential.provider),
-        credential.apiKey,
-      ),
-    );
-    const normalized = normalizeDesktopSettings({
-      ...desktopSettings,
-      selectedProvider: credential.provider,
-      providerSelectionCompletedAt:
-        desktopSettings.providerSelectionCompletedAt ?? new Date().toISOString(),
-    });
-    const providerChanged = credential.provider !== desktopModelPolicy.provider;
-    return persistDesktopRendererConfiguration(runnerTransport, {
-      settings: {
-        ...normalized,
-        ...(providerChanged
-          ? {
-              modelPolicy: {
-                ...desktopModelPolicy,
-                provider: credential.provider,
-                model: DEFAULT_MODEL_BY_PROVIDER[credential.provider],
-              },
-            }
-          : {}),
-      },
-      restartRuntime: true,
-      resetRunnerProfile: true,
-      restartMessage: "Applying provider credential…",
-    });
-  });
-  ipcMain.handle("desktop:get-tool-credential-status", async (_event, input: unknown) => {
-    const provider = parseDesktopToolCredentialProvider(input);
-    const status = await requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.credentialStatus(),
-    );
-    return toDesktopToolCredentialStatus(provider, status);
-  });
-  ipcMain.handle("desktop:save-tool-credential", async (_event, input: unknown) => {
-    let credential: DesktopToolCredentialInput;
-    try {
-      credential = parseDesktopToolCredentialInput(input);
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_tool_credential",
-        message: "Desktop tool credential is invalid.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    try {
-      await verifyVisualCrossingCredential({ apiKey: credential.apiKey });
-    } catch {
-      throw createDesktopError({
-        code: "desktop.tool_credential_verification_failed",
-        message: "Visual Crossing could not verify this API key.",
-        details: "Check the key and your network connection, then try again.",
-      });
-    }
-    const status = await requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.setCredential(
-        desktopToolCredentialId(credential.provider),
-        credential.apiKey,
-      ),
-    );
-    await runnerTransport.restart();
-    return toDesktopToolCredentialStatus(credential.provider, status);
-  });
-  ipcMain.handle("desktop:delete-tool-credential", async (_event, input: unknown) => {
-    const provider = parseDesktopToolCredentialProvider(input);
-    const result = await requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.deleteCredential(
-        desktopToolCredentialId(provider),
-      ),
-    );
-    await runnerTransport.restart();
-    return toDesktopToolCredentialStatus(provider, result.credentials);
   });
   ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle("desktop:pick-workspace", async () => {
@@ -1262,7 +1236,75 @@ function registerIpcHandlers(
       ...resolveFileViewKind(resolvedPath),
     };
   });
-  ipcMain.handle("desktop:discover-mcp-servers", async (): Promise<DesktopMcpDiscoveryResult> => discoverMcpServersFromKnownConfigFiles());
+  ipcMain.handle("desktop:discover-mcp-servers", async (): Promise<DesktopMcpDiscoveryResult> => readDesktopMcpInventory());
+  ipcMain.handle("desktop:save-mcp-server", async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
+    let configuration: DesktopMcpServerMutationInput;
+    try {
+      configuration = parseDesktopMcpServerMutationInput(input);
+    } catch (error) {
+      throw createDesktopError({ code: "desktop.invalid_mcp_server", message: "MCP server configuration is invalid.", details: error instanceof Error ? error.message : String(error) });
+    }
+    let server: DesktopMcpServerConfig;
+    try {
+      if (configuration.enabled) {
+        const prepared = prepareDesktopMcpVerification(configuration);
+        const verification = await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => await client.verifyMcpServer(prepared.request),
+        );
+        server = completeDesktopMcpVerification(
+          configuration,
+          prepared.bindings,
+          verification,
+        );
+      } else {
+        const current = desktopSettings.mcpServers.find((entry) => entry.id === configuration.id);
+        if (current === undefined) throw new Error("Only an existing Desktop-managed MCP server can be disabled.");
+        server = { ...current, enabled: false };
+      }
+    } catch (error) {
+      throw createDesktopError({ code: "desktop.mcp_verification_failed", message: `${configuration.name} could not be activated.`, details: error instanceof Error ? error.message : String(error) });
+    }
+    const previousServer = desktopSettings.mcpServers.find((entry) => entry.id === server.id);
+    await saveDesktopCoreSettings({
+      ...desktopSettings,
+      mcpServers: [...desktopSettings.mcpServers.filter((entry) => entry.id !== server.id), server],
+      capabilityVerifications: {
+        ...desktopSettings.capabilityVerifications,
+        ...(configuration.enabled ? { "connections.mcp": server.verifiedAt! } : {}),
+      },
+    });
+    const activeCredentialIds = new Set(server.credentials?.map((credential) => credential.credentialId) ?? []);
+    const removedCredentialIds = previousServer?.credentials
+      ?.map((credential) => credential.credentialId)
+      .filter((credentialId) => activeCredentialIds.has(credentialId) === false) ?? [];
+    if (removedCredentialIds.length > 0) {
+      await requireLocalCoreConnectionManager().executeOnce(async (client) => {
+        for (const credentialId of removedCredentialIds) await client.deleteCredential(credentialId);
+      });
+    }
+    applyDesktopProfileOverride(desktopSettings);
+    await resetDesktopRunnerAdapter();
+    await runnerTransport.restart();
+    return await readDesktopMcpInventory();
+  });
+  ipcMain.handle("desktop:delete-mcp-server", async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
+    if (typeof input !== "string" || /^[a-zA-Z0-9._-]+$/u.test(input) === false) {
+      throw createDesktopError({ code: "desktop.invalid_mcp_server", message: "MCP server id is invalid." });
+    }
+    const removed = desktopSettings.mcpServers.find((server) => server.id === input);
+    await saveDesktopCoreSettings({ ...desktopSettings, mcpServers: desktopSettings.mcpServers.filter((server) => server.id !== input) });
+    if (removed?.credentials !== undefined) {
+      await requireLocalCoreConnectionManager().executeOnce(async (client) => {
+        for (const credential of removed.credentials ?? []) {
+          await client.deleteCredential(credential.credentialId);
+        }
+      });
+    }
+    applyDesktopProfileOverride(desktopSettings);
+    await resetDesktopRunnerAdapter();
+    await runnerTransport.restart();
+    return await readDesktopMcpInventory();
+  });
   ipcMain.handle("desktop:read-project-launcher", async (_event, projectPath: unknown, packageManagerOverride: unknown): Promise<DesktopProjectLauncherDescriptor | undefined> => {
     if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
       throw createDesktopError({
@@ -1565,6 +1607,10 @@ async function requestDesktopMicrophoneAccess(): Promise<DesktopMicrophoneAccess
     };
   }
   if (process.platform === "darwin") {
+    if (currentState === "denied" || currentState === "restricted") {
+      await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+      return { state: currentState, granted: false };
+    }
     const granted = await systemPreferences.askForMediaAccess("microphone");
     const state = readDesktopMicrophoneAccessState();
     return {
@@ -2169,36 +2215,39 @@ function requireLocalCoreStatus(): LocalCoreStatus {
   return localCoreStatus;
 }
 
-function desktopToolCredentialId(
-  provider: DesktopToolCredentialProvider,
-): LocalCoreCredentialId {
-  if (provider === "visual-crossing") {
-    return "tool.visual-crossing.default";
-  }
-  throw new Error("Desktop tool credential provider is not supported.");
+async function readDesktopCapabilityView(): Promise<DesktopCapabilityView> {
+  const [credentials, discovery] = await Promise.all([
+    requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.credentialStatus(),
+    ),
+    readDesktopMcpInventory(),
+  ]);
+  const microphone = process.platform === "darwin"
+    ? systemPreferences.getMediaAccessStatus("microphone")
+    : "unknown";
+  const probes = await probeDesktopCapabilities({
+    projects: desktopSettings.projects,
+    databaseReady: databaseStatus?.state === "healthy",
+    microphone,
+    mcpServers: discovery.servers,
+    settings: desktopSettings,
+  });
+  return resolveDesktopCapabilityView({ settings: desktopSettings, credentials, probes });
 }
 
-function modelProviderCredentialId(
-  provider: "openrouter" | "openai" | "anthropic",
-): LocalCoreCredentialId {
-  if (provider === "openai") return "provider.openai.default";
-  if (provider === "anthropic") return "provider.anthropic.default";
-  return "provider.openrouter.default";
-}
-
-function toDesktopToolCredentialStatus(
-  provider: DesktopToolCredentialProvider,
-  status: LocalCoreCredentialStoreStatus,
-): DesktopToolCredentialStatus {
-  const credentialId = desktopToolCredentialId(provider);
+async function readDesktopMcpInventory(): Promise<DesktopMcpDiscoveryResult> {
+  const discovered = await discoverMcpServersFromKnownConfigFiles();
+  const managedIds = new Set(desktopSettings.mcpServers.map((server) => server.id));
   return {
-    provider,
-    configured:
-      status.credentials.find((credential) => credential.id === credentialId)
-        ?.configured ?? false,
-    available: status.available,
-    backend:
-      status.backend === "macos_keychain" ? "macos_keychain" : "unavailable",
+    ...discovered,
+    servers: [
+      ...desktopSettings.mcpServers.map((server) => ({
+        ...server,
+        args: server.args !== undefined ? [...server.args] : undefined,
+        tools: server.tools?.map((tool) => ({ ...tool })),
+      })),
+      ...discovered.servers.filter((server) => managedIds.has(server.id) === false),
+    ],
   };
 }
 
@@ -2207,7 +2256,7 @@ function requireDesktopRunnerAdapter(
 ): WebRunnerAdapter {
   if (desktopRunnerAdapter === undefined) {
     desktopRunnerAdapter = createWebRunnerAdapter({
-      profile: buildDesktopRunnerProfile(desktopModelPolicy),
+      profile: buildDesktopRunnerProfile(desktopModelPolicy, desktopSettings),
       transportFactory: () => transport,
     });
   }
@@ -2238,6 +2287,7 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
     { id: "provider.openai.default", value: desktopSettings.openaiApiKey },
     { id: "provider.anthropic.default", value: desktopSettings.anthropicApiKey },
     { id: "tool.tavily.default", value: desktopSettings.tavilyApiKey },
+    { id: "data.database.external", value: desktopSettings.databaseUrl },
   ];
   if (legacyCredentials.every((credential) => credential.value === undefined)) {
     return;
@@ -2267,6 +2317,7 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
     openaiApiKey: null,
     anthropicApiKey: null,
     tavilyApiKey: null,
+    databaseUrl: null,
   }));
   await refreshDesktopCoreState();
 }
@@ -2326,24 +2377,7 @@ async function persistDesktopRendererConfiguration(
 }
 
 async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
-  const selectedProvider = desktopSettings.selectedProvider;
-  if (
-    selectedProvider === "ollama"
-    || selectedProvider === "lmstudio"
-  ) {
-    return toDesktopRendererSettings(desktopSettings, true);
-  }
-  const status = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.credentialStatus(),
-  );
-  return toDesktopRendererSettings(
-    desktopSettings,
-    status.credentials.some(
-      (credential) => credential.id === modelProviderCredentialId(
-        selectedProvider,
-      ) && credential.configured,
-    ),
-  );
+  return toDesktopRendererSettings(desktopSettings);
 }
 
 function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {

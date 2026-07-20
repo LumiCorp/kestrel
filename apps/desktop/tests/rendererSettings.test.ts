@@ -18,14 +18,12 @@ test("Desktop renderer settings never project persisted credentials", () => {
 
   const projected = toDesktopRendererSettings(settings);
 
-  assert.equal(projected.providerCredentialConfigured, true);
   assert.deepEqual(Object.keys(projected).sort(), [
     "advancedWorkspaceEnabled",
     "capabilityPacks",
     "databaseMode",
     "presetId",
     "projects",
-    "providerCredentialConfigured",
     "selectedProvider",
   ]);
   assert.equal(JSON.stringify(projected).includes("secret"), false);
