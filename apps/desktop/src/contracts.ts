@@ -22,6 +22,7 @@ import type {
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopProviderModelCatalog,
   DesktopToolCredentialInput,
   DesktopToolCredentialProvider,
   DesktopToolCredentialStatus,
@@ -87,6 +88,9 @@ export type {
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
   DesktopProviderCredentialInput,
+  DesktopProviderModelCatalog,
+  DesktopProviderReadiness,
+  DesktopAppearanceTheme,
   DesktopToolCredentialInput,
   DesktopToolCredentialProvider,
   DesktopToolCredentialStatus,
@@ -120,6 +124,14 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
+export type {
+  DesktopAppDefinition,
+  DesktopAppRef,
+  DesktopExecutionSelection,
+  DesktopModelConfiguration,
+  DesktopModelConfigurationRef,
+  DesktopModelConfigurationRevision,
+} from "../../../src/desktopShell/configuration.js";
 
 export interface DesktopAppInfo {
   name: string;
@@ -179,6 +191,7 @@ export interface DesktopBridge {
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
   saveModelPolicy(policy: ModelPolicyV1): Promise<ModelPolicyV1>;
+  getModelCatalog(provider: DesktopRendererSettings["selectedProvider"]): Promise<DesktopProviderModelCatalog>;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   pickWorkspace(): Promise<string | undefined>;

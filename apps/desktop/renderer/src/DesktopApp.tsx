@@ -1,25 +1,22 @@
 import {
   Activity,
   Folder,
-  KeyRound,
   ListChecks,
   MessageSquare,
-  Moon,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Plug,
   Plus,
-  RefreshCw,
   Send,
   Settings,
   Square,
-  Sun,
   Wrench,
   X,
 } from "lucide-react";
 import {
   type FormEvent,
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -28,7 +25,6 @@ import {
 
 import type {
   DesktopBridgeInfo,
-  DesktopCredentialedModelProvider,
   DesktopAttachmentMetadata,
   DesktopFollowUpQueueEntry,
   DesktopOperatorControlRequest,
@@ -39,7 +35,6 @@ import type {
   DesktopRuntimeThreadInspection,
   DesktopToolCredentialStatus,
 } from "../../src/contracts";
-import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
 import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
@@ -52,6 +47,8 @@ import {
   projectDesktopRunStream,
   type DesktopRunStreamItem,
 } from "./runStream";
+import { ContextSidebar } from "./ContextSidebar";
+import { SettingsWorkspace } from "./SettingsWorkspace";
 import {
   addRendererThread,
   appendRendererTranscript,
@@ -63,7 +60,7 @@ import {
   resolveRendererThreadProjectPath,
   selectRendererThread,
   serializeDesktopRendererState,
-  setRendererTheme,
+  toDesktopExecutionSelection,
   toDesktopRunHistory,
   updateRendererThread,
   updateRendererDraft,
@@ -85,25 +82,14 @@ interface PendingTurnSubmission {
   projectPath?: string | undefined;
 }
 
-type DesktopSurface = "chat" | "mission-control" | "projects" | "mcp" | "diagnostics";
+type DesktopSurface = "chat" | "mission-control" | "projects" | "mcp" | "diagnostics" | "settings";
 
 export function DesktopApp() {
   const [state, setState] = useState<DesktopRendererState>();
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
-  const [providerApiKey, setProviderApiKey] = useState("");
-  const [modelPolicy, setModelPolicy] = useState<ModelPolicyV1>();
-  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
-  const [providerDraft, setProviderDraft] = useState<DesktopRendererSettings["selectedProvider"]>("openrouter");
-  const [modelDraft, setModelDraft] = useState("");
-  const [providerSettingsSaving, setProviderSettingsSaving] = useState(false);
-  const [providerSettingsError, setProviderSettingsError] = useState<string>();
   const [weatherCredential, setWeatherCredential] = useState<DesktopToolCredentialStatus>();
-  const [weatherSettingsOpen, setWeatherSettingsOpen] = useState(false);
-  const [weatherApiKey, setWeatherApiKey] = useState("");
-  const [weatherSettingsSaving, setWeatherSettingsSaving] = useState(false);
-  const [weatherSettingsError, setWeatherSettingsError] = useState<string>();
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRun>>({});
   const [threadViews, setThreadViews] = useState<Record<string, DesktopRuntimeThreadInspection>>({});
   const [runStreams, setRunStreams] = useState<Record<string, DesktopRunStreamItem[]>>({});
@@ -113,6 +99,7 @@ export function DesktopApp() {
   const [activity, setActivity] = useState("Ready");
   const [error, setError] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [missionControlRevision, setMissionControlRevision] = useState(0);
   const [activeProjectPath, setActiveProjectPath] = useState<string>();
@@ -154,13 +141,20 @@ export function DesktopApp() {
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
       window.kestrelDesktop.getBridgeInfo(),
-      window.kestrelDesktop.getModelPolicy(),
       window.kestrelDesktop.getToolCredentialStatus("visual-crossing"),
-    ]).then(([uiState, nextSettings, health, info, nextModelPolicy, nextWeatherCredential]) => {
+    ]).then(([uiState, nextSettings, health, info, nextWeatherCredential]) => {
       if (disposed) {
         return;
       }
-      const rendererState = readDesktopRendererState(uiState);
+      const defaultConfiguration = nextSettings.modelConfigurations.find(
+        (configuration) => configuration.id === nextSettings.defaultModelConfigurationId,
+      );
+      const rendererState = readDesktopRendererState(uiState, {
+        modelConfigurationId: defaultConfiguration?.id,
+        modelConfigurationRevision: defaultConfiguration?.currentRevision,
+        enabledAppIds: nextSettings.defaultEnabledAppIds,
+        theme: nextSettings.appearanceTheme,
+      });
       setState(rendererState);
       void Promise.all(rendererState.threads.map(async (thread) => await refreshThreadAuthority(thread)))
         .catch(() => {});
@@ -168,7 +162,6 @@ export function DesktopApp() {
       setActiveProjectPath((current) => current ?? nextSettings.projects[0]?.path);
       setRuntimeHealth(health);
       setBridgeInfo(info);
-      setModelPolicy(nextModelPolicy);
       setWeatherCredential(nextWeatherCredential);
     }).catch((cause) => {
       if (disposed === false) {
@@ -249,14 +242,31 @@ export function DesktopApp() {
     if (state === undefined) {
       return;
     }
-    document.documentElement.dataset.theme = state.theme;
-    document.documentElement.style.colorScheme = state.theme;
+    const resolvedTheme = state.theme === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      : state.theme;
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
     void window.kestrelDesktop
       .saveUiState(serializeDesktopRendererState(state))
       .catch((cause) => {
         setError(`Desktop state could not be saved: ${errorMessage(cause)}`);
       });
   }, [state]);
+
+  useEffect(() => {
+    if (state?.theme !== "system") {
+      return;
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applySystemTheme = () => {
+      const theme = media.matches ? "dark" : "light";
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    };
+    media.addEventListener("change", applySystemTheme);
+    return () => media.removeEventListener("change", applySystemTheme);
+  }, [state?.theme]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
@@ -298,6 +308,7 @@ export function DesktopApp() {
       state === undefined
       || activeThread === undefined
       || message.trim().length === 0
+      || settings === undefined
     ) {
       return;
     }
@@ -412,6 +423,7 @@ export function DesktopApp() {
           ? { projectPath }
           : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
+        executionSelection: toDesktopExecutionSelection(activeThread, settings.apps),
       });
       const assistantText = extractTerminalMessage(terminal);
       const terminalError = extractTerminalError(terminal);
@@ -612,139 +624,18 @@ export function DesktopApp() {
   }
 
   function startProjectConversation(projectPath: string): void {
+    const defaultConfiguration = settings?.modelConfigurations.find(
+      (configuration) => configuration.id === settings.defaultModelConfigurationId,
+    );
     setState((current) => current === undefined
       ? current
-      : addRendererThread(current, { projectPath }));
+      : addRendererThread(current, {
+          projectPath,
+          modelConfigurationId: defaultConfiguration?.id,
+          modelConfigurationRevision: defaultConfiguration?.currentRevision,
+          enabledAppIds: settings?.defaultEnabledAppIds,
+        }));
     setSurface("chat");
-  }
-
-  async function updateProvider(
-    selectedProvider: DesktopRendererSettings["selectedProvider"],
-  ): Promise<void> {
-    if (settings === undefined) {
-      return;
-    }
-    setProviderApiKey("");
-    const saved = await window.kestrelDesktop.saveSettings({ selectedProvider });
-    setSettings(saved);
-  }
-
-  async function saveProviderCredential(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (
-      settings === undefined
-      || isCredentialedProvider(settings.selectedProvider) === false
-      || providerApiKey.trim().length === 0
-    ) {
-      return;
-    }
-    setActivity("Applying provider credential");
-    try {
-      const saved = await window.kestrelDesktop.saveProviderCredential({
-        provider: settings.selectedProvider,
-        apiKey: providerApiKey,
-      });
-      setSettings(saved);
-      setProviderApiKey("");
-      setActivity("Ready");
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setActivity("Provider setup failed");
-    }
-  }
-
-  async function openProviderSettings(): Promise<void> {
-    setProviderSettingsError(undefined);
-    setProviderApiKey("");
-    try {
-      const [nextSettings, nextModelPolicy] = await Promise.all([
-        window.kestrelDesktop.getSettings(),
-        window.kestrelDesktop.getModelPolicy(),
-      ]);
-      setSettings(nextSettings);
-      setModelPolicy(nextModelPolicy);
-      setProviderDraft(nextModelPolicy.provider);
-      setModelDraft(nextModelPolicy.model);
-      setProviderSettingsOpen(true);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  async function saveProviderSettings(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (modelPolicy === undefined || modelDraft.trim().length === 0) {
-      setProviderSettingsError("Model ID is required.");
-      return;
-    }
-    setProviderSettingsSaving(true);
-    setProviderSettingsError(undefined);
-    try {
-      if (isCredentialedProvider(providerDraft) && providerApiKey.trim().length > 0) {
-        await window.kestrelDesktop.saveProviderCredential({
-          provider: providerDraft,
-          apiKey: providerApiKey,
-        });
-      }
-      const savedPolicy = await window.kestrelDesktop.saveModelPolicy({
-        ...modelPolicy,
-        provider: providerDraft,
-        model: modelDraft.trim(),
-      });
-      const savedSettings = await window.kestrelDesktop.getSettings();
-      setModelPolicy(savedPolicy);
-      setSettings(savedSettings);
-      setProviderApiKey("");
-      setProviderSettingsOpen(false);
-      setRuntimeHealth(await window.kestrelDesktop.getRuntimeHealth());
-      setActivity("Ready");
-    } catch (cause) {
-      setProviderSettingsError(errorMessage(cause));
-    } finally {
-      setProviderSettingsSaving(false);
-    }
-  }
-
-  function openWeatherSettings(): void {
-    setWeatherApiKey("");
-    setWeatherSettingsError(undefined);
-    setWeatherSettingsOpen(true);
-  }
-
-  async function saveWeatherCredential(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (weatherApiKey.trim().length === 0) return;
-    setWeatherSettingsSaving(true);
-    setWeatherSettingsError(undefined);
-    try {
-      const status = await window.kestrelDesktop.saveToolCredential({
-        provider: "visual-crossing",
-        apiKey: weatherApiKey,
-      });
-      setWeatherCredential(status);
-      setWeatherApiKey("");
-      setWeatherSettingsOpen(false);
-      setActivity("Weather fallback ready");
-    } catch (cause) {
-      setWeatherSettingsError(errorMessage(cause));
-    } finally {
-      setWeatherSettingsSaving(false);
-    }
-  }
-
-  async function removeWeatherCredential(): Promise<void> {
-    setWeatherSettingsSaving(true);
-    setWeatherSettingsError(undefined);
-    try {
-      const status = await window.kestrelDesktop.deleteToolCredential("visual-crossing");
-      setWeatherCredential(status);
-      setWeatherApiKey("");
-      setActivity("Weather fallback removed");
-    } catch (cause) {
-      setWeatherSettingsError(errorMessage(cause));
-    } finally {
-      setWeatherSettingsSaving(false);
-    }
   }
 
   if (state === undefined || activeThread === undefined) {
@@ -760,7 +651,7 @@ export function DesktopApp() {
   const activeProject = settings?.projects.find(
     (project) => project.path === activeProjectPath
   ) ?? settings?.projects[0];
-  const showInspector = surface === "chat" && inspectorOpen;
+  const showInspector = inspectorOpen && settings !== undefined;
   return (
     <div className="desktop-app">
       <header className="titlebar">
@@ -772,36 +663,23 @@ export function DesktopApp() {
           {surfaceTitle(surface, activeThread.title, activeProject?.label)}
         </div>
         <div className="titlebar-actions">
-          <span className={`health-indicator health-${healthState}`}>
-            <span aria-hidden="true" />
-            {healthState}
-          </span>
           <button
-            className="icon-button"
-            type="button"
-            title={state.theme === "dark" ? "Use light theme" : "Use dark theme"}
-            aria-label={state.theme === "dark" ? "Use light theme" : "Use dark theme"}
-            onClick={() => setState((current) => current === undefined
-              ? current
-              : setRendererTheme(current, current.theme === "dark" ? "light" : "dark"))}
-          >
-            {state.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
-          {surface === "chat" ? (
-            <button
               className="icon-button"
               type="button"
-              title={inspectorOpen ? "Close inspector" : "Open inspector"}
-              aria-label={inspectorOpen ? "Close inspector" : "Open inspector"}
+              title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+              aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
               onClick={() => setInspectorOpen((open) => !open)}
             >
+              <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
               {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
             </button>
-          ) : null}
         </div>
       </header>
 
-      <div className={`workspace ${showInspector ? "with-inspector" : ""}`}>
+      <div
+        className={`workspace ${showInspector ? "with-inspector" : ""}`}
+        style={{ "--inspector-width": `${sidebarWidth}px` } as CSSProperties}
+      >
         <aside className="conversation-rail" aria-label="Conversations">
           <nav className="surface-tabs" aria-label="Kestrel views">
             <button className={surface === "chat" ? "active" : ""} type="button" title="Conversations" aria-label="Conversations" onClick={() => setSurface("chat")}>
@@ -818,6 +696,9 @@ export function DesktopApp() {
             </button>
             <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setSurface("diagnostics")}>
               <Wrench size={17} />
+            </button>
+            <button className={`settings-tab ${surface === "settings" ? "active" : ""}`} type="button" title="Settings" aria-label="Settings" onClick={() => setSurface("settings")}>
+              <Settings size={17} />
             </button>
           </nav>
 
@@ -836,6 +717,11 @@ export function DesktopApp() {
                         ...(activeProject?.path !== undefined
                           ? { projectPath: activeProject.path }
                           : {}),
+                        modelConfigurationId: settings?.defaultModelConfigurationId,
+                        modelConfigurationRevision: settings?.modelConfigurations.find(
+                          (configuration) => configuration.id === settings.defaultModelConfigurationId,
+                        )?.currentRevision,
+                        enabledAppIds: settings?.defaultEnabledAppIds,
                       }))}
                 >
                   <Plus size={17} />
@@ -893,8 +779,8 @@ export function DesktopApp() {
             </>
           ) : (
             <div className="rail-context">
-              <span>{surface === "mission-control" ? "Mission control" : surface === "mcp" ? "MCP servers" : "Diagnostics"}</span>
-              <p>{surface === "mission-control" ? activeThread.title : surface === "mcp" ? "Local integrations" : runtimeHealth?.state ?? "unknown"}</p>
+              <span>{surface === "mission-control" ? "Mission control" : surface === "mcp" ? "MCP servers" : surface === "settings" ? "Settings" : "Diagnostics"}</span>
+              <p>{surface === "mission-control" ? activeThread.title : surface === "mcp" ? "Local integrations" : surface === "settings" ? "Application configuration" : runtimeHealth?.state ?? "unknown"}</p>
             </div>
           )}
         </aside>
@@ -1053,7 +939,27 @@ export function DesktopApp() {
         ) : (
           <div className="surface-host">
             {error !== undefined ? <div className="surface-error" role="alert">{error}</div> : null}
-            {surface === "projects" ? (
+            {surface === "settings" && settings !== undefined ? (
+              <SettingsWorkspace
+                settings={settings}
+                weatherCredential={weatherCredential}
+                onSettings={async (update) => {
+                  const saved = await window.kestrelDesktop.saveSettings(update);
+                  setSettings(saved);
+                  setState((current) => current === undefined ? current : { ...current, theme: saved.appearanceTheme });
+                }}
+                onProviderCredential={async (provider, apiKey) => {
+                  setSettings(await window.kestrelDesktop.saveProviderCredential({ provider, apiKey }));
+                }}
+                onWeatherCredential={async (apiKey) => {
+                  setWeatherCredential(await window.kestrelDesktop.saveToolCredential({ provider: "visual-crossing", apiKey }));
+                }}
+                onRemoveWeatherCredential={async () => {
+                  setWeatherCredential(await window.kestrelDesktop.deleteToolCredential("visual-crossing"));
+                }}
+                onError={setError}
+              />
+            ) : surface === "projects" ? (
               <ProjectWorkspace
                 project={activeProject}
                 onChat={(project) => startProjectConversation(project.path)}
@@ -1078,347 +984,57 @@ export function DesktopApp() {
           </div>
         )}
 
-        {showInspector ? (
-          <aside className="inspector" aria-label="Desktop status">
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Runtime</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Restart runtime"
-                  aria-label="Restart runtime"
-                  onClick={() => void restartRuntime()}
-                >
-                  <RefreshCw size={16} />
-                </button>
-              </div>
-              <dl className="status-list">
-                <div><dt>Status</dt><dd>{runtimeHealth?.state ?? "unknown"}</dd></div>
-                <div><dt>Bridge</dt><dd>v{bridgeInfo?.version ?? "-"}</dd></div>
-                <div><dt>Process</dt><dd>{runtimeHealth?.running === true ? "running" : "stopped"}</dd></div>
-              </dl>
-              <p className="status-summary">{runtimeHealth?.summary ?? "Runtime status unavailable."}</p>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Apps</span>
-              </div>
-              <button
-                className="app-readiness-row"
-                type="button"
-                onClick={openWeatherSettings}
-              >
-                <span className="app-readiness-copy">
-                  <strong>Weather</strong>
-                  <small>Open-Meteo + Visual Crossing fallback</small>
-                </span>
-                <span className={`provider-status ${weatherCredential?.configured ? "" : "needs-credential"}`}>
-                  <span aria-hidden="true" />
-                  {weatherCredential?.configured ? "Fallback ready" : "Free provider only"}
-                </span>
-              </button>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Projects</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Add project"
-                  aria-label="Add project"
-                  onClick={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
-                >
-                  <Folder size={16} />
-                </button>
-              </div>
-              <div className="project-list">
-                {settings?.projects.length === 0 ? (
-                  <span className="muted">No projects</span>
-                ) : settings?.projects.map((project) => (
-                  <div className="project-row" key={project.path} title={project.path}>
-                    <Folder size={14} />
-                    <span>{project.label}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Provider</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Configure provider and model"
-                  aria-label="Configure provider and model"
-                  onClick={() => void openProviderSettings()}
-                >
-                  <Settings size={15} aria-hidden="true" />
-                </button>
-              </div>
-              <select
-                aria-label="Model provider"
-                value={settings?.selectedProvider ?? "openrouter"}
-                onChange={(event) => void updateProvider(
-                  event.target.value as DesktopRendererSettings["selectedProvider"],
-                ).catch((cause) => setError(errorMessage(cause)))}
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama</option>
-                <option value="lmstudio">LM Studio</option>
-              </select>
-              <div className={`provider-status ${settings?.providerCredentialConfigured === false ? "needs-credential" : ""}`}>
-                <span aria-hidden="true" />
-                {settings?.providerCredentialConfigured === false ? "Credential required" : "Provider ready"}
-              </div>
-              {modelPolicy !== undefined ? (
-                <p className="provider-model" title={modelPolicy.model}>{modelPolicy.model}</p>
-              ) : null}
-              {settings?.providerCredentialConfigured === false
-                && isCredentialedProvider(settings.selectedProvider) ? (
-                  <form className="provider-credential" onSubmit={(event) => void saveProviderCredential(event)}>
-                    <input
-                      aria-label={`${providerLabel(settings.selectedProvider)} API key`}
-                      autoComplete="off"
-                      name="provider-api-key"
-                      placeholder="API key"
-                      type="password"
-                      value={providerApiKey}
-                      onChange={(event) => setProviderApiKey(event.target.value)}
-                    />
-                    <button
-                      className="icon-button"
-                      type="submit"
-                      title="Save provider credential"
-                      aria-label="Save provider credential"
-                      disabled={providerApiKey.trim().length === 0}
-                    >
-                      <KeyRound size={16} />
-                    </button>
-                  </form>
-                ) : null}
-            </section>
-          </aside>
+        {showInspector && settings !== undefined ? (
+          <ContextSidebar
+            surface={surface}
+            thread={activeThread}
+            settings={settings}
+            runtimeHealth={runtimeHealth}
+            bridgeInfo={bridgeInfo}
+            weatherCredential={weatherCredential}
+            locked={activeRun !== undefined || activeThread.pendingWaitEventType !== undefined}
+            activeProjectPath={activeProject?.path}
+            onModelConfigurationChange={(id, revision) => setState((current) => current === undefined
+              ? current
+              : updateRendererThread(current, activeThread.id, (thread) => ({
+                  ...thread,
+                  modelConfigurationId: id,
+                  modelConfigurationRevision: revision,
+                })))}
+            onAppToggle={(id, enabled) => setState((current) => current === undefined
+              ? current
+              : updateRendererThread(current, activeThread.id, (thread) => ({
+                  ...thread,
+                  enabledAppIds: enabled
+                    ? [...new Set([...thread.enabledAppIds, id])]
+                    : thread.enabledAppIds.filter((entry) => entry !== id),
+                })))}
+            onProjectChange={(path) => {
+              setActiveProjectPath(path);
+              setState((current) => current === undefined
+                ? current
+                : updateRendererThread(current, activeThread.id, (thread) => ({ ...thread, projectPath: path })));
+            }}
+            onAddProject={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
+            onRestartRuntime={() => void restartRuntime()}
+            onResizeStart={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              const startX = event.clientX;
+              const startWidth = sidebarWidth;
+              const move = (pointerEvent: PointerEvent) => {
+                setSidebarWidth(Math.min(420, Math.max(248, startWidth + startX - pointerEvent.clientX)));
+              };
+              const stop = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", stop);
+              };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", stop, { once: true });
+            }}
+          />
         ) : null}
       </div>
 
-      {providerSettingsOpen && modelPolicy !== undefined ? (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && providerSettingsSaving === false) {
-              setProviderSettingsOpen(false);
-            }
-          }}
-        >
-          <form
-            className="provider-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="provider-dialog-title"
-            onSubmit={(event) => void saveProviderSettings(event)}
-          >
-            <div className="provider-dialog-header">
-              <div>
-                <h2 id="provider-dialog-title">Model provider</h2>
-                <p>Choose the provider and model used for new runs.</p>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                title="Close model provider settings"
-                aria-label="Close model provider settings"
-                disabled={providerSettingsSaving}
-                onClick={() => setProviderSettingsOpen(false)}
-              >
-                <X size={17} />
-              </button>
-            </div>
-
-            <label className="provider-dialog-field">
-              <span>Provider</span>
-              <select
-                aria-label="Configured model provider"
-                value={providerDraft}
-                onChange={(event) => {
-                  setProviderDraft(event.target.value as DesktopRendererSettings["selectedProvider"]);
-                  setProviderApiKey("");
-                }}
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama</option>
-                <option value="lmstudio">LM Studio</option>
-              </select>
-            </label>
-
-            <label className="provider-dialog-field">
-              <span>Model ID</span>
-              <input
-                aria-label="Model ID"
-                autoComplete="off"
-                value={modelDraft}
-                onChange={(event) => setModelDraft(event.target.value)}
-                placeholder="Provider model ID"
-              />
-            </label>
-
-            {isCredentialedProvider(providerDraft) ? (
-              <label className="provider-dialog-field">
-                <span>API key</span>
-                <input
-                  aria-label={`${providerLabel(providerDraft)} API key`}
-                  autoComplete="off"
-                  type="password"
-                  value={providerApiKey}
-                  onChange={(event) => setProviderApiKey(event.target.value)}
-                  placeholder={
-                    settings?.selectedProvider === providerDraft
-                    && settings.providerCredentialConfigured
-                      ? "Leave blank to keep saved key"
-                      : "Enter API key"
-                  }
-                />
-              </label>
-            ) : null}
-
-            {providerSettingsError !== undefined ? (
-              <div className="provider-dialog-error" role="alert">{providerSettingsError}</div>
-            ) : null}
-
-            <div className="provider-dialog-actions">
-              <button
-                type="button"
-                disabled={providerSettingsSaving}
-                onClick={() => setProviderSettingsOpen(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="provider-dialog-save"
-                type="submit"
-                disabled={providerSettingsSaving || modelDraft.trim().length === 0}
-              >
-                {providerSettingsSaving ? "Applying…" : "Apply"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-
-      {weatherSettingsOpen ? (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && weatherSettingsSaving === false) {
-              setWeatherSettingsOpen(false);
-            }
-          }}
-        >
-          <form
-            className="provider-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="weather-dialog-title"
-            onSubmit={(event) => void saveWeatherCredential(event)}
-          >
-            <div className="provider-dialog-header">
-              <div>
-                <h2 id="weather-dialog-title">Weather providers</h2>
-                <p>Open-Meteo is always available. Add Visual Crossing as a verified fallback.</p>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                title="Close Weather settings"
-                aria-label="Close Weather settings"
-                disabled={weatherSettingsSaving}
-                onClick={() => setWeatherSettingsOpen(false)}
-              >
-                <X size={17} />
-              </button>
-            </div>
-
-            <div className="credential-readiness-card">
-              <div>
-                <strong>Open-Meteo</strong>
-                <span>Primary provider · no key required</span>
-              </div>
-              <span className="credential-state ready">Ready</span>
-            </div>
-            <div className="credential-readiness-card">
-              <div>
-                <strong>Visual Crossing</strong>
-                <span>Fallback provider · stored in macOS Keychain</span>
-              </div>
-              <span className={`credential-state ${weatherCredential?.configured ? "ready" : "optional"}`}>
-                {weatherCredential?.configured ? "Ready" : "Optional"}
-              </span>
-            </div>
-
-            {weatherCredential?.available === false ? (
-              <div className="provider-dialog-error" role="alert">
-                Secure credential storage is unavailable on this system.
-              </div>
-            ) : (
-              <label className="provider-dialog-field">
-                <span>Visual Crossing API key</span>
-                <input
-                  aria-label="Visual Crossing API key"
-                  autoComplete="off"
-                  type="password"
-                  value={weatherApiKey}
-                  onChange={(event) => setWeatherApiKey(event.target.value)}
-                  placeholder={weatherCredential?.configured ? "Enter a new key to replace the saved key" : "Paste your Visual Crossing API key"}
-                />
-              </label>
-            )}
-
-            <p className="provider-dialog-note">
-              Kestrel tests the key before saving it. The key is never returned to this window.
-            </p>
-
-            {weatherSettingsError !== undefined ? (
-              <div className="provider-dialog-error" role="alert">{weatherSettingsError}</div>
-            ) : null}
-
-            <div className="provider-dialog-actions provider-dialog-actions-split">
-              {weatherCredential?.configured ? (
-                <button
-                  className="provider-dialog-remove"
-                  type="button"
-                  disabled={weatherSettingsSaving}
-                  onClick={() => void removeWeatherCredential()}
-                >
-                  Remove fallback
-                </button>
-              ) : <span />}
-              <div>
-                <button
-                  type="button"
-                  disabled={weatherSettingsSaving}
-                  onClick={() => setWeatherSettingsOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="provider-dialog-save"
-                  type="submit"
-                  disabled={weatherSettingsSaving || weatherCredential?.available === false || weatherApiKey.trim().length === 0}
-                >
-                  {weatherSettingsSaving ? "Verifying…" : weatherCredential?.configured ? "Verify and replace" : "Verify and save"}
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1613,26 +1229,10 @@ function surfaceTitle(
   if (surface === "mission-control") {
     return "Mission control";
   }
+  if (surface === "settings") {
+    return "Settings";
+  }
   return surface === "mcp" ? "MCP servers" : "Diagnostics";
-}
-
-function isCredentialedProvider(
-  provider: DesktopRendererSettings["selectedProvider"],
-): provider is DesktopCredentialedModelProvider {
-  return provider === "openrouter" || provider === "openai" || provider === "anthropic";
-}
-
-function providerLabel(provider: DesktopRendererSettings["selectedProvider"]): string {
-  if (provider === "openrouter") {
-    return "OpenRouter";
-  }
-  if (provider === "openai") {
-    return "OpenAI";
-  }
-  if (provider === "anthropic") {
-    return "Anthropic";
-  }
-  return provider === "ollama" ? "Ollama" : "LM Studio";
 }
 
 function formatThreadTime(value: string): string {

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3465,
+  "testCount": 3470,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -119,6 +119,51 @@
       "risk": "medium",
       "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: resolveDesktopPathConfig uses repo-relative paths in development",
       "dimension": "resolveDesktopPathConfig uses repo-relative paths in development",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/configuration.test.ts :: desktop execution selections reject duplicate apps and preserve explicit contracts",
+      "file": "apps/desktop/tests/configuration.test.ts",
+      "line": 43,
+      "ancestors": [],
+      "title": "desktop execution selections reject duplicate apps and preserve explicit contracts",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: desktop execution selections reject duplicate apps and preserve explicit contracts",
+      "dimension": "desktop execution selections reject duplicate apps and preserve explicit contracts",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/configuration.test.ts :: desktop model configuration updates preserve pinned revision history",
+      "file": "apps/desktop/tests/configuration.test.ts",
+      "line": 63,
+      "ancestors": [],
+      "title": "desktop model configuration updates preserve pinned revision history",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: desktop model configuration updates preserve pinned revision history",
+      "dimension": "desktop model configuration updates preserve pinned revision history",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/configuration.test.ts :: desktop model configurations retain immutable revisions",
+      "file": "apps/desktop/tests/configuration.test.ts",
+      "line": 14,
+      "ancestors": [],
+      "title": "desktop model configurations retain immutable revisions",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: desktop model configurations retain immutable revisions",
+      "dimension": "desktop model configurations retain immutable revisions",
       "role": "variant",
       "lane": "desktop",
       "environment": "linux"
@@ -1836,7 +1881,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 436,
+      "line": 453,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys",
       "contractId": "desktop.contract",
@@ -1851,7 +1896,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment exposes only the selected provider key",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 227,
+      "line": 244,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment exposes only the selected provider key",
       "contractId": "desktop.contract",
@@ -1866,7 +1911,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 580,
+      "line": 597,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority",
       "contractId": "desktop.contract",
@@ -1881,7 +1926,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 477,
+      "line": 494,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs",
       "contractId": "desktop.contract",
@@ -1896,7 +1941,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 549,
+      "line": 566,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL",
       "contractId": "desktop.contract",
@@ -1911,7 +1956,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 514,
+      "line": 531,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres",
       "contractId": "desktop.contract",
@@ -1926,7 +1971,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerProfile applies the selected model policy to run.start",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 616,
+      "line": 633,
       "ancestors": [],
       "title": "buildDesktopRunnerProfile applies the selected model policy to run.start",
       "contractId": "desktop.contract",
@@ -1941,7 +1986,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: describeDesktopProviderCredentialRequirement explains the missing selected provider key",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 686,
+      "line": 703,
       "ancestors": [],
       "title": "describeDesktopProviderCredentialRequirement explains the missing selected provider key",
       "contractId": "desktop.contract",
@@ -1956,7 +2001,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: hasConfiguredDesktopProviderCredential follows the selected provider",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 635,
+      "line": 652,
       "ancestors": [],
       "title": "hasConfiguredDesktopProviderCredential follows the selected provider",
       "contractId": "desktop.contract",
@@ -1969,9 +2014,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/desktop/tests/settingsStore.test.ts :: legacy desktop settings seed the Default model configuration from Local Core policy",
+      "file": "apps/desktop/tests/settingsStore.test.ts",
+      "line": 19,
+      "ancestors": [],
+      "title": "legacy desktop settings seed the Default model configuration from Local Core policy",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: legacy desktop settings seed the Default model configuration from Local Core policy",
+      "dimension": "legacy desktop settings seed the Default model configuration from Local Core policy",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings backfills provider selection for intentional legacy provider states",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 67,
+      "line": 84,
       "ancestors": [],
       "title": "readDesktopSettings backfills provider selection for intentional legacy provider states",
       "contractId": "desktop.contract",
@@ -1986,7 +2046,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 47,
+      "line": 64,
       "ancestors": [],
       "title": "readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
       "contractId": "desktop.contract",
@@ -2001,7 +2061,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings normalizes legacy OpenRouter-only settings",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 26,
+      "line": 43,
       "ancestors": [],
       "title": "readDesktopSettings normalizes legacy OpenRouter-only settings",
       "contractId": "desktop.contract",
@@ -2016,7 +2076,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings returns default settings when the file is missing",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 18,
+      "line": 35,
       "ancestors": [],
       "title": "readDesktopSettings returns default settings when the file is missing",
       "contractId": "desktop.contract",
@@ -2031,7 +2091,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings persists external database mode and trims database URL",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 174,
+      "line": 191,
       "ancestors": [],
       "title": "writeDesktopSettings persists external database mode and trims database URL",
       "contractId": "desktop.contract",
@@ -2046,7 +2106,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings persists provider-aware settings and trims blank values",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 89,
+      "line": 106,
       "ancestors": [],
       "title": "writeDesktopSettings persists provider-aware settings and trims blank values",
       "contractId": "desktop.contract",
@@ -2061,7 +2121,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings round-trips local-provider settings",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 201,
+      "line": 218,
       "ancestors": [],
       "title": "writeDesktopSettings round-trips local-provider settings",
       "contractId": "desktop.contract",
@@ -51496,9 +51556,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter accepts a trusted per-turn inline profile and provenance metadata",
+      "file": "tests/unit/web-runner-adapter.test.ts",
+      "line": 409,
+      "ancestors": [],
+      "title": "web adapter accepts a trusted per-turn inline profile and provenance metadata",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: web adapter accepts a trusted per-turn inline profile and provenance metadata",
+      "dimension": "web adapter accepts a trusted per-turn inline profile and provenance metadata",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter can cancel a durable run after subscriber disconnect",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 971,
+      "line": 1002,
       "ancestors": [],
       "title": "web adapter can cancel a durable run after subscriber disconnect",
       "contractId": "runtime.behavior",
@@ -51513,7 +51588,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter does not infer explicit tool directive flags from prompt text",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1132,
+      "line": 1163,
       "ancestors": [],
       "title": "web adapter does not infer explicit tool directive flags from prompt text",
       "contractId": "runtime.behavior",
@@ -51528,7 +51603,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter durable runs adopt the canonical runtime thread id from events",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 927,
+      "line": 958,
       "ancestors": [],
       "title": "web adapter durable runs adopt the canonical runtime thread id from events",
       "contractId": "runtime.behavior",
@@ -51543,7 +51618,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter durable start and subscribe do not cancel on subscriber abort",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 867,
+      "line": 898,
       "ancestors": [],
       "title": "web adapter durable start and subscribe do not cancel on subscriber abort",
       "contractId": "runtime.behavior",
@@ -51558,7 +51633,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter durable start keeps continue-on-disconnect for registered profiles",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 799,
+      "line": 830,
       "ancestors": [],
       "title": "web adapter durable start keeps continue-on-disconnect for registered profiles",
       "contractId": "runtime.behavior",
@@ -51573,7 +51648,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter durable start reuses the active run for duplicate thread starts",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1028,
+      "line": 1059,
       "ancestors": [],
       "title": "web adapter durable start reuses the active run for duplicate thread starts",
       "contractId": "runtime.behavior",
@@ -51588,7 +51663,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter forwards control commands",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1196,
+      "line": 1227,
       "ancestors": [],
       "title": "web adapter forwards control commands",
       "contractId": "runtime.behavior",
@@ -51603,7 +51678,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter forwards explicit blocked-run resumes",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1094,
+      "line": 1125,
       "ancestors": [],
       "title": "web adapter forwards explicit blocked-run resumes",
       "contractId": "runtime.behavior",
@@ -51618,7 +51693,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter forwards runner command metadata from request context",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1308,
+      "line": 1339,
       "ancestors": [],
       "title": "web adapter forwards runner command metadata from request context",
       "contractId": "runtime.behavior",
@@ -51633,7 +51708,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter normalizes history and emits only correlated run events",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 562,
+      "line": 593,
       "ancestors": [],
       "title": "web adapter normalizes history and emits only correlated run events",
       "contractId": "runtime.behavior",
@@ -51648,7 +51723,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter normalizes legacy work mode to build",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1164,
+      "line": 1195,
       "ancestors": [],
       "title": "web adapter normalizes legacy work mode to build",
       "contractId": "runtime.behavior",
@@ -51663,7 +51738,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter omits stepAgent for resume-from-wait turns",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 1060,
+      "line": 1091,
       "ancestors": [],
       "title": "web adapter omits stepAgent for resume-from-wait turns",
       "contractId": "runtime.behavior",
@@ -51678,7 +51753,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter rejects invalid registered profile configurations",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 837,
+      "line": 868,
       "ancestors": [],
       "title": "web adapter rejects invalid registered profile configurations",
       "contractId": "runtime.behavior",
@@ -51693,7 +51768,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter sends only registered profile identity while preserving actor and client durability",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 674,
+      "line": 705,
       "ancestors": [],
       "title": "web adapter sends only registered profile identity while preserving actor and client durability",
       "contractId": "runtime.behavior",
@@ -51708,7 +51783,7 @@
     {
       "identity": "tests/unit/web-runner-adapter.test.ts :: web adapter uses registered profile identity for MCP commands without inline metadata",
       "file": "tests/unit/web-runner-adapter.test.ts",
-      "line": 744,
+      "line": 775,
       "ancestors": [],
       "title": "web adapter uses registered profile identity for MCP commands without inline metadata",
       "contractId": "runtime.behavior",
