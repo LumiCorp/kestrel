@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3406,
+  "testCount": 3407,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -10311,7 +10311,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: accepts a valid Better Auth cookie through the incoming request headers",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 66,
+      "line": 70,
       "ancestors": [],
       "title": "accepts a valid Better Auth cookie through the incoming request headers",
       "contractId": "web.unit-contract",
@@ -10326,7 +10326,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: accepts a valid personal API key through the incoming request headers",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 72,
+      "line": 76,
       "ancestors": [],
       "title": "accepts a valid personal API key through the incoming request headers",
       "contractId": "web.unit-contract",
@@ -10341,7 +10341,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: accepts a valid signed-session Bearer through the incoming request headers",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 69,
+      "line": 73,
       "ancestors": [],
       "title": "accepts a valid signed-session Bearer through the incoming request headers",
       "contractId": "web.unit-contract",
@@ -10356,7 +10356,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: environment configuration failures remain configuration errors",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 129,
+      "line": 133,
       "ancestors": [],
       "title": "environment configuration failures remain configuration errors",
       "contractId": "web.unit-contract",
@@ -10371,7 +10371,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: expired sessions stop at the authentication boundary",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 91,
+      "line": 95,
       "ancestors": [],
       "title": "expired sessions stop at the authentication boundary",
       "contractId": "web.unit-contract",
@@ -10384,9 +10384,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/mobile/session.test.ts :: failure telemetry records only safe authentication-presence facts",
+      "file": "apps/web/lib/mobile/session.test.ts",
+      "line": 138,
+      "ancestors": [],
+      "title": "failure telemetry records only safe authentication-presence facts",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: failure telemetry records only safe authentication-presence facts",
+      "dimension": "failure telemetry records only safe authentication-presence facts",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/mobile/session.test.ts :: membership lookup failures remain configuration errors",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 124,
+      "line": 128,
       "ancestors": [],
       "title": "membership lookup failures remain configuration errors",
       "contractId": "web.unit-contract",
@@ -10401,7 +10416,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: missing sessions stop at the authentication boundary",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 89,
+      "line": 93,
       "ancestors": [],
       "title": "missing sessions stop at the authentication boundary",
       "contractId": "web.unit-contract",
@@ -10416,7 +10431,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: organization membership is resolved only after the session and is not a 401",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 95,
+      "line": 99,
       "ancestors": [],
       "title": "organization membership is resolved only after the session and is not a 401",
       "contractId": "web.unit-contract",
@@ -10431,7 +10446,7 @@
     {
       "identity": "apps/web/lib/mobile/session.test.ts :: revoked sessions stop at the authentication boundary",
       "file": "apps/web/lib/mobile/session.test.ts",
-      "line": 93,
+      "line": 97,
       "ancestors": [],
       "title": "revoked sessions stop at the authentication boundary",
       "contractId": "web.unit-contract",
