@@ -190,9 +190,7 @@ test("Local Core API serves health/status with bearer token auth", async () => {
   }
 });
 
-test("Local Core API makes existing state and Core authority roots private before serving", {
-  skip: process.platform === "win32",
-}, async () => {
+test("Local Core API makes existing state and Core authority roots private before serving", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-private-"));
   const paths = resolveLocalCorePaths(home);
   await chmod(home, 0o755);

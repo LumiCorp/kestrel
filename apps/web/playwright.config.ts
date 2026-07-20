@@ -26,6 +26,7 @@ export default defineConfig({
           NEXT_PUBLIC_APP_URL: baseURL,
           BETTER_AUTH_URL: baseURL,
           DEV_AUTH_BYPASS: "true",
+          KESTREL_SKIP_RAG_FIXTURES: "true",
         },
       },
 });

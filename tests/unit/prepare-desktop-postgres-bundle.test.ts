@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   access,
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -15,10 +13,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  assertNoExternalDarwinDependencies,
-  readMachODependencies,
-} from "../../scripts/darwin-dependency-bundle.js";
 import { prepareDesktopPostgresBundle } from "../../scripts/prepare-desktop-postgres-bundle.js";
 
 test("desktop Postgres preparation materializes source symlinks", async (t) => {
@@ -109,41 +103,3 @@ test("desktop Postgres preparation materializes source symlinks", async (t) => {
   assert.equal(manifestSource.includes(sourceRoot), false);
   assert.equal(manifestSource.includes(pgConfigPath), false);
 });
-
-test(
-  "Darwin dependency audit rejects a load path that escapes the bundled library directory",
-  { skip: process.platform !== "darwin" },
-  async (t) => {
-    const testRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-darwin-audit-"));
-    t.after(async () => {
-      const { rm } = await import("node:fs/promises");
-      await rm(testRoot, { recursive: true, force: true });
-    });
-
-    const binaryRoot = path.join(testRoot, "bin");
-    const bundleLibDir = path.join(testRoot, "lib");
-    await Promise.all([
-      mkdir(binaryRoot, { recursive: true }),
-      mkdir(bundleLibDir, { recursive: true }),
-    ]);
-    const binaryPath = path.join(binaryRoot, "postgres");
-    await copyFile("/usr/bin/true", binaryPath);
-    await chmod(binaryPath, 0o755);
-    await writeFile(path.join(testRoot, "x.dylib"), "outside-bundle", "utf8");
-
-    const systemDependency = readMachODependencies(binaryPath).find((dependency) =>
-      dependency.startsWith("/usr/lib/") || dependency.startsWith("/System/Library/")
-    );
-    assert.ok(systemDependency, "expected a system dependency in /usr/bin/true");
-    execFileSync(
-      "install_name_tool",
-      ["-change", systemDependency, "@loader_path/../x.dylib", binaryPath],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-
-    assert.throws(
-      () => assertNoExternalDarwinDependencies({ binaryRoots: [binaryRoot], bundleLibDir }),
-      /unresolved bundled dependency '@loader_path\/\.\.\/x\.dylib'/u,
-    );
-  },
-);

@@ -169,9 +169,7 @@ test("Local Core reports a missing PGlite store without inventing an archive", a
   }
 });
 
-test("Local Core makes existing state and PGlite authority roots private", {
-  skip: process.platform === "win32",
-}, async () => {
+test("Local Core makes existing state and PGlite authority roots private", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-private-store-"));
   const paths = resolveLocalCorePaths(productRoot);
   try {

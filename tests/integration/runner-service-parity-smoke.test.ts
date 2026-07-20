@@ -259,27 +259,10 @@ test("runner service parity smoke matrix covers start, resume, and cancel teleme
 });
 
 async function createHttpServerOrSkip(
-  context: TestContext | undefined,
+  _context: TestContext | undefined,
   options: Parameters<typeof createRunnerServiceServer>[0],
 ) {
-  try {
-    return await createRunnerServiceServer(options);
-  } catch (error) {
-    if (isListenPermissionError(error)) {
-      context?.skip("sandbox denied localhost listener setup for runner-service parity smoke test");
-      return ;
-    }
-    throw error;
-  }
-}
-
-function isListenPermissionError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as Error & { code?: string }).code === "EPERM" &&
-    /listen/i.test(error.message)
-  );
+  return await createRunnerServiceServer(options);
 }
 
 function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {

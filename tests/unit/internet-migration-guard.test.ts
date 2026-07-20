@@ -10,7 +10,6 @@ const ACTIVE_PATHS = [
   "tools/index.ts",
   "tools/createDefaultToolGateway.ts",
   "agents/reference-react/src/steps/deliberator.ts",
-  "tests/scenario/promptSuiteHarness.ts",
   "apps/web/lib/agent/kestrel-capabilities.ts",
 ] as const;
 

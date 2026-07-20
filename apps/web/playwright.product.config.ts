@@ -117,8 +117,5 @@ export default defineConfig({
   ],
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    ...(process.env.KESTREL_PRODUCT_WEBKIT === "true"
-      ? [{ name: "webkit", use: { ...devices["Desktop Safari"] } }]
-      : []),
   ],
 });

@@ -10,8 +10,7 @@ type EvaluationParityStatus = "pending_execution" | "pending_independent_test" |
 
 interface ReplacementTestEvidence {
   path: string;
-  testName?: string | undefined;
-  promptSuiteCase?: string | undefined;
+  testName: string;
 }
 
 export interface EvaluationOwnershipEntry {
@@ -340,17 +339,14 @@ async function validateReplacementTestEvidence(
     errors.push(`${behaviorId} replacement test does not exist: ${evidence.path}`);
     return;
   }
-  if ((evidence.testName === undefined) === (evidence.promptSuiteCase === undefined)) {
-    errors.push(`${behaviorId} replacement test must declare exactly one of testName or promptSuiteCase`);
+  if (evidence.testName.trim().length === 0) {
+    errors.push(`${behaviorId} replacement test must declare testName`);
     return;
   }
 
   const source = await readFile(resolvedPath, "utf8");
-  if (evidence.testName !== undefined && !source.includes(`test("${evidence.testName}"`)) {
+  if (!source.includes(`test("${evidence.testName}"`)) {
     errors.push(`${behaviorId} replacement test name not found in ${evidence.path}: ${evidence.testName}`);
-  }
-  if (evidence.promptSuiteCase !== undefined && !source.includes(`name: "${evidence.promptSuiteCase}"`)) {
-    errors.push(`${behaviorId} prompt-suite case not found in ${evidence.path}: ${evidence.promptSuiteCase}`);
   }
 }
 

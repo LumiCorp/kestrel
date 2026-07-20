@@ -9,13 +9,8 @@ const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
 test(
   "Postgres Environment reconciliation lock excludes overlapping workers and releases",
-  {
-    skip: databaseUrl
-      ? false
-      : "KESTREL_ENVIRONMENT_DB_TEST_URL is not configured",
-  },
   async () => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
 
@@ -52,13 +47,8 @@ test(
 
 test(
   "Postgres Environment operation locks exclude only the same operation",
-  {
-    skip: databaseUrl
-      ? false
-      : "KESTREL_ENVIRONMENT_DB_TEST_URL is not configured",
-  },
   async () => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
 

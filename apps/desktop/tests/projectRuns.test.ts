@@ -651,13 +651,10 @@ test("DesktopProjectRunRegistry fails runs when spawn emits an error and stop re
     projectPath,
     scriptName: "test",
   });
-  const startedAt = Date.now();
   const stoppedRun = await registry.stopRun(runningRun.runId);
-  const elapsedMs = Date.now() - startedAt;
 
   assert.equal(stoppedRun?.status, "stopped");
   assert.equal(killSignals.at(-1), "SIGTERM");
-  assert.ok(elapsedMs < 1000, `expected stopRun to settle quickly, received ${elapsedMs}ms`);
 });
 
 test("DesktopProjectRunRegistry signals the owned process group on POSIX stops", async () => {

@@ -59,7 +59,16 @@ test("diffReplayAgainstBaseline catches missing strict events", () => {
     errorCodes: [],
   });
 
-  assert.equal(violations.length > 0, true);
+  assert.deepEqual(
+    violations.filter((violation) => violation.field === "strict_events"),
+    [
+      {
+        field: "strict_events",
+        expected: "terminal.normalized",
+        actual: "missing",
+      },
+    ],
+  );
 });
 
 test("diffReplayAgainstBaseline enforces expected error codes", () => {

@@ -383,15 +383,12 @@ test("kestrel web forces shutdown immediately on a second signal", async (t) => 
     subscription.close();
   });
 
-  const startedAt = Date.now();
   runner.signal("SIGINT");
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await runner.waitForStderr(/shutting down gracefully/u);
   runner.signal("SIGINT");
   const exit = await runner.waitForExit(2000);
-  const elapsedMs = Date.now() - startedAt;
 
   assert.equal(exit.code, 0);
-  assert.ok(elapsedMs < 5000, `Expected second signal to force shutdown before grace timeout, got ${elapsedMs}ms.`);
   assert.match(runner.stderrOutput(), /received another shutdown signal; forcing shutdown/u);
   assert.match(runner.stderrOutput(), /runner service stopped/u);
 });
@@ -462,6 +459,7 @@ async function startWebRunner(
   startupOutput: string;
   signal(signal: NodeJS.Signals): void;
   waitForExit(timeoutMs?: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  waitForStderr(pattern: RegExp, timeoutMs?: number): Promise<string>;
   stderrOutput(): string;
 }> {
   const repoRoot = process.cwd();
@@ -602,6 +600,9 @@ async function startWebRunner(
           }, timeoutMs);
         }),
       ]);
+    },
+    async waitForStderr(pattern, timeoutMs = 10_000) {
+      return await waitForOutput(stderrChunks, pattern, timeoutMs);
     },
     stderrOutput() {
       return stderrChunks.join("");

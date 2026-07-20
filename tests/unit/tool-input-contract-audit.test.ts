@@ -80,22 +80,31 @@ test("internet.search_advanced contract still validates dates when country is ig
   );
 });
 
-for (const [toolName, inputPath] of [
+const workspaceRootMutationCases = [
   ["fs.mkdir", "."],
   ["fs.mkdir", "./"],
   ["fs.delete", "."],
-] as const) {
-  test(`${toolName} rejects workspace-root mutation targets`, () => {
-    assert.throws(
-      () => validateBuiltInToolInputContract(toolName, { path: inputPath }),
-      (error: unknown) => {
-        assert.equal(error instanceof RuntimeFailure, true);
-        const failure = error as RuntimeFailure;
-        assert.equal(failure.code, "TOOL_INPUT_INVALID");
-        assert.equal(failure.details?.field, "path");
-        assert.deepEqual(failure.details?.invalidValues, [inputPath]);
-        return true;
-      },
-    );
-  });
-}
+] as const;
+
+const assertWorkspaceRootMutationRejected = (
+  [toolName, inputPath]: (typeof workspaceRootMutationCases)[number],
+) => {
+  assert.throws(
+    () => validateBuiltInToolInputContract(toolName, { path: inputPath }),
+    (error: unknown) => {
+      assert.equal(error instanceof RuntimeFailure, true);
+      const failure = error as RuntimeFailure;
+      assert.equal(failure.code, "TOOL_INPUT_INVALID");
+      assert.equal(failure.details?.field, "path");
+      assert.deepEqual(failure.details?.invalidValues, [inputPath]);
+      return true;
+    },
+  );
+};
+
+test("fs.mkdir rejects the dot workspace-root mutation target", () =>
+  assertWorkspaceRootMutationRejected(workspaceRootMutationCases[0]));
+test("fs.mkdir rejects the dot-slash workspace-root mutation target", () =>
+  assertWorkspaceRootMutationRejected(workspaceRootMutationCases[1]));
+test("fs.delete rejects the dot workspace-root mutation target", () =>
+  assertWorkspaceRootMutationRejected(workspaceRootMutationCases[2]));

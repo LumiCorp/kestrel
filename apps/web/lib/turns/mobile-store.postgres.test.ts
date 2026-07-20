@@ -7,11 +7,8 @@ const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
 
 test(
   "mobile Thread creation, retry, and queued removal are transactionally authoritative",
-  {
-    skip: databaseUrl ? false : "KESTREL_TURN_DB_TEST_URL is not configured",
-  },
   async (context) => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     process.env.POSTGRES_URL = databaseUrl;
 

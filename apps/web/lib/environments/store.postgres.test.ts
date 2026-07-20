@@ -7,13 +7,8 @@ const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
 test(
   "hosted Environment bindings preserve Thread identity and reject cross-organization resolution",
-  {
-    skip: databaseUrl
-      ? false
-      : "KESTREL_ENVIRONMENT_DB_TEST_URL is not configured",
-  },
   async (context) => {
-    assert.ok(databaseUrl);
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
     process.env.KESTREL_ENVIRONMENTS_ENABLED = "true";

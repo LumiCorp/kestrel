@@ -2265,44 +2265,47 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated sa
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
-for (const row of [
+const repeatedFilesystemInspectionCases = [
   { toolName: "fs.read_text", input: { path: "app/page.tsx" } },
   { toolName: "fs.list", input: { path: "." } },
   { toolName: "fs.search_text", input: { path: ".", query: "newsletter" } },
-] as const) {
-  test(`ExecutionEngine loop-guards repeated filesystem inspection for ${row.toolName}`, async () => {
-    const store = new InMemorySessionStore();
-    const kestrel = new Kestrel({
-      store,
-      toolGateway: {
-        call: async () => null as never,
-      },
-      modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
-      guardrails: {
-        maxStepsPerRun: 5,
-        maxStepVisits: 20,
-      },
-    });
+] as const;
 
-    kestrel.registerStep("agent.loop", async () => ({
-      status: "RUNNING",
-      nextStepAgent: "agent.loop",
-      statePatch: {
-        agent: {
-          nextAction: {
-            kind: "tool",
-            name: row.toolName,
-            input: row.input,
-          },
-          observations: [
-            {
-              summary: `Repeated filesystem inspection through ${row.toolName}.`,
-              goalMet: false,
-            },
-          ],
+const assertRepeatedFilesystemInspectionLoopGuard = async (
+  row: (typeof repeatedFilesystemInspectionCases)[number],
+) => {
+  const store = new InMemorySessionStore();
+  const kestrel = new Kestrel({
+    store,
+    toolGateway: {
+      call: async () => null as never,
+    },
+    modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
+    guardrails: {
+      maxStepsPerRun: 5,
+      maxStepVisits: 20,
+    },
+  });
+
+  kestrel.registerStep("agent.loop", async () => ({
+    status: "RUNNING",
+    nextStepAgent: "agent.loop",
+    statePatch: {
+      agent: {
+        nextAction: {
+          kind: "tool",
+          name: row.toolName,
+          input: row.input,
         },
+        observations: [
+          {
+            summary: `Repeated filesystem inspection through ${row.toolName}.`,
+            goalMet: false,
+          },
+        ],
       },
-    }));
+    },
+  }));
 
     const output = await kestrel.run({
       id: `evt-filesystem-loop-${row.toolName}`,
@@ -2318,8 +2321,14 @@ for (const row of [
       store.getRunEvents().some((event) => event.type === "loop.guard_triggered"),
       true,
     );
-  });
-}
+};
+
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.read_text", () =>
+  assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[0]));
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.list", () =>
+  assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[1]));
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.search_text", () =>
+  assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[2]));
 
 test("ExecutionEngine ignores volatile capability evidence metadata when enforcing repeated same-tool guard", async () => {
   const store = new InMemorySessionStore();
