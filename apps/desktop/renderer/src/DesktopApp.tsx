@@ -1,7 +1,6 @@
 import {
   Activity,
   Folder,
-  KeyRound,
   ListChecks,
   MessageSquare,
   Moon,
@@ -15,7 +14,6 @@ import {
   Square,
   Sun,
   Wrench,
-  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -27,11 +25,11 @@ import {
 
 import type {
   DesktopBridgeInfo,
-  DesktopCredentialedModelProvider,
+  DesktopCapabilityId,
+  DesktopReadinessItemId,
   DesktopRendererSettings,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
-  DesktopToolCredentialStatus,
 } from "../../src/contracts";
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
@@ -39,6 +37,7 @@ import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { SettingsWorkspace } from "./SettingsWorkspace";
 import {
   addRendererThread,
   appendRendererTranscript,
@@ -62,7 +61,7 @@ interface ActiveRun {
   runId?: string | undefined;
 }
 
-type DesktopSurface = "chat" | "mission-control" | "projects" | "mcp" | "diagnostics";
+type DesktopSurface = "chat" | "mission-control" | "projects" | "mcp" | "settings" | "diagnostics";
 
 export function DesktopApp() {
   const [state, setState] = useState<DesktopRendererState>();
@@ -70,23 +69,14 @@ export function DesktopApp() {
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
   const [draft, setDraft] = useState("");
-  const [providerApiKey, setProviderApiKey] = useState("");
   const [modelPolicy, setModelPolicy] = useState<ModelPolicyV1>();
-  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
-  const [providerDraft, setProviderDraft] = useState<DesktopRendererSettings["selectedProvider"]>("openrouter");
-  const [modelDraft, setModelDraft] = useState("");
-  const [providerSettingsSaving, setProviderSettingsSaving] = useState(false);
-  const [providerSettingsError, setProviderSettingsError] = useState<string>();
-  const [weatherCredential, setWeatherCredential] = useState<DesktopToolCredentialStatus>();
-  const [weatherSettingsOpen, setWeatherSettingsOpen] = useState(false);
-  const [weatherApiKey, setWeatherApiKey] = useState("");
-  const [weatherSettingsSaving, setWeatherSettingsSaving] = useState(false);
-  const [weatherSettingsError, setWeatherSettingsError] = useState<string>();
   const [activeRun, setActiveRun] = useState<ActiveRun>();
   const [activity, setActivity] = useState("Ready");
   const [error, setError] = useState<string>();
+  const [errorCapability, setErrorCapability] = useState<DesktopCapabilityId>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [surface, setSurface] = useState<DesktopSurface>("chat");
+  const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
   const [activeProjectPath, setActiveProjectPath] = useState<string>();
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -104,8 +94,7 @@ export function DesktopApp() {
       window.kestrelDesktop.getRuntimeHealth(),
       window.kestrelDesktop.getBridgeInfo(),
       window.kestrelDesktop.getModelPolicy(),
-      window.kestrelDesktop.getToolCredentialStatus("visual-crossing"),
-    ]).then(([uiState, nextSettings, health, info, nextModelPolicy, nextWeatherCredential]) => {
+    ]).then(([uiState, nextSettings, health, info, nextModelPolicy]) => {
       if (disposed) {
         return;
       }
@@ -115,7 +104,6 @@ export function DesktopApp() {
       setRuntimeHealth(health);
       setBridgeInfo(info);
       setModelPolicy(nextModelPolicy);
-      setWeatherCredential(nextWeatherCredential);
     }).catch((cause) => {
       if (disposed === false) {
         setError(errorMessage(cause));
@@ -188,6 +176,7 @@ export function DesktopApp() {
     const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     setDraft("");
     setError(undefined);
+    setErrorCapability(undefined);
     setActivity("Starting run");
     setActiveRun({
       threadId,
@@ -228,7 +217,8 @@ export function DesktopApp() {
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
       });
       const assistantText = extractTerminalMessage(terminal);
-      const terminalError = extractTerminalError(terminal);
+      const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
+      const terminalError = terminalFailure?.message;
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
       const waitingPrompt = getTerminalWaitingPrompt(terminal);
       const terminalLine = assistantText !== undefined
@@ -269,6 +259,7 @@ export function DesktopApp() {
       }
       if (terminalError !== undefined) {
         setError(terminalError);
+        setErrorCapability(terminalFailure?.capabilityId);
       }
       setActivity(
         terminal.type === "run.failed"
@@ -346,133 +337,16 @@ export function DesktopApp() {
     setSurface("chat");
   }
 
-  async function updateProvider(
-    selectedProvider: DesktopRendererSettings["selectedProvider"],
-  ): Promise<void> {
-    if (settings === undefined) {
-      return;
-    }
-    setProviderApiKey("");
-    const saved = await window.kestrelDesktop.saveSettings({ selectedProvider });
-    setSettings(saved);
+  function openCapabilitySettings(target?: DesktopCapabilityId): void {
+    setSettingsTarget(target);
+    setSurface("settings");
   }
 
-  async function saveProviderCredential(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (
-      settings === undefined
-      || isCredentialedProvider(settings.selectedProvider) === false
-      || providerApiKey.trim().length === 0
-    ) {
-      return;
-    }
-    setActivity("Applying provider credential");
-    try {
-      const saved = await window.kestrelDesktop.saveProviderCredential({
-        provider: settings.selectedProvider,
-        apiKey: providerApiKey,
-      });
-      setSettings(saved);
-      setProviderApiKey("");
-      setActivity("Ready");
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setActivity("Provider setup failed");
-    }
-  }
-
-  async function openProviderSettings(): Promise<void> {
-    setProviderSettingsError(undefined);
-    setProviderApiKey("");
-    try {
-      const [nextSettings, nextModelPolicy] = await Promise.all([
-        window.kestrelDesktop.getSettings(),
-        window.kestrelDesktop.getModelPolicy(),
-      ]);
-      setSettings(nextSettings);
-      setModelPolicy(nextModelPolicy);
-      setProviderDraft(nextModelPolicy.provider);
-      setModelDraft(nextModelPolicy.model);
-      setProviderSettingsOpen(true);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  async function saveProviderSettings(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (modelPolicy === undefined || modelDraft.trim().length === 0) {
-      setProviderSettingsError("Model ID is required.");
-      return;
-    }
-    setProviderSettingsSaving(true);
-    setProviderSettingsError(undefined);
-    try {
-      if (isCredentialedProvider(providerDraft) && providerApiKey.trim().length > 0) {
-        await window.kestrelDesktop.saveProviderCredential({
-          provider: providerDraft,
-          apiKey: providerApiKey,
-        });
-      }
-      const savedPolicy = await window.kestrelDesktop.saveModelPolicy({
-        ...modelPolicy,
-        provider: providerDraft,
-        model: modelDraft.trim(),
-      });
-      const savedSettings = await window.kestrelDesktop.getSettings();
-      setModelPolicy(savedPolicy);
-      setSettings(savedSettings);
-      setProviderApiKey("");
-      setProviderSettingsOpen(false);
-      setRuntimeHealth(await window.kestrelDesktop.getRuntimeHealth());
-      setActivity("Ready");
-    } catch (cause) {
-      setProviderSettingsError(errorMessage(cause));
-    } finally {
-      setProviderSettingsSaving(false);
-    }
-  }
-
-  function openWeatherSettings(): void {
-    setWeatherApiKey("");
-    setWeatherSettingsError(undefined);
-    setWeatherSettingsOpen(true);
-  }
-
-  async function saveWeatherCredential(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (weatherApiKey.trim().length === 0) return;
-    setWeatherSettingsSaving(true);
-    setWeatherSettingsError(undefined);
-    try {
-      const status = await window.kestrelDesktop.saveToolCredential({
-        provider: "visual-crossing",
-        apiKey: weatherApiKey,
-      });
-      setWeatherCredential(status);
-      setWeatherApiKey("");
-      setWeatherSettingsOpen(false);
-      setActivity("Weather fallback ready");
-    } catch (cause) {
-      setWeatherSettingsError(errorMessage(cause));
-    } finally {
-      setWeatherSettingsSaving(false);
-    }
-  }
-
-  async function removeWeatherCredential(): Promise<void> {
-    setWeatherSettingsSaving(true);
-    setWeatherSettingsError(undefined);
-    try {
-      const status = await window.kestrelDesktop.deleteToolCredential("visual-crossing");
-      setWeatherCredential(status);
-      setWeatherApiKey("");
-      setActivity("Weather fallback removed");
-    } catch (cause) {
-      setWeatherSettingsError(errorMessage(cause));
-    } finally {
-      setWeatherSettingsSaving(false);
-    }
+  function openReadinessSettings(itemId: DesktopReadinessItemId): void {
+    if (itemId === "provider" && settings !== undefined) openCapabilitySettings(`model.${settings.selectedProvider}`);
+    else if (itemId === "database") openCapabilitySettings("data.database");
+    else if (itemId === "projects") openCapabilitySettings("data.workspace");
+    else openCapabilitySettings();
   }
 
   if (state === undefined || activeThread === undefined) {
@@ -543,6 +417,9 @@ export function DesktopApp() {
             </button>
             <button className={surface === "mcp" ? "active" : ""} type="button" title="MCP servers" aria-label="MCP servers" onClick={() => setSurface("mcp")}>
               <Plug size={17} />
+            </button>
+            <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => openCapabilitySettings()}>
+              <Settings size={17} />
             </button>
             <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setSurface("diagnostics")}>
               <Wrench size={17} />
@@ -621,8 +498,8 @@ export function DesktopApp() {
             </>
           ) : (
             <div className="rail-context">
-              <span>{surface === "mission-control" ? "Mission control" : surface === "mcp" ? "MCP servers" : "Diagnostics"}</span>
-              <p>{surface === "mission-control" ? activeThread.title : surface === "mcp" ? "Local integrations" : runtimeHealth?.state ?? "unknown"}</p>
+              <span>{surface === "mission-control" ? "Mission control" : surface === "mcp" ? "MCP servers" : surface === "settings" ? "Settings" : "Diagnostics"}</span>
+              <p>{surface === "mission-control" ? activeThread.title : surface === "mcp" ? "Local integrations" : surface === "settings" ? "Capabilities and readiness" : runtimeHealth?.state ?? "unknown"}</p>
             </div>
           )}
         </aside>
@@ -652,6 +529,7 @@ export function DesktopApp() {
               <Activity size={14} aria-hidden="true" />
               <span>{activity}</span>
               {error !== undefined ? <span className="activity-error">{error}</span> : null}
+              {errorCapability !== undefined ? <button className="secondary-button" type="button" onClick={() => openCapabilitySettings(errorCapability)}>Open capability settings</button> : null}
             </div>
           </div>
 
@@ -711,7 +589,7 @@ export function DesktopApp() {
           </main>
         ) : (
           <div className="surface-host">
-            {error !== undefined ? <div className="surface-error" role="alert">{error}</div> : null}
+            {error !== undefined ? <div className="surface-error" role="alert"><span>{error}</span>{errorCapability !== undefined ? <button type="button" onClick={() => openCapabilitySettings(errorCapability)}>Open capability settings</button> : null}</div> : null}
             {surface === "projects" ? (
               <ProjectWorkspace
                 project={activeProject}
@@ -727,11 +605,20 @@ export function DesktopApp() {
               />
             ) : surface === "mcp" ? (
               <McpWorkspace onError={setError} />
+            ) : surface === "settings" ? (
+              <SettingsWorkspace
+                initialCapabilityId={settingsTarget}
+                onOpenMcp={() => setSurface("mcp")}
+                onAddProject={async () => { await addProject(); }}
+                onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
+                onError={setError}
+              />
             ) : (
               <DiagnosticsWorkspace
                 runtimeHealth={runtimeHealth}
                 onRuntimeHealth={setRuntimeHealth}
                 onError={setError}
+                onOpenReadinessSettings={openReadinessSettings}
               />
             )}
           </div>
@@ -767,15 +654,15 @@ export function DesktopApp() {
               <button
                 className="app-readiness-row"
                 type="button"
-                onClick={openWeatherSettings}
+                onClick={() => openCapabilitySettings("tools.weather")}
               >
                 <span className="app-readiness-copy">
                   <strong>Weather</strong>
                   <small>Open-Meteo + Visual Crossing fallback</small>
                 </span>
-                <span className={`provider-status ${weatherCredential?.configured ? "" : "needs-credential"}`}>
+                <span className="provider-status">
                   <span aria-hidden="true" />
-                  {weatherCredential?.configured ? "Fallback ready" : "Free provider only"}
+                  View readiness
                 </span>
               </button>
             </section>
@@ -813,271 +700,26 @@ export function DesktopApp() {
                   type="button"
                   title="Configure provider and model"
                   aria-label="Configure provider and model"
-                  onClick={() => void openProviderSettings()}
+                  onClick={() => settings !== undefined && openCapabilitySettings(`model.${settings.selectedProvider}`)}
                 >
                   <Settings size={15} aria-hidden="true" />
                 </button>
               </div>
-              <select
-                aria-label="Model provider"
-                value={settings?.selectedProvider ?? "openrouter"}
-                onChange={(event) => void updateProvider(
-                  event.target.value as DesktopRendererSettings["selectedProvider"],
-                ).catch((cause) => setError(errorMessage(cause)))}
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama</option>
-                <option value="lmstudio">LM Studio</option>
-              </select>
-              <div className={`provider-status ${settings?.providerCredentialConfigured === false ? "needs-credential" : ""}`}>
+              <div className="provider-status">
                 <span aria-hidden="true" />
-                {settings?.providerCredentialConfigured === false ? "Credential required" : "Provider ready"}
+                {settings?.selectedProvider ?? "Provider unavailable"}
               </div>
               {modelPolicy !== undefined ? (
                 <p className="provider-model" title={modelPolicy.model}>{modelPolicy.model}</p>
               ) : null}
-              {settings?.providerCredentialConfigured === false
-                && isCredentialedProvider(settings.selectedProvider) ? (
-                  <form className="provider-credential" onSubmit={(event) => void saveProviderCredential(event)}>
-                    <input
-                      aria-label={`${providerLabel(settings.selectedProvider)} API key`}
-                      autoComplete="off"
-                      name="provider-api-key"
-                      placeholder="API key"
-                      type="password"
-                      value={providerApiKey}
-                      onChange={(event) => setProviderApiKey(event.target.value)}
-                    />
-                    <button
-                      className="icon-button"
-                      type="submit"
-                      title="Save provider credential"
-                      aria-label="Save provider credential"
-                      disabled={providerApiKey.trim().length === 0}
-                    >
-                      <KeyRound size={16} />
-                    </button>
-                  </form>
-                ) : null}
+              <button className="secondary-button" type="button" onClick={() => settings !== undefined && openCapabilitySettings(`model.${settings.selectedProvider}`)}>
+                Open capability settings
+              </button>
             </section>
           </aside>
         ) : null}
       </div>
 
-      {providerSettingsOpen && modelPolicy !== undefined ? (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && providerSettingsSaving === false) {
-              setProviderSettingsOpen(false);
-            }
-          }}
-        >
-          <form
-            className="provider-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="provider-dialog-title"
-            onSubmit={(event) => void saveProviderSettings(event)}
-          >
-            <div className="provider-dialog-header">
-              <div>
-                <h2 id="provider-dialog-title">Model provider</h2>
-                <p>Choose the provider and model used for new runs.</p>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                title="Close model provider settings"
-                aria-label="Close model provider settings"
-                disabled={providerSettingsSaving}
-                onClick={() => setProviderSettingsOpen(false)}
-              >
-                <X size={17} />
-              </button>
-            </div>
-
-            <label className="provider-dialog-field">
-              <span>Provider</span>
-              <select
-                aria-label="Configured model provider"
-                value={providerDraft}
-                onChange={(event) => {
-                  setProviderDraft(event.target.value as DesktopRendererSettings["selectedProvider"]);
-                  setProviderApiKey("");
-                }}
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama</option>
-                <option value="lmstudio">LM Studio</option>
-              </select>
-            </label>
-
-            <label className="provider-dialog-field">
-              <span>Model ID</span>
-              <input
-                aria-label="Model ID"
-                autoComplete="off"
-                value={modelDraft}
-                onChange={(event) => setModelDraft(event.target.value)}
-                placeholder="Provider model ID"
-              />
-            </label>
-
-            {isCredentialedProvider(providerDraft) ? (
-              <label className="provider-dialog-field">
-                <span>API key</span>
-                <input
-                  aria-label={`${providerLabel(providerDraft)} API key`}
-                  autoComplete="off"
-                  type="password"
-                  value={providerApiKey}
-                  onChange={(event) => setProviderApiKey(event.target.value)}
-                  placeholder={
-                    settings?.selectedProvider === providerDraft
-                    && settings.providerCredentialConfigured
-                      ? "Leave blank to keep saved key"
-                      : "Enter API key"
-                  }
-                />
-              </label>
-            ) : null}
-
-            {providerSettingsError !== undefined ? (
-              <div className="provider-dialog-error" role="alert">{providerSettingsError}</div>
-            ) : null}
-
-            <div className="provider-dialog-actions">
-              <button
-                type="button"
-                disabled={providerSettingsSaving}
-                onClick={() => setProviderSettingsOpen(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="provider-dialog-save"
-                type="submit"
-                disabled={providerSettingsSaving || modelDraft.trim().length === 0}
-              >
-                {providerSettingsSaving ? "Applying…" : "Apply"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-
-      {weatherSettingsOpen ? (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && weatherSettingsSaving === false) {
-              setWeatherSettingsOpen(false);
-            }
-          }}
-        >
-          <form
-            className="provider-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="weather-dialog-title"
-            onSubmit={(event) => void saveWeatherCredential(event)}
-          >
-            <div className="provider-dialog-header">
-              <div>
-                <h2 id="weather-dialog-title">Weather providers</h2>
-                <p>Open-Meteo is always available. Add Visual Crossing as a verified fallback.</p>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                title="Close Weather settings"
-                aria-label="Close Weather settings"
-                disabled={weatherSettingsSaving}
-                onClick={() => setWeatherSettingsOpen(false)}
-              >
-                <X size={17} />
-              </button>
-            </div>
-
-            <div className="credential-readiness-card">
-              <div>
-                <strong>Open-Meteo</strong>
-                <span>Primary provider · no key required</span>
-              </div>
-              <span className="credential-state ready">Ready</span>
-            </div>
-            <div className="credential-readiness-card">
-              <div>
-                <strong>Visual Crossing</strong>
-                <span>Fallback provider · stored in macOS Keychain</span>
-              </div>
-              <span className={`credential-state ${weatherCredential?.configured ? "ready" : "optional"}`}>
-                {weatherCredential?.configured ? "Ready" : "Optional"}
-              </span>
-            </div>
-
-            {weatherCredential?.available === false ? (
-              <div className="provider-dialog-error" role="alert">
-                Secure credential storage is unavailable on this system.
-              </div>
-            ) : (
-              <label className="provider-dialog-field">
-                <span>Visual Crossing API key</span>
-                <input
-                  aria-label="Visual Crossing API key"
-                  autoComplete="off"
-                  type="password"
-                  value={weatherApiKey}
-                  onChange={(event) => setWeatherApiKey(event.target.value)}
-                  placeholder={weatherCredential?.configured ? "Enter a new key to replace the saved key" : "Paste your Visual Crossing API key"}
-                />
-              </label>
-            )}
-
-            <p className="provider-dialog-note">
-              Kestrel tests the key before saving it. The key is never returned to this window.
-            </p>
-
-            {weatherSettingsError !== undefined ? (
-              <div className="provider-dialog-error" role="alert">{weatherSettingsError}</div>
-            ) : null}
-
-            <div className="provider-dialog-actions provider-dialog-actions-split">
-              {weatherCredential?.configured ? (
-                <button
-                  className="provider-dialog-remove"
-                  type="button"
-                  disabled={weatherSettingsSaving}
-                  onClick={() => void removeWeatherCredential()}
-                >
-                  Remove fallback
-                </button>
-              ) : <span />}
-              <div>
-                <button
-                  type="button"
-                  disabled={weatherSettingsSaving}
-                  onClick={() => setWeatherSettingsOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="provider-dialog-save"
-                  type="submit"
-                  disabled={weatherSettingsSaving || weatherCredential?.available === false || weatherApiKey.trim().length === 0}
-                >
-                  {weatherSettingsSaving ? "Verifying…" : weatherCredential?.configured ? "Verify and replace" : "Verify and save"}
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1137,12 +779,64 @@ function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
   return readString(result?.assistantText);
 }
 
-function extractTerminalError(event: DesktopRunnerEvent): string | undefined {
+export function extractTerminalFailure(
+  event: DesktopRunnerEvent,
+  selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
+): { message: string; capabilityId?: DesktopCapabilityId | undefined } | undefined {
   if (event.type !== "run.failed") {
     return ;
   }
   const error = asRecord(event.payload.error);
-  return readString(error?.message) ?? readString(error?.code) ?? "Run failed.";
+  const code = readString(error?.code);
+  const details = asRecord(error?.details);
+  const explicitCapabilityId = readDesktopCapabilityId(details?.capabilityId);
+  return {
+    message: readString(error?.message) ?? code ?? "Run failed.",
+    capabilityId: explicitCapabilityId ?? capabilityForRuntimeFailureCode(code, selectedProvider),
+  };
+}
+
+function capabilityForRuntimeFailureCode(
+  code: string | undefined,
+  selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
+): DesktopCapabilityId | undefined {
+  if (code === "IO_MODEL_FAILED" || code === "IO_MODEL_TIMEOUT" || code === "MODEL_POLICY_INVALID") {
+    return selectedProvider === undefined ? undefined : `model.${selectedProvider}`;
+  }
+  if (MCP_FAILURE_CODES.has(code ?? "")) return "connections.mcp";
+  if (DEV_SHELL_FAILURE_CODES.has(code ?? "")) return "local.developer_shell";
+  if (DATABASE_FAILURE_CODES.has(code ?? "")) return "data.database";
+  if (code === "STORE_SQLITE_INIT_FAILED") return "data.database";
+  return ;
+}
+
+const MCP_FAILURE_CODES = new Set([
+  "MCP_CLIENT_METHOD_MISSING", "MCP_ENV_VAR_REQUIRED", "MCP_HEADER_ENV_REQUIRED",
+  "MCP_HTTP_TRANSPORT_UNAVAILABLE", "MCP_PRECHECK_FAILED", "MCP_SDK_CLIENT_MISSING",
+  "MCP_SSE_TRANSPORT_UNAVAILABLE", "MCP_STDIO_TRANSPORT_UNAVAILABLE", "MCP_TOOL_UNAVAILABLE",
+  "MCP_HOSTED_SCOPE_UNAVAILABLE", "MCP_TOOL_NAME_COLLISION",
+]);
+const DEV_SHELL_FAILURE_CODES = new Set([
+  "DEV_SHELL_COMMAND_INVALID", "DEV_SHELL_CWD_NOT_FOUND", "DEV_SHELL_CWD_OUTSIDE_WORKSPACE",
+  "DEV_SHELL_PATH_OUTSIDE_WORKSPACE", "DEV_SHELL_PROCESS_NOT_FOUND", "DEV_SHELL_PROCESS_NOT_RUNNING",
+  "DEV_SHELL_SHELL_UNAVAILABLE", "DEV_SHELL_SOURCE_WRITE_AUTHORITY_DENIED", "DEV_SHELL_WORKSPACE_NOT_FOUND",
+  "DEV_SHELL_SERVICE_REQUEST_FAILED", "DEV_SHELL_SERVICE_UNAVAILABLE", "DEV_SHELL_MIGRATION_FAILED",
+]);
+const DATABASE_FAILURE_CODES = new Set([
+  "STORE_DATABASE_URL_REQUIRED", "STORE_ENSURE_SESSION_FAILED", "STORE_SCHEMA_V3_REQUIRED",
+  "DATABASE_UNREACHABLE", "DATABASE_URL_INVALID", "LOCAL_CORE_DATABASE_BLOCKED",
+  "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED", "LOCAL_CORE_EXTERNAL_DATABASE_URL_REQUIRED",
+  "LOCAL_CORE_PGLITE_INIT_FAILED", "LOCAL_CORE_MIGRATIONS_BLOCKED", "LOCAL_CORE_MIGRATION_FAILED",
+]);
+
+function readDesktopCapabilityId(value: unknown): DesktopCapabilityId | undefined {
+  const ids: DesktopCapabilityId[] = [
+    "model.openrouter", "model.openai", "model.anthropic", "model.ollama", "model.lmstudio",
+    "tools.internet.tavily", "tools.weather", "tools.network.free", "local.filesystem",
+    "local.developer_shell", "local.sandbox_code", "connections.mcp", "data.workspace",
+    "data.database", "permission.microphone",
+  ];
+  return typeof value === "string" && ids.includes(value as DesktopCapabilityId) ? value as DesktopCapabilityId : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1173,26 +867,7 @@ function surfaceTitle(
   if (surface === "mission-control") {
     return "Mission control";
   }
-  return surface === "mcp" ? "MCP servers" : "Diagnostics";
-}
-
-function isCredentialedProvider(
-  provider: DesktopRendererSettings["selectedProvider"],
-): provider is DesktopCredentialedModelProvider {
-  return provider === "openrouter" || provider === "openai" || provider === "anthropic";
-}
-
-function providerLabel(provider: DesktopRendererSettings["selectedProvider"]): string {
-  if (provider === "openrouter") {
-    return "OpenRouter";
-  }
-  if (provider === "openai") {
-    return "OpenAI";
-  }
-  if (provider === "anthropic") {
-    return "Anthropic";
-  }
-  return provider === "ollama" ? "Ollama" : "LM Studio";
+  return surface === "mcp" ? "MCP servers" : surface === "settings" ? "Settings" : "Diagnostics";
 }
 
 function formatThreadTime(value: string): string {

@@ -60,21 +60,19 @@ Local Core settings support two database modes:
 - `Default`: preserve existing desktop behavior.
   - Desktop uses embedded PGlite owned by Local Core.
   - The 0.6 state epoch is isolated from 0.5 data.
-- `External`: use a hosted Postgres `DATABASE_URL` from Settings > Database.
+- `External`: enter a hosted PostgreSQL connection URL in Settings > Runtime database.
 
-`External` mode requires `DATABASE_URL`. Desktop validates connectivity during runtime startup/restart and surfaces failures through runtime health and recovery flows.
-
-The static renderer shows the active database mode and recovery state but does not yet accept a new external URL. External database mode remains optional; packaged Desktop defaults to PGlite and does not ship a Postgres server.
+`External` mode accepts a PostgreSQL connection URL in Settings. Local Core verifies it before replacing the last working value, stores it in macOS Keychain, and applies it on runtime restart; the URL is never returned to the renderer or written to Desktop settings. External database mode remains optional, and packaged Desktop defaults to PGlite.
 
 ## First-Run Setup
 
 Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. A public 0.6 artifact must be Developer ID signed and notarized.
 
 - Guided setup requires the user to choose one provider first: `openrouter`, `openai`, `anthropic`, `ollama`, or `lmstudio`.
-- Hosted providers require a local desktop-stored API key before runs can start.
+- Hosted providers require a Local Core Keychain credential before runs can start.
 - Local providers (`ollama`, `lmstudio`) do not require an API key by default and use local OpenAI-compatible base URLs.
 - If onboarding is incomplete, Desktop resumes the first unfinished milestone instead of routing provider setup through the blocked recovery screen.
-- The static renderer exposes provider selection and write-only hosted-provider credential setup through Desktop IPC.
+- Settings is the authoritative capability surface for models, built-in tools, local execution, MCP, storage, and operating-system permissions. Credential inputs are write-only and verified before replacement.
 
 ## 0.6 Release Boundaries
 
@@ -82,7 +80,7 @@ Packaged Desktop treats first-run onboarding as an explicit choice flow, not a s
 - Release packaging fails unless the app is Developer ID signed, hardened, notarized, stapled, and accepted by Gatekeeper.
 - Auto-update is out of scope.
 - Local Core owns PGlite storage and execution; Desktop does not launch independent Postgres or runner processes.
-- Code/dev-shell workflows and `kcron` automation are companion surfaces, not the default first-run promise.
+- Developer-shell and Docker-backed code capabilities expose their prerequisites and runtime policies in Settings; `kcron` automation remains a companion surface.
 
 ## Local Development
 

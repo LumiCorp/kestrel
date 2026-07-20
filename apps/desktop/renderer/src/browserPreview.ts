@@ -5,12 +5,10 @@ import type {
   DesktopFileWriteInput,
   DesktopLegacyUiStateEntries,
   DesktopManagedProjectRun,
+  DesktopMcpServerMutationInput,
   DesktopPathTargetInput,
   DesktopProjectAction,
   DesktopProjectSnapshotResponse,
-  DesktopProviderCredentialInput,
-  DesktopToolCredentialInput,
-  DesktopToolCredentialProvider,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunnerEvent,
@@ -20,6 +18,8 @@ import type {
   DesktopRuntimeThreadInspection,
 } from "../../src/contracts";
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
+import { resolveDesktopCapabilityView } from "../../../../src/desktopShell/capabilityRegistry";
+import { LOCAL_CORE_CREDENTIAL_IDS } from "../../../../src/localCore/credentialStore";
 
 type PreviewSnapshot = DesktopProjectSnapshotResponse["snapshot"];
 type PreviewTaskAction = Extract<DesktopProjectAction, { type: `task.${string}` }>;
@@ -42,7 +42,6 @@ export function ensureBrowserPreviewBridge(): void {
       { path: "/workspace/kestrel", label: "kestrel" },
       { path: "/workspace/demo-agent", label: "demo-agent" },
     ],
-    providerCredentialConfigured: true,
     advancedWorkspaceEnabled: false,
     setupCompletedAt: new Date().toISOString(),
   };
@@ -55,6 +54,7 @@ export function ensureBrowserPreviewBridge(): void {
     modelCapabilities: { visionInputEnabled: false },
   };
   let weatherCredentialConfigured = false;
+  let managedMcpServers: import("../../src/contracts").DesktopMcpServerConfig[] = [];
   let previewProjectSnapshot = createPreviewProjectSnapshot();
   let previewFileContent = [
     "import { createKestrelClient } from \"@kestrel/sdk\";",
@@ -134,11 +134,12 @@ export function ensureBrowserPreviewBridge(): void {
     async getBridgeInfo() {
       return {
         connected: true,
-        version: "3-preview",
+        version: "4-preview",
         capabilities: [
           "ui_state",
           "runner_commands",
           "settings",
+          "capability_registry",
           "provider_credentials",
           "project_picker",
           "runtime_control",
@@ -166,60 +167,78 @@ export function ensureBrowserPreviewBridge(): void {
     async getSettings() {
       return settings;
     },
+    async getCapabilities() {
+      return resolveDesktopCapabilityView({
+        settings: {
+          selectedProvider: settings.selectedProvider,
+          databaseMode: settings.databaseMode,
+          presetId: settings.presetId,
+          capabilityPacks: [...settings.capabilityPacks],
+          projects: settings.projects.map((project) => ({ ...project })),
+          mcpServers: managedMcpServers,
+          capabilityVerifications: {},
+          developerShellEnvMode: "inherit",
+          developerShellAllowedEnvNames: [],
+          approvalPolicyPackId: "dev",
+          providerSelectionCompletedAt: settings.providerSelectionCompletedAt,
+          setupCompletedAt: settings.setupCompletedAt,
+          advancedWorkspaceEnabled: settings.advancedWorkspaceEnabled,
+        },
+        credentials: {
+          backend: "macos_keychain",
+          available: true,
+          credentials: LOCAL_CORE_CREDENTIAL_IDS.map((id) => ({
+            id,
+            configured:
+              id === "provider.openrouter.default"
+              || (id === "tool.visual-crossing.default" && weatherCredentialConfigured),
+          })),
+        },
+        probes: {
+          filesystemAccessible: settings.projects.length > 0,
+          shellAvailable: true,
+          shellPath: "/bin/zsh",
+          executablePath: "/usr/local/bin:/usr/bin:/bin",
+          languageRuntimes: [{ name: "node", available: true }, { name: "python3", available: true }],
+          packageManagers: [{ name: "pnpm", available: true }, { name: "npm", available: true }],
+          dockerInstalled: true,
+          dockerDaemonReachable: true,
+          dockerImages: [{ name: "node:20-alpine", available: true }, { name: "python:3.12-alpine", available: true }, { name: "bash:5.2", available: true }],
+          databaseReady: true,
+          microphone: "not-determined",
+          mcpServers: [],
+          localModelProviders: { ollama: true, lmstudio: true },
+        },
+      });
+    },
+    async configureCapability(input: import("../../src/contracts").DesktopCapabilityConfigurationInput) {
+      if (input.enabled === true && input.capabilityId.startsWith("model.")) {
+        const provider = input.capabilityId.slice("model.".length) as DesktopRendererSettings["selectedProvider"];
+        settings = {
+          ...settings,
+          selectedProvider: provider,
+        };
+      }
+      if (input.capabilityId === "tools.weather") {
+        if (input.credential === null) weatherCredentialConfigured = false;
+        else if (typeof input.credential === "string") weatherCredentialConfigured = true;
+      }
+      return {
+        capabilityId: input.capabilityId,
+        applied: true,
+        runtimeRestarted: true,
+        view: await bridge.getCapabilities(),
+      };
+    },
     async saveSettings(update: DesktopRendererSettingsUpdate) {
       settings = {
         ...settings,
-        ...(update.selectedProvider !== undefined
-          ? { selectedProvider: update.selectedProvider }
-          : {}),
         ...(update.projects !== undefined ? { projects: update.projects } : {}),
-        providerCredentialConfigured: update.selectedProvider === undefined
-          ? settings.providerCredentialConfigured
-          : update.selectedProvider === "ollama" || update.selectedProvider === "lmstudio",
-      };
-      return settings;
-    },
-    async saveProviderCredential(input: DesktopProviderCredentialInput) {
-      settings = {
-        ...settings,
-        selectedProvider: input.provider,
-        providerCredentialConfigured: true,
       };
       return settings;
     },
     async getModelPolicy() {
       return modelPolicy;
-    },
-    async saveModelPolicy(nextPolicy: ModelPolicyV1) {
-      modelPolicy = nextPolicy;
-      settings = { ...settings, selectedProvider: nextPolicy.provider };
-      return modelPolicy;
-    },
-    async getToolCredentialStatus(provider: DesktopToolCredentialProvider) {
-      return {
-        provider,
-        configured: weatherCredentialConfigured,
-        available: true,
-        backend: "macos_keychain" as const,
-      };
-    },
-    async saveToolCredential(input: DesktopToolCredentialInput) {
-      weatherCredentialConfigured = input.apiKey.trim().length > 0;
-      return {
-        provider: input.provider,
-        configured: weatherCredentialConfigured,
-        available: true,
-        backend: "macos_keychain" as const,
-      };
-    },
-    async deleteToolCredential(provider: DesktopToolCredentialProvider) {
-      weatherCredentialConfigured = false;
-      return {
-        provider,
-        configured: false,
-        available: true,
-        backend: "macos_keychain" as const,
-      };
     },
     async getRuntimeHealth() {
       return {
@@ -494,6 +513,7 @@ export function ensureBrowserPreviewBridge(): void {
         discoveredAt: new Date().toISOString(),
         diagnostics: [],
         servers: [
+          ...managedMcpServers,
           {
             id: "filesystem",
             name: "Filesystem",
@@ -524,6 +544,32 @@ export function ensureBrowserPreviewBridge(): void {
           },
         ],
       };
+    },
+    async saveMcpServer(input: DesktopMcpServerMutationInput) {
+      const server: import("../../src/contracts").DesktopMcpServerConfig = {
+        id: input.id,
+        name: input.name,
+        transport: input.transport,
+        ...(input.transport === "stdio" ? { command: input.command, args: input.args } : { url: input.url }),
+        enabled: input.enabled,
+        credentials: input.credentials?.map((binding) => ({
+          kind: binding.kind,
+          ...(binding.name !== undefined ? { name: binding.name } : {}),
+          credentialId: binding.credentialId ?? `mcp.${input.id}.${binding.kind}.preview`,
+          envKey: binding.envKey ?? (binding.name ?? "KESTREL_MCP_PREVIEW"),
+          configured: binding.secret !== undefined || binding.credentialId !== undefined,
+        })),
+        source: "Kestrel Desktop",
+        sourceKind: "desktop-managed",
+        tools: [],
+        toolCount: 0,
+      };
+      managedMcpServers = [...managedMcpServers.filter((entry) => entry.id !== input.id), server];
+      return await bridge.discoverMcpServers();
+    },
+    async deleteMcpServer(id: string) {
+      managedMcpServers = managedMcpServers.filter((server) => server.id !== id);
+      return await bridge.discoverMcpServers();
     },
     async readFile(input: DesktopFileReadInput): Promise<DesktopFileContent> {
       return {
