@@ -8,9 +8,9 @@ sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Operator manual">
-Use these APIs when Workspace Copilot needs tasks, project status, and review decisions that people can inspect and update.
-</WorkspaceCopilotDemo>
+<GuideNote step="Operator manual">
+Use these APIs when an application needs tasks, project status, and review decisions that people can inspect and update.
+</GuideNote>
 
 This is the missing middle layer between “an agent replied” and “an operator can actually manage ongoing work.” Kestrel exposes several stateful control-plane surfaces for that job:
 
@@ -40,7 +40,7 @@ The Kestrel One can use the control route to move through the full inspection pa
 ```ts
 const inbox = await sendRunnerControl({
   command: "operator.inbox",
-  sessionId: "workspace-copilot-nightly",
+  sessionId: "reference-session-001",
 });
 
 const thread = await sendRunnerControl({
@@ -50,18 +50,18 @@ const thread = await sendRunnerControl({
 
 const graph = await sendRunnerControl({
   command: "task.graph.get",
-  sessionId: "workspace-copilot-nightly",
+  sessionId: "reference-session-001",
   threadId: "thread-main",
 });
 
 const snapshot = await sendRunnerControl({
   command: "project.snapshot.get",
-  sessionId: "workspace-copilot-nightly",
+  sessionId: "reference-session-001",
 });
 
 const review = await sendRunnerControl({
   command: "project.review.get",
-  sessionId: "workspace-copilot-nightly",
+  sessionId: "reference-session-001",
   reviewTarget: {
     taskId: "task:thread:thread-main",
     filePath: "src/project/workspace.ts",
@@ -78,10 +78,10 @@ When an operator wants to leave or apply a review action, the control route acce
 ```json
 {
   "command": "project.review.action",
-  "sessionId": "workspace-copilot-nightly",
+  "sessionId": "reference-session-001",
   "reviewAction": {
     "type": "review.comment.create",
-    "sessionId": "workspace-copilot-nightly",
+    "sessionId": "reference-session-001",
     "target": {
       "taskId": "task:thread:thread-main",
       "pullRequestNumber": 42,
@@ -124,20 +124,20 @@ const context = {
 
 const graph = await client.getTaskGraph(
   {
-    sessionId: "workspace-copilot-nightly",
+    sessionId: "reference-session-001",
     threadId: "thread-main",
   },
   context,
 );
 
 const snapshot = await client.getProjectSnapshot(
-  { sessionId: "workspace-copilot-nightly" },
+  { sessionId: "reference-session-001" },
   context,
 );
 
 const detail = await client.getProjectReview(
   {
-    sessionId: "workspace-copilot-nightly",
+    sessionId: "reference-session-001",
     target: {
       taskId: "task:thread:thread-main",
       filePath: "src/project/workspace.ts",
@@ -154,7 +154,7 @@ Reading the surfaces is only half the workflow. The same client can update them 
 ```ts
 await client.updateTaskGraph(
   {
-    sessionId: "workspace-copilot-nightly",
+    sessionId: "reference-session-001",
     threadId: "thread-main",
     graph: {
       tasks: {
@@ -170,7 +170,7 @@ await client.updateTaskGraph(
 
 await client.updateProjectSnapshot(
   {
-    sessionId: "workspace-copilot-nightly",
+    sessionId: "reference-session-001",
     snapshot: {
       branch: "docs/search-hardening",
       focus: "review-state and search behavior",
@@ -182,7 +182,7 @@ await client.updateProjectSnapshot(
 
 await client.runProjectAction(
   {
-    sessionId: "workspace-copilot-nightly",
+    sessionId: "reference-session-001",
     action: {
       type: "project.status.set",
       value: "needs-review",
@@ -200,7 +200,7 @@ Task graph response:
 ```json
 {
   "type": "task.graph",
-  "sessionId": "workspace-copilot-nightly",
+  "sessionId": "reference-session-001",
   "threadId": "thread-main",
   "graph": {
     "taskId": "task:thread:thread-main",
@@ -215,7 +215,7 @@ Project snapshot response:
 ```json
 {
   "type": "project.snapshot",
-  "sessionId": "workspace-copilot-nightly",
+  "sessionId": "reference-session-001",
   "snapshot": {
     "branch": "docs/search-hardening",
     "focus": "review-state and search behavior",

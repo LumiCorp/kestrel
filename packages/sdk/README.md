@@ -34,14 +34,14 @@ higher-level agent client, use `@kestrel-agents/sdk/runner`.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.6.0-beta.0
-npm install @kestrel-agents/sdk@0.6.0-beta.0
-yarn add @kestrel-agents/sdk@0.6.0-beta.0
-bun add @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/sdk@0.6.0
+npm install @kestrel-agents/sdk@0.6.0
+yarn add @kestrel-agents/sdk@0.6.0
+bun add @kestrel-agents/sdk@0.6.0
 ```
 
 Use an exact compatible release line across the runtime and public packages.
-Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+Check [0.6 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Requirements
@@ -57,7 +57,7 @@ import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
   id: "support-agent",
-  profileId: "support",
+  profileId: "reference",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
@@ -129,7 +129,7 @@ const client = new KestrelClient({
 
 const job = client.streamJob(
   {
-    profileId: "support",
+    profileId: "reference",
     input: {
       version: "job_input_v1",
       turn: {
@@ -160,6 +160,7 @@ assistant text from structured payloads.
 await agent.resume(
   {
     sessionId: "session-123",
+    requestId: "interaction-123",
     message: "Continue with the fix.",
   },
   context,
@@ -175,8 +176,11 @@ const memory = await session.memory.get(context);
 
 await session.memory.update(
   {
-    findings: "The deployment finished successfully.",
-    linkedArtifacts: ["docs/deploy.md"],
+    expectedRevision: memory.revision,
+    patch: {
+      findings: "The deployment finished successfully.",
+      linkedArtifacts: ["docs/deploy.md"],
+    },
   },
   context,
 );

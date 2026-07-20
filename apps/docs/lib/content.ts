@@ -315,16 +315,16 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
     ]),
     group("desktop", "Desktop", "/desktop", [
       ["Get Desktop", ["/desktop", "/desktop/install", "/desktop/first-run", "/desktop/providers"]],
-      ["Work and recover", ["/desktop/workspaces-and-sessions", "/desktop/operator-control", "/desktop/automation", "/desktop/recovery", "/desktop/troubleshooting"]],
+      ["Work and recover", ["/desktop/workspaces-and-sessions", "/desktop/operator-control", "/desktop/recovery", "/desktop/troubleshooting"]],
     ]),
     group("kestrel-one", "Kestrel One", "/kestrel-one", [
-      ["Start collaborating", ["/kestrel-one", "/kestrel-one/getting-started", "/kestrel-one/threads", "/kestrel-one/projects"]],
+      ["Start collaborating", ["/kestrel-one", "/kestrel-one/getting-started", "/kestrel-one/threads", "/kestrel-one/projects", "/kestrel-one/apps"]],
       ["Context and Knowledge", ["/kestrel-one/context-revisions", "/kestrel-one/knowledge", "/kestrel-one/artifacts-and-sharing"]],
-      ["Models and administration", ["/kestrel-one/organizations-and-access", "/kestrel-one/models-and-gateways", "/kestrel-one/managed-model-deployments", "/kestrel-one/administration", "/kestrel-one/production-operations"]],
+      ["Models and administration", ["/kestrel-one/organizations-and-access", "/kestrel-one/environments", "/kestrel-one/models-and-gateways", "/kestrel-one/managed-model-deployments", "/kestrel-one/administration", "/kestrel-one/production-operations"]],
     ]),
     group("build", "Build", "/build", [
-      ["First working agent", ["/build", "/build/workspace-copilot-demo", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
-      ["Add to your app", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability", "/build/workspaces-and-automation", "/build/automating-common-tasks"]],
+      ["First working agent", ["/build", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
+      ["Add to your app", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability"]],
       ["Runtime behavior", ["/build/protocol-and-results", "/build/runner-events", "/build/waiting-resume-and-cancellation", "/build/upgrading-to-0-6"]],
     ]),
     group("operate", "Operate", "/operate", [
@@ -334,7 +334,7 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
     ]),
     group("reference", "Reference", "/reference", [
       ["Contracts", ["/reference", "/reference/protocol", "/reference/terminal-results", "/reference/events", "/reference/compatibility"]],
-      ["Packages", ["/reference/sdk", "/reference/nextjs", "/reference/observability", "/reference/http"]],
+      ["Packages", ["/reference/sdk", "/reference/nextjs", "/reference/ai-sdk", "/reference/observability", "/reference/http"]],
       ["CLI and configuration", ["/reference/cli", "/cli/command-suite", "/cli/profiles-code-mode-and-mcp", "/reference/configuration"]],
       ["Releases", ["/reference/terminology", "/reference/releases"]],
     ]),

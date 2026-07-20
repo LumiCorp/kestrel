@@ -28,13 +28,13 @@ or browser client. Start and control the run through
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/ai-sdk@0.6.0-beta.0 \
-  @kestrel-agents/sdk@0.6.0-beta.0 \
+pnpm add @kestrel-agents/ai-sdk@0.6.0 \
+  @kestrel-agents/sdk@0.6.0 \
   ai@^6
 ```
 
 The runtime, protocol, SDK, and presentation adapter must use a compatible
-release line. Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+release line. Check [0.6 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Stream a Kestrel Run

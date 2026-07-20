@@ -1,23 +1,23 @@
 ---
 title: "@kestrel-agents/next"
-summary: Next.js route helpers and integration patterns for exposing `workspace-copilot` through typed routes or an OpenAI-compatible proxy while keeping context and correlation on the server.
+summary: Next.js route helpers for exposing Kestrel through typed server routes while keeping context, credentials, and correlation on the server.
 section: reference
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Next.js reference">
-Use this package to expose Workspace Copilot through JSON, streaming, and webhook routes.
-</WorkspaceCopilotDemo>
+<GuideNote step="Next.js reference">
+Use this package to expose a server-side Kestrel agent through JSON, streaming, and webhook routes.
+</GuideNote>
 
 `@kestrel-agents/next` handles request parsing, authenticated context, correlation headers, and SSE formatting inside Next.js route handlers.
 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/next@0.6.0 @kestrel-agents/sdk@0.6.0
 ```
 
 ## Route helpers
@@ -43,8 +43,8 @@ Use compatibility mode to preserve an existing client. Move to route helpers whe
 
 ```ts
 export const POST = createStreamRunRouteHandler({
-  agent: tracedWorkspaceCopilotAgent,
-  resolveContext: async () => workspaceCopilotContext,
+  agent,
+  resolveContext,
 });
 ```
 
@@ -89,9 +89,9 @@ The route helpers read:
 - `user-agent`
 - `x-forwarded-for`
 
-If those values are missing, the helper generates request and correlation ids and returns them as Kestrel response headers.
+If those values are missing, the helper generates request and correlation IDs and returns them as `x-kestrel-request-id` and `x-kestrel-correlation-id`.
 
-That matters because the response headers become the bridge between a web request and later operator inspection. Preserve `x-kestrel-request-id`, `x-kestrel-correlation-id`, `x-kestrel-session-id`, and `x-kestrel-run-id` when you proxy upstream responses.
+Those two headers connect the application request to later inspection. When you proxy the OpenAI-compatible runner endpoints instead, preserve their separate upstream session, run, thread, and model headers as well.
 
 ## Common failure cases
 
@@ -119,5 +119,5 @@ Move deeper into the SDK and custom protocol when the app needs operator inbox/t
 - [OpenAI-compatible HTTP](/build/openai-compatible-http)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
 - [Next.js route cookbook](/build/nextjs-route-cookbook)
-- [Running the runner service](/operate/runner-service)
+- [Connect to a runner service](/operate/runner-service)
 - [Kestrel One](/kestrel-one)

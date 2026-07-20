@@ -1,101 +1,71 @@
 ---
 title: Command suite
-summary: The main Kestrel command family and the jobs each command is best suited for, including operator control, workspace automation, runner-service startup, and evaluation gates.
+summary: The current Kestrel command-mode families, interactive client, workspace tools, and Local Core HTTP bridge.
 section: cli
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-Kestrel ships a family of commands because the workflows are different, not because the branding is noisy.
+Run `kestrel` or its `ks` alias without a command to open the interactive
+terminal client. Command mode provides focused operations that can also be used
+from scripts.
 
-## Start here if you are...
+## Command-mode families
 
-- doing interactive terminal work: use `kestrel`
-- using the shorter local alias: use `ks`
-- scheduling recurring workspace work: use `kcron`
-- starting a local app-facing HTTP runner: use `kestrel web`
-
-## Use the right command for the job
-
-| Command | Best for | Example |
+| Command | Current usage | Purpose |
 | --- | --- | --- |
-| `kestrel` | interactive chat, operator work, and command mode | `kestrel --profile reference` |
-| `ks` | short alias for the same CLI entrypoint | `ks workspace status` |
-| `kcron` | recurring workspace automation | `kcron run-once` |
-| `kestrel web` | local runner service for another app | `kestrel web --port 43102` |
-| `pnpm run evals:release-check` | released Ruhroh evaluation validation | `pnpm run evals:release-check` |
+| `model` | `kestrel model <show or search or set-provider or set> ...` | Inspect or change the configured model |
+| `status` | `kestrel status` | Show Local Core and local configuration status |
+| `workspace` | `kestrel workspace <status or list>` | Resolve the current workspace or list registered workspaces |
+| `web` | `kestrel web [--host <host>] [--port <port>] [--token <token>]` | Expose Local Core to a trusted local server over authenticated HTTP |
+| `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | Run non-interactive work with strict JSON input and output |
+| `operator` | `kestrel operator <resume-wait or approve or retry-delegation or doctor-export> ...` | Respond to waits, approvals, delegations, and diagnostic exports |
+| `runtime` | `kestrel runtime <replay or doctor> <query> [--json]` | Inspect recorded runtime evidence |
+| `runtime bundle` | `kestrel runtime bundle <query> --out <file>` | Export a diagnostic bundle |
+| `setup` | `kestrel setup [--profile <id>] [--approval-pack <dev, ci_bot, or production>] [--full]` | Check or configure a local installation |
 
-## Why the suite exists
+`job run` is the protocol-native non-interactive surface. Its required
+`--json-in` and `--json-out` files keep request and result handling explicit.
 
-The command set mirrors the product model:
+## Interactive commands
 
-- interactive work
-- workspace-local behavior
-- recurring scheduled work
-- an HTTP runner for application integrations
+Inside `kestrel`, use `/help` for the complete current list. Common groups
+include:
 
-Separate commands make it clear whether you are working interactively, managing a workspace, scheduling a task, or starting a service.
+- sessions and navigation: `/start`, `/new`, `/sessions`, `/switch`, `/resume`
+- inspection: `/status`, `/workspace`, `/tasks`, `/checkpoint`, `/assembly`
+- configuration: `/profiles`, `/model`, `/mode`, `/mcp`, `/code`, `/skill`
+- operator control: `/approve`, `/deny`, `/reply`, `/retry`, `/steer`, `/queue`, `/stop`
+- recovery: `/snapshot`, `/restore`, `/operator`
 
-## Common sequences
+## Local state
 
-### Workspace lifecycle
+Local Core stores product data under the platform data directory and adds the
+active state epoch:
 
-```bash
-kestrel workspace status
-kestrel workspace status
-kestrel workspace list
-kcron install
-kcron start
-kcron status
-kcron run-once
-```
+| Platform | Default product root |
+| --- | --- |
+| macOS | `~/Library/Application Support/Kestrel` |
+| Windows | `%LOCALAPPDATA%\\Kestrel` |
+| Linux | `$XDG_DATA_HOME/kestrel`, or `~/.local/share/kestrel` |
 
-### Operator cockpit workflow
+`KESTREL_CORE_HOME` selects an explicit Local Core product root.
+`KESTREL_HOME` selects an isolated Kestrel home, primarily for development and
+testing. In either case, Local Core resolves the active `state/<epoch>` below
+that root.
 
-```text
-kestrel
-/status
-/sessions
-/resume workspace-copilot-nightly
-/steer collect one more source
-/stop hold for review
-```
+## Scheduling status
 
-### Local runner-service workflow
+The separate `kcron` executable can install, start, stop, and inspect its local
+service and evaluate registered workspaces. Workspace execution is not
+available: an enabled workspace is recorded with the `deferred` outcome until
+the central scheduler is implemented. See [kcron availability](/cli/kcron).
 
-```bash
-kestrel web
-export KESTREL_RUNNER_SERVICE_URL='http://127.0.0.1:43102'
-export KESTREL_RUNNER_SERVICE_TOKEN='...'
-```
+## Related references
 
-### Evaluation workflow
-
-```bash
-pnpm run evals:validate
-pnpm run evals:release-check
-```
-
-## Command families that reveal the “cool stuff”
-
-The command suite is interesting because it exposes more than chat:
-
-- workspace catalog status
-- runner-service startup and health
-- scheduled recurring work through `kcron`
-- operator steering and stop/retry flows in `kestrel`
-- MCP server and tool policy control
-- codeMode policy inspection and toggling
-- released Ruhroh evaluation and migration-evidence checks
-
-Together, these commands cover interactive work, workspace setup, automation, services, and evaluation rather than only sending prompts.
-
-## Use the commands in a workflow
-
-- [Workspace workflows](/cli/workspace-workflows)
 - [CLI terminal client](/cli/kchat)
 - [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
-- [kcron](/cli/kcron)
-- [Runner service](/cli/runner-service)
+- [Workspace workflows](/cli/workspace-workflows)
+- [Local Core HTTP bridge](/cli/runner-service)

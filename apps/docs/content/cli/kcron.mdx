@@ -1,65 +1,49 @@
 ---
-title: kcron
-summary: Run and schedule repeatable Kestrel tasks for registered workspaces.
+title: kcron availability
+summary: Inspect the implemented kcron service commands and the current deferred status of workspace execution.
 section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="CLI mechanics">
-Use `kcron` to run the Workspace Copilot review on a schedule and write the result to `./reports`.
-</WorkspaceCopilotDemo>
+`kcron` manages a local polling service and evaluates registered workspace
+entries. It does **not** currently launch workspace agent tasks.
 
-`kcron` is a Beta local automation tool. Run the task once manually before installing a schedule, and confirm installation and failure behavior on the target machine before depending on it.
-
-Recurring execution is available only where the workspace and packaged scheduler support it. The workspace catalog may show `automationEnabled` before scheduled execution is enabled for that installation.
-
-## Core commands
+## Implemented commands
 
 ```bash
-kcron start
-kcron stop
 kcron status
 kcron run-once
+kcron start
+kcron stop
 kcron install
 kcron uninstall
 ```
 
-## Workspace Copilot workflow
+| Command | Current behavior |
+| --- | --- |
+| `status` | Shows Local Core, daemon, and recorded workspace evaluation state |
+| `run-once` | Evaluates each registered workspace once and saves its status |
+| `start` | Acquires the Local Core lease and starts periodic evaluation |
+| `stop` | Stops the running local service |
+| `install` | Installs the managed local service |
+| `uninstall` | Removes the managed local service |
 
-```bash
-kestrel workspace status
-kestrel workspace list
-kcron install
-kcron status
-kcron run-once
+## Deferred execution
+
+For a workspace whose `automationEnabled` field is false, evaluation records
+`disabled`. For an enabled and valid workspace, evaluation currently records:
+
+```text
+lastOutcome: deferred
+lastError: Workspace automation is deferred until the central scheduler model is implemented.
 ```
 
-`run-once` is the safest first validation step once scheduler execution is available because it proves the configured run path before the schedule matters.
+`run-once`, `start`, and `install` therefore confirm service and catalog
+behavior; they do not prove that a scheduled agent task ran or produced a
+report. Do not depend on `kcron` for recurring execution until the command stops
+returning the explicit deferred outcome.
 
-## What each command is for
-
-| Command | Use it for |
-| --- | --- |
-| `install` | install or enable the daemon |
-| `start` | start the scheduler manually |
-| `status` | verify the daemon is healthy |
-| `run-once` | test the exact workspace cron flow now |
-| `stop` | stop scheduling without uninstalling |
-| `uninstall` | remove the scheduler integration entirely |
-
-## Incident checklist: nightly report missing
-
-- [ ] `kestrel workspace status` shows the expected catalog entry
-- [ ] `kestrel workspace list` shows the expected root path
-- [ ] the catalog entry has the intended `automationEnabled` value
-- [ ] the central scheduler implementation is available for recurring runs
-- [ ] run output and replay evidence are inspectable after execution
-
-## Continue with scheduled work
-
-- [Workspace workflows](/cli/workspace-workflows)
-- [Automating common tasks](/build/automating-common-tasks)
-- [Production operating model](/operate/deployment)
+See [Workspace workflows](/cli/workspace-workflows) for catalog discovery.

@@ -12,16 +12,16 @@ A **provider** is the service that runs the model. Desktop stores the provider c
 
 ## Hosted providers
 
-OpenRouter, OpenAI, and Anthropic require an API key. Paste the key into Desktop settings, save it, and select a model returned by that provider. Desktop does not write the key into project files, prompts, or transcripts.
+OpenRouter, OpenAI, and Anthropic require an API key. Paste the key into Desktop settings, enter the exact model ID you want to use, and save the provider. Desktop does not write the key into project files, prompts, or transcripts.
 
 ## Local providers
 
-Ollama and LM Studio expose models from your computer through a local OpenAI-compatible endpoint. Start the provider first, load the model you want, and then select that model in Desktop. A key is normally unnecessary.
+Ollama and LM Studio expose models from your computer through a local OpenAI-compatible endpoint. Start the provider first, load the model you want, and then enter that model's exact ID in Desktop. A key is normally unnecessary.
 
 ## Verify the connection
 
 Create a short test session and ask for a one-sentence response. If Local Core is healthy but the request fails, check the provider status, endpoint, credential, and model name before restarting Desktop.
 
 <Outcome>
-  <p>The provider panel shows no credential warning, the model is selectable, and a short test request completes successfully.</p>
+  <p>The provider panel shows no credential warning, the configured model ID is saved, and a short test request completes successfully.</p>
 </Outcome>

@@ -1,0 +1,72 @@
+---
+title: Environments
+summary: Understand the organization boundary that supplies execution, Workspaces, inference, shared Apps, and activity to Kestrel One Projects.
+section: kestrel-one
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-20
+---
+
+An **Environment** is an organization boundary for execution and inference. It
+groups the Runtime configuration, persistent Workspaces, shared Apps, maximum
+capability policy, and recorded activity used by Projects and standalone
+Threads.
+
+Every organization has a default Environment. New work uses that Environment
+unless an authorized workflow selects another one.
+
+## What an Environment contains
+
+| Area | What it controls or shows |
+| --- | --- |
+| Overview | Region, Runtime template, idle timeout, and provider-reasoning policy |
+| Workspaces | Persistent execution Workspaces attached to the Environment |
+| Apps | Shared connections and the maximum App capabilities available to Projects |
+| Activity | Provisioning operations, run state, and available reasoning inspection |
+| Private inference | Environment-specific inference configuration when the deployment enables this feature |
+
+Environment details are available under `/settings/environments/:id`.
+Organization-admin access is required to change Environment configuration,
+shared connections, capability policy, or reasoning policy.
+
+## Environments and Projects
+
+A Project uses a persistent Workspace in an Environment. The Environment
+provides the execution and shared capability ceiling; Project policy can narrow
+that ceiling for a particular body of work. Standalone Threads inherit the
+available Environment authority without belonging to a Project.
+
+The default Environment provides a predictable starting point, while additional
+Environments can separate regions, execution configuration, shared services, or
+administrative policy.
+
+## Apps and custom MCP services
+
+The Apps section lets an administrator configure shared App connections and
+enable or deny individual capabilities. A custom MCP server can be added as a
+private App. Newly reported capabilities remain disabled until approved.
+
+Personal App connections are managed from `/apps` and remain associated with
+the person who connected them. Environment connections are shared
+administrative resources.
+
+## Reasoning and activity
+
+Environment settings control whether provider reasoning is requested and how
+provider-visible reasoning may be retained. The Activity section lists recent
+Environment operations and runs. Retained reasoning is inspectable only when
+the Environment policy permits it and the required encryption material is
+available.
+
+Private inference appears only in deployments where that capability is
+enabled. Its absence does not prevent an Environment from hosting Workspaces,
+Apps, or normal managed execution.
+
+<Outcome>
+  <p>You can tell which Environment supplies a Project's execution boundary, who may change it, and where its shared capabilities and activity are controlled.</p>
+</Outcome>
+
+Read [Apps](/kestrel-one/apps) for the member-facing catalog and
+[Kestrel One administration](/kestrel-one/administration) for other
+organization controls.

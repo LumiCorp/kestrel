@@ -1,31 +1,33 @@
 ---
-title: Runner service
-summary: Start and check the local runner service from the command line.
+title: Local Core HTTP bridge
+summary: Expose Local Core to a trusted local server application and verify the connection.
 section: cli
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="CLI mechanics">
-This is the terminal-side entrypoint for the same runner service used by `/api/copilot/run` and `/api/copilot/stream`.
-</WorkspaceCopilotDemo>
+<GuideNote step="Local integration">
+Give a trusted local application server an authenticated HTTP connection to Local Core.
+</GuideNote>
 
-Use these commands when you want to start the local HTTP runner directly from a terminal.
+`kestrel web` exposes Local Core's Execution Protocol through an authenticated
+loopback HTTP endpoint. It is a bridge for trusted local server applications,
+not a second runtime.
 
-## Start it
+## Start the bridge
 
 ```bash
 kestrel web
 ```
 
-The command prints:
+The command ensures Local Core is ready and prints:
 
 - `KESTREL_RUNNER_SERVICE_URL`
 - `KESTREL_RUNNER_SERVICE_TOKEN`
 
-## Common local flow
+## Connect a local application
 
 ```bash
 kestrel web
@@ -34,26 +36,31 @@ export KESTREL_RUNNER_SERVICE_TOKEN='...'
 pnpm dev
 ```
 
-## Health and auth checks
+The SDK uses its remote HTTP transport for this loopback URL, but execution and
+state remain in Local Core.
+
+## Check health and authentication
 
 ```bash
-curl -I "$KESTREL_RUNNER_SERVICE_URL/health"
+curl -sS "$KESTREL_RUNNER_SERVICE_URL/health"
 ```
 
-If you provided a custom host, port, or token, confirm the printed exports match the values your app server actually uses.
+If you provided a custom host, port, or token, confirm the printed exports match
+the values used by the local application server.
 
-## When to use this instead of the full Deploy section
+## When to use this guide
 
-Use this shorter guide when you just need:
+Use this page when you need:
 
-- the startup command
-- the printed env exports
+- the local bridge command
+- the printed environment variables
 - a local health check
 
-Use [Operate Kestrel](/operate) when you are preparing authentication, application routes, observability, and recovery for production.
+Use [Connect to a runner service](/operate/runner-service) to compare this local
+bridge with a remote runner-service deployment.
 
-## Continue with the service
+## Continue
 
-- [Running the runner service](/operate/runner-service)
 - [Environment and auth](/operate/environment-and-auth)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
+- [Production operating model](/operate/deployment)

@@ -101,6 +101,40 @@ test("product-contract bootstrap waits for Compose health before database setup"
     /docker compose up -d --wait --wait-timeout 60 postgres/u
   );
   assert.match(bootstrap, /KESTREL_TURN_WORKER_READY_FILE/u);
+  assert.match(bootstrap, /trap cleanup EXIT INT TERM/u);
+});
+
+test("product-contract infrastructure ports are allocated per run", async () => {
+  const packageJson = JSON.parse(
+    await readFile(path.join(ROOT, "package.json"), "utf8")
+  ) as { scripts: Record<string, string> };
+  const productConfig = await readFile(
+    path.join(ROOT, "apps", "web", "playwright.product.config.ts"),
+    "utf8"
+  );
+  const launcher = await readFile(
+    path.join(ROOT, "apps", "web", "scripts", "run-product-contract.ts"),
+    "utf8"
+  );
+
+  assert.equal(
+    packageJson.scripts["ci:product"],
+    "node --import tsx apps/web/scripts/run-product-contract.ts"
+  );
+  assert.match(
+    productConfig,
+    /requiredPort\("KESTREL_PRODUCT_REDIS_PORT"\)/u
+  );
+  assert.match(productConfig, /KESTREL_RUNNER_SERVICE_PORT/u);
+  assert.match(
+    productConfig,
+    /gracefulShutdown: \{ signal: "SIGTERM", timeout: 30_000 \}/u
+  );
+  assert.match(launcher, /allocateProductContractPorts/u);
+  assert.doesNotMatch(
+    productConfig,
+    /const\s+\w*[Pp]ort\s*=\s*[\d_]+/u
+  );
 });
 
 test("product-contract browser proof waits for the durable worker before test timeouts", async () => {

@@ -12,7 +12,7 @@ import { resolveDocsAppRoot } from "@/lib/site";
 import { DOCS_RELEASE } from "@/lib/release";
 import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/types";
 
-const VERSION = "0.6.0-beta.0";
+const VERSION = "0.6.0";
 
 test("navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -30,7 +30,16 @@ test("navigation exposes exactly six ordered public journeys", async () => {
 test("every navigation, related, and Markdown link resolves to a public docs page", async () => {
   const [pages, navigation] = await Promise.all([getPublicPages(), getNavigation()]);
   const publicUrls = new Set(pages.map(({ meta }) => meta.url));
-  const redirectOnlyUrls = new Set(["/apps/desktop", "/apps/web", "/docs", "/deploy"]);
+  const redirectOnlyUrls = new Set([
+    "/apps/desktop",
+    "/apps/web",
+    "/docs",
+    "/deploy",
+    "/build/workspace-copilot-demo",
+    "/build/workspaces-and-automation",
+    "/build/automating-common-tasks",
+    "/desktop/automation",
+  ]);
 
   for (const section of navigation) {
     assert.ok(section.landing && publicUrls.has(section.landing.url));
@@ -59,6 +68,8 @@ test("the complete 0.6 public baseline is represented", async () => {
     "desktop/workspaces-and-sessions",
     "kestrel-one/threads",
     "kestrel-one/projects",
+    "kestrel-one/apps",
+    "kestrel-one/environments",
     "kestrel-one/knowledge",
     "kestrel-one/managed-model-deployments",
     "build/protocol-and-results",
@@ -70,6 +81,7 @@ test("the complete 0.6 public baseline is represented", async () => {
     "reference/protocol",
     "reference/terminal-results",
     "reference/compatibility",
+    "reference/ai-sdk",
   ];
   for (const slug of required) {
     assert.ok(await getRenderedPageBySlug(slug.split("/")), `missing /${slug}`);
@@ -103,30 +115,36 @@ test("Kestrel One documentation uses the owned product routes", async () => {
   const pages = await Promise.all([
     getRenderedPageBySlug(["kestrel-one", "threads"]),
     getRenderedPageBySlug(["kestrel-one", "projects"]),
+    getRenderedPageBySlug(["kestrel-one", "apps"]),
+    getRenderedPageBySlug(["kestrel-one", "environments"]),
     getRenderedPageBySlug(["kestrel-one", "knowledge"]),
     getRenderedPageBySlug(["kestrel-one", "managed-model-deployments"]),
   ]);
   assert.match(pages[0]?.rawContent ?? "", /\/threads/u);
   assert.match(pages[1]?.rawContent ?? "", /\/projects/u);
-  assert.match(pages[2]?.rawContent ?? "", /\/knowledge/u);
-  assert.match(pages[3]?.rawContent ?? "", /\/model-deployments/u);
+  assert.match(pages[2]?.rawContent ?? "", /\/apps/u);
+  assert.match(pages[3]?.rawContent ?? "", /\/settings\/environments/u);
+  assert.match(pages[4]?.rawContent ?? "", /\/knowledge/u);
+  assert.match(pages[5]?.rawContent ?? "", /\/model-deployments/u);
 });
 
 test("released packages and compatibility are first-class public reference pages", async () => {
-  const routes = ["protocol", "sdk", "nextjs", "observability"];
+  const routes = ["protocol", "sdk", "nextjs", "ai-sdk", "observability"];
   for (const route of routes) assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   assert.ok(await getRenderedPageBySlug(["reference", "compatibility"]));
   assert.deepEqual(
     DOCS_RELEASE.compatibility.map(([component]) => component),
-    ["Runtime", "Protocol", "SDK", "Next.js", "Observability", "CLI", "Desktop", "Kestrel One"],
+    ["Runtime", "Protocol", "SDK", "Next.js", "AI SDK", "Observability", "CLI", "Desktop", "Kestrel One"],
   );
 });
 
-test("release-sensitive public copy uses the 0.6 beta version", async () => {
+test("release-sensitive public copy uses stable 0.6.0", async () => {
   const pages = await getPublicPages();
-  const versions = pages.flatMap(({ rawContent }) => rawContent.match(/\b\d+\.\d+\.\d+-beta\.\d+\b/gu) ?? []);
-  assert.ok(versions.length > 0);
-  assert.deepEqual([...new Set(versions)], [VERSION]);
+  const corpus = pages.map(({ rawContent }) => rawContent).join("\n");
+  assert.equal(DOCS_RELEASE.version, VERSION);
+  assert.equal(DOCS_RELEASE.channel, "Stable");
+  assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
+  assert.match(corpus, /\b0\.6\.0\b/u);
 });
 
 test("all seven product screenshots exist and have descriptive alt text and captions", async () => {
@@ -148,7 +166,7 @@ test("all seven product screenshots exist and have descriptive alt text and capt
   }
 });
 
-test("public code fences name their language and package installs pin the Beta version", async () => {
+test("public code fences name their language and package installs pin the stable version", async () => {
   const pages = await getPublicPages();
   for (const page of pages) {
     let insideFence = false;
@@ -166,9 +184,40 @@ test("public code fences name their language and package installs pin the Beta v
 
     for (const line of page.rawContent.split("\n").filter((candidate) => candidate.includes("pnpm add @kestrel-agents/"))) {
       for (const packageName of line.match(/@kestrel-agents\/[a-z-]+(?:@[^\s\\]+)?/gu) ?? []) {
-        assert.match(packageName, /@0\.6\.0-beta\.0$/u, `${page.meta.url} has an unpinned package install`);
+        assert.match(packageName, /@0\.6\.0$/u, `${page.meta.url} has an unpinned package install`);
       }
     }
+  }
+});
+
+test("the Build journey uses only the shipped Reference profile", async () => {
+  const pages = await getPublicPages();
+  const buildJourney = pages.filter(({ meta }) => meta.journey?.id === "reference-agent-build");
+  assert.ok(buildJourney.length > 0);
+  const corpus = buildJourney.map(({ rawContent }) => rawContent).join("\n");
+  assert.match(corpus, /profileId:\s*"reference"/u);
+  assert.match(corpus, /reference-react/u);
+  assert.doesNotMatch(corpus, /workspace-copilot|Workspace Copilot/u);
+});
+
+test("retired automation tutorials are absent and permanently redirected", async () => {
+  const [pages, navigation, nextConfig] = await Promise.all([
+    getPublicPages(),
+    getNavigation(),
+    fs.readFile(path.join(resolveDocsAppRoot(), "next.config.ts"), "utf8"),
+  ]);
+  const publicUrls = new Set(pages.map(({ meta }) => meta.url));
+  const navUrls = new Set(navigation.flatMap((section) => section.groups.flatMap((group) => group.entries.map((entry) => entry.url))));
+  const retired = [
+    "/build/workspace-copilot-demo",
+    "/build/workspaces-and-automation",
+    "/build/automating-common-tasks",
+    "/desktop/automation",
+  ];
+  for (const url of retired) {
+    assert.equal(publicUrls.has(url), false, url);
+    assert.equal(navUrls.has(url), false, url);
+    assert.match(nextConfig, new RegExp(`source: "${url.replaceAll("/", "\\/")}"`, "u"));
   }
 });
 

@@ -3,126 +3,72 @@ id: design-root
 domain: agent
 status: active
 owner: kestrel-agents
-last_verified_at: 2026-07-16
+last_verified_at: 2026-07-20
 depends_on: [ARCHITECTURE.md, docs/PLANS.md]
 ---
 
 # Kestrel Design Principles
 
-Kestrel is designed for agent work that must remain understandable while it is
-running and defensible after it ends. These principles guide runtime, product,
-package, prompt, and documentation decisions.
+Kestrel is designed for agent work that may span many steps, use tools, pause
+for people, and continue after an interruption. These principles describe what
+people using Kestrel should be able to expect from every product surface.
 
-## 1. Make Agent Work Legible
+## Agent work stays understandable
 
-The system should show what exists, what is happening, what is blocked, and
-what a person can do next. Waiting is a state, not a spinner. Failure is an
-outcome, not missing UI. Recovery operates on the original work.
+Kestrel shows what work exists, what is happening, what is waiting, and what a
+person can do next. Runs have stable identities, progress is represented by
+events, and completed, failed, cancelled, and waiting outcomes are distinct.
 
-**In practice:** expose run identity, progress, tool activity, terminal state,
-artifacts, and operator actions through shared contracts.
+## Important meaning travels in contracts
 
-## 2. Give Every Decision an Owner
+Runs, events, tool calls, errors, and terminal results use shared typed
+contracts. Human-facing `assistantText` remains separate from structured result
+data so an application does not have to recover meaning from display text.
 
-Repair behavior where it first becomes wrong. A downstream rejection is useful
-evidence, but it does not automatically make the downstream boundary the owner
-of the bug.
+## The same execution model appears everywhere
 
-**In practice:** name the observed failure, first wrong component, owning
-surface, and proof before implementing a runtime fix.
+Desktop, the CLI and TUI, Kestrel One, the SDK, and framework adapters use the
+same Runtime and Execution Protocol. Product surfaces may present different
+workflows, but they do not redefine sessions, runs, tools, waiting, recovery,
+or terminal results.
 
-## 3. Carry Contracts Across Boundaries
+## Effects are explicit
 
-Important meaning belongs in typed fields, validators, tool descriptions,
-examples, prompts, and result shapes—not in convention or ambient process
-state.
+Model reasoning and real-world effects are different responsibilities.
+Filesystem changes, shell commands, network access, provider calls, and MCP
+actions pass through validated tool boundaries. Their outcomes remain visible
+as structured events, results, artifacts, or checkpoints.
 
-**In practice:** keep `assistantText`, structured results, status, and waiting or
-cancellation outcomes explicit from runtime through public packages and UI.
+## Recovery is part of normal operation
 
-## 4. Prefer Determinism Over Cleverness
+Long-running work can lose a network connection, close a window, encounter a
+provider failure, or wait for a decision. Kestrel preserves durable state so a
+person can inspect, resume, retry, cancel, or recover the original work instead
+of starting an unrelated replacement.
 
-Replay, retries, recovery, and tests depend on stable behavior. Hidden ranking,
-keyword rules, fallback classification, and threshold policy make the system
-harder to explain and reproduce.
+## Recorded work can be explained later
 
-**In practice:** do not add heuristic decision-making without surfacing the
-exact rule, ownership, evidence, and approval.
+Sessions, events, artifacts, checkpoints, and operator actions form a durable
+record. That evidence supports diagnosis, replay, comparison, and evaluation
+after the original request has ended.
 
-## 5. Harden What the Model Can See
+## Credentials stay behind trusted boundaries
 
-When model behavior is weak or repetitive, improve the instructions and
-contracts that shape it before adding invisible policy around it.
+Provider keys, runner tokens, and deployment credentials stay in Local Core,
+the Electron main process, or trusted application servers. Browser and renderer
+code receive only the data and capabilities needed for their interface.
 
-**In practice:** strengthen prompts, schemas, field descriptions, examples,
-validators, retries, and result shaping before considering caps, thresholds,
-or fallback ranking.
+## Public documentation is part of the product contract
 
-## 6. Keep Effects Explicit
+Root documentation, the public docs site, package documentation, and exported
+types describe the same system at different levels of detail. Examples identify
+their required version and execution target, and unavailable behavior is stated
+as unavailable rather than presented as a tutorial.
 
-Agent reasoning and real-world effects are different responsibilities.
-Filesystem writes, shell commands, network access, model calls, and MCP actions
-must pass through typed, policy-aware boundaries.
-
-**In practice:** parse input before use, return machine-readable outcomes, and
-leave evidence for workspace mutations and operator-sensitive actions.
-
-Mutation authority must not exceed observation authority. Partial source reads
-remain explicitly partial and continuable; edits to existing source are bound to
-the observed revision. Shell-produced source changes re-enter the same patch
-validation boundary instead of bypassing the editor contract.
-
-## 7. Build One Runtime, Many Surfaces
-
-Desktop, Kestrel One, CLI/TUI, SDK, and framework adapters should share the
-same execution model rather than reconstructing local variants.
-
-**In practice:** product surfaces own experience and trusted context; the
-runtime owns lifecycle, state, effects, evidence, and terminal results.
-
-## 8. Design Recovery Before the Happy Path Is Done
-
-Long-running work will be interrupted. A production-shaped feature includes
-diagnosis, cancellation, resume, retry, and evidence—not just successful
-execution.
-
-**In practice:** define terminal states and recovery ownership alongside the
-initial request path.
-
-## 9. Keep Changes Small and Reversible
-
-Contract-heavy systems are safer to evolve through narrow, independently
-verified changes.
-
-**In practice:** use existing utilities and boundaries, avoid speculative
-abstractions, and separate migrations or policy changes from unrelated cleanup.
-
-## 10. Treat Documentation as a Product Contract
-
-Public guidance, repository truth docs, and exported code describe the same
-system at different depths. Drift between them is a product defect.
-
-**In practice:** lead with reader outcomes in public docs, keep maintainer
-ownership precise in root docs, pin release-sensitive examples, and run the
-documentation and governance checks.
-
-## Decision Test
-
-When several designs appear viable, prefer the option that:
-
-1. keeps authority in the existing owner
-2. makes behavior visible in contracts and evidence
-3. remains deterministic under replay and recovery
-4. reduces duplicated runtime meaning across surfaces
-5. is testable without a live provider when practical
-6. can be rolled back without an irreversible data or policy move
-
-## Design Inputs
+## Read Next
 
 - [Architecture](ARCHITECTURE.md)
-- [Plans index](docs/PLANS.md)
-- [Quality score](QUALITY_SCORE.md)
 - [Reliability](RELIABILITY.md)
 - [Security](SECURITY.md)
-- [Heuristic hotspots](docs/references/heuristic-hotspots.md)
-- [Contributor guardrails](AGENTS.md)
+- [Documentation](docs/index.md)
+- [Contributor guidance](CONTRIBUTING.md)

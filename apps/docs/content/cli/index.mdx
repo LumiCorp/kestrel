@@ -1,38 +1,24 @@
 ---
 title: CLI
-summary: Capability-led command docs for the CLI as an operator cockpit, workspace control, code mode, MCP, recurring automation, and runner-service startup.
+summary: Use Kestrel from a terminal for local sessions, operator control, workspace inspection, scripted jobs, and trusted local integrations.
 section: reference
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-07-20
 ---
 
-The CLI is where Kestrel becomes concrete for local operators. It covers interactive chat, workspace control, recurring automation, and the local runner-service boot path.
+The CLI and TUI are Local Core clients. They use the same Runtime, Execution
+Protocol, persistence, and terminal-result contracts as Desktop and the SDK.
 
-Use these references when you need the exact commands for local sessions, workspaces, services, profiles, and scheduled tasks.
+## Choose a reference
 
-## Start here if you are...
+- [Command suite](/cli/command-suite) lists every current command-mode family.
+- [CLI terminal client](/cli/kchat) explains interactive sessions and operator control.
+- [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp) covers execution configuration.
+- [Workspace workflows](/cli/workspace-workflows) covers workspace discovery and registration.
+- [kcron availability](/cli/kcron) explains the implemented commands and deferred execution status.
+- [Local Core HTTP bridge](/cli/runner-service) connects a trusted local server application to Local Core.
 
-- using the terminal as the main operator cockpit: read [CLI terminal client](/cli/kchat)
-- setting up a workspace-local flow: read [Workspace workflows](/cli/workspace-workflows)
-- configuring profiles, code mode, or MCP servers: read [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
-- scheduling recurring work: read [kcron](/cli/kcron)
-- starting the local HTTP runner for another app: read [Runner service](/cli/runner-service)
-- learning the overall command family: read [Command suite](/cli/command-suite)
-
-## Reading order
-
-1. [CLI terminal client](/cli/kchat)
-2. [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp)
-3. [Command suite](/cli/command-suite)
-4. [Workspace workflows](/cli/workspace-workflows)
-5. [kcron](/cli/kcron)
-6. [Runner service](/cli/runner-service)
-
-## Choose a command workflow
-
-- [Build](/build)
-- [Operator control workflows](/operate/operator-control)
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
-- [Runner service](/cli/runner-service)
+Start with `kestrel status` to inspect Local Core, or run `kestrel` to open an
+interactive session.

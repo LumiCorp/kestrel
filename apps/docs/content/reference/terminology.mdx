@@ -5,45 +5,72 @@ section: reference
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
 ## Agent
 
-A server-side definition that connects an application identity and profile to Kestrel run, stream, resume, session, and subscription methods.
+A server-side definition that connects an application identity and profile to
+Kestrel run, stream, resume, session, and subscription methods.
 
 ## Artifact
 
-A persisted file, dataset, code result, sheet, rendered interface, or other output associated with durable work.
+A persisted file, dataset, code result, sheet, rendered interface, or other
+output associated with durable work.
 
 ## Context revision
 
-The immutable version of Project instructions, files, and selected Knowledge attached to a Kestrel One turn.
+The immutable version of Project instructions, files, and selected Knowledge
+attached to a Kestrel One turn.
+
+## Execution Protocol
+
+The shared commands, events, streams, and terminal-result contracts exposed by
+Local Core and remote runner services.
+
+## Local Core
+
+The local Kestrel runtime host used by Desktop, CLI/TUI workflows, and local SDK
+targets. It manages local configuration, credentials, persistence, and an
+authenticated Unix socket.
 
 ## Operator
 
-A person or authorized service responsible for inspecting, steering, stopping, resuming, retrying, or recovering agent work.
+A person or authorized service responsible for inspecting, steering, stopping,
+resuming, retrying, or recovering agent work.
 
 ## Replay
 
-Inspection of persisted run evidence after execution ends, used to explain, compare, recover, or evaluate behavior.
+Inspection of persisted run evidence after execution ends, used to explain,
+compare, recover, or evaluate behavior.
 
 ## Run
 
-One execution attempt with an identity, events, and a completed, failed, cancelled, or waiting outcome.
+One execution attempt with an identity, events, and a completed, failed,
+cancelled, or waiting outcome.
 
 ## Runner service
 
-The authenticated service that receives application requests and executes them through the durable runtime.
+The network-hosted Kestrel runtime endpoint used by trusted application servers
+and remote SDK targets. It exposes the same Execution Protocol as Local Core
+through authenticated HTTP and streaming.
+
+## Runtime
+
+The shared execution implementation that advances runs, coordinates model and
+tool work, persists evidence, and produces terminal results.
 
 ## Session
 
-A durable line of continuity connecting related turns, memory, events, and evidence.
+A durable line of continuity connecting related turns, memory, events, and
+evidence.
 
 ## Thread
 
-The product-facing history of a durable piece of work. Kestrel One Threads also retain authorship, files, artifacts, sharing, and Project context.
+The product-facing history of a durable piece of work. Kestrel One Threads also
+retain authorship, files, artifacts, sharing, and Project context.
 
 ## Workspace
 
-A local project folder known to Desktop or the CLI and used to keep sessions and automation attached to the correct project.
+A local project folder known to Desktop or the CLI and used to keep sessions
+and automation attached to the correct project.

@@ -5,12 +5,12 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Deploy step 2">
-Move the runner connection and authenticated user context into server-owned configuration before exposing Workspace Copilot to users.
-</WorkspaceCopilotDemo>
+<GuideNote step="Authentication boundary">
+Keep the runner connection and authenticated user context in server-owned configuration before exposing a Kestrel-backed route.
+</GuideNote>
 
 Your application server should authenticate the user, determine their organization, and attach the runner credential. The browser should supply only the task-specific request data.
 
@@ -60,11 +60,11 @@ If either id is missing, the helper generates it and returns Kestrel correlation
 | user authentication | application server |
 | runner bearer token | application server |
 | actor id / actor type / tenant id | application server |
-| run lifecycle and persistence | runner service + runtime |
+| run lifecycle and persistence | Local Core or runner service + runtime |
 
 ## Check the server-side setup
 
-- Workspace Copilot now reads credentials and caller identity in one server module
+- the application reads credentials and caller identity in one server module
 - actor and tenant values come from authenticated application data
 - `/api/copilot/run` and `/api/copilot/stream` preserve request correlation end to end
 
@@ -74,6 +74,6 @@ Check the server route that reads the authenticated session and creates the Kest
 
 ## Prepare for production
 
-- [Running the runner service](/operate/runner-service)
+- [Connect to a runner service](/operate/runner-service)
 - [Integrating with Next.js](/build/integrating-with-nextjs)
 - [FAQ](/start/faq)

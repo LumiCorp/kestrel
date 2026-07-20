@@ -5,7 +5,7 @@ section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
 ## Which Kestrel product should I start with?
@@ -14,11 +14,11 @@ Use Desktop for work in local folders and repositories. Use Kestrel One when an 
 
 ## Do I need to run a database for Desktop?
 
-No. The packaged Desktop Beta includes Local Core and manages its own persistence. You choose a model provider and a project folder during first run.
+No. Kestrel Desktop includes Local Core and manages its own persistence. You choose a model provider and a project folder during first run.
 
 ## Can anyone sign up for Kestrel One?
 
-Kestrel One is currently available to invited Beta teams. Use the invitation from your organization administrator. Public signup and self-hosted consumer onboarding are not documented as part of this Beta.
+Kestrel One is currently available to invited teams. Use the invitation from your organization administrator. Public signup and self-hosted consumer onboarding are not currently documented.
 
 ## Why not call a model directly?
 
@@ -26,7 +26,14 @@ A direct call is simpler for a stateless answer. Kestrel becomes useful when wor
 
 ## What is the runner service?
 
-It is the authenticated server that executes Kestrel work for an application. Your application server calls it with trusted user and session context. A browser should not receive its bearer token or provider credentials.
+It is the network-hosted form of the Kestrel runtime. A trusted application
+server calls it with authenticated user and session context. It exposes the
+same Execution Protocol that Local Core provides locally, but through HTTP and
+streaming endpoints. A browser should not receive its bearer token or provider
+credentials.
+
+For local development, `kestrel web` provides a compatible HTTP URL by bridging
+requests to Local Core. It does not start a second runtime.
 
 ## What is the difference between streaming and subscriptions?
 
@@ -38,8 +45,11 @@ Use compatible HTTP when an existing server already speaks OpenAI-style chat or 
 
 ## When is Kestrel too much?
 
-Kestrel may be unnecessary when a feature only sends a prompt and shows an answer, with no durable state, recovery, scheduled work, operator workflow, or later audit requirement.
+Kestrel may be unnecessary when a feature only sends a prompt and shows an answer, with no durable state, recovery, operator workflow, or later audit requirement.
 
 ## How do I deploy it?
 
-Deploy the runner service behind your application server, configure authenticated server-to-server access, then verify the complete request and recovery path. Start with [Operate](/operate).
+Run the runner service behind your application server, configure authenticated
+server-to-server access, then verify the complete request and recovery path.
+For local development, expose Local Core with `kestrel web`. Start with
+[Operate](/operate) for the distinction between local and remote environments.

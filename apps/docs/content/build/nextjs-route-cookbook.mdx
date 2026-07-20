@@ -1,6 +1,6 @@
 ---
 title: Next.js route cookbook
-summary: Copy the request bodies, response headers, cancellation behavior, and webhook mapping for a Workspace Copilot Next.js app.
+summary: Copy the request bodies, response headers, cancellation behavior, and webhook mapping for a Kestrel-backed Next.js app.
 section: build
 audience: integrators
 status: stable
@@ -8,9 +8,9 @@ sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Route reference">
-Copy the exact request and response details for your Workspace Copilot routes.
-</WorkspaceCopilotDemo>
+<GuideNote step="Route reference">
+Copy the exact request and response details for your Kestrel routes.
+</GuideNote>
 
 Keep this reference nearby while implementing or debugging the three `/api/copilot/*` routes.
 
@@ -28,7 +28,7 @@ app/api/copilot/webhook/route.ts
 
 ```json
 {
-  "sessionId": "workspace-copilot-session-001",
+  "sessionId": "reference-session-001",
   "message": "Summarize the highest-risk files in this workspace."
 }
 ```
@@ -48,7 +48,7 @@ The stream route uses the same request body:
 
 ```json
 {
-  "sessionId": "workspace-copilot-session-001",
+  "sessionId": "reference-session-001",
   "message": "Stream progress while you inspect the workspace."
 }
 ```
@@ -95,7 +95,7 @@ Example payload mapping:
 ```ts
 mapPayload(payload) {
   return {
-    sessionId: payload.sessionId ?? "workspace-copilot-session-001",
+    sessionId: payload.sessionId ?? "reference-session-001",
     message: payload.prompt,
   };
 }

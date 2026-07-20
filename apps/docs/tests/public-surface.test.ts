@@ -33,5 +33,9 @@ test("superseded product and operations URLs are permanent redirects", async () 
     { source: "/deploy/environment-and-auth", destination: "/operate/environment-and-auth", permanent: true },
     { source: "/deploy/deployment-troubleshooting", destination: "/operate/troubleshooting", permanent: true },
     { source: "/operations/:path*", destination: "/operate/:path*", permanent: true },
+    { source: "/build/workspace-copilot-demo", destination: "/build/building-your-first-agent", permanent: true },
+    { source: "/build/workspaces-and-automation", destination: "/cli/workspace-workflows", permanent: true },
+    { source: "/build/automating-common-tasks", destination: "/cli/kcron", permanent: true },
+    { source: "/desktop/automation", destination: "/cli/kcron", permanent: true },
   ]);
 });

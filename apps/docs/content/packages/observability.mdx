@@ -1,6 +1,6 @@
 ---
 title: "@kestrel-agents/observability"
-summary: Kestrel-native tracing and OTEL export helpers for instrumenting `workspace-copilot` runs, streams, resumptions, and subscriptions.
+summary: Kestrel-native tracing and OpenTelemetry export for runs, streams, resumptions, and subscriptions.
 section: reference
 audience: integrators
 status: stable
@@ -8,16 +8,16 @@ sourceKind: curated
 updatedAt: 2026-03-20
 ---
 
-<WorkspaceCopilotDemo step="Observability reference">
-Wrap the Workspace Copilot agent so completed, waiting, cancelled, and failed work can be found later.
-</WorkspaceCopilotDemo>
+<GuideNote step="Observability reference">
+Wrap an SDK agent so completed, waiting, cancelled, and failed work can be found later.
+</GuideNote>
 
 The package starts with a Kestrel-native trace model and offers OTEL export as a bridge.
 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.6.0-beta.0 @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/observability@0.6.0 @kestrel-agents/sdk@0.6.0
 ```
 
 ## Core APIs
@@ -36,7 +36,7 @@ const tracer = createTracer({
   processors: [new InMemoryTraceProcessor()],
 });
 
-const tracedWorkspaceCopilotAgent = tracer.wrapAgent(workspaceCopilotAgent);
+const tracedAgent = tracer.wrapAgent(agent);
 ```
 
 ## What gets instrumented

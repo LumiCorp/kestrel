@@ -2,8 +2,19 @@ import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { chromium } from "@playwright/test";
 
-const baseURL = "http://127.0.0.1:43123";
-const workerReadyFile = "/tmp/kestrel-one-product-contract-worker.ready";
+function requiredEnvironmentValue(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} must be set by the product contract launcher.`);
+  }
+  return value;
+}
+
+const appPort = requiredEnvironmentValue("KESTREL_PRODUCT_APP_PORT");
+const baseURL = `http://127.0.0.1:${appPort}`;
+const workerReadyFile = requiredEnvironmentValue(
+  "KESTREL_PRODUCT_WORKER_READY_FILE"
+);
 const prewarmNavigationTimeoutMs = 90_000;
 
 async function waitForWorkerReady() {

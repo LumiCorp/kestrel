@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
 Use this reference when your server already speaks an OpenAI-style HTTP contract. For an adoption walkthrough, use [the integration tutorial](/build/openai-compatible-http).
@@ -14,13 +14,14 @@ Use this reference when your server already speaks an OpenAI-style HTTP contract
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /v1/models` | List models available through the configured runner profile |
+| `GET /v1/models` | Return the fixed `reference-react` compatibility model |
 | `POST /v1/chat/completions` | Submit chat-completion shaped input |
 | `POST /v1/responses` | Submit responses-shaped input |
 
 ## Authentication
 
-Send the runner service token from trusted server code:
+Send the configured runner token from trusted server code. It may authenticate
+to a remote runner service or to the local HTTP bridge exposed by `kestrel web`:
 
 ```http
 Authorization: Bearer <runner-service-token>
@@ -29,10 +30,21 @@ Content-Type: application/json
 
 Do not expose this token to browser code. Resolve the authenticated user, tenant, and session in your application server before forwarding the request.
 
+## Model identifiers
+
+The compatibility layer accepts `reference-react` and the `reference-web`
+alias. `/v1/models` lists `reference-react`; it does not enumerate arbitrary
+CLI or runner profiles. Unknown model IDs are rejected.
+
 ## Streaming
 
 Streaming responses use server-sent events. A client disconnect must cancel the exact upstream run rather than leaving anonymous work active. The terminal event remains the source for the final result.
 
 ## Kestrel metadata
 
-Compatible responses may include Kestrel metadata such as session, run, request, and correlation identifiers. Preserve that nested metadata if your application needs replay, support, or observability later.
+Compatible runner responses include session, run, thread, and model headers.
+Preserve them when your application needs replay, support, or observability.
+
+The Next.js route helpers separately generate `x-kestrel-request-id` and
+`x-kestrel-correlation-id` for application-route correlation. Those headers do
+not come from the runner's OpenAI compatibility layer.

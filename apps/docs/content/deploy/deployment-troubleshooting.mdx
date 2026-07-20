@@ -1,6 +1,6 @@
 ---
 title: Deployment troubleshooting
-summary: Start from the visible symptom and find whether the runner, application route, trusted context, model, session, or scheduler first became unhealthy.
+summary: Start from the visible symptom and identify whether the runner, application route, trusted context, model, or session is unhealthy.
 section: operate
 audience: integrators
 status: stable
@@ -11,13 +11,11 @@ updatedAt: 2026-07-13
 | Symptom | Check first | Verification after the fix |
 | --- | --- | --- |
 | Runner health fails | Process, service URL, and deployment logs | Health response reports compatible versions and capabilities |
-| Runner is healthy but commands fail | Service token and trusted actor headers | `runner.ping` succeeds with the intended tenant context |
+| Runner is healthy but commands fail | Service token and command metadata | `runner.ping` succeeds with the intended tenant context |
 | Application route returns an error | Server route configuration and correlation id | Direct runner check and application route both succeed |
 | Stream closes unexpectedly | Client disconnect, forwarded abort signal, and terminal event | Disconnect produces `run.cancelled`; normal request completes |
 | Wrong user or organization context | Server-side authentication resolver | Allowed account succeeds and denied account receives no protected data |
 | Model cannot be selected | Gateway visibility, approval, deployment readiness, and lease | Short request completes through the requested model |
-| Scheduled artifact is missing | Scheduler launch, workspace, session, terminal outcome, and artifact path | A run-once test writes the expected artifact and evidence |
-| Interactive and scheduled results disagree | Session memory revision and launch context | Both paths use the intended revision and remain separately traceable |
 
 ## Runner checks
 
@@ -27,10 +25,19 @@ curl -sS "$KESTREL_RUNNER_SERVICE_URL/health"
 curl -sS "$KESTREL_RUNNER_SERVICE_URL/commands" \
   -H "Authorization: Bearer $KESTREL_RUNNER_SERVICE_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "x-kestrel-actor-id: operator-check" \
-  -H "x-kestrel-actor-type: operator" \
-  -H "x-kestrel-tenant-id: test" \
-  -d '{"command":"runner.ping"}'
+  -d '{
+    "id": "cmd-operator-check",
+    "type": "runner.ping",
+    "metadata": {
+      "actor": {
+        "actorId": "operator-check",
+        "actorType": "operator",
+        "tenantId": "test"
+      },
+      "tenantId": "test"
+    },
+    "payload": { "nonce": "operator-check" }
+  }'
 ```
 
 Preserve the request, correlation, session, and run identifiers before changing the deployment. Use [Reliability and recovery](/operate/reliability) to confirm that the original user path works afterward.

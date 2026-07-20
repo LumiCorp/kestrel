@@ -1,33 +1,36 @@
 ---
 title: Deploy
-summary: Runtime-focused deployment docs for exposing the Workspace Copilot example through the runner service, server-owned auth, and a production-shaped operating model.
+summary: Connect a server application to local or remote Kestrel execution while preserving server-owned authentication.
 section: deploy
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-Deploy covers the runtime boundary behind the `Workspace Copilot` example. The main job is not "host a site." It is to keep the app-to-runner trust model intact while the example moves from local development to a production-shaped setup.
+Operate covers the execution boundary behind a server-side Kestrel integration.
+The main job is not "host a site." It is to keep the application-to-runtime
+trust model intact while moving from a Local Core bridge in development to a
+remote runner service in a hosted environment.
 
 This section is for teams that already have the tutorial working and now need to run it in a more serious environment.
 
 ## Start here if you are...
 
-- starting the local runner boundary: read [Running the runner service](/operate/runner-service)
+- comparing the Local Core HTTP bridge with a remote runner service: read [Connect to a runner service](/operate/runner-service)
 - wiring credentials and request context correctly: read [Environment and auth](/operate/environment-and-auth)
 - treating the demo like a real product: read [Production operating model](/operate/deployment)
 - debugging a broken integration: read [Deployment troubleshooting](/operate/troubleshooting)
 
 ## Read this in order
 
-1. [Running the runner service](/operate/runner-service)
+1. [Connect to a runner service](/operate/runner-service)
 2. [Environment and auth](/operate/environment-and-auth)
 3. [Production operating model](/operate/deployment)
 4. [Deployment troubleshooting](/operate/troubleshooting)
 
 ## Continue with operation
 
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
+- [Build your first agent](/build/building-your-first-agent)
 - [Artifact inspection](/operate/observability)
 - [Reliability](/operate/reliability)

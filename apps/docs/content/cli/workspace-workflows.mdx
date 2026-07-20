@@ -1,19 +1,16 @@
 ---
 title: Workspace workflows
-summary: The current CLI mechanics for workspace catalog discovery, status, listing, and session binding.
+summary: Discover the current project, inspect registered workspaces, and bind an interactive session to the intended local folder.
 section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-05-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="CLI mechanics">
-Use these commands to add, inspect, and manage registered workspaces.
-</WorkspaceCopilotDemo>
-
-Kestrel workspaces are catalog entries in `~/.kestrel/workspaces.json`.
-The catalog is the durable local inventory. The current directory is only the discovery signal.
+A Kestrel workspace is a durable catalog entry for a local project folder. The
+current directory is a discovery input; it is not the source of runtime
+configuration.
 
 ## Inspect the current workspace
 
@@ -21,15 +18,16 @@ The catalog is the durable local inventory. The current directory is only the di
 kestrel workspace status
 ```
 
-This resolves the current directory, registers the Git root when available, and prints the catalog binding.
+Kestrel resolves the current directory, uses its Git root when available, and
+shows the matching catalog binding.
 
-## List known workspaces
+## List registered workspaces
 
 ```bash
 kestrel workspace list
 ```
 
-Inside the TUI, use:
+Inside the interactive client, the equivalent commands are:
 
 ```text
 /workspace status
@@ -37,15 +35,19 @@ Inside the TUI, use:
 /workspace use <workspaceId|rootPath|detached>
 ```
 
-## What changed
+`detached` removes the active workspace binding for the session. Selecting a
+workspace does not copy, upload, or move its folder.
 
-Kestrel creates catalog entries, not project-local runtime scaffolds.
+## Profiles and scheduling
 
-Profiles are selected through the normal global profile flow.
-Automation will be rebuilt on top of the catalog instead of project-local cron settings.
+Profiles are selected through the normal CLI profile configuration; a workspace
+catalog entry does not contain a hidden profile override.
 
-## Continue with workspace work
+The catalog includes an `automationEnabled` field reserved for the scheduler.
+Current `kcron` commands can evaluate that field, but they do not execute
+workspace tasks. Enabled entries receive a `deferred` outcome until the central
+scheduler is implemented.
 
-- [Workspaces and automation](/build/workspaces-and-automation)
-- [kcron](/cli/kcron)
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
+Read [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp) for runtime
+configuration and [kcron availability](/cli/kcron) for the exact scheduling
+status.

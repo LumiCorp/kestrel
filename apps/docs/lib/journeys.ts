@@ -22,13 +22,14 @@ export const DOCS_JOURNEYS: Record<DocsJourneyId, JourneyDefinition> = {
       "/kestrel-one/getting-started",
       "/kestrel-one/threads",
       "/kestrel-one/projects",
+      "/kestrel-one/apps",
       "/kestrel-one/context-revisions",
       "/kestrel-one/knowledge",
       "/kestrel-one/artifacts-and-sharing",
     ],
   },
-  "workspace-copilot-build": {
-    label: "Build a durable Workspace Copilot",
+  "reference-agent-build": {
+    label: "Build with the Reference agent",
     urls: [
       "/build/building-your-first-agent",
       "/build/running-your-first-streamed-request",

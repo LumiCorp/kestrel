@@ -1,138 +1,57 @@
 ---
 title: Profiles, code mode, and MCP
-summary: Configure global profiles, workspace-local profiles, tool allowlists, code mode, and MCP servers so Kestrel behaves differently by task and workspace instead of by hidden machine state.
+summary: Configure the Reference agent's model, tools, code execution, reasoning, and MCP connections for local CLI sessions.
 section: cli
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-07-20
 ---
 
-Profiles are how the CLI decides what a run is allowed to do. They are not cosmetic presets. They shape the active model, tool allowlist, MCP connections, and code execution policy for the current session.
+A CLI **profile** is a saved runtime configuration. It selects the agent,
+session prefix, model policy, tools, code execution policy, reasoning policy,
+and MCP servers used by a session.
 
-## Global versus workspace-local profiles
+Kestrel creates two profiles by default:
 
-Use global profiles when the behavior belongs to you as an operator across many folders. Use workspace-local profiles when the behavior belongs to the project itself.
-
-| Profile location | File | Best for |
+| Profile ID | Agent | Purpose |
 | --- | --- | --- |
-| global | `~/.kestrel/profiles.json` | personal defaults, reusable operator profiles, machine-wide MCP config |
-| workspace-local | `global profile selection` | project-specific tools, prompts, scheduling, and local automation contracts |
+| `reference` | `reference-react` | Default local Reference-agent work |
+| `kestrel-one` | `reference-react` | Kestrel One work with its additional tool allowlist |
 
-If a workspace contains `global profile selection`, that workspace-local profile wins over a global profile while you are inside that folder.
+The profile ID is the CLI selection, such as `--profile reference`. The `agent`
+field identifies the runtime implementation. They are related but are not the
+same identifier.
 
-## The fields that change runtime behavior
+## Minimal custom profile
 
-These are the capability-heavy profile fields worth understanding:
-
-| Field | Purpose | Why it matters |
-| --- | --- | --- |
-| `toolAllowlist` | controls which tools can be used | narrows capability to the minimum needed for the task |
-| `codeMode` | enables controlled code execution | switches the session from pure chat into code-capable behavior |
-| `mcpServers` | configures external MCP-backed tools | lets the profile expose remote or local server tools |
-| `reasoning` | requests provider-visible reasoning and controls its separate retention policy | keeps live display and encrypted retention explicit instead of conflating them with transcript history |
-| `sessionPrefix` | controls durable naming | makes session continuity readable across repeated runs |
-
-## Example global profile
+Profiles are stored in `profiles.json` under the active Kestrel state root. A
+custom profile must use the supported `reference-react` agent:
 
 ```json
 {
   "version": 4,
   "profiles": [
     {
-      "id": "reference",
-      "label": "Reference React",
+      "id": "research",
+      "label": "Research",
       "agent": "reference-react",
-      "sessionPrefix": "reference",
-      "reasoning": {
-        "request": { "mode": "provider_visible", "effort": "medium" },
-        "retention": { "mode": "live_only", "days": 7 }
-      },
-      "toolAllowlist": ["free.hn.top", "free.time.current", "code.execute"],
-      "codeMode": {
-        "enabled": true,
-        "languages": ["javascript", "python", "bash"],
-        "sandbox": {
-          "executor": "docker",
-          "timeoutMs": 20000,
-          "memoryMb": 256,
-          "cpuShares": 256,
-          "networkDefault": "off",
-          "allowDependencyInstall": false
-        },
-        "retention": {
-          "persistSummary": true,
-          "persistArtifacts": true
-        },
-        "approvalMode": "auto"
-      },
-      "mcpServers": [],
-      "default": true
+      "sessionPrefix": "research",
+      "default": false
     }
   ]
 }
 ```
 
-`live_only` is the retention default. Opting into `provider_visible` retention
-stores only the provider-visible summary or thinking text, encrypted, for an
-integer from 1 through 30 days. Seven days is the default window. Provider
-continuation signatures or encrypted state are never rendered or retained as
-visible reasoning.
+Missing optional fields receive the current defaults during profile loading.
+Use `/profiles` and `/status` to inspect the resolved profile rather than
+assuming a value from the file alone.
 
-## Workspace-local example
+## Tools and code mode
 
-The Workspace Copilot flow is stronger when the profile lives with the project:
-
-```json
-{
-  "id": "workspace-copilot",
-  "label": "Workspace Copilot",
-  "agent": "workspace-copilot",
-  "sessionPrefix": "workspace-copilot",
-  "toolAllowlist": ["fs.read_text", "code.execute"],
-  "mcpServers": [
-    {
-      "id": "docker-gateway",
-      "transport": "stdio",
-      "command": "docker",
-      "args": ["run", "--rm", "mcp/gateway"]
-    }
-  ],
-  "codeMode": {
-    "enabled": true,
-    "languages": ["bash", "typescript"],
-    "sandbox": {
-      "executor": "docker",
-      "timeoutMs": 20000,
-      "memoryMb": 256,
-      "cpuShares": 256,
-      "networkDefault": "off",
-      "allowDependencyInstall": false
-    },
-    "retention": {
-      "persistSummary": true,
-      "persistArtifacts": true
-    },
-    "approvalMode": "auto"
-  }
-}
-```
-
-## Tool allowlists
-
-`toolAllowlist` limits which tools the profile may use. Include only what the workflow needs.
-
-- add only the tools the workflow needs
-- expect `code.execute` to be present when `codeMode.enabled` is `true`
-- remove MCP-provided tools when you remove the server that owns them
-
-The CLI merges and normalizes tool allowlists during profile loading. That means a profile is the durable policy document, while the runtime sees an explicit effective allowlist.
-
-## Code mode
-
-Code mode is beta for Kestrel v0.5. It is useful when a workflow genuinely needs local execution, but it is not part of the default Desktop first-run promise.
-
-`/code` is not a theme toggle. It changes runtime behavior:
+`toolAllowlist` narrows the tools available to the profile. Code mode adds
+controlled code-execution configuration and its required capabilities. Inspect
+or change it interactively with:
 
 ```text
 /code status
@@ -141,11 +60,22 @@ Code mode is beta for Kestrel v0.5. It is useful when a workflow genuinely needs
 /code disable
 ```
 
-Use code mode when the workflow needs to execute code. Keep it off for review-only or writing tasks. When enabled, Kestrel validates the sandbox settings and adds `code.execute` to the allowed tools.
+Use code mode only when the task needs execution. Filesystem, shell, network,
+and dependency-install behavior remain governed by the configured sandbox and
+approval policy.
+
+## Reasoning policy
+
+The `reasoning` field separates provider reasoning requests from retention.
+`live_only` is the default retention mode. Provider-visible reasoning can be
+retained only when explicitly configured, and retained content is encrypted
+for the configured window. Provider continuation state is not rendered as
+visible reasoning.
 
 ## MCP servers
 
-`mcpServers` lets a profile expose remote or local capability bundles through MCP. The CLI supports:
+Profiles can expose local or remote MCP servers. The interactive commands cover
+server discovery, tool inspection, connection configuration, and allowlisting:
 
 ```text
 /mcp status
@@ -154,25 +84,14 @@ Use code mode when the workflow needs to execute code. Keep it off for review-on
 /mcp add stdio <id> <command> [args...]
 /mcp add http <id> <url> [--auth-env VAR] [--header-env Name=ENV]
 /mcp add sse <id> <url> [--auth-env VAR] [--header-env Name=ENV]
-/mcp docker [server]
 /mcp allow <toolId>
 /mcp deny <toolId>
 /mcp remove <serverId>
 /mcp refresh
 ```
 
-Use MCP when a profile or workspace needs a named external tool connection.
+MCP authentication values should be referenced through environment variables,
+not placed directly in a profile committed to source control.
 
-## Review the resulting profile
-
-This is the point where Kestrel stops being “a terminal chat that happens to run tools” and becomes a configurable local runtime. Profiles let the same binary behave differently for narrative chat, code tasks, workspace automation, and MCP-backed operator flows.
-
-## Keep capabilities explicit
-
-Profiles keep model, tool, MCP, and sandbox choices visible. A workspace-local profile stores those choices with the project instead of relying on settings from one person's home directory.
-
-## Continue with profiles and tools
-
-- [CLI terminal client](/cli/kchat)
-- [Workspaces and automation](/build/workspaces-and-automation)
-- [Workspace workflows](/cli/workspace-workflows)
+Read [CLI terminal client](/cli/kchat) for using a profile in a session and
+[Command suite](/cli/command-suite) for platform state locations.

@@ -1,41 +1,48 @@
 ---
 title: Waiting, resume, and cancellation
-summary: Continue blocked work with expected response context and cancel the exact upstream run when a caller disconnects.
+summary: Answer the exact pending interaction on a waiting run or cancel the exact run owned by a request.
 section: build
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
-A run may pause because it needs a decision, approval, credential, or other input. Kestrel records that state as **waiting** instead of pretending the run failed or leaving the application to infer why output stopped.
+A run may wait for a decision, approval, credential, or other input. Waiting is
+an explicit terminal event for the current run, not an inferred timeout.
 
 ## Resume the same work
 
-Resume the same session and blocked run with the event name and payload requested by the waiting result. Start a new turn only when someone intentionally abandons the blocked work.
+Read the waiting result's durable interaction request ID and answer it on the
+same session:
 
 ```ts
-const terminal = await workspaceCopilotAgent.resume(
+const terminal = await agent.resume(
   {
-    sessionId: "workspace-copilot-session-001",
-    runId: waitingRunId,
-    event: {
-      type: expectedEventType,
-      payload: { approved: true },
-    },
+    sessionId: "reference-session-001",
+    requestId: waitingRequestId,
+    message: "Approved. Continue with the requested operation.",
   },
-  workspaceCopilotContext,
+  context,
 );
 ```
 
-Use the expected event name and payload shown by the waiting result. Do not accept an arbitrary browser payload as trusted approval context.
+`sessionId`, `requestId`, and `message` are required. The SDK marks the turn as
+a response to the blocked run and carries the request ID into the Execution
+Protocol. Validate browser input and authorize the requested action before
+calling `resume()`.
+
+Use `resumeStream()` with the same fields when the resumed work should stream.
 
 ## Cancellation
 
-Pass an `AbortSignal` to request-scoped streaming. When the caller disconnects, the SDK cancels that exact upstream run and the terminal promise resolves with `run.cancelled`.
+Pass an `AbortSignal` to `stream()` or `resumeStream()` for request-scoped work.
+When the caller disconnects, the SDK cancels that exact upstream run and the
+terminal promise resolves with `run.cancelled`.
 
-Cancellation is a final run outcome. Keep it in history and show it as cancelled rather than as a generic network error.
+Cancellation remains in history as its own terminal outcome. It is not a
+generic failure and does not erase earlier events.
 
 <Outcome>
-  <p>A resumed run continues where it paused, while a cancelled run ends as `run.cancelled` and remains visible in history.</p>
+  <p>A response continues the exact pending interaction, while cancellation ends and records the exact upstream run.</p>
 </Outcome>

@@ -1,95 +1,38 @@
 ---
 title: Artifact inspection
-summary: Find a missing or incorrect report by following its run, memory record, trace, and saved history.
+summary: Connect a missing or incorrect artifact to the run, tool result, memory record, trace, and checkpoint that produced it.
 section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Operator manual">
-Use these checks when Workspace Copilot produced the wrong file, failed to update `reports/nightly-review.md`, or reported completion without the expected output.
-</WorkspaceCopilotDemo>
+An artifact is useful evidence only when it can be connected to the work that
+created or changed it. Start with the expected artifact and follow its durable
+identities back through the run.
 
-Reports and other generated files are part of the result users depend on. Inspect them together with the run that created them so you can tell what was requested, what completed, and where the output was written.
+## Inspection order
 
-## What to inspect first
+1. Identify the session and run that should have produced the artifact.
+2. Read the run's terminal event rather than inferring success from UI text.
+3. Inspect tool events and results for the create or update operation.
+4. Compare session memory `linkedArtifacts` with the actual artifact path or ID.
+5. Inspect traces, checkpoints, and replay evidence tied to the same run.
 
-For Workspace Copilot, start with:
+## Common disagreements
 
-- `reports/nightly-review.md`
-- session memory fields such as `linkedArtifacts`
-- route or scheduler path that launched the run
-- traces or replay evidence tied to the same request or session
-
-## Places to inspect
-
-| Place | Why inspect it |
+| Observation | Useful evidence |
 | --- | --- |
-| `reports/nightly-review.md` | confirms whether the expected report was written and what it contained |
-| session memory `linkedArtifacts` | confirms what the run intended to update |
-| traces | confirms route, actor, tenant, and run-level execution path |
-| replay/store evidence | confirms the durable sequence after the run finishes |
+| Artifact is missing | terminal event, tool failure, requested path, capability policy |
+| Artifact exists but is stale | observed source revision, edit result, checkpoint diff |
+| Memory points to another artifact | memory revision and the update that changed `linkedArtifacts` |
+| UI and stored artifact disagree | persisted artifact identity and the product projection |
+| Trace and run history disagree | correlation, session, run, and event IDs on both records |
 
-## Artifact lifecycle
+Do not rewrite historical evidence to make it agree with the current artifact.
+Preserve the original run and create new work only when a corrected artifact is
+actually needed.
 
-The useful operator question is not only “is the file there?” It is “how did the artifact get there and what other state points at it?”
-
-```text
-interactive route or kcron run-once
-  -> runner service
-    -> session memory and linkedArtifacts
-      -> report or UI artifact written
-        -> trace and replay evidence persisted
-```
-
-That is why `reports/nightly-review.md` matters. It is the visible result of a larger durable trail.
-
-## Incident: nightly report missing
-
-Inspect in this order:
-
-1. confirm `kcron run-once` or the route actually launched
-2. inspect `reports/nightly-review.md`
-3. inspect memory revision and `linkedArtifacts`
-4. inspect traces for the corresponding request or scheduled run
-5. inspect replay evidence to confirm whether the artifact step happened
-
-```text
-kcron run-once or /api/copilot/run
-  -> expected report path: reports/nightly-review.md
-    -> compare linkedArtifacts and memory revision
-      -> inspect trace and replay evidence for the same session
-```
-
-## Incident: memory and replay mismatch
-
-If the artifact does not match the remembered context:
-
-- inspect the current memory revision
-- inspect the stored `linkedArtifacts`
-- compare the prompt path used by the route and scheduler
-- use traces and replay evidence to confirm which path actually ran
-
-## Incident: replay evidence and a visible artifact disagree
-
-If a visible artifact disagrees with replay evidence:
-
-1. confirm the persisted run id
-2. confirm the artifact path, checksum, and producer
-3. compare the artifact with the original linked artifacts and run events
-4. rerun the owning workflow only when new evidence is required
-
-Do not rewrite historical evidence to make the current output look consistent.
-
-## What this means for Workspace Copilot
-
-The product promise is not only “it writes a report.” It is “operators can explain why the report was written, why it was wrong, or why it never appeared.”
-
-## Continue the investigation
-
-- [Reliability](/operate/reliability)
-- [Evaluations with Ruhroh](/operate/evaluations)
-- [Store and replay](/operate/replay)
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
+Continue with [Store and replay](/operate/replay),
+[Reliability](/operate/reliability), and [Evaluations](/operate/evaluations).

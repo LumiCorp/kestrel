@@ -6,7 +6,7 @@ The public docs are written for people trying Kestrel, adopting it in a product,
 
 - **Gateway:** helps a reader choose a product, task, or next step without teaching every concept.
 - **Product journey:** follows a Desktop or Kestrel One outcome through the product UI, with real screenshots and a clear success state.
-- **Build tutorial:** produces a working integration in a tested sequence and keeps examples runnable on the documented Beta version.
+- **Build tutorial:** produces a working integration in a tested sequence and keeps examples runnable on the documented release version.
 - **Task recipe:** solves one bounded job for a reader who already has the prerequisites.
 - **Explainer:** builds a mental model and answers why a boundary or behavior exists.
 - **Operational playbook:** starts from an observable state, assigns ownership, takes a safe action, and verifies recovery.
@@ -19,7 +19,7 @@ The public docs are written for people trying Kestrel, adopting it in a product,
 - Address the reader as “you” when describing an action or choice.
 - Explain the user benefit before internal architecture.
 - Keep Desktop, Kestrel One, Build, and Operate stories distinct; do not force them into the same heading template.
-- Label Beta behavior and feature-gated capabilities explicitly.
+- Label prerelease behavior and feature-gated capabilities explicitly.
 - Separate human-facing `assistantText`, structured finalized data, runtime status, and waiting or cancellation outcomes.
 - Use product screenshots only when the visible state supports the surrounding claim. Every screenshot needs descriptive alt text and a caption that adds meaning.
 - Pin install examples to the release metadata version and validate contract claims against exported code.

@@ -1,6 +1,6 @@
 ---
 title: Upgrading to 0.6
-summary: Update terminal-result handling, package versions, and application links for 0.6 Beta.
+summary: Update terminal-result handling, package versions, and application links for Kestrel 0.6.
 section: build
 audience: integrators
 status: active
@@ -21,13 +21,14 @@ if (terminal.payload.result.assistantText !== null) {
 
 ## Compatibility
 
-Upgrade the runtime, protocol, SDK, Next.js, and observability packages as one compatible `0.6.0-beta.0` line. Rebuild consumers that depend on exported protocol types.
+Upgrade the Runtime, Protocol, SDK, Next.js, AI SDK, and Observability packages as one compatible `0.6.0` line. Rebuild consumers that depend on exported protocol types.
 
 ```bash
-pnpm add @kestrel-agents/protocol@0.6.0-beta.0 \
-  @kestrel-agents/sdk@0.6.0-beta.0 \
-  @kestrel-agents/next@0.6.0-beta.0 \
-  @kestrel-agents/observability@0.6.0-beta.0
+pnpm add @kestrel-agents/protocol@0.6.0 \
+  @kestrel-agents/sdk@0.6.0 \
+  @kestrel-agents/next@0.6.0 \
+  @kestrel-agents/ai-sdk@0.6.0 \
+  @kestrel-agents/observability@0.6.0
 ```
 
 ## Documentation links
@@ -35,5 +36,5 @@ pnpm add @kestrel-agents/protocol@0.6.0-beta.0 \
 Update saved documentation links to `/desktop`, `/kestrel-one`, and `/operate`. Previous addresses redirect automatically.
 
 <Outcome>
-  <p>Terminal handling reads `assistantText` directly, all Kestrel packages use the same 0.6 Beta line, and application links use the current public routes.</p>
+  <p>Terminal handling reads `assistantText` directly, all Kestrel packages use the same 0.6.0 line, and application links use the current public routes.</p>
 </Outcome>

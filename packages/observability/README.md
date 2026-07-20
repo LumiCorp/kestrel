@@ -28,11 +28,11 @@ It is not the runtime's internal observability system. It is the application-fac
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.6.0-beta.0 \
-  @kestrel-agents/sdk@0.6.0-beta.0
+pnpm add @kestrel-agents/observability@0.6.0 \
+  @kestrel-agents/sdk@0.6.0
 ```
 
-Check [0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+Check [0.6 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Create a Tracer
@@ -52,7 +52,7 @@ import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
   id: "support-agent",
-  profileId: "support",
+  profileId: "reference",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,

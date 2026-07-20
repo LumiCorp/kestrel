@@ -1,0 +1,124 @@
+---
+title: AI SDK presentation adapter
+summary: Convert Kestrel runner streams into typed Vercel AI SDK 6 messages without moving runtime authority into the browser.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-07-20
+---
+
+`@kestrel-agents/ai-sdk` is a server-side presentation adapter. It converts one
+Kestrel run stream into a Vercel AI SDK message containing visible text, typed
+activity parts, terminal metadata, and contract failures.
+
+It does not start runs or replace the Kestrel SDK. Use
+`@kestrel-agents/sdk` to connect to Local Core or a runner service, then pass
+the resulting stream to this package.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/ai-sdk@0.6.0 @kestrel-agents/sdk@0.6.0 ai@^6
+```
+
+Requirements:
+
+- Node.js 20 or newer
+- Vercel AI SDK `>=6 <7`
+- compatible Kestrel Protocol and SDK `0.6.0` packages
+- server-side execution so runner credentials remain outside the browser
+
+## Write a run to an AI SDK message
+
+Use the stream adapter inside a server-side `createUIMessageStream` execute
+callback:
+
+```ts
+import type { UIMessageStreamWriter } from "ai";
+import type {
+  RunnerRunStreamEvent,
+  RunnerRunTerminalEvent,
+  RunnerStream,
+} from "@kestrel-agents/sdk";
+import {
+  type KestrelUIMessage,
+  writeKestrelFailureToUIMessage,
+  writeKestrelRunnerStreamToUIMessage,
+} from "@kestrel-agents/ai-sdk";
+
+async function writeRun(
+  writer: UIMessageStreamWriter<KestrelUIMessage>,
+  runStream: RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>,
+  turnId: string,
+) {
+  try {
+    return await writeKestrelRunnerStreamToUIMessage({
+      writer,
+      events: runStream,
+      terminalEvent: runStream.result,
+      assistantMessageId: crypto.randomUUID(),
+      textPartId: crypto.randomUUID(),
+      turnId,
+    });
+  } catch (error) {
+    return writeKestrelFailureToUIMessage({
+      writer,
+      error,
+      assistantMessageId: crypto.randomUUID(),
+      textPartId: crypto.randomUUID(),
+      turnId,
+    });
+  }
+}
+```
+
+The returned snapshot includes the complete message to persist, canonical
+`assistantText`, terminal status, visible failure detail, and any durable
+pending interaction.
+
+## Typed message parts
+
+The adapter can emit persisted parts for runtime progress, committed agent
+progress, tool activity, citations, artifacts, interactions, and terminal
+status. Provider-exposed live reasoning is transient and is not added to the
+persisted message.
+
+## Use the accumulator directly
+
+Applications with their own stream transport can use the same presentation
+contract without using the AI SDK writer:
+
+```ts
+import { createKestrelPresentationAccumulator } from "@kestrel-agents/ai-sdk";
+
+const presentation = createKestrelPresentationAccumulator({
+  assistantMessageId: "assistant-123",
+  turnId: "turn-123",
+});
+
+for await (const event of runStream) {
+  const newParts = presentation.append(event);
+  // Send newParts through the application's server-owned transport.
+}
+
+const snapshot = presentation.finish(await runStream.result);
+// Persist snapshot.message.
+```
+
+`readKestrelTerminalInteraction()` extracts a pending interaction from a
+waiting terminal event. `KestrelPresentationContractError` makes invalid or
+contradictory presentation data visible instead of silently dropping it.
+
+## Main exports
+
+- `writeKestrelRunnerStreamToUIMessage`
+- `writeKestrelFailureToUIMessage`
+- `createKestrelPresentationAccumulator`
+- `readKestrelTerminalInteraction`
+- `KestrelPresentationContractError`
+- typed Kestrel message, part, snapshot, status, and interaction contracts
+
+Read [SDK reference](/reference/sdk) for starting and controlling runs and
+[Protocol reference](/reference/protocol) for the event and terminal-result
+contracts consumed by this adapter.

@@ -18,7 +18,7 @@ task instead of reading the repository as one long manual.
 | Layer | Audience | Purpose |
 | --- | --- | --- |
 | [Public docs site](https://docs.kestrelagents.dev) | People using, adopting, or operating Kestrel | Task-oriented product guides, tutorials, operations, and reference |
-| Root truth docs | Contributors and maintainers | Current product boundaries, architecture, design, reliability, security, and quality policy |
+| Root project docs | External technical readers or contributors, as stated by each document | Current architecture, design, reliability, security, and quality policy |
 | `docs/` working record | Maintainers and reviewers | Current delivery plans and retained reference material |
 
 ## Start by Goal
@@ -62,7 +62,7 @@ task instead of reading the repository as one long manual.
 These files describe the current system and are checked for freshness:
 
 - [README](../README.md) — public GitHub entry point
-- [Architecture](../ARCHITECTURE.md) — ownership, authority, data flow, and invariants
+- [Architecture](../ARCHITECTURE.md) — external technical explanation of local and remote execution, data flow, runtime guarantees, and trust boundaries
 - [Design principles](../DESIGN.md) — decision rules across runtime and product work
 - [Reliability](../RELIABILITY.md) — verification, evidence, incidents, and recovery
 - [Security](../SECURITY.md) — trust boundaries and disclosure

@@ -1,47 +1,85 @@
 ---
 title: Core concepts
-summary: Learn the small set of ideas that connect Desktop, Kestrel One, the SDK, and the runner service.
+summary: Learn the small set of ideas shared by Desktop, Kestrel One, the CLI, and SDK applications.
 section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-07-20
 ---
 
-The same concepts appear throughout Kestrel even though each product tells a different story. Learn them here when a guide uses an unfamiliar term.
+The same concepts appear throughout Kestrel even though each product provides a
+different experience. Learn them here when a guide uses an unfamiliar term.
+
+## Runtime
+
+The **runtime** executes and records agent work. It advances runs through model
+and tool steps, persists events and results, and supports waiting, cancellation,
+recovery, and replay.
+
+## Execution Protocol
+
+The **Execution Protocol** is the shared contract for commands, events, streams,
+and terminal results. Local Core and remote runner services expose the same
+protocol through different transports.
+
+## Local Core
+
+**Local Core** is the runtime host on a user's computer. Desktop and local
+CLI/TUI workflows connect to it through an authenticated Unix socket. A local
+SDK target can use the same connection.
+
+## Runner service
+
+A **runner service** is a network-hosted runtime endpoint for trusted
+application servers. Kestrel One and remote SDK targets use this form. Browser
+code should call its application server rather than hold runner credentials
+directly.
+
+The `kestrel web` command is a local HTTP bridge to Local Core. It gives a local
+server application a runner-service-compatible URL without starting another
+runtime.
 
 ## Run and terminal outcome
 
-A **run** is one execution attempt. It ends as completed, failed, cancelled, or waiting for a person or external condition. The terminal result keeps human-facing `assistantText` separate from structured application data.
-
-## Runner service
-
-The runner service is the HTTP boundary that executes Kestrel work on behalf of applications. Product apps and backend services call it. Browsers do not. That boundary is what lets the SDK, Next.js helpers, OpenAI-compatible HTTP routes, and operator applications share one execution model without copying runtime internals into every surface.
+A **run** is one execution attempt. It ends as completed, failed, cancelled, or
+waiting for a person or external condition. The terminal result keeps
+human-facing `assistantText` separate from structured application data.
 
 ## Agent
 
-An agent is the application-facing definition created with `createAgent()`. It binds an `id`, a `profileId`, an explicit local or remote execution target, and methods such as `run`, `stream`, `resume`, `session`, and `subscribe`. It is the cleanest package-level expression of the runtime contract.
+An **agent** is the application-facing definition created with `createAgent()`.
+It binds an identity and profile to an explicit local or remote execution target
+and provides methods such as `run`, `stream`, `resume`, `session`, and
+`subscribe`.
 
 ## Session
 
-A **session** is a durable line of continuity. It connects related turns, memory, events, and evidence so later work can continue instead of starting from an empty request.
+A **session** is a durable line of continuity. It connects related turns,
+memory, events, and evidence so later work can continue instead of starting
+from an empty request.
 
 ## Thread and Project
 
-A **Thread** is the product-facing conversation and work history. In Kestrel One, a **Project** groups related Threads with members, instructions, files, and Knowledge. Desktop uses a local workspace rather than a hosted Project.
+A **Thread** is the product-facing conversation and work history. In Kestrel
+One, a **Project** groups related Threads with members, instructions, files, and
+Knowledge. Desktop uses a local workspace rather than a hosted Project.
 
 ## Workspace
 
-A **workspace** is a local project folder known to Desktop or the CLI. It tells Kestrel where the work belongs; it does not automatically enable recurring automation.
-
-## Runner service
-
-The **runner service** is the authenticated server that accepts application requests and executes them through the runtime. Your application server calls it. Browser code should call your application, not hold runner credentials directly.
+A **workspace** is a local project folder known to Desktop or the CLI. It tells
+Kestrel where the work belongs; it does not automatically enable recurring
+automation.
 
 ## Stream, subscription, and replay
 
-A **stream** shows live events for the request that just started. A **subscription** follows selected background events. **Replay** uses persisted evidence to inspect work after it ends. They solve different jobs and should not be treated as one global event feed.
+A **stream** shows live events for the request that just started. A
+**subscription** follows selected persisted events. **Replay** uses recorded
+evidence to inspect work after it ends. They solve different jobs and are not
+one global event feed.
 
 ## Operator control
 
-**Operator control** lets a person inspect and act on work that already exists. Steering, stopping, resuming, and retrying remain attached to the original session instead of creating an unrelated conversation.
+**Operator control** lets a person inspect and act on work that already exists.
+Steering, stopping, resuming, and retrying remain attached to the original
+session instead of creating an unrelated conversation.

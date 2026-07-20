@@ -14,11 +14,11 @@ transport, gateway, or contract-aware diagnostic tool.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/protocol@0.6.0-beta.0
+pnpm add @kestrel-agents/protocol@0.6.0
 ```
 
 Use the same release line as the runtime and SDK. Check
-[0.6 Beta release status](../../apps/docs/content/start/release-status.mdx)
+[0.6 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Contract Families

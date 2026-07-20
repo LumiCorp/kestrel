@@ -1,82 +1,38 @@
 ---
 title: Store and replay
-summary: Inspect the saved state and history behind interactive and scheduled Workspace Copilot runs.
+summary: Inspect the durable sessions, runs, events, memory revisions, artifacts, and checkpoints behind Kestrel work.
 section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-07-20
 ---
 
-<WorkspaceCopilotDemo step="Saved history">
-Interactive requests and nightly reviews can share one workspace because Kestrel saves the state and history of each run.
-</WorkspaceCopilotDemo>
+Kestrel stores run state separately from the live connection that created it.
+That lets a person inspect or continue work after a terminal, browser, or
+network request has ended.
 
-Kestrel's store layer persists state, logs, events, and replay material. That is what lets operators reason about a run after it finishes instead of reconstructing it from loose logs or conflicting prompt memories.
+## Durable records
 
-## What Kestrel saves
+The store keeps:
 
-- session continuity for `workspace-copilot-session-*`
-- explicit memory updates and revisions
-- run events and terminal outcomes
-- enough evidence to compare an interactive route and a nightly scheduler path
+- session, thread, and run identities
+- ordered events and terminal outcomes
+- versioned session memory and task state
+- tool results and linked artifacts
+- workspace checkpoints and operator actions
 
-## Data-flow summary
+## Replay
 
-```text
-route or scheduler launch
-  -> run/session state persisted
-    -> events and outcomes written durably
-      -> memory revision updated
-        -> operators inspect replay evidence later
-```
+Replay reads recorded evidence to explain or compare what happened. It does not
+rerun the model, replace the original terminal result, or turn a partial live
+stream into a new source of truth.
 
-## What this means for Workspace Copilot
+When investigating an outcome, inspect the terminal event first, then the
+events, memory revision, tool results, artifacts, and checkpoints attached to
+the same run. This keeps diagnosis tied to recorded work rather than to a new
+prompt that may behave differently.
 
-If the nightly report is wrong, replay and persisted state should help answer:
-
-- which route or scheduler path triggered the run
-- what memory state existed before the run
-- which tools or steps were involved
-- what artifact path the run intended to update
-- whether the failure was a cancellation, error, or content problem
-
-That is the core support value of the store layer. It turns "something weird happened overnight" into a concrete inspection sequence.
-
-## Operator loop
-
-```bash
-pnpm run governance:check
-pnpm run test
-pnpm run prompt-suite
-```
-
-These checks help catch changes in prompts or behavior before they make saved runs harder to compare.
-
-## Failure mode: memory and replay mismatch
-
-If the daytime route and the nightly run disagree, replay and store data should let you separate:
-
-- a route returning different data than expected
-- a workspace prompt changing between runs
-- memory revision conflict
-- runtime behavior regression
-
-That is the practical support value of durable persistence.
-
-## What to inspect first
-
-When an operator is trying to explain a bad outcome, the order should usually be:
-
-1. terminal event and run outcome
-2. session memory revision before the run
-3. artifact path and whether the expected file changed
-4. replay or evaluation evidence for comparable prior behavior
-
-That order keeps the investigation attached to durable evidence instead of drifting into guesswork.
-
-## Continue from replay evidence
-
-- [Reliability](/operate/reliability)
-- [Evaluations with Ruhroh](/operate/evaluations)
-- [Workspace Copilot demo](/build/workspace-copilot-demo)
+Continue with [Reliability](/operate/reliability),
+[Artifact inspection](/operate/observability), and
+[Evaluations](/operate/evaluations).

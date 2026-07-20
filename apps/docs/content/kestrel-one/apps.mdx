@@ -1,0 +1,64 @@
+---
+title: Apps and agent capabilities
+summary: Discover the services Kestrel One agents can use and understand how connections and access are governed.
+section: kestrel-one
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-07-20
+---
+
+An **App** gives Kestrel One agents a set of named capabilities. An App may be
+built into Kestrel, connect to an external service, or come from a custom MCP
+server. Open **Apps** at `/apps` to browse the catalog.
+
+## Read an App card
+
+Each card identifies what the App does and its current readiness:
+
+| Status | Meaning |
+| --- | --- |
+| Ready | The App can be used with its current installation and connection state |
+| Setup required | The App needs a required connection |
+| Available | An organization administrator must install it |
+| Needs attention | A connection is degraded |
+| Disabled | The organization has disabled the App |
+
+Open an App to see its capabilities, connection requirements, and advanced
+runtime names. The catalog is the current source for which Apps and operations
+are available in your organization.
+
+## Personal and shared connections
+
+A personal connection belongs to the person who connected the account. For
+example, an App may use a person's own service authorization when acting for
+that person. A shared connection belongs to an Environment and is configured
+by an organization administrator.
+
+Some Apps require no connection. Others accept a personal connection, an
+Environment connection, or either form. The App detail page shows the model
+used by that App.
+
+## Installation and access
+
+Organization members can browse available Apps and manage supported personal
+connections. Organization owners and administrators can install or disable
+explicit Apps and configure shared Environment connections.
+
+An Environment sets the maximum App capability available to every Project that
+uses it. A Project may narrow that access for its own work, but it cannot enable
+a capability the Environment has denied. This keeps a Project from silently
+expanding its authority.
+
+## Custom Apps
+
+Organization administrators can add a private MCP-backed App from Environment
+settings. Kestrel records the capabilities reported by the server and keeps
+them disabled until an administrator reviews and enables them.
+
+<Outcome>
+  <p>You can identify whether an App is ready, which connection it uses, and where an administrator controls the maximum access available to a Project.</p>
+</Outcome>
+
+Continue to [Context revisions](/kestrel-one/context-revisions), or read
+[Environments](/kestrel-one/environments) for shared execution and App policy.
