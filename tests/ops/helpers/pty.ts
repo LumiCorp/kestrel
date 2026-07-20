@@ -106,6 +106,8 @@ export async function runTuiScenarioWithSession(input: {
       KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
       KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
       KESTREL_DISABLE_DOTENV: "1",
+      // Prove every Core-owned child keeps using the explicit external URL.
+      KESTREL_DB_PORT: "1",
       OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
       TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
       FORCE_COLOR: "0",
