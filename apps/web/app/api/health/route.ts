@@ -20,14 +20,8 @@ export async function GET() {
     environment: process.env.NODE_ENV || "development",
     responseTimeMs: responseTime,
     uptimeSeconds: process.uptime(),
-    version:
-      process.env.KESTREL_APP_VERSION ||
-      process.env.npm_package_version ||
-      "unknown",
-    revision:
-      process.env.KESTREL_BUILD_REVISION ||
-      process.env.VERCEL_GIT_COMMIT_SHA ||
-      "unknown",
+    version: process.env.KESTREL_APP_VERSION,
+    revision: process.env.KESTREL_BUILD_REVISION,
   });
 
   return NextResponse.json(body, {
