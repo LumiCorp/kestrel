@@ -10,6 +10,7 @@ import type {
   WorkspaceFreshnessEvidenceRef,
   WorkspaceFreshnessSummary,
 } from "../../../../src/runtime/workspaceFreshness.js";
+import { readKeepRunningSessionIds } from "../finalizationPolicy.js";
 
 export interface DecisionPolicyContext {
   phase: "deliberator";
@@ -58,6 +59,7 @@ export function validateDecisionPolicy(context: DecisionPolicyContext): string[]
 
   if (context.action.kind === "finalize") {
     validateFinalizeActionPolicy(context);
+    validateKeepRunningSessionPolicy(context);
     validateBuildModeGoalSatisfiedEvidence(context);
     checksPassed.push("finalize_semantics_valid");
   }
@@ -98,13 +100,20 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
   }
 
   const activeSessions = context.activeExecCommandSessions ?? [];
-  if (activeSessions.length > 0) {
-    const sessionIds = activeSessions.map((item) => item.processId).filter((item): item is string => Boolean(item));
+  const keepRunningSessionIds = readKeepRunningSessionIds(context.action);
+  const keepRunningSessionIdSet = new Set(keepRunningSessionIds);
+  const undeclaredActiveSessions = activeSessions.filter(
+    (item) => item.processId === undefined || keepRunningSessionIdSet.has(item.processId) === false,
+  );
+  if (undeclaredActiveSessions.length > 0) {
+    const sessionIds = undeclaredActiveSessions
+      .map((item) => item.processId)
+      .filter((item): item is string => Boolean(item));
     const recovery = sessionIds.map((sessionId) =>
       `Call exec_command with {"sessionId":"${sessionId}","assistantProgress":"I am checking the running process."} and no command to collect its current or final result; repeat if it returns running, or use {"sessionId":"${sessionId}","stop":true,"assistantProgress":"I am stopping the unneeded process."} if the process is no longer needed.`
     ).join(" ");
     throw decisionPolicyError(
-      `Build mode cannot finalize goal_satisfied while an exec_command process is still running. ${recovery}`,
+      `Build mode cannot finalize goal_satisfied while an undeclared exec_command process is still running. ${recovery} If a listed process is intentionally part of the requested completed result, call kestrel_finalize with its exact active sessionId in data.keepRunningSessionIds and state in the user-facing message that it remains running.`,
       "DECISION_POLICY_FAILED",
       {
         reason: "build_goal_satisfied_with_live_exec_command",
@@ -253,6 +262,33 @@ function validateExecutionIntentPolicy(context: DecisionPolicyContext): void {
       );
     }
   }
+}
+
+function validateKeepRunningSessionPolicy(context: DecisionPolicyContext): void {
+  const keepRunningSessionIds = readKeepRunningSessionIds(context.action);
+  if (keepRunningSessionIds.length === 0) {
+    return;
+  }
+  const activeSessionIds = (context.activeExecCommandSessions ?? [])
+    .map((item) => item.processId)
+    .filter((item): item is string => Boolean(item));
+  const activeSessionIdSet = new Set(activeSessionIds);
+  const invalidKeepRunningSessionIds = keepRunningSessionIds.filter(
+    (sessionId) => activeSessionIdSet.has(sessionId) === false,
+  );
+  if (invalidKeepRunningSessionIds.length === 0) {
+    return;
+  }
+  throw decisionPolicyError(
+    "Cannot retain an exec_command session that is not currently running.",
+    "DECISION_POLICY_FAILED",
+    {
+      reason: "keep_running_session_not_active",
+      invalidSessionIds: invalidKeepRunningSessionIds,
+      activeSessionIds,
+      requiredAction: "use_active_session_ids_or_remove_keep_running_declaration",
+    },
+  );
 }
 
 function hasStructuredSupportEvidence(value: unknown): boolean {

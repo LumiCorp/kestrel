@@ -511,7 +511,8 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
   assert.match(systemPrompt, /3\. Validate the exact requested behavior after the latest mutation\./u);
   assert.match(systemPrompt, /4\. Review the final diff and user-visible output\./u);
   assert.match(systemPrompt, /continue that exact sessionId without command/u);
-  assert.match(systemPrompt, /settle every live process before finalizing/u);
+  assert.match(systemPrompt, /settle every live process before finalizing unless a running process is itself part of the requested completed result/u);
+  assert.match(systemPrompt, /data\.keepRunningSessionIds/u);
   assert.match(systemPrompt, /visible plan agent-owned/u);
   assert.match(systemPrompt, /User-facing control tools:/u);
 });
