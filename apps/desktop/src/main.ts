@@ -241,6 +241,9 @@ async function main(): Promise<void> {
     localCoreHomePath: localCoreHome.homePath,
     isPackaged: app.isPackaged,
   });
+  if (app.isPackaged === false && process.platform === "darwin") {
+    app.dock?.setIcon(desktopConfig.iconPath);
+  }
   const desktopLibexecRoot = resolveDesktopLibexecRoot({
     currentValue: process.env.KESTREL_CLI_LIBEXEC,
     isPackaged: desktopConfig.isPackaged,
@@ -351,6 +354,7 @@ async function ensureMainWindow(): Promise<void> {
     return;
   }
   const window = new BrowserWindow({
+    icon: desktopConfig.iconPath,
     width: 1440,
     height: 980,
     minWidth: 1100,

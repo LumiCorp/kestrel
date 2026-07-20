@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3464,
+  "testCount": 3465,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -81,7 +81,7 @@
     {
       "identity": "apps/desktop/tests/config.test.ts :: resolveDesktopPathConfig can root shell state in Kestrel Local Core",
       "file": "apps/desktop/tests/config.test.ts",
-      "line": 73,
+      "line": 75,
       "ancestors": [],
       "title": "resolveDesktopPathConfig can root shell state in Kestrel Local Core",
       "contractId": "desktop.contract",
@@ -96,7 +96,7 @@
     {
       "identity": "apps/desktop/tests/config.test.ts :: resolveDesktopPathConfig uses packaged resource paths in production",
       "file": "apps/desktop/tests/config.test.ts",
-      "line": 52,
+      "line": 53,
       "ancestors": [],
       "title": "resolveDesktopPathConfig uses packaged resource paths in production",
       "contractId": "desktop.contract",
@@ -681,7 +681,7 @@
     {
       "identity": "apps/desktop/tests/packageConfig.test.ts :: resolveDesktopPackagerConfig honors explicit platform and arch overrides",
       "file": "apps/desktop/tests/packageConfig.test.ts",
-      "line": 18,
+      "line": 32,
       "ancestors": [],
       "title": "resolveDesktopPackagerConfig honors explicit platform and arch overrides",
       "contractId": "desktop.contract",
@@ -689,6 +689,21 @@
       "risk": "medium",
       "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: resolveDesktopPackagerConfig honors explicit platform and arch overrides",
       "dimension": "resolveDesktopPackagerConfig honors explicit platform and arch overrides",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/packageConfig.test.ts :: resolveDesktopPackagerConfig selects native Windows and Linux icon formats",
+      "file": "apps/desktop/tests/packageConfig.test.ts",
+      "line": 47,
+      "ancestors": [],
+      "title": "resolveDesktopPackagerConfig selects native Windows and Linux icon formats",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: resolveDesktopPackagerConfig selects native Windows and Linux icon formats",
+      "dimension": "resolveDesktopPackagerConfig selects native Windows and Linux icon formats",
       "role": "variant",
       "lane": "desktop",
       "environment": "linux"
