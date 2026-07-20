@@ -39,6 +39,7 @@ const files = execFileSync(
 )
   .split("\0")
   .filter(Boolean)
+  .concat("apps/web/lib/environments/cutover-readiness.postgres.test.ts")
   .sort();
 if (files.length === 0) {
   throw new Error("No PostgreSQL integration suites were discovered.");
@@ -77,8 +78,18 @@ if (
 ) {
   throw new Error("PostgreSQL integration reported a skipped test.");
 }
+
+const opsDatabaseUrl = new URL(databaseUrls[0]);
+opsDatabaseUrl.pathname = "/kestrel_ops_test";
+const tuiEnvironment: NodeJS.ProcessEnv = {
+  ...process.env,
+  KESTREL_OPS_TEST_DATABASE_URL: opsDatabaseUrl.toString(),
+  ...(process.platform === "darwin" ? { TMPDIR: "/tmp" } : {}),
+};
+delete tuiEnvironment.CI;
+run("pnpm", ["run", "test:ops:tui"], tuiEnvironment);
 process.stdout.write(
-  `[postgres-integration] migrations=passed-twice suites=${files.length} skips=0\n`
+  `[postgres-integration] migrations=passed-twice suites=${files.length} tui=passed skips=0\n`
 );
 
 function run(executable: string, args: string[], env: NodeJS.ProcessEnv): void {

@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "contracts": [
+    {
+      "id": "ci.planning",
+      "owner": "runtime-platform",
+      "risk": "medium",
+      "counterexample": "A changed component selects the wrong required proof lane or the stable aggregate accepts an invalid result.",
+      "lane": "policy",
+      "environment": "linux",
+      "prefixes": ["scripts/ci/"]
+    },
+    {
+      "id": "web.durable-postgres",
+      "owner": "kestrel-one",
+      "risk": "critical",
+      "counterexample": "The hosted product loses durable queue, interaction, retry, or authorization state when backed by PostgreSQL.",
+      "lane": "postgres",
+      "environment": "linux-postgres",
+      "suffixes": [".postgres.test.ts"]
+    },
+    {
+      "id": "web.durable-product",
+      "owner": "kestrel-one",
+      "risk": "critical",
+      "counterexample": "A completed, waiting, failed, or retried conversation does not survive the real web-worker-storage boundary.",
+      "lane": "product",
+      "environment": "linux-chromium",
+      "prefixes": ["apps/web/tests/product/"]
+    },
+    {
+      "id": "web.browser-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A user-visible hosted workflow no longer works through the Chromium browser boundary.",
+      "lane": "product",
+      "environment": "linux-chromium",
+      "prefixes": ["apps/web/tests/e2e/"]
+    },
+    {
+      "id": "macos.package-contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "A macOS package accepts a dependency path that escapes its bundled runtime.",
+      "lane": "package-macos",
+      "environment": "macos",
+      "prefixes": ["tests/macos/"]
+    },
+    {
+      "id": "product.tui-postgres",
+      "owner": "runtime-platform",
+      "risk": "medium",
+      "counterexample": "The TUI cannot render or navigate persisted operator state through a real PostgreSQL store.",
+      "lane": "postgres",
+      "environment": "linux-postgres-pty",
+      "prefixes": ["tests/ops/tui/"]
+    },
+    {
+      "id": "runtime.replay-integrity",
+      "owner": "runtime-core",
+      "risk": "high",
+      "counterexample": "Replay accepts missing ordered events, terminal-state drift, or required evidence loss.",
+      "lane": "runtime",
+      "environment": "linux",
+      "files": ["tests/unit/governance-replay-baseline.test.ts"]
+    },
+    {
+      "id": "package.consumer-integration",
+      "owner": "ecosystem",
+      "risk": "medium",
+      "counterexample": "A packed public package installs but fails in a real consumer application or transport boundary.",
+      "lane": "packages",
+      "environment": "linux",
+      "prefixes": ["tests/e2e/sdk-ecosystem/"]
+    },
+    {
+      "id": "runtime.integration",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries.",
+      "lane": "runtime",
+      "environment": "linux",
+      "prefixes": ["tests/integration/", "tests/e2e/", "tests/ops/"]
+    },
+    {
+      "id": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly.",
+      "lane": "runtime",
+      "environment": "linux",
+      "prefixes": ["tests/", "agents/", "tools/"]
+    },
+    {
+      "id": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary.",
+      "lane": "web",
+      "environment": "linux",
+      "prefixes": ["apps/web/"]
+    },
+    {
+      "id": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract.",
+      "lane": "desktop",
+      "environment": "linux",
+      "prefixes": ["apps/desktop/tests/"]
+    },
+    {
+      "id": "docs.contract",
+      "owner": "documentation",
+      "risk": "low",
+      "counterexample": "Published documentation navigation, content registration, release metadata, or links become internally inconsistent.",
+      "lane": "docs",
+      "environment": "linux",
+      "prefixes": ["apps/docs/tests/"]
+    },
+    {
+      "id": "package.public-contract",
+      "owner": "ecosystem",
+      "risk": "medium",
+      "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers.",
+      "lane": "packages",
+      "environment": "linux",
+      "prefixes": [
+        "packages/protocol/",
+        "packages/sdk/",
+        "packages/ai-sdk/",
+        "packages/next/",
+        "packages/observability/"
+      ]
+    },
+    {
+      "id": "service.contract",
+      "owner": "hosted-services",
+      "risk": "medium",
+      "counterexample": "A hosted authentication, routing, workspace-runtime, or MCP service boundary changes unexpectedly.",
+      "lane": "services",
+      "environment": "linux",
+      "prefixes": [
+        "packages/environment-auth/",
+        "packages/mcp-security/",
+        "apps/environment-router/",
+        "apps/workspace-runtime/",
+        "apps/mcp-service/"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "mutations": [
+    {
+      "id": "runtime-replay-verdict-inversion",
+      "contractId": "runtime.replay-integrity",
+      "target": "src/governance/replayBaseline.ts",
+      "find": "if (nextIndex === -1) {",
+      "replace": "if (nextIndex !== -1) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "tests/unit/governance-replay-baseline.test.ts"],
+      "testFiles": ["tests/unit/governance-replay-baseline.test.ts"]
+    },
+    {
+      "id": "postgres-retry-source-loss",
+      "contractId": "web.durable-postgres",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "sourceMessageId: input.sourceMessageId ?? null,",
+      "replace": "sourceMessageId: null,",
+      "command": "pnpm",
+      "args": ["run", "ci:postgres:local"],
+      "testFiles": [
+        "apps/web/lib/apps/service.postgres.test.ts",
+        "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
+        "apps/web/lib/environments/reconcile-lock.postgres.test.ts",
+        "apps/web/lib/environments/store.postgres.test.ts",
+        "apps/web/lib/integrations/github-action-approvals.postgres.test.ts",
+        "apps/web/lib/turns/mobile-store.postgres.test.ts",
+        "apps/web/lib/turns/store.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "product-retry-source-loss",
+      "contractId": "web.durable-product",
+      "target": "apps/web/app/api/mobile/v2/turns/[turnId]/retry/route.ts",
+      "find": "sourceMessageId: retrySource.sourceMessageId,",
+      "replace": "sourceMessageId: null,",
+      "command": "pnpm",
+      "args": ["run", "ci:product"],
+      "testFiles": ["apps/web/tests/product/durable-conversation.spec.ts"]
+    }
+  ]
+}

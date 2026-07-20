@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 const supported = /\.(?:cjs|css|js|json|jsonc|jsx|mjs|ts|tsx)$/u;
-const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
+const paths = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { encoding: "utf8" })
   .split("\0")
+  .filter((path) => existsSync(path))
   .filter((path) => supported.test(path))
   .map((path) => resolve(path));
 

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "evidence": [
+    {
+      "id": "postgres-retry-source-loss",
+      "contractId": "web.durable-postgres",
+      "target": "apps/web/lib/turns/store.ts",
+      "sourceSha256": "ceba816266ddfec49a99277e42fb78d5c12dafc6aaa2fb3097f1bb0837d010b3",
+      "testFiles": [
+        "apps/web/lib/apps/service.postgres.test.ts",
+        "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
+        "apps/web/lib/environments/reconcile-lock.postgres.test.ts",
+        "apps/web/lib/environments/store.postgres.test.ts",
+        "apps/web/lib/integrations/github-action-approvals.postgres.test.ts",
+        "apps/web/lib/turns/mobile-store.postgres.test.ts",
+        "apps/web/lib/turns/store.postgres.test.ts"
+      ],
+      "testsSha256": "9f612bff31b710e423ff5301d26e6e617f7b600ebf84d64648a4dd49086971dc",
+      "command": "pnpm run ci:postgres:local",
+      "result": "killed"
+    },
+    {
+      "id": "product-retry-source-loss",
+      "contractId": "web.durable-product",
+      "target": "apps/web/app/api/mobile/v2/turns/[turnId]/retry/route.ts",
+      "sourceSha256": "f2d66d1d85c901c38e8c34cb3fe8aac82bb8dd6724108f8ccff6cc5d8f000bb8",
+      "testFiles": [
+        "apps/web/tests/product/durable-conversation.spec.ts"
+      ],
+      "testsSha256": "c91bd0d39fb39d185662797a35d2cda271182e1509553501fdd0602d1b4f6cad",
+      "command": "pnpm run ci:product",
+      "result": "killed"
+    },
+    {
+      "id": "runtime-replay-verdict-inversion",
+      "contractId": "runtime.replay-integrity",
+      "target": "src/governance/replayBaseline.ts",
+      "sourceSha256": "7534be9876f784b8ea743cf9ad59c2d479e1b1e556db5c2ddbb0b7d6026eb180",
+      "testFiles": [
+        "tests/unit/governance-replay-baseline.test.ts"
+      ],
+      "testsSha256": "51d880c9324228fc18296c59a9aadced25b212715757f5ed1fe879222a6924bf",
+      "command": "node --import tsx --test tests/unit/governance-replay-baseline.test.ts",
+      "result": "killed"
+    }
+  ]
+}
