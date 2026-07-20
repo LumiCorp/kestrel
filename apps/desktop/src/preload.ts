@@ -94,6 +94,9 @@ const desktopBridge: DesktopBridge = {
   saveModelPolicy(policy: ModelPolicyV1) {
     return ipcRenderer.invoke("desktop:save-model-policy", policy);
   },
+  getModelCatalog(provider) {
+    return ipcRenderer.invoke("desktop:get-model-catalog", provider);
+  },
   getBootState() {
     return ipcRenderer.invoke("desktop:get-boot-state");
   },

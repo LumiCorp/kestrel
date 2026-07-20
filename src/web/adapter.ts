@@ -170,6 +170,8 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
   return {
     async runTurnStream(request, runOptions, context) {
       const activeClient = ensureClient();
+      const requestProfileSelection = resolveRequestProfileSelection(profileSelection, context);
+      const requestProfile = requestProfileSelection.resolvedProfile;
       const commandId = randomUUID();
       let aborted = false;
 
@@ -203,18 +205,18 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         const resolvedMode = normalizeInteractionMode({
           interactionMode: request.interactionMode,
           actSubmode: request.actSubmode,
-          defaultInteractionMode: profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
-          defaultActSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+          defaultInteractionMode: requestProfile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
+          defaultActSubmode: requestProfile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
         });
         const commandMetadata = toRunnerCommandMetadata(
-          profileSelection,
+          requestProfileSelection,
           context,
           protocolClientOptions?.defaultMetadata,
         );
         const response = await activeClient.sendCommandWithId(
           commandId,
           "run.start",
-          buildRunStartPayload(profileSelection, request, resolvedMode, commandMetadata),
+          buildRunStartPayload(requestProfileSelection, request, resolvedMode, commandMetadata),
           commandMetadata,
         );
 
@@ -866,6 +868,7 @@ function buildRunStartPayload(
       ...(request.executionPolicy !== undefined ? { executionPolicy: request.executionPolicy } : {}),
       ...(request.workspace !== undefined ? { workspace: request.workspace } : {}),
       ...(request.attachments !== undefined ? { attachments: request.attachments } : {}),
+      ...(request.metadata !== undefined ? { metadata: request.metadata } : {}),
       ...(request.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
       ...(request.resumeRequestId !== undefined ? { resumeRequestId: request.resumeRequestId } : {}),
       ...(actor !== undefined ? { actor } : {}),
@@ -1072,6 +1075,23 @@ function toRunnerProfileReference(
   return profileSelection.kind === "registered"
     ? { profileId: profileSelection.profileId }
     : { profile: profileSelection.resolvedProfile };
+}
+
+function resolveRequestProfileSelection(
+  base: WebRunnerProfileSelection,
+  context: WebRunnerRequestContext | undefined,
+): WebRunnerProfileSelection {
+  if (context?.profile === undefined) {
+    return base;
+  }
+  if (base.kind === "registered") {
+    throw createRuntimeFailure(
+      "WEB_ADAPTER_REGISTERED_PROFILE_OVERRIDE_FORBIDDEN",
+      "A registered web runner profile cannot be overridden per request.",
+      { profileId: base.profileId },
+    );
+  }
+  return { kind: "inline", resolvedProfile: context.profile };
 }
 
 function validateProtocolClientOptions(

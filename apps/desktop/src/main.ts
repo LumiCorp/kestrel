@@ -59,6 +59,14 @@ import {
   type ResolvedModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
 import { DEFAULT_MODEL_BY_PROVIDER } from "../../../src/profile/runtimeProfile.js";
+import { resolveProviderModelCatalog } from "../../../src/profile/modelCatalogDiscovery.js";
+import {
+  assertDesktopModelConfigurationHistoryPreserved,
+  getDesktopAppDefinition,
+  listDesktopAppDefinitions,
+  resolveDesktopModelConfiguration,
+  type DesktopExecutionSelection,
+} from "../../../src/desktopShell/configuration.js";
 import { resolveDesktopLibexecRoot, resolveDesktopPathConfig } from "./config.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
@@ -93,6 +101,7 @@ import type {
   DesktopAttachmentMetadata,
   DesktopOperatorControlRequest,
   DesktopSettings,
+  DesktopModelProvider,
   DesktopShellCommand,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
@@ -651,7 +660,8 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    const { projectPath, threadId, attachmentIds, ...turnRequest } = request;
+    const { projectPath, threadId, attachmentIds, executionSelection, ...turnRequest } = request;
+    const runProfile = resolveDesktopExecutionProfile(executionSelection);
     const canonicalThreadId = `thread-main:${request.sessionId}`;
     if (threadId !== undefined && threadId !== canonicalThreadId) {
       throw createDesktopError({ code: "desktop.invalid_run_thread", message: "Desktop run thread does not match its Local Core session." });
@@ -664,7 +674,7 @@ function registerIpcHandlers(
       if (selected.some((entry) => entry === undefined)) {
         throw createDesktopError({ code: "desktop.attachment_unavailable", message: "One or more attachments are unavailable for this thread." });
       }
-      if (selected.some((entry) => entry?.kind === "image") && desktopModelPolicy.modelCapabilities.visionInputEnabled !== true) {
+      if (selected.some((entry) => entry?.kind === "image") && runProfile.modelCapabilities?.visionInputEnabled !== true) {
         throw createDesktopError({ code: "desktop.model_vision_unavailable", message: "The selected model does not accept image attachments." });
       }
     }
@@ -683,6 +693,7 @@ function registerIpcHandlers(
         ...turnRequest,
         ...(attachments !== undefined ? { attachments } : {}),
         workspace,
+        metadata: { desktopExecutionSelection: executionSelection },
       },
       {
         onEvent(runnerEvent) {
@@ -691,7 +702,7 @@ function registerIpcHandlers(
           }
         },
       },
-      DESKTOP_RUNNER_REQUEST_CONTEXT,
+      { ...DESKTOP_RUNNER_REQUEST_CONTEXT, profile: runProfile },
     );
   });
   ipcMain.handle("desktop:select-attachments", async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
@@ -773,6 +784,16 @@ function registerIpcHandlers(
     );
   });
   ipcMain.handle("desktop:get-model-policy", async () => desktopModelPolicy);
+  ipcMain.handle("desktop:get-model-catalog", async (_event, provider: unknown) => {
+    if (provider !== "openrouter" && provider !== "openai" && provider !== "anthropic"
+      && provider !== "ollama" && provider !== "lmstudio") {
+      throw createDesktopError({
+        code: "desktop.invalid_model_provider",
+        message: "Desktop model provider is invalid.",
+      });
+    }
+    return await resolveProviderModelCatalog(provider, process.env);
+  });
   ipcMain.handle("desktop:save-model-policy", async (_event, nextPolicy: unknown) => {
     if (desktopConfig === undefined) {
       throw createDesktopError({
@@ -821,6 +842,12 @@ function registerIpcHandlers(
     let update: DesktopRendererSettingsUpdate;
     try {
       update = parseDesktopRendererSettingsUpdate(nextSettings);
+      if (update.modelConfigurations !== undefined) {
+        assertDesktopModelConfigurationHistoryPreserved(
+          desktopSettings.modelConfigurations,
+          update.modelConfigurations,
+        );
+      }
     } catch (error) {
       throw createDesktopError({
         code: "desktop.invalid_settings",
@@ -843,8 +870,13 @@ function registerIpcHandlers(
       ...desktopSettings,
       selectedProvider,
       projects: preparedProjects,
+      modelConfigurations: update.modelConfigurations ?? desktopSettings.modelConfigurations,
+      defaultModelConfigurationId:
+        update.defaultModelConfigurationId ?? desktopSettings.defaultModelConfigurationId,
+      defaultEnabledAppIds: update.defaultEnabledAppIds ?? desktopSettings.defaultEnabledAppIds,
+      appearanceTheme: update.appearanceTheme ?? desktopSettings.appearanceTheme,
       ...(providerSelectionCompletedAt !== undefined ? { providerSelectionCompletedAt } : {}),
-    });
+    }, { fallbackModelPolicy: desktopModelPolicy });
     return persistDesktopRendererConfiguration(runnerTransport, {
       settings: {
         ...normalized,
@@ -2330,6 +2362,51 @@ function requireDesktopRunnerAdapter(
   return desktopRunnerAdapter;
 }
 
+function resolveDesktopExecutionProfile(selection: DesktopExecutionSelection) {
+  const resolved = resolveDesktopModelConfiguration(
+    desktopSettings.modelConfigurations,
+    selection.modelConfiguration,
+  );
+  if (resolved === undefined) {
+    throw createDesktopError({
+      code: "desktop.model_configuration_not_found",
+      message: "The selected model configuration revision is unavailable.",
+      details: JSON.stringify(selection.modelConfiguration),
+    });
+  }
+  const selectedAppTools = new Set<string>();
+  for (const app of selection.apps) {
+    const definition = getDesktopAppDefinition(app.id, app.contractVersion);
+    if (definition === undefined) {
+      throw createDesktopError({
+        code: "desktop.app_contract_not_found",
+        message: `The selected app contract '${app.id}@${app.contractVersion}' is unavailable.`,
+      });
+    }
+    for (const toolName of definition.toolNames) {
+      selectedAppTools.add(toolName);
+    }
+  }
+  const allAppTools = new Set(
+    listDesktopAppDefinitions().flatMap((definition) => definition.toolNames),
+  );
+  const baseProfile = buildDesktopRunnerProfile(resolved.revision.policy);
+  const toolAllowlist = [
+    ...(baseProfile.toolAllowlist ?? []).filter((toolName) => allAppTools.has(toolName) === false),
+    ...selectedAppTools,
+  ];
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(selection))
+    .digest("hex")
+    .slice(0, 12);
+  return {
+    ...baseProfile,
+    id: `${baseProfile.id}-${fingerprint}`,
+    label: `${resolved.configuration.name} · ${baseProfile.label}`,
+    toolAllowlist: [...new Set(toolAllowlist)],
+  };
+}
+
 async function resetDesktopRunnerAdapter(): Promise<void> {
   const adapter = desktopRunnerAdapter;
   desktopRunnerAdapter = undefined;
@@ -2340,7 +2417,9 @@ async function refreshDesktopCoreState(): Promise<void> {
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
   );
-  desktopSettings = normalizeDesktopSettings(response.settings);
+  desktopSettings = normalizeDesktopSettings(response.settings, {
+    fallbackModelPolicy: response.modelPolicy,
+  });
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
 }
@@ -2390,14 +2469,18 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
 async function saveDesktopCoreSettings(
   settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined },
 ): Promise<void> {
-  const normalized = normalizeDesktopSettings(settings);
+  const normalized = normalizeDesktopSettings(settings, {
+    fallbackModelPolicy: desktopModelPolicy,
+  });
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.patchDesktopSettings<Partial<DesktopSettings>>({
       ...normalized,
       ...(settings.modelPolicy !== undefined ? { modelPolicy: settings.modelPolicy } : {}),
     }),
   );
-  desktopSettings = normalizeDesktopSettings(response.settings);
+  desktopSettings = normalizeDesktopSettings(response.settings, {
+    fallbackModelPolicy: response.modelPolicy,
+  });
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
 }
@@ -2447,19 +2530,20 @@ async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
     selectedProvider === "ollama"
     || selectedProvider === "lmstudio"
   ) {
-    return toDesktopRendererSettings(desktopSettings, true);
+    return toDesktopRendererSettings(desktopSettings, new Set([selectedProvider]));
   }
   const status = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.credentialStatus(),
   );
-  return toDesktopRendererSettings(
-    desktopSettings,
-    status.credentials.some(
-      (credential) => credential.id === modelProviderCredentialId(
-        selectedProvider,
-      ) && credential.configured,
-    ),
-  );
+  const configuredProviders = new Set<DesktopModelProvider>();
+  for (const provider of ["openrouter", "openai", "anthropic"] as const) {
+    if (status.credentials.some(
+      (credential) => credential.id === modelProviderCredentialId(provider) && credential.configured,
+    )) {
+      configuredProviders.add(provider);
+    }
+  }
+  return toDesktopRendererSettings(desktopSettings, configuredProviders);
 }
 
 function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {

@@ -21,6 +21,7 @@ import type {
   ToolExecutionClass,
 } from "../mode/contracts.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
+import type { TuiProfile } from "../../cli/contracts.js";
 
 interface WebHistoryLineBase {
   text: string;
@@ -58,6 +59,7 @@ export interface WebRunTurnRequest {
   resumeRequestId?: string | undefined;
   workspace?: WorkspaceRuntimeContext | undefined;
   attachments?: RunTurnAttachment[] | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export type WebControlCommand =
@@ -287,4 +289,6 @@ export interface WebRunTurnStreamOptions {
 export interface WebRunnerRequestContext {
   actor?: RunnerActorMetadata | undefined;
   tenantId?: string | undefined;
+  /** Trusted caller-only inline profile override for this request. */
+  profile?: TuiProfile | undefined;
 }

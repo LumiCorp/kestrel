@@ -9,9 +9,18 @@ import {
 import { buildDesktopModelEnvironment } from "../../../src/desktopShell/modelEnvironment.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import {
+  createDefaultModelPolicy,
+  type ModelPolicyV1,
   type ResolvedModelPolicy,
   resolveProfileWithModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
+import {
+  createDesktopModelConfiguration,
+  DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
+  DESKTOP_WEATHER_APP_ID,
+  getDesktopAppDefinition,
+  parseDesktopModelConfigurations,
+} from "../../../src/desktopShell/configuration.js";
 import { createWebDemoProfile } from "../../../src/web/profile.js";
 import type {
   DesktopCapabilityPackId,
@@ -53,6 +62,10 @@ type DesktopSettingsFileBase = {
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled?: boolean | undefined;
+  modelConfigurations?: DesktopSettings["modelConfigurations"] | undefined;
+  defaultModelConfigurationId?: string | undefined;
+  defaultEnabledAppIds?: string[] | undefined;
+  appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
 };
 
 type DesktopSettingsFileV1 = {
@@ -112,6 +125,13 @@ type DesktopSettingsFileV9 = DesktopSettingsFileBase & {
   projects?: DesktopProjectRegistration[] | undefined;
 };
 
+type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
+  version: 10;
+  presetId?: DesktopSettings["presetId"] | undefined;
+  capabilityPacks?: DesktopSettings["capabilityPacks"] | undefined;
+  projects?: DesktopProjectRegistration[] | undefined;
+};
+
 const LEGACY_SETUP_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const LEGACY_PROVIDER_SELECTION_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const DESKTOP_PRESET_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
@@ -142,7 +162,9 @@ function normalizeDesktopCapabilityPacks(
   return next.size > 0 ? [...next] : [...DESKTOP_PRESET_CAPABILITY_PACKS];
 }
 
-export function createDefaultDesktopSettings(): DesktopSettings {
+export function createDefaultDesktopSettings(
+  fallbackModelPolicy: ModelPolicyV1 = createDefaultModelPolicy(),
+): DesktopSettings {
   return {
     selectedProvider: "openrouter",
     databaseMode: "default",
@@ -150,6 +172,10 @@ export function createDefaultDesktopSettings(): DesktopSettings {
     capabilityPacks: [...DESKTOP_PRESET_CAPABILITY_PACKS],
     projects: [],
     advancedWorkspaceEnabled: false,
+    modelConfigurations: [createDesktopModelConfiguration(fallbackModelPolicy)],
+    defaultModelConfigurationId: DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
+    defaultEnabledAppIds: [DESKTOP_WEATHER_APP_ID],
+    appearanceTheme: "system",
   };
 }
 
@@ -169,6 +195,7 @@ export function normalizeDesktopSettings(
     legacySetupCompletedFromKeys?: boolean | undefined;
     legacyAdvancedWorkspaceEnabled?: boolean | undefined;
     backfillProviderSelection?: boolean | undefined;
+    fallbackModelPolicy?: ModelPolicyV1 | undefined;
   } = {},
 ): DesktopSettings {
   const openrouterApiKey = normalizeOptionalSecret(settings?.openrouterApiKey);
@@ -263,6 +290,31 @@ export function normalizeDesktopSettings(
     )
       ? LEGACY_PROVIDER_SELECTION_COMPLETED_AT
       : undefined);
+  let modelConfigurations: DesktopSettings["modelConfigurations"];
+  try {
+    modelConfigurations = settings?.modelConfigurations === undefined
+      ? [createDesktopModelConfiguration(options.fallbackModelPolicy ?? createDefaultModelPolicy())]
+      : parseDesktopModelConfigurations(settings.modelConfigurations);
+  } catch {
+    modelConfigurations = [createDesktopModelConfiguration(options.fallbackModelPolicy ?? createDefaultModelPolicy())];
+  }
+  const requestedDefaultConfigurationId = typeof settings?.defaultModelConfigurationId === "string"
+    ? settings.defaultModelConfigurationId.trim()
+    : "";
+  const defaultModelConfigurationId = modelConfigurations.some(
+    (configuration) => configuration.id === requestedDefaultConfigurationId && configuration.archivedAt === undefined,
+  )
+    ? requestedDefaultConfigurationId
+    : modelConfigurations.find((configuration) => configuration.archivedAt === undefined)?.id
+      ?? modelConfigurations[0]!.id;
+  const defaultEnabledAppIds = Array.isArray(settings?.defaultEnabledAppIds)
+    ? [...new Set(settings.defaultEnabledAppIds.filter(
+        (id): id is string => typeof id === "string" && getDesktopAppDefinition(id.trim()) !== undefined,
+      ).map((id) => id.trim()))].sort()
+    : [DESKTOP_WEATHER_APP_ID];
+  const appearanceTheme = settings?.appearanceTheme === "light" || settings?.appearanceTheme === "dark"
+    ? settings.appearanceTheme
+    : "system";
 
   return {
     selectedProvider,
@@ -302,6 +354,10 @@ export function normalizeDesktopSettings(
       typeof settings?.advancedWorkspaceEnabled === "boolean"
         ? settings.advancedWorkspaceEnabled
         : options.legacyAdvancedWorkspaceEnabled === true,
+    modelConfigurations,
+    defaultModelConfigurationId,
+    defaultEnabledAppIds,
+    appearanceTheme,
   };
 }
 
@@ -363,7 +419,7 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
       parsed.version !== 6 &&
       parsed.version !== 7 &&
       parsed.version !== 8 &&
-      parsed.version !== 9
+      parsed.version !== 9 && parsed.version !== 10
     ) {
       return createDefaultDesktopSettings();
     }
@@ -412,6 +468,19 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
       parsed.advancedWorkspaceEnabled === true || parsed.advancedWorkspaceEnabled === false
         ? parsed.advancedWorkspaceEnabled
         : undefined;
+    const modelConfigurations = parsed.version === 10 && Array.isArray(parsed.modelConfigurations)
+      ? parsed.modelConfigurations
+      : undefined;
+    const defaultModelConfigurationId = parsed.version === 10 && typeof parsed.defaultModelConfigurationId === "string"
+      ? parsed.defaultModelConfigurationId
+      : undefined;
+    const defaultEnabledAppIds = parsed.version === 10 && Array.isArray(parsed.defaultEnabledAppIds)
+      ? parsed.defaultEnabledAppIds
+      : undefined;
+    const appearanceTheme = parsed.version === 10
+      && (parsed.appearanceTheme === "system" || parsed.appearanceTheme === "light" || parsed.appearanceTheme === "dark")
+      ? parsed.appearanceTheme
+      : undefined;
     const presetId = parsed.presetId === "desktop_dev_local" ? parsed.presetId : undefined;
     const capabilityPacks =
       Array.isArray(parsed.capabilityPacks) &&
@@ -461,8 +530,12 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
         : {}),
       ...(setupCompletedAt !== undefined ? { setupCompletedAt } : {}),
       ...(advancedWorkspaceEnabled !== undefined ? { advancedWorkspaceEnabled } : {}),
+      ...(modelConfigurations !== undefined ? { modelConfigurations } : {}),
+      ...(defaultModelConfigurationId !== undefined ? { defaultModelConfigurationId } : {}),
+      ...(defaultEnabledAppIds !== undefined ? { defaultEnabledAppIds } : {}),
+      ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
     }, {
-      backfillProviderSelection: parsed.version !== 9,
+      backfillProviderSelection: parsed.version !== 9 && parsed.version !== 10,
     });
   } catch {
     return createDefaultDesktopSettings();
@@ -471,8 +544,8 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
 
 export async function writeDesktopSettings(settingsPath: string, settings: DesktopSettings): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
-  const payload: DesktopSettingsFileV9 = {
-    version: 9,
+  const payload: DesktopSettingsFileV10 = {
+    version: 10,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
     presetId: normalized.presetId,
@@ -507,6 +580,10 @@ export async function writeDesktopSettings(settingsPath: string, settings: Deskt
       : {}),
     ...(normalized.setupCompletedAt !== undefined ? { setupCompletedAt: normalized.setupCompletedAt } : {}),
     advancedWorkspaceEnabled: normalized.advancedWorkspaceEnabled,
+    modelConfigurations: normalized.modelConfigurations,
+    defaultModelConfigurationId: normalized.defaultModelConfigurationId,
+    defaultEnabledAppIds: normalized.defaultEnabledAppIds,
+    appearanceTheme: normalized.appearanceTheme,
   };
   await mkdir(path.dirname(settingsPath), { recursive: true });
   await writeFile(settingsPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");

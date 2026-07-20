@@ -12,8 +12,25 @@ import {
   describeDesktopProviderCredentialRequirement,
   hasConfiguredDesktopProviderCredential,
   readDesktopSettings,
+  normalizeDesktopSettings,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
+
+test("legacy desktop settings seed the Default model configuration from Local Core policy", () => {
+  const settings = normalizeDesktopSettings({ selectedProvider: "openrouter" }, {
+    fallbackModelPolicy: {
+      version: 1,
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      modelByStage: {},
+      modelCapabilities: { visionInputEnabled: true },
+    },
+  });
+
+  assert.equal(settings.modelConfigurations[0]?.name, "Default");
+  assert.equal(settings.modelConfigurations[0]?.revisions[0]?.policy.provider, "anthropic");
+  assert.equal(settings.modelConfigurations[0]?.revisions[0]?.policy.model, "claude-sonnet-4-5");
+});
 
 test("readDesktopSettings returns default settings when the file is missing", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
@@ -160,7 +177,7 @@ test("writeDesktopSettings persists provider-aware settings and trims blank valu
   assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
   assert.equal(restored.tavilyApiKey, "tavily-key");
   assert.deepEqual(restored.projects, saved.projects);
-  assert.match(raw, /"version": 9/u);
+  assert.match(raw, /"version": 10/u);
   assert.match(raw, /"selectedProvider": "openai"/u);
   assert.match(raw, /"databaseMode": "default"/u);
   assert.match(raw, /"openaiApiKey": "openai-key"/u);
@@ -193,7 +210,7 @@ test("writeDesktopSettings persists external database mode and trims database UR
   assert.equal(saved.databaseUrl, "postgres://user:password@db.example:5432/kestrel");
   assert.equal(restored.databaseMode, "external");
   assert.equal(restored.databaseUrl, "postgres://user:password@db.example:5432/kestrel");
-  assert.match(raw, /"version": 9/u);
+  assert.match(raw, /"version": 10/u);
   assert.match(raw, /"databaseMode": "external"/u);
   assert.match(raw, /"databaseUrl": "postgres:\/\/user:password@db\.example:5432\/kestrel"/u);
 });

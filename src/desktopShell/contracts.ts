@@ -8,6 +8,14 @@ import type {
   ProductProjectBoardAction,
   ProductProjectSnapshot,
 } from "../project/contracts.js";
+import {
+  parseDesktopExecutionSelection,
+  parseDesktopModelConfigurations,
+  type DesktopAppDefinition,
+  type DesktopExecutionSelection,
+  type DesktopModelConfiguration,
+} from "./configuration.js";
+import type { ResolvedProviderModelCatalog } from "../profile/modelCatalogDiscovery.js";
 
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
 export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
@@ -40,6 +48,8 @@ export type DesktopBridgeCapabilityId =
   | "external_open"
   | "path_open"
   | "microphone"
+  | "model_configurations"
+  | "app_selection"
   | "commands";
 
 export interface DesktopBridgeInfo {
@@ -76,6 +86,8 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "external_open",
   "path_open",
   "microphone",
+  "model_configurations",
+  "app_selection",
   "commands",
 ];
 
@@ -148,6 +160,7 @@ export interface DesktopRunTurnRequest {
   resumeFromWait?: boolean | undefined;
   resumeBlockedRun?: boolean | undefined;
   attachmentIds?: string[] | undefined;
+  executionSelection: DesktopExecutionSelection;
 }
 
 export interface DesktopAttachmentMetadata {
@@ -512,6 +525,7 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
     ...(input.resumeFromWait === true ? { resumeFromWait: true } : {}),
     ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
     ...(attachmentIds !== undefined ? { attachmentIds } : {}),
+    executionSelection: parseDesktopExecutionSelection(input.executionSelection),
   };
 }
 
@@ -841,6 +855,7 @@ export interface DesktopManagedProjectRun {
 }
 
 export type DesktopModelProvider = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
+export type DesktopAppearanceTheme = "system" | "light" | "dark";
 export type DesktopDatabaseMode = "default" | "external";
 export type DesktopShellPresetId = "desktop_dev_local";
 export type DesktopCapabilityPackId =
@@ -889,6 +904,16 @@ export interface DesktopSettings {
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled: boolean;
+  modelConfigurations: DesktopModelConfiguration[];
+  defaultModelConfigurationId: string;
+  defaultEnabledAppIds: string[];
+  appearanceTheme: DesktopAppearanceTheme;
+}
+
+export interface DesktopProviderReadiness {
+  provider: DesktopModelProvider;
+  configured: boolean;
+  requiresCredential: boolean;
 }
 
 export interface DesktopRendererSettings {
@@ -901,11 +926,21 @@ export interface DesktopRendererSettings {
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled: boolean;
+  modelConfigurations: DesktopModelConfiguration[];
+  defaultModelConfigurationId: string;
+  defaultEnabledAppIds: string[];
+  appearanceTheme: DesktopAppearanceTheme;
+  apps: DesktopAppDefinition[];
+  providerReadiness: DesktopProviderReadiness[];
 }
 
 export interface DesktopRendererSettingsUpdate {
   selectedProvider?: DesktopModelProvider | undefined;
   projects?: DesktopProjectRegistration[] | undefined;
+  modelConfigurations?: DesktopModelConfiguration[] | undefined;
+  defaultModelConfigurationId?: string | undefined;
+  defaultEnabledAppIds?: string[] | undefined;
+  appearanceTheme?: DesktopAppearanceTheme | undefined;
 }
 
 export type DesktopCredentialedModelProvider = "openrouter" | "openai" | "anthropic";
@@ -937,7 +972,14 @@ export function parseDesktopRendererSettingsUpdate(
     throw new Error("Desktop settings update must be an object.");
   }
   const input = value as Record<string, unknown>;
-  const supportedKeys = new Set(["selectedProvider", "projects"]);
+  const supportedKeys = new Set([
+    "selectedProvider",
+    "projects",
+    "modelConfigurations",
+    "defaultModelConfigurationId",
+    "defaultEnabledAppIds",
+    "appearanceTheme",
+  ]);
   const unsupportedKey = Object.keys(input).find((key) => supportedKeys.has(key) === false);
   if (unsupportedKey !== undefined) {
     throw new Error(`Desktop settings update includes unsupported field '${unsupportedKey}'.`);
@@ -962,8 +1004,38 @@ export function parseDesktopRendererSettingsUpdate(
       };
     });
   }
+  if (input.modelConfigurations !== undefined) {
+    update.modelConfigurations = parseDesktopModelConfigurations(input.modelConfigurations);
+  }
+  if (input.defaultModelConfigurationId !== undefined) {
+    update.defaultModelConfigurationId = parseRequiredDesktopString(
+      input.defaultModelConfigurationId,
+      "defaultModelConfigurationId",
+    );
+  }
+  if (input.defaultEnabledAppIds !== undefined) {
+    if (
+      Array.isArray(input.defaultEnabledAppIds) === false
+      || input.defaultEnabledAppIds.some((entry) => typeof entry !== "string" || entry.trim().length === 0)
+    ) {
+      throw new Error("Desktop settings update defaultEnabledAppIds must be an array of strings.");
+    }
+    update.defaultEnabledAppIds = [...new Set(input.defaultEnabledAppIds.map((entry) => entry.trim()))].sort();
+  }
+  if (input.appearanceTheme !== undefined) {
+    if (
+      input.appearanceTheme !== "system"
+      && input.appearanceTheme !== "light"
+      && input.appearanceTheme !== "dark"
+    ) {
+      throw new Error("Desktop settings update appearanceTheme is invalid.");
+    }
+    update.appearanceTheme = input.appearanceTheme;
+  }
   return update;
 }
+
+export type DesktopProviderModelCatalog = ResolvedProviderModelCatalog;
 
 export function parseDesktopProviderCredentialInput(
   value: unknown,
