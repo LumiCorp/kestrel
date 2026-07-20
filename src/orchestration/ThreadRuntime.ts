@@ -7,6 +7,7 @@ import type {
 import type {
   ContextCheckpointRecord,
   ContextSummaryArtifactRecord,
+  RunTurnAttachment,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
 import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
@@ -45,10 +46,20 @@ import {
   updateDelegationOutcomePolicy,
 } from "./Supervision.js";
 import { listPendingSteers, removePendingSteer } from "./SteeringQueue.js";
+import {
+  enqueueFollowUp as enqueueFollowUpRecord,
+  editFollowUp as editFollowUpRecord,
+  markFollowUpStarting,
+  pauseFollowUpQueue,
+  readFollowUpQueue,
+  removeFollowUp,
+  resumeFollowUps,
+} from "./FollowUpQueue.js";
 import { TurnOrchestrator, mergeSubmittedHistoryMetadata } from "./TurnOrchestrator.js";
 import type {
   AssemblyBundleRecord,
   DelegationRequest,
+  EnqueueFollowUpInput,
   FanInDispositionSummary,
   ReplyToRequestInput,
   ResumeBlockedTurnInput,
@@ -74,6 +85,7 @@ export interface ThreadRuntimeOptions {
   profile?: TuiProfile | undefined;
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
   structuredSummaryGenerator?: ContextStructuredSummaryGenerator | undefined;
+  resolveAttachments?: ((threadId: string, attachmentIds: string[]) => Promise<RunTurnAttachment[]>) | undefined;
 }
 
 export class ThreadRuntime implements ThreadRuntimePort {
@@ -90,11 +102,16 @@ export class ThreadRuntime implements ThreadRuntimePort {
   private readonly delegationSupervisor?: DelegationSupervisor | undefined;
   private readonly listeners = new Set<(event: ThreadRuntimeEvent) => void>();
   private readonly pendingSteerProcessors = new Set<string>();
+  private readonly followUpProcessors = new Set<string>();
+  private readonly followUpMutations = new Map<string, Promise<void>>();
+  private readonly activeThreadSubmissions = new Set<string>();
+  private readonly resolveAttachments?: ThreadRuntimeOptions["resolveAttachments"];
 
   constructor(options: ThreadRuntimeOptions) {
     this.sessionStore = options.sessionStore;
     this.store = options.orchestrationStore ?? (options.sessionStore as ReplayStore);
     this.profile = options.profile;
+    this.resolveAttachments = options.resolveAttachments;
     this.interactionManager = new InteractionManager(this.store);
     this.contextPolicyManager = new ContextPolicyManager(this.store, {
       ...(options.structuredSummaryGenerator !== undefined
@@ -236,6 +253,22 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }
 
   async submitTurn(input: SubmitTurnInput): Promise<SubmitTurnResult> {
+    if (this.activeThreadSubmissions.has(input.threadId)) {
+      throw createRuntimeFailure(
+        "THREAD_RUN_ALREADY_ACTIVE",
+        `Thread '${input.threadId}' already has an active run.`,
+        { threadId: input.threadId },
+      );
+    }
+    this.activeThreadSubmissions.add(input.threadId);
+    try {
+      return await this.submitAcceptedTurn(input);
+    } finally {
+      this.activeThreadSubmissions.delete(input.threadId);
+    }
+  }
+
+  private async submitAcceptedTurn(input: SubmitTurnInput): Promise<SubmitTurnResult> {
     const thread = await this.requireThread(input.threadId);
     const submittedMetadata = input.metadata;
     const submittedTurnId = readNonEmptyString(submittedMetadata?.turnId);
@@ -464,7 +497,17 @@ export class ThreadRuntime implements ThreadRuntimePort {
       });
     }
     const effectiveAssembly = await this.runtimeComposer.getActiveAssembly(thread.threadId);
-    const threadWithIdentity = this.applyRuntimeIdentityToThread(result.thread, effectiveAssembly?.bundle ?? assembly.bundle);
+    const latestStoredThread = await this.store.getThread(result.thread.threadId);
+    const resultThread = latestStoredThread?.metadata?.operatorControl !== undefined
+      ? {
+          ...result.thread,
+          metadata: {
+            ...(result.thread.metadata ?? {}),
+            operatorControl: latestStoredThread.metadata.operatorControl,
+          },
+        }
+      : result.thread;
+    const threadWithIdentity = this.applyRuntimeIdentityToThread(resultThread, effectiveAssembly?.bundle ?? assembly.bundle);
     if (threadWithIdentity !== result.thread) {
       await this.store.upsertThread(threadWithIdentity);
     }
@@ -566,14 +609,100 @@ export class ThreadRuntime implements ThreadRuntimePort {
           readAssemblyString(assembly.bundle?.metadata, "promptVariant"),
       },
     });
+    if (result.output.status === "WAITING" || result.output.status === "FAILED") {
+      await this.withFollowUpMutation(activeThread.threadId, async (latestThread) => {
+        if (readFollowUpQueue(latestThread).items.length > 0) {
+          const queue = readFollowUpQueue(latestThread);
+          await this.store.upsertThread(pauseFollowUpQueue(
+            latestThread,
+            result.output.status === "WAITING"
+              ? "waiting"
+              : queue.pauseReason === "cancelled" ? "cancelled" : "failed",
+          ));
+        }
+      });
+    }
     void this.processPendingSteers(activeThread.threadId);
+    if (result.output.status === "COMPLETED") void this.processFollowUps(activeThread.threadId);
     return {
       ...result,
       thread: threadWithIdentity,
     };
   }
 
+  async enqueueFollowUp(input: EnqueueFollowUpInput) {
+    const entry = {
+      followUpId: input.followUpId,
+      message: input.message,
+      attachmentIds: input.attachmentIds ?? [],
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+      createdAt: new Date().toISOString(),
+      state: "queued" as const,
+    };
+    const thread = await this.withFollowUpMutation(input.threadId, async (current) => {
+      const updated = enqueueFollowUpRecord(current, entry);
+      await this.store.upsertThread(updated);
+      return updated;
+    });
+    this.emit("thread.follow_up_queued", input.threadId, { followUpId: input.followUpId });
+    if (thread.status !== "RUNNING") void this.processFollowUps(input.threadId);
+    return this.requireOperatorThreadView(input.threadId);
+  }
+
+  async cancelFollowUp(input: { threadId: string; followUpId: string }) {
+    const removed = await this.withFollowUpMutation(input.threadId, async (thread) => {
+      const entry = readFollowUpQueue(thread).items.find((item) => item.followUpId === input.followUpId);
+      if (entry === undefined) return false;
+      if (entry.state === "starting") throw createRuntimeFailure("FOLLOW_UP_ALREADY_STARTING", `Follow-up '${input.followUpId}' is already starting.`);
+      await this.store.upsertThread(removeFollowUp(thread, input.followUpId));
+      return true;
+    });
+    if (removed === false) return this.requireOperatorThreadView(input.threadId);
+    this.emit("thread.follow_up_cancelled", input.threadId, { followUpId: input.followUpId });
+    return this.requireOperatorThreadView(input.threadId);
+  }
+
+  async editFollowUp(input: { threadId: string; followUpId: string; message: string }) {
+    const message = input.message.trim();
+    if (message.length === 0) throw createRuntimeFailure("FOLLOW_UP_MESSAGE_INVALID", "Follow-up message cannot be empty.");
+    await this.withFollowUpMutation(input.threadId, async (thread) => {
+      const entry = readFollowUpQueue(thread).items.find((item) => item.followUpId === input.followUpId);
+      if (entry === undefined) throw createRuntimeFailure("FOLLOW_UP_NOT_FOUND", `Follow-up '${input.followUpId}' was not found.`);
+      if (entry.state === "starting") throw createRuntimeFailure("FOLLOW_UP_ALREADY_STARTING", `Follow-up '${input.followUpId}' is already starting.`);
+      await this.store.upsertThread(editFollowUpRecord(thread, input.followUpId, message));
+    });
+    this.emit("thread.follow_up_edited", input.threadId, { followUpId: input.followUpId });
+    return this.requireOperatorThreadView(input.threadId);
+  }
+
+  async pauseFollowUpQueue(input: { threadId: string; reason: import("./contracts.js").FollowUpQueuePauseReason }) {
+    await this.withFollowUpMutation(input.threadId, async (thread) => {
+      if (readFollowUpQueue(thread).items.length === 0) return;
+      await this.store.upsertThread(pauseFollowUpQueue(thread, input.reason));
+    });
+    this.emit("thread.follow_up_queue_paused", input.threadId, { reason: input.reason });
+    return this.requireOperatorThreadView(input.threadId);
+  }
+
+  async resumeFollowUpQueue(input: { threadId: string }) {
+    await this.withFollowUpMutation(input.threadId, async (thread) => {
+      if (thread.status === "WAITING" || thread.currentRequestId !== undefined) {
+        throw createRuntimeFailure(
+          "FOLLOW_UP_QUEUE_WAITING_FOR_INPUT",
+          "Resolve the thread's waiting action before resuming its follow-up queue.",
+          { threadId: input.threadId, requestId: thread.currentRequestId },
+        );
+      }
+      await this.store.upsertThread(resumeFollowUps(thread));
+    });
+    this.emit("thread.follow_up_queue_resumed", input.threadId, {});
+    void this.processFollowUps(input.threadId);
+    return this.requireOperatorThreadView(input.threadId);
+  }
+
   async replyToRequest(input: ReplyToRequestInput): Promise<SubmitTurnResult> {
+    const queueWasWaiting = readFollowUpQueue(await this.requireThread(input.threadId)).pauseReason === "waiting";
     const resolved = await this.interactionManager.resolveRequest(input);
     this.emit("interaction.resolved", input.threadId, {
       requestId: resolved.request.requestId,
@@ -636,6 +765,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
           },
         });
       }
+      if (queueWasWaiting) {
+        await this.withFollowUpMutation(input.threadId, async (latest) => {
+          await this.store.upsertThread(resumeFollowUps(latest));
+        });
+        void this.processFollowUps(input.threadId);
+      }
       return {
         thread: threadWithIdentity,
         output: buildSyntheticOutput({
@@ -696,6 +831,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
       },
       ...(input.runtimeTurn !== undefined ? { runtimeTurn: input.runtimeTurn } : {}),
     });
+    if (queueWasWaiting && result.output.status === "COMPLETED") {
+      await this.withFollowUpMutation(input.threadId, async (latest) => {
+        await this.store.upsertThread(resumeFollowUps(latest));
+      });
+      void this.processFollowUps(input.threadId);
+    }
     await this.interactionManager.expireTurnScopedGrants(input.threadId);
     return result;
   }
@@ -923,6 +1064,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return this.operatorControlPlane.retryThread(input);
   }
 
+  async continueWaiting(input: { threadId: string }) {
+    return this.operatorControlPlane.continueWaiting(input);
+  }
+
   async focusThread(input: import("./contracts.js").FocusThreadInput) {
     return this.operatorControlPlane.focusThread(input);
   }
@@ -1094,6 +1239,94 @@ export class ThreadRuntime implements ThreadRuntimePort {
       }
     } finally {
       this.pendingSteerProcessors.delete(threadId);
+    }
+  }
+
+  private async processFollowUps(threadId: string): Promise<void> {
+    if (this.followUpProcessors.has(threadId)) return;
+    this.followUpProcessors.add(threadId);
+    try {
+      while (true) {
+        const status = await this.getThreadStatus(threadId);
+        if (status === null || status.thread.status === "RUNNING") return;
+        const queue = readFollowUpQueue(status.thread);
+        if (queue.state === "paused") return;
+        const next = queue.items[0];
+        if (next === undefined) return;
+        await this.withFollowUpMutation(threadId, async (thread) => {
+          await this.store.upsertThread(markFollowUpStarting(thread, next.followUpId));
+        });
+        try {
+          const attachments = next.attachmentIds.length === 0
+            ? undefined
+            : await this.resolveQueuedAttachments(threadId, next.attachmentIds);
+          const result = await this.submitTurn({
+            threadId,
+            message: next.message,
+            eventType: "user.follow_up",
+            ...(next.interactionMode !== undefined ? { interactionMode: next.interactionMode } : {}),
+            ...(next.actSubmode !== undefined ? { actSubmode: next.actSubmode } : {}),
+            ...(attachments !== undefined ? { attachments } : {}),
+            metadata: {
+              followUpId: next.followUpId,
+              enqueuedAt: next.createdAt,
+            },
+          });
+          await this.withFollowUpMutation(threadId, async (latest) => {
+            await this.store.upsertThread(removeFollowUp(latest, next.followUpId));
+          });
+          if (result.output.status === "WAITING" || result.output.status === "FAILED") return;
+        } catch (error) {
+          await this.withFollowUpMutation(threadId, async (latest) => {
+            await this.store.upsertThread(pauseFollowUpQueue(latest, "failed"));
+          });
+          this.emit("thread.follow_up_failed", threadId, {
+            followUpId: next.followUpId,
+            code: asRuntimeError(error).code,
+          });
+          return;
+        }
+      }
+    } finally {
+      this.followUpProcessors.delete(threadId);
+    }
+  }
+
+  private async resolveQueuedAttachments(
+    threadId: string,
+    attachmentIds: string[],
+  ): Promise<RunTurnAttachment[]> {
+    if (this.resolveAttachments === undefined) {
+      throw createRuntimeFailure(
+        "ATTACHMENT_RESOLVER_UNAVAILABLE",
+        "Queued attachments cannot be resolved by this runtime.",
+        { threadId, attachmentIds },
+      );
+    }
+    return this.resolveAttachments(threadId, attachmentIds);
+  }
+
+  private async requireOperatorThreadView(threadId: string) {
+    const view = await this.getOperatorThreadView(threadId);
+    if (view === null) throw threadNotFoundFailure(threadId);
+    return view;
+  }
+
+  private async withFollowUpMutation<T>(
+    threadId: string,
+    operation: (thread: ThreadRecord) => Promise<T>,
+  ): Promise<T> {
+    const previous = this.followUpMutations.get(threadId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const chain = previous.then(() => current);
+    this.followUpMutations.set(threadId, chain);
+    await previous;
+    try {
+      return await operation(await this.requireThread(threadId));
+    } finally {
+      release();
+      if (this.followUpMutations.get(threadId) === chain) this.followUpMutations.delete(threadId);
     }
   }
 

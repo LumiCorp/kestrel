@@ -17,6 +17,7 @@ import type {
   DesktopRuntimeThreadPlan,
   DesktopRuntimeThreadStatus,
   DesktopRuntimeThreadSummary,
+  DesktopOperatorControlRequest,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 
@@ -94,6 +95,20 @@ export async function getDesktopOperatorThread(input: {
   }
 }
 
+export async function runDesktopOperatorControl(input: {
+  adapter: Pick<WebRunnerAdapter, "sendControl">;
+  request: DesktopOperatorControlRequest & { attachments?: import("../../../src/kestrel/contracts/orchestration.js").RunTurnAttachment[] | undefined };
+  context: WebRunnerRequestContext;
+}): Promise<DesktopRuntimeThreadInspection> {
+  const event = await input.adapter.sendControl({ type: "operator.control", ...input.request }, input.context);
+  if (event.type !== "operator.controlled") {
+    throw createDesktopError({ code: "desktop.operator_control_unexpected_response", message: `Runner returned '${event.type}' for operator.control.` });
+  }
+  const view = event.payload.view;
+  if (view === undefined) throw createDesktopError({ code: "desktop.operator_control_missing_view", message: "Runner did not return the authoritative thread view." });
+  return parseDesktopRuntimeThreadInspection(view);
+}
+
 export async function getDesktopOperatorRun(input: {
   adapter: Pick<WebRunnerAdapter, "sendControl">;
   runId: unknown;
@@ -165,6 +180,11 @@ export function parseDesktopRuntimeThreadInspection(
   const latestSteering = view.latestSteering === undefined
     ? undefined
     : parseLatestSteering(view.latestSteering);
+  const activeRun = view.activeRun === undefined ? undefined : parseActiveRun(view.activeRun);
+  const followUpQueue = parseFollowUpQueue(view.followUpQueue);
+  const inboxItems = view.inboxItems === undefined
+    ? []
+    : requireArray(view.inboxItems, "operator thread view.inboxItems").map(parseInboxItem);
   return {
     thread: parseRuntimeThreadSummary(view.thread, "operator thread view.thread"),
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
@@ -175,6 +195,66 @@ export function parseDesktopRuntimeThreadInspection(
     ...(nextAction !== undefined ? { nextAction } : {}),
     ...(runtimePlan !== undefined ? { runtimePlan } : {}),
     ...(latestSteering !== undefined ? { latestSteering } : {}),
+    ...(activeRun !== undefined ? { activeRun } : {}),
+    followUpQueue,
+    inboxItems,
+  };
+}
+
+function parseActiveRun(value: unknown): NonNullable<DesktopRuntimeThreadInspection["activeRun"]> {
+  const run = requireRecord(value, "operator thread view.activeRun");
+  if (run.status !== "RUNNING" && run.status !== "WAITING") throw new Error("operator thread view.activeRun.status is invalid.");
+  return { runId: requireString(run.runId, "operator thread view.activeRun.runId"), status: run.status };
+}
+
+function parseFollowUpQueue(value: unknown): DesktopRuntimeThreadInspection["followUpQueue"] {
+  if (value === undefined) return { state: "ready", items: [] };
+  const queue = requireRecord(value, "operator thread view.followUpQueue");
+  if (queue.state !== "ready" && queue.state !== "paused") throw new Error("operator thread view.followUpQueue.state is invalid.");
+  const pauseReason = queue.pauseReason;
+  if (pauseReason !== undefined && pauseReason !== "waiting" && pauseReason !== "failed" && pauseReason !== "cancelled" && pauseReason !== "operator") {
+    throw new Error("operator thread view.followUpQueue.pauseReason is invalid.");
+  }
+  return {
+    state: queue.state,
+    ...(pauseReason !== undefined ? { pauseReason } : {}),
+    items: requireArray(queue.items, "operator thread view.followUpQueue.items").map((value, index) => {
+      const item = requireRecord(value, `operator thread view.followUpQueue.items[${index}]`);
+      if (item.state !== "queued" && item.state !== "starting") throw new Error("operator follow-up state is invalid.");
+      const interactionMode = item.interactionMode;
+      const actSubmode = item.actSubmode;
+      return {
+        followUpId: requireString(item.followUpId, "followUpId"),
+        message: requireString(item.message, "message"),
+        attachmentIds: requireArray(item.attachmentIds, "attachmentIds").map((id) => requireString(id, "attachmentId")),
+        ...(interactionMode === "chat" || interactionMode === "plan" || interactionMode === "build" ? { interactionMode } : {}),
+        ...(actSubmode === "strict" || actSubmode === "safe" || actSubmode === "full_auto" ? { actSubmode } : {}),
+        createdAt: requireTimestamp(item.createdAt, "createdAt"),
+        state: item.state,
+      };
+    }),
+  };
+}
+
+function parseInboxItem(value: unknown, index: number): DesktopRuntimeThreadInspection["inboxItems"][number] {
+  const item = requireRecord(value, `operator thread view.inboxItems[${index}]`);
+  const kinds = new Set(["approval_request", "user_input_request", "context_checkpoint", "child_thread_blocker", "stalled_thread_attention", "assembly_change_proposal", "compatibility_downgrade_attention", "fan_in_checkpoint", "child_outcome_review"]);
+  if (typeof item.kind !== "string" || kinds.has(item.kind) === false || typeof item.actionable !== "boolean") throw new Error("operator inbox item is invalid.");
+  return {
+    itemId: requireString(item.itemId, "itemId"),
+    kind: item.kind as DesktopRuntimeThreadInspection["inboxItems"][number]["kind"],
+    threadId: requireString(item.threadId, "threadId"),
+    sessionId: requireString(item.sessionId, "sessionId"),
+    title: requireString(item.title, "title"),
+    actionable: item.actionable,
+    createdAt: requireTimestamp(item.createdAt, "createdAt"),
+    ...optionalField(item.requestId, "requestId", "requestId"),
+    ...optionalField(item.checkpointId, "checkpointId", "checkpointId"),
+    ...optionalField(item.delegationId, "delegationId", "delegationId"),
+    ...optionalField(item.childThreadId, "childThreadId", "childThreadId"),
+    ...optionalField(item.recommendedAction, "recommendedAction", "recommendedAction"),
+    ...optionalField(item.detail, "detail", "detail"),
+    ...(typeof item.metadata === "object" && item.metadata !== null && Array.isArray(item.metadata) === false ? { metadata: item.metadata as Record<string, unknown> } : {}),
   };
 }
 

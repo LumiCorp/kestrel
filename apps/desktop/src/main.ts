@@ -28,6 +28,7 @@ import {
   parseDesktopRendererSettingsUpdate,
   parseDesktopRunCancelRequest,
   parseDesktopRunTurnRequest,
+  parseDesktopOperatorControlRequest,
 } from "../../../src/desktopShell/contracts.js";
 import {
   ensureLocalCoreDaemonReady,
@@ -89,6 +90,8 @@ import type {
   DesktopReadinessView,
   DesktopRunCancelRequest,
   DesktopRunTurnRequest,
+  DesktopAttachmentMetadata,
+  DesktopOperatorControlRequest,
   DesktopSettings,
   DesktopShellCommand,
 } from "./contracts.js";
@@ -128,6 +131,7 @@ import {
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
   runDesktopProjectAction,
+  runDesktopOperatorControl,
 } from "./missionControl.js";
 
 declare global {
@@ -135,7 +139,7 @@ declare global {
   var __kestrelDesktopProfileOverride:
     | {
         presetId?: "desktop_dev_local" | undefined;
-        capabilityPacks?: Array<"balanced" | "filesystem" | "dev_shell" | "sandbox_code"> | undefined;
+        capabilityPacks?: Array<"balanced" | "filesystem" | "dev_shell" | "desktop_host" | "sandbox_code"> | undefined;
         version: number;
       }
     | undefined;
@@ -643,7 +647,28 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    const { projectPath, ...turnRequest } = request;
+    const { projectPath, threadId, attachmentIds, ...turnRequest } = request;
+    const canonicalThreadId = `thread-main:${request.sessionId}`;
+    if (threadId !== undefined && threadId !== canonicalThreadId) {
+      throw createDesktopError({ code: "desktop.invalid_run_thread", message: "Desktop run thread does not match its Local Core session." });
+    }
+    if (attachmentIds !== undefined) {
+      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopAttachments(canonicalThreadId),
+      );
+      const selected = attachmentIds.map((attachmentId) => listed.find((entry) => entry.attachmentId === attachmentId));
+      if (selected.some((entry) => entry === undefined)) {
+        throw createDesktopError({ code: "desktop.attachment_unavailable", message: "One or more attachments are unavailable for this thread." });
+      }
+      if (selected.some((entry) => entry?.kind === "image") && desktopModelPolicy.modelCapabilities.visionInputEnabled !== true) {
+        throw createDesktopError({ code: "desktop.model_vision_unavailable", message: "The selected model does not accept image attachments." });
+      }
+    }
+    const attachments = attachmentIds === undefined
+      ? undefined
+      : await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) => await client.resolveDesktopAttachments(canonicalThreadId, attachmentIds),
+        );
     const workspace = resolveDesktopThreadWorkspace({
       ...(projectPath !== undefined ? { projectPath } : {}),
       projects: desktopSettings.projects,
@@ -652,6 +677,7 @@ function registerIpcHandlers(
     return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
       {
         ...turnRequest,
+        ...(attachments !== undefined ? { attachments } : {}),
         workspace,
       },
       {
@@ -663,6 +689,65 @@ function registerIpcHandlers(
       },
       DESKTOP_RUNNER_REQUEST_CONTEXT,
     );
+  });
+  ipcMain.handle("desktop:select-attachments", async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
+    const normalizedThreadId = parseDesktopThreadId(threadId);
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: "Attach files",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Images and text/code", extensions: ["png", "jpg", "jpeg", "webp", "gif", "txt", "md", "markdown", "json", "yaml", "yml", "csv", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cc", "cpp", "hpp", "cs", "php", "sh", "zsh", "sql", "html", "css", "scss", "toml", "xml", "vue", "svelte"] },
+      ],
+    };
+    const selection = mainWindow === undefined
+      ? await dialog.showOpenDialog(dialogOptions)
+      : await dialog.showOpenDialog(mainWindow, dialogOptions);
+    if (selection.canceled) return [];
+    if (selection.filePaths.length > 8) throw createDesktopError({ code: "desktop.too_many_attachments", message: "Select no more than 8 attachments at once." });
+    const imported: DesktopAttachmentMetadata[] = [];
+    for (const filePath of selection.filePaths) {
+      const bytes = await readFile(filePath);
+      imported.push(await requireLocalCoreConnectionManager().executeOnce(async (client) => await client.importDesktopAttachment({
+        threadId: normalizedThreadId,
+        filename: path.basename(filePath),
+        mimeType: desktopAttachmentMimeType(filePath),
+        data: bytes.toString("base64"),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      })));
+    }
+    return imported;
+  });
+  ipcMain.handle("desktop:list-attachments", async (_event, threadId: unknown) => await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.listDesktopAttachments(parseDesktopThreadId(threadId)),
+  ));
+  ipcMain.handle("desktop:remove-attachment", async (_event, threadId: unknown, attachmentId: unknown) => await requireLocalCoreConnectionManager().executeOnce(
+    async (client) => await client.removeDesktopAttachment(parseDesktopThreadId(threadId), parseDesktopAttachmentId(attachmentId)),
+  ));
+  ipcMain.handle("desktop:operator-control", async (_event, input: unknown) => {
+    let request: DesktopOperatorControlRequest;
+    try { request = parseDesktopOperatorControlRequest(input); }
+    catch (error) { throw createDesktopError({ code: "desktop.invalid_operator_control", message: "Desktop operator control request is invalid.", details: error instanceof Error ? error.message : String(error) }); }
+    const { attachmentIds, ...control } = request;
+    if (attachmentIds !== undefined) {
+      const listed = await requireLocalCoreConnectionManager().executeIdempotent(async (client) => await client.listDesktopAttachments(request.threadId));
+      const selected = attachmentIds.map((attachmentId) => listed.find((entry) => entry.attachmentId === attachmentId));
+      if (selected.some((entry) => entry === undefined)) throw createDesktopError({ code: "desktop.attachment_unavailable", message: "One or more attachments are unavailable for this thread." });
+      if (selected.some((entry) => entry?.kind === "image") && desktopModelPolicy.modelCapabilities.visionInputEnabled !== true) {
+        throw createDesktopError({ code: "desktop.model_vision_unavailable", message: "The selected model does not accept image attachments." });
+      }
+    }
+    const attachments = attachmentIds !== undefined && request.action !== "enqueue_follow_up"
+      ? await requireLocalCoreConnectionManager().executeIdempotent(async (client) => await client.resolveDesktopAttachments(request.threadId, attachmentIds))
+      : undefined;
+    return runDesktopOperatorControl({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request: {
+        ...control,
+        ...(request.action === "enqueue_follow_up" && attachmentIds !== undefined ? { attachmentIds } : {}),
+        ...(attachments !== undefined ? { attachments } : {}),
+      },
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    });
   });
   ipcMain.handle("desktop:cancel-run", async (_event, input: unknown) => {
     let request: DesktopRunCancelRequest;
@@ -2167,6 +2252,33 @@ function requireLocalCoreStatus(): LocalCoreStatus {
     });
   }
   return localCoreStatus;
+}
+
+function parseDesktopThreadId(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw createDesktopError({ code: "desktop.invalid_attachment_thread", message: "Attachment thread ID must be a non-empty string." });
+  }
+  return value.trim();
+}
+
+function parseDesktopAttachmentId(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw createDesktopError({ code: "desktop.invalid_attachment_id", message: "Attachment ID must be a non-empty string." });
+  }
+  return value.trim();
+}
+
+function desktopAttachmentMimeType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".json") return "application/json";
+  if (extension === ".yaml" || extension === ".yml") return "application/yaml";
+  if (extension === ".csv") return "text/csv";
+  if (extension === ".md" || extension === ".markdown") return "text/markdown";
+  return "text/plain";
 }
 
 function desktopToolCredentialId(

@@ -969,22 +969,33 @@ button:disabled {
 
 .message {
   width: min(780px, 100%);
-  margin: 0 auto;
-  padding: 17px 0;
-  border-bottom: 1px solid var(--border);
+  margin: 0 auto 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
 .message:last-of-type {
-  border-bottom-color: transparent;
+  margin-bottom: 24px;
+}
+
+.message-assistant {
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
 }
 
 .message-user {
-  padding-left: 18px;
-  border-left: 3px solid var(--focus);
+  width: min(620px, 88%);
+  margin-right: max(0px, calc((100% - 780px) / 2));
+  margin-left: auto;
+  padding: 14px 18px;
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
 }
 
 .message-system {
   color: var(--warning);
+  background: var(--surface-raised);
 }
 
 .message-meta {
@@ -998,6 +1009,14 @@ button:disabled {
 .message-meta strong {
   font-size: 12px;
   font-weight: 680;
+}
+
+.message-assistant .message-meta strong {
+  color: var(--accent);
+}
+
+.message-user .message-meta strong {
+  color: var(--text);
 }
 
 .message-meta time {
@@ -1204,6 +1223,43 @@ button:disabled {
   padding: 5px 7px 7px 13px;
   color: var(--muted);
   font-size: 10px;
+}
+
+.attachment-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+.attachment-chip button, .queue-item button { display: inline-grid; place-items: center; padding: 2px; border: 0; background: transparent; color: inherit; }
+.follow-up-queue, .operator-action-card { margin: 0 18px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); }
+.queue-heading, .queue-item, .operator-action-buttons { display: flex; align-items: center; gap: 8px; }
+.queue-heading { justify-content: space-between; }
+.queue-item p { flex: 1; margin: 5px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operator-action-card p { margin: 4px 0; }
+.operator-action-card small { color: var(--muted); }
+.operator-action-buttons { margin-top: 8px; flex-wrap: wrap; }
+
+.run-stream-item {
+  width: min(780px, 100%);
+  margin: 0 auto 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+}
+
+.run-stream-reasoning {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.run-stream-tool {
+  padding-block: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-stream-failed {
+  border-left-color: var(--danger);
+  color: var(--danger);
 }
 
 .primary-icon-button {

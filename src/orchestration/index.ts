@@ -10,6 +10,7 @@ export { ContextPolicyManager } from "./ContextPolicyManager.js";
 export { OperatorControlPlane } from "./OperatorControlPlane.js";
 export * from "./OperatorAffordanceProjection.js";
 export * from "./OperatorControlValidation.js";
+export * from "./FollowUpQueue.js";
 export * from "./OperatorSessionProjection.js";
 export * from "./RuntimeSessionStateProjection.js";
 export { DelegationSupervisor, type DelegationTaskUpdate } from "./DelegationSupervisor.js";

@@ -8,7 +8,7 @@ import { MessageContent } from "../renderer/src/MessageContent.js";
 
 test("assistant messages render Markdown through Streamdown", () => {
   const html = renderToStaticMarkup(React.createElement(MessageContent, {
-    role: "assistant",
+    messageRole: "assistant",
     text: "**Important**\n\n- first\n- second\n\n`inline code`",
   }));
 
@@ -20,7 +20,7 @@ test("assistant messages render Markdown through Streamdown", () => {
 
 test("user messages remain literal text", () => {
   const html = renderToStaticMarkup(React.createElement(MessageContent, {
-    role: "user",
+    messageRole: "user",
     text: "**literal user text**",
   }));
 

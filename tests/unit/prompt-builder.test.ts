@@ -116,6 +116,29 @@ test("deliberator prompt preserves application instructions at system priority",
   assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
 });
 
+test("deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
+  const desktopChat = buildDeliberatorSystemPrompt({
+    interactionMode: "chat",
+    environmentShellKind: "desktop",
+  });
+  const desktopBuild = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    environmentShellKind: "desktop",
+  });
+  const desktopPlan = buildDeliberatorSystemPrompt({
+    interactionMode: "plan",
+    environmentShellKind: "desktop",
+  });
+  const cliBuild = buildDeliberatorSystemPrompt({ interactionMode: "build", environmentShellKind: "cli" });
+  const webChat = buildDeliberatorSystemPrompt({ interactionMode: "chat", environmentShellKind: "web" });
+
+  assert.match(desktopChat, /use desktop\.host\.open/u);
+  assert.match(desktopBuild, /use desktop\.host\.open/u);
+  assert.doesNotMatch(desktopPlan, /desktop\.host\.open/u);
+  assert.doesNotMatch(cliBuild, /desktop\.host\.open/u);
+  assert.doesNotMatch(webChat, /desktop\.host\.open/u);
+});
+
 test("deliberator prompt resolver selects real mode prompts", () => {
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "reference-react:plan");
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "reference-react:build");

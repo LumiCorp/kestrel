@@ -115,6 +115,7 @@ try {
   await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
   await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
+  await window.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
   const terminalBootState = await window.evaluate(async () => {
     const bridge = (globalThis as typeof globalThis & {
       kestrelDesktop?: {
@@ -178,9 +179,11 @@ try {
   assert.equal(renderer.appInfo.version, mainProcess.version, "Main and preload versions must agree.");
   assert.equal(renderer.appInfo.version, expectedDesktopVersion, "Packaged Desktop must report its manifest version.");
   assert.equal(renderer.bridgeInfo.connected, true, "Desktop preload bridge must be connected.");
-  assert.equal(renderer.bridgeInfo.version, "3", "Packaged Desktop must expose bridge version 3.");
+  assert.equal(renderer.bridgeInfo.version, "4", "Packaged Desktop must expose bridge version 4.");
   assert.equal(renderer.bridgeInfo.capabilities.includes("runtime_inspection"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("mission_control"), true);
+  assert.equal(renderer.bridgeInfo.capabilities.includes("attachments"), true);
+  assert.equal(renderer.bridgeInfo.capabilities.includes("operator_control"), true);
   assert.equal(renderer.bootState.phase, "ready", renderer.bootState.code ?? renderer.bootState.message);
   assert.equal(renderer.hasRoot, true, "Packaged Desktop must mount the Vite renderer root.");
   assert.equal(renderer.hasNextAsset, false, "Packaged Desktop must not load Next.js assets.");

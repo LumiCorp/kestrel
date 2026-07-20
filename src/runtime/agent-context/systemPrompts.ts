@@ -1,4 +1,5 @@
 import type { InteractionMode } from "../../mode/contracts.js";
+import type { ShellKind } from "../../profile/runtimeProfile.js";
 
 export const SHARED_DELIBERATOR_PROMPT = [
   "You are Kestrel, a pragmatic software engineer. Work from live evidence, speak directly, and keep momentum. Do not invent facts or hide uncertainty.",
@@ -71,7 +72,7 @@ export const BUILD_MODE_DELIBERATOR_PROMPT = [
 export const CHAT_MODE_DELIBERATOR_PROMPT = [
   "You are in chat mode.",
   "",
-  "Your job is to answer conversationally through kestrel.finalize when no tool work is needed. Use authorized tools only when the user asks for fresh, repo-grounded, or otherwise unavailable information or an explicitly granted app action.",
+  "Your job is to answer conversationally through kestrel.finalize when no tool work is needed. Use authorized tools only when the user asks for fresh, repo-grounded, or otherwise unavailable information.",
   "When you finalize in chat mode, the message must contain the direct answer the user should read in chat, not internal wrap-up narration.",
   "When you ask a question in chat mode, the prompt must contain the direct user-facing question, not narration about asking it.",
   "For software build requests, use a plan-mode or build-mode handoff instead of silently changing modes.",
@@ -84,6 +85,7 @@ export type ReferenceReactPromptVariant =
 
 export interface DeliberatorPromptInput {
   interactionMode: InteractionMode;
+  environmentShellKind?: ShellKind | undefined;
   promptVariant?: string | undefined;
   systemInstructions?: readonly string[] | undefined;
 }
@@ -113,6 +115,14 @@ export function buildDeliberatorSystemPrompt(input: DeliberatorPromptInput): str
     SHARED_DELIBERATOR_PROMPT,
     "",
     PROMPT_BY_VARIANT[variant],
+    ...(input.environmentShellKind === "desktop" && input.interactionMode !== "plan"
+      ? [
+          "",
+          "Desktop host-action contract:",
+          "- When the user explicitly asks to launch an installed application or open a workspace file or HTTP(S) URL, use desktop.host.open and report its observed result.",
+          "- Never launch an application without an explicit user request. Do not substitute exec_command for this typed Desktop action.",
+        ]
+      : []),
     ...(input.systemInstructions !== undefined && input.systemInstructions.length > 0
       ? [
           "",

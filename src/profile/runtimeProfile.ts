@@ -16,6 +16,7 @@ export type CapabilityPackId =
   | "balanced"
   | "filesystem"
   | "dev_shell"
+  | "desktop_host"
   | "sandbox_code";
 export type ShellPresetId =
   | "cli_dev_local"
@@ -55,6 +56,7 @@ const PACK_ORDER: CapabilityPackId[] = [
   "balanced",
   "filesystem",
   "dev_shell",
+  "desktop_host",
   "sandbox_code",
 ];
 
@@ -66,6 +68,7 @@ const PACK_TOOL_NAMES: Record<CapabilityPackId, string[]> = {
   balanced: [...DEFAULT_BALANCED_TOOL_ALLOWLIST],
   filesystem: [...CODING_FILESYSTEM_TOOL_NAMES, "artifact.read"],
   dev_shell: [...DEV_SHELL_TOOL_NAMES],
+  desktop_host: ["desktop.host.open"],
   sandbox_code: ["code.execute"],
 };
 
@@ -80,7 +83,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ModelProviderId, string> = {
 export const SHELL_PRESET_PACKS: Record<ShellPresetId, CapabilityPackId[]> = {
   cli_dev_local: ["balanced", "filesystem", "dev_shell"],
   web_balanced: ["balanced"],
-  desktop_dev_local: ["balanced", "filesystem", "dev_shell"],
+  desktop_dev_local: ["balanced", "filesystem", "dev_shell", "desktop_host"],
 };
 
 const DEFAULT_PRESET_BY_SHELL: Record<ShellKind, ShellPresetId> = {
@@ -209,6 +212,7 @@ export function normalizeCapabilityPackIds(value: unknown): CapabilityPackId[] |
       entry === "balanced" ||
       entry === "filesystem" ||
       entry === "dev_shell" ||
+      entry === "desktop_host" ||
       entry === "sandbox_code",
   );
   return packs.length > 0 ? sortCapabilityPacks([...new Set(packs)]) : [];
@@ -265,6 +269,7 @@ function applyCapabilityPackToolRequirements(input: {
   const hasFilesystem = input.capabilityPacks.includes("filesystem");
   const hasSandboxCode = input.capabilityPacks.includes("sandbox_code");
   const hasDevShell = input.capabilityPacks.includes("dev_shell");
+  const hasDesktopHost = input.capabilityPacks.includes("desktop_host");
 
   for (const toolName of FILESYSTEM_TOOL_NAMES) {
     if (hasFilesystem) {
@@ -300,6 +305,14 @@ function applyCapabilityPackToolRequirements(input: {
       continue;
     }
     removeTool(next, toolName);
+  }
+
+  if (hasDesktopHost) {
+    if (next.includes("desktop.host.open") === false) {
+      next.push("desktop.host.open");
+    }
+  } else {
+    removeTool(next, "desktop.host.open");
   }
 
   return next;
