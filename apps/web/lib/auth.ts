@@ -101,6 +101,7 @@ const googleOAuthConfigured = Boolean(
 export const auth = betterAuth({
   appName: "Kestrel One",
   baseURL,
+  secret: process.env.BETTER_AUTH_SECRET,
   database: {
     dialect,
     type: "postgres",

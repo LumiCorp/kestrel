@@ -156,6 +156,7 @@ test("failure telemetry records only safe authentication-presence facts", () => 
     status: 401,
     code: "UNAUTHORIZED",
     hasCookie: true,
+    hasBetterAuthSessionCookie: true,
     hasAuthorization: true,
     hasApiKey: true,
   });
