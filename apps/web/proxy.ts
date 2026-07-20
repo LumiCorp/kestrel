@@ -33,7 +33,11 @@ export async function proxy(request: NextRequest) {
   }
 
   if (pathname.startsWith("/api/")) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    if (pathname.startsWith("/api/mobile/v2/")) {
+      response.headers.set("Cache-Control", "private, no-store");
+    }
+    return response;
   }
 
   // Don't redirect public routes

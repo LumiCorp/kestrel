@@ -14,7 +14,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const result = await resumeDurableThreadQueue({
       threadId: id,

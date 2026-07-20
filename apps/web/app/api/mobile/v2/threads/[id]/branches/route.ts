@@ -24,7 +24,7 @@ const bodySchema = z
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id: parentThreadId } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     const idempotencyKey = request.headers.get("idempotency-key")?.trim();

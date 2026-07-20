@@ -110,6 +110,47 @@ test("mobile Project routes export GET only", () => {
   }
 });
 
+test("every mobile v2 handler reaches the request-scoped mobile session boundary", () => {
+  const v2Root = path.join(packageRoot, "app/api/mobile/v2");
+  const routeFiles = fs
+    .readdirSync(v2Root, { recursive: true })
+    .map(String)
+    .filter((relativePath) => relativePath.endsWith("route.ts"));
+  const combinedSources = routeFiles
+    .map((relativePath) =>
+      fs.readFileSync(path.join(v2Root, relativePath), "utf8")
+    )
+    .join("\n");
+  const v1Root = path.join(packageRoot, "app/api/mobile/v1");
+  const reusedV1Sources = fs
+    .readdirSync(v1Root, { recursive: true })
+    .map(String)
+    .filter((relativePath) => relativePath.endsWith("route.ts"))
+    .map((relativePath) =>
+      fs.readFileSync(path.join(v1Root, relativePath), "utf8")
+    )
+    .join("\n");
+
+  assert.match(combinedSources, /requireActiveOrganization\(request\)/u);
+  assert.doesNotMatch(combinedSources, /requireActiveOrganization\(\)/u);
+  assert.doesNotMatch(reusedV1Sources, /require(?:Session|ActiveOrganization)\(\)/u);
+
+  const authBoundary = fs.readFileSync(
+    path.join(packageRoot, "lib/knowledge/auth.ts"),
+    "utf8"
+  );
+  assert.match(
+    authBoundary,
+    /requireMobileSession\(request\)/u
+  );
+});
+
+test("mobile v2 responses are private and never cached", () => {
+  const proxySource = fs.readFileSync(path.join(packageRoot, "proxy.ts"), "utf8");
+  assert.match(proxySource, /pathname\.startsWith\("\/api\/mobile\/v2\/"\)/u);
+  assert.match(proxySource, /"Cache-Control", "private, no-store"/u);
+});
+
 test("mobile wire inputs contain no model or agent configuration", () => {
   const createThread = JSON.stringify(
     contract.components.schemas.CreateThreadInput

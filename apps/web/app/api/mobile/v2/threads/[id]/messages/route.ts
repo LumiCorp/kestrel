@@ -20,7 +20,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const url = new URL(request.url);
     const query = querySchema.parse(

@@ -10,7 +10,7 @@ const querySchema = z.object({ before: z.string().min(1).optional(), limit: z.co
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const query = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams.entries()));
     const page = await getMobileV2OutlinePage({ threadId: id, organizationId, userId: session.user.id, ...query });
