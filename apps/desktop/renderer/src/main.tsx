@@ -18,6 +18,9 @@ const editorView = params.get("view") === "editor";
 const filePath = params.get("filePath");
 const projectPath = params.get("projectPath");
 const projectLabel = params.get("projectLabel");
+const threadId = params.get("threadId");
+const lineNumber = parseSourcePosition(params.get("lineNumber"));
+const columnNumber = parseSourcePosition(params.get("columnNumber"));
 
 createRoot(root).render(
   <StrictMode>
@@ -26,9 +29,20 @@ createRoot(root).render(
         filePath={filePath}
         projectPath={projectPath}
         projectLabel={projectLabel}
+        {...(threadId !== null ? { threadId } : {})}
+        {...(lineNumber !== undefined ? { lineNumber } : {})}
+        {...(columnNumber !== undefined ? { columnNumber } : {})}
       />
     ) : (
       <DesktopApp />
     )}
   </StrictMode>,
 );
+
+function parseSourcePosition(value: string | null): number | undefined {
+  if (value === null) {
+    return;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}

@@ -167,6 +167,20 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               updatedAt: "2026-07-10T12:00:00.000Z",
             }],
             childBlockerChain: [],
+            workspace: {
+              kind: "managed",
+              workspaceId: "workspace-a",
+              label: "Project A",
+              workspaceRoot: "/tmp/managed/project-a",
+              sourceWorkspaceRoot: "/tmp/project-a",
+              sourceRepoRoot: "/tmp/project-a",
+              managedWorktreeRoot: "/tmp/managed/project-a",
+              baseHead: "base-sha",
+              lastObservedSourceHead: "source-sha",
+              leaseId: "lease-1",
+              leaseKind: "run",
+              dirty: true,
+            },
             focusedThreadId: "thread-main:session-1",
             operatorPhase: "act",
             blocker: {
@@ -201,6 +215,20 @@ test("Desktop Mission Control projects runtime thread inspection through the run
 
   assert.equal(response.thread.activeRunId, "run-1");
   assert.equal(response.thread.status, "RUNNING");
+  assert.deepEqual(response.workspace, {
+    kind: "managed",
+    workspaceId: "workspace-a",
+    label: "Project A",
+    workspaceRoot: "/tmp/managed/project-a",
+    sourceWorkspaceRoot: "/tmp/project-a",
+    sourceRepoRoot: "/tmp/project-a",
+    managedWorktreeRoot: "/tmp/managed/project-a",
+    baseHead: "base-sha",
+    lastObservedSourceHead: "source-sha",
+    leaseId: "lease-1",
+    leaseKind: "run",
+    dirty: true,
+  });
   assert.equal(response.blocker?.summary, "Desktop package smoke is required.");
   assert.equal(response.nextAction?.checkpointId, "checkpoint-1");
   assert.deepEqual(response.runtimePlan?.commandNames, ["pnpm desktop:test"]);

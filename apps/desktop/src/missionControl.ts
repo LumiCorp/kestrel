@@ -17,6 +17,7 @@ import type {
   DesktopRuntimeThreadPlan,
   DesktopRuntimeThreadStatus,
   DesktopRuntimeThreadSummary,
+  DesktopThreadWorkspaceContext,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 
@@ -165,8 +166,12 @@ export function parseDesktopRuntimeThreadInspection(
   const latestSteering = view.latestSteering === undefined
     ? undefined
     : parseLatestSteering(view.latestSteering);
+  const workspace = view.workspace === undefined
+    ? undefined
+    : parseThreadWorkspaceContext(view.workspace);
   return {
     thread: parseRuntimeThreadSummary(view.thread, "operator thread view.thread"),
+    ...(workspace !== undefined ? { workspace } : {}),
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
     ...(parentThread !== undefined ? { parentThread } : {}),
     childThreads,
@@ -175,6 +180,46 @@ export function parseDesktopRuntimeThreadInspection(
     ...(nextAction !== undefined ? { nextAction } : {}),
     ...(runtimePlan !== undefined ? { runtimePlan } : {}),
     ...(latestSteering !== undefined ? { latestSteering } : {}),
+  };
+}
+
+function parseThreadWorkspaceContext(value: unknown): DesktopThreadWorkspaceContext {
+  const workspace = requireRecord(value, "operator thread view.workspace");
+  if (workspace.kind !== "local" && workspace.kind !== "managed") {
+    throw new Error("operator thread view.workspace.kind is invalid.");
+  }
+  const leaseKind = workspace.leaseKind;
+  if (leaseKind !== undefined && leaseKind !== "run" && leaseKind !== "process") {
+    throw new Error("operator thread view.workspace.leaseKind is invalid.");
+  }
+  if (workspace.dirty !== undefined && typeof workspace.dirty !== "boolean") {
+    throw new Error("operator thread view.workspace.dirty is invalid.");
+  }
+  return {
+    kind: workspace.kind,
+    ...optionalField(workspace.workspaceId, "operator thread view.workspace.workspaceId", "workspaceId"),
+    label: requireString(workspace.label, "operator thread view.workspace.label"),
+    workspaceRoot: requireString(workspace.workspaceRoot, "operator thread view.workspace.workspaceRoot"),
+    sourceWorkspaceRoot: requireString(
+      workspace.sourceWorkspaceRoot,
+      "operator thread view.workspace.sourceWorkspaceRoot",
+    ),
+    ...optionalField(workspace.sourceRepoRoot, "operator thread view.workspace.sourceRepoRoot", "sourceRepoRoot"),
+    ...optionalField(
+      workspace.managedWorktreeRoot,
+      "operator thread view.workspace.managedWorktreeRoot",
+      "managedWorktreeRoot",
+    ),
+    ...optionalField(workspace.baseRefName, "operator thread view.workspace.baseRefName", "baseRefName"),
+    ...optionalField(workspace.baseHead, "operator thread view.workspace.baseHead", "baseHead"),
+    ...optionalField(
+      workspace.lastObservedSourceHead,
+      "operator thread view.workspace.lastObservedSourceHead",
+      "lastObservedSourceHead",
+    ),
+    ...optionalField(workspace.leaseId, "operator thread view.workspace.leaseId", "leaseId"),
+    ...(leaseKind !== undefined ? { leaseKind } : {}),
+    ...(typeof workspace.dirty === "boolean" ? { dirty: workspace.dirty } : {}),
   };
 }
 

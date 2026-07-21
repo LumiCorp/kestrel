@@ -3,6 +3,7 @@ import type {
   DesktopRunHistoryLine,
   DesktopRunnerEvent,
   DesktopUiStateV1,
+  RunTurnAttachment,
 } from "../../src/contracts";
 import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
 
@@ -15,12 +16,24 @@ const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
 
 export type RendererTheme = "light" | "dark";
 export type RendererMode = "chat" | "plan" | "build";
+export type RendererWorkspaceMode = "local" | "managed";
+export type RendererDiffScopeKind =
+  | "unstaged"
+  | "staged"
+  | "uncommitted"
+  | "branch"
+  | "commit"
+  | "pull_request"
+  | "latest_run"
+  | "latest_turn"
+  | "promotion";
 
 export interface RendererTranscriptLine {
   role: "user" | "assistant" | "system";
   text: string;
   timestamp: string;
   data?: unknown;
+  attachments?: RunTurnAttachment[] | undefined;
 }
 
 export interface RendererThread {
@@ -32,6 +45,15 @@ export interface RendererThread {
   transcript: RendererTranscriptLine[];
   pendingWaitEventType?: string | undefined;
   mode: RendererMode;
+  workspaceMode: RendererWorkspaceMode;
+  workspaceBaseRef: string;
+  workspaceSetupIgnoredFiles: string;
+  workspaceSetupExecutable: string;
+  workspaceSetupArgs: string;
+  openFiles: string[];
+  diffScopeKind: RendererDiffScopeKind;
+  diffRevision: string;
+  diffView: "unified" | "side-by-side";
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
 }
@@ -49,9 +71,12 @@ export function readDesktopRendererState(
   const entries = { ...(uiState?.entries ?? {}) };
   const store = parseThreadStore(entries[THREADS_STORAGE_KEY]);
   const threads = collectThreads(store);
-  const normalizedThreads = threads.length > 0 ? threads : [createRendererThread()];
+  const normalizedThreads =
+    threads.length > 0 ? threads : [createRendererThread()];
   const requestedActive = entries[ACTIVE_THREAD_STORAGE_KEY];
-  const activeThreadId = normalizedThreads.some((thread) => thread.id === requestedActive)
+  const activeThreadId = normalizedThreads.some(
+    (thread) => thread.id === requestedActive,
+  )
     ? requestedActive!
     : normalizedThreads[0]!.id;
   return {
@@ -62,17 +87,30 @@ export function readDesktopRendererState(
   };
 }
 
-export function createRendererThread(input: { projectPath?: string | undefined } = {}): RendererThread {
+export function createRendererThread(
+  input: { projectPath?: string | undefined } = {},
+): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   return {
     id,
     title: "New conversation",
     sessionId: crypto.randomUUID(),
-    ...(input.projectPath !== undefined ? { projectPath: input.projectPath } : {}),
+    ...(input.projectPath !== undefined
+      ? { projectPath: input.projectPath }
+      : {}),
     updatedAt: now,
     transcript: [],
     mode: "build",
+    workspaceMode: "local",
+    workspaceBaseRef: "HEAD",
+    workspaceSetupIgnoredFiles: "",
+    workspaceSetupExecutable: "",
+    workspaceSetupArgs: "",
+    openFiles: [],
+    diffScopeKind: "uncommitted",
+    diffRevision: "",
+    diffView: "unified",
     rawSummary: {},
     rawState: {},
   };
@@ -84,16 +122,19 @@ export function appendRendererTranscript(
   line: RendererTranscriptLine,
 ): DesktopRendererState {
   return updateRendererThread(state, threadId, (thread) => {
-    const firstUserText = line.role === "user" && thread.transcript.every((item) => item.role !== "user")
-      ? line.text.trim()
-      : undefined;
+    const firstUserText =
+      line.role === "user" &&
+      thread.transcript.every((item) => item.role !== "user")
+        ? line.text.trim()
+        : undefined;
     return {
       ...thread,
-      title: firstUserText === undefined
-        ? thread.title
-        : firstUserText.length > 54
-          ? `${firstUserText.slice(0, 51)}...`
-          : firstUserText,
+      title:
+        firstUserText === undefined
+          ? thread.title
+          : firstUserText.length > 54
+            ? `${firstUserText.slice(0, 51)}...`
+            : firstUserText,
       updatedAt: line.timestamp,
       transcript: [...thread.transcript, line],
     };
@@ -107,7 +148,9 @@ export function updateRendererThread(
 ): DesktopRendererState {
   return {
     ...state,
-    threads: state.threads.map((thread) => thread.id === threadId ? update(thread) : thread),
+    threads: state.threads.map((thread) =>
+      thread.id === threadId ? update(thread) : thread,
+    ),
   };
 }
 
@@ -134,19 +177,28 @@ export function selectRendererThread(
 
 export function resolveRendererThreadProjectPath(input: {
   thread: Pick<RendererThread, "projectPath">;
+  authoritativeProjectPath?: string | undefined;
   activeProjectPath?: string | undefined;
   projects: readonly { path: string }[];
 }): string | undefined {
-  const registeredPaths = new Set(input.projects.map((project) => project.path));
+  const registeredPaths = new Set(
+    input.projects.map((project) => project.path),
+  );
   if (
-    input.thread.projectPath !== undefined
-    && registeredPaths.has(input.thread.projectPath)
+    input.authoritativeProjectPath !== undefined &&
+    registeredPaths.has(input.authoritativeProjectPath)
+  ) {
+    return input.authoritativeProjectPath;
+  }
+  if (
+    input.thread.projectPath !== undefined &&
+    registeredPaths.has(input.thread.projectPath)
   ) {
     return input.thread.projectPath;
   }
   if (
-    input.activeProjectPath !== undefined
-    && registeredPaths.has(input.activeProjectPath)
+    input.activeProjectPath !== undefined &&
+    registeredPaths.has(input.activeProjectPath)
   ) {
     return input.activeProjectPath;
   }
@@ -169,27 +221,41 @@ export function serializeDesktopRendererState(
     id: thread.id,
     title: thread.title,
     updatedAt: thread.updatedAt,
-    createdAt: typeof thread.rawSummary.createdAt === "string"
-      ? thread.rawSummary.createdAt
-      : thread.updatedAt,
+    createdAt:
+      typeof thread.rawSummary.createdAt === "string"
+        ? thread.rawSummary.createdAt
+        : thread.updatedAt,
     lastPreview: thread.transcript.at(-1)?.text.slice(0, 160) ?? "",
   }));
-  const states = Object.fromEntries(state.threads.map((thread) => [
-    thread.id,
-    {
-      ...thread.rawState,
-      sessionId: thread.sessionId,
-      ...(thread.projectPath !== undefined
-        ? { projectPath: thread.projectPath }
-        : { projectPath: undefined }),
-      transcript: persistedTranscripts.get(thread.id) ?? [],
-      ...(thread.pendingWaitEventType !== undefined
-        ? { pendingWaitEventType: thread.pendingWaitEventType }
-        : { pendingWaitEventType: undefined }),
-      interactionMode: thread.mode,
-      ...(thread.mode === "build" ? { actSubmode: "safe" } : { actSubmode: undefined }),
-    },
-  ]));
+  const states = Object.fromEntries(
+    state.threads.map((thread) => [
+      thread.id,
+      {
+        ...thread.rawState,
+        sessionId: thread.sessionId,
+        ...(thread.projectPath !== undefined
+          ? { projectPath: thread.projectPath }
+          : { projectPath: undefined }),
+        transcript: persistedTranscripts.get(thread.id) ?? [],
+        ...(thread.pendingWaitEventType !== undefined
+          ? { pendingWaitEventType: thread.pendingWaitEventType }
+          : { pendingWaitEventType: undefined }),
+        interactionMode: thread.mode,
+        workspaceMode: thread.workspaceMode,
+        workspaceBaseRef: thread.workspaceBaseRef,
+        workspaceSetupIgnoredFiles: thread.workspaceSetupIgnoredFiles,
+        workspaceSetupExecutable: thread.workspaceSetupExecutable,
+        workspaceSetupArgs: thread.workspaceSetupArgs,
+        openFiles: thread.openFiles.slice(-20),
+        diffScopeKind: thread.diffScopeKind,
+        diffRevision: thread.diffRevision,
+        diffView: thread.diffView,
+        ...(thread.mode === "build"
+          ? { actSubmode: "safe" }
+          : { actSubmode: undefined }),
+      },
+    ]),
+  );
   return {
     ...state.entries,
     [THREADS_STORAGE_KEY]: JSON.stringify({ summaries, states }),
@@ -198,32 +264,44 @@ export function serializeDesktopRendererState(
   };
 }
 
-export function toDesktopRunHistory(thread: RendererThread): DesktopRunHistoryLine[] {
+export function toDesktopRunHistory(
+  thread: RendererThread,
+): DesktopRunHistoryLine[] {
   return thread.transcript.flatMap<DesktopRunHistoryLine>((line) => {
     if (line.role === "user" || line.role === "assistant") {
-      return [{ role: line.role, text: line.text, timestamp: line.timestamp }];
-    }
-    const data = asRecord(line.data);
-    const runId = typeof data?.runId === "string" && data.runId.trim().length > 0
-      ? data.runId.trim()
-      : undefined;
-    return data?.kind === "runtime.waiting_prompt"
-      ? [{
-          role: "system" as const,
+      return [
+        {
+          role: line.role,
           text: line.text,
           timestamp: line.timestamp,
-          data: {
-            kind: "runtime.waiting_prompt" as const,
-            ...(runId !== undefined ? { runId } : {}),
+          ...(line.attachments !== undefined
+            ? { attachments: line.attachments }
+            : {}),
+        },
+      ];
+    }
+    const data = asRecord(line.data);
+    const runId =
+      typeof data?.runId === "string" && data.runId.trim().length > 0
+        ? data.runId.trim()
+        : undefined;
+    return data?.kind === "runtime.waiting_prompt"
+      ? [
+          {
+            role: "system" as const,
+            text: line.text,
+            timestamp: line.timestamp,
+            data: {
+              kind: "runtime.waiting_prompt" as const,
+              ...(runId !== undefined ? { runId } : {}),
+            },
           },
-        }]
+        ]
       : [];
   });
 }
 
-export function getRendererTurnContinuation(
-  thread: RendererThread,
-): {
+export function getRendererTurnContinuation(thread: RendererThread): {
   eventType: string;
   resumeFromWait?: true | undefined;
   resumeBlockedRun?: true | undefined;
@@ -243,8 +321,11 @@ export function getRendererTurnContinuation(
 export function getTerminalWaitEventType(
   event: DesktopRunnerEvent,
 ): string | undefined {
-  if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
-    return ;
+  if (
+    event.type !== "run.completed" ||
+    event.payload.result.output.status !== "WAITING"
+  ) {
+    return;
   }
   const eventType = event.payload.result.output.waitFor?.eventType;
   return typeof eventType === "string" && eventType.trim().length > 0
@@ -255,8 +336,11 @@ export function getTerminalWaitEventType(
 export function getTerminalWaitingPrompt(
   event: DesktopRunnerEvent,
 ): { text: string; runId: string } | undefined {
-  if (event.type !== "run.completed" || event.payload.result.output.status !== "WAITING") {
-    return ;
+  if (
+    event.type !== "run.completed" ||
+    event.payload.result.output.status !== "WAITING"
+  ) {
+    return;
   }
   const prompt = extractWaitPrompt(event.payload.result.output.waitFor);
   return prompt !== undefined
@@ -295,41 +379,109 @@ function collectThreads(store: {
     }
   }
   const ids = [...new Set([...summaries.keys(), ...Object.keys(store.states)])];
-  return ids.flatMap((id) => {
-    const rawState = asRecord(store.states[id]);
-    if (rawState === undefined || typeof rawState.sessionId !== "string") {
-      return [];
-    }
-    const rawSummary = summaries.get(id) ?? {};
-    const transcript = Array.isArray(rawState.transcript)
-      ? rawState.transcript.flatMap(parseTranscriptLine)
-      : [];
-    const updatedAt = typeof rawSummary.updatedAt === "string"
-      ? normalizeTimestamp(rawSummary.updatedAt)
-      : transcript.at(-1)?.timestamp ?? new Date().toISOString();
-    const mode: RendererMode = rawState.interactionMode === "chat" || rawState.interactionMode === "plan"
-      ? rawState.interactionMode
-      : "build";
-    return [{
-      id,
-      title: typeof rawSummary.title === "string" && rawSummary.title.trim().length > 0
-        ? rawSummary.title
-        : "Conversation",
-      sessionId: rawState.sessionId,
-      ...(typeof rawState.projectPath === "string" && rawState.projectPath.trim().length > 0
-        ? { projectPath: rawState.projectPath.trim() }
-        : {}),
-      updatedAt,
-      transcript,
-      ...(typeof rawState.pendingWaitEventType === "string" &&
-      rawState.pendingWaitEventType.trim().length > 0
-        ? { pendingWaitEventType: rawState.pendingWaitEventType.trim() }
-        : {}),
-      mode,
-      rawSummary,
-      rawState,
-    }];
-  }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return ids
+    .flatMap((id) => {
+      const rawState = asRecord(store.states[id]);
+      if (rawState === undefined || typeof rawState.sessionId !== "string") {
+        return [];
+      }
+      const rawSummary = summaries.get(id) ?? {};
+      const transcript = Array.isArray(rawState.transcript)
+        ? rawState.transcript.flatMap(parseTranscriptLine)
+        : [];
+      const updatedAt =
+        typeof rawSummary.updatedAt === "string"
+          ? normalizeTimestamp(rawSummary.updatedAt)
+          : (transcript.at(-1)?.timestamp ?? new Date().toISOString());
+      const mode: RendererMode =
+        rawState.interactionMode === "chat" ||
+        rawState.interactionMode === "plan"
+          ? rawState.interactionMode
+          : "build";
+      const workspaceMode: RendererWorkspaceMode =
+        rawState.workspaceMode === "managed" ? "managed" : "local";
+      const workspaceBaseRef =
+        typeof rawState.workspaceBaseRef === "string" &&
+        rawState.workspaceBaseRef.trim().length > 0
+          ? rawState.workspaceBaseRef.trim()
+          : "HEAD";
+      const workspaceSetupIgnoredFiles =
+        typeof rawState.workspaceSetupIgnoredFiles === "string"
+          ? rawState.workspaceSetupIgnoredFiles
+          : "";
+      const workspaceSetupExecutable =
+        typeof rawState.workspaceSetupExecutable === "string"
+          ? rawState.workspaceSetupExecutable
+          : "";
+      const workspaceSetupArgs =
+        typeof rawState.workspaceSetupArgs === "string"
+          ? rawState.workspaceSetupArgs
+          : "";
+      const openFiles = Array.isArray(rawState.openFiles)
+        ? rawState.openFiles
+            .filter(
+              (value): value is string =>
+                typeof value === "string" && value.length > 0,
+            )
+            .slice(-20)
+        : [];
+      const diffScopeKind = parseDiffScopeKind(rawState.diffScopeKind);
+      const diffRevision =
+        typeof rawState.diffRevision === "string"
+          ? rawState.diffRevision.slice(0, 512)
+          : "";
+      const diffView =
+        rawState.diffView === "side-by-side"
+          ? ("side-by-side" as const)
+          : ("unified" as const);
+      return [
+        {
+          id,
+          title:
+            typeof rawSummary.title === "string" &&
+            rawSummary.title.trim().length > 0
+              ? rawSummary.title
+              : "Conversation",
+          sessionId: rawState.sessionId,
+          ...(typeof rawState.projectPath === "string" &&
+          rawState.projectPath.trim().length > 0
+            ? { projectPath: rawState.projectPath.trim() }
+            : {}),
+          updatedAt,
+          transcript,
+          ...(typeof rawState.pendingWaitEventType === "string" &&
+          rawState.pendingWaitEventType.trim().length > 0
+            ? { pendingWaitEventType: rawState.pendingWaitEventType.trim() }
+            : {}),
+          mode,
+          workspaceMode,
+          workspaceBaseRef,
+          workspaceSetupIgnoredFiles,
+          workspaceSetupExecutable,
+          workspaceSetupArgs,
+          openFiles,
+          diffScopeKind,
+          diffRevision,
+          diffView,
+          rawSummary,
+          rawState,
+        },
+      ];
+    })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function parseDiffScopeKind(value: unknown): RendererDiffScopeKind {
+  return value === "unstaged" ||
+    value === "staged" ||
+    value === "branch" ||
+    value === "commit" ||
+    value === "pull_request" ||
+    value === "latest_run" ||
+    value === "latest_turn" ||
+    value === "promotion"
+    ? value
+    : "uncommitted";
 }
 
 function compactTranscriptsForPersistence(
@@ -366,8 +518,14 @@ function compactTranscriptLine(
     text: truncateUtf8(line.text, MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES),
     timestamp: line.timestamp,
     ...(line.data !== undefined ? { data: line.data } : {}),
+    ...(line.attachments !== undefined
+      ? { attachments: line.attachments }
+      : {}),
   };
-  if (serializedByteLength(compacted) <= MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES * 2) {
+  if (
+    serializedByteLength(compacted) <=
+    MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES * 2
+  ) {
     return compacted;
   }
   return {
@@ -397,28 +555,62 @@ function truncateUtf8(value: string, maxBytes: number): string {
 function parseTranscriptLine(value: unknown): RendererTranscriptLine[] {
   const line = asRecord(value);
   if (
-    (line?.role !== "user" && line?.role !== "assistant" && line?.role !== "system")
-    || typeof line.text !== "string"
+    (line?.role !== "user" &&
+      line?.role !== "assistant" &&
+      line?.role !== "system") ||
+    typeof line.text !== "string"
   ) {
     return [];
   }
-  return [{
-    role: line.role,
-    text: line.text,
-    timestamp: typeof line.timestamp === "string"
-      ? normalizeTimestamp(line.timestamp)
-      : new Date().toISOString(),
-    ...(line.data !== undefined ? { data: line.data } : {}),
-  }];
+  return [
+    {
+      role: line.role,
+      text: line.text,
+      timestamp:
+        typeof line.timestamp === "string"
+          ? normalizeTimestamp(line.timestamp)
+          : new Date().toISOString(),
+      ...(line.data !== undefined ? { data: line.data } : {}),
+      ...parseRendererAttachments(line.attachments),
+    },
+  ];
+}
+
+function parseRendererAttachments(value: unknown): {
+  attachments?: RunTurnAttachment[] | undefined;
+} {
+  if (Array.isArray(value) === false) {
+    return {};
+  }
+  const attachments = value
+    .filter((entry): entry is RunTurnAttachment => {
+      const record = asRecord(entry);
+      return (
+        typeof record?.attachmentId === "string" &&
+        typeof record.filename === "string" &&
+        typeof record.mimeType === "string" &&
+        typeof record.sizeBytes === "number" &&
+        typeof record.sha256 === "string" &&
+        (record.kind === "text" || record.kind === "image") &&
+        (record.kind !== "text" || typeof record.text === "string") &&
+        (record.kind !== "image" || typeof record.data === "string")
+      );
+    })
+    .slice(0, 8);
+  return attachments.length === 0 ? {} : { attachments };
 }
 
 function normalizeTimestamp(value: string): string {
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+  return Number.isFinite(date.getTime())
+    ? date.toISOString()
+    : new Date().toISOString();
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false
-    ? value as Record<string, unknown>
+  return typeof value === "object" &&
+    value !== null &&
+    Array.isArray(value) === false
+    ? (value as Record<string, unknown>)
     : undefined;
 }

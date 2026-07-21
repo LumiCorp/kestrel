@@ -1,14 +1,19 @@
 import { execFile } from "node:child_process";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import type {
   DesktopDirectoryListing,
+  DesktopFileContentSearchResponse,
+  DesktopFileContentSearchResult,
   DesktopFileSearchResponse,
   DesktopFileSearchResult,
 } from "../../../src/desktopShell/contracts.js";
 
 export const DESKTOP_FILE_SEARCH_RESULT_LIMIT = 200;
+export const DESKTOP_CONTENT_SEARCH_FILE_MAX_BYTES = 1024 * 1024;
+export const DESKTOP_CONTENT_SEARCH_TOTAL_MAX_BYTES = 16 * 1024 * 1024;
 
 type GitListFiles = (rootPath: string) => Promise<string[] | undefined>;
 
@@ -94,6 +99,83 @@ export class DesktopProjectFileIndex {
     });
   }
 
+  async searchContent(rootPath: string, query: string): Promise<DesktopFileContentSearchResponse> {
+    const normalizedRoot = path.resolve(rootPath);
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length === 0) {
+      return emptyContentSearchResponse(normalizedRoot, normalizedQuery, true);
+    }
+
+    const gitFiles = await this.readCachedGitFiles(normalizedRoot);
+    const candidates = gitFiles !== undefined
+      ? gitFiles.map((relativePath) => path.resolve(normalizedRoot, relativePath))
+      : this.knownListingCandidates(normalizedRoot).map((entry) => entry.path);
+    const fullSearchAvailable = gitFiles !== undefined;
+    const results: DesktopFileContentSearchResult[] = [];
+    let scannedFileCount = 0;
+    let skippedFileCount = 0;
+    let scannedBytes = 0;
+    let truncated = false;
+    const realRoot = await realpath(normalizedRoot);
+
+    for (const candidatePath of [...new Set(candidates)].sort((left, right) => left.localeCompare(right))) {
+      if (results.length >= DESKTOP_FILE_SEARCH_RESULT_LIMIT) {
+        truncated = true;
+        break;
+      }
+      if (isPathWithinRoot(normalizedRoot, candidatePath) === false) {
+        skippedFileCount += 1;
+        continue;
+      }
+      try {
+        const fileStats = await lstat(candidatePath);
+        if (
+          fileStats.isFile() === false ||
+          fileStats.isSymbolicLink() ||
+          fileStats.size > DESKTOP_CONTENT_SEARCH_FILE_MAX_BYTES ||
+          scannedBytes + fileStats.size > DESKTOP_CONTENT_SEARCH_TOTAL_MAX_BYTES
+        ) {
+          skippedFileCount += 1;
+          if (scannedBytes + fileStats.size > DESKTOP_CONTENT_SEARCH_TOTAL_MAX_BYTES) {
+            truncated = true;
+          }
+          continue;
+        }
+        const realCandidate = await realpath(candidatePath);
+        if (isPathWithinRoot(realRoot, realCandidate) === false) {
+          skippedFileCount += 1;
+          continue;
+        }
+        const buffer = await readFile(realCandidate);
+        scannedBytes += buffer.byteLength;
+        if (buffer.includes(0)) {
+          skippedFileCount += 1;
+          continue;
+        }
+        const content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        scannedFileCount += 1;
+        appendContentMatches({
+          results,
+          candidatePath,
+          query: normalizedQuery,
+          content,
+        });
+      } catch {
+        skippedFileCount += 1;
+      }
+    }
+
+    return {
+      rootPath: normalizedRoot,
+      query: normalizedQuery,
+      results: results.slice(0, DESKTOP_FILE_SEARCH_RESULT_LIMIT),
+      truncated: truncated || results.length > DESKTOP_FILE_SEARCH_RESULT_LIMIT,
+      fullSearchAvailable,
+      scannedFileCount,
+      skippedFileCount,
+    };
+  }
+
   private async readCachedGitFiles(rootPath: string): Promise<string[] | undefined> {
     if (this.gitCache.has(rootPath)) {
       return this.gitCache.get(rootPath);
@@ -129,6 +211,61 @@ export class DesktopProjectFileIndex {
   }
 }
 
+function emptyContentSearchResponse(
+  rootPath: string,
+  query: string,
+  fullSearchAvailable: boolean,
+): DesktopFileContentSearchResponse {
+  return {
+    rootPath,
+    query,
+    results: [],
+    truncated: false,
+    fullSearchAvailable,
+    scannedFileCount: 0,
+    skippedFileCount: 0,
+  };
+}
+
+function appendContentMatches(input: {
+  results: DesktopFileContentSearchResult[];
+  candidatePath: string;
+  query: string;
+  content: string;
+}): void {
+  const normalizedQuery = input.query.toLowerCase();
+  const lines = input.content.split(/\r\n|\n|\r/u);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
+    const normalizedLine = line.toLowerCase();
+    let fromIndex = 0;
+    while (fromIndex <= normalizedLine.length - normalizedQuery.length) {
+      const matchIndex = normalizedLine.indexOf(normalizedQuery, fromIndex);
+      if (matchIndex < 0) {
+        break;
+      }
+      input.results.push({
+        path: input.candidatePath,
+        name: path.basename(input.candidatePath),
+        directoryPath: path.dirname(input.candidatePath),
+        lineNumber: lineIndex + 1,
+        columnNumber: matchIndex + 1,
+        preview: boundedMatchPreview(line, matchIndex, input.query.length),
+      });
+      if (input.results.length > DESKTOP_FILE_SEARCH_RESULT_LIMIT) {
+        return;
+      }
+      fromIndex = matchIndex + Math.max(input.query.length, 1);
+    }
+  }
+}
+
+function boundedMatchPreview(line: string, matchIndex: number, matchLength: number): string {
+  const start = Math.max(0, matchIndex - 80);
+  const end = Math.min(line.length, matchIndex + matchLength + 120);
+  return `${start > 0 ? "…" : ""}${line.slice(start, end)}${end < line.length ? "…" : ""}`;
+}
+
 function buildSearchResponse(input: {
   rootPath: string;
   query: string;
@@ -136,7 +273,10 @@ function buildSearchResponse(input: {
   fullSearchAvailable: boolean;
 }): DesktopFileSearchResponse {
   const matched = input.candidates
-    .filter((entry) => entry.name.toLowerCase().includes(input.query))
+    .filter((entry) => {
+      const relativePath = path.relative(input.rootPath, entry.path).replaceAll(path.sep, "/").toLowerCase();
+      return entry.name.toLowerCase().includes(input.query) || relativePath.includes(input.query);
+    })
     .sort((left, right) => left.path.localeCompare(right.path));
   return {
     rootPath: input.rootPath,

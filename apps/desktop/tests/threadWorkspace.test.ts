@@ -17,6 +17,28 @@ test("desktop project threads use the registered project as their workspace and 
   assert.equal(workspace.appRoot, ".");
   assert.equal(workspace.label, "Project A");
   assert.match(workspace.workspaceId, /^local:[a-f0-9]{16}$/u);
+  assert.equal(workspace.managedWorktreeRequired, false);
+});
+
+test("desktop build threads can explicitly select managed worktree isolation", () => {
+  const projectPath = path.join(path.sep, "workspace", "project-a");
+  const workspace = resolveDesktopThreadWorkspace({
+    projectPath,
+    workspaceMode: "managed",
+    workspaceBaseRef: "release/v2",
+    workspaceSetup: {
+      approvedIgnoredFiles: [".env"],
+      steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
+    },
+    projects: [{ path: projectPath, label: "Project A" }],
+    defaultKestrelRoot: path.join(path.sep, "kestrel"),
+  });
+
+  assert.equal(workspace.managedWorktreeRequired, true);
+  assert.equal(workspace.managedWorktreeIsolation, "scoped");
+  assert.equal(workspace.sourceWorkspaceRoot, projectPath);
+  assert.equal(workspace.managedWorktreeBaseRef, "release/v2");
+  assert.deepEqual(workspace.managedWorktreeSetup?.approvedIgnoredFiles, [".env"]);
 });
 
 test("desktop unscoped threads use the default Kestrel folder instead of the app bundle", () => {

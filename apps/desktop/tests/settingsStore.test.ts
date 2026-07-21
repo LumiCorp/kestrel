@@ -505,6 +505,7 @@ test("buildDesktopRunnerEnvironment applies local runtime defaults for desktop r
 
   assert.equal(env.KESTREL_HOME, "/tmp/kestrel-desktop-runtime-home");
   assert.equal(env.KESTREL_MODEL_PROMPT_DUMP, "1");
+  assert.equal(env.KESTREL_ENABLE_MANAGED_WORKTREES, "1");
   assert.equal(env.OPENROUTER_API_KEY, "router-key");
   assert.equal(env.TAVILY_API_KEY, "tavily-key");
   assert.equal(env.DATABASE_URL, "postgres://kestrel:kestrel@localhost:55499/kestrel");
