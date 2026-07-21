@@ -6,11 +6,29 @@ import type {
   RunnerRunTerminalEvent,
 } from "@kestrel-agents/sdk";
 import {
+  KESTREL_PRESENTATION_DATA_PART_KEYS,
   createKestrelPresentationAccumulator,
   writeKestrelRunnerStreamToUIMessage,
+  type KestrelPresentationDataParts,
   type KestrelUIMessage,
 } from "../src/index.js";
 import type { UIMessageStreamWriter } from "ai";
+
+test("presentation data part runtime keys stay aligned with the public contract", () => {
+  const contractKeys: readonly (keyof KestrelPresentationDataParts)[] =
+    KESTREL_PRESENTATION_DATA_PART_KEYS;
+
+  assert.deepEqual(contractKeys, [
+    "kestrel-progress",
+    "kestrel-agent-progress",
+    "kestrel-provider-reasoning",
+    "kestrel-tool",
+    "kestrel-citation",
+    "kestrel-artifact",
+    "kestrel-interaction",
+    "kestrel-status",
+  ]);
+});
 
 test("completed output becomes canonical assistant text", () => {
   const accumulator = createKestrelPresentationAccumulator({

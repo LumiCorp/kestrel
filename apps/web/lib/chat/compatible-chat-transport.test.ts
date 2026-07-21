@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { KESTREL_PRESENTATION_DATA_PART_KEYS } from "@kestrel-agents/ai-sdk";
 import type { UIMessage } from "ai";
 import { CompatibleChatTransport } from "@/lib/chat/compatible-chat-transport";
 import type { ChatStreamChunk } from "@/lib/chat/stream-protocol";
@@ -22,7 +23,54 @@ function createEventStreamBody(events: string[]) {
   return events.map((event) => `data: ${event}\n\n`).join("");
 }
 
-test("CompatibleChatTransport ignores malformed events and emits one warning chunk", async () => {
+test("CompatibleChatTransport preserves Kestrel presentation events without a warning", async () => {
+  const mockFetch = (async () =>
+    new Response(
+      createEventStreamBody([
+        JSON.stringify({ type: "start", messageId: "assistant-1" }),
+        ...KESTREL_PRESENTATION_DATA_PART_KEYS.map((key) =>
+          JSON.stringify({
+            type: `data-${key}`,
+            id: `part-${key}`,
+            data: { contractKey: key },
+          })
+        ),
+        JSON.stringify({ type: "finish", finishReason: "stop" }),
+      ]),
+      {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }
+    )) as unknown as typeof fetch;
+
+  const transport = new CompatibleChatTransport<UIMessage>({
+    api: "/api/threads",
+    fetch: mockFetch,
+  });
+  const chunks = (await readAllChunks(
+    await transport.sendMessages({
+      trigger: "submit-message",
+      chatId: "thread-1",
+      messageId: undefined,
+      messages: [],
+      abortSignal: undefined,
+    })
+  )) as ChatStreamChunk[];
+
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.type),
+    [
+      "start",
+      ...KESTREL_PRESENTATION_DATA_PART_KEYS.map((key) => `data-${key}`),
+      "finish",
+    ]
+  );
+});
+
+test("CompatibleChatTransport continues text and reports safe diagnostics for rejected events", async () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args);
   const mockFetch = (async () =>
     new Response(
       createEventStreamBody([
@@ -48,15 +96,20 @@ test("CompatibleChatTransport ignores malformed events and emits one warning chu
     fetch: mockFetch,
   });
 
-  const chunks = (await readAllChunks(
-    await transport.sendMessages({
-      trigger: "submit-message",
-      chatId: "thread-1",
-      messageId: undefined,
-      messages: [],
-      abortSignal: undefined,
-    })
-  )) as ChatStreamChunk[];
+  let chunks: ChatStreamChunk[];
+  try {
+    chunks = (await readAllChunks(
+      await transport.sendMessages({
+        trigger: "submit-message",
+        chatId: "thread-1",
+        messageId: undefined,
+        messages: [],
+        abortSignal: undefined,
+      })
+    )) as ChatStreamChunk[];
+  } finally {
+    console.warn = originalWarn;
+  }
 
   assert.deepEqual(
     chunks.map((chunk) => chunk.type),
@@ -74,6 +127,27 @@ test("CompatibleChatTransport ignores malformed events and emits one warning chu
     data: { droppedChunkCount: 2 },
     transient: true,
   });
+  assert.deepEqual(warnings, [
+    [
+      "Chat stream dropped incompatible chunks.",
+      {
+        droppedChunkCount: 2,
+        droppedChunks: [
+          {
+            count: 1,
+            reason: "event_parse_failed",
+            type: "unknown",
+          },
+          {
+            count: 1,
+            reason: "chunk_rejected",
+            type: "response.apply_patch_call_operation_diff.delta",
+          },
+        ],
+      },
+    ],
+  ]);
+  assert.equal(JSON.stringify(warnings).includes("--- bad ---"), false);
 });
 
 test("CompatibleChatTransport reconnectToStream returns null for 204 responses", async () => {

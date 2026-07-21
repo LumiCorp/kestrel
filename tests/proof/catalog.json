@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3506,
+  "testCount": 3509,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -6469,16 +6469,31 @@
       "environment": "linux"
     },
     {
-      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 25,
+      "line": 70,
       "ancestors": [],
-      "title": "CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "title": "CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
       "contractId": "web.unit-contract",
       "owner": "kestrel-one",
       "risk": "medium",
-      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport ignores malformed events and emits one warning chunk",
-      "dimension": "CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
+      "dimension": "CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
+      "line": 26,
+      "ancestors": [],
+      "title": "CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "dimension": "CompatibleChatTransport preserves Kestrel presentation events without a warning",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -6486,7 +6501,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 157,
+      "line": 231,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors",
       "contractId": "web.unit-contract",
@@ -6501,7 +6516,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 130,
+      "line": 204,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors",
       "contractId": "web.unit-contract",
@@ -6516,7 +6531,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream prepends a resumed chunk",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 98,
+      "line": 172,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream prepends a resumed chunk",
       "contractId": "web.unit-contract",
@@ -6531,7 +6546,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream returns null for 204 responses",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 79,
+      "line": 153,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream returns null for 204 responses",
       "contractId": "web.unit-contract",
@@ -6606,7 +6621,7 @@
     {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: reorderToolInvocationChunks preserves supported tool chunks after sanitization",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 106,
+      "line": 127,
       "ancestors": [],
       "title": "reorderToolInvocationChunks preserves supported tool chunks after sanitization",
       "contractId": "web.unit-contract",
@@ -6621,7 +6636,7 @@
     {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream drops malformed provider chunks and emits one warning",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 34,
+      "line": 35,
       "ancestors": [],
       "title": "sanitizeChatStream drops malformed provider chunks and emits one warning",
       "contractId": "web.unit-contract",
@@ -6634,9 +6649,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "file": "apps/web/lib/chat/stream-protocol.test.ts",
+      "line": 69,
+      "ancestors": [],
+      "title": "sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "dimension": "sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream preserves resumable status data chunks",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 68,
+      "line": 89,
       "ancestors": [],
       "title": "sanitizeChatStream preserves resumable status data chunks",
       "contractId": "web.unit-contract",
@@ -12723,7 +12753,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: AI SDK stream and persisted message are emitted from the same accumulator",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 69,
+      "line": 87,
       "ancestors": [],
       "title": "AI SDK stream and persisted message are emitted from the same accumulator",
       "contractId": "package.public-contract",
@@ -12738,7 +12768,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: completed output becomes canonical assistant text",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 15,
+      "line": 33,
       "ancestors": [],
       "title": "completed output becomes canonical assistant text",
       "contractId": "package.public-contract",
@@ -12753,7 +12783,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: empty completed output becomes a visible contract failure",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 49,
+      "line": 67,
       "ancestors": [],
       "title": "empty completed output becomes a visible contract failure",
       "contractId": "package.public-contract",
@@ -12766,9 +12796,24 @@
       "environment": "linux"
     },
     {
+      "identity": "packages/ai-sdk/tests/accumulator.test.ts :: presentation data part runtime keys stay aligned with the public contract",
+      "file": "packages/ai-sdk/tests/accumulator.test.ts",
+      "line": 17,
+      "ancestors": [],
+      "title": "presentation data part runtime keys stay aligned with the public contract",
+      "contractId": "package.public-contract",
+      "owner": "ecosystem",
+      "risk": "medium",
+      "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers. Executable counterexample: presentation data part runtime keys stay aligned with the public contract",
+      "dimension": "presentation data part runtime keys stay aligned with the public contract",
+      "role": "variant",
+      "lane": "packages",
+      "environment": "linux"
+    },
+    {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: waiting output persists one assistant prompt and its exact durable interaction",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 32,
+      "line": 50,
       "ancestors": [],
       "title": "waiting output persists one assistant prompt and its exact durable interaction",
       "contractId": "package.public-contract",
