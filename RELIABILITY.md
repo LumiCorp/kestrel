@@ -79,15 +79,16 @@ the current supported versions.
 
 ## Verification and evidence
 
-Kestrel uses registered executable contracts and one fixed validation graph
-to detect regressions before release. Every retained automated test names a
-contract and exactly one hermetic, process, PostgreSQL, or Chromium boundary.
-Critical contracts carry current targeted killed-mutation evidence. Shared
-artifacts, PostgreSQL, and Chromium are each provisioned once per validation.
-Run `pnpm validate` locally before opening or updating a pull request. GitHub
-Actions runs that exact complete portable suite without file-based selection.
-The runner records phase, task, and contract durations for diagnosis, while the
-GitHub job timeout alone owns operational hang termination.
+Kestrel uses registered executable contracts to detect regressions before
+release. Run `pnpm validate` locally before opening or updating a pull request.
+GitHub Actions runs that exact portable gate: public-boundary validation,
+shared and root builds, workspace typechecks, and hermetic tests. The runner
+records phase, task, and contract durations for diagnosis, while the GitHub job
+timeout alone owns operational hang termination.
+
+Process, PostgreSQL, Chromium, mutation, documentation, Desktop, and release
+checks remain explicit validation for their owning surfaces rather than part of
+the required pull-request gate.
 
 macOS package validation is an explicit release-preparation step:
 `pnpm run validate:release:macos`.

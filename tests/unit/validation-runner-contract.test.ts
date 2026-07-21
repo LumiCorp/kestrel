@@ -7,6 +7,10 @@ const runner = readFileSync(
   new URL("../../scripts/validate.mjs", import.meta.url),
   "utf8",
 );
+const workflow = readFileSync(
+  new URL("../../.github/workflows/ci.yml", import.meta.url),
+  "utf8",
+);
 const proofChecker = readFileSync(
   new URL("../../scripts/check-contract-proofs.mjs", import.meta.url),
   "utf8",
@@ -115,12 +119,13 @@ contractTest(
       runner,
       /if \(validationRequest\.mode === "full"\) \{\s*rmSync\(REPORT_DIR/u,
     );
+    assert.match(runner, /mkdirSync\(REPORT_DIR, \{ recursive: true \}\)/u);
   },
 );
 
 contractTest(
   "runtime.hermetic",
-  "focused audit consumes retained evidence without replaying validation boundaries",
+  "focused audit checks mutations and contracts without replaying validation boundaries",
   () => {
     const auditLeaf = runner.slice(
       runner.indexOf('if (boundary === "audit")'),
@@ -128,11 +133,12 @@ contractTest(
     );
     assert.match(auditLeaf, /await phase\("audit", auditTasks\(\)\)/u);
     for (const replayed of [
-      "productionBuildTasks",
+      "webProductionBuildTask",
       "hermeticTasks",
       "processTasks",
       "startPostgres",
       "chromiumTasks",
+      "check-coverage",
     ]) {
       assert.doesNotMatch(auditLeaf, new RegExp(replayed, "u"));
     }
@@ -162,8 +168,36 @@ contractTest(
 
 contractTest(
   "runtime.hermetic",
-  "validation runner contract builds the fixed graph before execution",
+  "required pull-request validation is the minimal portable gate",
   () => {
-    assert.match(runner, /validateGraphContract\(\)/u);
+    const fullValidation = runner.slice(
+      runner.indexOf("async function runFullValidation()"),
+      runner.indexOf("function hermeticTasks()"),
+    );
+    assert.match(fullValidation, /task\("public boundary", PNPM, \["run", "check:public-boundary"\]\)/u);
+    assert.match(fullValidation, /phase\("sharedBuild"/u);
+    assert.match(fullValidation, /phase\("hermetic", hermeticTasks\(\)\)/u);
+    for (const excluded of [
+      "webProductionBuildTask",
+      "processTasks",
+      "processSetupTasks",
+      "startPostgres",
+      "postgresTasks",
+      "chromiumTasks",
+      "auditTasks",
+    ]) {
+      assert.doesNotMatch(fullValidation, new RegExp(excluded, "u"));
+    }
+    assert.doesNotMatch(
+      runner,
+      /validateGraphContract|enforceRequestInvariants|NODE_V8_COVERAGE|check-coverage/u,
+    );
+    assert.match(workflow, /uses: actions\/checkout@v4/u);
+    assert.match(workflow, /uses: \.\/\.github\/actions\/setup/u);
+    assert.match(workflow, /run: pnpm validate/u);
+    assert.doesNotMatch(
+      workflow,
+      /playwright install|actions\/upload-artifact|test-results/u,
+    );
   },
 );

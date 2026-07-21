@@ -12,71 +12,51 @@ depends_on:
 
 # CI validation-contract audit
 
-Kestrel has one portable pull-request validation contract:
+Kestrel has one required pull-request validation command:
 
 ```bash
 pnpm validate
 ```
 
-Developers and GitHub Actions run this exact command. `scripts/validate.mjs`
-owns a fixed, path-independent DAG; there is no second CI command map or
-changed-file classifier.
+Developers and GitHub Actions run this exact command. The required gate checks
+the public repository boundary, builds shared and root artifacts, typechecks
+workspaces, and runs hermetic test groups sequentially with Node test
+concurrency capped at four.
 
-## Portable validation
+The runner records phase, task, contract, and process-launch durations under
+`test-results/validation/`. Durations are diagnostic evidence, not blocking
+correctness gates. GitHub Actions' 15-minute job timeout is the operational hang
+watchdog.
 
-The runner verifies Node.js 22, performs each shared build once, and runs
-production builds, hermetic groups, and process groups sequentially. Node test
-concurrency never exceeds four. One PostgreSQL container supplies isolated
-cloned databases to all database contracts, then one production Web environment
-and one Chromium process execute the two browser journeys. Contract, coverage,
-and mutation evidence are audited last.
+The required gate does not start Docker or Chromium, install browser
+dependencies, collect repository-wide V8 coverage, execute mutations, or build
+release artifacts.
 
-Every test belongs to exactly one boundary: `hermetic`, `process`, `postgres`,
-or `chromium`. Phase, task, and contract durations, process launches, the
-one-container invariant, the one-browser invariant, coverage, and slow work are
-written under `test-results/validation/`. Durations are diagnostic evidence,
-not blocking validation gates. GitHub Actions' 15-minute job timeout is the sole
-suite-level operational hang watchdog.
+## Focused boundary validation
 
-Environment setup is explicit but is not a second validation definition. A
-developer machine needs the frozen pnpm workspace, Docker, and Playwright
-Chromium. GitHub Actions prepares those dependencies before invoking
-`pnpm validate`.
-
-## Proof registry
-
-Tests call `contractTest(contractId, title, ...)`. The versioned registry names
-the exact proofs, owner, risk, counterexample, and one of the four boundaries.
-Critical contracts also name targeted semantic mutations.
-
-The checker rejects unknown contracts, boundary mismatches, missing exact
-proofs, dynamic declarations, skips, todos, focused tests, retries, missing
-runtime evidence, and stale critical killed-mutation evidence. V8 execution and
-branch range signals are compared by component; no arbitrary global percentage
-is used.
-
-## Release-only validation
-
-macOS packaging is not portable and is therefore not a pull-request gate. Run
-it explicitly during release preparation:
+Heavier checks remain explicit commands for their owning surfaces:
 
 ```bash
-pnpm run validate:release:macos
-```
-
-Focused component commands remain available for iteration. Passing them does
-not replace the complete `pnpm validate` readiness contract.
-
-Focused whole-boundary commands use the canonical runner lifecycle and report:
-
-```bash
-pnpm run validate:hermetic
 pnpm run validate:process
 pnpm run validate:postgres
 pnpm run validate:chromium
 pnpm run validate:audit
+pnpm run ruhroh:validate
+pnpm run validate:release:macos
 ```
 
-Focused boundary runs retain their coverage and timing evidence. The focused
-audit consumes that evidence and runs only coverage, mutation, and contract
-checks; it does not replay the preceding boundaries.
+`validate:audit` verifies critical mutations and the contract registry. It does
+not replay other boundaries or enforce a repository-wide coverage percentage.
+
+Process validation owns child-process, daemon, CLI, TUI, and packed-consumer
+contracts. PostgreSQL validation owns migrations and real-database behavior.
+Chromium validation owns the production Web build and cross-surface browser
+journeys. macOS packaging remains a release-preparation step.
+
+## Proof registry
+
+Tests call `contractTest(contractId, title, ...)`. The versioned registry names
+the exact proofs, owner, risk, counterexample, and boundary. Critical contracts
+name targeted semantic mutations. The checker rejects unknown contracts,
+boundary mismatches, missing exact proofs, dynamic declarations, skips, todos,
+focused tests, retries, missing runtime evidence, and stale mutation evidence.

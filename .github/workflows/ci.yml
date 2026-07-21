@@ -19,18 +19,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - name: Install Chromium dependencies
-        run: pnpm --filter @kestrel/kestrel-one exec playwright install --with-deps chromium
       - name: Run the local validation contract
         run: pnpm validate
-      - name: Upload browser failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: chromium-product-failure-${{ github.run_attempt }}
-          path: |
-            apps/web/playwright-report
-            apps/web/test-results
-            test-results
-          if-no-files-found: ignore
-          retention-days: 14

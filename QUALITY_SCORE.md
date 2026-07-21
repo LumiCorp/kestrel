@@ -49,11 +49,10 @@ The scorecard answers “where might risk be accumulating?” It does not make a
 automatic product or release decision.
 
 Direct pull-request readiness is established by `pnpm validate`. GitHub Actions
-runs the same fixed validation DAG. The runner reports component V8 coverage,
-contract coverage, mutation evidence, and slowest work without turning elapsed
-time into a correctness gate or collapsing evidence into one global percentage.
-macOS package readiness is established separately during release preparation
-with `pnpm run validate:release:macos`.
+runs the same minimal portable gate and reports task, contract, and duration
+evidence without turning elapsed time into a correctness gate. Process,
+PostgreSQL, Chromium, mutation, documentation, Desktop, and macOS package
+readiness are established separately with their focused commands.
 
 ## Current data
 

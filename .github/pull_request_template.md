@@ -21,7 +21,9 @@ Confirm the canonical pull-request validation:
 pnpm validate
 ```
 
-List focused iteration commands separately if they provide useful review evidence.
+List any focused process, PostgreSQL, Chromium, mutation, documentation,
+Desktop, Ruhroh, or release checks separately when the change touches those
+surfaces.
 
 ## Notes
 

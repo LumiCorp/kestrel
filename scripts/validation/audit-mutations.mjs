@@ -17,7 +17,9 @@ const root = process.cwd();
 const specPath = path.join(root, "tests/proof/mutations.json");
 const evidencePath = path.join(root, "tests/proof/mutation-evidence.json");
 const specs = JSON.parse(readFileSync(specPath, "utf8"));
-const requested = process.argv.slice(2).filter((value) => value !== "--write");
+const requested = process.argv
+  .slice(2)
+  .filter((value) => value !== "--write" && value !== "--");
 const selected = requested.length > 0
   ? specs.mutations.filter((mutation) => requested.includes(mutation.id))
   : specs.mutations;

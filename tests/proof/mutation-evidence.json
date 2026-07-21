@@ -52,7 +52,7 @@
     {
       "id": "source-write-guard-fail-open",
       "contractId": "runtime.source-write-guard",
-      "target": "src/devShell/DevShellSupervisor.ts",
+      "target": "src/devshell/DevShellSupervisor.ts",
       "sourceSha256": "ed35dad92c5869dd5bedcd91be7a0936336b2acdf7d5420a94a51965a206aacc",
       "testFiles": [
         "tests/unit/dev-shell-supervisor.test.ts"

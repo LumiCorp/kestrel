@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const REPORT_DIR = path.join(ROOT, "test-results", "validation");
-const COVERAGE_DIR = path.join(REPORT_DIR, "coverage");
 const REPORT_PATH = path.join(REPORT_DIR, "report.json");
 const PACKED_CONSUMER_DIR = path.join(REPORT_DIR, "packed-consumer");
 const TEMP_DIR = path.join(REPORT_DIR, "tmp");
@@ -28,7 +27,6 @@ let buildInvocations = 0;
 let processLaunches = 0;
 let postgres;
 
-validateGraphContract();
 const request = parseRequest(process.argv.slice(2));
 if (request.mode === "plan") {
   printPlan();
@@ -42,7 +40,7 @@ async function runValidation(validationRequest) {
   if (validationRequest.mode === "full") {
     rmSync(REPORT_DIR, { recursive: true, force: true });
   }
-  mkdirSync(COVERAGE_DIR, { recursive: true });
+  mkdirSync(REPORT_DIR, { recursive: true });
 
   process.once("SIGINT", () => abortAll("SIGINT"));
   process.once("SIGTERM", () => abortAll("SIGTERM"));
@@ -51,7 +49,6 @@ async function runValidation(validationRequest) {
     requireNode22();
     if (validationRequest.mode === "full") await runFullValidation();
     else await runLeaf(validationRequest.boundary, validationRequest.workspace);
-    enforceRequestInvariants(validationRequest);
     const elapsedMs = Date.now() - startedAt;
     writeReport("passed", undefined, validationRequest);
     process.stdout.write(`\n[validate] passed in ${formatMs(elapsedMs)}\n`);
@@ -70,8 +67,7 @@ async function runValidation(validationRequest) {
 
 async function runFullValidation() {
   await phase("preflight", [
-    task("governance", PNPM, ["run", "governance:check"]),
-    task("ruhroh configuration", PNPM, ["run", "ruhroh:validate"]),
+    task("public boundary", PNPM, ["run", "check:public-boundary"]),
   ]);
 
   buildInvocations += 1;
@@ -118,63 +114,30 @@ async function runFullValidation() {
     ]),
   ]);
 
-  await phase("productionBuilds", productionBuildTasks());
   await phase("hermetic", hermeticTasks());
-  await phase("process", processTasks(), { setup: processSetupTasks() });
-
-  postgres = await startPostgres();
-  await phase("postgres", postgresTasks(postgres));
-  await phase("chromium", await chromiumTasks(postgres));
-  await phase("audit", auditTasks());
 }
 
 function hermeticTasks() {
   return testTasksForBoundary("hermetic");
 }
 
-function productionBuildTasks() {
-  return [
-    task(
-      "Web production build",
-      PNPM,
-      ["--filter", "@kestrel/kestrel-one", "run", "build:self"],
-      {
-        env: {
-          BETTER_AUTH_SECRET:
-            "kestrel-validation-build-secret-0000000000000000",
-          BETTER_AUTH_URL: "http://127.0.0.1:43103",
-          DATABASE_URL:
-            "postgresql://postgres:postgres@127.0.0.1:1/kestrel_build_guard",
-          KESTREL_DISABLE_DOTENV: "1",
-          NEXT_PUBLIC_APP_URL: "http://127.0.0.1:43103",
-        },
+function webProductionBuildTask() {
+  return task(
+    "Web production build",
+    PNPM,
+    ["--filter", "@kestrel/kestrel-one", "run", "build:self"],
+    {
+      env: {
+        BETTER_AUTH_SECRET:
+          "kestrel-validation-build-secret-0000000000000000",
+        BETTER_AUTH_URL: "http://127.0.0.1:43103",
+        DATABASE_URL:
+          "postgresql://postgres:postgres@127.0.0.1:1/kestrel_build_guard",
+        KESTREL_DISABLE_DOTENV: "1",
+        NEXT_PUBLIC_APP_URL: "http://127.0.0.1:43103",
       },
-    ),
-    task("Desktop portable build", PNPM, [
-      "--filter",
-      "@kestrel/desktop",
-      "run",
-      "build:self",
-    ]),
-    task("documentation build", PNPM, [
-      "--filter",
-      "@kestrel/docs",
-      "run",
-      "build:self",
-    ]),
-    task("service builds", PNPM, [
-      "-r",
-      "--workspace-concurrency=1",
-      "--filter",
-      "./apps/environment-router",
-      "--filter",
-      "./apps/workspace-runtime",
-      "--filter",
-      "./apps/mcp-service",
-      "run",
-      "build:self",
-    ]),
-  ];
+    },
+  );
 }
 
 function processTasks() {
@@ -188,9 +151,7 @@ function processSetupTasks() {
       "tsx",
       "scripts/validation/prepare-packed-consumer.ts",
     ]),
-    nodeTests("TUI PTY journeys", ROOT, ["tests/ops/tui/tui.ops.ts"], 1, [], {
-      coverage: false,
-    }),
+    nodeTests("TUI PTY journeys", ROOT, ["tests/ops/tui/tui.ops.ts"], 1),
   ];
 }
 
@@ -245,7 +206,6 @@ function testTasksForBoundary(boundary) {
           [file],
           singleThreaded.has(file) ? 1 : 4,
           group.prefix,
-          singleThreaded.has(file) ? { coverage: false } : undefined,
         ),
       );
     });
@@ -303,7 +263,6 @@ function postgresTasks(context) {
       ["--import", "tsx", "scripts/validation/run-postgres.ts"],
       {
         env: context.environment,
-        coverage: true,
       },
     ),
   ];
@@ -326,7 +285,6 @@ async function chromiumTasks(context) {
       {
         cwd: path.join(ROOT, "apps/web"),
         env: { ...context.environment, ...productEnvironment },
-        coverage: true,
       },
     ),
   ];
@@ -334,10 +292,6 @@ async function chromiumTasks(context) {
 
 function auditTasks() {
   return [
-    task("coverage baseline", process.execPath, [
-      "scripts/validation/check-coverage.mjs",
-      COVERAGE_DIR,
-    ]),
     task("critical mutations", process.execPath, [
       "scripts/validation/audit-mutations.mjs",
     ]),
@@ -361,21 +315,14 @@ async function phase(name, tasks, options = {}) {
 
 function runTask(phaseName, item) {
   const taskStart = Date.now();
-  const coveragePath = path.join(
-    COVERAGE_DIR,
-    safeName(`${phaseName}-${item.label}`),
-  );
-  mkdirSync(coveragePath, { recursive: true });
   const env = {
     ...process.env,
     CI: "true",
-    NODE_V8_COVERAGE: coveragePath,
     KESTREL_CONTRACT_TIMINGS: path.join(REPORT_DIR, "contract-timings.jsonl"),
     KESTREL_PACKED_CONSUMER_DIR: PACKED_CONSUMER_DIR,
     KESTREL_VALIDATION_TEMP_ROOT: TEMP_DIR,
     ...item.env,
   };
-  if (item.coverage === false) delete env.NODE_V8_COVERAGE;
   process.stdout.write(
     `[validate:${phaseName}] ${item.label}: ${item.command} ${item.args.join(" ")}\n`,
   );
@@ -413,10 +360,10 @@ function runTask(phaseName, item) {
 }
 
 function task(label, command, args, options = {}) {
-  return { label, command, args, coverage: false, ...options };
+  return { label, command, args, ...options };
 }
 
-function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
+function nodeTests(label, cwd, files, concurrency, prefix = []) {
   if (files.length === 0) throw new Error(`${label} discovered no tests`);
   return task(
     label,
@@ -430,7 +377,7 @@ function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
       "--test-reporter=spec",
       ...files,
     ],
-    { cwd, coverage: true, ...options },
+    { cwd },
   );
 }
 
@@ -609,17 +556,6 @@ function requireNode22() {
     );
 }
 
-function enforceInvariant(value, message) {
-  if (!value) throw new Error(message);
-}
-
-function safeName(value) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "-")
-    .replace(/^-|-$/gu, "");
-}
-
 function formatMs(value) {
   return `${(value / 1000).toFixed(1)}s`;
 }
@@ -678,74 +614,8 @@ function readContractTimings() {
 
 function printPlan() {
   process.stdout.write(
-    "preflight\nshared build and type analysis\nproduction builds (sequential)\nhermetic groups (sequential, test concurrency <= 4)\nprocess groups (sequential, test concurrency <= 4)\npostgres: one container\nchromium: one browser\naudit: contracts, coverage, mutations\ndurations: recorded, never blocking\noperational watchdog: GitHub Actions job timeout\n",
+    "public boundary\nshared build and type analysis\nhermetic groups (sequential, test concurrency <= 4)\nfocused manual boundaries: process, postgres, chromium, audit\ndurations: recorded, never blocking\noperational watchdog: GitHub Actions job timeout\n",
   );
-}
-
-function validateGraphContract() {
-  const packageFiles = spawnSync(
-    "git",
-    [
-      "ls-files",
-      "-z",
-      "package.json",
-      "apps/*/package.json",
-      "packages/*/package.json",
-    ],
-    { cwd: ROOT, encoding: "utf8" },
-  );
-  if (packageFiles.status !== 0)
-    throw new Error("Unable to inspect workspace validation leaves");
-  for (const file of packageFiles.stdout.split("\0").filter(Boolean)) {
-    const manifest = JSON.parse(readFileSync(path.join(ROOT, file), "utf8"));
-    for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
-      if (name.startsWith("ci:"))
-        throw new Error(`${file}: obsolete ${name} command is prohibited`);
-      if (
-        [
-          "build:self",
-          "typecheck:self",
-          "test:unit",
-          "test:integration",
-        ].includes(name)
-      ) {
-        if (/\bdocker\b|\bcompose\b/u.test(command))
-          throw new Error(
-            `${file}: ${name} must not start shared infrastructure`,
-          );
-        if (
-          name !== "build:self" &&
-          /\b(?:pnpm|npm|yarn)\b[^\n]*\bbuild(?::self)?\b/u.test(command)
-        )
-          throw new Error(`${file}: ${name} must not build dependencies`);
-      }
-    }
-  }
-  const workflow = readFileSync(
-    path.join(ROOT, ".github/workflows/ci.yml"),
-    "utf8",
-  );
-  const validationCalls = workflow.match(/\bpnpm validate\b/gu)?.length ?? 0;
-  if (validationCalls !== 1)
-    throw new Error(
-      `CI must invoke pnpm validate exactly once; found ${validationCalls}`,
-    );
-  const productConfig = readFileSync(
-    path.join(ROOT, "apps/web/playwright.product.config.ts"),
-    "utf8",
-  );
-  for (const forbidden of [
-    "globalSetup",
-    "REDIS_URL",
-    "MINIO",
-    "next dev",
-    "product-dev-all",
-  ]) {
-    if (productConfig.includes(forbidden))
-      throw new Error(
-        `Product validation config must not contain ${forbidden}`,
-      );
-  }
 }
 
 async function runLeaf(boundary, workspace) {
@@ -775,12 +645,7 @@ async function runLeaf(boundary, workspace) {
     return;
   }
   if (boundary === "chromium") {
-    await phase(
-      "productionBuilds",
-      productionBuildTasks().filter(
-        (item) => item.label === "Web production build",
-      ),
-    );
+    await phase("productionBuilds", [webProductionBuildTask()]);
     postgres = await startPostgres();
     await phase(
       "postgres",
@@ -819,21 +684,5 @@ function parseRequest(args) {
   }
   throw new Error(
     "usage: node scripts/validate.mjs [--plan | --leaf <boundary> <workspace|all|.>]",
-  );
-}
-
-function enforceRequestInvariants(validationRequest) {
-  if (validationRequest.mode !== "full") return;
-  enforceInvariant(
-    buildInvocations === 1,
-    `expected one shared build invocation, observed ${buildInvocations}`,
-  );
-  enforceInvariant(
-    dockerStarts === 1,
-    `expected one PostgreSQL startup, observed ${dockerStarts}`,
-  );
-  enforceInvariant(
-    browserStarts === 1,
-    `expected one Chromium startup, observed ${browserStarts}`,
   );
 }

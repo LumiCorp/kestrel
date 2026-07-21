@@ -84,7 +84,7 @@
     {
       "id": "source-write-guard-fail-open",
       "contractId": "runtime.source-write-guard",
-      "target": "src/devShell/DevShellSupervisor.ts",
+      "target": "src/devshell/DevShellSupervisor.ts",
       "find": "if (hasUnauthorizedSourceWrites(result)) {",
       "replace": "if (false && hasUnauthorizedSourceWrites(result)) {",
       "command": "node",
