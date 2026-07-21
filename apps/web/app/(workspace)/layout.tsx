@@ -60,7 +60,10 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
       <SidebarInset className="min-h-0 overflow-hidden">
         <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
           <WorkspaceRail organizationId={activeOrganization?.id ?? "unknown"} />
-          <main className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <main
+            className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto"
+            data-slot="workspace-content"
+          >
             {children}
           </main>
         </div>
