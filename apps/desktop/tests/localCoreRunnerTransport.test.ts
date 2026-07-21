@@ -52,9 +52,19 @@ test("LocalCoreRunnerTransport reports Core request failures as protocol events"
     connectionManager: createConnectionManager(client),
     logPath: "/tmp/kestrel-core.log",
   });
-  const events: Array<{ type?: string; commandId?: string }> = [];
+  const events: Array<{
+    type?: string;
+    ts?: string;
+    commandId?: string;
+    payload?: { code?: string; message?: string };
+  }> = [];
   transport.observe({
-    onLine: (line) => events.push(JSON.parse(line) as { type?: string; commandId?: string }),
+    onLine: (line) => events.push(JSON.parse(line) as {
+      type?: string;
+      ts?: string;
+      commandId?: string;
+      payload?: { code?: string; message?: string };
+    }),
   });
   transport.ensureStarted();
 
@@ -62,7 +72,12 @@ test("LocalCoreRunnerTransport reports Core request failures as protocol events"
   await waitFor(() => events.length === 1);
 
   assert.equal(events[0]?.type, "runner.error");
+  assert.equal(Number.isFinite(Date.parse(events[0]?.ts ?? "")), true);
   assert.equal(events[0]?.commandId, "command-2");
+  assert.deepEqual(events[0]?.payload, {
+    code: "LOCAL_CORE_RUNNER_TRANSPORT_ERROR",
+    message: "socket unavailable",
+  });
   assert.deepEqual(transport.getStatus().recentStderr, ["socket unavailable"]);
 });
 

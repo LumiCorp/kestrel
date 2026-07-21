@@ -22,12 +22,18 @@ test("Desktop bridge v6 exposes workspace, attachment, and operator-control cont
     requestId: "request-1",
     message: "Use these files",
     attachmentIds: ["attachment-1"],
+    completionMode: "accepted",
+    interactionMode: "build",
+    actSubmode: "safe",
   }), {
     action: "reply",
     threadId: "thread-1",
     requestId: "request-1",
     message: "Use these files",
     attachmentIds: ["attachment-1"],
+    completionMode: "accepted",
+    interactionMode: "build",
+    actSubmode: "safe",
   });
   assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
 });

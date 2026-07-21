@@ -1588,12 +1588,16 @@ test("KestrelChatRuntime maps operator child-thread tool policy into runtime pol
 
 test("KestrelChatRuntime forwards attachments when replying to a typed operator request", async () => {
   let capturedAttachments: unknown;
+  let capturedInteractionMode: unknown;
+  let capturedActSubmode: unknown;
   const fakeFactory: RuntimeFactory = {
     create: () => {
       const threadRuntime = {
         getThreadStatus: async () => ({ openRequests: [{ requestId: "request-1" }] }),
-        replyToRequest: async (input: { attachments?: unknown }) => {
+        replyToRequest: async (input: { attachments?: unknown; interactionMode?: unknown; actSubmode?: unknown }) => {
           capturedAttachments = input.attachments;
+          capturedInteractionMode = input.interactionMode;
+          capturedActSubmode = input.actSubmode;
           return {
             thread: { threadId: "thread-reply", sessionId: "session-reply", title: "Reply", status: "COMPLETED", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
             output: { status: "COMPLETED", runId: "run-reply", sessionId: "session-reply", quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 }, errors: [], telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 } },
@@ -1616,8 +1620,77 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
   };
   const runtime = new KestrelChatRuntime(profile, fakeFactory);
   const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "a".repeat(64), kind: "text" as const, createdAt: new Date().toISOString(), text: "context" }];
-  await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Continue", attachments });
+  await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Continue", attachments, interactionMode: "build", actSubmode: "safe" });
   assert.deepEqual(capturedAttachments, attachments);
+  assert.equal(capturedInteractionMode, "build");
+  assert.equal(capturedActSubmode, "safe");
+  await runtime.close();
+});
+
+test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes", async () => {
+  let threadListener: ((event: { type: string; threadId: string; timestamp: string; payload: Record<string, unknown> }) => void) | undefined;
+  let resolveCompletion!: (result: {
+    thread: { threadId: string; sessionId: string; title: string; status: "COMPLETED"; createdAt: string; updatedAt: string };
+    output: { status: "COMPLETED"; runId: string; sessionId: string; quality: { citationCoverage: number; unresolvedClaims: number; reworkRate: number; thrashIndex: number }; errors: []; telemetry: { stepsExecuted: number; toolCalls: number; modelCalls: number; durationMs: number } };
+    assistantText: string;
+  }) => void;
+  const completion = new Promise<Parameters<typeof resolveCompletion>[0]>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  let capturedMode: unknown;
+  let capturedSubmode: unknown;
+  let capturedRunId: string | undefined;
+  const now = new Date().toISOString();
+  const thread = { threadId: "thread-accepted", sessionId: "session-accepted", title: "Accepted", status: "COMPLETED" as const, createdAt: now, updatedAt: now };
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {} as Kestrel,
+      threadRuntime: {
+        getThreadStatus: async () => ({
+          thread,
+          openRequests: [{ requestId: "request-accepted", eventType: "continuation_handoff" }],
+        }),
+        subscribe: (_target: unknown, listener: typeof threadListener) => {
+          threadListener = listener;
+          return { unsubscribe() {} };
+        },
+        replyToRequest: (input: { interactionMode?: unknown; actSubmode?: unknown; runtimeTurn?: { runId?: string } }) => {
+          capturedMode = input.interactionMode;
+          capturedSubmode = input.actSubmode;
+          capturedRunId = input.runtimeTurn?.runId;
+          threadListener?.({ type: "thread.turn_submitted", threadId: thread.threadId, timestamp: now, payload: {} });
+          return completion;
+        },
+        getOperatorThreadView: async () => ({ thread: { ...thread, status: "RUNNING" as const }, childThreads: [] }),
+        listOperatorInbox: async () => ({ items: [], summary: { total: 0, actionable: 0, approvals: 0, userInputs: 0, checkpoints: 0, childBlockers: 0, stalled: 0, assemblyProposals: 0, compatibilityAlerts: 0 } }),
+      } as unknown as ThreadRuntime,
+      entryStepAgent: "example.step",
+      close: async () => {},
+    }),
+  });
+
+  const accepted = await runtime.performAcceptedOperatorAction({
+    action: "reply",
+    threadId: thread.threadId,
+    requestId: "request-accepted",
+    message: "Let's build it",
+    interactionMode: "build",
+    actSubmode: "safe",
+  });
+
+  assert.equal(accepted.accepted.disposition, "accepted");
+  assert.equal(accepted.accepted.sessionId, thread.sessionId);
+  assert.equal(accepted.accepted.runId, capturedRunId);
+  assert.equal(typeof capturedRunId, "string");
+  assert.equal(capturedMode, "build");
+  assert.equal(capturedSubmode, "safe");
+
+  resolveCompletion({
+    thread,
+    output: { status: "COMPLETED", runId: capturedRunId!, sessionId: thread.sessionId, quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 }, errors: [], telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 1, durationMs: 100 } },
+    assistantText: "Built it.",
+  });
+  assert.equal((await accepted.completion).output.runId, capturedRunId);
   await runtime.close();
 });
 

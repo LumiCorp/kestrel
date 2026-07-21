@@ -87,7 +87,7 @@ test("runtime replay surfaces multi-child supervision outcomes for parent thread
   assert.match(result.stdout, /child thread=ops-superseded-child-thread status=COMPLETED delegation=CANCELLED outcome="Superseded by a newer delegation branch\."/);
 });
 
-test("runtime doctor reports delegation failure and stalled runs", async () => {
+test("runtime doctor reports delegation failure and trusts authoritative running thread state", async () => {
   const failed = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.failureRoot.runId],
     env: runtimeEnv(),
@@ -102,7 +102,7 @@ test("runtime doctor reports delegation failure and stalled runs", async () => {
   });
 
   assert.equal(stalled.exitCode, 0);
-  assert.match(stalled.stdout, /status=STALLED/);
+  assert.match(stalled.stdout, /status=RUNNING/);
 });
 
 test("runtime doctor reports user-input wait classification for explicit operator reply blockers", async () => {

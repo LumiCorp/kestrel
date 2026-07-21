@@ -215,6 +215,7 @@ export interface OperatorControlCommandPayload {
     | "cancel_follow_up"
     | "resume_follow_up_queue";
   threadId: string;
+  completionMode?: "terminal" | "accepted" | undefined;
   followUpId?: string | undefined;
   requestId?: string | undefined;
   proposalId?: string | undefined;
@@ -736,6 +737,8 @@ export interface OperatorRunReasoningEventPayload {
 export interface OperatorControlledEventPayload {
   sessionId?: string | undefined;
   threadId: string;
+  disposition?: "accepted" | "completed" | undefined;
+  runId?: string | undefined;
   inbox?: OperatorInboxSnapshot | undefined;
   view?: OperatorThreadView | undefined;
   result?: RunTurnResult | undefined;

@@ -371,7 +371,7 @@ export interface DesktopBridge {
   writeUserTerminal(input: { sessionId: string; terminalId: string; data: string }): Promise<DesktopUserTerminal>;
   resizeUserTerminal(input: { sessionId: string; terminalId: string; cols: number; rows: number }): Promise<DesktopUserTerminal>;
   stopUserTerminal(input: { sessionId: string; terminalId: string }): Promise<DesktopUserTerminal>;
-  inspectWorkspaceChanges(input: { sessionId: string; threadId: string; scope: DesktopWorkspaceChangeScope; options?: Partial<DesktopWorkspaceDiffOptions> }): Promise<DesktopWorkspaceChangeSnapshot>;
+  inspectWorkspaceChanges(input: { sessionId: string; threadId: string; projectPath?: string; scope: DesktopWorkspaceChangeScope; options?: Partial<DesktopWorkspaceDiffOptions> }): Promise<DesktopWorkspaceChangeSnapshot>;
   mutateWorkspaceChanges(input: { sessionId: string; threadId: string; expectedFingerprint: string; scope?: DesktopWorkspaceChangeScope; options?: Partial<DesktopWorkspaceDiffOptions>; mutation: DesktopWorkspaceChangeMutation }): Promise<DesktopWorkspaceChangeMutationResult>;
   addWorkspaceFeedback(input: { sessionId: string; threadId: string; candidateFingerprint: string; path: string; line: number; side: "LEFT" | "RIGHT"; body: string }): Promise<DesktopWorkspaceFeedbackSnapshot>;
   listWorkspaceFeedback(input: { sessionId: string; threadId: string }): Promise<DesktopWorkspaceFeedbackSnapshot>;

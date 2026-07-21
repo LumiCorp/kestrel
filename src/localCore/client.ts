@@ -1,5 +1,7 @@
 import { request } from "node:http";
 
+import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
+
 import {
   parseDesktopUiStateV1,
   type DesktopUiStateSyncResult,
@@ -24,7 +26,8 @@ import {
   type LocalCoreStatus,
 } from "./contracts.js";
 import type { DesktopAttachmentMetadata } from "./desktopAttachments.js";
-import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
+import type { RunTurnAttachment, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
 import {
   parseLocalCoreCredentialId,
   parseLocalCoreCredentialSecret,
@@ -240,6 +243,15 @@ export class LocalCoreClient {
     };
   }
 
+  async syncDesktopThreadWorkspace(input: {
+    sessionId: string;
+    threadId: string;
+    workspace: WorkspaceRuntimeContext;
+  }): Promise<ThreadRecord> {
+    const response = await this.put("/v1/desktop/thread-workspace", input);
+    return readObjectField<ThreadRecord>(response, "thread", "Desktop thread workspace");
+  }
+
   async importDesktopAttachment(input: {
     threadId: string;
     filename: string;
@@ -435,7 +447,9 @@ export class LocalCoreClient {
     },
   ): Promise<void> {
     const command = parseRunnerCommandEnvelope(line);
-    const stream = command.type === "run.start" || command.type === "job.run";
+    const stream = command.type === "run.start"
+      || command.type === "job.run"
+      || (command.type === "operator.control" && command.payload.completionMode === "accepted");
     await new Promise<void>((resolve, reject) => {
       const req = request({
         socketPath: this.socketPath,
@@ -461,6 +475,12 @@ export class LocalCoreClient {
         response.on("end", () => {
           const trailing = raw.trim();
           if ((response.statusCode ?? 500) >= 400) {
+            const runnerErrorLine = parseCorrelatedRunnerErrorLine(trailing, command.id);
+            if (runnerErrorLine !== undefined) {
+              input.onLine(runnerErrorLine);
+              resolve();
+              return;
+            }
             reject(new LocalCoreApiError(
               response.statusCode ?? 500,
               parseJsonOrText(trailing),
@@ -616,6 +636,24 @@ export class LocalCoreClient {
   }
 }
 
+function parseCorrelatedRunnerErrorLine(
+  line: string,
+  commandId: string,
+): string | undefined {
+  if (line.length === 0) {
+    return undefined;
+  }
+  try {
+    const event = parseRunnerEventV2(JSON.parse(line));
+    if (event.type !== "runner.error" || event.commandId !== commandId) {
+      return undefined;
+    }
+    return JSON.stringify(event);
+  } catch {
+    return undefined;
+  }
+}
+
 function createLocalCoreStreamClosedError(): NodeJS.ErrnoException {
   return Object.assign(
     new Error("Local Core project run event stream closed."),
@@ -623,7 +661,7 @@ function createLocalCoreStreamClosedError(): NodeJS.ErrnoException {
   );
 }
 
-function parseRunnerCommandEnvelope(line: string): { id: string; type: string } {
+function parseRunnerCommandEnvelope(line: string): { id: string; type: string; payload: Record<string, unknown> } {
   let decoded: unknown;
   try {
     decoded = JSON.parse(line);
@@ -635,10 +673,14 @@ function parseRunnerCommandEnvelope(line: string): { id: string; type: string } 
   }
   const id = (decoded as Record<string, unknown>).id;
   const type = (decoded as Record<string, unknown>).type;
+  const payloadValue = (decoded as Record<string, unknown>).payload;
   if (typeof id !== "string" || id.length === 0 || typeof type !== "string" || type.length === 0) {
     throw new Error("Local Core runner command must include string id and type fields.");
   }
-  return { id, type };
+  const payload = typeof payloadValue === "object" && payloadValue !== null && !Array.isArray(payloadValue)
+    ? payloadValue as Record<string, unknown>
+    : {};
+  return { id, type, payload };
 }
 
 function consumeRunnerSseBuffer(buffer: string, onLine: (line: string) => void): string {

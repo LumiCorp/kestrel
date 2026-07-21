@@ -180,8 +180,13 @@ export function DesktopApp() {
           runId: threadViews[activeThread.id]?.activeRun?.runId,
         }
       : undefined);
+  const operatorInboxItems = activeThread === undefined
+    ? []
+    : (threadViews[activeThread.id]?.inboxItems ?? []).filter(
+        (item) => item.kind !== "stalled_thread_attention" || activeRun === undefined,
+      );
   const composerPolicy = getDesktopComposerSubmissionPolicy({
-    inboxItems: activeThread === undefined ? [] : threadViews[activeThread.id]?.inboxItems ?? [],
+    inboxItems: operatorInboxItems,
     runActive: activeRun !== undefined,
   });
   const activeRunStream = activeThread === undefined ? [] : runStreams[activeThread.id] ?? [];
@@ -438,9 +443,12 @@ export function DesktopApp() {
         const view = await window.kestrelDesktop.submitOperatorControl({
           action: "reply",
           threadId: localCoreThreadId(activeThread.sessionId),
+          completionMode: "accepted",
           requestId: item.requestId,
           message,
           attachmentIds: activeThread.draftAttachmentIds,
+          interactionMode: activeThread.mode,
+          ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
         });
         setThreadViews((current) => ({ ...current, [threadId]: view }));
         setActiveRuns((current) => {
@@ -476,6 +484,8 @@ export function DesktopApp() {
         setActivity(view.activeRun?.status === "RUNNING" ? "Reply sent; run resumed" : "Reply sent");
       } catch (cause) {
         delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
+        setDraft((current) => current.trim().length > 0 ? current : message);
+        setComposerAttachments((current) => current.length > 0 ? current : submittedAttachments);
         setError(errorMessage(cause));
         setActivity("Reply not sent");
       } finally {
@@ -1272,7 +1282,7 @@ export function DesktopApp() {
             </section>
           ) : null}
 
-          {threadViews[activeThread.id]?.inboxItems.map((item) => (
+          {operatorInboxItems.map((item) => (
             <OperatorActionCard
               key={item.itemId}
               item={item}
@@ -1329,37 +1339,41 @@ export function DesktopApp() {
               </div>
             ) : null}
             <div className="composer-actions">
-              <span>{activeThread.mode === "build" ? "Safe build" : modeLabel(activeThread.mode)}</span>
-              <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
-                <Paperclip size={16} />
-              </button>
-              {composerPolicy.mode === "reply_to_request" ? (
-                <button
-                  className="primary-icon-button"
-                  type="submit"
-                  title="Reply to request"
-                  aria-label="Reply to request"
-                  disabled={activeThread.draft.trim().length === 0 || operatorActionPending[composerPolicy.item.itemId] === true}
-                >
-                  <Send size={17} />
+              <div className="composer-actions-left">
+                <span className="composer-mode-label">{activeThread.mode === "build" ? "Safe build" : modeLabel(activeThread.mode)}</span>
+                <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
+                  <Paperclip size={16} />
                 </button>
-              ) : activeRun === undefined ? (
-                <button
-                  className="primary-icon-button"
-                  type="submit"
-                  title="Send message"
-                  aria-label="Send message"
-                  disabled={activeThread.draft.trim().length === 0}
-                >
-                  <Send size={17} />
-                </button>
-              ) : (
-                <>
-                  <button type="button" disabled={activeThread.draft.trim().length === 0} onClick={() => void steerActiveRun()}>Steer now</button>
-                  <button className="primary-icon-button" type="submit" title="Queue follow-up" aria-label="Queue follow-up" disabled={activeThread.draft.trim().length === 0}><Send size={17} /></button>
-                  <button className="stop-button" type="button" title="Stop run" aria-label="Stop run" onClick={() => void cancelActiveRun()}><Square size={15} fill="currentColor" /></button>
-                </>
-              )}
+              </div>
+              <div className="composer-actions-right">
+                {composerPolicy.mode === "reply_to_request" ? (
+                  <button
+                    className="primary-icon-button"
+                    type="submit"
+                    title="Reply to request"
+                    aria-label="Reply to request"
+                    disabled={activeThread.draft.trim().length === 0 || operatorActionPending[composerPolicy.item.itemId] === true}
+                  >
+                    <Send size={17} />
+                  </button>
+                ) : activeRun === undefined ? (
+                  <button
+                    className="primary-icon-button"
+                    type="submit"
+                    title="Send message"
+                    aria-label="Send message"
+                    disabled={activeThread.draft.trim().length === 0}
+                  >
+                    <Send size={17} />
+                  </button>
+                ) : (
+                  <>
+                    <button className="composer-steer-button" type="button" disabled={activeThread.draft.trim().length === 0} onClick={() => void steerActiveRun()}>Steer now</button>
+                    <button className="primary-icon-button" type="submit" title="Queue follow-up" aria-label="Queue follow-up" disabled={activeThread.draft.trim().length === 0}><Send size={17} /></button>
+                    <button className="stop-button" type="button" title="Stop run" aria-label="Stop run" onClick={() => void cancelActiveRun()}><Square size={15} fill="currentColor" /></button>
+                  </>
+                )}
+              </div>
             </div>
             </form>
           </main>
@@ -1408,7 +1422,8 @@ export function DesktopApp() {
               <DiffWorkspace
                 key={activeThread.id}
                 sessionId={activeThread.sessionId}
-                threadId={activeThread.sessionId}
+                threadId={localCoreThreadId(activeThread.sessionId)}
+                projectPath={activeThread.projectPath}
                 defaultBaseRef={activeThread.workspaceBaseRef}
                 initialScopeKind={activeThread.diffScopeKind}
                 initialRevision={activeThread.diffRevision}

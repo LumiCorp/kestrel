@@ -1247,6 +1247,166 @@ test("runner service streams run events and preserves issuedBy for operator acti
   }
 });
 
+test("runner service acknowledges accepted operator replies before streaming their terminal result", async () => {
+  let markAccepted!: () => void;
+  const acceptedCalled = new Promise<void>((resolve) => {
+    markAccepted = resolve;
+  });
+  let resolveCompletion!: (result: Awaited<ReturnType<NonNullable<RunnerRuntime["runTurn"]>>>) => void;
+  const completion = new Promise<Awaited<ReturnType<NonNullable<RunnerRuntime["runTurn"]>>>>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("runTurn is not used by accepted operator controls");
+      },
+      performAcceptedOperatorAction: async (input) => {
+        markAccepted();
+        return {
+          accepted: {
+            sessionId: "session-accepted",
+            threadId: input.threadId,
+            disposition: "accepted",
+            runId: "run-accepted",
+          },
+          completion,
+        };
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const responsePromise = service.dispatch({
+      method: "POST",
+      url: "/commands/stream",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-accepted-reply",
+        type: "operator.control",
+        metadata: {
+          profile,
+          actor: { actorId: "desktop", actorType: "operator", tenantId: "internal" },
+        },
+        payload: {
+          action: "reply",
+          threadId: "thread-accepted",
+          requestId: "request-accepted",
+          message: "Let's build it",
+          interactionMode: "build",
+          actSubmode: "safe",
+          completionMode: "accepted",
+        },
+      }),
+    });
+
+    await acceptedCalled;
+    let settled = false;
+    void responsePromise.then(() => { settled = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+
+    resolveCompletion({
+      assistantText: "Built it.",
+      output: {
+        status: "COMPLETED",
+        sessionId: "session-accepted",
+        runId: "run-accepted",
+        errors: [],
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 1, durationMs: 100 },
+      },
+    });
+    const response = await responsePromise;
+    const events = response.body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as { type: string; runId?: string; payload: Record<string, unknown> });
+    assert.deepEqual(events.map((event) => event.type), ["operator.controlled", "run.started", "run.completed"]);
+    assert.equal(events[0]?.payload.disposition, "accepted");
+    assert.equal(events[0]?.payload.runId, "run-accepted");
+    assert.equal(events[1]?.runId, "run-accepted");
+    assert.equal((events[1]?.payload as { interactionMode?: string }).interactionMode, "build");
+  } finally {
+    await service.close();
+  }
+});
+
+test("runner service cancels an accepted operator reply through its allocated run", async () => {
+  let markAccepted!: () => void;
+  const acceptedCalled = new Promise<void>((resolve) => { markAccepted = resolve; });
+  const service = createInMemoryRunnerService({
+    runtimeFactory: () => ({
+      runTurn: async () => { throw new Error("runTurn is not used by accepted operator controls"); },
+      performAcceptedOperatorAction: async (input) => {
+        const completion = new Promise<never>((_resolve, reject) => {
+          input.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("cancelled"), { code: "RUN_CANCELLED" }));
+          }, { once: true });
+        });
+        markAccepted();
+        return {
+          accepted: {
+            sessionId: "session-accepted-cancel",
+            threadId: input.threadId,
+            disposition: "accepted" as const,
+            runId: "run-accepted-cancel",
+          },
+          completion,
+        };
+      },
+      cancelActiveRun: async () => ({ runId: "run-accepted-cancel" }),
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const responsePromise = service.dispatch({
+      method: "POST",
+      url: "/commands/stream",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-accepted-cancel",
+        type: "operator.control",
+        metadata: { profile, actor: { actorId: "desktop", actorType: "operator", tenantId: "internal" } },
+        payload: {
+          action: "reply",
+          threadId: "thread-accepted-cancel",
+          requestId: "request-accepted-cancel",
+          message: "Continue",
+          completionMode: "accepted",
+        },
+      }),
+    });
+
+    await acceptedCalled;
+    await new Promise((resolve) => setImmediate(resolve));
+    const cancelResponse = await service.dispatch({
+      method: "POST",
+      url: "/commands",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-cancel-accepted",
+        type: "run.cancel",
+        metadata: { profile, actor: { actorId: "desktop", actorType: "operator", tenantId: "internal" } },
+        payload: { sessionId: "session-accepted-cancel", runId: "run-accepted-cancel" },
+      }),
+    });
+    assert.equal((JSON.parse(cancelResponse.body) as { type: string }).type, "run.cancelled");
+
+    const response = await responsePromise;
+    const events = response.body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as { type: string; runId?: string });
+    assert.deepEqual(events.map((event) => event.type), ["operator.controlled", "run.started", "run.cancelled"]);
+    assert.equal(events[2]?.runId, "run-accepted-cancel");
+  } finally {
+    await service.close();
+  }
+});
+
 test("in-memory runner service cancels active runs when a streaming dispatch is aborted", async () => {
   let aborted = false;
   let resolveRunTurnEntered: (() => void) | undefined;

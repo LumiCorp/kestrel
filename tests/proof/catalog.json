@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3592,
+  "testCount": 3604,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -349,6 +349,51 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/desktop/tests/conversationLayout.test.ts :: active runs suppress stale stalled-attention cards",
+      "file": "apps/desktop/tests/conversationLayout.test.ts",
+      "line": 37,
+      "ancestors": [],
+      "title": "active runs suppress stale stalled-attention cards",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: active runs suppress stale stalled-attention cards",
+      "dimension": "active runs suppress stale stalled-attention cards",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/conversationLayout.test.ts :: composer controls are grouped by context and action",
+      "file": "apps/desktop/tests/conversationLayout.test.ts",
+      "line": 25,
+      "ancestors": [],
+      "title": "composer controls are grouped by context and action",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: composer controls are grouped by context and action",
+      "dimension": "composer controls are grouped by context and action",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/conversationLayout.test.ts :: thread messages and composer share the conversation width",
+      "file": "apps/desktop/tests/conversationLayout.test.ts",
+      "line": 11,
+      "ancestors": [],
+      "title": "thread messages and composer share the conversation width",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: thread messages and composer share the conversation width",
+      "dimension": "thread messages and composer share the conversation width",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/desktop/tests/databaseController.test.ts :: Core-owned Desktop database accepts healthy PGlite without a database URL",
       "file": "apps/desktop/tests/databaseController.test.ts",
       "line": 7,
@@ -651,7 +696,7 @@
     {
       "identity": "apps/desktop/tests/localCoreRunnerTransport.test.ts :: LocalCoreRunnerTransport forwards streamed run updates before the terminal event",
       "file": "apps/desktop/tests/localCoreRunnerTransport.test.ts",
-      "line": 69,
+      "line": 84,
       "ancestors": [],
       "title": "LocalCoreRunnerTransport forwards streamed run updates before the terminal event",
       "contractId": "desktop.contract",
@@ -1939,6 +1984,36 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/desktop/tests/replyPipeline.test.ts :: Desktop forwards runner events from one centralized transport observer",
+      "file": "apps/desktop/tests/replyPipeline.test.ts",
+      "line": 20,
+      "ancestors": [],
+      "title": "Desktop forwards runner events from one centralized transport observer",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: Desktop forwards runner events from one centralized transport observer",
+      "dimension": "Desktop forwards runner events from one centralized transport observer",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/replyPipeline.test.ts :: Desktop replies request accepted completion in the selected interaction mode",
+      "file": "apps/desktop/tests/replyPipeline.test.ts",
+      "line": 11,
+      "ancestors": [],
+      "title": "Desktop replies request accepted completion in the selected interaction mode",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: Desktop replies request accepted completion in the selected interaction mode",
+      "dimension": "Desktop replies request accepted completion in the selected interaction mode",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/desktop/tests/runnerHandshake.test.ts :: ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping",
       "file": "apps/desktop/tests/runnerHandshake.test.ts",
       "line": 108,
@@ -3014,6 +3089,21 @@
       "risk": "medium",
       "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: Desktop workspace review requires explicit dismissal reason",
       "dimension": "Desktop workspace review requires explicit dismissal reason",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/desktop/tests/workspaceSurfaceThreadIds.test.ts :: Desktop Diff binds restored conversations to the canonical Local Core thread",
+      "file": "apps/desktop/tests/workspaceSurfaceThreadIds.test.ts",
+      "line": 12,
+      "ancestors": [],
+      "title": "Desktop Diff binds restored conversations to the canonical Local Core thread",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: Desktop Diff binds restored conversations to the canonical Local Core thread",
+      "dimension": "Desktop Diff binds restored conversations to the canonical Local Core thread",
       "role": "variant",
       "lane": "desktop",
       "environment": "linux"
@@ -14896,6 +14986,21 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
+      "file": "tests/integration/cli-chat-runtime.test.ts",
+      "line": 1630,
+      "ancestors": [],
+      "title": "KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
+      "contractId": "runtime.integration",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
+      "dimension": "KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime annotates forced legacy-mode migration for the reference harness",
       "file": "tests/integration/cli-chat-runtime.test.ts",
       "line": 749,
@@ -15033,7 +15138,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1753,
+      "line": 1826,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "contractId": "runtime.integration",
@@ -15123,7 +15228,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1624,
+      "line": 1697,
       "ancestors": [],
       "title": "KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "contractId": "runtime.integration",
@@ -16608,7 +16713,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: in-memory runner service cancels active runs when a streaming dispatch is aborted",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1250,
+      "line": 1410,
       "ancestors": [],
       "title": "in-memory runner service cancels active runs when a streaming dispatch is aborted",
       "contractId": "runtime.integration",
@@ -16623,7 +16728,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: in-memory runner service resolves cleanly when a streaming dispatch is already aborted before start",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1329,
+      "line": 1489,
       "ancestors": [],
       "title": "in-memory runner service resolves cleanly when a streaming dispatch is already aborted before start",
       "contractId": "runtime.integration",
@@ -16726,9 +16831,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/integration/runner-service.test.ts :: runner service acknowledges accepted operator replies before streaming their terminal result",
+      "file": "tests/integration/runner-service.test.ts",
+      "line": 1250,
+      "ancestors": [],
+      "title": "runner service acknowledges accepted operator replies before streaming their terminal result",
+      "contractId": "runtime.integration",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: runner service acknowledges accepted operator replies before streaming their terminal result",
+      "dimension": "runner service acknowledges accepted operator replies before streaming their terminal result",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/integration/runner-service.test.ts :: runner service cancels active runs when a stream disconnects",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1554,
+      "line": 1714,
       "ancestors": [],
       "title": "runner service cancels active runs when a stream disconnects",
       "contractId": "runtime.integration",
@@ -16741,9 +16861,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/integration/runner-service.test.ts :: runner service cancels an accepted operator reply through its allocated run",
+      "file": "tests/integration/runner-service.test.ts",
+      "line": 1336,
+      "ancestors": [],
+      "title": "runner service cancels an accepted operator reply through its allocated run",
+      "contractId": "runtime.integration",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: runner service cancels an accepted operator reply through its allocated run",
+      "dimension": "runner service cancels an accepted operator reply through its allocated run",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/integration/runner-service.test.ts :: runner service emits run.cancelled on the original stream after run.cancel",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1933,
+      "line": 2093,
       "ancestors": [],
       "title": "runner service emits run.cancelled on the original stream after run.cancel",
       "contractId": "runtime.integration",
@@ -16788,7 +16923,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service graceful close ends open event subscriptions",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1508,
+      "line": 1668,
       "ancestors": [],
       "title": "runner service graceful close ends open event subscriptions",
       "contractId": "runtime.integration",
@@ -16803,7 +16938,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service keeps durable runs active when a stream disconnects",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1655,
+      "line": 1815,
       "ancestors": [],
       "title": "runner service keeps durable runs active when a stream disconnects",
       "contractId": "runtime.integration",
@@ -16863,7 +16998,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service replays journaled events from sinceEventId after host recreation",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1816,
+      "line": 1976,
       "ancestors": [],
       "title": "runner service replays journaled events from sinceEventId after host recreation",
       "contractId": "runtime.integration",
@@ -16938,7 +17073,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service streams filtered subscription events over /events/stream",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1388,
+      "line": 1548,
       "ancestors": [],
       "title": "runner service streams filtered subscription events over /events/stream",
       "contractId": "runtime.integration",
@@ -17416,16 +17551,16 @@
       "environment": "linux"
     },
     {
-      "identity": "tests/ops/cli/runtime-cli.ops.ts :: runtime doctor reports delegation failure and stalled runs",
+      "identity": "tests/ops/cli/runtime-cli.ops.ts :: runtime doctor reports delegation failure and trusts authoritative running thread state",
       "file": "tests/ops/cli/runtime-cli.ops.ts",
       "line": 90,
       "ancestors": [],
-      "title": "runtime doctor reports delegation failure and stalled runs",
+      "title": "runtime doctor reports delegation failure and trusts authoritative running thread state",
       "contractId": "runtime.integration",
       "owner": "runtime-core",
       "risk": "medium",
-      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: runtime doctor reports delegation failure and stalled runs",
-      "dimension": "runtime doctor reports delegation failure and stalled runs",
+      "counterexample": "Runtime components pass in isolation but fail across process, store, CLI, PTY, or SDK boundaries. Executable counterexample: runtime doctor reports delegation failure and trusts authoritative running thread state",
+      "dimension": "runtime doctor reports delegation failure and trusts authoritative running thread state",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -28953,7 +29088,7 @@
     {
       "identity": "tests/unit/desktop-ui-state.test.ts :: Desktop run requests admit only tagged runtime system prompts",
       "file": "tests/unit/desktop-ui-state.test.ts",
-      "line": 65,
+      "line": 71,
       "ancestors": [],
       "title": "Desktop run requests admit only tagged runtime system prompts",
       "contractId": "runtime.behavior",
@@ -28968,7 +29103,7 @@
     {
       "identity": "tests/unit/desktop-ui-state.test.ts :: Desktop UI state accepts only the versioned legacy storage contract",
       "file": "tests/unit/desktop-ui-state.test.ts",
-      "line": 35,
+      "line": 41,
       "ancestors": [],
       "title": "Desktop UI state accepts only the versioned legacy storage contract",
       "contractId": "runtime.behavior",
@@ -28983,7 +29118,7 @@
     {
       "identity": "tests/unit/desktop-ui-state.test.ts :: Desktop UI state rejects unknown storage keys and non-string values",
       "file": "tests/unit/desktop-ui-state.test.ts",
-      "line": 54,
+      "line": 60,
       "ancestors": [],
       "title": "Desktop UI state rejects unknown storage keys and non-string values",
       "contractId": "runtime.behavior",
@@ -35043,7 +35178,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: CLI disconnect leaves a durable Core run available to another client",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1345,
+      "line": 1389,
       "ancestors": [],
       "title": "CLI disconnect leaves a durable Core run available to another client",
       "contractId": "runtime.behavior",
@@ -35058,7 +35193,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API canonicalizes symlink aliases before reserving execution authority",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 246,
+      "line": 290,
       "ancestors": [],
       "title": "Local Core API canonicalizes symlink aliases before reserving execution authority",
       "contractId": "runtime.behavior",
@@ -35073,7 +35208,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API does not adopt another authority instance in the same process",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 278,
+      "line": 322,
       "ancestors": [],
       "title": "Local Core API does not adopt another authority instance in the same process",
       "contractId": "runtime.behavior",
@@ -35088,7 +35223,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API does not steal or unlink another process authority",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 313,
+      "line": 357,
       "ancestors": [],
       "title": "Local Core API does not steal or unlink another process authority",
       "contractId": "runtime.behavior",
@@ -35103,7 +35238,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API exposes shared workspace and legacy-state endpoints",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1467,
+      "line": 1511,
       "ancestors": [],
       "title": "Local Core API exposes shared workspace and legacy-state endpoints",
       "contractId": "runtime.behavior",
@@ -35118,7 +35253,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API makes existing state and Core authority roots private before serving",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 193,
+      "line": 237,
       "ancestors": [],
       "title": "Local Core API makes existing state and Core authority roots private before serving",
       "contractId": "runtime.behavior",
@@ -35133,7 +35268,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API mirrors Desktop UI state without overwriting TUI state",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1897,
+      "line": 1941,
       "ancestors": [],
       "title": "Local Core API mirrors Desktop UI state without overwriting TUI state",
       "contractId": "runtime.behavior",
@@ -35148,7 +35283,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API owns default shell stores through client-backed adapters",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1504,
+      "line": 1548,
       "ancestors": [],
       "title": "Local Core API owns default shell stores through client-backed adapters",
       "contractId": "runtime.behavior",
@@ -35163,7 +35298,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API owns Desktop project runs and streams changes",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 2004,
+      "line": 2048,
       "ancestors": [],
       "title": "Local Core API owns Desktop project runs and streams changes",
       "contractId": "runtime.behavior",
@@ -35178,7 +35313,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API owns Desktop settings and model policy",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1653,
+      "line": 1697,
       "ancestors": [],
       "title": "Local Core API owns Desktop settings and model policy",
       "contractId": "runtime.behavior",
@@ -35193,7 +35328,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API owns kcron duplicate lease decisions",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1622,
+      "line": 1666,
       "ancestors": [],
       "title": "Local Core API owns kcron duplicate lease decisions",
       "contractId": "runtime.behavior",
@@ -35208,7 +35343,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API refuses a second execution authority without unlinking its socket",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 217,
+      "line": 261,
       "ancestors": [],
       "title": "Local Core API refuses a second execution authority without unlinking its socket",
       "contractId": "runtime.behavior",
@@ -35223,7 +35358,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API reports execution unavailable after a failed store restart",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1119,
+      "line": 1163,
       "ancestors": [],
       "title": "Local Core API reports execution unavailable after a failed store restart",
       "contractId": "runtime.behavior",
@@ -35238,7 +35373,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core API restart swaps execution ownership across blocked and healthy stores",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1953,
+      "line": 1997,
       "ancestors": [],
       "title": "Local Core API restart swaps execution ownership across blocked and healthy stores",
       "contractId": "runtime.behavior",
@@ -35268,7 +35403,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core captures injected credentials once per execution bundle",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 928,
+      "line": 972,
       "ancestors": [],
       "title": "Local Core captures injected credentials once per execution bundle",
       "contractId": "runtime.behavior",
@@ -35283,7 +35418,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core credential mutations are write-only and return sanitized status",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1032,
+      "line": 1076,
       "ancestors": [],
       "title": "Local Core credential mutations are write-only and return sanitized status",
       "contractId": "runtime.behavior",
@@ -35298,7 +35433,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core keeps control authority reachable and resets a broken startup store",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 344,
+      "line": 388,
       "ancestors": [],
       "title": "Local Core keeps control authority reachable and resets a broken startup store",
       "contractId": "runtime.behavior",
@@ -35313,7 +35448,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core maintenance ends subscriptions owned by each retired execution handler",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1157,
+      "line": 1201,
       "ancestors": [],
       "title": "Local Core maintenance ends subscriptions owned by each retired execution handler",
       "contractId": "runtime.behavior",
@@ -35328,7 +35463,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core maintenance rejects runtime admission and configuration mutation races",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 745,
+      "line": 789,
       "ancestors": [],
       "title": "Local Core maintenance rejects runtime admission and configuration mutation races",
       "contractId": "runtime.behavior",
@@ -35343,7 +35478,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core migrates a legacy plaintext external database URL into credential storage",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1074,
+      "line": 1118,
       "ancestors": [],
       "title": "Local Core migrates a legacy plaintext external database URL into credential storage",
       "contractId": "runtime.behavior",
@@ -35358,7 +35493,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core provider readiness follows the authoritative credential store",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 974,
+      "line": 1018,
       "ancestors": [],
       "title": "Local Core provider readiness follows the authoritative credential store",
       "contractId": "runtime.behavior",
@@ -35373,7 +35508,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core registers a Core-owned Desktop execution profile resolved from model policy",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1693,
+      "line": 1737,
       "ancestors": [],
       "title": "Local Core registers a Core-owned Desktop execution profile resolved from model policy",
       "contractId": "runtime.behavior",
@@ -35388,7 +35523,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core rejects an ambiguous credential store and custom runtime factory",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1098,
+      "line": 1142,
       "ancestors": [],
       "title": "Local Core rejects an ambiguous credential store and custom runtime factory",
       "contractId": "runtime.behavior",
@@ -35403,7 +35538,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core repairs malformed runtime configuration while execution is blocked",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 431,
+      "line": 475,
       "ancestors": [],
       "title": "Local Core repairs malformed runtime configuration while execution is blocked",
       "contractId": "runtime.behavior",
@@ -35418,7 +35553,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core replays durable execution events to the SDK after restart",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 1233,
+      "line": 1277,
       "ancestors": [],
       "title": "Local Core replays durable execution events to the SDK after restart",
       "contractId": "runtime.behavior",
@@ -35433,7 +35568,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core restart and reset reject an in-flight runtime-store read",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 689,
+      "line": 733,
       "ancestors": [],
       "title": "Local Core restart and reset reject an in-flight runtime-store read",
       "contractId": "runtime.behavior",
@@ -35448,7 +35583,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core runtime-store reset refuses external database authority without mutation",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 570,
+      "line": 614,
       "ancestors": [],
       "title": "Local Core runtime-store reset refuses external database authority without mutation",
       "contractId": "runtime.behavior",
@@ -35463,7 +35598,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core runtime-store reset rejects an active execution before archiving",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 602,
+      "line": 646,
       "ancestors": [],
       "title": "Local Core runtime-store reset rejects an active execution before archiving",
       "contractId": "runtime.behavior",
@@ -35478,7 +35613,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core runtime-store reset requires explicit confirmation and exposes typed errors",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 533,
+      "line": 577,
       "ancestors": [],
       "title": "Local Core runtime-store reset requires explicit confirmation and exposes typed errors",
       "contractId": "runtime.behavior",
@@ -35493,7 +35628,7 @@
     {
       "identity": "tests/unit/local-core-api.test.ts :: Local Core serializes reset against every other maintenance request",
       "file": "tests/unit/local-core-api.test.ts",
-      "line": 837,
+      "line": 881,
       "ancestors": [],
       "title": "Local Core serializes reset against every other maintenance request",
       "contractId": "runtime.behavior",
@@ -36056,6 +36191,36 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Local Core daemon runs Electron executables in Node mode",
       "dimension": "Local Core daemon runs Electron executables in Node mode",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/local-core-desktop-thread-workspace.test.ts :: Desktop workspace registration bootstraps restored conversations into Local Core authority",
+      "file": "tests/unit/local-core-desktop-thread-workspace.test.ts",
+      "line": 7,
+      "ancestors": [],
+      "title": "Desktop workspace registration bootstraps restored conversations into Local Core authority",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Desktop workspace registration bootstraps restored conversations into Local Core authority",
+      "dimension": "Desktop workspace registration bootstraps restored conversations into Local Core authority",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/local-core-desktop-ui-state.test.ts :: Desktop UI state serializes concurrent snapshots without trailing bytes",
+      "file": "tests/unit/local-core-desktop-ui-state.test.ts",
+      "line": 10,
+      "ancestors": [],
+      "title": "Desktop UI state serializes concurrent snapshots without trailing bytes",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Desktop UI state serializes concurrent snapshots without trailing bytes",
+      "dimension": "Desktop UI state serializes concurrent snapshots without trailing bytes",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -44088,7 +44253,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService captures compact adaptation for repeated continuation-thrash sessions",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 1312,
+      "line": 1346,
       "ancestors": [],
       "title": "RunReplayService captures compact adaptation for repeated continuation-thrash sessions",
       "contractId": "runtime.behavior",
@@ -44103,7 +44268,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService classifies TOOL_LOOKUP_FAILED caused by capability-loss tool pruning",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 1007,
+      "line": 1041,
       "ancestors": [],
       "title": "RunReplayService classifies TOOL_LOOKUP_FAILED caused by capability-loss tool pruning",
       "contractId": "runtime.behavior",
@@ -44118,7 +44283,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService derives evidence recovery summary from persisted checkpoint signals",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 1100,
+      "line": 1134,
       "ancestors": [],
       "title": "RunReplayService derives evidence recovery summary from persisted checkpoint signals",
       "contractId": "runtime.behavior",
@@ -44133,7 +44298,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService exposes supervision groups, fan-in decisions, superseded lineage, and dominant blocker across multiple children",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 682,
+      "line": 716,
       "ancestors": [],
       "title": "RunReplayService exposes supervision groups, fan-in decisions, superseded lineage, and dominant blocker across multiple children",
       "contractId": "runtime.behavior",
@@ -44178,7 +44343,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService keeps fan-in checkpoints out of latest adaptation summaries",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 875,
+      "line": 909,
       "ancestors": [],
       "title": "RunReplayService keeps fan-in checkpoints out of latest adaptation summaries",
       "contractId": "runtime.behavior",
@@ -44223,7 +44388,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService reports legacy threads without assembly history as implicit/legacy",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 971,
+      "line": 1005,
       "ancestors": [],
       "title": "RunReplayService reports legacy threads without assembly history as implicit/legacy",
       "contractId": "runtime.behavior",
@@ -44238,7 +44403,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService surfaces canonical filesystem retrieval family from persisted checkpoint signals",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 1169,
+      "line": 1203,
       "ancestors": [],
       "title": "RunReplayService surfaces canonical filesystem retrieval family from persisted checkpoint signals",
       "contractId": "runtime.behavior",
@@ -44253,7 +44418,7 @@
     {
       "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService surfaces split adaptation lineage and compaction-backed evidence fallback",
       "file": "tests/unit/run-replay-service.test.ts",
-      "line": 1219,
+      "line": 1253,
       "ancestors": [],
       "title": "RunReplayService surfaces split adaptation lineage and compaction-backed evidence fallback",
       "contractId": "runtime.behavior",
@@ -44291,6 +44456,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: RunReplayService surfaces summarize_forward adaptation lineage with authoritative summary artifacts",
       "dimension": "RunReplayService surfaces summarize_forward adaptation lineage with authoritative summary artifacts",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/run-replay-service.test.ts :: RunReplayService trusts authoritative running thread state over old event timestamps",
+      "file": "tests/unit/run-replay-service.test.ts",
+      "line": 682,
+      "ancestors": [],
+      "title": "RunReplayService trusts authoritative running thread state over old event timestamps",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: RunReplayService trusts authoritative running thread state over old event timestamps",
+      "dimension": "RunReplayService trusts authoritative running thread state over old event timestamps",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"

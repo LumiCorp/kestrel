@@ -52,6 +52,7 @@ import {
 } from "./desktopProjectRuns.js";
 import { DesktopUiStateStore } from "./desktopUiState.js";
 import { DesktopAttachmentStore, DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES } from "./desktopAttachments.js";
+import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
@@ -1137,6 +1138,39 @@ async function handleRequest(input: {
         200,
         { ok: true, ...await new DesktopUiStateStore(input.status.home.homePath).sync(state) },
       );
+      return;
+    }
+    if (method === "PUT" && url.pathname === "/v1/desktop/thread-workspace") {
+      const bodyValue = await readJsonBody(input.request);
+      if (typeof bodyValue !== "object" || bodyValue === null || Array.isArray(bodyValue)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID", "Thread workspace registration must be an object.");
+      }
+      const body = bodyValue as Record<string, unknown>;
+      const sessionId = normalizeString(body.sessionId);
+      const threadId = normalizeString(body.threadId);
+      const workspace = normalizeObjectField<Record<string, unknown>>(body, "workspace");
+      const workspaceId = normalizeString(workspace.workspaceId);
+      const workspaceRoot = normalizeString(workspace.workspaceRoot);
+      const appRoot = normalizeString(workspace.appRoot);
+      if (sessionId === undefined || threadId === undefined || workspaceId === undefined || workspaceRoot === undefined || appRoot === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID", "sessionId, threadId, workspaceId, workspaceRoot, and appRoot are required.");
+      }
+      try {
+        const thread = await input.withRuntimeStore(async (store) => await syncDesktopThreadWorkspace(store, {
+          sessionId,
+          threadId,
+          workspace: {
+            ...workspace,
+            workspaceId,
+            workspaceRoot,
+            appRoot,
+            commands: normalizeObjectField(workspace, "commands"),
+          },
+        }));
+        writeJson(input.response, 200, { ok: true, thread });
+      } catch (error) {
+        throw new LocalCoreApiRequestError(409, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_CONFLICT", error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (method === "GET" && url.pathname === "/v1/provider-readiness") {

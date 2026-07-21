@@ -583,6 +583,7 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         const response = await sendCommand(activeClient, "operator.control", {
           action: command.action,
           threadId: command.threadId,
+          ...(command.completionMode !== undefined ? { completionMode: command.completionMode } : {}),
           ...(command.followUpId !== undefined ? { followUpId: command.followUpId } : {}),
           ...(command.requestId !== undefined ? { requestId: command.requestId } : {}),
           ...(command.proposalId !== undefined ? { proposalId: command.proposalId } : {}),
