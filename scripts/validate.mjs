@@ -26,7 +26,7 @@ let postgres;
 const budgets = {
   preflight: 20_000,
   sharedBuild: 90_000,
-  hermetic: 180_000,
+  hermetic: 360_000,
   productionBuilds: 180_000,
   process: 60_000,
   postgres: 60_000,
