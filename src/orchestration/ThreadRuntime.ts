@@ -150,6 +150,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return this.delegationSupervisor;
   }
 
+  async listConversationTurns(input: { threadId?: string | undefined; sessionId?: string | undefined; limit?: number | undefined } = {}) { return this.store.listConversationTurns?.(input) ?? []; }
+  async listConversationTurnSegments(turnId: string) { return this.store.listConversationTurnSegments?.(turnId) ?? []; }
+
   async startThread(input: {
     threadId?: string | undefined;
     sessionId?: string | undefined;

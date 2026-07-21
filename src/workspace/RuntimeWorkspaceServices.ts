@@ -7,10 +7,16 @@ import {
 } from "./ManagedWorktreePromotionService.js";
 import type { ManagedTaskWorktreeService } from "./ManagedTaskWorktreeService.js";
 import type {
+  ManagedTaskWorktreeBinding,
+  ManagedTaskWorktreeCleanupResult,
+  ManagedTaskWorktreeLifecycleInspection,
+} from "./ManagedTaskWorktreeService.js";
+import type {
   WorkspaceCheckpointCleanupPolicy,
   WorkspaceCheckpointCleanupResult,
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
+  WorkspaceCheckpointRole,
   WorkspaceDiffRecord,
   WorkspacePromotionPreview,
   WorkspacePromotionRecord,
@@ -22,16 +28,36 @@ export interface WorkspaceContextResolverOptions {
     sessionId: string;
     snapshot: ProductProjectSnapshot;
   }>;
+  getThreadWorkspace?(input: { threadId: string }): Promise<{
+    sessionId: string;
+    kind: "local" | "managed";
+    workspaceRoot: string;
+  } | undefined>;
+  updateManagedWorktreeBinding?(input: {
+    sessionId: string;
+    binding: ManagedTaskWorktreeBinding | undefined;
+  }): Promise<void>;
 }
 
 export class WorkspaceContextResolver {
   private readonly getProjectSnapshot: WorkspaceContextResolverOptions["getProjectSnapshot"];
+  private readonly getThreadWorkspace?: WorkspaceContextResolverOptions["getThreadWorkspace"];
+  private readonly updateManagedWorktreeBinding?: WorkspaceContextResolverOptions["updateManagedWorktreeBinding"];
 
   constructor(options: WorkspaceContextResolverOptions) {
     this.getProjectSnapshot = options.getProjectSnapshot;
+    this.getThreadWorkspace = options.getThreadWorkspace;
+    this.updateManagedWorktreeBinding = options.updateManagedWorktreeBinding;
   }
 
-  async resolve(input: { sessionId: string }): Promise<ProductProjectSetupState> {
+  async resolve(input: { sessionId: string; threadId?: string | undefined }): Promise<ProductProjectSetupState> {
+    return (await this.resolveWithRole(input)).setup;
+  }
+
+  async resolveWithRole(input: {
+    sessionId: string;
+    threadId?: string | undefined;
+  }): Promise<{ setup: ProductProjectSetupState; workspaceRole: WorkspaceCheckpointRole }> {
     const { snapshot } = await this.getProjectSnapshot({ sessionId: input.sessionId });
     if (hasWorkspaceRoot(snapshot.setup) === false) {
       throw createRuntimeFailure(
@@ -42,7 +68,64 @@ export class WorkspaceContextResolver {
         },
       );
     }
-    return snapshot.setup;
+    if (input.threadId !== undefined && this.getThreadWorkspace !== undefined) {
+      const workspace = await this.resolveThreadWorkspace({
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+      });
+      if (workspace?.kind === "managed") {
+        return {
+          setup: {
+            ...snapshot.setup,
+            workspaceRoot: workspace.workspaceRoot,
+            repoRoot: workspace.workspaceRoot,
+            repoLabel: "managed-worktree",
+          },
+          workspaceRole: "managed_worktree",
+        };
+      }
+    }
+    return { setup: snapshot.setup, workspaceRole: "source" };
+  }
+
+  async resolveThreadWorkspace(input: { sessionId: string; threadId: string }) {
+    if (this.getThreadWorkspace === undefined) {
+      throw createRuntimeFailure(
+        "WORKSPACE_CONTEXT_UNAVAILABLE",
+        "Thread workspace authority is unavailable.",
+        input,
+      );
+    }
+    const workspace = await this.getThreadWorkspace({ threadId: input.threadId });
+    if (workspace === undefined) {
+      throw createRuntimeFailure(
+        "WORKSPACE_CONTEXT_UNAVAILABLE",
+        `Thread '${input.threadId}' has no workspace context.`,
+        input,
+      );
+    }
+    if (workspace.sessionId !== input.sessionId) {
+      throw createRuntimeFailure(
+        "WORKSPACE_CONTEXT_MISMATCH",
+        `Thread '${input.threadId}' does not belong to session '${input.sessionId}'.`,
+        input,
+      );
+    }
+    return workspace;
+  }
+
+  async setManagedWorktreeBinding(input: {
+    sessionId: string;
+    binding: ManagedTaskWorktreeBinding | undefined;
+  }): Promise<void> {
+    if (this.updateManagedWorktreeBinding === undefined) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_BINDING_UPDATE_UNAVAILABLE",
+        "Managed worktree binding updates are unavailable.",
+        { sessionId: input.sessionId },
+      );
+    }
+    await this.updateManagedWorktreeBinding(input);
   }
 }
 
@@ -69,12 +152,13 @@ export class RuntimeWorkspaceCheckpointService {
     runId?: string | undefined;
     taskId?: string | undefined;
   }): Promise<{ sessionId: string; checkpoint: WorkspaceCheckpointDetail }> {
+    const context = await this.resolver.resolveWithRole(input);
     return {
       sessionId: input.sessionId,
       checkpoint: await this.checkpointService.capture({
         ...input,
-        setup: await this.resolver.resolve(input),
-        workspaceRole: "source",
+        setup: context.setup,
+        workspaceRole: context.workspaceRole,
       }),
     };
   }
@@ -238,6 +322,175 @@ export class RuntimeWorkspaceCheckpointService {
     return { sessionId: input.sessionId, ...result };
   }
 
+  async inspectManagedWorktree(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<{ sessionId: string; inspection: ManagedTaskWorktreeLifecycleInspection }> {
+    const binding = await this.resolveManagedBinding(input);
+    return {
+      sessionId: input.sessionId,
+      inspection: await this.requireManagedWorktreeService().inspectLifecycle(binding),
+    };
+  }
+
+  async cleanupManagedWorktree(input: {
+    sessionId: string;
+    threadId: string;
+    reason: string;
+    cleanedBy?: string | undefined;
+  }): Promise<{
+    sessionId: string;
+    checkpoint: WorkspaceCheckpointDetail;
+    cleanup: ManagedTaskWorktreeCleanupResult;
+  }> {
+    const binding = await this.resolveManagedBinding(input);
+    const service = this.requireManagedWorktreeService();
+    const inspection = await service.inspectLifecycle(binding);
+    if (inspection.status !== "valid" || inspection.currentLease !== undefined || inspection.activeProcesses.length > 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_CLEANUP_BLOCKED",
+        "Managed worktree cleanup is blocked until the binding is valid and all leases and processes are released.",
+        {
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          worktreeRoot: binding.worktreeRoot,
+          blockedReason: inspection.status !== "valid"
+            ? inspection.validationReason ?? "binding_invalid"
+            : inspection.activeProcesses.length > 0
+              ? "active_processes"
+              : "active_lease",
+        },
+      );
+    }
+    const checkpoint = await this.checkpointService.capture({
+      sessionId: input.sessionId,
+      setup: managedWorktreeSetup(binding),
+      label: `Before managed worktree cleanup ${new Date().toISOString()}`,
+      reason: input.reason,
+      kind: "recovery_anchor",
+      threadId: input.threadId,
+      createdBy: input.cleanedBy ?? "operator",
+      workspaceRole: "managed_worktree",
+    });
+    await this.resolver.setManagedWorktreeBinding({ sessionId: input.sessionId, binding: undefined });
+    let cleanup: ManagedTaskWorktreeCleanupResult;
+    try {
+      cleanup = await service.cleanupManagedWorktree(binding, {
+        snapshotCheckpointId: checkpoint.checkpoint.checkpointId,
+        cleanedBy: input.cleanedBy,
+      });
+    } catch (error) {
+      await this.resolver.setManagedWorktreeBinding({ sessionId: input.sessionId, binding });
+      throw error;
+    }
+    return { sessionId: input.sessionId, checkpoint, cleanup };
+  }
+
+  async restoreManagedWorktree(input: {
+    sessionId: string;
+    threadId: string;
+    checkpointId: string;
+    reason?: string | undefined;
+    restoredBy?: string | undefined;
+  }): Promise<{
+    sessionId: string;
+    binding: ManagedTaskWorktreeBinding;
+    restore: WorkspaceRestoreRecord;
+  }> {
+    const service = this.requireManagedWorktreeService();
+    const checkpoint = await this.checkpointService.getCheckpointRecord({
+      sessionId: input.sessionId,
+      checkpointId: input.checkpointId,
+    });
+    if (
+      checkpoint.workspaceRole !== "managed_worktree" ||
+      checkpoint.threadId !== input.threadId ||
+      checkpoint.headSha === undefined
+    ) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_RESTORE_CHECKPOINT_INVALID",
+        "Managed worktree restore requires a checkpoint for the same thread with a recorded HEAD.",
+        { sessionId: input.sessionId, threadId: input.threadId, checkpointId: input.checkpointId },
+      );
+    }
+    const sourceSetup = await this.resolver.resolve({ sessionId: input.sessionId });
+    if (sourceSetup.workspaceRoot.trim().length === 0 || sourceSetup.repoRoot.trim().length === 0) {
+      throw createRuntimeFailure(
+        "WORKSPACE_CONTEXT_UNAVAILABLE",
+        "Managed worktree restore requires an authoritative source workspace.",
+        { sessionId: input.sessionId, threadId: input.threadId },
+      );
+    }
+    const restoreRunId = `restore:${input.checkpointId}`;
+    const provisioned = await service.provision({
+      sessionId: input.sessionId,
+      runId: restoreRunId,
+      sourceWorkspaceRoot: sourceSetup.workspaceRoot,
+      sourceRepoRoot: sourceSetup.repoRoot,
+      threadId: input.threadId,
+      isolation: "scoped",
+      baseRef: checkpoint.headSha,
+      triggeringTool: "workspace.managed.restore",
+    });
+    const binding = provisioned.binding;
+    if (binding.worktreeRoot !== checkpoint.workspaceRoot) {
+      await service.releaseLease(binding, { runId: restoreRunId });
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_RESTORE_TARGET_MISMATCH",
+        "The retained checkpoint does not match the managed worktree generation selected for restoration.",
+        {
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          checkpointId: input.checkpointId,
+          checkpointWorkspaceRoot: checkpoint.workspaceRoot,
+          provisionedWorktreeRoot: binding.worktreeRoot,
+        },
+      );
+    }
+    await this.resolver.setManagedWorktreeBinding({ sessionId: input.sessionId, binding });
+    try {
+      const restore = await this.checkpointService.restore({
+        sessionId: input.sessionId,
+        setup: managedWorktreeSetup(binding),
+        checkpointId: input.checkpointId,
+        reason: input.reason,
+        threadId: input.threadId,
+        runId: restoreRunId,
+        restoredBy: input.restoredBy ?? "operator",
+        expectedWorkspaceRole: "managed_worktree",
+      });
+      await service.releaseLease(binding, { runId: restoreRunId });
+      return { sessionId: input.sessionId, binding, restore };
+    } catch (error) {
+      await service.releaseLease(binding, { runId: restoreRunId });
+      throw error;
+    }
+  }
+
+  async retryManagedWorktreeSetup(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<{ sessionId: string; inspection: ManagedTaskWorktreeLifecycleInspection }> {
+    const service = this.requireManagedWorktreeService();
+    const sourceSetup = await this.resolver.resolve({ sessionId: input.sessionId });
+    const runId = `setup-retry:${input.threadId}:${Date.now()}`;
+    const provisioned = await service.retrySetup({
+      sessionId: input.sessionId,
+      runId,
+      sourceWorkspaceRoot: sourceSetup.workspaceRoot,
+      sourceRepoRoot: sourceSetup.repoRoot,
+      threadId: input.threadId,
+      isolation: "scoped",
+      triggeringTool: "workspace.managed.setup.retry",
+    });
+    await service.releaseLease(provisioned.binding, { runId });
+    await this.resolver.setManagedWorktreeBinding({ sessionId: input.sessionId, binding: provisioned.binding });
+    return {
+      sessionId: input.sessionId,
+      inspection: await service.inspectLifecycle(provisioned.binding),
+    };
+  }
+
   private async resolvePromotionCandidate(input: {
     sessionId: string;
     promotionId: string;
@@ -283,6 +536,33 @@ export class RuntimeWorkspaceCheckpointService {
       );
     }
     return this.managedWorktreeService;
+  }
+
+  private async resolveManagedBinding(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<ManagedTaskWorktreeBinding> {
+    const workspace = await this.resolver.resolveThreadWorkspace(input);
+    if (workspace.kind !== "managed") {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_UNAVAILABLE",
+        `Thread '${input.threadId}' is using its local source checkout.`,
+        input,
+      );
+    }
+    const binding = await this.requireManagedWorktreeService().readBindingForWorktreeRoot(workspace.workspaceRoot);
+    if (
+      binding === undefined ||
+      binding.sessionId !== input.sessionId ||
+      (binding.threadId !== undefined && binding.threadId !== input.threadId)
+    ) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_BINDING_INVALID",
+        "The authoritative thread workspace no longer matches its managed worktree binding.",
+        { ...input, worktreeRoot: workspace.workspaceRoot },
+      );
+    }
+    return binding;
   }
 }
 

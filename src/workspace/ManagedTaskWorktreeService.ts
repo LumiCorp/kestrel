@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import { chmod, copyFile, lstat, mkdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
@@ -20,6 +20,34 @@ export interface ManagedTaskWorktreeRequest {
   isolation?: "scoped" | "session" | undefined;
   triggeringTool: string;
   approvalId?: string | undefined;
+  baseRef?: string | undefined;
+  setup?: ManagedTaskWorktreeSetupSpec | undefined;
+}
+
+export interface ManagedTaskWorktreeSetupSpec {
+  approvedIgnoredFiles: string[];
+  steps: ManagedTaskWorktreeSetupStep[];
+}
+
+export interface ManagedTaskWorktreeSetupStep {
+  id: string;
+  label: string;
+  executable: string;
+  args: string[];
+}
+
+export interface ManagedTaskWorktreeSetupState {
+  status: "not_configured" | "pending" | "running" | "completed" | "failed";
+  fingerprint?: string | undefined;
+  attempts: number;
+  approvedIgnoredFiles: string[];
+  completedStepIds: string[];
+  activeStepId?: string | undefined;
+  startedAt?: string | undefined;
+  completedAt?: string | undefined;
+  failedAt?: string | undefined;
+  failureStepId?: string | undefined;
+  failureMessage?: string | undefined;
 }
 
 export type ManagedTaskWorktreeScopeKind = "taskId" | "taskKey" | "threadId" | "sessionId";
@@ -45,6 +73,7 @@ export interface ManagedTaskWorktreeBinding {
   sourceRepoRoot: string;
   worktreeRoot: string;
   baseHead: string;
+  baseRefName?: string | undefined;
   lastObservedSourceHead: string;
   scope: ManagedTaskWorktreeScope;
   leaseId: string;
@@ -66,6 +95,7 @@ export interface ManagedTaskWorktreeProposal {
   sourceRepoRoot: string;
   worktreeRoot: string;
   baseHead: string;
+  baseRefName?: string | undefined;
   lastObservedSourceHead?: string | undefined;
   scope?: ManagedTaskWorktreeScope | undefined;
   taskId?: string | undefined;
@@ -73,6 +103,7 @@ export interface ManagedTaskWorktreeProposal {
   threadId?: string | undefined;
   isolation?: "scoped" | "session" | undefined;
   triggeringTool: string;
+  setup?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 
 export interface ManagedTaskWorktreeProvisionResult {
@@ -99,6 +130,7 @@ interface ManagedTaskWorktreeMetadata {
   sourceRepoRoot: string;
   worktreeRoot: string;
   baseHead: string;
+  baseRefName?: string | undefined;
   lastObservedSourceHead?: string | undefined;
   bindingKey: string;
   scope?: ManagedTaskWorktreeScope | undefined;
@@ -115,6 +147,8 @@ interface ManagedTaskWorktreeMetadata {
   threadId?: string | undefined;
   isolation?: "scoped" | "session" | undefined;
   createdAt: string;
+  setup?: ManagedTaskWorktreeSetupState | undefined;
+  setupSpec?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 
 interface ManagedTaskWorktreeBindingRegistryGeneration {
@@ -144,11 +178,56 @@ interface ManagedTaskWorktreeSessionBinding {
   lastBoundAt: string;
 }
 
-interface ManagedTaskWorktreeProcessLease {
+export interface ManagedTaskWorktreeProcessLease {
   processId: string;
   sessionId: string;
   runId: string;
   startedAt: string;
+}
+
+export interface ManagedTaskWorktreeLifecycleInspection {
+  status: "valid" | "invalid";
+  binding: ManagedTaskWorktreeBinding;
+  validationReason?: "missing" | "path_collision" | "metadata_mismatch" | undefined;
+  currentLease?: ManagedTaskWorktreeLease | undefined;
+  activeProcesses: ManagedTaskWorktreeProcessLease[];
+  dirtyState: ManagedTaskWorktreeDirtyState;
+  storageBytes: number;
+  storageScanTruncated: boolean;
+  headSha?: string | undefined;
+  currentSourceHead?: string | undefined;
+  aheadCommitCount: number;
+  staleBase: boolean;
+  promotionState?: "pending_promotion" | "promotion_blocked" | "promoted" | "abandoned" | undefined;
+  latestPromotionId?: string | undefined;
+  latestPromotionStatus?: "promoted" | "noop" | "blocked" | "pending_review" | "skipped" | "failed" | undefined;
+  setup: ManagedTaskWorktreeSetupState;
+  retention: ManagedTaskWorktreeRetentionState;
+}
+
+export interface ManagedTaskWorktreeRetentionState {
+  policy: "retain_until_explicit_cleanup";
+  disposition: "blocked" | "retain_with_snapshot" | "clean_disposable";
+  reasons: Array<
+    | "binding_invalid"
+    | "active_lease"
+    | "active_processes"
+    | "setup_incomplete"
+    | "uncommitted_changes"
+    | "unpromoted_commits"
+    | "clean_and_no_commits"
+  >;
+  lastBoundAt?: string | undefined;
+}
+
+export interface ManagedTaskWorktreeCleanupResult {
+  status: "cleaned";
+  worktreeRoot: string;
+  sourceRepoRoot: string;
+  snapshotCheckpointId: string;
+  removedBytes: number;
+  cleanedAt: string;
+  cleanedBy: string;
 }
 
 export interface ManagedTaskWorktreeDirtyState {
@@ -291,8 +370,18 @@ export class ManagedTaskWorktreeService {
   async prepare(input: ManagedTaskWorktreeRequest): Promise<ManagedTaskWorktreeProposal> {
     const sourceWorkspaceRoot = await resolveRealDirectory(input.sourceWorkspaceRoot, "sourceWorkspaceRoot");
     const sourceRepoRoot = await this.resolveSourceRepoRoot(sourceWorkspaceRoot, input.sourceRepoRoot);
-    const baseHead = await this.ensureSourceHead(sourceRepoRoot);
+    await this.ensureSourceHead(sourceRepoRoot);
+    const baseRefName = normalizeNonEmptyString(input.baseRef)
+      ?? await git(sourceRepoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "HEAD");
+    const baseHead = await git(sourceRepoRoot, ["rev-parse", "--verify", `${baseRefName}^{commit}`]).catch(() => {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_BASE_REF_INVALID",
+        `Managed worktree base ref '${baseRefName}' does not resolve to a commit.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, sourceRepoRoot, baseRefName },
+      );
+    });
     const scope = resolveWorktreeScope(input);
+    const setup = normalizeManagedWorktreeSetupSpec(input.setup);
     const worktreeRoot = await this.resolveCurrentWorktreeRoot({
       sourceRepoRoot,
       scope,
@@ -304,6 +393,7 @@ export class ManagedTaskWorktreeService {
       sourceRepoRoot,
       worktreeRoot,
       baseHead,
+      baseRefName,
       lastObservedSourceHead: baseHead,
       scope,
       ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
@@ -311,6 +401,7 @@ export class ManagedTaskWorktreeService {
       ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       triggeringTool: input.triggeringTool,
+      ...(setup !== undefined ? { setup } : {}),
     };
   }
 
@@ -320,7 +411,10 @@ export class ManagedTaskWorktreeService {
       : await this.normalizeApprovedProposal(input, input.approvedProposal);
     const existing = await this.inspectExistingWorktree(proposal, input.leaseOwnerLookup);
     if (existing.status === "valid") {
-      const metadata = await this.acquireLease(proposal, existing.metadata, input);
+      const metadata = await this.runProvisioningSetup(
+        proposal,
+        await this.acquireLease(proposal, existing.metadata, input),
+      );
       await this.updateBindingRegistryCurrent(proposal, {
         currentWorktreeRoot: proposal.worktreeRoot,
         tombstonePrevious: false,
@@ -335,7 +429,7 @@ export class ManagedTaskWorktreeService {
         await this.reclaimWorktreeRoot(proposal.worktreeRoot);
         await mkdir(path.dirname(proposal.worktreeRoot), { recursive: true });
         await git(proposal.sourceRepoRoot, ["worktree", "add", "--detach", proposal.worktreeRoot, proposal.baseHead]);
-        const metadata = await this.writeMetadata(proposal, input);
+        const metadata = await this.runProvisioningSetup(proposal, await this.writeMetadata(proposal, input));
         await this.updateBindingRegistryCurrent(proposal, {
           currentWorktreeRoot: proposal.worktreeRoot,
           tombstonePrevious: false,
@@ -350,7 +444,7 @@ export class ManagedTaskWorktreeService {
       const rotatedProposal = await this.rotateProposal(proposal);
       await mkdir(path.dirname(rotatedProposal.worktreeRoot), { recursive: true });
       await git(rotatedProposal.sourceRepoRoot, ["worktree", "add", "--detach", rotatedProposal.worktreeRoot, rotatedProposal.baseHead]);
-      const metadata = await this.writeMetadata(rotatedProposal, input);
+      const metadata = await this.runProvisioningSetup(rotatedProposal, await this.writeMetadata(rotatedProposal, input));
       await this.updateBindingRegistryCurrent(rotatedProposal, {
         currentWorktreeRoot: rotatedProposal.worktreeRoot,
         tombstonePrevious: true,
@@ -398,7 +492,7 @@ export class ManagedTaskWorktreeService {
 
     await mkdir(path.dirname(proposal.worktreeRoot), { recursive: true });
     await git(proposal.sourceRepoRoot, ["worktree", "add", "--detach", proposal.worktreeRoot, proposal.baseHead]);
-    const metadata = await this.writeMetadata(proposal, input);
+    const metadata = await this.runProvisioningSetup(proposal, await this.writeMetadata(proposal, input));
     await this.updateBindingRegistryCurrent(proposal, {
       currentWorktreeRoot: proposal.worktreeRoot,
       tombstonePrevious: false,
@@ -435,6 +529,47 @@ export class ManagedTaskWorktreeService {
       await this.writeRawMetadata(binding.worktreeRoot, next);
     }
     return binding;
+  }
+
+  async retrySetup(input: ManagedTaskWorktreeRequest): Promise<ManagedTaskWorktreeProvisionResult> {
+    const locator = await this.prepare({ ...input, setup: undefined });
+    const metadata = await this.readMetadata(locator);
+    if (metadata?.setupSpec === undefined || metadata.setup?.status !== "failed") {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_RETRY_UNAVAILABLE",
+        "No failed managed worktree setup is available to retry.",
+        {
+          subsystem: "workspace",
+          classification: "runtime",
+          recoverable: true,
+          worktreeRoot: locator.worktreeRoot,
+        },
+      );
+    }
+    const approvedProposal: ManagedTaskWorktreeProposal = {
+      sessionId: input.sessionId,
+      sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+      sourceRepoRoot: metadata.sourceRepoRoot,
+      worktreeRoot: metadata.worktreeRoot,
+      baseHead: metadata.baseHead,
+      baseRefName: metadata.baseRefName ?? metadata.baseHead,
+      lastObservedSourceHead: metadata.lastObservedSourceHead ?? metadata.baseHead,
+      scope: metadata.scope,
+      ...(metadata.taskId !== undefined ? { taskId: metadata.taskId } : {}),
+      ...(metadata.taskKey !== undefined ? { taskKey: metadata.taskKey } : {}),
+      ...(metadata.threadId !== undefined ? { threadId: metadata.threadId } : {}),
+      ...(metadata.isolation !== undefined ? { isolation: metadata.isolation } : {}),
+      triggeringTool: input.triggeringTool,
+      setup: metadata.setupSpec,
+    };
+    return this.provision({
+      ...input,
+      sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+      sourceRepoRoot: metadata.sourceRepoRoot,
+      baseRef: approvedProposal.baseRefName,
+      setup: metadata.setupSpec,
+      approvedProposal,
+    });
   }
 
   async attachProcess(
@@ -712,6 +847,110 @@ export class ManagedTaskWorktreeService {
     };
   }
 
+  async inspectLifecycle(binding: ManagedTaskWorktreeBinding): Promise<ManagedTaskWorktreeLifecycleInspection> {
+    const validation = await this.validateBinding(binding);
+    const metadata = await this.readMetadata({ worktreeRoot: binding.worktreeRoot });
+    const dirtyState = validation.status === "valid"
+      ? await readDirtyState(binding.worktreeRoot)
+      : binding.dirtyState;
+    const [headSha, currentSourceHead, aheadCommitText, storage] = await Promise.all([
+      validation.status === "valid"
+        ? git(binding.worktreeRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined)
+        : Promise.resolve(undefined),
+      git(binding.sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
+      validation.status === "valid"
+        ? git(binding.worktreeRoot, ["rev-list", "--count", `${binding.baseHead}..HEAD`]).catch(() => "0")
+        : Promise.resolve("0"),
+      validation.status === "valid"
+        ? directoryStorageBytes(binding.worktreeRoot)
+        : Promise.resolve({ bytes: 0, truncated: false }),
+    ]);
+    const aheadCommitCount = Number.parseInt(aheadCommitText.trim(), 10);
+    const normalizedAheadCommitCount = Number.isFinite(aheadCommitCount) ? aheadCommitCount : 0;
+    const activeProcesses = metadata?.activeProcesses ?? [];
+    const setup = metadata?.setup ?? initialSetupState(undefined);
+    return {
+      status: validation.status,
+      binding,
+      ...(validation.status === "invalid" ? { validationReason: validation.reason } : {}),
+      ...(metadata?.currentLease !== undefined ? { currentLease: metadata.currentLease } : {}),
+      activeProcesses,
+      dirtyState,
+      storageBytes: storage.bytes,
+      storageScanTruncated: storage.truncated,
+      ...(headSha !== undefined ? { headSha } : {}),
+      ...(currentSourceHead !== undefined ? { currentSourceHead } : {}),
+      aheadCommitCount: normalizedAheadCommitCount,
+      staleBase: currentSourceHead !== undefined && currentSourceHead !== binding.lastObservedSourceHead,
+      ...(metadata?.promotionState !== undefined ? { promotionState: metadata.promotionState } : {}),
+      ...(metadata?.latestPromotionId !== undefined ? { latestPromotionId: metadata.latestPromotionId } : {}),
+      ...(metadata?.latestPromotionStatus !== undefined ? { latestPromotionStatus: metadata.latestPromotionStatus } : {}),
+      setup,
+      retention: managedWorktreeRetentionState({
+        valid: validation.status === "valid",
+        hasActiveLease: metadata?.currentLease !== undefined,
+        activeProcessCount: activeProcesses.length,
+        setup,
+        dirty: dirtyState.dirty,
+        aheadCommitCount: normalizedAheadCommitCount,
+        lastBoundAt: latestSessionBindingAt(metadata?.bindings),
+      }),
+    };
+  }
+
+  async cleanupManagedWorktree(
+    binding: ManagedTaskWorktreeBinding,
+    input: {
+      snapshotCheckpointId: string;
+      cleanedBy?: string | undefined;
+    },
+  ): Promise<ManagedTaskWorktreeCleanupResult> {
+    const snapshotCheckpointId = input.snapshotCheckpointId.trim();
+    if (snapshotCheckpointId.length === 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_CLEANUP_SNAPSHOT_REQUIRED",
+        "Managed worktree cleanup requires a recovery snapshot.",
+        { worktreeRoot: binding.worktreeRoot, sourceRepoRoot: binding.sourceRepoRoot },
+      );
+    }
+    const inspection = await this.inspectLifecycle(binding);
+    if (inspection.status !== "valid") {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_CLEANUP_BLOCKED",
+        "Managed worktree cleanup requires a valid binding.",
+        {
+          blockedReason: inspection.validationReason ?? "binding_invalid",
+          worktreeRoot: binding.worktreeRoot,
+          sourceRepoRoot: binding.sourceRepoRoot,
+        },
+      );
+    }
+    if (inspection.currentLease !== undefined || inspection.activeProcesses.length > 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_CLEANUP_BLOCKED",
+        "Managed worktree cleanup is blocked while the workspace is leased or has active processes.",
+        {
+          blockedReason: inspection.activeProcesses.length > 0 ? "active_processes" : "active_lease",
+          worktreeRoot: binding.worktreeRoot,
+          sourceRepoRoot: binding.sourceRepoRoot,
+          ...(inspection.currentLease !== undefined ? { activeLease: inspection.currentLease } : {}),
+          activeProcessIds: inspection.activeProcesses.map((process) => process.processId),
+        },
+      );
+    }
+    await git(binding.sourceRepoRoot, ["worktree", "remove", "--force", binding.worktreeRoot]);
+    await rm(this.metadataPath({ worktreeRoot: binding.worktreeRoot }), { force: true });
+    return {
+      status: "cleaned",
+      worktreeRoot: binding.worktreeRoot,
+      sourceRepoRoot: binding.sourceRepoRoot,
+      snapshotCheckpointId,
+      removedBytes: inspection.storageBytes,
+      cleanedAt: new Date().toISOString(),
+      cleanedBy: input.cleanedBy?.trim().length ? input.cleanedBy.trim() : "operator",
+    };
+  }
+
   async releaseStaleProcessLease(input: {
     worktreeRoot: string;
     processLookup: ManagedTaskWorktreeProcessStatusLookup;
@@ -863,6 +1102,7 @@ export class ManagedTaskWorktreeService {
       sourceWorkspaceRoot: binding.sourceWorkspaceRoot,
       sourceRepoRoot: binding.sourceRepoRoot,
       baseHead: binding.baseHead,
+      ...(binding.baseRefName !== undefined ? { baseRefName: binding.baseRefName } : {}),
       lastObservedSourceHead: binding.lastObservedSourceHead,
       sessionId: binding.sessionId,
       runId: binding.runId,
@@ -881,6 +1121,7 @@ export class ManagedTaskWorktreeService {
         worktreeRoot: binding.worktreeRoot,
         sourceRepoRoot: binding.sourceRepoRoot,
         baseHead: binding.baseHead,
+        ...(binding.baseRefName !== undefined ? { baseRefName: binding.baseRefName } : {}),
         lastObservedSourceHead: binding.lastObservedSourceHead,
         scope: binding.scope,
         leaseId: binding.leaseId,
@@ -906,12 +1147,14 @@ export class ManagedTaskWorktreeService {
     });
     const worktreeRoot = approved.worktreeRoot.trim();
     const baseHead = approved.baseHead.trim();
+    const setup = normalizeManagedWorktreeSetupSpec(input.setup);
     const proposal: ManagedTaskWorktreeProposal = {
       sessionId: input.sessionId,
       sourceWorkspaceRoot,
       sourceRepoRoot,
       worktreeRoot,
       baseHead,
+      baseRefName: approved.baseRefName ?? normalizeNonEmptyString(input.baseRef) ?? "HEAD",
       lastObservedSourceHead: approved.lastObservedSourceHead?.trim() ?? baseHead,
       scope,
       ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
@@ -919,6 +1162,7 @@ export class ManagedTaskWorktreeService {
       ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       triggeringTool: input.triggeringTool,
+      ...(setup !== undefined ? { setup } : {}),
     };
     if (
       approved.sessionId !== proposal.sessionId ||
@@ -928,6 +1172,7 @@ export class ManagedTaskWorktreeService {
       proposal.worktreeRoot !== expectedWorktreeRoot ||
       proposal.worktreeRoot.length === 0 ||
       approved.baseHead !== proposal.baseHead ||
+      (approved.baseRefName ?? normalizeNonEmptyString(input.baseRef) ?? "HEAD") !== proposal.baseRefName ||
       proposal.baseHead.length === 0 ||
       (approved.lastObservedSourceHead ?? baseHead) !== proposal.lastObservedSourceHead ||
       proposal.lastObservedSourceHead === undefined ||
@@ -938,6 +1183,7 @@ export class ManagedTaskWorktreeService {
       (approved.threadId ?? "") !== (proposal.threadId ?? "") ||
       (approved.isolation ?? "") !== (proposal.isolation ?? "") ||
       approved.triggeringTool !== proposal.triggeringTool
+      || setupFingerprint(approved.setup) !== setupFingerprint(proposal.setup)
     ) {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_APPROVED_PROPOSAL_MISMATCH",
@@ -1199,6 +1445,153 @@ export class ManagedTaskWorktreeService {
     return next;
   }
 
+  private async runProvisioningSetup(
+    proposal: ManagedTaskWorktreeProposal,
+    metadata: ManagedTaskWorktreeMetadata,
+  ): Promise<ManagedTaskWorktreeMetadata> {
+    const spec = proposal.setup;
+    if (spec === undefined) {
+      return metadata;
+    }
+    const fingerprint = setupFingerprint(spec);
+    const previous = metadata.setup;
+    if (previous?.status === "completed" && previous.fingerprint === fingerprint) {
+      return metadata;
+    }
+    const completedStepIds = previous !== undefined && previous.fingerprint === fingerprint
+      ? previous.completedStepIds.filter((id) => spec.steps.some((step) => step.id === id))
+      : [];
+    const startedAt = new Date().toISOString();
+    let next: ManagedTaskWorktreeMetadata = {
+      ...metadata,
+      setup: {
+        status: "running",
+        fingerprint,
+        attempts: (previous?.attempts ?? 0) + 1,
+        approvedIgnoredFiles: [...spec.approvedIgnoredFiles],
+        completedStepIds,
+        startedAt,
+      },
+    };
+    await this.writeRawMetadata(proposal.worktreeRoot, next);
+    try {
+      for (const relativePath of spec.approvedIgnoredFiles) {
+        await this.copyApprovedIgnoredSetupFile(proposal, relativePath);
+      }
+      for (const step of spec.steps) {
+        if (completedStepIds.includes(step.id)) {
+          continue;
+        }
+        next = {
+          ...next,
+          setup: { ...next.setup!, activeStepId: step.id },
+        };
+        await this.writeRawMetadata(proposal.worktreeRoot, next);
+        await execFileAsync(step.executable, step.args, {
+          cwd: proposal.worktreeRoot,
+          maxBuffer: 1024 * 1024,
+        });
+        completedStepIds.push(step.id);
+        next = {
+          ...next,
+          setup: { ...next.setup!, completedStepIds: [...completedStepIds], activeStepId: undefined },
+        };
+        await this.writeRawMetadata(proposal.worktreeRoot, next);
+      }
+      next = {
+        ...next,
+        dirtyState: await readDirtyState(proposal.worktreeRoot),
+        setup: {
+          ...next.setup!,
+          status: "completed",
+          activeStepId: undefined,
+          completedAt: new Date().toISOString(),
+        },
+      };
+      await this.writeRawMetadata(proposal.worktreeRoot, next);
+      return next;
+    } catch (error) {
+      const failed: ManagedTaskWorktreeMetadata = {
+        ...next,
+        currentLease: undefined,
+        dirtyState: await readDirtyState(proposal.worktreeRoot),
+        setup: {
+          ...next.setup!,
+          status: "failed",
+          activeStepId: undefined,
+          failedAt: new Date().toISOString(),
+          ...(next.setup?.activeStepId !== undefined ? { failureStepId: next.setup.activeStepId } : {}),
+          failureMessage: boundedSetupFailureMessage(error),
+        },
+      };
+      await this.writeRawMetadata(proposal.worktreeRoot, failed);
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FAILED",
+        "Managed worktree environment setup failed. The worktree was retained and can be retried.",
+        {
+          subsystem: "workspace",
+          classification: "runtime",
+          recoverable: true,
+          worktreeRoot: proposal.worktreeRoot,
+          setup: failed.setup,
+        },
+      );
+    }
+  }
+
+  private async copyApprovedIgnoredSetupFile(
+    proposal: ManagedTaskWorktreeProposal,
+    relativePath: string,
+  ): Promise<void> {
+    const safePath = requireSafeRelativeGitPath(relativePath);
+    const ignored = await gitExitCode(proposal.sourceRepoRoot, ["check-ignore", "--quiet", "--", safePath]);
+    if (ignored !== 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FILE_NOT_IGNORED",
+        `Approved setup file '${safePath}' is not ignored by Git.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, path: safePath },
+      );
+    }
+    const tracked = await gitExitCode(proposal.worktreeRoot, ["ls-files", "--error-unmatch", "--", safePath]);
+    if (tracked === 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FILE_TRACKED",
+        `Approved setup file '${safePath}' would overwrite a tracked worktree file.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, path: safePath },
+      );
+    }
+    const sourcePath = path.resolve(proposal.sourceRepoRoot, safePath);
+    const sourceRealPath = await realpath(sourcePath).catch(() => undefined);
+    if (sourceRealPath === undefined || isPathInside(proposal.sourceRepoRoot, sourceRealPath) === false) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FILE_INVALID",
+        `Approved setup file '${safePath}' is missing or escapes the source repository.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, path: safePath },
+      );
+    }
+    const sourceStat = await stat(sourceRealPath);
+    if (sourceStat.isFile() === false || sourceStat.size > 64 * 1024 * 1024) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FILE_UNSUPPORTED",
+        `Approved setup file '${safePath}' must be a regular file no larger than 64 MiB.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, path: safePath, size: sourceStat.size },
+      );
+    }
+    const targetPath = path.resolve(proposal.worktreeRoot, safePath);
+    await assertSourceParentInsideRepo(proposal.worktreeRoot, targetPath);
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const targetStat = await lstat(targetPath).catch(() => undefined);
+    if (targetStat?.isDirectory() === true || targetStat?.isSymbolicLink() === true) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_FILE_INVALID",
+        `Approved setup file '${safePath}' has an unsafe worktree target.`,
+        { subsystem: "workspace", classification: "configuration", recoverable: true, path: safePath },
+      );
+    }
+    await copyFile(sourceRealPath, targetPath);
+    await chmod(targetPath, sourceStat.mode & 0o777);
+  }
+
   private async toBinding(
     proposal: ManagedTaskWorktreeProposal,
     input: ManagedTaskWorktreeProvisionRequest,
@@ -1222,6 +1615,7 @@ export class ManagedTaskWorktreeService {
       sourceRepoRoot: proposal.sourceRepoRoot,
       worktreeRoot: proposal.worktreeRoot,
       baseHead: proposal.baseHead,
+      baseRefName: proposal.baseRefName,
       lastObservedSourceHead: metadata.lastObservedSourceHead ?? proposal.lastObservedSourceHead ?? proposal.baseHead,
       scope: proposal.scope ?? resolveWorktreeScope(proposal),
       leaseId: lease.leaseId,
@@ -1264,6 +1658,7 @@ export class ManagedTaskWorktreeService {
       sourceRepoRoot: proposal.sourceRepoRoot,
       worktreeRoot: proposal.worktreeRoot,
       baseHead: proposal.baseHead,
+      baseRefName: proposal.baseRefName,
       lastObservedSourceHead: proposal.lastObservedSourceHead,
       bindingKey: bindingKeyForProposal(proposal),
       scope: proposal.scope,
@@ -1285,6 +1680,8 @@ export class ManagedTaskWorktreeService {
       ...(proposal.taskKey !== undefined ? { taskKey: proposal.taskKey } : {}),
       ...(proposal.threadId !== undefined ? { threadId: proposal.threadId } : {}),
       ...(proposal.isolation !== undefined ? { isolation: proposal.isolation } : {}),
+      setup: initialSetupState(proposal.setup),
+      ...(proposal.setup !== undefined ? { setupSpec: proposal.setup } : {}),
       createdAt: now,
     };
     await this.writeRawMetadata(proposal.worktreeRoot, metadata);
@@ -1591,6 +1988,8 @@ function metadataIdentityMatchesProposal(
     metadata.sourceWorkspaceRoot === proposal.sourceWorkspaceRoot &&
     metadata.sourceRepoRoot === proposal.sourceRepoRoot &&
     metadata.worktreeRoot === proposal.worktreeRoot &&
+    metadata.baseHead === proposal.baseHead &&
+    (metadata.baseRefName === undefined || proposal.baseRefName === undefined || metadata.baseRefName === proposal.baseRefName) &&
     scopesEqual(metadata.scope, proposal.scope) &&
     metadata.bindingKey === bindingKeyForProposal(proposal)
   );
@@ -1627,6 +2026,179 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseManagedTaskWorktreeSetupSpec(
+  value: unknown,
+): ManagedTaskWorktreeSetupSpec | undefined {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw createRuntimeFailure(
+      "MANAGED_WORKTREE_SETUP_INVALID",
+      "Managed worktree setup must be an object.",
+      { subsystem: "workspace", classification: "configuration", recoverable: true },
+    );
+  }
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.approvedIgnoredFiles) || !Array.isArray(record.steps)) {
+    throw createRuntimeFailure(
+      "MANAGED_WORKTREE_SETUP_INVALID",
+      "Managed worktree setup must provide approvedIgnoredFiles and steps arrays.",
+      { subsystem: "workspace", classification: "configuration", recoverable: true },
+    );
+  }
+  const approvedIgnoredFiles = [...new Set(record.approvedIgnoredFiles.map((entry) => {
+    if (typeof entry !== "string") {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_INVALID",
+        "Approved ignored setup paths must be strings.",
+        { subsystem: "workspace", classification: "configuration", recoverable: true },
+      );
+    }
+    return requireSafeRelativeGitPath(entry);
+  }))];
+  if (approvedIgnoredFiles.length > 64) {
+    throw createRuntimeFailure(
+      "MANAGED_WORKTREE_SETUP_INVALID",
+      "Managed worktree setup supports at most 64 approved ignored files.",
+      { subsystem: "workspace", classification: "configuration", recoverable: true },
+    );
+  }
+  if (record.steps.length > 16) {
+    throw createRuntimeFailure(
+      "MANAGED_WORKTREE_SETUP_INVALID",
+      "Managed worktree setup supports at most 16 ordered steps.",
+      { subsystem: "workspace", classification: "configuration", recoverable: true },
+    );
+  }
+  const ids = new Set<string>();
+  const steps = record.steps.map((valueStep) => {
+    if (typeof valueStep !== "object" || valueStep === null || Array.isArray(valueStep)) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_INVALID",
+        "Managed worktree setup steps must be objects.",
+        { subsystem: "workspace", classification: "configuration", recoverable: true },
+      );
+    }
+    const step = valueStep as Record<string, unknown>;
+    const id = normalizeNonEmptyString(step.id);
+    const label = normalizeNonEmptyString(step.label);
+    const executable = normalizeNonEmptyString(step.executable);
+    if (
+      id === undefined || label === undefined || executable === undefined ||
+      id.length > 80 || label.length > 160 || executable.length > 512 || executable.includes("\u0000") ||
+      !Array.isArray(step.args) || step.args.length > 128 ||
+      step.args.some((arg) => typeof arg !== "string" || arg.length > 8192 || arg.includes("\u0000")) ||
+      ids.has(id)
+    ) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SETUP_INVALID",
+        "Managed worktree setup contains an invalid or duplicate step.",
+        { subsystem: "workspace", classification: "configuration", recoverable: true, stepId: id },
+      );
+    }
+    ids.add(id);
+    return { id, label, executable, args: [...step.args] as string[] };
+  });
+  if (approvedIgnoredFiles.length === 0 && steps.length === 0) {
+    return;
+  }
+  return { approvedIgnoredFiles, steps };
+}
+
+const normalizeManagedWorktreeSetupSpec = parseManagedTaskWorktreeSetupSpec;
+
+function latestSessionBindingAt(
+  bindings: ManagedTaskWorktreeSessionBinding[] | undefined,
+): string | undefined {
+  return bindings?.reduce<string | undefined>(
+    (latest, binding) => latest === undefined || binding.lastBoundAt > latest ? binding.lastBoundAt : latest,
+    undefined,
+  );
+}
+
+function managedWorktreeRetentionState(input: {
+  valid: boolean;
+  hasActiveLease: boolean;
+  activeProcessCount: number;
+  setup: ManagedTaskWorktreeSetupState;
+  dirty: boolean;
+  aheadCommitCount: number;
+  lastBoundAt?: string | undefined;
+}): ManagedTaskWorktreeRetentionState {
+  const reasons: ManagedTaskWorktreeRetentionState["reasons"] = [];
+  if (input.valid === false) {
+    reasons.push("binding_invalid");
+  }
+  if (input.hasActiveLease) {
+    reasons.push("active_lease");
+  }
+  if (input.activeProcessCount > 0) {
+    reasons.push("active_processes");
+  }
+  if (input.setup.status === "pending" || input.setup.status === "running" || input.setup.status === "failed") {
+    reasons.push("setup_incomplete");
+  }
+  if (input.dirty) {
+    reasons.push("uncommitted_changes");
+  }
+  if (input.aheadCommitCount > 0) {
+    reasons.push("unpromoted_commits");
+  }
+
+  const blocked = reasons.some((reason) =>
+    reason === "binding_invalid" || reason === "active_lease" || reason === "active_processes" || reason === "setup_incomplete"
+  );
+  const disposition = blocked
+    ? "blocked"
+    : reasons.length > 0
+      ? "retain_with_snapshot"
+      : "clean_disposable";
+  if (reasons.length === 0) {
+    reasons.push("clean_and_no_commits");
+  }
+  return {
+    policy: "retain_until_explicit_cleanup",
+    disposition,
+    reasons,
+    ...(input.lastBoundAt !== undefined ? { lastBoundAt: input.lastBoundAt } : {}),
+  };
+}
+
+function setupFingerprint(spec: ManagedTaskWorktreeSetupSpec | undefined): string | undefined {
+  return spec === undefined
+    ? undefined
+    : createHash("sha256").update(JSON.stringify(spec)).digest("hex");
+}
+
+function initialSetupState(spec: ManagedTaskWorktreeSetupSpec | undefined): ManagedTaskWorktreeSetupState {
+  return spec === undefined
+    ? { status: "not_configured", attempts: 0, approvedIgnoredFiles: [], completedStepIds: [] }
+    : {
+        status: "pending",
+        fingerprint: setupFingerprint(spec),
+        attempts: 0,
+        approvedIgnoredFiles: [...spec.approvedIgnoredFiles],
+        completedStepIds: [],
+      };
+}
+
+function boundedSetupFailureMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const record = error as { code?: unknown; signal?: unknown };
+    if (typeof record.code === "number") {
+      return `Setup process exited with code ${record.code}.`;
+    }
+    if (typeof record.signal === "string" && record.signal.length > 0) {
+      return `Setup process was terminated by signal ${record.signal}.`;
+    }
+    if (typeof record.code === "string" && record.code.length > 0) {
+      return `Setup failed with code ${record.code}.`;
+    }
+  }
+  return "Setup failed without exposing command output. Review the step directly in the managed workspace.";
 }
 
 function parseGitPathList(output: string): string[] {
@@ -1868,6 +2440,7 @@ function proposalFromBinding(binding: ManagedTaskWorktreeBinding): ManagedTaskWo
     sourceRepoRoot: binding.sourceRepoRoot,
     worktreeRoot: binding.worktreeRoot,
     baseHead: binding.baseHead,
+    ...(binding.baseRefName !== undefined ? { baseRefName: binding.baseRefName } : {}),
     lastObservedSourceHead: binding.lastObservedSourceHead,
     scope: binding.scope,
     ...(binding.taskId !== undefined ? { taskId: binding.taskId } : {}),
@@ -1885,6 +2458,35 @@ async function readDirtyState(worktreeRoot: string): Promise<ManagedTaskWorktree
     porcelain,
     checkedAt: new Date().toISOString(),
   };
+}
+
+async function directoryStorageBytes(rootPath: string): Promise<{ bytes: number; truncated: boolean }> {
+  const maxEntries = 250_000;
+  let total = 0;
+  let inspectedEntries = 0;
+  const pending = [rootPath];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) {
+      continue;
+    }
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      inspectedEntries += 1;
+      if (inspectedEntries > maxEntries) {
+        return { bytes: total, truncated: true };
+      }
+      const entryPath = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        total += (await lstat(entryPath)).size;
+      } else if (entry.isDirectory()) {
+        pending.push(entryPath);
+      } else if (entry.isFile()) {
+        total += (await stat(entryPath)).size;
+      }
+    }
+  }
+  return { bytes: total, truncated: false };
 }
 
 function isSessionBinding(value: unknown): value is ManagedTaskWorktreeSessionBinding {

@@ -11,6 +11,7 @@ import type {
   ProductReviewAction,
   ProductReviewTarget,
 } from "../project/contracts.js";
+import type { WorkspaceChangeMutation, WorkspaceChangeScope, WorkspaceDiffOptions } from "../changes/contracts.js";
 import type { WorkspaceCheckpointCleanupPolicy } from "../workspaceCheckpoints/contracts.js";
 import type { ProductTaskGraph } from "../taskGraph/contracts.js";
 import type { ClientCapabilities } from "../clientCapabilities.js";
@@ -21,6 +22,7 @@ import type {
   ToolExecutionClass,
 } from "../mode/contracts.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
+import type { WorkspaceGitAction } from "../git/contracts.js";
 
 interface WebHistoryLineBase {
   text: string;
@@ -209,10 +211,114 @@ export type WebControlCommand =
       policyOverride?: Partial<WorkspaceCheckpointCleanupPolicy> | undefined;
     }
   | {
+      type: "workspace.promotion.list";
+      sessionId: string;
+    }
+  | {
+      type: "workspace.promotion.preview";
+      sessionId: string;
+      promotionId: string;
+    }
+  | {
+      type: "workspace.promotion.apply";
+      sessionId: string;
+      promotionId: string;
+      candidateFingerprint: string;
+    }
+  | {
       type: "workspace.promotion.undo_latest";
       sessionId: string;
       reason?: string | undefined;
     }
+  | {
+      type: "workspace.managed.inspect";
+      sessionId: string;
+      threadId: string;
+    }
+  | {
+      type: "workspace.managed.cleanup";
+      sessionId: string;
+      threadId: string;
+      reason: string;
+    }
+  | {
+      type: "workspace.managed.restore";
+      sessionId: string;
+      threadId: string;
+      checkpointId: string;
+      reason?: string | undefined;
+    }
+  | {
+      type: "workspace.managed.setup.retry";
+      sessionId: string;
+      threadId: string;
+    }
+  | {
+      type: "user.terminal.start";
+      sessionId: string;
+      threadId: string;
+      cols?: number | undefined;
+      rows?: number | undefined;
+    }
+  | {
+      type: "user.terminal.list";
+      sessionId: string;
+      threadId?: string | undefined;
+    }
+  | {
+      type: "user.terminal.read";
+      sessionId: string;
+      terminalId: string;
+      cursor?: number | undefined;
+    }
+  | {
+      type: "user.terminal.write";
+      sessionId: string;
+      terminalId: string;
+      data: string;
+    }
+  | {
+      type: "user.terminal.resize";
+      sessionId: string;
+      terminalId: string;
+      cols: number;
+      rows: number;
+    }
+  | {
+      type: "user.terminal.stop";
+      sessionId: string;
+      terminalId: string;
+    }
+  | {
+      type: "workspace.changes.inspect";
+      sessionId: string;
+      threadId: string;
+      scope: WorkspaceChangeScope;
+      options?: Partial<WorkspaceDiffOptions> | undefined;
+    }
+  | {
+      type: "workspace.changes.mutate";
+      sessionId: string;
+      threadId: string;
+      expectedFingerprint: string;
+      scope?: WorkspaceChangeScope | undefined;
+      options?: Partial<WorkspaceDiffOptions> | undefined;
+      mutation: WorkspaceChangeMutation;
+    }
+  | { type: "workspace.feedback.add"; sessionId: string; threadId: string; candidateFingerprint: string; path: string; line: number; side: "LEFT" | "RIGHT"; body: string }
+  | { type: "workspace.feedback.list"; sessionId: string; threadId: string }
+  | { type: "workspace.feedback.remove"; sessionId: string; threadId: string; candidateFingerprint: string; commentId: string }
+  | { type: "workspace.feedback.submit"; sessionId: string; threadId: string; candidateFingerprint: string; commentIds: string[] }
+  | { type: "workspace.review.run"; sessionId: string; threadId: string; scope: WorkspaceChangeScope; mode?: "current_thread" | "detached_thread"; reviewerProfileId?: string; reviewerModel?: string }
+  | { type: "workspace.review.list"; sessionId: string; threadId: string }
+  | { type: "workspace.review.update"; sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingId: string; action: "accept" | "dismiss" | "reopen" | "mark_fixed"; reason?: string }
+  | { type: "workspace.review.submit"; sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingIds: string[]; request: "address" | "more_evidence" | "verify" }
+  | { type: "workspace.validation.inspect"; sessionId: string; threadId: string }
+  | { type: "workspace.validation.run"; sessionId: string; threadId: string; candidateFingerprint: string; actionId?: string; suiteId?: string }
+  | { type: "workspace.validation.cancel"; sessionId: string; threadId: string; resultId: string }
+  | { type: "workspace.validation.submit"; sessionId: string; threadId: string; resultIds: string[] }
+  | { type: "workspace.git.inspect"; sessionId: string; threadId: string }
+  | { type: "workspace.git.action"; sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string; action: WorkspaceGitAction }
   | {
       type: "project.snapshot.get";
       sessionId: string;

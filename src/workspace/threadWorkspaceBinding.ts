@@ -18,6 +18,22 @@ export interface ThreadWorkspaceSummaryProjection {
   workspaceRoot?: string | undefined;
 }
 
+export interface ThreadWorkspaceAuthorityProjection {
+  kind: "local" | "managed";
+  workspaceId?: string | undefined;
+  label: string;
+  workspaceRoot: string;
+  sourceWorkspaceRoot: string;
+  sourceRepoRoot?: string | undefined;
+  managedWorktreeRoot?: string | undefined;
+  baseRefName?: string | undefined;
+  baseHead?: string | undefined;
+  lastObservedSourceHead?: string | undefined;
+  leaseId?: string | undefined;
+  leaseKind?: "run" | "process" | undefined;
+  dirty?: boolean | undefined;
+}
+
 export function normalizeThreadWorkspaceBinding(
   input: Partial<ThreadWorkspaceBinding> | undefined,
 ): ThreadWorkspaceBinding {
@@ -82,6 +98,77 @@ export function deriveThreadWorkspaceSummaryProjection(
   };
 }
 
+export function deriveThreadWorkspaceAuthorityProjection(input: {
+  threadMetadata?: Record<string, unknown> | undefined;
+  sessionState?: Record<string, unknown> | undefined;
+}): ThreadWorkspaceAuthorityProjection | undefined {
+  const submittedWorkspace = asRecord(input.threadMetadata?.workspace);
+  const submittedRoot = trimUnknownString(submittedWorkspace?.workspaceRoot);
+  const sourceWorkspaceRoot =
+    trimUnknownString(submittedWorkspace?.sourceWorkspaceRoot) ?? submittedRoot;
+  const managedBinding = asRecord(
+    asRecord(asRecord(input.sessionState?.agent)?.exec)?.managedWorktreeBinding,
+  );
+
+  if (managedBinding?.status === "bound") {
+    const worktreeRoot = trimUnknownString(managedBinding.worktreeRoot);
+    const managedSourceRoot = trimUnknownString(managedBinding.sourceWorkspaceRoot);
+    if (worktreeRoot !== undefined && managedSourceRoot !== undefined) {
+      const dirtyState = asRecord(managedBinding.dirtyState);
+      const leaseKind = managedBinding.leaseKind === "process" ? "process" : "run";
+      return {
+        kind: "managed",
+        ...(trimUnknownString(submittedWorkspace?.workspaceId) !== undefined
+          ? { workspaceId: trimUnknownString(submittedWorkspace?.workspaceId) }
+          : {}),
+        label:
+          trimUnknownString(submittedWorkspace?.label) ??
+          trimUnknownString(input.threadMetadata?.workspaceLabel) ??
+          "Managed worktree",
+        workspaceRoot: worktreeRoot,
+        sourceWorkspaceRoot: managedSourceRoot,
+        ...(trimUnknownString(managedBinding.sourceRepoRoot) !== undefined
+          ? { sourceRepoRoot: trimUnknownString(managedBinding.sourceRepoRoot) }
+          : {}),
+        managedWorktreeRoot: worktreeRoot,
+        ...(trimUnknownString(managedBinding.baseRefName) !== undefined
+          ? { baseRefName: trimUnknownString(managedBinding.baseRefName) }
+          : {}),
+        ...(trimUnknownString(managedBinding.baseHead) !== undefined
+          ? { baseHead: trimUnknownString(managedBinding.baseHead) }
+          : {}),
+        ...(trimUnknownString(managedBinding.lastObservedSourceHead) !== undefined
+          ? { lastObservedSourceHead: trimUnknownString(managedBinding.lastObservedSourceHead) }
+          : {}),
+        ...(trimUnknownString(managedBinding.leaseId) !== undefined
+          ? { leaseId: trimUnknownString(managedBinding.leaseId) }
+          : {}),
+        leaseKind,
+        ...(typeof dirtyState?.dirty === "boolean" ? { dirty: dirtyState.dirty } : {}),
+      };
+    }
+  }
+
+  if (submittedRoot === undefined || sourceWorkspaceRoot === undefined) {
+    return ;
+  }
+  return {
+    kind: "local",
+    ...(trimUnknownString(submittedWorkspace?.workspaceId) !== undefined
+      ? { workspaceId: trimUnknownString(submittedWorkspace?.workspaceId) }
+      : {}),
+    label:
+      trimUnknownString(submittedWorkspace?.label) ??
+      trimUnknownString(input.threadMetadata?.workspaceLabel) ??
+      "Current workspace",
+    workspaceRoot: submittedRoot,
+    sourceWorkspaceRoot,
+    ...(trimUnknownString(submittedWorkspace?.sourceRepoRoot) !== undefined
+      ? { sourceRepoRoot: trimUnknownString(submittedWorkspace?.sourceRepoRoot) }
+      : {}),
+  };
+}
+
 export function resolveThreadWorkspaceRuntimeContext(
   binding: ThreadWorkspaceBinding | undefined,
 ): WorkspaceRuntimeContext | undefined {
@@ -119,4 +206,15 @@ function trimString(value: string | undefined): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function trimUnknownString(value: unknown): string | undefined {
+  return typeof value === "string" ? trimString(value) : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return ;
+  }
+  return value as Record<string, unknown>;
 }

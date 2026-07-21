@@ -41,6 +41,32 @@ export const RUNNER_COMMAND_TYPES = [
   "workspace.promotion.preview",
   "workspace.promotion.apply",
   "workspace.promotion.undo_latest",
+  "workspace.managed.inspect",
+  "workspace.managed.cleanup",
+  "workspace.managed.restore",
+  "workspace.managed.setup.retry",
+  "user.terminal.start",
+  "user.terminal.list",
+  "user.terminal.read",
+  "user.terminal.write",
+  "user.terminal.resize",
+  "user.terminal.stop",
+  "workspace.changes.inspect",
+  "workspace.changes.mutate",
+  "workspace.feedback.add",
+  "workspace.feedback.list",
+  "workspace.feedback.remove",
+  "workspace.feedback.submit",
+  "workspace.review.run",
+  "workspace.review.list",
+  "workspace.review.update",
+  "workspace.review.submit",
+  "workspace.validation.inspect",
+  "workspace.validation.run",
+  "workspace.validation.cancel",
+  "workspace.validation.submit",
+  "workspace.git.inspect",
+  "workspace.git.action",
   "project.snapshot.get",
   "project.snapshot.update",
   "project.action",
@@ -140,6 +166,12 @@ export const RUNNER_EVENT_TYPES = [
   "task.updated",
   "task.graph",
   "workspace.checkpoint",
+  "user.terminal",
+  "workspace.changes",
+  "workspace.feedback",
+  "workspace.review",
+  "workspace.validation",
+  "workspace.git",
   "project.snapshot",
   "project.review",
   "mcp.status",
@@ -814,6 +846,113 @@ export interface WorkspacePromotionUndoLatestCommandPayload {
   reason?: string | undefined;
 }
 
+export interface WorkspaceManagedInspectCommandPayload {
+  sessionId: string;
+  threadId: string;
+}
+
+export interface WorkspaceManagedCleanupCommandPayload {
+  sessionId: string;
+  threadId: string;
+  reason: string;
+}
+
+export interface WorkspaceManagedRestoreCommandPayload {
+  sessionId: string;
+  threadId: string;
+  checkpointId: string;
+  reason?: string | undefined;
+}
+
+export interface WorkspaceManagedSetupRetryCommandPayload {
+  sessionId: string;
+  threadId: string;
+}
+
+export interface UserTerminalStartCommandPayload {
+  sessionId: string;
+  threadId: string;
+  cols?: number | undefined;
+  rows?: number | undefined;
+}
+
+export interface UserTerminalListCommandPayload {
+  sessionId: string;
+  threadId?: string | undefined;
+}
+
+export interface UserTerminalReadCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  cursor?: number | undefined;
+}
+
+export interface UserTerminalWriteCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  data: string;
+}
+
+export interface UserTerminalResizeCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface UserTerminalStopCommandPayload {
+  sessionId: string;
+  terminalId: string;
+}
+
+export type RunnerWorkspaceChangeScope =
+  | { kind: "unstaged" }
+  | { kind: "staged" }
+  | { kind: "uncommitted" }
+  | { kind: "branch"; baseRef: string }
+  | { kind: "commit"; commitSha: string }
+  | { kind: "pull_request"; number?: number | undefined }
+  | { kind: "latest_run"; runId?: string | undefined }
+  | { kind: "latest_turn"; turnId?: string | undefined }
+  | { kind: "promotion"; promotionId: string };
+
+export interface WorkspaceChangesInspectCommandPayload {
+  sessionId: string;
+  threadId: string;
+  scope: RunnerWorkspaceChangeScope;
+  options?: { contextLines?: number | undefined; whitespace?: "show" | "ignore_all" | "ignore_eol" | undefined } | undefined;
+}
+
+export interface WorkspaceChangesMutateCommandPayload {
+  sessionId: string;
+  threadId: string;
+  expectedFingerprint: string;
+  scope?: RunnerWorkspaceChangeScope | undefined;
+  options?: { contextLines?: number | undefined; whitespace?: "show" | "ignore_all" | "ignore_eol" | undefined } | undefined;
+  mutation:
+    | { operation: "stage_file"; path: string }
+    | { operation: "unstage_file"; path: string }
+    | { operation: "revert_file"; path: string; confirmation: "revert_file" }
+    | { operation: "stage_hunk"; path: string; hunkId: string }
+    | { operation: "unstage_hunk"; path: string; hunkId: string }
+    | { operation: "revert_hunk"; path: string; hunkId: string; confirmation: "revert_hunk" };
+}
+
+export interface WorkspaceFeedbackAddCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; path: string; line: number; side: "LEFT" | "RIGHT"; body: string }
+export interface WorkspaceFeedbackListCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceFeedbackRemoveCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; commentId: string }
+export interface WorkspaceFeedbackSubmitCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; commentIds: string[] }
+export interface WorkspaceReviewRunCommandPayload { sessionId: string; threadId: string; scope: RunnerWorkspaceChangeScope; mode?: "current_thread" | "detached_thread" | undefined; reviewerProfileId?: string | undefined; reviewerModel?: string | undefined }
+export interface WorkspaceReviewListCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceReviewUpdateCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingId: string; action: "accept" | "dismiss" | "reopen" | "mark_fixed"; reason?: string | undefined }
+export interface WorkspaceReviewSubmitCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingIds: string[]; request: "address" | "more_evidence" | "verify" }
+export interface WorkspaceValidationInspectCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceValidationRunCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; actionId?: string | undefined; suiteId?: string | undefined }
+export interface WorkspaceValidationCancelCommandPayload { sessionId: string; threadId: string; resultId: string }
+export interface WorkspaceValidationSubmitCommandPayload { sessionId: string; threadId: string; resultIds: string[] }
+export interface WorkspaceGitInspectCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceGitActionCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string | undefined; action: Record<string, unknown> }
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -869,6 +1008,32 @@ export interface RunnerCommandPayloadByType {
   "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
   "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "workspace.promotion.undo_latest": WorkspacePromotionUndoLatestCommandPayload;
+  "workspace.managed.inspect": WorkspaceManagedInspectCommandPayload;
+  "workspace.managed.cleanup": WorkspaceManagedCleanupCommandPayload;
+  "workspace.managed.restore": WorkspaceManagedRestoreCommandPayload;
+  "workspace.managed.setup.retry": WorkspaceManagedSetupRetryCommandPayload;
+  "user.terminal.start": UserTerminalStartCommandPayload;
+  "user.terminal.list": UserTerminalListCommandPayload;
+  "user.terminal.read": UserTerminalReadCommandPayload;
+  "user.terminal.write": UserTerminalWriteCommandPayload;
+  "user.terminal.resize": UserTerminalResizeCommandPayload;
+  "user.terminal.stop": UserTerminalStopCommandPayload;
+  "workspace.changes.inspect": WorkspaceChangesInspectCommandPayload;
+  "workspace.changes.mutate": WorkspaceChangesMutateCommandPayload;
+  "workspace.feedback.add": WorkspaceFeedbackAddCommandPayload;
+  "workspace.feedback.list": WorkspaceFeedbackListCommandPayload;
+  "workspace.feedback.remove": WorkspaceFeedbackRemoveCommandPayload;
+  "workspace.feedback.submit": WorkspaceFeedbackSubmitCommandPayload;
+  "workspace.review.run": WorkspaceReviewRunCommandPayload;
+  "workspace.review.list": WorkspaceReviewListCommandPayload;
+  "workspace.review.update": WorkspaceReviewUpdateCommandPayload;
+  "workspace.review.submit": WorkspaceReviewSubmitCommandPayload;
+  "workspace.validation.inspect": WorkspaceValidationInspectCommandPayload;
+  "workspace.validation.run": WorkspaceValidationRunCommandPayload;
+  "workspace.validation.cancel": WorkspaceValidationCancelCommandPayload;
+  "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
+  "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
+  "workspace.git.action": WorkspaceGitActionCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -1192,7 +1357,11 @@ export interface WorkspaceCheckpointEventPayload {
     | "promotion.list"
     | "promotion.preview"
     | "promotion.apply"
-    | "promotion.undo_latest";
+    | "promotion.undo_latest"
+    | "managed.inspect"
+    | "managed.cleanup"
+    | "managed.restore"
+    | "managed.setup.retry";
   checkpoint?: RunnerWorkspaceCheckpointDetail | undefined;
   checkpoints?: RunnerWorkspaceCheckpointRecord[] | undefined;
   diff?: RunnerWorkspaceDiffRecord | undefined;
@@ -1204,7 +1373,56 @@ export interface WorkspaceCheckpointEventPayload {
   promotions?: RunnerWorkspacePromotionRecord[] | undefined;
   preview?: RunnerWorkspacePromotionPreview | undefined;
   promotion?: RunnerWorkspacePromotionRecord | undefined;
+  managedInspection?: Record<string, unknown> | undefined;
+  managedCleanup?: Record<string, unknown> | undefined;
+  managedBinding?: Record<string, unknown> | undefined;
+  cleanupCheckpoint?: RunnerWorkspaceCheckpointDetail | undefined;
 }
+
+export interface RunnerUserTerminalRecord {
+  terminalId: string;
+  kind: "user_terminal";
+  sessionId: string;
+  threadId: string;
+  workspaceRoot: string;
+  cwd: string;
+  shellPath: string;
+  pid?: number | undefined;
+  status: "running" | "exited" | "stopped" | "lost";
+  cols: number;
+  rows: number;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | undefined;
+  exitCode?: number | undefined;
+  signal?: number | undefined;
+  durationMs?: number | undefined;
+}
+
+export interface UserTerminalEventPayload {
+  sessionId: string;
+  operation: "start" | "list" | "read" | "write" | "resize" | "stop";
+  terminal?: RunnerUserTerminalRecord | undefined;
+  terminals?: RunnerUserTerminalRecord[] | undefined;
+  output?: string | undefined;
+  cursor?: number | undefined;
+  nextCursor?: number | undefined;
+  truncated?: boolean | undefined;
+}
+
+export interface WorkspaceChangesEventPayload {
+  sessionId: string;
+  threadId: string;
+  operation: "inspect" | "mutate";
+  snapshot: Record<string, unknown>;
+  previousFingerprint?: string | undefined;
+  mutationOperation?: "stage_file" | "unstage_file" | "revert_file" | "stage_hunk" | "unstage_hunk" | "revert_hunk" | undefined;
+}
+
+export interface WorkspaceFeedbackEventPayload { sessionId: string; threadId: string; operation: "add" | "list" | "remove" | "submit"; snapshot: Record<string, unknown>; submissionRunId?: string | undefined }
+export interface WorkspaceReviewEventPayload { sessionId: string; threadId: string; operation: "run" | "list" | "update" | "submit"; snapshot: Record<string, unknown>; runId?: string | undefined }
+export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: Record<string, unknown>; runId?: string | undefined }
+export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: Record<string, unknown> }
 
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
@@ -1260,6 +1478,12 @@ export interface RunnerEventPayloadByType {
   "task.updated": TaskUpdatedEventPayload;
   "task.graph": TaskGraphEventPayload;
   "workspace.checkpoint": WorkspaceCheckpointEventPayload;
+  "user.terminal": UserTerminalEventPayload;
+  "workspace.changes": WorkspaceChangesEventPayload;
+  "workspace.feedback": WorkspaceFeedbackEventPayload;
+  "workspace.review": WorkspaceReviewEventPayload;
+  "workspace.validation": WorkspaceValidationEventPayload;
+  "workspace.git": WorkspaceGitEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;
@@ -1318,6 +1542,32 @@ export interface RunnerResponseByCommandType {
   "workspace.promotion.preview": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.promotion.apply": RunnerEventEnvelope<"workspace.checkpoint">;
   "workspace.promotion.undo_latest": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.managed.inspect": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.managed.cleanup": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.managed.restore": RunnerEventEnvelope<"workspace.checkpoint">;
+  "workspace.managed.setup.retry": RunnerEventEnvelope<"workspace.checkpoint">;
+  "user.terminal.start": RunnerEventEnvelope<"user.terminal">;
+  "user.terminal.list": RunnerEventEnvelope<"user.terminal">;
+  "user.terminal.read": RunnerEventEnvelope<"user.terminal">;
+  "user.terminal.write": RunnerEventEnvelope<"user.terminal">;
+  "user.terminal.resize": RunnerEventEnvelope<"user.terminal">;
+  "user.terminal.stop": RunnerEventEnvelope<"user.terminal">;
+  "workspace.changes.inspect": RunnerEventEnvelope<"workspace.changes">;
+  "workspace.changes.mutate": RunnerEventEnvelope<"workspace.changes">;
+  "workspace.feedback.add": RunnerEventEnvelope<"workspace.feedback">;
+  "workspace.feedback.list": RunnerEventEnvelope<"workspace.feedback">;
+  "workspace.feedback.remove": RunnerEventEnvelope<"workspace.feedback">;
+  "workspace.feedback.submit": RunnerEventEnvelope<"workspace.feedback">;
+  "workspace.review.run": RunnerEventEnvelope<"workspace.review">;
+  "workspace.review.list": RunnerEventEnvelope<"workspace.review">;
+  "workspace.review.update": RunnerEventEnvelope<"workspace.review">;
+  "workspace.review.submit": RunnerEventEnvelope<"workspace.review">;
+  "workspace.validation.inspect": RunnerEventEnvelope<"workspace.validation">;
+  "workspace.validation.run": RunnerEventEnvelope<"workspace.validation">;
+  "workspace.validation.cancel": RunnerEventEnvelope<"workspace.validation">;
+  "workspace.validation.submit": RunnerEventEnvelope<"workspace.validation">;
+  "workspace.git.inspect": RunnerEventEnvelope<"workspace.git">;
+  "workspace.git.action": RunnerEventEnvelope<"workspace.git">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;
@@ -1354,6 +1604,32 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "workspace.promotion.preview": ["workspace.checkpoint"],
   "workspace.promotion.apply": ["workspace.checkpoint"],
   "workspace.promotion.undo_latest": ["workspace.checkpoint"],
+  "workspace.managed.inspect": ["workspace.checkpoint"],
+  "workspace.managed.cleanup": ["workspace.checkpoint"],
+  "workspace.managed.restore": ["workspace.checkpoint"],
+  "workspace.managed.setup.retry": ["workspace.checkpoint"],
+  "user.terminal.start": ["user.terminal"],
+  "user.terminal.list": ["user.terminal"],
+  "user.terminal.read": ["user.terminal"],
+  "user.terminal.write": ["user.terminal"],
+  "user.terminal.resize": ["user.terminal"],
+  "user.terminal.stop": ["user.terminal"],
+  "workspace.changes.inspect": ["workspace.changes"],
+  "workspace.changes.mutate": ["workspace.changes"],
+  "workspace.feedback.add": ["workspace.feedback"],
+  "workspace.feedback.list": ["workspace.feedback"],
+  "workspace.feedback.remove": ["workspace.feedback"],
+  "workspace.feedback.submit": ["workspace.feedback"],
+  "workspace.review.run": ["workspace.review"],
+  "workspace.review.list": ["workspace.review"],
+  "workspace.review.update": ["workspace.review"],
+  "workspace.review.submit": ["workspace.review"],
+  "workspace.validation.inspect": ["workspace.validation"],
+  "workspace.validation.run": ["workspace.validation"],
+  "workspace.validation.cancel": ["workspace.validation"],
+  "workspace.validation.submit": ["workspace.validation"],
+  "workspace.git.inspect": ["workspace.git"],
+  "workspace.git.action": ["workspace.git"],
   "project.snapshot.get": ["project.snapshot"],
   "project.snapshot.update": ["project.snapshot"],
   "project.action": ["project.snapshot"],
@@ -1377,6 +1653,10 @@ const WORKSPACE_OPERATION_BY_COMMAND_TYPE = {
   "workspace.promotion.preview": "promotion.preview",
   "workspace.promotion.apply": "promotion.apply",
   "workspace.promotion.undo_latest": "promotion.undo_latest",
+  "workspace.managed.inspect": "managed.inspect",
+  "workspace.managed.cleanup": "managed.cleanup",
+  "workspace.managed.restore": "managed.restore",
+  "workspace.managed.setup.retry": "managed.setup.retry",
 } as const satisfies Partial<
   Record<RunnerCommandType, WorkspaceCheckpointEventPayload["operation"]>
 >;
@@ -1770,6 +2050,133 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalString(payload.reason, `${label}.reason`);
       break;
+    case "workspace.managed.inspect":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      break;
+    case "workspace.managed.cleanup":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.reason, `${label}.reason`);
+      break;
+    case "workspace.managed.restore":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.checkpointId, `${label}.checkpointId`);
+      validateOptionalString(payload.reason, `${label}.reason`);
+      break;
+    case "workspace.managed.setup.retry":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      break;
+    case "user.terminal.start":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      validateOptionalIntegerRange(payload.cols, `${label}.cols`, 2, 1000);
+      validateOptionalIntegerRange(payload.rows, `${label}.rows`, 2, 1000);
+      break;
+    case "user.terminal.list":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      validateOptionalString(payload.threadId, `${label}.threadId`);
+      break;
+    case "user.terminal.read":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.terminalId, `${label}.terminalId`);
+      validateOptionalNonNegativeInteger(payload.cursor, `${label}.cursor`);
+      break;
+    case "user.terminal.write":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.terminalId, `${label}.terminalId`);
+      if (typeof payload.data !== "string" || payload.data.length === 0) {
+        throw new RunnerProtocolContractError(`${label}.data must be a non-empty string`);
+      }
+      if (Buffer.byteLength(payload.data, "utf8") > 65_536) {
+        throw new RunnerProtocolContractError(`${label}.data exceeds 65536 bytes`);
+      }
+      break;
+    case "user.terminal.resize":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.terminalId, `${label}.terminalId`);
+      if (requireNonNegativeInteger(payload.cols, `${label}.cols`) < 2 || (payload.cols as number) > 1000) {
+        throw new RunnerProtocolContractError(`${label}.cols must be from 2 to 1000`);
+      }
+      if (requireNonNegativeInteger(payload.rows, `${label}.rows`) < 2 || (payload.rows as number) > 1000) {
+        throw new RunnerProtocolContractError(`${label}.rows must be from 2 to 1000`);
+      }
+      break;
+    case "user.terminal.stop":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.terminalId, `${label}.terminalId`);
+      break;
+    case "workspace.changes.inspect":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      validateWorkspaceChangeScope(requireRecord(payload.scope, `${label}.scope`), `${label}.scope`);
+      if (payload.options !== undefined) validateWorkspaceDiffOptions(requireRecord(payload.options, `${label}.options`), `${label}.options`);
+      break;
+    case "workspace.changes.mutate": {
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.expectedFingerprint, `${label}.expectedFingerprint`);
+      if (payload.scope !== undefined) validateWorkspaceChangeScope(requireRecord(payload.scope, `${label}.scope`), `${label}.scope`);
+      if (payload.options !== undefined) validateWorkspaceDiffOptions(requireRecord(payload.options, `${label}.options`), `${label}.options`);
+      const mutation = requireRecord(payload.mutation, `${label}.mutation`);
+      validateEnum(mutation.operation, `${label}.mutation.operation`, ["stage_file", "unstage_file", "revert_file", "stage_hunk", "unstage_hunk", "revert_hunk"]);
+      requireNonEmptyString(mutation.path, `${label}.mutation.path`);
+      if (mutation.operation === "stage_hunk" || mutation.operation === "unstage_hunk" || mutation.operation === "revert_hunk") requireNonEmptyString(mutation.hunkId, `${label}.mutation.hunkId`);
+      if (mutation.operation === "revert_file" && mutation.confirmation !== "revert_file") {
+        throw new RunnerProtocolContractError(`${label}.mutation.confirmation must be 'revert_file'`);
+      }
+      if (mutation.operation === "revert_hunk" && mutation.confirmation !== "revert_hunk") throw new RunnerProtocolContractError(`${label}.mutation.confirmation must be 'revert_hunk'`);
+      break;
+    }
+    case "workspace.feedback.add":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`);
+      requireNonEmptyString(payload.path, `${label}.path`);
+      if (requireNonNegativeInteger(payload.line, `${label}.line`) === 0) throw new RunnerProtocolContractError(`${label}.line must be positive`);
+      validateEnum(payload.side, `${label}.side`, ["LEFT", "RIGHT"]);
+      requireNonEmptyString(payload.body, `${label}.body`);
+      break;
+    case "workspace.feedback.list":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      break;
+    case "workspace.feedback.remove":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`);
+      requireNonEmptyString(payload.commentId, `${label}.commentId`);
+      break;
+    case "workspace.feedback.submit":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`);
+      validateNonEmptyStringArray(payload.commentIds, `${label}.commentIds`);
+      break;
+    case "workspace.review.run":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateWorkspaceChangeScope(requireRecord(payload.scope, `${label}.scope`), `${label}.scope`);
+      if (payload.mode !== undefined) validateEnum(payload.mode, `${label}.mode`, ["current_thread", "detached_thread"]);
+      validateOptionalNonEmptyString(payload.reviewerProfileId, `${label}.reviewerProfileId`); validateOptionalNonEmptyString(payload.reviewerModel, `${label}.reviewerModel`); break;
+    case "workspace.review.list":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); break;
+    case "workspace.review.update":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`); requireNonEmptyString(payload.reviewId, `${label}.reviewId`); requireNonEmptyString(payload.findingId, `${label}.findingId`); validateEnum(payload.action, `${label}.action`, ["accept", "dismiss", "reopen", "mark_fixed"]); if (payload.action === "dismiss") requireNonEmptyString(payload.reason, `${label}.reason`); break;
+    case "workspace.review.submit":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`); requireNonEmptyString(payload.reviewId, `${label}.reviewId`); validateStringArray(payload.findingIds, `${label}.findingIds`); validateEnum(payload.request, `${label}.request`, ["address", "more_evidence", "verify"]); break;
+    case "workspace.validation.inspect":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); break;
+    case "workspace.validation.run":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`); validateOptionalNonEmptyString(payload.actionId, `${label}.actionId`); validateOptionalNonEmptyString(payload.suiteId, `${label}.suiteId`); if ((payload.actionId === undefined) === (payload.suiteId === undefined)) throw new Error(`${label} must contain exactly one actionId or suiteId`); break;
+    case "workspace.validation.cancel":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.resultId, `${label}.resultId`); break;
+    case "workspace.validation.submit":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateNonEmptyStringArray(payload.resultIds, `${label}.resultIds`); break;
+    case "workspace.git.inspect":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); break;
+    case "workspace.git.action":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`); validateOptionalNonEmptyString(payload.expectedHeadSha, `${label}.expectedHeadSha`); requireRecord(payload.action, `${label}.action`); break;
     case "project.snapshot.update":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireRecord(payload.snapshot, `${label}.snapshot`);
@@ -1988,6 +2395,10 @@ function parseRunnerEventPayloadV2(
         "promotion.preview",
         "promotion.apply",
         "promotion.undo_latest",
+        "managed.inspect",
+        "managed.cleanup",
+        "managed.restore",
+        "managed.setup.retry",
       ]);
       validateOptionalWorkspaceRecord(
         payload.checkpoint,
@@ -2040,6 +2451,51 @@ function parseRunnerEventPayloadV2(
       );
       validateOptionalNonNegativeNumber(payload.remainingBytes, `${label}.remainingBytes`);
       break;
+    case "user.terminal":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      validateEnum(payload.operation, `${label}.operation`, ["start", "list", "read", "write", "resize", "stop"]);
+      if (payload.terminal !== undefined) {
+        validateUserTerminalRecord(requireRecord(payload.terminal, `${label}.terminal`), `${label}.terminal`);
+      }
+      if (payload.terminals !== undefined) {
+        if (Array.isArray(payload.terminals) === false) {
+          throw new RunnerProtocolContractError(`${label}.terminals must be an array`);
+        }
+        payload.terminals.forEach((terminal, index) =>
+          validateUserTerminalRecord(
+            requireRecord(terminal, `${label}.terminals[${index}]`),
+            `${label}.terminals[${index}]`,
+          )
+        );
+      }
+      validateOptionalString(payload.output, `${label}.output`);
+      validateOptionalNonNegativeInteger(payload.cursor, `${label}.cursor`);
+      validateOptionalNonNegativeInteger(payload.nextCursor, `${label}.nextCursor`);
+      if (payload.truncated !== undefined && typeof payload.truncated !== "boolean") {
+        throw new RunnerProtocolContractError(`${label}.truncated must be a boolean`);
+      }
+      break;
+    case "workspace.changes":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      validateEnum(payload.operation, `${label}.operation`, ["inspect", "mutate"]);
+      requireRecord(payload.snapshot, `${label}.snapshot`);
+      validateOptionalNonEmptyString(payload.previousFingerprint, `${label}.previousFingerprint`);
+      if (payload.mutationOperation !== undefined) validateEnum(payload.mutationOperation, `${label}.mutationOperation`, ["stage_file", "unstage_file", "revert_file", "stage_hunk", "unstage_hunk", "revert_hunk"]);
+      break;
+    case "workspace.feedback":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      validateEnum(payload.operation, `${label}.operation`, ["add", "list", "remove", "submit"]);
+      requireRecord(payload.snapshot, `${label}.snapshot`);
+      validateOptionalNonEmptyString(payload.submissionRunId, `${label}.submissionRunId`);
+      break;
+    case "workspace.review":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["run", "list", "update", "submit"]); requireRecord(payload.snapshot, `${label}.snapshot`); validateOptionalNonEmptyString(payload.runId, `${label}.runId`); break;
+    case "workspace.validation":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "run", "cancel", "submit"]); requireRecord(payload.snapshot, `${label}.snapshot`); validateOptionalNonEmptyString(payload.runId, `${label}.runId`); break;
+    case "workspace.git":
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "action"]); requireRecord(payload.snapshot, `${label}.snapshot`); break;
     case "project.snapshot":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireRecord(payload.snapshot, `${label}.snapshot`);
@@ -2976,6 +3432,41 @@ function parseOptionalNonEmptyString(
   return value === undefined ? undefined : requireNonEmptyString(value, label);
 }
 
+function validateUserTerminalRecord(record: Record<string, unknown>, label: string): void {
+  requireNonEmptyString(record.terminalId, `${label}.terminalId`);
+  validateEnum(record.kind, `${label}.kind`, ["user_terminal"]);
+  requireNonEmptyString(record.sessionId, `${label}.sessionId`);
+  requireNonEmptyString(record.threadId, `${label}.threadId`);
+  requireNonEmptyString(record.workspaceRoot, `${label}.workspaceRoot`);
+  requireNonEmptyString(record.cwd, `${label}.cwd`);
+  requireNonEmptyString(record.shellPath, `${label}.shellPath`);
+  validateEnum(record.status, `${label}.status`, ["running", "exited", "stopped", "lost"]);
+  requireNonNegativeInteger(record.cols, `${label}.cols`);
+  requireNonNegativeInteger(record.rows, `${label}.rows`);
+  requireNonEmptyString(record.startedAt, `${label}.startedAt`);
+  requireNonEmptyString(record.updatedAt, `${label}.updatedAt`);
+  validateOptionalNonNegativeInteger(record.pid, `${label}.pid`);
+  validateOptionalString(record.completedAt, `${label}.completedAt`);
+  validateOptionalNonNegativeInteger(record.exitCode, `${label}.exitCode`);
+  validateOptionalNonNegativeInteger(record.signal, `${label}.signal`);
+  validateOptionalNonNegativeNumber(record.durationMs, `${label}.durationMs`);
+}
+
+function validateWorkspaceChangeScope(scope: Record<string, unknown>, label: string): void {
+  validateEnum(scope.kind, `${label}.kind`, ["unstaged", "staged", "uncommitted", "branch", "commit", "pull_request", "latest_run", "latest_turn", "promotion"]);
+  if (scope.kind === "branch") requireNonEmptyString(scope.baseRef, `${label}.baseRef`);
+  if (scope.kind === "commit") requireNonEmptyString(scope.commitSha, `${label}.commitSha`);
+  if (scope.kind === "pull_request") validateOptionalIntegerRange(scope.number, `${label}.number`, 1, Number.MAX_SAFE_INTEGER);
+  if (scope.kind === "latest_run") validateOptionalNonEmptyString(scope.runId, `${label}.runId`);
+  if (scope.kind === "latest_turn") validateOptionalNonEmptyString(scope.turnId, `${label}.turnId`);
+  if (scope.kind === "promotion") requireNonEmptyString(scope.promotionId, `${label}.promotionId`);
+}
+
+function validateWorkspaceDiffOptions(options: Record<string, unknown>, label: string): void {
+  validateOptionalIntegerRange(options.contextLines, `${label}.contextLines`, 0, 100);
+  if (options.whitespace !== undefined) validateEnum(options.whitespace, `${label}.whitespace`, ["show", "ignore_all", "ignore_eol"]);
+}
+
 function requireNonNegativeInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new RunnerProtocolContractError(`${label} must be a non-negative integer`);
@@ -3082,6 +3573,13 @@ function validateOptionalNonEmptyStringArray(value: unknown, label: string): voi
     throw new RunnerProtocolContractError(
       `${label} must be an array of non-empty strings`,
     );
+  }
+}
+
+function validateNonEmptyStringArray(value: unknown, label: string): void {
+  validateOptionalNonEmptyStringArray(value, label);
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RunnerProtocolContractError(`${label} must contain at least one entry`);
   }
 }
 

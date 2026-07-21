@@ -35,6 +35,28 @@ import type {
   SessionStateCommandPayload,
   TaskGraphGetCommandPayload,
   TaskGraphUpdateCommandPayload,
+  UserTerminalListCommandPayload,
+  UserTerminalReadCommandPayload,
+  UserTerminalResizeCommandPayload,
+  UserTerminalStartCommandPayload,
+  UserTerminalStopCommandPayload,
+  UserTerminalWriteCommandPayload,
+  WorkspaceChangesInspectCommandPayload,
+  WorkspaceChangesMutateCommandPayload,
+  WorkspaceFeedbackAddCommandPayload,
+  WorkspaceFeedbackListCommandPayload,
+  WorkspaceFeedbackRemoveCommandPayload,
+  WorkspaceFeedbackSubmitCommandPayload,
+  WorkspaceReviewRunCommandPayload,
+  WorkspaceReviewListCommandPayload,
+  WorkspaceReviewUpdateCommandPayload,
+  WorkspaceReviewSubmitCommandPayload,
+  WorkspaceValidationInspectCommandPayload,
+  WorkspaceValidationRunCommandPayload,
+  WorkspaceValidationCancelCommandPayload,
+  WorkspaceValidationSubmitCommandPayload,
+  WorkspaceGitInspectCommandPayload,
+  WorkspaceGitActionCommandPayload,
   WorkspaceCheckpointCaptureCommandPayload,
   WorkspaceCheckpointCleanupCommandPayload,
   WorkspaceCheckpointDiffCommandPayload,
@@ -45,6 +67,10 @@ import type {
   WorkspacePromotionListCommandPayload,
   WorkspacePromotionPreviewCommandPayload,
   WorkspacePromotionUndoLatestCommandPayload,
+  WorkspaceManagedCleanupCommandPayload,
+  WorkspaceManagedInspectCommandPayload,
+  WorkspaceManagedRestoreCommandPayload,
+  WorkspaceManagedSetupRetryCommandPayload,
 } from "../protocol/contracts.js";
 import {
   RUN_STARTED_ACT_SUBMODES,
@@ -313,6 +339,89 @@ export class CommandRouter {
         );
         return;
       }
+
+      if (command.type === "workspace.managed.inspect") {
+        const payload = validateWorkspaceManagedInspectPayload(command.payload);
+        await this.host.workspaceManagedInspect(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "workspace.managed.cleanup") {
+        const payload = validateWorkspaceManagedCleanupPayload(command.payload);
+        await this.host.workspaceManagedCleanup(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "workspace.managed.restore") {
+        const payload = validateWorkspaceManagedRestorePayload(command.payload);
+        await this.host.workspaceManagedRestore(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "workspace.managed.setup.retry") {
+        const payload = validateWorkspaceManagedSetupRetryPayload(command.payload);
+        await this.host.workspaceManagedSetupRetry(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "user.terminal.start") {
+        await this.host.userTerminalStart(command.id, validateUserTerminalStartPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "user.terminal.list") {
+        await this.host.userTerminalList(command.id, validateUserTerminalListPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "user.terminal.read") {
+        await this.host.userTerminalRead(command.id, validateUserTerminalReadPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "user.terminal.write") {
+        await this.host.userTerminalWrite(command.id, validateUserTerminalWritePayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "user.terminal.resize") {
+        await this.host.userTerminalResize(command.id, validateUserTerminalResizePayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "user.terminal.stop") {
+        await this.host.userTerminalStop(command.id, validateUserTerminalStopPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.changes.inspect") {
+        await this.host.workspaceChangesInspect(command.id, validateWorkspaceChangesInspectPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.changes.mutate") {
+        await this.host.workspaceChangesMutate(command.id, validateWorkspaceChangesMutatePayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.feedback.add") {
+        await this.host.workspaceFeedbackAdd(command.id, validateWorkspaceFeedbackAddPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.feedback.list") {
+        await this.host.workspaceFeedbackList(command.id, validateWorkspaceFeedbackListPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.feedback.remove") {
+        await this.host.workspaceFeedbackRemove(command.id, validateWorkspaceFeedbackRemovePayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.feedback.submit") {
+        await this.host.workspaceFeedbackSubmit(command.id, validateWorkspaceFeedbackSubmitPayload(command.payload), command.metadata);
+        return;
+      }
+      if (command.type === "workspace.review.run") { await this.host.workspaceReviewRun(command.id, validateWorkspaceReviewRunPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.review.list") { await this.host.workspaceReviewList(command.id, validateWorkspaceReviewListPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.review.update") { await this.host.workspaceReviewUpdate(command.id, validateWorkspaceReviewUpdatePayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.review.submit") { await this.host.workspaceReviewSubmit(command.id, validateWorkspaceReviewSubmitPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.validation.inspect") { await this.host.workspaceValidationInspect(command.id, validateWorkspaceValidationInspectPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.validation.run") { await this.host.workspaceValidationRun(command.id, validateWorkspaceValidationRunPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.validation.cancel") { await this.host.workspaceValidationCancel(command.id, validateWorkspaceValidationCancelPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.validation.submit") { await this.host.workspaceValidationSubmit(command.id, validateWorkspaceValidationSubmitPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.git.inspect") { await this.host.workspaceGitInspect(command.id, validateWorkspaceGitInspectPayload(command.payload), command.metadata); return; }
+      if (command.type === "workspace.git.action") { await this.host.workspaceGitAction(command.id, validateWorkspaceGitActionPayload(command.payload), command.metadata); return; }
 
       if (command.type === "project.snapshot.get") {
         const payload = validateProjectSnapshotGetPayload(command.payload);
@@ -786,6 +895,250 @@ function validateWorkspacePromotionApplyPayload(
       "workspace.promotion.apply payload.candidateFingerprint"
     ),
   };
+}
+
+function validateWorkspaceManagedInspectPayload(
+  value: unknown
+): WorkspaceManagedInspectCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.managed.inspect");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.managed.inspect payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.managed.inspect payload.threadId"),
+  };
+}
+
+function validateWorkspaceManagedCleanupPayload(
+  value: unknown
+): WorkspaceManagedCleanupCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.managed.cleanup");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.managed.cleanup payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.managed.cleanup payload.threadId"),
+    reason: requireNonEmptyString(record.reason, "workspace.managed.cleanup payload.reason"),
+  };
+}
+
+function validateWorkspaceManagedRestorePayload(
+  value: unknown
+): WorkspaceManagedRestoreCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.managed.restore");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.managed.restore payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.managed.restore payload.threadId"),
+    checkpointId: requireNonEmptyString(record.checkpointId, "workspace.managed.restore payload.checkpointId"),
+    ...(typeof record.reason === "string" && record.reason.trim().length > 0
+      ? { reason: record.reason.trim() }
+      : {}),
+  };
+}
+
+function validateWorkspaceManagedSetupRetryPayload(
+  value: unknown
+): WorkspaceManagedSetupRetryCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.managed.setup.retry");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.managed.setup.retry payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.managed.setup.retry payload.threadId"),
+  };
+}
+
+function validateUserTerminalStartPayload(value: unknown): UserTerminalStartCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.start");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.start payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "user.terminal.start payload.threadId"),
+    ...(record.cols !== undefined ? { cols: readTerminalDimension(record.cols, "user.terminal.start payload.cols") } : {}),
+    ...(record.rows !== undefined ? { rows: readTerminalDimension(record.rows, "user.terminal.start payload.rows") } : {}),
+  };
+}
+
+function validateUserTerminalListPayload(value: unknown): UserTerminalListCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.list");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.list payload.sessionId"),
+    ...(record.threadId !== undefined
+      ? { threadId: requireNonEmptyString(record.threadId, "user.terminal.list payload.threadId") }
+      : {}),
+  };
+}
+
+function validateUserTerminalReadPayload(value: unknown): UserTerminalReadCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.read");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.read payload.sessionId"),
+    terminalId: requireNonEmptyString(record.terminalId, "user.terminal.read payload.terminalId"),
+    ...(record.cursor !== undefined
+      ? { cursor: readRequiredNonNegativeInteger(record.cursor, "user.terminal.read payload.cursor") }
+      : {}),
+  };
+}
+
+function validateUserTerminalWritePayload(value: unknown): UserTerminalWriteCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.write");
+  if (typeof record.data !== "string" || record.data.length === 0) {
+    throw new Error("user.terminal.write payload.data must be a non-empty string");
+  }
+  const data = record.data;
+  if (Buffer.byteLength(data, "utf8") > 64 * 1024) {
+    throw new Error("user.terminal.write payload.data must contain at most 64 KB");
+  }
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.write payload.sessionId"),
+    terminalId: requireNonEmptyString(record.terminalId, "user.terminal.write payload.terminalId"),
+    data,
+  };
+}
+
+function validateUserTerminalResizePayload(value: unknown): UserTerminalResizeCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.resize");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.resize payload.sessionId"),
+    terminalId: requireNonEmptyString(record.terminalId, "user.terminal.resize payload.terminalId"),
+    cols: readTerminalDimension(record.cols, "user.terminal.resize payload.cols"),
+    rows: readTerminalDimension(record.rows, "user.terminal.resize payload.rows"),
+  };
+}
+
+function validateUserTerminalStopPayload(value: unknown): UserTerminalStopCommandPayload {
+  const record = ensureObjectPayload(value, "user.terminal.stop");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "user.terminal.stop payload.sessionId"),
+    terminalId: requireNonEmptyString(record.terminalId, "user.terminal.stop payload.terminalId"),
+  };
+}
+
+function readTerminalDimension(value: unknown, label: string): number {
+  if (!Number.isInteger(value) || Number(value) < 2 || Number(value) > 1000) {
+    throw new Error(`${label} must be an integer between 2 and 1000`);
+  }
+  return Number(value);
+}
+
+function validateWorkspaceChangesInspectPayload(value: unknown): WorkspaceChangesInspectCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.changes.inspect");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.changes.inspect payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.changes.inspect payload.threadId"),
+    scope: validateWorkspaceChangeScope(record.scope, "workspace.changes.inspect payload.scope"),
+    ...(record.options !== undefined ? { options: validateWorkspaceDiffOptions(record.options, "workspace.changes.inspect payload.options") } : {}),
+  };
+}
+
+function validateWorkspaceChangesMutatePayload(value: unknown): WorkspaceChangesMutateCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.changes.mutate");
+  const mutation = ensureObjectPayload(record.mutation, "workspace.changes.mutate payload.mutation");
+  const operation = mutation.operation;
+  if (!["stage_file", "unstage_file", "revert_file", "stage_hunk", "unstage_hunk", "revert_hunk"].includes(String(operation))) {
+    throw new Error("workspace.changes.mutate payload.mutation.operation is invalid");
+  }
+  const mutationPath = requireNonEmptyString(mutation.path, "workspace.changes.mutate payload.mutation.path");
+  let parsedMutation: WorkspaceChangesMutateCommandPayload["mutation"];
+  if (operation === "revert_file") {
+    if (mutation.confirmation !== "revert_file") {
+      throw new Error("workspace.changes.mutate revert requires confirmation");
+    }
+    parsedMutation = { operation: "revert_file", path: mutationPath, confirmation: "revert_file" };
+  } else if (operation === "revert_hunk") {
+    if (mutation.confirmation !== "revert_hunk") throw new Error("workspace.changes.mutate hunk revert requires confirmation");
+    parsedMutation = { operation: "revert_hunk", path: mutationPath, hunkId: requireNonEmptyString(mutation.hunkId, "workspace.changes.mutate payload.mutation.hunkId"), confirmation: "revert_hunk" };
+  } else if (operation === "stage_hunk" || operation === "unstage_hunk") {
+    parsedMutation = { operation, path: mutationPath, hunkId: requireNonEmptyString(mutation.hunkId, "workspace.changes.mutate payload.mutation.hunkId") };
+  } else if (operation === "stage_file") {
+    parsedMutation = { operation: "stage_file", path: mutationPath };
+  } else {
+    parsedMutation = { operation: "unstage_file", path: mutationPath };
+  }
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "workspace.changes.mutate payload.sessionId"),
+    threadId: requireNonEmptyString(record.threadId, "workspace.changes.mutate payload.threadId"),
+    expectedFingerprint: requireNonEmptyString(record.expectedFingerprint, "workspace.changes.mutate payload.expectedFingerprint"),
+    ...(record.scope !== undefined ? { scope: validateWorkspaceChangeScope(record.scope, "workspace.changes.mutate payload.scope") } : {}),
+    ...(record.options !== undefined ? { options: validateWorkspaceDiffOptions(record.options, "workspace.changes.mutate payload.options") } : {}),
+    mutation: parsedMutation,
+  };
+}
+
+function validateWorkspaceChangeScope(value: unknown, label: string): WorkspaceChangesInspectCommandPayload["scope"] {
+  const record = ensureObjectPayload(value, label);
+  if (record.kind === "unstaged" || record.kind === "staged" || record.kind === "uncommitted") return { kind: record.kind };
+  if (record.kind === "branch") return { kind: "branch", baseRef: requireNonEmptyString(record.baseRef, `${label}.baseRef`) };
+  if (record.kind === "commit") return { kind: "commit", commitSha: requireNonEmptyString(record.commitSha, `${label}.commitSha`) };
+  if (record.kind === "pull_request") { if (record.number === undefined) return { kind: "pull_request" }; const number = readPositiveInteger(record.number, `${label}.number`); if (number === undefined) throw new Error(`${label}.number is invalid`); return { kind: "pull_request", number }; }
+  if (record.kind === "latest_run") return { kind: "latest_run", ...(record.runId !== undefined ? { runId: requireNonEmptyString(record.runId, `${label}.runId`) } : {}) };
+  if (record.kind === "latest_turn") return { kind: "latest_turn", ...(record.turnId !== undefined ? { turnId: requireNonEmptyString(record.turnId, `${label}.turnId`) } : {}) };
+  if (record.kind === "promotion") return { kind: "promotion", promotionId: requireNonEmptyString(record.promotionId, `${label}.promotionId`) };
+  throw new Error(`${label}.kind is invalid`);
+}
+
+function validateWorkspaceDiffOptions(value: unknown, label: string): NonNullable<WorkspaceChangesInspectCommandPayload["options"]> {
+  const record = ensureObjectPayload(value, label);
+  const result: NonNullable<WorkspaceChangesInspectCommandPayload["options"]> = {};
+  if (record.contextLines !== undefined) {
+    if (!Number.isInteger(record.contextLines) || Number(record.contextLines) < 0 || Number(record.contextLines) > 100) throw new Error(`${label}.contextLines is invalid`);
+    result.contextLines = Number(record.contextLines);
+  }
+  if (record.whitespace !== undefined) {
+    if (record.whitespace !== "show" && record.whitespace !== "ignore_all" && record.whitespace !== "ignore_eol") throw new Error(`${label}.whitespace is invalid`);
+    result.whitespace = record.whitespace;
+  }
+  return result;
+}
+
+function validateWorkspaceFeedbackAddPayload(value: unknown): WorkspaceFeedbackAddCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.feedback.add");
+  const line = readPositiveInteger(record.line, "workspace.feedback.add payload.line");
+  if (line === undefined) throw new Error("workspace.feedback.add payload.line is required");
+  if (record.side !== "LEFT" && record.side !== "RIGHT") throw new Error("workspace.feedback.add payload.side is invalid");
+  return { sessionId: requireNonEmptyString(record.sessionId, "workspace.feedback.add payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.feedback.add payload.threadId"), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.feedback.add payload.candidateFingerprint"), path: requireNonEmptyString(record.path, "workspace.feedback.add payload.path"), line, side: record.side, body: requireNonEmptyString(record.body, "workspace.feedback.add payload.body") };
+}
+
+function validateWorkspaceFeedbackListPayload(value: unknown): WorkspaceFeedbackListCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.feedback.list");
+  return { sessionId: requireNonEmptyString(record.sessionId, "workspace.feedback.list payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.feedback.list payload.threadId") };
+}
+
+function validateWorkspaceFeedbackRemovePayload(value: unknown): WorkspaceFeedbackRemoveCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.feedback.remove");
+  return { ...validateWorkspaceFeedbackListPayload(record), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.feedback.remove payload.candidateFingerprint"), commentId: requireNonEmptyString(record.commentId, "workspace.feedback.remove payload.commentId") };
+}
+
+function validateWorkspaceFeedbackSubmitPayload(value: unknown): WorkspaceFeedbackSubmitCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.feedback.submit");
+  if (!Array.isArray(record.commentIds) || record.commentIds.length === 0 || record.commentIds.length > 100) throw new Error("workspace.feedback.submit payload.commentIds is invalid");
+  return { ...validateWorkspaceFeedbackListPayload(record), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.feedback.submit payload.candidateFingerprint"), commentIds: record.commentIds.map((id) => requireNonEmptyString(id, "workspace.feedback.submit payload.commentIds[]")) };
+}
+
+function validateWorkspaceReviewRunPayload(value: unknown): WorkspaceReviewRunCommandPayload { const record = ensureObjectPayload(value, "workspace.review.run"); const mode = record.mode; if (mode !== undefined && mode !== "current_thread" && mode !== "detached_thread") throw new Error("workspace.review.run payload.mode is invalid"); return { sessionId: requireNonEmptyString(record.sessionId, "workspace.review.run payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.review.run payload.threadId"), scope: validateWorkspaceChangeScope(record.scope, "workspace.review.run payload.scope"), ...(mode ? { mode } : {}), ...(record.reviewerProfileId !== undefined ? { reviewerProfileId: requireNonEmptyString(record.reviewerProfileId, "workspace.review.run payload.reviewerProfileId") } : {}), ...(record.reviewerModel !== undefined ? { reviewerModel: requireNonEmptyString(record.reviewerModel, "workspace.review.run payload.reviewerModel") } : {}) }; }
+function validateWorkspaceReviewListPayload(value: unknown): WorkspaceReviewListCommandPayload { const record = ensureObjectPayload(value, "workspace.review.list"); return { sessionId: requireNonEmptyString(record.sessionId, "workspace.review.list payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.review.list payload.threadId") }; }
+function validateWorkspaceReviewUpdatePayload(value: unknown): WorkspaceReviewUpdateCommandPayload { const record = ensureObjectPayload(value, "workspace.review.update"); const action = record.action; if (action !== "accept" && action !== "dismiss" && action !== "reopen" && action !== "mark_fixed") throw new Error("workspace.review.update payload.action is invalid"); return { ...validateWorkspaceReviewListPayload(record), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.review.update payload.candidateFingerprint"), reviewId: requireNonEmptyString(record.reviewId, "workspace.review.update payload.reviewId"), findingId: requireNonEmptyString(record.findingId, "workspace.review.update payload.findingId"), action, ...(record.reason !== undefined ? { reason: requireNonEmptyString(record.reason, "workspace.review.update payload.reason") } : {}) }; }
+function validateWorkspaceReviewSubmitPayload(value: unknown): WorkspaceReviewSubmitCommandPayload { const record = ensureObjectPayload(value, "workspace.review.submit"); const request = record.request; if (request !== "address" && request !== "more_evidence" && request !== "verify") throw new Error("workspace.review.submit payload.request is invalid"); if (!Array.isArray(record.findingIds) || record.findingIds.length === 0 || record.findingIds.length > 100) throw new Error("workspace.review.submit payload.findingIds is invalid"); return { ...validateWorkspaceReviewListPayload(record), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.review.submit payload.candidateFingerprint"), reviewId: requireNonEmptyString(record.reviewId, "workspace.review.submit payload.reviewId"), findingIds: record.findingIds.map((id) => requireNonEmptyString(id, "workspace.review.submit payload.findingIds[]")), request }; }
+function validateWorkspaceValidationInspectPayload(value: unknown): WorkspaceValidationInspectCommandPayload { const record = ensureObjectPayload(value, "workspace.validation.inspect"); return { sessionId: requireNonEmptyString(record.sessionId, "workspace.validation.inspect payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.validation.inspect payload.threadId") }; }
+function validateWorkspaceValidationRunPayload(value: unknown): WorkspaceValidationRunCommandPayload { const record = ensureObjectPayload(value, "workspace.validation.run"); const base = validateWorkspaceValidationInspectPayload(record); const actionId = record.actionId === undefined ? undefined : requireNonEmptyString(record.actionId, "workspace.validation.run payload.actionId"); const suiteId = record.suiteId === undefined ? undefined : requireNonEmptyString(record.suiteId, "workspace.validation.run payload.suiteId"); if ((actionId === undefined) === (suiteId === undefined)) throw new Error("workspace.validation.run must select exactly one action or suite"); return { ...base, candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.validation.run payload.candidateFingerprint"), ...(actionId ? { actionId } : {}), ...(suiteId ? { suiteId } : {}) }; }
+function validateWorkspaceValidationCancelPayload(value: unknown): WorkspaceValidationCancelCommandPayload { const record = ensureObjectPayload(value, "workspace.validation.cancel"); return { ...validateWorkspaceValidationInspectPayload(record), resultId: requireNonEmptyString(record.resultId, "workspace.validation.cancel payload.resultId") }; }
+function validateWorkspaceValidationSubmitPayload(value: unknown): WorkspaceValidationSubmitCommandPayload { const record = ensureObjectPayload(value, "workspace.validation.submit"); if (!Array.isArray(record.resultIds) || record.resultIds.length === 0 || record.resultIds.length > 100) throw new Error("workspace.validation.submit payload.resultIds is invalid"); return { ...validateWorkspaceValidationInspectPayload(record), resultIds: record.resultIds.map((id) => requireNonEmptyString(id, "workspace.validation.submit payload.resultIds[]")) }; }
+function validateWorkspaceGitInspectPayload(value: unknown): WorkspaceGitInspectCommandPayload { const record = ensureObjectPayload(value, "workspace.git.inspect"); return { sessionId: requireNonEmptyString(record.sessionId, "workspace.git.inspect payload.sessionId"), threadId: requireNonEmptyString(record.threadId, "workspace.git.inspect payload.threadId") }; }
+function validateWorkspaceGitActionPayload(value: unknown): WorkspaceGitActionCommandPayload {
+  const record = ensureObjectPayload(value, "workspace.git.action"); const action = ensureObjectPayload(record.action, "workspace.git.action payload.action"); const kind = action.kind;
+  const string = (key: string) => requireNonEmptyString(action[key], `workspace.git.action payload.action.${key}`);
+  let parsed: WorkspaceGitActionCommandPayload["action"];
+  if (kind === "branch_create") parsed = { kind, branchName: string("branchName") };
+  else if (kind === "fetch") parsed = { kind, remote: string("remote") };
+  else if (kind === "commit") { if (!Array.isArray(action.paths) || action.paths.length === 0 || action.paths.length > 1000) throw new Error("workspace.git.action payload.action.paths is invalid"); parsed = { kind, message: string("message"), paths: action.paths.map((value) => requireNonEmptyString(value, "workspace.git.action payload.action.paths[]")) }; }
+  else if (kind === "push") { if (typeof action.setUpstream !== "boolean") throw new Error("workspace.git.action payload.action.setUpstream must be boolean"); parsed = { kind, remote: string("remote"), branch: string("branch"), setUpstream: action.setUpstream }; }
+  else if (kind === "pr_create") { if (typeof action.body !== "string" || typeof action.draft !== "boolean") throw new Error("workspace.git.action pull request payload is invalid"); parsed = { kind, title: string("title"), body: action.body, baseBranch: string("baseBranch"), draft: action.draft }; }
+  else if (kind === "pr_ready") parsed = { kind, number: positiveNumber(action.number, "workspace.git.action payload.action.number") };
+  else if (kind === "pr_comment") { const side = action.side; if (side !== undefined && side !== "LEFT" && side !== "RIGHT") throw new Error("workspace.git.action payload.action.side is invalid"); parsed = { kind, number: positiveNumber(action.number, "workspace.git.action payload.action.number"), body: string("body"), ...(action.path !== undefined ? { path: string("path") } : {}), ...(action.line !== undefined ? { line: positiveNumber(action.line, "workspace.git.action payload.action.line") } : {}), ...(side ? { side } : {}) }; }
+  else throw new Error("workspace.git.action payload.action.kind is invalid");
+  return { ...validateWorkspaceGitInspectPayload(record), candidateFingerprint: requireNonEmptyString(record.candidateFingerprint, "workspace.git.action payload.candidateFingerprint"), ...(record.expectedHeadSha !== undefined ? { expectedHeadSha: requireNonEmptyString(record.expectedHeadSha, "workspace.git.action payload.expectedHeadSha") } : {}), action: parsed };
+}
+function positiveNumber(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) throw new Error(`${label} must be a positive integer`); return value; }
+
+function readRequiredNonNegativeInteger(value: unknown, label: string): number {
+  const result = readNonNegativeInteger(value, label);
+  if (result === undefined) {
+    throw new Error(`${label} is required`);
+  }
+  return result;
 }
 
 function readPositiveInteger(

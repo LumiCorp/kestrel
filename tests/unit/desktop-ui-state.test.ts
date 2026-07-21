@@ -71,8 +71,80 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       projectPath: "  /workspace/project-a  ",
+      workspaceMode: "managed",
     }).projectPath,
     "/workspace/project-a",
+  );
+  assert.equal(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceMode: "local",
+    }).workspaceMode,
+    "local",
+  );
+  assert.equal(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceBaseRef: "release/v2",
+    }).workspaceBaseRef,
+    "release/v2",
+  );
+  assert.deepEqual(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceSetup: {
+        approvedIgnoredFiles: [".env"],
+        steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
+      },
+    }).workspaceSetup,
+    {
+      approvedIgnoredFiles: [".env"],
+      steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
+    },
+  );
+  const attachment = {
+    attachmentId: "attachment-1",
+    threadId: "session-1",
+    filename: "app.ts",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    sha256: "a".repeat(64),
+    kind: "text",
+    text: "hello",
+  };
+  assert.deepEqual(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Review this file",
+      eventType: "user.message",
+      attachments: [attachment],
+      history: [{ role: "user", text: "Earlier file", timestamp, attachments: [attachment] }],
+    }).attachments,
+    [attachment],
+  );
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-2",
+      message: "Review this file",
+      eventType: "user.message",
+      attachments: [attachment],
+    }),
+    /attachments must belong to the active session/u,
+  );
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceMode: "shared",
+    }),
+    /workspaceMode is invalid/u,
   );
   assert.throws(
     () => parseDesktopRunTurnRequest({

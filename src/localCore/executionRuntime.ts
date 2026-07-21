@@ -24,6 +24,8 @@ export function createLocalCoreRunnerRuntimeFactory(
 ): RunnerRuntimeFactory {
   const runtimeEnvironmentResolver = options.runtimeEnvironmentResolver;
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
+    enableUserTerminals: true,
+    enableWorkspaceChanges: true,
     ...(runtimeEnvironmentResolver !== undefined
       ? {
           resolveEnvironment: (profile) => toKestrelRuntimeEnvironment(

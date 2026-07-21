@@ -239,11 +239,16 @@ export class WorkspaceCheckpointService {
 
   async inspect(input: InspectWorkspaceCheckpointInput): Promise<WorkspaceCheckpointDetail> {
     await this.store.ensureSession(input.sessionId);
-    const checkpoint = await this.getCheckpointRecord(input.sessionId, input.checkpointId);
+    const checkpoint = await this.requireCheckpointRecord(input.sessionId, input.checkpointId);
     return {
       checkpoint,
       files: (await this.listGitRefFiles(checkpoint.repoRoot, checkpoint.gitRef)).map(stripSourcePath),
     };
+  }
+
+  async getCheckpointRecord(input: InspectWorkspaceCheckpointInput): Promise<WorkspaceCheckpointRecord> {
+    await this.store.ensureSession(input.sessionId);
+    return this.requireCheckpointRecord(input.sessionId, input.checkpointId);
   }
 
   async diff(input: DiffWorkspaceCheckpointInput): Promise<WorkspaceDiffRecord> {
@@ -742,7 +747,7 @@ export class WorkspaceCheckpointService {
     return createdAtMs <= Date.now() - maxAge * 24 * 60 * 60 * 1000;
   }
 
-  private async getCheckpointRecord(
+  private async requireCheckpointRecord(
     sessionId: string,
     checkpointId: string,
   ): Promise<WorkspaceCheckpointRecord> {
@@ -769,7 +774,7 @@ export class WorkspaceCheckpointService {
     },
   ): Promise<{ endpoint: WorkspaceDiffEndpoint; files: DiffSourceFile[] }> {
     if (endpoint.checkpointId !== undefined) {
-      const checkpoint = await this.getCheckpointRecord(sessionId, endpoint.checkpointId);
+      const checkpoint = await this.requireCheckpointRecord(sessionId, endpoint.checkpointId);
       return {
         endpoint: {
           kind: "checkpoint",

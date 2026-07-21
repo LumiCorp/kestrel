@@ -53,6 +53,144 @@ test("ManagedTaskWorktreeService creates a detached worktree from HEAD without i
   assert.equal(reused.binding.worktreeRoot, provisioned.binding.worktreeRoot);
 });
 
+test("ManagedTaskWorktreeService provisions from an explicitly selected base branch", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-base-ref-"));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  await initRepo(repo);
+  await git(repo, ["switch", "-c", "release-base"]);
+  await writeFile(path.join(repo, "app.txt"), "release\n", "utf8");
+  await git(repo, ["add", "app.txt"]);
+  await git(repo, ["commit", "-m", "release base"]);
+  const releaseHead = await git(repo, ["rev-parse", "HEAD"]);
+  await git(repo, ["switch", "-"]);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: home });
+  const provisioned = await service.provision({
+    sessionId: "session-base-ref",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-base-ref",
+    baseRef: "release-base",
+    triggeringTool: "fs.write_text",
+  });
+
+  assert.equal(provisioned.binding.baseRefName, "release-base");
+  assert.equal(provisioned.binding.baseHead, releaseHead);
+  assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "release\n");
+});
+
+test("ManagedTaskWorktreeService rejects a base ref that does not resolve to a commit", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-invalid-base-ref-"));
+  const repo = path.join(root, "repo");
+  await initRepo(repo);
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+
+  await assert.rejects(
+    service.prepare({
+      sessionId: "session-invalid-base-ref",
+      sourceWorkspaceRoot: repo,
+      threadId: "thread-invalid-base-ref",
+      baseRef: "missing-branch",
+      triggeringTool: "fs.write_text",
+    }),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "MANAGED_WORKTREE_BASE_REF_INVALID");
+      return true;
+    },
+  );
+});
+
+test("ManagedTaskWorktreeService copies only explicitly approved ignored files and runs typed setup steps", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-setup-"));
+  const repo = path.join(root, "repo");
+  await initRepo(repo);
+  await writeFile(path.join(repo, ".gitignore"), ".env\n.env.other\n", "utf8");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "ignore setup files"]);
+  await writeFile(path.join(repo, ".env"), "APP_MODE=test\n", "utf8");
+  await writeFile(path.join(repo, ".env.other"), "DO_NOT_COPY=true\n", "utf8");
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  const provisioned = await service.provision({
+    sessionId: "session-setup",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-setup",
+    triggeringTool: "fs.write_text",
+    setup: {
+      approvedIgnoredFiles: [".env"],
+      steps: [{
+        id: "prepare",
+        label: "Prepare workspace",
+        executable: process.execPath,
+        args: ["-e", "require('node:fs').writeFileSync('setup.out', 'ready\\n')"],
+      }],
+    },
+  });
+
+  assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, ".env"), "utf8"), "APP_MODE=test\n");
+  await assert.rejects(readFile(path.join(provisioned.binding.worktreeRoot, ".env.other"), "utf8"));
+  assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "setup.out"), "utf8"), "ready\n");
+  const inspection = await service.inspectLifecycle(provisioned.binding);
+  assert.equal(inspection.setup.status, "completed");
+  assert.equal(inspection.setup.attempts, 1);
+  assert.deepEqual(inspection.setup.completedStepIds, ["prepare"]);
+});
+
+test("ManagedTaskWorktreeService retries failed setup in place without rerunning completed steps or discarding work", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-setup-retry-"));
+  const repo = path.join(root, "repo");
+  await initRepo(repo);
+  const home = path.join(root, "home");
+  const service = new ManagedTaskWorktreeService({ homeDir: home });
+  const setup = {
+    approvedIgnoredFiles: [],
+    steps: [
+      {
+        id: "first",
+        label: "First step",
+        executable: process.execPath,
+        args: ["-e", "require('node:fs').appendFileSync('step1.log', 'once\\n')"],
+      },
+      {
+        id: "second",
+        label: "Second step",
+        executable: process.execPath,
+        args: ["-e", "if (!require('node:fs').existsSync('allow-retry')) process.exit(2); require('node:fs').writeFileSync('setup.done', 'done\\n')"],
+      },
+    ],
+  };
+  const request = {
+    sessionId: "session-setup-retry",
+    runId: "run-setup-retry",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-setup-retry",
+    triggeringTool: "fs.write_text",
+    setup,
+  };
+
+  await assert.rejects(service.provision(request), (error) => {
+    assert.equal((error as { code?: string }).code, "MANAGED_WORKTREE_SETUP_FAILED");
+    return true;
+  });
+  const proposal = await service.prepare(request);
+  await writeFile(path.join(proposal.worktreeRoot, "agent-work.txt"), "preserve me\n", "utf8");
+  await writeFile(path.join(proposal.worktreeRoot, "allow-retry"), "yes\n", "utf8");
+
+  const retried = await service.retrySetup({
+    ...request,
+    setup: undefined,
+    triggeringTool: "workspace.managed.setup.retry",
+  });
+  assert.equal(retried.disposition, "reused");
+  assert.equal(await readFile(path.join(retried.binding.worktreeRoot, "step1.log"), "utf8"), "once\n");
+  assert.equal(await readFile(path.join(retried.binding.worktreeRoot, "agent-work.txt"), "utf8"), "preserve me\n");
+  assert.equal(await readFile(path.join(retried.binding.worktreeRoot, "setup.done"), "utf8"), "done\n");
+  const inspection = await service.inspectLifecycle(retried.binding);
+  assert.equal(inspection.setup.status, "completed");
+  assert.equal(inspection.setup.attempts, 2);
+  assert.deepEqual(inspection.setup.completedStepIds, ["first", "second"]);
+});
+
 test("ManagedTaskWorktreeService expands ~/ KESTREL_HOME for default worktree roots", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-tilde-home-"));
   const repo = path.join(root, "repo");
@@ -889,6 +1027,87 @@ test("ManagedTaskWorktreeService creates a baseline commit for initialized repos
   });
   assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "unborn branch\n");
   assert.equal(await git(provisioned.binding.worktreeRoot, ["rev-parse", "HEAD"]), proposal.baseHead);
+});
+
+test("ManagedTaskWorktreeService reports live lifecycle state and storage", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-inspect-"));
+  const repo = path.join(root, "repo");
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  await initRepo(repo);
+  const provisioned = await service.provision({
+    sessionId: "session-1",
+    runId: "run-1",
+    threadId: "thread-1",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+  await writeFile(path.join(provisioned.binding.worktreeRoot, "added.txt"), "managed change\n", "utf8");
+  await writeFile(path.join(repo, "source-only.txt"), "source change\n", "utf8");
+  await git(repo, ["add", "source-only.txt"]);
+  await git(repo, ["commit", "-m", "advance source"]);
+
+  const inspection = await service.inspectLifecycle(provisioned.binding);
+  assert.equal(inspection.status, "valid");
+  assert.equal(inspection.dirtyState.dirty, true);
+  assert.equal(inspection.currentLease?.runId, "run-1");
+  assert.equal(inspection.storageBytes > 0, true);
+  assert.equal(inspection.storageScanTruncated, false);
+  assert.equal(inspection.staleBase, true);
+  assert.equal(inspection.aheadCommitCount, 0);
+  assert.equal(inspection.retention.policy, "retain_until_explicit_cleanup");
+  assert.equal(inspection.retention.disposition, "blocked");
+  assert.deepEqual(inspection.retention.reasons, ["active_lease", "uncommitted_changes"]);
+
+  await service.releaseLease(provisioned.binding, { runId: "run-1" });
+  const retained = await service.inspectLifecycle(provisioned.binding);
+  assert.equal(retained.retention.disposition, "retain_with_snapshot");
+  assert.deepEqual(retained.retention.reasons, ["uncommitted_changes"]);
+
+  await rm(path.join(provisioned.binding.worktreeRoot, "added.txt"));
+  const disposable = await service.inspectLifecycle(provisioned.binding);
+  assert.equal(disposable.retention.disposition, "clean_disposable");
+  assert.deepEqual(disposable.retention.reasons, ["clean_and_no_commits"]);
+});
+
+test("ManagedTaskWorktreeService requires released leases and a snapshot before cleanup", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-cleanup-"));
+  const repo = path.join(root, "repo");
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  await initRepo(repo);
+  const provisioned = await service.provision({
+    sessionId: "session-1",
+    runId: "run-1",
+    threadId: "thread-1",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+  await writeFile(path.join(provisioned.binding.worktreeRoot, "added.txt"), "recoverable change\n", "utf8");
+
+  await assert.rejects(
+    service.cleanupManagedWorktree(provisioned.binding, { snapshotCheckpointId: "checkpoint-1" }),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "MANAGED_WORKTREE_CLEANUP_BLOCKED");
+      return true;
+    },
+  );
+  await service.releaseLease(provisioned.binding);
+  await assert.rejects(
+    service.cleanupManagedWorktree(provisioned.binding, { snapshotCheckpointId: " " }),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "MANAGED_WORKTREE_CLEANUP_SNAPSHOT_REQUIRED");
+      return true;
+    },
+  );
+  const cleanup = await service.cleanupManagedWorktree(provisioned.binding, {
+    snapshotCheckpointId: "checkpoint-1",
+    cleanedBy: "user-1",
+  });
+  assert.equal(cleanup.status, "cleaned");
+  assert.equal(cleanup.snapshotCheckpointId, "checkpoint-1");
+  assert.equal(cleanup.cleanedBy, "user-1");
+  await assert.rejects(lstat(provisioned.binding.worktreeRoot));
+  await assert.rejects(lstat(`${provisioned.binding.worktreeRoot}.binding.json`));
+  assert.equal((await git(repo, ["worktree", "list", "--porcelain"])).includes(provisioned.binding.worktreeRoot), false);
 });
 
 test("WorkspaceLifecycleService ignores non-auto-provisioned tools", async () => {

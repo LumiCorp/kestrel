@@ -27,6 +27,19 @@ export * from "./code/index.js";
 export * from "./devshell/contracts.js";
 export { InMemoryDevShellStore } from "./devshell/InMemoryDevShellStore.js";
 export { LocalDevShellService } from "./devshell/LocalDevShellService.js";
+export {
+  UserTerminalService,
+  type UserTerminalReadResult,
+  type UserTerminalRecord,
+  type UserTerminalStatus,
+} from "./terminal/UserTerminalService.js";
+export * from "./changes/contracts.js";
+export { WorkspaceChangeService } from "./changes/WorkspaceChangeService.js";
+export * from "./review/contracts.js";
+export { WorkspaceFeedbackService } from "./review/WorkspaceFeedbackService.js";
+export { WorkspaceReviewService } from "./review/WorkspaceReviewService.js";
+export * from "./validation/index.js";
+export * from "./git/index.js";
 export { PostgresDevShellStore } from "./devshell/PostgresDevShellStore.js";
 export { DevShellSupervisor } from "./devshell/DevShellSupervisor.js";
 export * from "./clientCapabilities.js";

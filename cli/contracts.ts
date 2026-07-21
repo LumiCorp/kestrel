@@ -12,6 +12,7 @@ import type {
   ToolExecutionClass,
 } from "../src/index.js";
 import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
+import type { ManagedTaskWorktreeSetupSpec } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type {
   OperatorAffordancePayload,
   OperatorBlockReason,
@@ -145,6 +146,8 @@ export interface WorkspaceRuntimeContext {
   managedWorktreeRequired?: boolean | undefined;
   managedWorktreeIsolation?: "scoped" | "session" | undefined;
   sourceWorkspaceRoot?: string | undefined;
+  managedWorktreeBaseRef?: string | undefined;
+  managedWorktreeSetup?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 
 export interface ResolvedWorkspace {
