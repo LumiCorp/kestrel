@@ -97,6 +97,7 @@ export interface DesktopFollowUpQueueEntry {
 export interface DesktopOperatorControlRequest {
     action: "approve" | "reject" | "reply" | "steer" | "retry" | "continue_waiting" | "focus_thread" | "resolve_context_checkpoint" | "approve_assembly_change" | "reject_assembly_change" | "supersede_child_thread" | "resolve_fan_in_checkpoint" | "enqueue_follow_up" | "edit_follow_up" | "cancel_follow_up" | "resume_follow_up_queue";
     threadId: string;
+    completionMode?: "terminal" | "accepted" | undefined;
     followUpId?: string | undefined;
     requestId?: string | undefined;
     proposalId?: string | undefined;

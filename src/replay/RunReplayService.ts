@@ -1635,15 +1635,15 @@ export class RunReplayService {
     if (focusStatus === "WAITING" || focusStatus === "COMPLETED" || focusStatus === "FAILED") {
       return focusStatus;
     }
+    if (focusStatus === "RUNNING") {
+      return "RUNNING";
+    }
     const lastEventAt = replay.summary.lastEventAt;
     if (lastEventAt !== undefined) {
       const ageMs = Date.now() - Date.parse(lastEventAt);
       if (Number.isFinite(ageMs) && ageMs > 5 * 60 * 1000) {
         return "STALLED";
       }
-    }
-    if (focusStatus === "RUNNING") {
-      return "RUNNING";
     }
     return "UNKNOWN";
   }

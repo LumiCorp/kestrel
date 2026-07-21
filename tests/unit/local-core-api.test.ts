@@ -151,6 +151,50 @@ contractTest("runtime.process", "Local Core API serves health/status with bearer
     assert.equal(runnerEvent.commandId, "local-core-desktop-ping");
     assert.equal(runnerEvent.payload?.nonce, "desktop-local-core");
 
+    const restoredSessionId = "local-core-restored-desktop-session";
+    const restoredThreadId = `thread-main:${restoredSessionId}`;
+    const restoredThread = await client.syncDesktopThreadWorkspace({
+      sessionId: restoredSessionId,
+      threadId: restoredThreadId,
+      workspace: {
+        workspaceId: "local:restored-desktop",
+        workspaceRoot: home,
+        sourceWorkspaceRoot: home,
+        launchCwd: home,
+        appRoot: ".",
+        commands: {},
+        label: "Restored Desktop",
+        managedWorktreeRequired: false,
+      },
+    });
+    assert.equal(restoredThread.threadId, restoredThreadId);
+    assert.equal((restoredThread.metadata?.workspace as { workspaceRoot?: string }).workspaceRoot, home);
+
+    const runnerErrorEvents: string[] = [];
+    await client.sendRunnerCommand(JSON.stringify({
+      id: "local-core-desktop-invalid-actor",
+      type: "runner.ping",
+      payload: { nonce: "desktop-local-core-error" },
+    }), {
+      onLine(line) {
+        runnerErrorEvents.push(line);
+      },
+    });
+    assert.equal(runnerErrorEvents.length, 1);
+    const runnerErrorEvent = JSON.parse(runnerErrorEvents[0] ?? "{}") as {
+      type?: string;
+      ts?: string;
+      commandId?: string;
+      payload?: { code?: string; message?: string };
+    };
+    assert.equal(runnerErrorEvent.type, "runner.error");
+    assert.equal(Number.isFinite(Date.parse(runnerErrorEvent.ts ?? "")), true);
+    assert.equal(runnerErrorEvent.commandId, "local-core-desktop-invalid-actor");
+    assert.deepEqual(runnerErrorEvent.payload, {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Runner actor metadata is required.",
+    });
+
     const runs = await client.runs() as { runs?: unknown[] | undefined };
     assert.deepEqual(runs.runs, []);
 

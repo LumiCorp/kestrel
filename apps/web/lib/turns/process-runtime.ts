@@ -226,17 +226,34 @@ export async function processDurableThreadTurn(turnId: string) {
           () => {}
         ),
       onRuntimeEvent(event) {
-        eventWrites = eventWrites.then(() =>
-          recordMobileTurnRuntimeActivity({
-            turnId: turn.id,
-            eventId: event.id,
-            eventType: event.type,
-            progressCode:
-              event.type === "run.progress"
-                ? event.payload.update.code
-                : undefined,
-          }).catch(() => {})
-        );
+        eventWrites = eventWrites.then(async () => {
+          try {
+            if (event.type === "run.started") {
+              await appendDurableTurnEvent({
+                turnId: turn.id,
+                type: "runtime.started",
+                data: {
+                  eventId: event.id,
+                  requestedInteractionMode: turn.requestedInteractionMode,
+                  effectiveInteractionMode:
+                    event.payload.interactionMode ?? null,
+                },
+              });
+              return;
+            }
+            await recordMobileTurnRuntimeActivity({
+              turnId: turn.id,
+              eventId: event.id,
+              eventType: event.type,
+              progressCode:
+                event.type === "run.progress"
+                  ? event.payload.update.code
+                  : undefined,
+            });
+          } catch {
+            // Runtime telemetry is best effort and must not fail the turn.
+          }
+        });
         if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
           cancellation.abort(
             new Error("The user interrupted this turn at a safe boundary.")

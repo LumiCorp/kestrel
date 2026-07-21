@@ -47,6 +47,7 @@ import {
   type WebRunnerAdapter,
   type WebRunnerRequestContext,
 } from "../../../src/web/index.js";
+import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
 import { redactDiagnosticValue } from "../../../src/diagnostics/redaction.js";
 import { resolveDesktopCapabilityView } from "../../../src/desktopShell/capabilityRegistry.js";
@@ -322,6 +323,18 @@ async function main(): Promise<void> {
   runnerTransport = new LocalCoreRunnerTransport({
     connectionManager: localCoreConnectionManager,
     logPath: desktopConfig.runtimeLogPath,
+  });
+  runnerTransport.observe({
+    onLine(line) {
+      try {
+        const event = parseRunnerEventV2(JSON.parse(line));
+        if ((event.type.startsWith("run.") || event.type === "task.updated") && mainWindow?.isDestroyed() === false) {
+          mainWindow.webContents.send("desktop:runner-event", event);
+        }
+      } catch {
+        // Protocol parsing and command-specific error handling remain owned by the adapter.
+      }
+    },
   });
   subscribeToCoreProjectRuns();
   globalThis.__kestrelDesktopRunnerTransportFactory = () => {
@@ -860,7 +873,7 @@ function registerIpcHandlers(
       async (client) => await client.syncDesktopUiState(state),
     );
   });
-  ipcMain.handle("desktop:run-turn", async (event, input: unknown) => {
+  ipcMain.handle("desktop:run-turn", async (_event, input: unknown) => {
     let request: DesktopRunTurnRequest;
     try {
       request = parseDesktopRunTurnRequest(input);
@@ -919,11 +932,7 @@ function registerIpcHandlers(
         metadata: { desktopExecutionSelection: executionSelection },
       },
       {
-        onEvent(runnerEvent) {
-          if (event.sender.isDestroyed() === false) {
-            event.sender.send("desktop:runner-event", runnerEvent);
-          }
-        },
+        onEvent() {},
       },
       { ...DESKTOP_RUNNER_REQUEST_CONTEXT, profile: runProfile },
     );
@@ -1733,7 +1742,23 @@ function registerIpcHandlers(
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
     }));
   }
-  ipcMain.handle("desktop:inspect-workspace-changes", async (_event, request: unknown) => inspectDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  ipcMain.handle("desktop:inspect-workspace-changes", async (_event, request: unknown) => {
+    const record = typeof request === "object" && request !== null && !Array.isArray(request)
+      ? request as Record<string, unknown>
+      : {};
+    const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+    const threadId = typeof record.threadId === "string" ? record.threadId.trim() : "";
+    const projectPath = typeof record.projectPath === "string" ? record.projectPath.trim() : undefined;
+    if (sessionId.length > 0 && threadId.length > 0) {
+      const workspace = resolveDesktopThreadWorkspace({
+        ...(projectPath ? { projectPath } : {}),
+        projects: desktopSettings.projects,
+        defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+      });
+      await requireLocalCoreConnectionManager().executeOnce(async (client) => await client.syncDesktopThreadWorkspace({ sessionId, threadId, workspace }));
+    }
+    return inspectDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT });
+  });
   ipcMain.handle("desktop:mutate-workspace-changes", async (_event, request: unknown) => mutateDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
   for (const operation of ["add", "list", "remove", "submit"] as const) {
     ipcMain.handle(`desktop:${operation}-workspace-feedback`, async (_event, request: unknown) => runDesktopWorkspaceFeedback({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));

@@ -6,6 +6,7 @@ import type { DesktopWorkspaceChangeMutation, DesktopWorkspaceChangeScope, Deskt
 export function DiffWorkspace(props: {
   sessionId: string;
   threadId: string;
+  projectPath?: string | undefined;
   defaultBaseRef?: string | undefined;
   initialScopeKind?: DesktopWorkspaceChangeScope["kind"] | undefined;
   initialRevision?: string | undefined;
@@ -46,7 +47,7 @@ export function DiffWorkspace(props: {
   const refresh = async (quiet = false) => {
     if (!quiet) setBusy(true);
     try {
-      const next = await window.kestrelDesktop.inspectWorkspaceChanges({ sessionId: props.sessionId, threadId: props.threadId, scope, options: { contextLines, whitespace } });
+      const next = await window.kestrelDesktop.inspectWorkspaceChanges({ sessionId: props.sessionId, threadId: props.threadId, ...(props.projectPath !== undefined ? { projectPath: props.projectPath } : {}), scope, options: { contextLines, whitespace } });
       setSnapshot(next);
       setFeedback(await window.kestrelDesktop.listWorkspaceFeedback({ sessionId: props.sessionId, threadId: props.threadId }));
       props.onError(undefined);

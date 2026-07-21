@@ -73,6 +73,7 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
       this.emitLine(JSON.stringify({
         id: randomUUID(),
         type: "runner.error",
+        ts: new Date().toISOString(),
         commandId,
         payload: {
           code: "LOCAL_CORE_RUNNER_TRANSPORT_ERROR",

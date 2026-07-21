@@ -151,6 +151,30 @@ contractTest("runtime.hermetic", "plan mode allows read-only tools and session p
   assert.deepEqual(resolveAllowedToolClasses({ interactionMode: "plan" }), ["read_only", "planning_write"]);
 });
 
+contractTest("runtime.hermetic", "Build exposes sandboxed workspace mutations while Chat and Plan do not", () => {
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "build",
+      toolClass: "sandboxed_only",
+    }),
+    true,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "plan",
+      toolClass: "sandboxed_only",
+    }),
+    false,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "chat",
+      toolClass: "sandboxed_only",
+    }),
+    false,
+  );
+});
+
 contractTest("runtime.hermetic", "Chat allows read-only tools and only explicitly Chat-enabled app mutations", () => {
   assert.equal(
     isToolEligibleForInteractionMode({

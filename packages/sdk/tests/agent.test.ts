@@ -94,6 +94,7 @@ contractTest("packages.hermetic", "createAgent runs and resumes with the configu
       sessionId: "session-agent-1",
       message: "continue",
       requestId: "request-sdk-1",
+      interactionMode: "build",
     },
     context,
   );
@@ -118,6 +119,10 @@ contractTest("packages.hermetic", "createAgent runs and resumes with the configu
   assert.equal(
     ((requests[1]?.payload as { turn?: { resumeRequestId?: string } })?.turn?.resumeRequestId),
     "request-sdk-1",
+  );
+  assert.equal(
+    ((requests[1]?.payload as { turn?: { interactionMode?: string } })?.turn?.interactionMode),
+    "build",
   );
   await agent.close();
 });

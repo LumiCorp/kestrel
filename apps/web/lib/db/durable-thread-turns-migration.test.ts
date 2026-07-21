@@ -138,6 +138,19 @@ contractTest("web.hermetic", "the durable worker uses pinned organization contex
   assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
 });
 
+contractTest("web.hermetic", "the durable worker records requested and effective interaction modes at runtime start", () => {
+  assert.match(
+    workerRuntime,
+    /requestedInteractionMode: turn\.requestedInteractionMode/u
+  );
+  assert.match(
+    workerRuntime,
+    /effectiveInteractionMode:[\s\S]*event\.payload\.interactionMode/u
+  );
+  assert.match(workerRuntime, /type: "runtime\.started"/u);
+  assert.match(workerRuntime, /appendDurableTurnEvent\(/u);
+});
+
 contractTest("web.hermetic", "durable replay binds the cutoff through the timestamp column encoder", () => {
   assert.match(
     turnStore,

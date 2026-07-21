@@ -200,6 +200,56 @@ contractTest("runtime.hermetic", "ThreadRuntime creates a persisted canonical ma
   assert.notEqual(mainThread.threadId, mainThread.sessionId);
 });
 
+contractTest("runtime.hermetic", "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "run-authoritative-build",
+        status: "COMPLETED",
+      }),
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+
+  await runtime.startThread({
+    threadId: "thread-authoritative-build",
+    sessionId: "session-authoritative-build",
+    title: "Authoritative Build mode",
+    metadata: {
+      interactionMode: "chat",
+    },
+  });
+
+  await runtime.submitTurn({
+    threadId: "thread-authoritative-build",
+    message: "Create the application",
+    eventType: "user.message",
+    interactionMode: "build",
+    actSubmode: "safe",
+    metadata: {
+      interactionMode: "chat",
+      turnId: "turn-authoritative-build",
+    },
+  });
+
+  assert.equal(executor.inputs[0]?.interactionMode, "build");
+  assert.equal(executor.inputs[0]?.metadata?.interactionMode, "build");
+  assert.equal(executor.inputs[0]?.metadata?.actSubmode, "safe");
+
+  const status = await runtime.getThreadStatus("thread-authoritative-build");
+  assert.equal(status?.thread.metadata?.interactionMode, "build");
+  assert.equal(status?.thread.metadata?.actSubmode, "safe");
+
+  const turn = await sessionStore.getConversationTurn("turn-authoritative-build");
+  assert.equal(turn?.metadata?.interactionMode, "build");
+  assert.equal(turn?.metadata?.actSubmode, "safe");
+});
+
 contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run inspection from persisted replay evidence", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);

@@ -2103,6 +2103,9 @@ function validateOperatorControlPayload(
   if (record.actSubmode !== undefined && record.actSubmode !== "strict" && record.actSubmode !== "safe" && record.actSubmode !== "full_auto") {
     throw new Error("operator.control payload.actSubmode is invalid");
   }
+  if (record.completionMode !== undefined && record.completionMode !== "terminal" && record.completionMode !== "accepted") {
+    throw new Error("operator.control payload.completionMode is invalid");
+  }
   if (record.title !== undefined && typeof record.title !== "string") {
     throw new Error(
       "operator.control payload.title must be a string when present"

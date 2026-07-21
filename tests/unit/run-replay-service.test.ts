@@ -680,6 +680,40 @@ contractTest("runtime.hermetic", "RunReplayService identifies blocked parent thr
   assert.equal(doctor.dominantFailure?.classification, "delegation_blocked");
 });
 
+contractTest("runtime.hermetic", "RunReplayService trusts authoritative running thread state over old event timestamps", async () => {
+  const store = new InMemorySessionStore();
+
+  await store.ensureSession("session-running-old-events");
+  await store.upsertThread({
+    threadId: "thread-running-old-events",
+    sessionId: "session-running-old-events",
+    title: "Long-running implementation",
+    status: "RUNNING",
+    activeRunId: "run-running-old-events",
+    createdAt: "2026-03-16T11:00:00.000Z",
+    updatedAt: "2026-03-16T11:05:00.000Z",
+  });
+  await store.appendRunEvent({
+    runId: "run-running-old-events",
+    sessionId: "session-running-old-events",
+    type: "run.started",
+    level: "INFO",
+    timestamp: "2026-03-16T11:00:00.000Z",
+    metadata: {
+      threadId: "thread-running-old-events",
+      runId: "run-running-old-events",
+    },
+  });
+
+  const replay = await new RunReplayService(store).replay({
+    runId: "run-running-old-events",
+    threadId: "thread-running-old-events",
+  });
+  const doctor = new RunReplayService(store).doctor(replay);
+
+  assert.equal(doctor.status, "RUNNING");
+});
+
 contractTest("runtime.hermetic", "RunReplayService exposes supervision groups, fan-in decisions, superseded lineage, and dominant blocker across multiple children", async () => {
   const store = new InMemorySessionStore();
 
