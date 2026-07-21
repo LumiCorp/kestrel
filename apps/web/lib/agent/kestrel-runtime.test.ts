@@ -77,6 +77,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "plan",
     messages: [
       {
         id: "msg_user",
@@ -95,6 +96,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
 
   assert.equal(capturedInput?.sessionId, "chat_123");
   assert.equal(capturedInput?.message, "What changed?");
+  assert.equal(capturedInput?.interactionMode, "plan");
   assert.deepEqual(capturedInput?.clientCapabilities, {
     kestrelOne: {
       requestId: "req_123",

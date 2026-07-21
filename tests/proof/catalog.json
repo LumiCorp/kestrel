@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3505,
+  "testCount": 3509,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -4311,7 +4311,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 333,
+      "line": 335,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "contractId": "web.unit-contract",
@@ -4326,7 +4326,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 220,
+      "line": 222,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "contractId": "web.unit-contract",
@@ -4341,7 +4341,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 152,
+      "line": 154,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "contractId": "web.unit-contract",
@@ -4356,7 +4356,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 275,
+      "line": 277,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "contractId": "web.unit-contract",
@@ -4371,7 +4371,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 492,
+      "line": 494,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "contractId": "web.unit-contract",
@@ -4401,7 +4401,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces cancelled runner output once",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 455,
+      "line": 457,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces cancelled runner output once",
       "contractId": "web.unit-contract",
@@ -4416,7 +4416,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces failed runner output",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 393,
+      "line": 395,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces failed runner output",
       "contractId": "web.unit-contract",
@@ -6561,7 +6561,7 @@
     {
       "identity": "apps/web/lib/chat/first-turn-handoff.test.ts :: first-turn handoff clears by chat id",
       "file": "apps/web/lib/chat/first-turn-handoff.test.ts",
-      "line": 131,
+      "line": 132,
       "ancestors": [],
       "title": "first-turn handoff clears by chat id",
       "contractId": "web.unit-contract",
@@ -6576,7 +6576,7 @@
     {
       "identity": "apps/web/lib/chat/first-turn-handoff.test.ts :: first-turn handoff expires after the ttl",
       "file": "apps/web/lib/chat/first-turn-handoff.test.ts",
-      "line": 106,
+      "line": 107,
       "ancestors": [],
       "title": "first-turn handoff expires after the ttl",
       "contractId": "web.unit-contract",
@@ -6591,7 +6591,7 @@
     {
       "identity": "apps/web/lib/chat/first-turn-handoff.test.ts :: first-turn handoff rejects invalid payloads",
       "file": "apps/web/lib/chat/first-turn-handoff.test.ts",
-      "line": 115,
+      "line": 116,
       "ancestors": [],
       "title": "first-turn handoff rejects invalid payloads",
       "contractId": "web.unit-contract",
@@ -6606,7 +6606,7 @@
     {
       "identity": "apps/web/lib/chat/first-turn-handoff.test.ts :: first-turn handoff round-trips exact message parts",
       "file": "apps/web/lib/chat/first-turn-handoff.test.ts",
-      "line": 98,
+      "line": 99,
       "ancestors": [],
       "title": "first-turn handoff round-trips exact message parts",
       "contractId": "web.unit-contract",
@@ -7079,6 +7079,21 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: the production worker image retains its TypeScript runtime toolchain",
       "dimension": "the production worker image retains its TypeScript runtime toolchain",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/db/durable-turn-interaction-mode-migration.test.ts :: durable turns persist a validated interaction mode",
+      "file": "apps/web/lib/db/durable-turn-interaction-mode-migration.test.ts",
+      "line": 17,
+      "ancestors": [],
+      "title": "durable turns persist a validated interaction mode",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: durable turns persist a validated interaction mode",
+      "dimension": "durable turns persist a validated interaction mode",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -41056,9 +41071,54 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract cleanup tears down the matching compose project",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 56,
+      "ancestors": [],
+      "title": "product contract cleanup tears down the matching compose project",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract cleanup tears down the matching compose project",
+      "dimension": "product contract cleanup tears down the matching compose project",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract launcher always cleans up its isolated compose project",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 19,
+      "ancestors": [],
+      "title": "product contract launcher always cleans up its isolated compose project",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract launcher always cleans up its isolated compose project",
+      "dimension": "product contract launcher always cleans up its isolated compose project",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract launcher cleans up when the suite fails",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 40,
+      "ancestors": [],
+      "title": "product contract launcher cleans up when the suite fails",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract launcher cleans up when the suite fails",
+      "dimension": "product contract launcher cleans up when the suite fails",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/product-contract-ports.test.ts :: product contract ports are unique and outside the default Linux ephemeral range",
       "file": "tests/unit/product-contract-ports.test.ts",
-      "line": 5,
+      "line": 9,
       "ancestors": [],
       "title": "product contract ports are unique and outside the default Linux ephemeral range",
       "contractId": "runtime.behavior",

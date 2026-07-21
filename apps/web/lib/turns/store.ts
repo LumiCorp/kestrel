@@ -28,6 +28,7 @@ import {
   type ThreadTurnTerminalStatus,
   terminalQueueOutcome,
 } from "@/lib/turns/contracts";
+import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
 type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -303,6 +304,7 @@ type DurableThreadTurnInput = {
   requestedEnvironmentId: string;
   projectContextRevisionId?: string | null;
   requestedModelId?: string | null;
+  requestedInteractionMode?: KestrelOneInteractionMode;
   source: ThreadTurnSource;
 } & (
   | {
@@ -477,6 +479,7 @@ async function createDurableThreadTurnInTransaction(
       queueOrdinal: sequence,
       source: input.source,
       requestedModelId: input.requestedModelId ?? null,
+      requestedInteractionMode: input.requestedInteractionMode ?? "chat",
       status: "queued",
       createdAt: now,
       updatedAt: now,

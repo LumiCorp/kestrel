@@ -27,6 +27,7 @@ import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabi
 import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
 import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
+import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -141,6 +142,7 @@ export type KestrelOneAgentResponseInput = {
       }
     | undefined;
   modelId?: string;
+  interactionMode?: KestrelOneInteractionMode;
   runtimeModel?: KestrelOneRuntimeModelSelection;
   projectContext?: {
     projectId: string;
@@ -239,6 +241,7 @@ export function createKestrelOneAgentResponseFromAgent(
               sessionId: input.threadId,
               message: latestUserMessage,
               eventType: interactionResponse?.eventType ?? "user.message",
+              interactionMode: input.interactionMode,
               ...(interactionResponse !== undefined
                 ? { resumeRequestId: interactionResponse.requestId }
                 : {}),

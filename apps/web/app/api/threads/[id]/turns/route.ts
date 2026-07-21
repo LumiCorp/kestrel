@@ -6,6 +6,7 @@ import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
+import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import {
   createDurableThreadTurn,
@@ -20,6 +21,7 @@ const bodySchema = z.object({
     parts: z.array(uiMessagePartSchema).min(1).max(200),
   }),
   model: z.string().min(1).max(200).optional(),
+  interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).default("chat"),
 });
 
 export async function GET(
@@ -86,6 +88,7 @@ export async function POST(
         request.headers.get("idempotency-key")?.trim() || body.message.id,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
       requestedModelId: body.model ?? null,
+      requestedInteractionMode: body.interactionMode,
       source: "web",
     });
     if (durable.shouldDispatch) {

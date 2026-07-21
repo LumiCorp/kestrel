@@ -2,6 +2,7 @@ import type { KestrelPresentationDataParts } from "@kestrel-agents/ai-sdk";
 import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/artifact";
+import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import type { createDocument } from "./ai/tools/create-document";
 import type { getWeather } from "./ai/tools/get-weather";
 import type { requestSuggestions } from "./ai/tools/request-suggestions";
@@ -136,6 +137,7 @@ export type ChatFirstTurnHandoff = {
   messageId: string;
   messageParts: ChatMessage["parts"];
   modelId: string;
+  interactionMode: KestrelOneInteractionMode;
   createdAt: number;
   pendingAssistant: boolean;
 };

@@ -53,6 +53,10 @@ import {
 import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import { getComposerSubmissionPolicy } from "@/lib/turns/composer-policy";
+import {
+  KESTREL_ONE_INTERACTION_MODES,
+  type KestrelOneInteractionMode,
+} from "@/lib/turns/interaction-mode";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
@@ -375,6 +379,8 @@ function PureMultimodalInput({
   selectedVisibilityType,
   selectedModelId,
   onModelChange,
+  interactionMode,
+  onInteractionModeChange,
   activeEnvironmentName,
   modelScopeQuery,
 }: {
@@ -388,7 +394,10 @@ function PureMultimodalInput({
   messages: UIMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
-  queueMessage?: (message: ChatMessage) => void;
+  queueMessage?: (
+    message: ChatMessage,
+    interactionMode: KestrelOneInteractionMode
+  ) => void;
   conversationState: ThreadConversationState;
   onInterrupt?: () => Promise<void>;
   onRuntimeInteractionResponse?: (
@@ -398,6 +407,8 @@ function PureMultimodalInput({
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
+  interactionMode: KestrelOneInteractionMode;
+  onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
   activeEnvironmentName?: string;
   modelScopeQuery?: string;
 }) {
@@ -728,9 +739,9 @@ function PureMultimodalInput({
       if (!queueMessage) {
         return;
       }
-      queueMessage(message);
+      queueMessage(message, interactionMode);
     } else {
-      void sendMessage(message);
+      void sendMessage(message, { body: { interactionMode } });
     }
 
     setAttachments([]);
@@ -757,6 +768,7 @@ function PureMultimodalInput({
     composerRuntimeQuestion,
     onRuntimeInteractionResponse,
     shouldQueueSubmission,
+    interactionMode,
   ]);
 
   const uploadFile = useCallback(
@@ -958,10 +970,13 @@ function PureMultimodalInput({
   const handleSuggestedAction = useCallback(
     (suggestion: ChatSuggestion) => {
       if (suggestion.kind === "prompt") {
-        sendMessage({
-          role: "user",
-          parts: [{ type: "text", text: suggestion.prompt }],
-        });
+        sendMessage(
+          {
+            role: "user",
+            parts: [{ type: "text", text: suggestion.prompt }],
+          },
+          { body: { interactionMode } }
+        );
         return;
       }
 
@@ -969,7 +984,7 @@ function PureMultimodalInput({
       setMediaPrompt(suggestion.prompt);
       setMediaDialogOpen(true);
     },
-    [sendMessage]
+    [interactionMode, sendMessage]
   );
 
   return (
@@ -984,7 +999,6 @@ function PureMultimodalInput({
             knowledgeEnabled={knowledgeEnabled}
             onSuggestionSelect={handleSuggestedAction}
             selectedVisibilityType={selectedVisibilityType}
-            sendMessage={sendMessage}
             threadId={threadId}
             videoEnabled={videoModels.length > 0}
           />
@@ -1044,6 +1058,34 @@ function PureMultimodalInput({
             ))}
           </div>
         )}
+        <div
+          aria-label="Interaction mode"
+          className="flex w-fit items-center rounded-lg bg-muted p-0.5"
+          role="group"
+        >
+          {KESTREL_ONE_INTERACTION_MODES.map((mode) => (
+            <button
+              aria-pressed={interactionMode === mode}
+              className={cn(
+                "h-7 rounded-md px-2 font-medium text-xs transition-colors",
+                interactionMode === mode
+                  ? "bg-background text-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              data-testid={`interaction-mode-${mode}`}
+              disabled={Boolean(pendingInteraction)}
+              key={mode}
+              onClick={() => onInteractionModeChange(mode)}
+              type="button"
+            >
+              {mode === "chat"
+                ? "Chat"
+                : mode === "plan"
+                  ? "Plan"
+                  : "Build"}
+            </button>
+          ))}
+        </div>
         <div className="flex flex-row items-start gap-1 sm:gap-2">
           <PromptInputTextarea
             className="grow resize-none border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
@@ -1382,6 +1424,9 @@ export const MultimodalInput = memo(
       return false;
     }
     if (prevProps.selectedModelId !== nextProps.selectedModelId) {
+      return false;
+    }
+    if (prevProps.interactionMode !== nextProps.interactionMode) {
       return false;
     }
 

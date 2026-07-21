@@ -49,6 +49,7 @@ function buildRecord(): ChatFirstTurnHandoff {
       },
     ],
     modelId: "chat-model-1",
+    interactionMode: "plan",
     createdAt: 1_700_000_000_000,
     pendingAssistant: true,
   };

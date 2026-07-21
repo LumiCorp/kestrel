@@ -1,13 +1,16 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
+import { rm } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const PRODUCT_PORT_MIN = 20_000;
 const PRODUCT_PORT_MAX = 29_999;
 const PRODUCT_PORT_COUNT = 7;
 const MAX_ALLOCATION_ATTEMPTS = 100;
+const execFileAsync = promisify(execFile);
 
 export interface ProductContractPorts {
   app: number;
@@ -18,6 +21,22 @@ export interface ProductContractPorts {
   minioConsole: number;
   runner: number;
 }
+
+interface ProductContractContext {
+  environment: NodeJS.ProcessEnv;
+  webRoot: string;
+}
+
+interface ProductContractDependencies {
+  cleanup?: (context: ProductContractContext) => Promise<void>;
+  runSuite?: (context: ProductContractContext) => Promise<number>;
+}
+
+type ExecuteFile = (
+  file: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv }
+) => Promise<unknown>;
 
 function listen(server: net.Server, port: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -76,27 +95,15 @@ export async function allocateProductContractPorts(): Promise<ProductContractPor
   throw new Error("Unable to allocate ports for the product contract suite.");
 }
 
-async function runProductContract(): Promise<number> {
-  const ports = await allocateProductContractPorts();
-  const runId = `${String(process.pid)}-${String(Date.now())}`;
-  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+async function runPlaywrightSuite(
+  context: ProductContractContext
+): Promise<number> {
   const child = spawn(
     "pnpm",
     ["exec", "playwright", "test", "--config", "playwright.product.config.ts"],
     {
-      cwd: webRoot,
-      env: {
-        ...process.env,
-        COMPOSE_PROJECT_NAME: `kestrel-one-product-contract-${runId}`,
-        KESTREL_PRODUCT_APP_PORT: String(ports.app),
-        KESTREL_PRODUCT_FAKE_OPENROUTER_PORT: String(ports.fakeOpenRouter),
-        KESTREL_PRODUCT_POSTGRES_PORT: String(ports.postgres),
-        KESTREL_PRODUCT_REDIS_PORT: String(ports.redis),
-        KESTREL_PRODUCT_MINIO_API_PORT: String(ports.minioApi),
-        KESTREL_PRODUCT_MINIO_CONSOLE_PORT: String(ports.minioConsole),
-        KESTREL_PRODUCT_RUNNER_PORT: String(ports.runner),
-        KESTREL_PRODUCT_WORKER_READY_FILE: `/tmp/kestrel-one-product-contract-${runId}.ready`,
-      },
+      cwd: context.webRoot,
+      env: context.environment,
       stdio: "inherit",
     }
   );
@@ -111,6 +118,58 @@ async function runProductContract(): Promise<number> {
       resolve(code ?? 1);
     });
   });
+}
+
+export async function cleanupProductContract(
+  context: ProductContractContext,
+  execute: ExecuteFile = execFileAsync
+): Promise<void> {
+  try {
+    await execute(
+      "docker",
+      ["compose", "down", "--volumes", "--remove-orphans"],
+      {
+        cwd: context.webRoot,
+        env: context.environment,
+      }
+    );
+  } finally {
+    const workerReadyFile = context.environment.KESTREL_PRODUCT_WORKER_READY_FILE;
+    if (workerReadyFile) {
+      await rm(workerReadyFile, { force: true });
+    }
+  }
+}
+
+export async function runProductContract(
+  dependencies: ProductContractDependencies = {}
+): Promise<number> {
+  const ports = await allocateProductContractPorts();
+  const runId = `${String(process.pid)}-${String(Date.now())}`;
+  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const context: ProductContractContext = {
+    webRoot,
+    environment: {
+      ...process.env,
+      COMPOSE_PROJECT_NAME: `kestrel-one-product-contract-${runId}`,
+      KESTREL_PRODUCT_APP_PORT: String(ports.app),
+      KESTREL_PRODUCT_FAKE_OPENROUTER_PORT: String(ports.fakeOpenRouter),
+      KESTREL_PRODUCT_POSTGRES_PORT: String(ports.postgres),
+      KESTREL_PRODUCT_REDIS_PORT: String(ports.redis),
+      KESTREL_PRODUCT_MINIO_API_PORT: String(ports.minioApi),
+      KESTREL_PRODUCT_MINIO_CONSOLE_PORT: String(ports.minioConsole),
+      KESTREL_PRODUCT_RUNNER_PORT: String(ports.runner),
+      KESTREL_PRODUCT_WORKER_READY_FILE: `/tmp/kestrel-one-product-contract-${runId}.ready`,
+    },
+  };
+  const runSuite = dependencies.runSuite ?? runPlaywrightSuite;
+  const cleanup = dependencies.cleanup ?? cleanupProductContract;
+
+  try {
+    return await runSuite(context);
+  } finally {
+    await cleanup(context);
+  }
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : undefined;

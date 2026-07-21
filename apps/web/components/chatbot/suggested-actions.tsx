@@ -1,13 +1,11 @@
 "use client";
 
-import type { UseChatHelpers } from "@ai-sdk/react";
 import { motion } from "framer-motion";
 import { memo, useMemo } from "react";
 import {
   type ChatSuggestion,
   selectChatSuggestions,
 } from "@/lib/chat/suggestion-catalog";
-import type { ChatMessage } from "@/lib/types";
 import { Suggestion } from "./elements/suggestion";
 import type { VisibilityType } from "./visibility-selector";
 
@@ -16,7 +14,6 @@ type SuggestedActionsProps = {
   imageEnabled: boolean;
   knowledgeEnabled: boolean;
   onSuggestionSelect: (suggestion: ChatSuggestion) => void;
-  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   selectedVisibilityType: VisibilityType;
   videoEnabled: boolean;
 };
@@ -26,7 +23,6 @@ function PureSuggestedActions({
   imageEnabled,
   knowledgeEnabled,
   onSuggestionSelect,
-  sendMessage,
   videoEnabled,
 }: SuggestedActionsProps) {
   const suggestedActions = useMemo(
@@ -55,17 +51,7 @@ function PureSuggestedActions({
         >
           <Suggestion
             className="h-auto w-full whitespace-normal p-3 text-left"
-            onClick={() => {
-              if (suggestedAction.kind === "prompt") {
-                sendMessage({
-                  role: "user",
-                  parts: [{ type: "text", text: suggestedAction.prompt }],
-                });
-                return;
-              }
-
-              onSuggestionSelect(suggestedAction);
-            }}
+            onClick={() => onSuggestionSelect(suggestedAction)}
             suggestion={suggestedAction.label}
           >
             {suggestedAction.label}
