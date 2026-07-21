@@ -48,6 +48,7 @@ export const PromptInputTextarea = ({
   disableAutoResize = false,
   resizeOnNewLinesOnly = false,
   onSubmitOnEnter,
+  style,
   ...props
 }: PromptInputTextareaProps) => {
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
@@ -98,6 +99,7 @@ export const PromptInputTextarea = ({
       }}
       onKeyDown={handleKeyDown}
       placeholder={placeholder}
+      style={{ minHeight, maxHeight, ...style }}
       {...props}
     />
   );

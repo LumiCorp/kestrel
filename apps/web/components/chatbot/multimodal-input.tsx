@@ -52,21 +52,16 @@ import {
 } from "@/lib/ai/models";
 import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
-import { getComposerSubmissionPolicy } from "@/lib/turns/composer-policy";
 import {
-  KESTREL_ONE_INTERACTION_MODES,
-  type KestrelOneInteractionMode,
-} from "@/lib/turns/interaction-mode";
+  type ComposerPresentation,
+  resolveComposerPresentation,
+} from "@/lib/turns/composer-presentation";
+import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
-import {
-  PromptInput,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputToolbar,
-  PromptInputTools,
-} from "./elements/prompt-input";
+import { ComposerToolbar } from "./composer-toolbar";
+import { PromptInput, PromptInputTextarea } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import type { RuntimeInteractionResponse } from "./interaction-panel";
 import { PreviewAttachment } from "./preview-attachment";
@@ -79,237 +74,44 @@ type ScopedChatModel = ChatModel & {
   scope?: "environment" | "organization" | "platform";
 };
 
-type ComposerActivity = {
-  label: string;
-  tone: "ready" | "working" | "streaming" | "attention" | "error";
-};
-
-function getComposerActivity(input: {
-  messages: UIMessage[];
-  status: UseChatHelpers<ChatMessage>["status"];
-  conversationState: ThreadConversationState;
-}): ComposerActivity | null {
-  const activeTurn = input.conversationState.turns.find(
-    (turn) => turn.id === input.conversationState.queue.activeTurnId
-  );
-  const pendingInteraction = input.conversationState.interactions.find(
-    (interaction) => interaction.status === "pending"
-  );
-  const queuedCount = input.conversationState.turns.filter(
-    (turn) => turn.status === "queued"
-  ).length;
-
-  if (pendingInteraction) {
-    return {
-      label:
-        pendingInteraction.kind === "approval" ||
-        pendingInteraction.kind === "mcp_sampling"
-          ? "Waiting for approval"
-          : "Waiting for your response",
-      tone: "attention",
-    };
-  }
-
-  if (activeTurn?.cancelRequestedAt) {
-    return {
-      label: "Interrupt requested · stopping at a safe boundary",
-      tone: "attention",
-    };
-  }
-
-  if (input.status === "error") {
-    return {
-      label: "Agent error",
-      tone: "error",
-    };
-  }
-
-  if (input.conversationState.queue.pauseReason === "turn_failed") {
-    return {
-      label: "Agent failed · queue paused",
-      tone: "error",
-    };
-  }
-
-  if (input.conversationState.queue.pauseReason === "turn_cancelled") {
-    return {
-      label: "Turn interrupted · queue paused",
-      tone: "attention",
-    };
-  }
-
-  if (activeTurn && input.status === "ready") {
-    return {
-      label:
-        queuedCount > 0
-          ? `Agent working · ${queuedCount} queued`
-          : "Agent working",
-      tone: "working",
-    };
-  }
-
-  if (input.status === "ready") {
-    return { label: "Ready", tone: "ready" };
-  }
-
-  const latestAssistantMessage = [...input.messages]
-    .reverse()
-    .find((message) => message.role === "assistant");
-  const parts = latestAssistantMessage?.parts ?? [];
-
-  const activeToolPart = [...parts].reverse().find((part) => {
-    if (
-      !(
-        (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
-        "state" in part
-      )
-    ) {
-      return false;
-    }
-
-    if (typeof part.state !== "string") {
-      return false;
-    }
-
-    return [
-      "input-streaming",
-      "input-available",
-      "approval-requested",
-      "approval-responded",
-    ].includes(part.state);
-  });
-
-  if (
-    activeToolPart &&
-    "state" in activeToolPart &&
-    activeToolPart.state === "approval-requested"
-  ) {
-    return {
-      label: "Waiting for approval",
-      tone: "attention",
-    };
-  }
-
-  if (activeToolPart) {
-    switch (activeToolPart.type) {
-      case "tool-searchKnowledgeDocuments":
-        return {
-          label: "Searching documents",
-          tone: "working",
-        };
-      case "tool-bash":
-      case "tool-bash_batch":
-        return {
-          label: "Inspecting sources",
-          tone: "working",
-        };
-      case "tool-requestSuggestions":
-        return {
-          label: "Generating suggestions",
-          tone: "working",
-        };
-      case "tool-createDocument":
-      case "tool-updateDocument":
-        return {
-          label: "Updating document",
-          tone: "working",
-        };
-      default:
-        return {
-          label: "Agent working",
-          tone: "working",
-        };
-    }
-  }
-
-  const hasStreamingReasoning = parts.some(
-    (part) =>
-      part.type === "reasoning" && "state" in part && part.state === "streaming"
-  );
-
-  if (hasStreamingReasoning || input.status === "submitted") {
-    return {
-      label: "Thinking",
-      tone: "working",
-    };
-  }
-
-  if (input.status === "streaming") {
-    return {
-      label: "Writing answer",
-      tone: "streaming",
-    };
-  }
-
-  return {
-    label: "Agent working",
-    tone: "working",
-  };
-}
-
-function ComposerActivityRibbon({
-  activity,
+function ComposerStatusEdge({
+  presentation,
   queueVersion,
 }: {
-  activity: ComposerActivity | null;
+  presentation: ComposerPresentation;
   queueVersion: number;
 }) {
-  if (!activity) {
-    return null;
-  }
-
   const trackClassName = {
     ready: "bg-transparent",
-    working: "bg-primary/12",
-    streaming: "bg-sky-500/12",
-    attention: "bg-amber-500/15",
-    error: "bg-destructive/15",
-  }[activity.tone];
-
-  const coreClassName = {
-    ready: "from-transparent via-transparent to-transparent",
-    working:
-      "from-transparent via-primary/95 to-transparent shadow-[0_0_12px_rgba(0,108,255,0.7)]",
-    streaming:
-      "from-transparent via-sky-400/95 to-transparent shadow-[0_0_14px_rgba(56,189,248,0.8)]",
-    attention:
-      "from-transparent via-amber-400/95 to-transparent shadow-[0_0_14px_rgba(251,191,36,0.8)]",
-    error:
-      "from-transparent via-red-500/95 to-transparent shadow-[0_0_14px_rgba(239,68,68,0.8)]",
-  }[activity.tone];
+    working: "bg-accent/35",
+    attention: "bg-primary",
+    error: "bg-destructive",
+  }[presentation.tone];
 
   return (
     <>
-      <span aria-live="polite" className="sr-only" role="status">
-        {activity.label}
-      </span>
-      <div
-        className="px-2 pb-1 text-muted-foreground text-xs"
+      <span
+        aria-live="polite"
+        className="sr-only"
         data-queue-version={queueVersion}
         data-testid="composer-state"
+        role="status"
       >
-        {activity.label}
-      </div>
-      {activity.tone === "ready" ? null : (
+        {presentation.label}
+      </span>
+      {presentation.tone === "ready" ? null : (
         <div
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-x-3 top-0 z-10 h-[2px] overflow-hidden rounded-full",
+            "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden",
             trackClassName
           )}
+          data-composer-tone={presentation.tone}
+          data-testid="composer-status-edge"
         >
-          <div
-            className={cn(
-              "composer-agent-ribbon-sweep absolute inset-y-[-2px] left-[-34%] w-[30%] rounded-full bg-gradient-to-r blur-[4px]",
-              coreClassName
-            )}
-          />
-          <div
-            className={cn(
-              "composer-agent-ribbon-sweep absolute inset-y-0 left-[-22%] w-[18%] rounded-full bg-gradient-to-r",
-              coreClassName
-            )}
-          />
+          {presentation.tone === "working" ? (
+            <div className="composer-agent-ribbon-sweep absolute inset-y-0 left-[-30%] w-[30%] rounded-full bg-accent" />
+          ) : null}
         </div>
       )}
     </>
@@ -416,18 +218,6 @@ function PureMultimodalInput({
   const { width } = useWindowSize();
   const { setArtifact } = useArtifact();
 
-  const adjustHeight = useCallback(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "44px";
-    }
-  }, []);
-
-  useEffect(() => {
-    if (textareaRef.current) {
-      adjustHeight();
-    }
-  }, [adjustHeight]);
-
   const hasAutoFocused = useRef(false);
   useEffect(() => {
     if (!hasAutoFocused.current && width) {
@@ -441,7 +231,7 @@ function PureMultimodalInput({
 
   const resetHeight = useCallback(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = "44px";
+      textareaRef.current.style.height = "";
     }
   }, []);
 
@@ -477,11 +267,10 @@ function PureMultimodalInput({
       // Prefer DOM value over localStorage to handle hydration
       const finalValue = domValue || localStorageInput || "";
       setInput(finalValue);
-      adjustHeight();
     }
     // Only run once after hydration
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adjustHeight, localStorageInput, setInput]);
+  }, [localStorageInput, setInput]);
 
   useEffect(() => {
     setLocalStorageInput(input);
@@ -638,22 +427,30 @@ function PureMultimodalInput({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
-  const composerActivity = useMemo(
+  const composerPresentation = useMemo(
     () =>
-      getComposerActivity({
-        messages,
-        status,
+      resolveComposerPresentation({
+        attachmentCount: attachments.length,
+        canInterrupt: Boolean(
+          conversationState.queue.activeTurnId && onInterrupt
+        ),
+        canQueue: Boolean(queueMessage),
         conversationState,
+        hasText: input.trim().length > 0,
+        transportStatus: status,
+        uploadCount: uploadQueue.length,
       }),
-    [conversationState, messages, status]
+    [
+      attachments.length,
+      conversationState,
+      input,
+      onInterrupt,
+      queueMessage,
+      status,
+      uploadQueue.length,
+    ]
   );
-  const composerPolicy = getComposerSubmissionPolicy({
-    conversationState,
-    transportStatus: status,
-  });
-  const activeTurn = conversationState.turns.find(
-    (turn) => turn.id === conversationState.queue.activeTurnId
-  );
+  const composerPolicy = composerPresentation.submissionPolicy;
   const composerRuntimeQuestion =
     composerPolicy.mode === "answer_interaction"
       ? composerPolicy.interaction
@@ -1020,8 +817,8 @@ function PureMultimodalInput({
           void submitForm();
         }}
       >
-        <ComposerActivityRibbon
-          activity={composerActivity}
+        <ComposerStatusEdge
+          presentation={composerPresentation}
           queueVersion={conversationState.queue.version}
         />
 
@@ -1058,39 +855,10 @@ function PureMultimodalInput({
             ))}
           </div>
         )}
-        <div
-          aria-label="Interaction mode"
-          className="flex w-fit items-center rounded-lg bg-muted p-0.5"
-          role="group"
-        >
-          {KESTREL_ONE_INTERACTION_MODES.map((mode) => (
-            <button
-              aria-pressed={interactionMode === mode}
-              className={cn(
-                "h-7 rounded-md px-2 font-medium text-xs transition-colors",
-                interactionMode === mode
-                  ? "bg-background text-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-              data-testid={`interaction-mode-${mode}`}
-              disabled={Boolean(pendingInteraction)}
-              key={mode}
-              onClick={() => onInteractionModeChange(mode)}
-              type="button"
-            >
-              {mode === "chat"
-                ? "Chat"
-                : mode === "plan"
-                  ? "Plan"
-                  : "Build"}
-            </button>
-          ))}
-        </div>
         <div className="flex flex-row items-start gap-1 sm:gap-2">
           <PromptInputTextarea
-            className="grow resize-none border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
+            className="grow resize-none overflow-y-auto border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
             data-testid="multimodal-input"
-            disableAutoResize={true}
             disabled={composerBlockedByInteraction}
             maxHeight={200}
             minHeight={44}
@@ -1108,113 +876,98 @@ function PureMultimodalInput({
             value={input}
           />
         </div>
-        <PromptInputToolbar className="border-top-0! border-t-0! p-0 shadow-none dark:border-0 dark:border-transparent!">
-          <PromptInputTools className="gap-0 sm:gap-0.5">
-            {activeEnvironmentName ? (
-              <span className="hidden max-w-40 truncate rounded-md border px-2 py-1 text-muted-foreground text-xs sm:inline">
-                Environment: {activeEnvironmentName}
-              </span>
-            ) : null}
-            <AttachmentsButton
-              fileInputRef={fileInputRef}
-              selectedModelId={selectedModelId}
-              status={pendingInteraction ? "streaming" : status}
-            />
-            <PromptInputSpeechButton
-              className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
-              disabled={status !== "ready"}
-              onTranscriptionChange={setInput}
-              textareaRef={textareaRef}
-            />
+        <ComposerToolbar
+          activeEnvironmentName={activeEnvironmentName}
+          capabilityControls={
+            <>
+              <Button
+                aria-label="Generate an image"
+                className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
+                data-testid="media-image-button"
+                disabled={imageModels.length === 0}
+                onClick={() => {
+                  setMediaKind("image");
+                  setMediaDialogOpen(true);
+                }}
+                size="icon"
+                title="Generate an image"
+                type="button"
+                variant="ghost"
+              >
+                <ImagePlusIcon className="size-4" />
+              </Button>
+              <Button
+                aria-label="Generate a video"
+                className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
+                disabled={videoModels.length === 0}
+                onClick={() => {
+                  setMediaKind("video");
+                  setMediaDialogOpen(true);
+                }}
+                size="icon"
+                title="Generate a video"
+                type="button"
+                variant="ghost"
+              >
+                <FilmIcon className="size-4" />
+              </Button>
+              <Button
+                aria-label={
+                  autoPlaySpeech
+                    ? "Disable automatic response playback"
+                    : "Enable automatic response playback"
+                }
+                className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
+                onClick={() => setAutoPlaySpeech((current) => !current)}
+                size="icon"
+                title={
+                  autoPlaySpeech
+                    ? "Disable automatic response playback"
+                    : "Enable automatic response playback"
+                }
+                type="button"
+                variant="ghost"
+              >
+                {autoPlaySpeech ? (
+                  <Volume2Icon className="size-4" />
+                ) : (
+                  <VolumeXIcon className="size-4" />
+                )}
+              </Button>
+              <AttachmentsButton
+                disabled={composerBlockedByInteraction}
+                fileInputRef={fileInputRef}
+                selectedModelId={selectedModelId}
+              />
+              <PromptInputSpeechButton
+                className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
+                disabled={composerBlockedByInteraction}
+                onTranscriptionChange={setInput}
+                textareaRef={textareaRef}
+              />
+            </>
+          }
+          interactionMode={interactionMode}
+          modeDisabled={Boolean(pendingInteraction)}
+          modelControl={
             <ModelSelectorCompact
               availableModels={availableModels}
+              className="w-full max-w-[140px] sm:max-w-[200px] lg:w-[200px]"
               onModelChange={onModelChange}
               selectedModelId={selectedModelId}
             />
-            <Button
-              aria-label="Generate an image"
-              className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
-              data-testid="media-image-button"
-              disabled={imageModels.length === 0}
-              onClick={() => {
-                setMediaKind("image");
-                setMediaDialogOpen(true);
-              }}
-              type="button"
-              variant="ghost"
-            >
-              <ImagePlusIcon className="size-4" />
-            </Button>
-            <Button
-              aria-label="Generate a video"
-              className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
-              disabled={videoModels.length === 0}
-              onClick={() => {
-                setMediaKind("video");
-                setMediaDialogOpen(true);
-              }}
-              type="button"
-              variant="ghost"
-            >
-              <FilmIcon className="size-4" />
-            </Button>
-            <Button
-              aria-label={
-                autoPlaySpeech
-                  ? "Disable automatic response playback"
-                  : "Enable automatic response playback"
-              }
-              className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
-              onClick={() => setAutoPlaySpeech((current) => !current)}
-              type="button"
-              variant="ghost"
-            >
-              {autoPlaySpeech ? (
-                <Volume2Icon className="size-4" />
-              ) : (
-                <VolumeXIcon className="size-4" />
-              )}
-            </Button>
-          </PromptInputTools>
-
-          {status === "error" ? (
+          }
+          onInteractionModeChange={onInteractionModeChange}
+          primaryAction={
             <ComposerActionButton
               clearError={clearError}
+              onInterrupt={onInterrupt}
+              onSubmit={submitForm}
+              presentation={composerPresentation}
               setMessages={setMessages}
-              status={status}
             />
-          ) : (
-            <>
-              {activeTurn && onInterrupt ? (
-                <Button
-                  aria-label="Interrupt agent at the next safe boundary"
-                  className="size-8 rounded-full"
-                  disabled={Boolean(activeTurn.cancelRequestedAt)}
-                  onClick={() => void onInterrupt()}
-                  title="Interrupt at the next safe boundary"
-                  type="button"
-                  variant="outline"
-                >
-                  <StopIcon size={14} />
-                </Button>
-              ) : null}
-              <PromptInputSubmit
-                className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
-                data-testid="send-button"
-                disabled={
-                  composerBlockedByInteraction ||
-                  (!input.trim() && attachments.length === 0) ||
-                  uploadQueue.length > 0 ||
-                  (shouldQueueSubmission && !queueMessage)
-                }
-                onClick={() => void submitForm()}
-                status={status}
-              >
-                <ArrowUpIcon size={14} />
-              </PromptInputSubmit>
-            </>
-          )}
-        </PromptInputToolbar>
+          }
+        />
       </PromptInput>
 
       <Dialog onOpenChange={setPromotionOpen} open={promotionOpen}>
@@ -1435,12 +1188,12 @@ export const MultimodalInput = memo(
 );
 
 function PureAttachmentsButton({
+  disabled,
   fileInputRef,
-  status,
   selectedModelId,
 }: {
+  disabled: boolean;
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
-  status: UseChatHelpers<ChatMessage>["status"];
   selectedModelId: string;
 }) {
   const isReasoningModel =
@@ -1448,17 +1201,20 @@ function PureAttachmentsButton({
 
   return (
     <Button
-      className="aspect-square h-8 rounded-lg p-1 transition-colors hover:bg-accent"
+      aria-label="Attach files"
+      className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
       data-testid="attachments-button"
-      disabled={status !== "ready" || isReasoningModel}
+      disabled={disabled || isReasoningModel}
       onClick={(event) => {
         event.preventDefault();
         fileInputRef.current?.click();
       }}
+      size="icon"
+      title="Attach files"
       type="button"
       variant="ghost"
     >
-      <PaperclipIcon size={14} style={{ width: 14, height: 14 }} />
+      <PaperclipIcon size={16} style={{ width: 16, height: 16 }} />
     </Button>
   );
 }
@@ -1467,10 +1223,12 @@ const AttachmentsButton = memo(PureAttachmentsButton);
 
 function PureModelSelectorCompact({
   availableModels,
+  className,
   selectedModelId,
   onModelChange,
 }: {
   availableModels: ScopedChatModel[];
+  className?: string;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
 }) {
@@ -1521,7 +1279,8 @@ function PureModelSelectorCompact({
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button
-          className="h-8 w-[200px] justify-between px-2"
+          className={cn("h-8 w-[200px] justify-between px-2", className)}
+          data-testid="model-selector-trigger"
           type="button"
           variant="ghost"
         >
@@ -1572,33 +1331,73 @@ function PureModelSelectorCompact({
 const ModelSelectorCompact = memo(PureModelSelectorCompact);
 
 function PureComposerActionButton({
-  status,
   clearError,
+  onInterrupt,
+  onSubmit,
+  presentation,
   setMessages,
 }: {
-  status: UseChatHelpers<ChatMessage>["status"];
   clearError: () => void;
+  onInterrupt?: () => Promise<void>;
+  onSubmit: () => Promise<void>;
+  presentation: ComposerPresentation;
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
 }) {
-  const isResetAction = status === "error";
-
-  if (!isResetAction) {
-    return null;
-  }
+  const action = presentation.action;
+  const isResetAction = action.kind === "reset";
+  const isStopAction = action.kind === "stop";
+  const actionLabel = isResetAction
+    ? "Reset failed response"
+    : isStopAction
+      ? "Interrupt agent at the next safe boundary"
+      : action.kind === "queue"
+        ? "Queue message"
+        : action.kind === "respond"
+          ? "Send response"
+          : "Send message";
 
   return (
     <Button
-      aria-label="Reset failed response"
-      className="size-7 rounded-full bg-foreground p-1 text-background transition-colors duration-200 hover:bg-foreground/90 disabled:bg-muted disabled:text-muted-foreground"
-      data-testid="reset-button"
+      aria-label={actionLabel}
+      className={cn(
+        "size-10 rounded-full p-0 transition-colors duration-200 disabled:bg-muted disabled:text-muted-foreground",
+        isStopAction
+          ? "bg-background text-foreground hover:bg-accent"
+          : isResetAction
+            ? "bg-foreground text-background hover:bg-foreground/90"
+            : "bg-primary text-primary-foreground hover:bg-primary/90"
+      )}
+      data-testid={
+        isStopAction
+          ? "stop-button"
+          : isResetAction
+            ? "reset-button"
+            : "send-button"
+      }
+      disabled={action.disabled}
       onClick={(event) => {
         event.preventDefault();
-        clearError();
-        setMessages((messages) => messages);
+        if (isResetAction) {
+          clearError();
+          setMessages((messages) => messages);
+          return;
+        }
+        if (isStopAction) {
+          void onInterrupt?.();
+          return;
+        }
+        void onSubmit();
       }}
+      size="icon"
+      title={actionLabel}
       type="button"
+      variant={isStopAction ? "outline" : "default"}
     >
-      <StopIcon size={14} />
+      {isStopAction || isResetAction ? (
+        <StopIcon size={14} />
+      ) : (
+        <ArrowUpIcon size={16} />
+      )}
     </Button>
   );
 }
