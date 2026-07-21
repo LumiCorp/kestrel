@@ -592,7 +592,7 @@ async function inspectGithub(repoRoot: string) {
 }
 async function requireGithubReady(repoRoot: string): Promise<void> {
   const status = await inspectGithub(repoRoot);
-  if (!status.available || !status.authenticated)
+  if (!(status.available && status.authenticated))
     throw failure(
       "WORKSPACE_GIT_GITHUB_UNAVAILABLE",
       status.guidance ?? "GitHub CLI is unavailable.",
@@ -611,7 +611,7 @@ async function inspectPullRequest(
     ],
     repoRoot,
   );
-  if (!result) return undefined;
+  if (!result) return ;
   try {
     const r = JSON.parse(result.stdout) as Record<string, unknown>;
     if (
@@ -623,7 +623,7 @@ async function inspectPullRequest(
       typeof r.headRefName !== "string" ||
       typeof r.headRefOid !== "string"
     )
-      return undefined;
+      return ;
     return {
       number: r.number as number,
       title: r.title,
@@ -649,7 +649,7 @@ async function inspectPullRequest(
       ],
     };
   } catch {
-    return undefined;
+    return ;
   }
 }
 function parsePrFiles(value: unknown) {
@@ -847,7 +847,7 @@ async function safeRun(command: string, args: string[], cwd?: string) {
   try {
     return await run(command, args, cwd);
   } catch {
-    return undefined;
+    return ;
   }
 }
 function normalizedPaths(value: string[]) {

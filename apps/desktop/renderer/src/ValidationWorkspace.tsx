@@ -27,7 +27,7 @@ export function ValidationWorkspace(props: {
   };
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(true), 1_000);
+    const timer = window.setInterval(() => void refresh(true), 1000);
     return () => window.clearInterval(timer);
   }, [props.sessionId, props.threadId]);
   const run = async (target: { actionId: string } | { suiteId: string }) => {

@@ -29,7 +29,7 @@ export async function getDesktopWorkspaceLifecycle(input: {
   ]);
   const checkpoints = checkpointPayload(checkpointEvent, "list", sessionId).checkpoints;
   const promotions = checkpointPayload(promotionEvent, "promotion.list", sessionId).promotions;
-  if (!Array.isArray(checkpoints) || !Array.isArray(promotions)) {
+  if (!(Array.isArray(checkpoints) && Array.isArray(promotions))) {
     throw invalidResponse("Workspace lifecycle lists are missing.");
   }
   return { sessionId, checkpoints, promotions };
@@ -130,7 +130,7 @@ export async function compareDesktopWorkspaceCheckpoint(input: {
 export async function cleanupDesktopWorkspaceCheckpoints(input: { adapter: ControlAdapter; request: unknown; context: WebRunnerRequestContext }): Promise<DesktopWorkspaceCheckpointCleanupResult> {
   const request = objectInput(input.request, "checkpoint cleanup"); const sessionId = requiredString(request.sessionId, "sessionId"); const reason = optionalString(request.reason, "reason");
   const event = await input.adapter.sendControl({ type: "workspace.checkpoint.cleanup", sessionId, ...(reason ? { reason } : {}) }, input.context); const payload = checkpointPayload(event, "cleanup", sessionId);
-  if (!payload.cleanup || !payload.deletedCheckpoints || payload.remainingCheckpointCount === undefined || payload.remainingBytes === undefined) throw invalidResponse("Checkpoint cleanup result is incomplete.");
+  if (!(payload.cleanup && payload.deletedCheckpoints ) || payload.remainingCheckpointCount === undefined || payload.remainingBytes === undefined) throw invalidResponse("Checkpoint cleanup result is incomplete.");
   return { cleanup: payload.cleanup, deletedCheckpoints: payload.deletedCheckpoints, remainingCheckpointCount: payload.remainingCheckpointCount, remainingBytes: payload.remainingBytes };
 }
 
@@ -224,7 +224,7 @@ export async function cleanupDesktopManagedWorktree(input: {
     reason,
   }, input.context);
   const payload = checkpointPayload(event, "managed.cleanup", request.sessionId);
-  if (!payload.managedCleanup || !payload.cleanupCheckpoint) {
+  if (!(payload.managedCleanup && payload.cleanupCheckpoint)) {
     throw invalidResponse("Managed worktree cleanup evidence is missing.");
   }
   return {
@@ -250,7 +250,7 @@ export async function restoreDesktopManagedWorktree(input: {
     ...(reason !== undefined ? { reason } : {}),
   }, input.context);
   const payload = checkpointPayload(event, "managed.restore", request.sessionId);
-  if (!payload.managedBinding || !payload.restore) {
+  if (!(payload.managedBinding && payload.restore)) {
     throw invalidResponse("Managed worktree restore evidence is missing.");
   }
   return {
@@ -326,7 +326,7 @@ function requiredString(value: unknown, field: string): string {
 
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) {
-    return undefined;
+    return ;
   }
   return requiredString(value, field);
 }

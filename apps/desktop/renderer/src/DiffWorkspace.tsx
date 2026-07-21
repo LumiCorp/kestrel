@@ -59,7 +59,7 @@ export function DiffWorkspace(props: {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(true), 2_000);
+    const timer = window.setInterval(() => void refresh(true), 2000);
     return () => window.clearInterval(timer);
   }, [props.sessionId, props.threadId, scopeKind, revision, contextLines, whitespace]);
 
@@ -87,7 +87,7 @@ export function DiffWorkspace(props: {
 
   const files = snapshot?.files.filter((file) => !filter || file.path.toLocaleLowerCase().includes(filter.toLocaleLowerCase())) ?? [];
   const addComment = async () => {
-    if (!snapshot || !commentTarget || !commentDraft.trim()) return;
+    if (!((snapshot && commentTarget ) && commentDraft.trim())) return;
     setBusy(true);
     try {
       setFeedback(await window.kestrelDesktop.addWorkspaceFeedback({ sessionId: props.sessionId, threadId: props.threadId, candidateFingerprint: snapshot.candidateFingerprint, path: commentTarget.path, line: commentTarget.line, side: "RIGHT", body: commentDraft }));
@@ -116,7 +116,7 @@ export function DiffWorkspace(props: {
         <option value="uncommitted">All uncommitted</option><option value="unstaged">Unstaged</option><option value="staged">Staged</option><option value="latest_turn">Latest agent turn</option><option value="latest_run">Latest agent run</option><option value="branch">Branch vs merge base</option><option value="commit">Commit</option><option value="promotion">Promotion candidate</option><option value="pull_request">Pull request</option>
       </select>
       {scopeKind === "branch" || scopeKind === "commit" || scopeKind === "pull_request" || scopeKind === "latest_run" || scopeKind === "latest_turn" || scopeKind === "promotion" ? <input aria-label={scopeKind === "branch" ? "Base ref" : scopeKind === "commit" ? "Commit SHA" : scopeKind === "pull_request" ? "Pull request number (blank for current)" : scopeKind === "latest_run" ? "Run ID (blank for latest)" : scopeKind === "latest_turn" ? "Turn ID (blank for latest)" : "Promotion ID"} value={revision} onChange={(event) => setRevision(event.target.value)} /> : null}
-      <label className="diff-filter"><Search size={14} /><input placeholder="Filter files" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+      <label className="diff-filter"><span className="sr-only">Filter files</span><Search size={14} /><input placeholder="Filter files" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       <label>Context <input aria-label="Diff context lines" min={0} max={100} type="number" value={contextLines} onChange={(event) => setContextLines(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} /></label>
       <select aria-label="Whitespace display" value={whitespace} onChange={(event) => setWhitespace(event.target.value as typeof whitespace)}><option value="show">Show whitespace</option><option value="ignore_eol">Ignore end whitespace</option><option value="ignore_all">Ignore all whitespace</option></select>
       <button className={view === "unified" ? "active" : ""} type="button" onClick={() => setView("unified")}><Rows3 size={14} /> Unified</button>
@@ -140,7 +140,7 @@ export function DiffWorkspace(props: {
           </div>
           {snapshot?.hunks.filter((hunk) => hunk.filePath === file.path).map((hunk) => <div className="diff-hunk-actions" key={hunk.hunkId}>
             <button className="diff-hunk-link" type="button" onClick={() => document.getElementById(`diff-hunk-${hunk.hunkId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>View hunk {hunk.newStart}</button>
-            {!snapshot.readOnly ? <button className="diff-hunk-link" type="button" onClick={() => setCommentTarget({ path: hunk.filePath, line: hunk.newStart })}>Comment at line {hunk.newStart}</button> : null}
+            {snapshot.readOnly ? null : <button className="diff-hunk-link" type="button" onClick={() => setCommentTarget({ path: hunk.filePath, line: hunk.newStart })}>Comment at line {hunk.newStart}</button>}
             {hunk.origin === "unstaged" && file.status !== "untracked" ? <button disabled={busy} type="button" onClick={() => void mutate({ operation: "stage_hunk", path: hunk.filePath, hunkId: hunk.hunkId })}>Stage hunk</button> : null}
             {hunk.origin === "staged" ? <button disabled={busy} type="button" onClick={() => void mutate({ operation: "unstage_hunk", path: hunk.filePath, hunkId: hunk.hunkId })}>Unstage hunk</button> : null}
             {hunk.origin === "unstaged" && file.status !== "untracked" ? <button className="danger" disabled={busy} type="button" onClick={() => void mutate({ operation: "revert_hunk", path: hunk.filePath, hunkId: hunk.hunkId, confirmation: "revert_hunk" })}>Revert hunk</button> : null}

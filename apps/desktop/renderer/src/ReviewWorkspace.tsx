@@ -74,7 +74,7 @@ export function ReviewWorkspace(props: {
   };
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3_000);
+    const timer = window.setInterval(() => void refresh(), 3000);
     return () => window.clearInterval(timer);
   }, [props.sessionId, props.threadId]);
   const run = async () => {
@@ -276,18 +276,21 @@ export function ReviewWorkspace(props: {
               <strong>{active.scopeLabel}</strong>
               <div>
                 <button
+                  type="button"
                   disabled={busy || selected.length === 0}
                   onClick={() => void submit(active.reviewId, "more_evidence")}
                 >
                   Ask for evidence
                 </button>
                 <button
+                  type="button"
                   disabled={busy || selected.length === 0}
                   onClick={() => void submit(active.reviewId, "address")}
                 >
                   Send to coding agent
                 </button>
                 <button
+                  type="button"
                   disabled={busy || selected.length === 0}
                   onClick={() => void submit(active.reviewId, "verify")}
                 >
@@ -360,6 +363,7 @@ export function ReviewWorkspace(props: {
                 <footer>
                   {finding.status === "open" ? (
                     <button
+                      type="button"
                       onClick={() =>
                         void update(
                           active.reviewId,
@@ -373,6 +377,7 @@ export function ReviewWorkspace(props: {
                   ) : null}
                   {finding.status === "accepted" ? (
                     <button
+                      type="button"
                       onClick={() =>
                         void update(
                           active.reviewId,
@@ -387,6 +392,7 @@ export function ReviewWorkspace(props: {
                   {finding.status !== "stale" &&
                   finding.status !== "dismissed" ? (
                     <button
+                      type="button"
                       onClick={() =>
                         void update(
                           active.reviewId,
@@ -401,6 +407,7 @@ export function ReviewWorkspace(props: {
                   {finding.status === "dismissed" ||
                   finding.status === "fixed" ? (
                     <button
+                      type="button"
                       onClick={() =>
                         void update(
                           active.reviewId,

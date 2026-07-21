@@ -43,9 +43,9 @@ export class WorkspaceChangeService {
     const scope = parseScope(input.scope);
     const options = parseOptions(input.options);
     const [headSha, currentBranch, upstream, statusRaw, stagedDiff, unstagedDiff] = await Promise.all([
-      git(repoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
-      git(repoRoot, ["branch", "--show-current"]).catch(() => undefined),
-      git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(() => undefined),
+      git(repoRoot, ["rev-parse", "--verify", "HEAD"]).catch(missingGitValue),
+      git(repoRoot, ["branch", "--show-current"]).catch(missingGitValue),
+      git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(missingGitValue),
       gitRaw(repoRoot, ["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
       gitRaw(repoRoot, ["diff", "--cached", "--binary", "--no-ext-diff", "--find-renames"]),
       gitRaw(repoRoot, ["diff", "--binary", "--no-ext-diff", "--find-renames"]),
@@ -288,7 +288,7 @@ function parseNumstat(raw: string): Map<string, { additions: number; deletions: 
 }
 
 function normalizeNumstatPath(value: string | undefined): string | undefined {
-  if (!value || !value.includes(" => ")) return value;
+  if (!(value && value.includes(" => "))) return value;
   const braceStart = value.indexOf("{");
   const braceEnd = value.indexOf("}", braceStart + 1);
   if (braceStart >= 0 && braceEnd > braceStart) {
@@ -301,6 +301,10 @@ function normalizeNumstatPath(value: string | undefined): string | undefined {
       : `${value.slice(0, braceStart)}${replacement}${value.slice(braceEnd + 1)}`;
   }
   return value.split(" => ").at(-1);
+}
+
+function missingGitValue(): undefined {
+  return;
 }
 
 function statusFromDiff(diff: string): StatusEntry[] {
@@ -407,7 +411,7 @@ function parseScope(scope: WorkspaceChangeScope): WorkspaceChangeScope {
 }
 
 function parseMutation(value: WorkspaceChangeMutation): WorkspaceChangeMutation {
-  if (!value || !["stage_file", "unstage_file", "revert_file", "stage_hunk", "unstage_hunk", "revert_hunk"].includes(value.operation)) throw failure("WORKSPACE_CHANGE_MUTATION_INVALID", "Change mutation is invalid.");
+  if (!(value && ["stage_file", "unstage_file", "revert_file", "stage_hunk", "unstage_hunk", "revert_hunk"].includes(value.operation))) throw failure("WORKSPACE_CHANGE_MUTATION_INVALID", "Change mutation is invalid.");
   const filePath = normalizeGitPath(value.path);
   if (!filePath || path.isAbsolute(filePath) || filePath === ".." || filePath.startsWith("../") || filePath.includes("\0")) throw failure("WORKSPACE_CHANGE_PATH_INVALID", "Changed file path is invalid.");
   if ((value.operation === "stage_hunk" || value.operation === "unstage_hunk" || value.operation === "revert_hunk") && (typeof value.hunkId !== "string" || !/^[a-f0-9]{24}$/u.test(value.hunkId))) throw failure("WORKSPACE_CHANGE_HUNK_INVALID", "Changed hunk id is invalid.");
@@ -465,7 +469,7 @@ async function applyPatch(repoRoot: string, patch: string, args: string[]): Prom
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.once("error", reject);
-    child.once("close", (code) => code === 0 ? resolve() : reject(failure("WORKSPACE_CHANGE_HUNK_APPLY_FAILED", "Git could not apply the selected hunk safely.", { exitCode: code, stderr: Buffer.concat(stderr).toString("utf8").slice(0, 2_000) })));
+    child.once("close", (code) => code === 0 ? resolve() : reject(failure("WORKSPACE_CHANGE_HUNK_APPLY_FAILED", "Git could not apply the selected hunk safely.", { exitCode: code, stderr: Buffer.concat(stderr).toString("utf8").slice(0, 2000) })));
     child.stdin.end(patch);
   });
 }

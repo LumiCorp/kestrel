@@ -45,7 +45,7 @@ export function TerminalWorkspace(props: {
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !activeId) return;
+    if (!(host && activeId)) return;
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: false,
@@ -81,7 +81,7 @@ export function TerminalWorkspace(props: {
           cols,
           rows,
         })
-        .catch(() => undefined);
+        .catch(() => {});
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
@@ -152,7 +152,7 @@ export function TerminalWorkspace(props: {
   const find = () => {
     const terminal = xtermRef.current;
     const query = searchDraft;
-    if (!terminal || !query) return;
+    if (!(terminal && query)) return;
     for (let row = 0; row < terminal.buffer.active.length; row += 1) {
       const line =
         terminal.buffer.active.getLine(row)?.translateToString(true) ?? "";

@@ -52,7 +52,7 @@ export function GitWorkspace(props: {
   };
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(true), 5_000);
+    const timer = window.setInterval(() => void refresh(true), 5000);
     return () => window.clearInterval(timer);
   }, [props.sessionId, props.threadId]);
   useEffect(() => {
@@ -474,7 +474,7 @@ export function GitWorkspace(props: {
                     Draft
                   </label>
                   <button
-                    disabled={busy || !snapshot?.github.authenticated || !prTitle.trim() || !baseBranch.trim() || (!draft && !snapshot?.deliveryReady)}
+                    disabled={busy || !snapshot?.github.authenticated || !prTitle.trim() || !baseBranch.trim() || (!(draft || snapshot?.deliveryReady))}
                     type="button"
                     onClick={() =>
                       void action({

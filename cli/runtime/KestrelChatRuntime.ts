@@ -726,7 +726,7 @@ export class KestrelChatRuntime {
       const service = requireWorkspaceChangeService(this.workspaceChangeService);
       const checkpointService = this.workspaceCheckpointService;
       const threadRuntime = this.threadRuntime;
-      if (!checkpointService || !threadRuntime)
+      if (!(checkpointService && threadRuntime))
         throw createRuntimeFailure("WORKSPACE_CHANGE_TURN_SCOPE_UNAVAILABLE", "Conversation-turn checkpoints are unavailable.", {
           subsystem: "workspace",
           classification: "configuration",
@@ -799,7 +799,7 @@ export class KestrelChatRuntime {
         .sort((a, b) => b.run.startedAt.localeCompare(a.run.startedAt))
         .map((entry) => entry.run.runId);
       const runId = input.scope.runId ?? permittedRunIds[0];
-      if (!runId || !permittedRunIds.includes(runId))
+      if (!(runId && permittedRunIds.includes(runId)))
         throw createRuntimeFailure("WORKSPACE_CHANGE_RUN_NOT_FOUND", "No checkpointed run is available for this coding thread.", {
           subsystem: "workspace",
           classification: "state",
@@ -2021,11 +2021,11 @@ function createRuntimeWithStore(
     prepareHostedMcpRuntime: (input) => toolRegistry.refreshForRuntimeTurn(input),
     close: async () => {
       clearInterval(providerReasoningPurgeTimer);
-      await userTerminalReady?.catch(() => undefined);
-      await workspaceFeedbackReady?.catch(() => undefined);
-      await workspaceReviewReady?.catch(() => undefined);
-      await workspaceValidationReady?.catch(() => undefined);
-      await workspaceGitReady?.catch(() => undefined);
+      await userTerminalReady?.catch(() => {});
+      await workspaceFeedbackReady?.catch(() => {});
+      await workspaceReviewReady?.catch(() => {});
+      await workspaceValidationReady?.catch(() => {});
+      await workspaceGitReady?.catch(() => {});
       await userTerminalService?.close();
       await closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
@@ -2224,7 +2224,7 @@ function parseWorkspaceReviewFindings(value: unknown): ProposedWorkspaceReviewFi
   const record = asRecord(parsed);
   const data = asRecord(record?.data);
   const candidate = Array.isArray(record?.findings) ? record : Array.isArray(data?.findings) ? data : undefined;
-  if (!candidate || !Array.isArray(candidate.findings))
+  if (!(candidate && Array.isArray(candidate.findings)))
     throw createRuntimeFailure("WORKSPACE_REVIEW_OUTPUT_INVALID", "Reviewer output did not contain typed findings.", {
       subsystem: "review",
       classification: "contract",

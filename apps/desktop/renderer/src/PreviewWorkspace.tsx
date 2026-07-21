@@ -156,7 +156,7 @@ export function PreviewWorkspace(props: {
   useEffect(() => setAgentPermissionAt(undefined), [selectedRunId]);
 
   const start = async () => {
-    if (!props.projectPath || !scriptName) return;
+    if (!(props.projectPath && scriptName)) return;
     setBusy(true);
     try {
       const run = await window.kestrelDesktop.startProjectRun({
@@ -223,7 +223,7 @@ export function PreviewWorkspace(props: {
     }
   };
   const submitFeedback = async () => {
-    if (!screenshot || !selectedRun || !selectedUrl || !feedback.trim()) return;
+    if (!(((screenshot && selectedRun ) && selectedUrl ) && feedback.trim())) return;
     setBusy(true);
     try {
       const annotated = await annotateScreenshot(
@@ -543,7 +543,7 @@ function safeWebContentsId(webview: PreviewWebview | null): number | undefined {
   try {
     return webview?.getWebContentsId();
   } catch {
-    return undefined;
+    return ;
   }
 }
 function canPreviewGoBack(webview: PreviewWebview | null): boolean {

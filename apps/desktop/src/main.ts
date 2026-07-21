@@ -457,9 +457,7 @@ function configureEmbeddedPreviewSecurity(): void {
     if (contents.getType() !== "webview") return;
     embeddedPreviewWebContentsIds.add(contents.id);
     contents.once("destroyed", () => embeddedPreviewWebContentsIds.delete(contents.id));
-    contents.setWindowOpenHandler(() => {
-      return { action: "deny" };
-    });
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", (event, url) => {
       if (!isAllowedEmbeddedPreviewUrl(url)) event.preventDefault();
     });

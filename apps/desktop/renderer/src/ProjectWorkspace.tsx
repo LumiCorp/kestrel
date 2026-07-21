@@ -281,7 +281,7 @@ export function ProjectWorkspace(props: {
       props.onError(undefined);
     } catch (cause) {
       props.onError(errorMessage(cause));
-      await refreshManagedInspection().catch(() => undefined);
+      await refreshManagedInspection().catch(() => {});
     } finally {
       setPendingLifecycleAction(undefined);
     }
@@ -435,7 +435,7 @@ export function ProjectWorkspace(props: {
       props.onError(undefined);
     } catch (cause) {
       props.onError(errorMessage(cause));
-      await refreshLifecycle().catch(() => undefined);
+      await refreshLifecycle().catch(() => {});
     } finally {
       setPendingLifecycleAction(undefined);
     }

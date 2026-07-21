@@ -855,9 +855,9 @@ export class ManagedTaskWorktreeService {
       : binding.dirtyState;
     const [headSha, currentSourceHead, aheadCommitText, storage] = await Promise.all([
       validation.status === "valid"
-        ? git(binding.worktreeRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined)
+        ? git(binding.worktreeRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {})
         : Promise.resolve(undefined),
-      git(binding.sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
+      git(binding.sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {}),
       validation.status === "valid"
         ? git(binding.worktreeRoot, ["rev-list", "--count", `${binding.baseHead}..HEAD`]).catch(() => "0")
         : Promise.resolve("0"),
@@ -1561,7 +1561,7 @@ export class ManagedTaskWorktreeService {
       );
     }
     const sourcePath = path.resolve(proposal.sourceRepoRoot, safePath);
-    const sourceRealPath = await realpath(sourcePath).catch(() => undefined);
+    const sourceRealPath = await realpath(sourcePath).catch(() => {});
     if (sourceRealPath === undefined || isPathInside(proposal.sourceRepoRoot, sourceRealPath) === false) {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_SETUP_FILE_INVALID",
@@ -1580,7 +1580,7 @@ export class ManagedTaskWorktreeService {
     const targetPath = path.resolve(proposal.worktreeRoot, safePath);
     await assertSourceParentInsideRepo(proposal.worktreeRoot, targetPath);
     await mkdir(path.dirname(targetPath), { recursive: true });
-    const targetStat = await lstat(targetPath).catch(() => undefined);
+    const targetStat = await lstat(targetPath).catch(() => {});
     if (targetStat?.isDirectory() === true || targetStat?.isSymbolicLink() === true) {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_SETUP_FILE_INVALID",
@@ -2042,7 +2042,7 @@ export function parseManagedTaskWorktreeSetupSpec(
     );
   }
   const record = value as Record<string, unknown>;
-  if (!Array.isArray(record.approvedIgnoredFiles) || !Array.isArray(record.steps)) {
+  if (!(Array.isArray(record.approvedIgnoredFiles) && Array.isArray(record.steps))) {
     throw createRuntimeFailure(
       "MANAGED_WORKTREE_SETUP_INVALID",
       "Managed worktree setup must provide approvedIgnoredFiles and steps arrays.",
