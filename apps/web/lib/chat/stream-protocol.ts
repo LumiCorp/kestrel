@@ -1,4 +1,5 @@
 import type { FinishReason, ProviderMetadata, UIMessageChunk } from "ai";
+import { KESTREL_PRESENTATION_DATA_PART_KEYS } from "@kestrel-agents/ai-sdk";
 import type { CustomUIDataTypes, MessageMetadata } from "@/lib/types";
 
 export type ChatStreamChunk = UIMessageChunk<
@@ -25,6 +26,7 @@ const allowedDataChunkTypes = new Set([
   "data-suggestion",
   "data-textDelta",
   "data-title",
+  ...KESTREL_PRESENTATION_DATA_PART_KEYS.map((key) => `data-${key}`),
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

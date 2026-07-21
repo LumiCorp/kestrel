@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3578,
+  "testCount": 3581,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -6949,16 +6949,31 @@
       "environment": "linux"
     },
     {
-      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 25,
+      "line": 70,
       "ancestors": [],
-      "title": "CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "title": "CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
       "contractId": "web.unit-contract",
       "owner": "kestrel-one",
       "risk": "medium",
-      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport ignores malformed events and emits one warning chunk",
-      "dimension": "CompatibleChatTransport ignores malformed events and emits one warning chunk",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
+      "dimension": "CompatibleChatTransport continues text and reports safe diagnostics for rejected events",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
+      "line": 26,
+      "ancestors": [],
+      "title": "CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: CompatibleChatTransport preserves Kestrel presentation events without a warning",
+      "dimension": "CompatibleChatTransport preserves Kestrel presentation events without a warning",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -6966,7 +6981,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 157,
+      "line": 231,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors",
       "contractId": "web.unit-contract",
@@ -6981,7 +6996,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 130,
+      "line": 204,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors",
       "contractId": "web.unit-contract",
@@ -6996,7 +7011,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream prepends a resumed chunk",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 98,
+      "line": 172,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream prepends a resumed chunk",
       "contractId": "web.unit-contract",
@@ -7011,7 +7026,7 @@
     {
       "identity": "apps/web/lib/chat/compatible-chat-transport.test.ts :: CompatibleChatTransport reconnectToStream returns null for 204 responses",
       "file": "apps/web/lib/chat/compatible-chat-transport.test.ts",
-      "line": 79,
+      "line": 153,
       "ancestors": [],
       "title": "CompatibleChatTransport reconnectToStream returns null for 204 responses",
       "contractId": "web.unit-contract",
@@ -7086,7 +7101,7 @@
     {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: reorderToolInvocationChunks preserves supported tool chunks after sanitization",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 106,
+      "line": 127,
       "ancestors": [],
       "title": "reorderToolInvocationChunks preserves supported tool chunks after sanitization",
       "contractId": "web.unit-contract",
@@ -7101,7 +7116,7 @@
     {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream drops malformed provider chunks and emits one warning",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 34,
+      "line": 35,
       "ancestors": [],
       "title": "sanitizeChatStream drops malformed provider chunks and emits one warning",
       "contractId": "web.unit-contract",
@@ -7114,9 +7129,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "file": "apps/web/lib/chat/stream-protocol.test.ts",
+      "line": 69,
+      "ancestors": [],
+      "title": "sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "dimension": "sanitizeChatStream preserves every shared Kestrel presentation data part",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/chat/stream-protocol.test.ts :: sanitizeChatStream preserves resumable status data chunks",
       "file": "apps/web/lib/chat/stream-protocol.test.ts",
-      "line": 68,
+      "line": 89,
       "ancestors": [],
       "title": "sanitizeChatStream preserves resumable status data chunks",
       "contractId": "web.unit-contract",
@@ -13188,7 +13218,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: AI SDK stream and persisted message are emitted from the same accumulator",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 69,
+      "line": 87,
       "ancestors": [],
       "title": "AI SDK stream and persisted message are emitted from the same accumulator",
       "contractId": "package.public-contract",
@@ -13203,7 +13233,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: completed output becomes canonical assistant text",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 15,
+      "line": 33,
       "ancestors": [],
       "title": "completed output becomes canonical assistant text",
       "contractId": "package.public-contract",
@@ -13218,7 +13248,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: empty completed output becomes a visible contract failure",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 49,
+      "line": 67,
       "ancestors": [],
       "title": "empty completed output becomes a visible contract failure",
       "contractId": "package.public-contract",
@@ -13231,9 +13261,24 @@
       "environment": "linux"
     },
     {
+      "identity": "packages/ai-sdk/tests/accumulator.test.ts :: presentation data part runtime keys stay aligned with the public contract",
+      "file": "packages/ai-sdk/tests/accumulator.test.ts",
+      "line": 17,
+      "ancestors": [],
+      "title": "presentation data part runtime keys stay aligned with the public contract",
+      "contractId": "package.public-contract",
+      "owner": "ecosystem",
+      "risk": "medium",
+      "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers. Executable counterexample: presentation data part runtime keys stay aligned with the public contract",
+      "dimension": "presentation data part runtime keys stay aligned with the public contract",
+      "role": "variant",
+      "lane": "packages",
+      "environment": "linux"
+    },
+    {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: waiting output persists one assistant prompt and its exact durable interaction",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 32,
+      "line": 50,
       "ancestors": [],
       "title": "waiting output persists one assistant prompt and its exact durable interaction",
       "contractId": "package.public-contract",
@@ -28998,7 +29043,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: dev shell default maxReadBytes is generous enough for medium file reads",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 60,
+      "line": 88,
       "ancestors": [],
       "title": "dev shell default maxReadBytes is generous enough for medium file reads",
       "contractId": "runtime.behavior",
@@ -29013,7 +29058,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 649,
+      "line": 677,
       "ancestors": [],
       "title": "DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable",
       "contractId": "runtime.behavior",
@@ -29028,7 +29073,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor allows source writes in managed checkpoint worktree mode",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 704,
+      "line": 732,
       "ancestors": [],
       "title": "DevShellSupervisor allows source writes in managed checkpoint worktree mode",
       "contractId": "runtime.behavior",
@@ -29043,7 +29088,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor capture mode restores source and returns an exact patch",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 731,
+      "line": 759,
       "ancestors": [],
       "title": "DevShellSupervisor capture mode restores source and returns an exact patch",
       "contractId": "runtime.behavior",
@@ -29058,7 +29103,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor defaults its state directory under ~/ KESTREL_HOME",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 64,
+      "line": 92,
       "ancestors": [],
       "title": "DevShellSupervisor defaults its state directory under ~/ KESTREL_HOME",
       "contractId": "runtime.behavior",
@@ -29073,7 +29118,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1002,
+      "line": 1030,
       "ancestors": [],
       "title": "DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session",
       "contractId": "runtime.behavior",
@@ -29088,7 +29133,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor does not block command completion on console observers",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 190,
+      "line": 218,
       "ancestors": [],
       "title": "DevShellSupervisor does not block command completion on console observers",
       "contractId": "runtime.behavior",
@@ -29103,7 +29148,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor does not let a later passing command hide multiline setup failure",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 293,
+      "line": 321,
       "ancestors": [],
       "title": "DevShellSupervisor does not let a later passing command hide multiline setup failure",
       "contractId": "runtime.behavior",
@@ -29118,7 +29163,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1138,
+      "line": 1168,
       "ancestors": [],
       "title": "DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "contractId": "runtime.behavior",
@@ -29133,7 +29178,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor fails fast for multiline run commands",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 269,
+      "line": 297,
       "ancestors": [],
       "title": "DevShellSupervisor fails fast for multiline run commands",
       "contractId": "runtime.behavior",
@@ -29148,7 +29193,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor fails pnpm command without running it when build approval fails",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 431,
+      "line": 459,
       "ancestors": [],
       "title": "DevShellSupervisor fails pnpm command without running it when build approval fails",
       "contractId": "runtime.behavior",
@@ -29163,7 +29208,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor keeps an explicit timeout active after startProcess returns",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 835,
+      "line": 863,
       "ancestors": [],
       "title": "DevShellSupervisor keeps an explicit timeout active after startProcess returns",
       "contractId": "runtime.behavior",
@@ -29178,7 +29223,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor marks lost guarded processes as not finally source-write checked",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 763,
+      "line": 791,
       "ancestors": [],
       "title": "DevShellSupervisor marks lost guarded processes as not finally source-write checked",
       "contractId": "runtime.behavior",
@@ -29193,7 +29238,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor never regresses a fast terminal process back to running",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1052,
+      "line": 1082,
       "ancestors": [],
       "title": "DevShellSupervisor never regresses a fast terminal process back to running",
       "contractId": "runtime.behavior",
@@ -29208,7 +29253,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor observes stdout and stderr chunks without changing command output",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 161,
+      "line": 189,
       "ancestors": [],
       "title": "DevShellSupervisor observes stdout and stderr chunks without changing command output",
       "contractId": "runtime.behavior",
@@ -29223,7 +29268,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor observes through the initial window after early output",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 250,
+      "line": 278,
       "ancestors": [],
       "title": "DevShellSupervisor observes through the initial window after early output",
       "contractId": "runtime.behavior",
@@ -29238,7 +29283,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor points an invalid sessionId to the active command and cwd",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 136,
+      "line": 164,
       "ancestors": [],
       "title": "DevShellSupervisor points an invalid sessionId to the active command and cwd",
       "contractId": "runtime.behavior",
@@ -29253,7 +29298,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1083,
+      "line": 1113,
       "ancestors": [],
       "title": "DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "contractId": "runtime.behavior",
@@ -29268,7 +29313,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1179,
+      "line": 1209,
       "ancestors": [],
       "title": "DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "contractId": "runtime.behavior",
@@ -29283,7 +29328,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rejects missing workspace roots during exec preflight",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 82,
+      "line": 110,
       "ancestors": [],
       "title": "DevShellSupervisor rejects missing workspace roots during exec preflight",
       "contractId": "runtime.behavior",
@@ -29298,7 +29343,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rejects requested cwd outside the workspace root",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 118,
+      "line": 146,
       "ancestors": [],
       "title": "DevShellSupervisor rejects requested cwd outside the workspace root",
       "contractId": "runtime.behavior",
@@ -29313,7 +29358,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rejects source-write authority before spawning source-readonly commands",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 519,
+      "line": 547,
       "ancestors": [],
       "title": "DevShellSupervisor rejects source-write authority before spawning source-readonly commands",
       "contractId": "runtime.behavior",
@@ -29328,7 +29373,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor releases managed worktree process leases during lost-process recovery",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 791,
+      "line": 819,
       "ancestors": [],
       "title": "DevShellSupervisor releases managed worktree process leases during lost-process recovery",
       "contractId": "runtime.behavior",
@@ -29343,7 +29388,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor returns completed command output without a processId",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 100,
+      "line": 128,
       "ancestors": [],
       "title": "DevShellSupervisor returns completed command output without a processId",
       "contractId": "runtime.behavior",
@@ -29358,7 +29403,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor returns nonzero command exits as failed process results",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 232,
+      "line": 260,
       "ancestors": [],
       "title": "DevShellSupervisor returns nonzero command exits as failed process results",
       "contractId": "runtime.behavior",
@@ -29373,7 +29418,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor returns timed-out one-shot runs as failed process results",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 816,
+      "line": 844,
       "ancestors": [],
       "title": "DevShellSupervisor returns timed-out one-shot runs as failed process results",
       "contractId": "runtime.behavior",
@@ -29388,7 +29433,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor runs pnpm build approval before build-mode pnpm commands",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 313,
+      "line": 341,
       "ancestors": [],
       "title": "DevShellSupervisor runs pnpm build approval before build-mode pnpm commands",
       "contractId": "runtime.behavior",
@@ -29403,7 +29448,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor skips pnpm build approval for non-pnpm commands and missing pnpm packageManager",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 388,
+      "line": 416,
       "ancestors": [],
       "title": "DevShellSupervisor skips pnpm build approval for non-pnpm commands and missing pnpm packageManager",
       "contractId": "runtime.behavior",
@@ -29418,7 +29463,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor skips pnpm build approval outside explicit build-mode preflight",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 361,
+      "line": 389,
       "ancestors": [],
       "title": "DevShellSupervisor skips pnpm build approval outside explicit build-mode preflight",
       "contractId": "runtime.behavior",
@@ -29433,7 +29478,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard allows a matching per-command approved path",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 602,
+      "line": 630,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard allows a matching per-command approved path",
       "contractId": "runtime.behavior",
@@ -29448,7 +29493,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard fails and restores unauthorized shell writes",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 464,
+      "line": 492,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard fails and restores unauthorized shell writes",
       "contractId": "runtime.behavior",
@@ -29463,7 +29508,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard protects managed worktree gitfile",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 677,
+      "line": 705,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard protects managed worktree gitfile",
       "contractId": "runtime.behavior",
@@ -29478,7 +29523,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard removes created directories after restoring files",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 493,
+      "line": 521,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard removes created directories after restoring files",
       "contractId": "runtime.behavior",
@@ -29493,7 +29538,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard stops and restores unauthorized managed process writes",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 567,
+      "line": 595,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard stops and restores unauthorized managed process writes",
       "contractId": "runtime.behavior",
@@ -29508,7 +29553,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops a live process and rejects writes after completion",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1205,
+      "line": 1235,
       "ancestors": [],
       "title": "DevShellSupervisor stops a live process and rejects writes after completion",
       "contractId": "runtime.behavior",
@@ -29523,7 +29568,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops descendant processes when stopping a live process",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1229,
+      "line": 1259,
       "ancestors": [],
       "title": "DevShellSupervisor stops descendant processes when stopping a live process",
       "contractId": "runtime.behavior",
@@ -29538,7 +29583,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 906,
+      "line": 934,
       "ancestors": [],
       "title": "DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input",
       "contractId": "runtime.behavior",
@@ -29553,7 +29598,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor writes stdin and reads resulting output in one process call",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 962,
+      "line": 990,
       "ancestors": [],
       "title": "DevShellSupervisor writes stdin and reads resulting output in one process call",
       "contractId": "runtime.behavior",
@@ -29568,7 +29613,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: InMemoryDevShellStore deep clones source-write guard results",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 861,
+      "line": 889,
       "ancestors": [],
       "title": "InMemoryDevShellStore deep clones source-write guard results",
       "contractId": "runtime.behavior",

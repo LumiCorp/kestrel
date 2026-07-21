@@ -112,7 +112,21 @@ export interface KestrelMessageMetadata {
   } | undefined;
 }
 
-export type KestrelPresentationDataParts = {
+export const KESTREL_PRESENTATION_DATA_PART_KEYS = [
+  "kestrel-progress",
+  "kestrel-agent-progress",
+  "kestrel-provider-reasoning",
+  "kestrel-tool",
+  "kestrel-citation",
+  "kestrel-artifact",
+  "kestrel-interaction",
+  "kestrel-status",
+] as const;
+
+export type KestrelPresentationDataPartKey =
+  (typeof KESTREL_PRESENTATION_DATA_PART_KEYS)[number];
+
+type KestrelPresentationDataPartPayloads = {
   "kestrel-progress": KestrelProgressPresentation;
   "kestrel-agent-progress": KestrelAgentProgressPresentation;
   "kestrel-provider-reasoning": KestrelProviderReasoningPresentation;
@@ -121,6 +135,11 @@ export type KestrelPresentationDataParts = {
   "kestrel-artifact": KestrelArtifactPresentation;
   "kestrel-interaction": KestrelInteractionPresentation;
   "kestrel-status": KestrelStatusPresentation;
+};
+
+export type KestrelPresentationDataParts = {
+  [Key in KestrelPresentationDataPartKey]:
+    KestrelPresentationDataPartPayloads[Key];
 };
 
 export type KestrelUIMessage = UIMessage<
