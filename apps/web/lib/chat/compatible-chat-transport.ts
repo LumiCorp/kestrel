@@ -21,6 +21,26 @@ const rawStreamEventSchema = z
   })
   .passthrough();
 
+type DroppedChunkReason = "event_parse_failed" | "chunk_rejected";
+
+type DroppedChunkDiagnostic = {
+  count: number;
+  reason: DroppedChunkReason;
+  type: string;
+};
+
+function recordDroppedChunk(
+  diagnostics: Map<string, DroppedChunkDiagnostic>,
+  input: { reason: DroppedChunkReason; type: string }
+) {
+  const key = `${input.reason}:${input.type}`;
+  const current = diagnostics.get(key);
+  diagnostics.set(key, {
+    ...input,
+    count: (current?.count ?? 0) + 1,
+  });
+}
+
 export class CompatibleChatTransport<
   UI_MESSAGE extends UIMessage,
 > extends HttpChatTransport<UI_MESSAGE> {
@@ -32,6 +52,7 @@ export class CompatibleChatTransport<
     stream: ReadableStream<Uint8Array<ArrayBufferLike>>
   ) {
     let droppedChunkCount = 0;
+    const droppedChunkDiagnostics = new Map<string, DroppedChunkDiagnostic>();
 
     return parseJsonEventStream({
       stream,
@@ -41,12 +62,20 @@ export class CompatibleChatTransport<
         transform(chunk, controller) {
           if (!chunk.success) {
             droppedChunkCount += 1;
+            recordDroppedChunk(droppedChunkDiagnostics, {
+              reason: "event_parse_failed",
+              type: "unknown",
+            });
             return;
           }
 
           const normalizedChunk = normalizeChatStreamChunk(chunk.value);
           if (!normalizedChunk) {
             droppedChunkCount += 1;
+            recordDroppedChunk(droppedChunkDiagnostics, {
+              reason: "chunk_rejected",
+              type: chunk.value.type,
+            });
             return;
           }
 
@@ -54,6 +83,10 @@ export class CompatibleChatTransport<
         },
         flush(controller) {
           if (droppedChunkCount > 0) {
+            console.warn("Chat stream dropped incompatible chunks.", {
+              droppedChunkCount,
+              droppedChunks: [...droppedChunkDiagnostics.values()],
+            });
             controller.enqueue(createChatStreamWarningChunk(droppedChunkCount));
           }
         },

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { KESTREL_PRESENTATION_DATA_PART_KEYS } from "@kestrel-agents/ai-sdk";
 import {
   type ChatStreamChunk,
   reorderToolInvocationChunks,
@@ -63,6 +64,26 @@ test("sanitizeChatStream drops malformed provider chunks and emits one warning",
     data: { droppedChunkCount: 1 },
     transient: true,
   });
+});
+
+test("sanitizeChatStream preserves every shared Kestrel presentation data part", async () => {
+  const presentationChunks = KESTREL_PRESENTATION_DATA_PART_KEYS.map((key) => ({
+    type: `data-${key}`,
+    id: `part-${key}`,
+    data: { contractKey: key },
+  }));
+  const chunks = await readAllChunks(
+    sanitizeChatStream(streamFromChunks(presentationChunks))
+  );
+
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.type),
+    presentationChunks.map((chunk) => chunk.type)
+  );
+  assert.equal(
+    chunks.some((chunk) => chunk.type === "data-stream-warning"),
+    false
+  );
 });
 
 test("sanitizeChatStream preserves resumable status data chunks", async () => {
