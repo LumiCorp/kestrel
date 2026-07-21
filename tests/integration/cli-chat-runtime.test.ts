@@ -175,13 +175,91 @@ test("KestrelChatRuntime consumes hosted MCP authorization before compiling the 
   });
 
   assert.deepEqual(prepared, [
-    { mcpContext, mcpAuthorization: { executionTicket: "signed-run-ticket" } },
+    {
+      sessionId: "session-hosted-mcp",
+      mcpContext,
+      mcpAuthorization: { executionTicket: "signed-run-ticket" },
+    },
   ]);
   assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
   assert.equal(
     JSON.stringify(events[0]?.payload).includes("signed-run-ticket"),
     false,
   );
+});
+
+test("KestrelChatRuntime consumes execution authorization without requiring an MCP grant", async () => {
+  const events: RuntimeEvent[] = [];
+  const prepared: unknown[] = [];
+  const released: string[] = [];
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {
+        run: async (event: RuntimeEvent) => {
+          events.push(event);
+          return completedOutput(event.sessionId, "run-environment-app");
+        },
+        getSession: async (sessionId: string) =>
+          sessionWithAssistantText(sessionId, "The Environment App is ready."),
+      } as unknown as Kestrel,
+      entryStepAgent: "example.step",
+      prepareHostedMcpRuntime: async (input) => {
+        prepared.push(input);
+      },
+      releaseRuntimeAuthorization: (sessionId) => {
+        released.push(sessionId);
+      },
+      close: async () => {},
+    }),
+  });
+
+  await runtime.runTurn({
+    sessionId: "session-environment-app",
+    message: "search the web",
+    eventType: "user.message",
+    mcpAuthorization: { executionTicket: "signed-run-ticket" },
+  });
+
+  assert.deepEqual(prepared, [
+    {
+      sessionId: "session-environment-app",
+      mcpAuthorization: { executionTicket: "signed-run-ticket" },
+    },
+  ]);
+  assert.deepEqual(released, ["session-environment-app"]);
+  assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
+  assert.equal(
+    JSON.stringify(events[0]?.payload).includes("signed-run-ticket"),
+    false,
+  );
+});
+
+test("KestrelChatRuntime releases execution authorization when runtime preparation fails", async () => {
+  const released: string[] = [];
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {} as Kestrel,
+      entryStepAgent: "example.step",
+      prepareHostedMcpRuntime: async () => {
+        throw new Error("Synthetic preparation failure");
+      },
+      releaseRuntimeAuthorization: (sessionId) => {
+        released.push(sessionId);
+      },
+      close: async () => {},
+    }),
+  });
+
+  await assert.rejects(
+    runtime.runTurn({
+      sessionId: "session-preparation-failure",
+      message: "search the web",
+      eventType: "user.message",
+      mcpAuthorization: { executionTicket: "signed-run-ticket" },
+    }),
+    /Synthetic preparation failure/u
+  );
+  assert.deepEqual(released, ["session-preparation-failure"]);
 });
 
 test("project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {

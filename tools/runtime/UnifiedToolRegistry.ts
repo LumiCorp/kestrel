@@ -13,6 +13,7 @@ import type {
   McpStatusSnapshot,
 } from "../../src/mcp/contracts.js";
 import {
+  parseExecutionTicketAuthorization,
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
@@ -69,6 +70,7 @@ export interface McpToolProvider {
 }
 
 export interface HostedMcpRuntimeTurnInput {
+  sessionId?: string | undefined;
   mcpContext?: unknown;
   mcpAuthorization?: unknown;
 }
@@ -107,6 +109,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly builtInContext: SharedToolContext;
   private readonly mcpManager: McpToolProvider;
   private readonly hostedMcpScopes = new Map<string, HostedMcpScope>();
+  private readonly executionTicketsBySession = new Map<string, string>();
 
   private defaultAllowlist: Set<string>;
   private mcpStatus: McpStatusSnapshot = {
@@ -161,7 +164,20 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (this.initialized === false) {
       await this.refresh();
     }
+    if (input.mcpAuthorization !== undefined && input.sessionId !== undefined) {
+      this.executionTicketsBySession.set(
+        input.sessionId,
+        parseExecutionTicketAuthorization(input.mcpAuthorization)
+      );
+    }
     if (input.mcpContext === undefined) {
+      if (input.mcpAuthorization !== undefined && input.sessionId === undefined) {
+        throw createRuntimeFailure(
+          "RUNTIME_AUTHORIZATION_CONTEXT_INVALID",
+          "sessionId is required when execution authorization is provided without mcpContext",
+          { recoverable: false }
+        );
+      }
       return toToolRuntimeStatus(this.getMcpStatus(), this.builtInContext);
     }
     const context = parseHostedMcpContext(input.mcpContext);
@@ -203,6 +219,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       combineMcpSnapshots(this.mcpStatus, snapshot),
       this.builtInContext,
     );
+  }
+
+  clearRuntimeTurnAuthorization(sessionId: string): void {
+    this.executionTicketsBySession.delete(sessionId);
   }
 
   resolveAvailableAllowlistForRuntimeTurn(
@@ -791,8 +811,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         runContext.payload,
         runContext.sessionId
       ),
-      this.hostedMcpScopes.get(readHostedMcpGrantId(runContext.payload) ?? "")
-        ?.executionTicket
+      this.executionTicketsBySession.get(runContext.sessionId) ??
+        this.hostedMcpScopes.get(readHostedMcpGrantId(runContext.payload) ?? "")
+          ?.executionTicket
     );
   }
 }

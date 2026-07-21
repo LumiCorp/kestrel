@@ -289,7 +289,7 @@ function createModelAwareKestrelOneAgent(input: {
                 }
               : {}),
             ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
-            ...(route.mcpContext && route.executionTicket
+            ...(route.executionTicket
               ? {
                   mcpAuthorization: {
                     executionTicket: route.executionTicket,
@@ -537,10 +537,14 @@ export async function generateKestrelOneExternalReply(input: {
       },
       ...(route.mcpContext && route.executionTicket
         ? {
+            mcpContext: route.mcpContext,
+          }
+        : {}),
+      ...(route.executionTicket
+        ? {
             mcpAuthorization: {
               executionTicket: route.executionTicket,
             },
-            mcpContext: route.mcpContext,
           }
         : {}),
     });
