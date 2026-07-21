@@ -35,7 +35,9 @@ COPY --from=build /app/packages/protocol ./packages/protocol
 COPY --from=build /app/packages/sdk ./packages/sdk
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && test -f /app/dist/cli/runner/service.js \
-    && mkdir -p /workspace
+    && test -f /app/dist/cli/dev-shell/service.js \
+    && mkdir -p /workspace \
+    && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs
 ENV NODE_ENV=production KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]

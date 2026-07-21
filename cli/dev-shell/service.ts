@@ -58,7 +58,6 @@ async function main(): Promise<void> {
     await writeBootstrapFailure(
       statusPath,
       resolveStoreBootstrapFailureReason(error),
-      formatDevShellBootstrapFailureMessage(error),
     );
     throw error;
   }
@@ -73,7 +72,7 @@ async function main(): Promise<void> {
 
   await new Promise<void>((resolve, reject) => {
     const onError = async (error: Error) => {
-      await writeBootstrapFailure(statusPath, "socket_bind_failed", toErrorMessage(error));
+      await writeBootstrapFailure(statusPath, "socket_bind_failed");
       reject(error);
     };
     server.once("error", onError);
@@ -277,13 +276,27 @@ function resolveStoreBootstrapFailureReason(error: unknown): string {
 async function writeBootstrapFailure(
   statusPath: string | undefined,
   reasonCode: string,
-  message: string,
 ): Promise<void> {
   await writeBootstrapStatus(statusPath, {
     status: "failed",
     reasonCode,
-    message,
+    message: safeBootstrapStatusMessage(reasonCode),
   });
+}
+
+function safeBootstrapStatusMessage(reasonCode: string): string {
+  switch (reasonCode) {
+    case "missing_database_url":
+      return "Developer shell storage configuration is incomplete.";
+    case "migration_failed":
+      return "Developer shell storage migration failed.";
+    case "store_init_failed":
+      return "Developer shell storage initialization failed.";
+    case "socket_bind_failed":
+      return "Developer shell service could not bind its local socket.";
+    default:
+      return "Developer shell service failed during startup.";
+  }
 }
 
 async function writeBootstrapStatus(

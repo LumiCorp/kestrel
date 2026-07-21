@@ -12,7 +12,39 @@ import {
   renderModelTranscriptMessages,
 } from "../../src/runtime/modelTranscript.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
+import { buildAgentToolFailedOutputResult, buildAgentToolFailureResult } from "../../tools/toolResult.js";
+
+test("developer shell startup failure exposes only safe actionable diagnostics", () => {
+  const result = buildAgentToolFailureResult({
+    toolName: "exec_command",
+    input: { command: "printf marker" },
+    error: createRuntimeFailure(
+      "DEV_SHELL_SERVICE_UNAVAILABLE",
+      "Developer shell service entrypoint is missing or unreadable.",
+      {
+        bootstrapReason: "entrypoint_missing",
+        reasonCode: "entrypoint_missing",
+        entrypointPath: "/app/dist/cli/dev-shell/service.js",
+        exitCode: null,
+        statusMessage: "The resolved developer-shell service entrypoint is not readable.",
+        nextSuggestedAction: "Rebuild the runtime package.",
+        logTail: "sensitive raw service output",
+      },
+    ),
+  });
+  const visible = result.auditRecord.output as Record<string, unknown>;
+  const retainedError = result.auditRecord.error as { details?: Record<string, unknown> };
+
+  assert.equal(visible.bootstrapReason, "entrypoint_missing");
+  assert.equal(visible.reasonCode, "entrypoint_missing");
+  assert.equal(visible.entrypointPath, "/app/dist/cli/dev-shell/service.js");
+  assert.equal(visible.exitCode, null);
+  assert.equal(visible.statusMessage, "The resolved developer-shell service entrypoint is not readable.");
+  assert.equal(visible.nextSuggestedAction, "Rebuild the runtime package.");
+  assert.equal(visible.logTail, undefined);
+  assert.equal(retainedError.details?.logTail, "sensitive raw service output");
+  assert.doesNotMatch(result.modelContext.text, /sensitive raw service output/u);
+});
 
 test("failed dev.shell.run output keeps command output and execution context visible", () => {
   const output = buildRecoverableToolFailureOutput({

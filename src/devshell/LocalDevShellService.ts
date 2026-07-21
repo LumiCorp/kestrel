@@ -1,7 +1,7 @@
 import http from "node:http";
 import { once } from "node:events";
-import { mkdir, readFile, rm } from "node:fs/promises";
-import { closeSync, openSync } from "node:fs";
+import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { closeSync, constants, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -43,6 +43,39 @@ interface BoundedDevShellOutput {
 interface LocalDevShellServiceOptions {
   startupTimeoutMs?: number | undefined;
   pollIntervalMs?: number | undefined;
+  runtimeModuleUrl?: string | undefined;
+}
+
+export interface DevShellServiceLaunchSpec {
+  entrypointPath: string;
+  nodeArguments: string[];
+}
+
+export function resolveDevShellServiceLaunch(
+  runtimeModuleUrl: string,
+  tsxImport?: string | undefined,
+): DevShellServiceLaunchSpec {
+  const runtimeModulePath = fileURLToPath(runtimeModuleUrl);
+  const extension = path.extname(runtimeModulePath);
+  const runtimeRoot = path.resolve(path.dirname(runtimeModulePath), "../..");
+  if (extension === ".ts") {
+    const entrypointPath = path.join(runtimeRoot, "cli", "dev-shell", "service.ts");
+    const resolvedTsxImport = tsxImport ?? createRequire(import.meta.url).resolve("tsx");
+    return {
+      entrypointPath,
+      nodeArguments: ["--import", resolvedTsxImport, entrypointPath],
+    };
+  }
+  if (extension === ".js") {
+    const entrypointPath = path.join(runtimeRoot, "cli", "dev-shell", "service.js");
+    return {
+      entrypointPath,
+      nodeArguments: [entrypointPath],
+    };
+  }
+  throw new Error(
+    `Unsupported LocalDevShellService runtime module extension: ${extension || "(none)"}`,
+  );
 }
 
 interface DevShellBootstrapStatus {
@@ -62,6 +95,7 @@ export class LocalDevShellService implements DevShellServicePort {
   readonly bootstrapStatusPath: string;
   private readonly startupTimeoutMs: number;
   private readonly pollIntervalMs: number;
+  private readonly runtimeModuleUrl: string;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
@@ -80,6 +114,7 @@ export class LocalDevShellService implements DevShellServicePort {
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
     this.startupTimeoutMs = options.startupTimeoutMs ?? readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ?? 5000;
     this.pollIntervalMs = options.pollIntervalMs ?? 100;
+    this.runtimeModuleUrl = options.runtimeModuleUrl ?? import.meta.url;
   }
 
   async runCommand(input: DevShellRunInput, options: DevShellCommandOptions = {}): Promise<DevShellRunResult> {
@@ -396,14 +431,40 @@ export class LocalDevShellService implements DevShellServicePort {
     await mkdir(path.dirname(this.logPath), { recursive: true });
     await mkdir(path.dirname(this.bootstrapStatusPath), { recursive: true });
     await rm(this.bootstrapStatusPath, { force: true });
-    const require = createRequire(import.meta.url);
-    const tsxImport = require.resolve("tsx");
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-    const entrypoint = path.join(repoRoot, "cli", "dev-shell", "service.ts");
+    let launch: DevShellServiceLaunchSpec;
+    try {
+      launch = resolveDevShellServiceLaunch(this.runtimeModuleUrl);
+    } catch (error) {
+      throw await this.createUnavailableFailure(
+        "unsupported_runtime_module",
+        "Developer shell service cannot start from this runtime module format.",
+        {
+          reasonCode: "unsupported_runtime_module",
+          exitCode: null,
+          statusMessage: error instanceof Error ? error.message : String(error),
+          nextSuggestedAction: "Run Kestrel from a supported TypeScript source or compiled JavaScript runtime.",
+        },
+      );
+    }
+    try {
+      await access(launch.entrypointPath, constants.R_OK);
+    } catch {
+      throw await this.createUnavailableFailure(
+        "entrypoint_missing",
+        "Developer shell service entrypoint is missing or unreadable.",
+        {
+          reasonCode: "entrypoint_missing",
+          entrypointPath: launch.entrypointPath,
+          exitCode: null,
+          statusMessage: "The resolved developer-shell service entrypoint is not readable.",
+          nextSuggestedAction: "Rebuild the runtime package so the resolved developer-shell service entrypoint is included.",
+        },
+      );
+    }
     const logFd = openSync(this.logPath, "a");
     let child: ChildProcess;
     try {
-      child = spawn(process.execPath, ["--import", tsxImport, entrypoint, "--socket", this.socketPath], {
+      child = spawn(process.execPath, [...launch.nodeArguments, "--socket", this.socketPath], {
         detached: true,
         stdio: ["ignore", logFd, logFd],
         env: {

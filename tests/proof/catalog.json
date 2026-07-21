@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3592,
+  "testCount": 3598,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -10232,6 +10232,21 @@
       "role": "variant",
       "lane": "postgres",
       "environment": "linux-postgres"
+    },
+    {
+      "identity": "apps/web/lib/environments/workspace-command-canary.test.ts :: workspace command canary requires a completed OK exec_command record containing the marker",
+      "file": "apps/web/lib/environments/workspace-command-canary.test.ts",
+      "line": 6,
+      "ancestors": [],
+      "title": "workspace command canary requires a completed OK exec_command record containing the marker",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: workspace command canary requires a completed OK exec_command record containing the marker",
+      "dimension": "workspace command canary requires a completed OK exec_command record containing the marker",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
     },
     {
       "identity": "apps/web/lib/files/storage.test.ts :: assertUploadPathOwnedByUser rejects uploads owned by a different user",
@@ -36978,7 +36993,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: appendBoundedDevShellOutput does not split multi-byte characters",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 36,
+      "line": 106,
       "ancestors": [],
       "title": "appendBoundedDevShellOutput does not split multi-byte characters",
       "contractId": "runtime.behavior",
@@ -36993,7 +37008,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 22,
+      "line": 92,
       "ancestors": [],
       "title": "appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit",
       "contractId": "runtime.behavior",
@@ -37006,9 +37021,54 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/local-dev-shell-service.test.ts :: developer shell launch resolution rejects unsupported runtime module extensions",
+      "file": "tests/unit/local-dev-shell-service.test.ts",
+      "line": 47,
+      "ancestors": [],
+      "title": "developer shell launch resolution rejects unsupported runtime module extensions",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: developer shell launch resolution rejects unsupported runtime module extensions",
+      "dimension": "developer shell launch resolution rejects unsupported runtime module extensions",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/local-dev-shell-service.test.ts :: developer shell launch resolution selects the compiled JavaScript entrypoint without tsx",
+      "file": "tests/unit/local-dev-shell-service.test.ts",
+      "line": 37,
+      "ancestors": [],
+      "title": "developer shell launch resolution selects the compiled JavaScript entrypoint without tsx",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: developer shell launch resolution selects the compiled JavaScript entrypoint without tsx",
+      "dimension": "developer shell launch resolution selects the compiled JavaScript entrypoint without tsx",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/local-dev-shell-service.test.ts :: developer shell launch resolution selects the source TypeScript entrypoint",
+      "file": "tests/unit/local-dev-shell-service.test.ts",
+      "line": 23,
+      "ancestors": [],
+      "title": "developer shell launch resolution selects the source TypeScript entrypoint",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: developer shell launch resolution selects the source TypeScript entrypoint",
+      "dimension": "developer shell launch resolution selects the source TypeScript entrypoint",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: isCompatibleDevShellHealth requires the write_and_read process contract",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 531,
+      "line": 601,
       "ancestors": [],
       "title": "isCompatibleDevShellHealth requires the write_and_read process contract",
       "contractId": "runtime.behavior",
@@ -37023,7 +37083,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService cleans up an incompatible supervisor socket recorded in bootstrap status",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 443,
+      "line": 513,
       "ancestors": [],
       "title": "LocalDevShellService cleans up an incompatible supervisor socket recorded in bootstrap status",
       "contractId": "runtime.behavior",
@@ -37038,7 +37098,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService close terminates a spawned supervisor process",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 542,
+      "line": 612,
       "ancestors": [],
       "title": "LocalDevShellService close terminates a spawned supervisor process",
       "contractId": "runtime.behavior",
@@ -37053,7 +37113,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService defaults under KESTREL_HOME when available",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 49,
+      "line": 119,
       "ancestors": [],
       "title": "LocalDevShellService defaults under KESTREL_HOME when available",
       "contractId": "runtime.behavior",
@@ -37068,7 +37128,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService expands ~/ KESTREL_HOME for socket, log, and bootstrap status defaults",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 73,
+      "line": 143,
       "ancestors": [],
       "title": "LocalDevShellService expands ~/ KESTREL_HOME for socket, log, and bootstrap status defaults",
       "contractId": "runtime.behavior",
@@ -37083,7 +37143,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService fails fast with an explicit bootstrap reason when postgres DATABASE_URL is missing",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 164,
+      "line": 234,
       "ancestors": [],
       "title": "LocalDevShellService fails fast with an explicit bootstrap reason when postgres DATABASE_URL is missing",
       "contractId": "runtime.behavior",
@@ -37098,7 +37158,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService health timeout includes startup diagnostics",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 255,
+      "line": 325,
       "ancestors": [],
       "title": "LocalDevShellService health timeout includes startup diagnostics",
       "contractId": "runtime.behavior",
@@ -37113,7 +37173,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService honors explicit dev shell path environment overrides",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 113,
+      "line": 183,
       "ancestors": [],
       "title": "LocalDevShellService honors explicit dev shell path environment overrides",
       "contractId": "runtime.behavior",
@@ -37128,7 +37188,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService observed run preserves source-write guard metadata",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 578,
+      "line": 648,
       "ancestors": [],
       "title": "LocalDevShellService observed run preserves source-write guard metadata",
       "contractId": "runtime.behavior",
@@ -37143,7 +37203,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService preserves structured supervisor request errors",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 322,
+      "line": 392,
       "ancestors": [],
       "title": "LocalDevShellService preserves structured supervisor request errors",
       "contractId": "runtime.behavior",
@@ -37158,7 +37218,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService reads startup timeout from environment",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 136,
+      "line": 206,
       "ancestors": [],
       "title": "LocalDevShellService reads startup timeout from environment",
       "contractId": "runtime.behavior",
@@ -37171,9 +37231,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService reports a missing resolved entrypoint before spawn",
+      "file": "tests/unit/local-dev-shell-service.test.ts",
+      "line": 54,
+      "ancestors": [],
+      "title": "LocalDevShellService reports a missing resolved entrypoint before spawn",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: LocalDevShellService reports a missing resolved entrypoint before spawn",
+      "dimension": "LocalDevShellService reports a missing resolved entrypoint before spawn",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService restarts a stale supervisor with legacy health",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 378,
+      "line": 448,
       "ancestors": [],
       "title": "LocalDevShellService restarts a stale supervisor with legacy health",
       "contractId": "runtime.behavior",
@@ -37188,7 +37263,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService shortens overlong isolated socket paths",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 148,
+      "line": 218,
       "ancestors": [],
       "title": "LocalDevShellService shortens overlong isolated socket paths",
       "contractId": "runtime.behavior",
@@ -37203,7 +37278,7 @@
     {
       "identity": "tests/unit/local-dev-shell-service.test.ts :: LocalDevShellService surfaces persisted bootstrap failure details before health timeout",
       "file": "tests/unit/local-dev-shell-service.test.ts",
-      "line": 205,
+      "line": 275,
       "ancestors": [],
       "title": "LocalDevShellService surfaces persisted bootstrap failure details before health timeout",
       "contractId": "runtime.behavior",
@@ -49891,9 +49966,24 @@
       "environment": "linux"
     },
     {
-      "identity": "tests/unit/tool-failure-output.test.ts :: failed dev.shell.run output keeps command output and execution context visible",
+      "identity": "tests/unit/tool-failure-output.test.ts :: developer shell startup failure exposes only safe actionable diagnostics",
       "file": "tests/unit/tool-failure-output.test.ts",
       "line": 17,
+      "ancestors": [],
+      "title": "developer shell startup failure exposes only safe actionable diagnostics",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: developer shell startup failure exposes only safe actionable diagnostics",
+      "dimension": "developer shell startup failure exposes only safe actionable diagnostics",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/tool-failure-output.test.ts :: failed dev.shell.run output keeps command output and execution context visible",
+      "file": "tests/unit/tool-failure-output.test.ts",
+      "line": 49,
       "ancestors": [],
       "title": "failed dev.shell.run output keeps command output and execution context visible",
       "contractId": "runtime.behavior",
@@ -49908,7 +49998,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: failed durable tool effects keep nested failure output model-visible",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 279,
+      "line": 311,
       "ancestors": [],
       "title": "failed durable tool effects keep nested failure output model-visible",
       "contractId": "runtime.behavior",
@@ -49923,7 +50013,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: failed file tool output keeps path and validation details visible",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 377,
+      "line": 409,
       "ancestors": [],
       "title": "failed file tool output keeps path and validation details visible",
       "contractId": "runtime.behavior",
@@ -49938,7 +50028,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: interactive dev.shell.run timeout suggests process APIs in model transcript",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 123,
+      "line": 155,
       "ancestors": [],
       "title": "interactive dev.shell.run timeout suggests process APIs in model transcript",
       "contractId": "runtime.behavior",
@@ -49953,7 +50043,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: model transcript renders failed dev.shell.run compactly with failure details visible",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 56,
+      "line": 88,
       "ancestors": [],
       "title": "model transcript renders failed dev.shell.run compactly with failure details visible",
       "contractId": "runtime.behavior",
@@ -49968,7 +50058,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: model transcript renders failed tool output details instead of a generic failure",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 416,
+      "line": 448,
       "ancestors": [],
       "title": "model transcript renders failed tool output details instead of a generic failure",
       "contractId": "runtime.behavior",
@@ -49983,7 +50073,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: model transcript renders running exec_command with session continuation",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 178,
+      "line": 210,
       "ancestors": [],
       "title": "model transcript renders running exec_command with session continuation",
       "contractId": "runtime.behavior",
@@ -49998,7 +50088,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: noninteractive dev.shell.run timeout does not suggest process APIs",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 258,
+      "line": 290,
       "ancestors": [],
       "title": "noninteractive dev.shell.run timeout does not suggest process APIs",
       "contractId": "runtime.behavior",
@@ -50013,7 +50103,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: post-tool verification normalizes running exec_command process identity",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 225,
+      "line": 257,
       "ancestors": [],
       "title": "post-tool verification normalizes running exec_command process identity",
       "contractId": "runtime.behavior",
@@ -50028,7 +50118,7 @@
     {
       "identity": "tests/unit/tool-failure-output.test.ts :: raw failed shell output renders pytest evidence instead of object-string error",
       "file": "tests/unit/tool-failure-output.test.ts",
-      "line": 314,
+      "line": 346,
       "ancestors": [],
       "title": "raw failed shell output renders pytest evidence instead of object-string error",
       "contractId": "runtime.behavior",
