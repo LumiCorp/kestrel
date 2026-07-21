@@ -4,7 +4,6 @@ import { Suspense } from "react";
 import { Chat } from "@/components/chat";
 import { ThreadRouteLoading } from "@/components/chatbot/thread-route-loading";
 import { DataStreamHandler } from "@/components/data-stream-handler";
-import { ThreadActions } from "@/components/threads/thread-actions";
 import { ThreadReadMarker } from "@/components/threads/thread-read-marker";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
 import {
@@ -12,7 +11,7 @@ import {
   resolveThreadEnvironment,
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
+import { getProjectDetail } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
 import {
   listDurableThreadQueueForUser,
@@ -51,8 +50,7 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     environment?.id
   );
-  const [projectDetail, projectRows, durableState, interactions] =
-    await Promise.all([
+  const [projectDetail, durableState, interactions] = await Promise.all([
       chat?.projectId
         ? getProjectDetail({
             projectId: chat.projectId,
@@ -61,7 +59,6 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
             includeArchived: true,
           })
         : Promise.resolve(null),
-      listProjectsForUser({ organizationId, userId: session.user.id }),
       chat
         ? listDurableThreadQueueForUser({
             threadId: chat.id,
@@ -87,6 +84,8 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
             ? { id: environment.id, name: environment.name }
             : undefined
         }
+        archived={Boolean(chat?.archivedAt)}
+        canManage={chat?.access.canManage ?? false}
         canPublish={chat?.access.canPublish ?? false}
         id={chat?.id ?? id}
         initialChatExists={Boolean(chat)}
@@ -142,32 +141,12 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         threadTitle={chat?.title || "New Thread"}
       />
       {chat && (
-        <>
-          {chat.messages.at(-1)?.id ? (
-            <ThreadReadMarker
-              messageId={chat.messages.at(-1)!.id}
-              threadId={chat.id}
-            />
-          ) : null}
-          <ThreadActions
-            archived={Boolean(chat.archivedAt)}
-            canManage={chat.access.canManage}
-            initialTitle={chat.title || "New thread"}
-            project={
-              projectDetail
-                ? {
-                    id: projectDetail.project.id,
-                    name: projectDetail.project.name,
-                  }
-                : null
-            }
-            projects={projectRows.map(({ project }) => ({
-              id: project.id,
-              name: project.name,
-            }))}
+        chat.messages.at(-1)?.id ? (
+          <ThreadReadMarker
+            messageId={chat.messages.at(-1)!.id}
             threadId={chat.id}
           />
-        </>
+        ) : null
       )}
       <DataStreamHandler threadId={chat?.id ?? id} />
     </>

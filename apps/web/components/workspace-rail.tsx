@@ -6,9 +6,9 @@ import {
   ArrowDownUp,
   BookOpenText,
   ChevronDown,
+  Circle,
   FolderOpen,
   House,
-  MessageSquare,
   MoreHorizontal,
   Plus,
   Search,
@@ -32,6 +32,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   filterAndSortThreads,
   type ThreadSort,
@@ -226,20 +231,27 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       <aside className="hidden h-dvh w-72 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="border-b p-3">{projectSwitcher}</div>
         <div className="space-y-2 border-b p-3">
-          <Button asChild className="w-full justify-start">
-            <Link href={newThreadHref}>
-              <Plus className="size-4" /> New Thread
-            </Link>
-          </Button>
-          <div className="relative">
-            <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground" />
-            <Input
-              aria-label="Filter recent threads"
-              className="pl-8"
-              onChange={(event) => setThreadQuery(event.target.value)}
-              placeholder="Filter threads"
-              value={threadQuery}
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground" />
+              <Input
+                aria-label="Filter recent threads"
+                className="pl-8"
+                onChange={(event) => setThreadQuery(event.target.value)}
+                placeholder="Filter threads"
+                value={threadQuery}
+              />
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button asChild aria-label="New Thread" size="icon">
+                  <Link href={newThreadHref}>
+                    <Plus className="size-4" />
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">New Thread</TooltipContent>
+            </Tooltip>
           </div>
           <label className="flex items-center gap-2 text-muted-foreground text-xs">
             <ArrowDownUp className="size-3.5" />
@@ -278,7 +290,20 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                     className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-sm"
                     href={`/threads/${thread.id}`}
                   >
-                    <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
+                    <span
+                      aria-hidden={thread.unreadCount > 0 ? undefined : true}
+                      className="flex size-4 shrink-0 items-center justify-center"
+                    >
+                      {thread.unreadCount > 0 ? (
+                        <>
+                          <Circle
+                            aria-hidden="true"
+                            className="size-2 fill-primary text-primary"
+                          />
+                          <span className="sr-only">New message</span>
+                        </>
+                      ) : null}
+                    </span>
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate",
@@ -287,14 +312,6 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                     >
                       {thread.title || "New thread"}
                     </span>
-                    {thread.unreadCount > 0 ? (
-                      <span
-                        aria-label={`${thread.unreadCount} unread answers`}
-                        className="flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 font-semibold text-[10px] text-primary-foreground tabular-nums"
-                      >
-                        {thread.unreadCount > 9 ? "9+" : thread.unreadCount}
-                      </span>
-                    ) : null}
                   </Link>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

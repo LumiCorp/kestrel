@@ -343,7 +343,9 @@ function useChatCallbacks(input: {
 
 function ChatShell({
   addToolApprovalResponse,
+  archived,
   attachments,
+  canManage,
   threadId,
   clearError,
   currentModelId,
@@ -376,7 +378,9 @@ function ChatShell({
   threadExists,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
+  archived: boolean;
   attachments: Attachment[];
+  canManage: boolean;
   threadId: string;
   clearError: () => void;
   currentModelId: string;
@@ -422,6 +426,8 @@ function ChatShell({
     <>
       <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
         <ChatHeader
+          archived={archived}
+          canManage={canManage}
           isReadonly={headerReadonly}
           project={project}
           selectedVisibilityType={selectedVisibilityType}
@@ -622,7 +628,9 @@ export function BootstrapChat({
       <ChatShell
         activeEnvironment={activeEnvironment}
         addToolApprovalResponse={async () => {}}
+        archived={false}
         attachments={shared.attachments}
+        canManage={false}
         clearError={() => {
           shared.setDataStream([]);
         }}
@@ -675,6 +683,8 @@ export function Chat({
   initialConversationState,
   isReadonly,
   canPublish = true,
+  canManage = false,
+  archived = false,
   activeEnvironment,
   project,
   threadTitle,
@@ -688,6 +698,8 @@ export function Chat({
   initialConversationState: ThreadConversationState;
   isReadonly: boolean;
   canPublish?: boolean;
+  canManage?: boolean;
+  archived?: boolean;
   activeEnvironment?: { id: string; name: string };
   project?: { id: string; name: string } | null;
   threadTitle?: string;
@@ -1135,7 +1147,9 @@ export function Chat({
       <ChatShell
         activeEnvironment={activeEnvironment}
         addToolApprovalResponse={controller.addToolApprovalResponse}
+        archived={archived}
         attachments={shared.attachments}
+        canManage={canManage}
         clearError={() => {
           controller.clearError();
           shared.setDataStream([]);
