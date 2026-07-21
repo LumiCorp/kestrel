@@ -1,16 +1,25 @@
 import {
   Activity,
   Folder,
+  FlaskConical,
+  GitCompareArrows,
+  GitPullRequest,
+  KeyRound,
   ListChecks,
   MessageSquare,
+  Moon,
+  MonitorPlay,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Plug,
   Plus,
   Send,
+  ShieldCheck,
   Settings,
   Square,
+  Sun,
+  TerminalSquare,
   Wrench,
   X,
 } from "lucide-react";
@@ -35,13 +44,21 @@ import type {
   DesktopRendererSettings,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
+  DesktopThreadWorkspaceContext,
+  RunTurnAttachment,
   DesktopRuntimeThreadInspection,
 } from "../../src/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
+import { DiffWorkspace } from "./DiffWorkspace";
+import { GitWorkspace } from "./GitWorkspace";
 import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { PreviewWorkspace } from "./PreviewWorkspace";
+import { ReviewWorkspace } from "./ReviewWorkspace";
+import { TerminalWorkspace } from "./TerminalWorkspace";
+import { ValidationWorkspace } from "./ValidationWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
 import { getDesktopComposerSubmissionPolicy } from "./composerPolicy";
 import {
@@ -51,6 +68,7 @@ import {
   type DesktopRunStreamItem,
 } from "./runStream";
 import { ContextSidebar } from "./ContextSidebar";
+import { extractTerminalFailure } from "./runtimeCapabilityRecovery";
 import {
   addRendererThread,
   appendRendererTranscript,
@@ -62,6 +80,7 @@ import {
   resolveRendererThreadProjectPath,
   selectRendererThread,
   serializeDesktopRendererState,
+  setRendererTheme,
   toDesktopExecutionSelection,
   toDesktopRunHistory,
   updateRendererThread,
@@ -69,7 +88,13 @@ import {
   updateRendererDraftAttachments,
   type DesktopRendererState,
   type RendererMode,
+  type RendererThread,
 } from "./state";
+
+const kestrelMarkUrl = new URL(
+  "../../../docs/public/brand/kestrel-mark.png",
+  import.meta.url,
+).href;
 
 interface ActiveRun {
   threadId: string;
@@ -84,13 +109,32 @@ interface PendingTurnSubmission {
   projectPath?: string | undefined;
 }
 
-type DesktopSurface = "chat" | "mission-control" | "projects" | "mcp" | "settings" | "diagnostics";
+type DesktopSurface =
+  | "chat"
+  | "mission-control"
+  | "projects"
+  | "diff"
+  | "review"
+  | "validation"
+  | "git"
+  | "preview"
+  | "terminal"
+  | "mcp"
+  | "settings"
+  | "diagnostics";
+const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
+const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
+const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
 
 export function DesktopApp() {
   const [state, setState] = useState<DesktopRendererState>();
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
+  const [draft, setDraft] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<
+    RunTurnAttachment[]
+  >([]);
   const [capabilities, setCapabilities] = useState<DesktopCapabilityView>();
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRun>>({});
   const [threadViews, setThreadViews] = useState<Record<string, DesktopRuntimeThreadInspection>>({});
@@ -102,11 +146,14 @@ export function DesktopApp() {
   const [error, setError] = useState<string>();
   const [errorCapability, setErrorCapability] = useState<DesktopCapabilityId>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [inspectorWidth, setInspectorWidth] = useState(288);
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
   const [activeProjectPath, setActiveProjectPath] = useState<string>();
+  const [threadWorkspaces, setThreadWorkspaces] = useState<
+    Record<string, DesktopThreadWorkspaceContext>
+  >({});
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
   const pendingTurnSubmissionsRef = useRef<Record<string, PendingTurnSubmission>>({});
@@ -116,6 +163,14 @@ export function DesktopApp() {
     () => state?.threads.find((thread) => thread.id === state.activeThreadId),
     [state],
   );
+  const activeThreadWorkspace =
+    activeThread === undefined
+      ? undefined
+      : threadWorkspaces[activeThread.sessionId];
+
+  useEffect(() => {
+    setComposerAttachments([]);
+  }, [activeThread?.id]);
   const activeRun = activeThread === undefined
     ? undefined
     : activeRuns[activeThread.id] ?? (threadViews[activeThread.id]?.activeRun?.status === "RUNNING"
@@ -243,6 +298,43 @@ export function DesktopApp() {
   useEffect(() => window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth), []);
 
   useEffect(() => {
+    const projectPath =
+      activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread?.projectPath;
+    if (projectPath !== undefined) {
+      setActiveProjectPath(projectPath);
+    }
+  }, [
+    activeThread?.id,
+    activeThread?.projectPath,
+    activeThreadWorkspace?.sourceWorkspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (activeThread === undefined) {
+      return;
+    }
+    let disposed = false;
+    void window.kestrelDesktop
+      .getOperatorThread(activeThread.sessionId)
+      .then((inspection) => {
+        const workspace = inspection.workspace;
+        if (disposed || workspace === undefined) {
+          return;
+        }
+        setThreadWorkspaces((current) => ({
+          ...current,
+          [activeThread.sessionId]: workspace,
+        }));
+      })
+      .catch(() => {
+        // A newly created Desktop conversation has no runtime thread until its first turn.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeThread?.sessionId, missionControlRevision]);
+
+  useEffect(() => {
     if (state === undefined) {
       return;
     }
@@ -322,9 +414,19 @@ export function DesktopApp() {
     const continuation = getRendererTurnContinuation(activeThread);
     const projectPath = resolveRendererThreadProjectPath({
       thread: activeThread,
+      ...(activeThreadWorkspace !== undefined
+        ? {
+            authoritativeProjectPath: activeThreadWorkspace.sourceWorkspaceRoot,
+          }
+        : {}),
       ...(activeProjectPath !== undefined ? { activeProjectPath } : {}),
       projects: settings?.projects ?? [],
     });
+    const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
+    const workspaceSetup = buildManagedWorkspaceSetup(activeThread);
+    const submittedAttachments = composerAttachments;
+    setDraft("");
+    setComposerAttachments([]);
     setError(undefined);
     setErrorCapability(undefined);
     if (composerPolicy.mode === "reply_to_request") {
@@ -422,11 +524,23 @@ export function DesktopApp() {
           ? { resumeBlockedRun: true }
           : {}),
         history,
+        ...(submittedAttachments.length > 0
+          ? { attachments: submittedAttachments }
+          : {}),
         interactionMode: activeThread.mode,
+        workspaceMode: activeThread.workspaceMode,
+        ...(activeThread.workspaceMode === "managed"
+          ? { workspaceBaseRef: activeThread.workspaceBaseRef }
+          : {}),
         attachmentIds: activeThread.draftAttachmentIds,
         ...(projectPath !== undefined
           ? { projectPath }
           : {}),
+        ...(activeThread.workspaceMode === "managed" &&
+        workspaceSetup !== undefined
+          ? { workspaceSetup }
+          : {}),
+        ...(projectPath !== undefined ? { projectPath } : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
         executionSelection: toDesktopExecutionSelection(activeThread, settings.apps),
       });
@@ -435,21 +549,12 @@ export function DesktopApp() {
       const terminalError = terminalFailure?.message;
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
       const waitingPrompt = getTerminalWaitingPrompt(terminal);
-      const terminalLine = assistantText !== undefined
-        ? {
-            role: "assistant" as const,
-            text: assistantText,
-            timestamp: new Date().toISOString(),
-          }
-        : waitingPrompt !== undefined
+      const terminalLine =
+        assistantText !== undefined
           ? {
-              role: "system" as const,
-              text: waitingPrompt.text,
+              role: "assistant" as const,
+              text: assistantText,
               timestamp: new Date().toISOString(),
-              data: {
-                kind: "runtime.waiting_prompt" as const,
-                runId: waitingPrompt.runId,
-              },
             }
           : undefined;
       const acceptedFromEvent = acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
@@ -478,12 +583,22 @@ export function DesktopApp() {
         terminal.type === "run.failed"
           ? "Run failed"
           : pendingWaitEventType !== undefined
-          ? `Waiting for ${pendingWaitEventType}`
-          : terminal.type === "run.cancelled"
-            ? "Cancelled"
-            : "Ready",
+            ? `Waiting for ${pendingWaitEventType}`
+            : terminal.type === "run.cancelled"
+              ? "Cancelled"
+              : "Ready",
       );
     } catch (cause) {
+      if (submittedPendingWaitEventType !== undefined) {
+        setState((current) =>
+          current === undefined
+            ? current
+            : updateRendererThread(current, threadId, (thread) => ({
+                ...thread,
+                pendingWaitEventType: submittedPendingWaitEventType,
+              })),
+        );
+      }
       delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
       acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
       setError(errorMessage(cause));
@@ -508,6 +623,133 @@ export function DesktopApp() {
     } catch (cause) {
       setError(errorMessage(cause));
     }
+  }
+
+  async function attachWorkspaceFile(
+    filePath: string,
+    rootPath: string,
+    threadId: string | undefined,
+    intent: "attach" | "ask",
+  ): Promise<void> {
+    if (activeThread === undefined) {
+      return;
+    }
+    try {
+      const file = await window.kestrelDesktop.readFile({
+        rootPath,
+        targetPath: filePath,
+        ...(threadId !== undefined ? { threadId } : {}),
+      });
+      const attachmentBytes = new TextEncoder().encode(file.content);
+      const attachment: RunTurnAttachment = {
+        attachmentId: crypto.randomUUID(),
+        threadId: activeThread.sessionId,
+        filename: fileName(file.path),
+        mimeType: desktopTextMimeType(file.language, file.viewKind),
+        sizeBytes: attachmentBytes.byteLength,
+        sha256: await sha256Hex(attachmentBytes),
+        kind: "text",
+        createdAt: new Date().toISOString(),
+        text: file.content,
+      };
+      setComposerAttachments((current) =>
+        [
+          ...current.filter(
+            (candidate) =>
+              candidate.filename !== attachment.filename ||
+              candidate.sha256 !== attachment.sha256,
+          ),
+          attachment,
+        ].slice(-8),
+      );
+      if (intent === "ask") {
+        setDraft((current) =>
+          current.trim().length > 0
+            ? current
+            : `Please review the attached ${attachment.filename} in the context of this workspace.`,
+        );
+      }
+      setSurface("chat");
+      setError(undefined);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function attachTerminalOutput(
+    text: string,
+    terminal: import("../../src/contracts").DesktopUserTerminal,
+  ): Promise<void> {
+    if (activeThread === undefined || text.length === 0) {
+      return;
+    }
+    const bytes = new TextEncoder().encode(text);
+    const attachment: RunTurnAttachment = {
+      attachmentId: crypto.randomUUID(),
+      threadId: activeThread.sessionId,
+      filename: `terminal-${terminal.terminalId.slice(0, 8)}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: bytes.byteLength,
+      sha256: await sha256Hex(bytes),
+      kind: "text",
+      createdAt: new Date().toISOString(),
+      text,
+    };
+    setComposerAttachments((current) => [...current, attachment].slice(-8));
+    setDraft((current) =>
+      current.trim().length > 0
+        ? current
+        : "Please review the attached terminal output.",
+    );
+    setSurface("chat");
+  }
+
+  async function attachVisualFeedback(input: {
+    dataUrl: string;
+    filename: string;
+    comment: string;
+    runId: string;
+    url: string;
+    region?:
+      | { x: number; y: number; width: number; height: number }
+      | undefined;
+  }): Promise<void> {
+    if (activeThread === undefined) return;
+    const match = /^data:image\/png;base64,(.+)$/u.exec(input.dataUrl);
+    if (!match) throw new Error("Preview screenshot is not a PNG attachment.");
+    const binary = atob(match[1]!);
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
+    if (bytes.byteLength > 5 * 1024 * 1024)
+      throw new Error("Preview screenshot exceeds the 5 MB attachment limit.");
+    const attachment: RunTurnAttachment = {
+      attachmentId: crypto.randomUUID(),
+      threadId: activeThread.sessionId,
+      filename: input.filename,
+      mimeType: "image/png",
+      sizeBytes: bytes.byteLength,
+      sha256: await sha256Hex(bytes),
+      kind: "image",
+      createdAt: new Date().toISOString(),
+      data: match[1],
+    };
+    setComposerAttachments((current) => [...current, attachment].slice(-8));
+    setDraft(
+      [
+        input.comment,
+        "",
+        `Preview evidence: run ${input.runId}`,
+        `URL: ${input.url}`,
+        ...(input.region
+          ? [
+              `Annotated region: x=${input.region.x.toFixed(3)}, y=${input.region.y.toFixed(3)}, width=${input.region.width.toFixed(3)}, height=${input.region.height.toFixed(3)}`,
+            ]
+          : []),
+      ].join("\n"),
+    );
+    setSurface("chat");
+    setError(undefined);
   }
 
   async function steerActiveRun(): Promise<void> {
@@ -659,29 +901,78 @@ export function DesktopApp() {
   if (state === undefined || activeThread === undefined) {
     return (
       <main className="loading-shell">
-        <span className="brand-mark">K</span>
+        <span className="brand-mark" aria-hidden="true">
+          <img src={kestrelMarkUrl} alt="" />
+        </span>
         <p>{error ?? "Opening Kestrel"}</p>
       </main>
     );
   }
 
   const healthState = runtimeHealth?.state ?? "degraded";
-  const activeProject = settings?.projects.find(
-    (project) => project.path === activeProjectPath
-  ) ?? settings?.projects[0];
-  const showInspector = inspectorOpen && settings !== undefined;
+  const selectedProject =
+    settings?.projects.find((project) => project.path === activeProjectPath) ??
+    settings?.projects[0];
+  const threadProjectPath =
+    activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread.projectPath;
+  const threadProject = settings?.projects.find(
+    (project) => project.path === threadProjectPath,
+  );
+  const activeProject =
+    surface === "projects"
+      ? selectedProject
+      : (threadProject ?? selectedProject);
+  const projectWorkspace =
+    activeProject !== undefined &&
+    activeThreadWorkspace?.sourceWorkspaceRoot === activeProject.path
+      ? activeThreadWorkspace
+      : undefined;
+  const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
       <header className="titlebar">
         <div className="brand-lockup">
-          <span className="brand-mark">K</span>
+          <span className="brand-mark" aria-hidden="true">
+            <img src={kestrelMarkUrl} alt="" />
+          </span>
           <strong>Kestrel</strong>
         </div>
-        <div className="titlebar-context" title={surfaceTitle(surface, activeThread.title, activeProject?.label)}>
-          {surfaceTitle(surface, activeThread.title, activeProject?.label)}
+        <div
+          className="titlebar-context"
+          title={`${activeThread.title} · ${surfacePageTitle(surface)}`}
+        >
+          <strong className="titlebar-thread-title">
+            {activeThread.title}
+          </strong>
+          <span className="titlebar-page-title">
+            {surfacePageTitle(surface)}
+          </span>
         </div>
         <div className="titlebar-actions">
           <button
+            className="icon-button"
+            type="button"
+            title={
+              state.theme === "dark" ? "Use light theme" : "Use dark theme"
+            }
+            aria-label={
+              state.theme === "dark" ? "Use light theme" : "Use dark theme"
+            }
+            onClick={() =>
+              setState((current) =>
+                current === undefined
+                  ? current
+                  : setRendererTheme(
+                      current,
+                      current.theme === "dark" ? "light" : "dark",
+                    ),
+              )
+            }
+          >
+            {state.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
+          {surface === "chat" ? (
+            <button
               className="icon-button"
               type="button"
               title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
@@ -691,25 +982,104 @@ export function DesktopApp() {
               <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
               {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
             </button>
+          ) : null}
         </div>
       </header>
 
       <div
         className={`workspace ${showInspector ? "with-inspector" : ""}`}
-        style={{ "--inspector-width": `${sidebarWidth}px` } as CSSProperties}
+        style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
       >
         <aside className="conversation-rail" aria-label="Conversations">
           <nav className="surface-tabs" aria-label="Kestrel views">
-            <button className={surface === "chat" ? "active" : ""} type="button" title="Conversations" aria-label="Conversations" onClick={() => setSurface("chat")}>
+            <button
+              className={surface === "chat" ? "active" : ""}
+              type="button"
+              title="Conversations"
+              aria-label="Conversations"
+              onClick={() => setSurface("chat")}
+            >
               <MessageSquare size={17} />
             </button>
-            <button className={surface === "mission-control" ? "active" : ""} type="button" title="Mission control" aria-label="Mission control" onClick={() => setSurface("mission-control")}>
+            <button
+              className={surface === "mission-control" ? "active" : ""}
+              type="button"
+              title="Mission control"
+              aria-label="Mission control"
+              onClick={() => setSurface("mission-control")}
+            >
               <ListChecks size={17} />
             </button>
-            <button className={surface === "projects" ? "active" : ""} type="button" title="Projects" aria-label="Projects" onClick={() => setSurface("projects")}>
+            <button
+              className={surface === "projects" ? "active" : ""}
+              type="button"
+              title="Projects"
+              aria-label="Projects"
+              onClick={() => setSurface("projects")}
+            >
               <Folder size={17} />
             </button>
-            <button className={surface === "mcp" ? "active" : ""} type="button" title="MCP servers" aria-label="MCP servers" onClick={() => setSurface("mcp")}>
+            <button
+              className={surface === "diff" ? "active" : ""}
+              type="button"
+              title="Diff"
+              aria-label="Diff"
+              onClick={() => setSurface("diff")}
+            >
+              <GitCompareArrows size={17} />
+            </button>
+            <button
+              className={surface === "review" ? "active" : ""}
+              type="button"
+              title="Review"
+              aria-label="Review"
+              onClick={() => setSurface("review")}
+            >
+              <ShieldCheck size={17} />
+            </button>
+            <button
+              className={surface === "validation" ? "active" : ""}
+              type="button"
+              title="Validation"
+              aria-label="Validation"
+              onClick={() => setSurface("validation")}
+            >
+              <FlaskConical size={17} />
+            </button>
+            <button
+              className={surface === "git" ? "active" : ""}
+              type="button"
+              title="Git and pull requests"
+              aria-label="Git and pull requests"
+              onClick={() => setSurface("git")}
+            >
+              <GitPullRequest size={17} />
+            </button>
+            <button
+              className={surface === "preview" ? "active" : ""}
+              type="button"
+              title="Preview"
+              aria-label="Preview"
+              onClick={() => setSurface("preview")}
+            >
+              <MonitorPlay size={17} />
+            </button>
+            <button
+              className={surface === "terminal" ? "active" : ""}
+              type="button"
+              title="Terminal"
+              aria-label="Terminal"
+              onClick={() => setSurface("terminal")}
+            >
+              <TerminalSquare size={17} />
+            </button>
+            <button
+              className={surface === "mcp" ? "active" : ""}
+              type="button"
+              title="MCP servers"
+              aria-label="MCP servers"
+              onClick={() => setSurface("mcp")}
+            >
               <Plug size={17} />
             </button>
             <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => openCapabilitySettings()}>
@@ -717,9 +1087,6 @@ export function DesktopApp() {
             </button>
             <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setSurface("diagnostics")}>
               <Wrench size={17} />
-            </button>
-            <button className={`settings-tab ${surface === "settings" ? "active" : ""}`} type="button" title="Settings" aria-label="Settings" onClick={() => setSurface("settings")}>
-              <Settings size={17} />
             </button>
           </nav>
 
@@ -755,9 +1122,11 @@ export function DesktopApp() {
                     key={thread.id}
                     type="button"
                     onClick={() => {
-                      setState((current) => current === undefined
-                        ? current
-                        : selectRendererThread(current, thread.id));
+                      setState((current) =>
+                        current === undefined
+                          ? current
+                          : selectRendererThread(current, thread.id),
+                      );
                       if (thread.projectPath !== undefined) {
                         setActiveProjectPath(thread.projectPath);
                       }
@@ -778,7 +1147,11 @@ export function DesktopApp() {
                   type="button"
                   title="Add project"
                   aria-label="Add project"
-                  onClick={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
+                  onClick={() =>
+                    void addProject().catch((cause) =>
+                      setError(errorMessage(cause)),
+                    )
+                  }
                 >
                   <Plus size={17} />
                 </button>
@@ -795,13 +1168,45 @@ export function DesktopApp() {
                     <span>{project.label}</span>
                   </button>
                 ))}
-                {settings?.projects.length === 0 ? <p className="rail-empty">No projects</p> : null}
+                {settings?.projects.length === 0 ? (
+                  <p className="rail-empty">No projects</p>
+                ) : null}
               </nav>
             </>
           ) : (
             <div className="rail-context">
-              <span>{surface === "mission-control" ? "Mission control" : surface === "mcp" ? "MCP servers" : surface === "settings" ? "Settings" : "Diagnostics"}</span>
-              <p>{surface === "mission-control" ? activeThread.title : surface === "mcp" ? "Local integrations" : surface === "settings" ? "Capabilities and readiness" : runtimeHealth?.state ?? "unknown"}</p>
+              <span>
+                {surface === "mission-control"
+                  ? "Mission control"
+                  : surface === "diff"
+                    ? "Diff"
+                    : surface === "review"
+                      ? "Review"
+                      : surface === "validation"
+                        ? "Validation"
+                        : surface === "git"
+                          ? "Git and pull requests"
+                          : surface === "preview"
+                            ? "Preview"
+                            : surface === "terminal"
+                              ? "Terminal"
+                              : surface === "mcp"
+                                ? "MCP servers"
+                                : "Diagnostics"}
+              </span>
+              <p>
+                {surface === "mission-control" ||
+                surface === "diff" ||
+                surface === "review" ||
+                surface === "validation" ||
+                surface === "git" ||
+                surface === "preview" ||
+                surface === "terminal"
+                  ? activeThread.title
+                  : surface === "mcp"
+                    ? "Local integrations"
+                    : (runtimeHealth?.state ?? "unknown")}
+              </p>
             </div>
           )}
         </aside>
@@ -956,7 +1361,7 @@ export function DesktopApp() {
                 </>
               )}
             </div>
-          </form>
+            </form>
           </main>
         ) : (
           <div className="surface-host">
@@ -964,7 +1369,32 @@ export function DesktopApp() {
             {surface === "projects" ? (
               <ProjectWorkspace
                 project={activeProject}
+                threadId={activeThread.sessionId}
+                workspace={projectWorkspace}
+                openFiles={activeThread.openFiles}
                 onChat={(project) => startProjectConversation(project.path)}
+                onAttachFile={(filePath, rootPath, threadId, intent) =>
+                  void attachWorkspaceFile(filePath, rootPath, threadId, intent)
+                }
+                onOpenFile={(filePath) =>
+                  setState((current) =>
+                    current === undefined
+                      ? current
+                      : updateRendererThread(
+                          current,
+                          activeThread.id,
+                          (thread) => ({
+                            ...thread,
+                            openFiles: [
+                              ...thread.openFiles.filter(
+                                (candidate) => candidate !== filePath,
+                              ),
+                              filePath,
+                            ].slice(-20),
+                          }),
+                        ),
+                  )
+                }
                 onError={setError}
               />
             ) : surface === "mission-control" ? (
@@ -972,6 +1402,110 @@ export function DesktopApp() {
                 sessionId={activeThread.sessionId}
                 project={activeProject}
                 refreshVersion={missionControlRevision}
+                onError={setError}
+              />
+            ) : surface === "diff" ? (
+              <DiffWorkspace
+                key={activeThread.id}
+                sessionId={activeThread.sessionId}
+                threadId={activeThread.sessionId}
+                defaultBaseRef={activeThread.workspaceBaseRef}
+                initialScopeKind={activeThread.diffScopeKind}
+                initialRevision={activeThread.diffRevision}
+                initialView={activeThread.diffView}
+                onPreferencesChange={(preferences) =>
+                  setState((current) =>
+                    current === undefined
+                      ? current
+                      : updateRendererThread(
+                          current,
+                          activeThread.id,
+                          (thread) => ({
+                            ...thread,
+                            diffScopeKind: preferences.scopeKind,
+                            diffRevision: preferences.revision,
+                            diffView: preferences.view,
+                          }),
+                        ),
+                  )
+                }
+                onOpenFile={(filePath, lineNumber) => {
+                  const workspaceRoot =
+                    activeThreadWorkspace?.workspaceRoot ??
+                    activeThread.projectPath;
+                  const project = activeProject;
+                  if (workspaceRoot && project)
+                    void window.kestrelDesktop.openFileEditor({
+                      projectPath: workspaceRoot,
+                      filePath,
+                      projectLabel: project.label,
+                      threadId: activeThread.sessionId,
+                      ...(lineNumber ? { lineNumber } : {}),
+                    });
+                }}
+                onError={setError}
+              />
+            ) : surface === "terminal" ? (
+              <TerminalWorkspace
+                sessionId={activeThread.sessionId}
+                threadId={activeThread.sessionId}
+                onAttachOutput={attachTerminalOutput}
+                onError={setError}
+              />
+            ) : surface === "review" ? (
+              <ReviewWorkspace
+                sessionId={activeThread.sessionId}
+                threadId={activeThread.sessionId}
+                defaultBaseRef={activeThread.workspaceBaseRef}
+                onOpenFile={(filePath, lineNumber) => {
+                  const workspaceRoot =
+                    activeThreadWorkspace?.workspaceRoot ??
+                    activeThread.projectPath;
+                  const project = activeProject;
+                  if (workspaceRoot && project)
+                    void window.kestrelDesktop.openFileEditor({
+                      projectPath: workspaceRoot,
+                      filePath,
+                      projectLabel: project.label,
+                      threadId: activeThread.sessionId,
+                      ...(lineNumber ? { lineNumber } : {}),
+                    });
+                }}
+                onError={setError}
+              />
+            ) : surface === "validation" ? (
+              <ValidationWorkspace
+                sessionId={activeThread.sessionId}
+                threadId={activeThread.sessionId}
+                onOpenFile={(filePath, lineNumber) => {
+                  const workspaceRoot =
+                    activeThreadWorkspace?.workspaceRoot ??
+                    activeThread.projectPath;
+                  const project = activeProject;
+                  if (workspaceRoot && project)
+                    void window.kestrelDesktop.openFileEditor({
+                      projectPath: workspaceRoot,
+                      filePath,
+                      projectLabel: project.label,
+                      threadId: activeThread.sessionId,
+                      ...(lineNumber ? { lineNumber } : {}),
+                    });
+                }}
+                onError={setError}
+              />
+            ) : surface === "git" ? (
+              <GitWorkspace
+                sessionId={activeThread.sessionId}
+                threadId={activeThread.sessionId}
+                defaultBaseRef={activeThread.workspaceBaseRef}
+                executionSelection={toDesktopExecutionSelection(activeThread, settings?.apps ?? [])}
+                onError={setError}
+              />
+            ) : surface === "preview" ? (
+              <PreviewWorkspace
+                projectPath={activeThread.projectPath ?? activeProject?.path}
+                threadId={activeThread.sessionId}
+                onAttachVisualFeedback={attachVisualFeedback}
                 onError={setError}
               />
             ) : surface === "mcp" ? (
@@ -1039,9 +1573,9 @@ export function DesktopApp() {
             onResizeStart={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId);
               const startX = event.clientX;
-              const startWidth = sidebarWidth;
+              const startWidth = inspectorWidth;
               const move = (pointerEvent: PointerEvent) => {
-                setSidebarWidth(Math.min(420, Math.max(248, startWidth + startX - pointerEvent.clientX)));
+                setInspectorWidth(clampInspectorWidth(startWidth + startX - pointerEvent.clientX));
               };
               const stop = () => {
                 window.removeEventListener("pointermove", move);
@@ -1170,27 +1704,31 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
   }
   if (event.type === "run.model.reasoning.delta") {
     const update = asRecord(event.payload.update);
-    if (update?.contentState === "not_retained") return "Provider reasoning was not retained";
-    const label = update?.format === "summary"
-      ? "Provider reasoning summary"
-      : update?.format === "provider_thinking"
-        ? "Provider-visible thinking"
-        : "Provider reasoning";
+    if (update?.contentState === "not_retained")
+      return "Provider reasoning was not retained";
+    const label =
+      update?.format === "summary"
+        ? "Provider reasoning summary"
+        : update?.format === "provider_thinking"
+          ? "Provider-visible thinking"
+          : "Provider reasoning";
     return `${label} (attempt ${String(update?.attempt ?? 1)}): ${readString(update?.delta) ?? "Thinking"}`;
   }
   if (event.type === "run.model.reasoning.unavailable") {
     return "Provider reasoning unavailable for this model";
   }
   if (
-    event.type === "run.tool.started"
-    || event.type === "run.tool.completed"
-    || event.type === "run.tool.failed"
+    event.type === "run.tool.started" ||
+    event.type === "run.tool.completed" ||
+    event.type === "run.tool.failed"
   ) {
     const payload = asRecord(event.payload);
     const update = asRecord(payload?.update);
-    return readString(update?.toolName)
-      ?? readString(payload?.toolName)
-      ?? "Using tool";
+    return (
+      readString(update?.toolName) ??
+      readString(payload?.toolName) ??
+      "Using tool"
+    );
   }
   if (event.type === "run.completed") {
     return "Ready";
@@ -1206,101 +1744,89 @@ function describeRunnerActivity(event: DesktopRunnerEvent): string {
 
 function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
   if (event.type !== "run.completed") {
-    return ;
+    return;
   }
   const result = asRecord(event.payload.result);
   return readString(result?.assistantText);
 }
 
-export function extractTerminalFailure(
-  event: DesktopRunnerEvent,
-  selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
-): { message: string; capabilityId?: DesktopCapabilityId | undefined } | undefined {
-  if (event.type !== "run.failed") {
-    return ;
-  }
-  const error = asRecord(event.payload.error);
-  const code = readString(error?.code);
-  const details = asRecord(error?.details);
-  const explicitCapabilityId = readDesktopCapabilityId(details?.capabilityId);
-  return {
-    message: readString(error?.message) ?? code ?? "Run failed.",
-    capabilityId: explicitCapabilityId ?? capabilityForRuntimeFailureCode(code, selectedProvider),
-  };
-}
-
-function capabilityForRuntimeFailureCode(
-  code: string | undefined,
-  selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
-): DesktopCapabilityId | undefined {
-  if (code === "IO_MODEL_FAILED" || code === "IO_MODEL_TIMEOUT" || code === "MODEL_POLICY_INVALID") {
-    return selectedProvider === undefined ? undefined : `model.${selectedProvider}`;
-  }
-  if (MCP_FAILURE_CODES.has(code ?? "")) return "connections.mcp";
-  if (DEV_SHELL_FAILURE_CODES.has(code ?? "")) return "local.developer_shell";
-  if (DATABASE_FAILURE_CODES.has(code ?? "")) return "data.database";
-  if (code === "STORE_SQLITE_INIT_FAILED") return "data.database";
-  return ;
-}
-
-const MCP_FAILURE_CODES = new Set([
-  "MCP_CLIENT_METHOD_MISSING", "MCP_ENV_VAR_REQUIRED", "MCP_HEADER_ENV_REQUIRED",
-  "MCP_HTTP_TRANSPORT_UNAVAILABLE", "MCP_PRECHECK_FAILED", "MCP_SDK_CLIENT_MISSING",
-  "MCP_SSE_TRANSPORT_UNAVAILABLE", "MCP_STDIO_TRANSPORT_UNAVAILABLE", "MCP_TOOL_UNAVAILABLE",
-  "MCP_HOSTED_SCOPE_UNAVAILABLE", "MCP_TOOL_NAME_COLLISION",
-]);
-const DEV_SHELL_FAILURE_CODES = new Set([
-  "DEV_SHELL_COMMAND_INVALID", "DEV_SHELL_CWD_NOT_FOUND", "DEV_SHELL_CWD_OUTSIDE_WORKSPACE",
-  "DEV_SHELL_PATH_OUTSIDE_WORKSPACE", "DEV_SHELL_PROCESS_NOT_FOUND", "DEV_SHELL_PROCESS_NOT_RUNNING",
-  "DEV_SHELL_SHELL_UNAVAILABLE", "DEV_SHELL_SOURCE_WRITE_AUTHORITY_DENIED", "DEV_SHELL_WORKSPACE_NOT_FOUND",
-  "DEV_SHELL_SERVICE_REQUEST_FAILED", "DEV_SHELL_SERVICE_UNAVAILABLE", "DEV_SHELL_MIGRATION_FAILED",
-]);
-const DATABASE_FAILURE_CODES = new Set([
-  "STORE_DATABASE_URL_REQUIRED", "STORE_ENSURE_SESSION_FAILED", "STORE_SCHEMA_V3_REQUIRED",
-  "DATABASE_UNREACHABLE", "DATABASE_URL_INVALID", "LOCAL_CORE_DATABASE_BLOCKED",
-  "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED", "LOCAL_CORE_EXTERNAL_DATABASE_URL_REQUIRED",
-  "LOCAL_CORE_PGLITE_INIT_FAILED", "LOCAL_CORE_MIGRATIONS_BLOCKED", "LOCAL_CORE_MIGRATION_FAILED",
-]);
-
-function readDesktopCapabilityId(value: unknown): DesktopCapabilityId | undefined {
-  const ids: DesktopCapabilityId[] = [
-    "model.openrouter", "model.openai", "model.anthropic", "model.ollama", "model.lmstudio",
-    "tools.internet.tavily", "tools.weather", "tools.network.free", "local.filesystem",
-    "local.developer_shell", "local.sandbox_code", "connections.mcp", "data.workspace",
-    "data.database", "permission.microphone",
-  ];
-  return typeof value === "string" && ids.includes(value as DesktopCapabilityId) ? value as DesktopCapabilityId : undefined;
-}
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false
-    ? value as Record<string, unknown>
+  return typeof value === "object" &&
+    value !== null &&
+    Array.isArray(value) === false
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function modeLabel(mode: RendererMode): string {
   return mode === "chat" ? "Chat" : mode === "plan" ? "Plan" : "Build";
 }
 
-function surfaceTitle(
-  surface: DesktopSurface,
-  threadTitle: string,
-  projectLabel: string | undefined
-) {
+function surfacePageTitle(surface: DesktopSurface): string {
   if (surface === "chat") {
-    return threadTitle;
+    return "Conversation";
   }
   if (surface === "projects") {
-    return projectLabel ?? "Projects";
+    return "Projects";
   }
   if (surface === "mission-control") {
     return "Mission control";
   }
-  return surface === "mcp" ? "MCP servers" : surface === "settings" ? "Settings" : "Diagnostics";
+  if (surface === "terminal") {
+    return "Terminal";
+  }
+  if (surface === "diff") {
+    return "Diff";
+  }
+  if (surface === "review") return "Review";
+  if (surface === "validation") return "Validation";
+  if (surface === "git") return "Git and pull requests";
+  if (surface === "preview") return "Preview";
+  if (surface === "mcp") return "MCP servers";
+  return surface === "settings" ? "Settings" : "Diagnostics";
+}
+
+function parseDesktopSurface(value: string | undefined): DesktopSurface {
+  return value === "mission-control" ||
+    value === "projects" ||
+    value === "diff" ||
+    value === "review" ||
+    value === "validation" ||
+    value === "git" ||
+    value === "preview" ||
+    value === "terminal" ||
+    value === "mcp" ||
+    value === "settings" ||
+    value === "diagnostics"
+    ? value
+    : "chat";
+}
+
+function clampInspectorWidth(value: number): number {
+  return Number.isFinite(value)
+    ? Math.max(240, Math.min(520, Math.round(value)))
+    : 288;
+}
+
+function providerLabel(
+  provider: DesktopRendererSettings["selectedProvider"],
+): string {
+  if (provider === "openrouter") {
+    return "OpenRouter";
+  }
+  if (provider === "openai") {
+    return "OpenAI";
+  }
+  if (provider === "anthropic") {
+    return "Anthropic";
+  }
+  return provider === "ollama" ? "Ollama" : "LM Studio";
 }
 
 function formatThreadTime(value: string): string {
@@ -1312,9 +1838,73 @@ function formatThreadTime(value: string): string {
 }
 
 function formatMessageTime(value: string): string {
-  return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatBytes(value: number): string {
+  return value < 1024
+    ? `${value} B`
+    : value < 1024 * 1024
+      ? `${(value / 1024).toFixed(1)} KB`
+      : `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
+}
+
+function fileName(filePath: string): string {
+  return filePath.split(/[\\/]/u).at(-1) ?? filePath;
+}
+
+function desktopTextMimeType(
+  language: string | undefined,
+  viewKind: string,
+): string {
+  if (viewKind === "markdown") {
+    return "text/markdown";
+  }
+  if (language === "json") {
+    return "application/json";
+  }
+  return "text/plain";
+}
+
+async function sha256Hex(value: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function buildManagedWorkspaceSetup(thread: RendererThread) {
+  const approvedIgnoredFiles = thread.workspaceSetupIgnoredFiles
+    .split("\n")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const executable = thread.workspaceSetupExecutable.trim();
+  const args = thread.workspaceSetupArgs
+    .split("\n")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (approvedIgnoredFiles.length === 0 && executable.length === 0) {
+    return;
+  }
+  return {
+    approvedIgnoredFiles,
+    steps:
+      executable.length === 0
+        ? []
+        : [
+            {
+              id: "desktop-environment-setup",
+              label: "Desktop environment setup",
+              executable,
+              args,
+            },
+          ],
+  };
 }

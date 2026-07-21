@@ -9,6 +9,9 @@ import {
 } from "../../src/events/RuntimeEventProjections.js";
 import type {
   McpStatusSnapshot,
+  ManagedTaskWorktreeCleanupResult,
+  ManagedTaskWorktreeBinding,
+  ManagedTaskWorktreeLifecycleInspection,
   ProductProjectSnapshot,
   ProductReviewDetail,
   ProductTaskGraph,
@@ -21,12 +24,20 @@ import type {
   RunLogEntry,
   RunToolUpdateV1,
   ToolRuntimeStatus,
+  UserTerminalReadResult,
+  UserTerminalRecord,
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
   WorkspaceDiffRecord,
   WorkspacePromotionPreview,
   WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
+  WorkspaceChangeMutationResult,
+  WorkspaceChangeSnapshot,
+  WorkspaceFeedbackSnapshot,
+  WorkspaceReviewSnapshot,
+  WorkspaceValidationSnapshot,
+  WorkspaceGitSnapshot,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -63,6 +74,28 @@ import type {
   SessionStateCommandPayload,
   TaskGraphGetCommandPayload,
   TaskGraphUpdateCommandPayload,
+  UserTerminalListCommandPayload,
+  UserTerminalReadCommandPayload,
+  UserTerminalResizeCommandPayload,
+  UserTerminalStartCommandPayload,
+  UserTerminalStopCommandPayload,
+  UserTerminalWriteCommandPayload,
+  WorkspaceChangesInspectCommandPayload,
+  WorkspaceChangesMutateCommandPayload,
+  WorkspaceFeedbackAddCommandPayload,
+  WorkspaceFeedbackListCommandPayload,
+  WorkspaceFeedbackRemoveCommandPayload,
+  WorkspaceFeedbackSubmitCommandPayload,
+  WorkspaceReviewRunCommandPayload,
+  WorkspaceReviewListCommandPayload,
+  WorkspaceReviewUpdateCommandPayload,
+  WorkspaceReviewSubmitCommandPayload,
+  WorkspaceValidationInspectCommandPayload,
+  WorkspaceValidationRunCommandPayload,
+  WorkspaceValidationCancelCommandPayload,
+  WorkspaceValidationSubmitCommandPayload,
+  WorkspaceGitInspectCommandPayload,
+  WorkspaceGitActionCommandPayload,
   WorkspaceCheckpointCaptureCommandPayload,
   WorkspaceCheckpointCleanupCommandPayload,
   WorkspaceCheckpointDiffCommandPayload,
@@ -73,6 +106,10 @@ import type {
   WorkspacePromotionListCommandPayload,
   WorkspacePromotionPreviewCommandPayload,
   WorkspacePromotionUndoLatestCommandPayload,
+  WorkspaceManagedCleanupCommandPayload,
+  WorkspaceManagedInspectCommandPayload,
+  WorkspaceManagedRestoreCommandPayload,
+  WorkspaceManagedSetupRetryCommandPayload,
 } from "../protocol/contracts.js";
 import {
   type DelegationTaskUpdate,
@@ -281,6 +318,54 @@ export interface RunnerRuntime {
         promotion: WorkspacePromotionRecord;
       }>)
     | undefined;
+  inspectManagedWorktree?:
+    | ((input: WorkspaceManagedInspectCommandPayload) => Promise<{
+        sessionId: string;
+        inspection: ManagedTaskWorktreeLifecycleInspection;
+      }>)
+    | undefined;
+  cleanupManagedWorktree?:
+    | ((input: WorkspaceManagedCleanupCommandPayload & { cleanedBy?: string | undefined }) => Promise<{
+        sessionId: string;
+        checkpoint: WorkspaceCheckpointDetail;
+        cleanup: ManagedTaskWorktreeCleanupResult;
+      }>)
+    | undefined;
+  restoreManagedWorktree?:
+    | ((input: WorkspaceManagedRestoreCommandPayload & { restoredBy?: string | undefined }) => Promise<{
+        sessionId: string;
+        binding: ManagedTaskWorktreeBinding;
+        restore: WorkspaceRestoreRecord;
+      }>)
+    | undefined;
+  retryManagedWorktreeSetup?:
+    | ((input: WorkspaceManagedSetupRetryCommandPayload) => Promise<{
+        sessionId: string;
+        inspection: ManagedTaskWorktreeLifecycleInspection;
+      }>)
+    | undefined;
+  startUserTerminal?: ((input: UserTerminalStartCommandPayload) => Promise<UserTerminalRecord>) | undefined;
+  listUserTerminals?: ((input: UserTerminalListCommandPayload) => Promise<UserTerminalRecord[]>) | undefined;
+  readUserTerminal?: ((input: UserTerminalReadCommandPayload) => Promise<UserTerminalReadResult>) | undefined;
+  writeUserTerminal?: ((input: UserTerminalWriteCommandPayload) => Promise<UserTerminalRecord>) | undefined;
+  resizeUserTerminal?: ((input: UserTerminalResizeCommandPayload) => Promise<UserTerminalRecord>) | undefined;
+  stopUserTerminal?: ((input: UserTerminalStopCommandPayload) => Promise<UserTerminalRecord>) | undefined;
+  inspectWorkspaceChanges?: ((input: WorkspaceChangesInspectCommandPayload) => Promise<WorkspaceChangeSnapshot>) | undefined;
+  mutateWorkspaceChanges?: ((input: WorkspaceChangesMutateCommandPayload) => Promise<WorkspaceChangeMutationResult>) | undefined;
+  addWorkspaceFeedback?: ((input: WorkspaceFeedbackAddCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
+  listWorkspaceFeedback?: ((input: WorkspaceFeedbackListCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
+  removeWorkspaceFeedback?: ((input: WorkspaceFeedbackRemoveCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
+  submitWorkspaceFeedback?: ((input: WorkspaceFeedbackSubmitCommandPayload) => Promise<{ snapshot: WorkspaceFeedbackSnapshot; result: RunTurnResult }>) | undefined;
+  runWorkspaceReview?: ((input: WorkspaceReviewRunCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
+  listWorkspaceReviews?: ((input: WorkspaceReviewListCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
+  updateWorkspaceReviewFinding?: ((input: WorkspaceReviewUpdateCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
+  submitWorkspaceReviewFindings?: ((input: WorkspaceReviewSubmitCommandPayload) => Promise<{ snapshot: WorkspaceReviewSnapshot; result: RunTurnResult }>) | undefined;
+  inspectWorkspaceValidation?: ((input: WorkspaceValidationInspectCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
+  runWorkspaceValidation?: ((input: WorkspaceValidationRunCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
+  cancelWorkspaceValidation?: ((input: WorkspaceValidationCancelCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
+  submitWorkspaceValidationFailures?: ((input: WorkspaceValidationSubmitCommandPayload) => Promise<{ snapshot: WorkspaceValidationSnapshot; result: RunTurnResult }>) | undefined;
+  inspectWorkspaceGit?: ((input: WorkspaceGitInspectCommandPayload) => Promise<WorkspaceGitSnapshot>) | undefined;
+  performWorkspaceGitAction?: ((input: WorkspaceGitActionCommandPayload) => Promise<WorkspaceGitSnapshot>) | undefined;
   getSessionState?:
     | ((sessionId: string) => Promise<
         | {
@@ -1779,6 +1864,264 @@ export class RunnerHost {
       },
       { commandId }
     );
+  }
+
+  async workspaceManagedInspect(
+    commandId: string,
+    payload: WorkspaceManagedInspectCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.inspectManagedWorktree === "function") {
+        const response = await runtime.inspectManagedWorktree(payload);
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "managed.inspect",
+            managedInspection: response.inspection,
+          },
+          { commandId, sessionId: response.sessionId },
+        );
+        return;
+      }
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Managed worktree inspection is unavailable.",
+    }, { commandId });
+  }
+
+  async workspaceManagedCleanup(
+    commandId: string,
+    payload: WorkspaceManagedCleanupCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.cleanupManagedWorktree === "function") {
+        const response = await runtime.cleanupManagedWorktree({
+          ...payload,
+          ...(metadata?.actor?.actorId ? { cleanedBy: metadata.actor.actorId } : {}),
+        });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "managed.cleanup",
+            managedCleanup: response.cleanup,
+            cleanupCheckpoint: response.checkpoint,
+          },
+          { commandId, sessionId: response.sessionId },
+        );
+        return;
+      }
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Managed worktree cleanup is unavailable.",
+    }, { commandId });
+  }
+
+  async workspaceManagedRestore(
+    commandId: string,
+    payload: WorkspaceManagedRestoreCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.restoreManagedWorktree === "function") {
+        const response = await runtime.restoreManagedWorktree({
+          ...payload,
+          ...(metadata?.actor?.actorId ? { restoredBy: metadata.actor.actorId } : {}),
+        });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "managed.restore",
+            managedBinding: response.binding,
+            restore: response.restore,
+          },
+          { commandId, sessionId: response.sessionId },
+        );
+        return;
+      }
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Managed worktree restore is unavailable.",
+    }, { commandId });
+  }
+
+  async workspaceManagedSetupRetry(
+    commandId: string,
+    payload: WorkspaceManagedSetupRetryCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.retryManagedWorktreeSetup === "function") {
+        const response = await runtime.retryManagedWorktreeSetup(payload);
+        this.writer.emit("workspace.checkpoint", {
+          sessionId: response.sessionId,
+          operation: "managed.setup.retry",
+          managedInspection: response.inspection,
+        }, { commandId, sessionId: response.sessionId });
+        return;
+      }
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Managed worktree setup retry is unavailable.",
+    }, { commandId });
+  }
+
+  async userTerminalStart(commandId: string, payload: UserTerminalStartCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "start", "startUserTerminal", payload);
+  }
+
+  async userTerminalList(commandId: string, payload: UserTerminalListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "list", "listUserTerminals", payload);
+  }
+
+  async userTerminalRead(commandId: string, payload: UserTerminalReadCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "read", "readUserTerminal", payload);
+  }
+
+  async userTerminalWrite(commandId: string, payload: UserTerminalWriteCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "write", "writeUserTerminal", payload);
+  }
+
+  async userTerminalResize(commandId: string, payload: UserTerminalResizeCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "resize", "resizeUserTerminal", payload);
+  }
+
+  async userTerminalStop(commandId: string, payload: UserTerminalStopCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runUserTerminalCommand(commandId, payload.sessionId, metadata, "stop", "stopUserTerminal", payload);
+  }
+
+  private async runUserTerminalCommand(
+    commandId: string,
+    sessionId: string,
+    metadata: RunnerCommandMetadata | undefined,
+    operation: "start" | "list" | "read" | "write" | "resize" | "stop",
+    method: "startUserTerminal" | "listUserTerminals" | "readUserTerminal" | "writeUserTerminal" | "resizeUserTerminal" | "stopUserTerminal",
+    payload: UserTerminalStartCommandPayload | UserTerminalListCommandPayload | UserTerminalReadCommandPayload | UserTerminalWriteCommandPayload | UserTerminalResizeCommandPayload | UserTerminalStopCommandPayload,
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as ((input: typeof payload) => Promise<UserTerminalRecord | UserTerminalRecord[] | UserTerminalReadResult>) | undefined;
+      if (typeof handler !== "function") {
+        continue;
+      }
+      const response = await handler.call(runtime, payload);
+      const eventPayload = Array.isArray(response)
+        ? { sessionId, operation, terminals: response }
+        : operation === "read" && "output" in response
+          ? { sessionId, operation, terminal: response.terminal, output: response.output, cursor: response.cursor, nextCursor: response.nextCursor, truncated: response.truncated }
+          : { sessionId, operation, terminal: response as UserTerminalRecord };
+      this.writer.emit("user.terminal", eventPayload, { commandId, sessionId });
+      return;
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: `User terminal ${operation} is unavailable.`,
+    }, { commandId, sessionId });
+  }
+
+  async workspaceChangesInspect(commandId: string, payload: WorkspaceChangesInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.inspectWorkspaceChanges !== "function") continue;
+      const snapshot = await runtime.inspectWorkspaceChanges(payload);
+      this.writer.emit("workspace.changes", { sessionId: payload.sessionId, threadId: payload.threadId, operation: "inspect", snapshot }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: "Workspace change inspection is unavailable." }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  }
+
+  async workspaceChangesMutate(commandId: string, payload: WorkspaceChangesMutateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.mutateWorkspaceChanges !== "function") continue;
+      const result = await runtime.mutateWorkspaceChanges(payload);
+      this.writer.emit("workspace.changes", {
+        sessionId: payload.sessionId,
+        threadId: payload.threadId,
+        operation: "mutate",
+        snapshot: result.snapshot,
+        previousFingerprint: result.previousFingerprint,
+        mutationOperation: result.operation,
+      }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: "Workspace change mutation is unavailable." }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  }
+
+  async workspaceFeedbackAdd(commandId: string, payload: WorkspaceFeedbackAddCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "add", "addWorkspaceFeedback"); }
+  async workspaceFeedbackList(commandId: string, payload: WorkspaceFeedbackListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "list", "listWorkspaceFeedback"); }
+  async workspaceFeedbackRemove(commandId: string, payload: WorkspaceFeedbackRemoveCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "remove", "removeWorkspaceFeedback"); }
+  async workspaceFeedbackSubmit(commandId: string, payload: WorkspaceFeedbackSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "submit", "submitWorkspaceFeedback"); }
+
+  private async runWorkspaceFeedbackCommand(
+    commandId: string,
+    payload: WorkspaceFeedbackAddCommandPayload | WorkspaceFeedbackListCommandPayload | WorkspaceFeedbackRemoveCommandPayload | WorkspaceFeedbackSubmitCommandPayload,
+    metadata: RunnerCommandMetadata | undefined,
+    operation: "add" | "list" | "remove" | "submit",
+    method: "addWorkspaceFeedback" | "listWorkspaceFeedback" | "removeWorkspaceFeedback" | "submitWorkspaceFeedback",
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceFeedbackSnapshot | { snapshot: WorkspaceFeedbackSnapshot; result: RunTurnResult }>) | undefined;
+      if (typeof handler !== "function") continue;
+      const response = await handler.call(runtime, payload);
+      const snapshot = "snapshot" in response ? response.snapshot : response;
+      const submissionRunId = "result" in response ? response.result.output.runId : undefined;
+      this.writer.emit("workspace.feedback", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(submissionRunId ? { submissionRunId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace feedback ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  }
+
+  async workspaceReviewRun(commandId: string, payload: WorkspaceReviewRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "run", "runWorkspaceReview"); }
+  async workspaceReviewList(commandId: string, payload: WorkspaceReviewListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "list", "listWorkspaceReviews"); }
+  async workspaceReviewUpdate(commandId: string, payload: WorkspaceReviewUpdateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "update", "updateWorkspaceReviewFinding"); }
+  async workspaceReviewSubmit(commandId: string, payload: WorkspaceReviewSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "submit", "submitWorkspaceReviewFindings"); }
+
+  private async runWorkspaceReviewCommand(commandId: string, payload: WorkspaceReviewRunCommandPayload | WorkspaceReviewListCommandPayload | WorkspaceReviewUpdateCommandPayload | WorkspaceReviewSubmitCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "run" | "list" | "update" | "submit", method: "runWorkspaceReview" | "listWorkspaceReviews" | "updateWorkspaceReviewFinding" | "submitWorkspaceReviewFindings"): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceReviewSnapshot | { snapshot: WorkspaceReviewSnapshot; result: RunTurnResult }>) | undefined;
+      if (typeof handler !== "function") continue;
+      const response = await handler.call(runtime, payload); const snapshot = "snapshot" in response ? response.snapshot : response; const runId = "result" in response ? response.result.output.runId : undefined;
+      this.writer.emit("workspace.review", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(runId ? { runId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId }); return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace review ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  }
+
+  async workspaceValidationInspect(commandId: string, payload: WorkspaceValidationInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceValidation"); }
+  async workspaceValidationRun(commandId: string, payload: WorkspaceValidationRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "run", "runWorkspaceValidation"); }
+  async workspaceValidationCancel(commandId: string, payload: WorkspaceValidationCancelCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "cancel", "cancelWorkspaceValidation"); }
+  async workspaceValidationSubmit(commandId: string, payload: WorkspaceValidationSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "submit", "submitWorkspaceValidationFailures"); }
+
+  private async runWorkspaceValidationCommand(commandId: string, payload: WorkspaceValidationInspectCommandPayload | WorkspaceValidationRunCommandPayload | WorkspaceValidationCancelCommandPayload | WorkspaceValidationSubmitCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "inspect" | "run" | "cancel" | "submit", method: "inspectWorkspaceValidation" | "runWorkspaceValidation" | "cancelWorkspaceValidation" | "submitWorkspaceValidationFailures"): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceValidationSnapshot | { snapshot: WorkspaceValidationSnapshot; result: RunTurnResult }>) | undefined;
+      if (typeof handler !== "function") continue;
+      const response = await handler.call(runtime, payload);
+      const snapshot = "snapshot" in response ? response.snapshot : response;
+      const runId = "result" in response ? response.result.output.runId : undefined;
+      this.writer.emit("workspace.validation", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(runId ? { runId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace validation ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  }
+
+  async workspaceGitInspect(commandId: string, payload: WorkspaceGitInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceGitCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceGit"); }
+  async workspaceGitAction(commandId: string, payload: WorkspaceGitActionCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceGitCommand(commandId, payload, metadata, "action", "performWorkspaceGitAction"); }
+
+  private async runWorkspaceGitCommand(commandId: string, payload: WorkspaceGitInspectCommandPayload | WorkspaceGitActionCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "inspect" | "action", method: "inspectWorkspaceGit" | "performWorkspaceGitAction"): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceGitSnapshot>) | undefined;
+      if (typeof handler !== "function") continue;
+      const snapshot = await handler.call(runtime, payload);
+      this.writer.emit("workspace.git", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace Git ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
   }
 
   async projectSnapshotUpdate(

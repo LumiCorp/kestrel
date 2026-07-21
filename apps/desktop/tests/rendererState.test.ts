@@ -5,6 +5,7 @@ import {
   acceptRendererPrompt,
   addRendererThread,
   appendRendererTranscript,
+  createRendererThread,
   getRendererTurnContinuation,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
@@ -19,6 +20,39 @@ import {
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 
+test("new Desktop conversations default to the local checkout", () => {
+  assert.equal(createRendererThread().workspaceMode, "local");
+});
+
+test("Vite renderer preserves an explicitly managed persisted conversation", () => {
+  const state = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    capturedAt: "2026-07-20T12:00:00.000Z",
+    entries: {
+      "kchat:web:active-thread:v1": "thread-managed",
+      "kchat:web:threads:v2": JSON.stringify({
+        summaries: [
+          {
+            id: "thread-managed",
+            title: "Managed",
+            updatedAt: "2026-07-20T12:00:00.000Z",
+          },
+        ],
+        states: {
+          "thread-managed": {
+            sessionId: "session-managed",
+            workspaceMode: "managed",
+            transcript: [],
+          },
+        },
+      }),
+    },
+  });
+
+  assert.equal(state.threads[0]?.workspaceMode, "managed");
+});
+
 test("Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
@@ -29,23 +63,31 @@ test("Vite renderer hydrates legacy threads and preserves unknown persisted fiel
       "kchat:web:active-thread:v1": "thread-1",
       "kchat:web:theme-mode": "dark",
       "kchat:web:threads:v2": JSON.stringify({
-        summaries: [{
-          id: "thread-1",
-          title: "Existing thread",
-          createdAt: "2026-07-09T10:00:00.000Z",
-          updatedAt: "2026-07-09T11:00:00.000Z",
-          titleLocked: true,
-        }],
+        summaries: [
+          {
+            id: "thread-1",
+            title: "Existing thread",
+            createdAt: "2026-07-09T10:00:00.000Z",
+            updatedAt: "2026-07-09T11:00:00.000Z",
+            titleLocked: true,
+          },
+        ],
         states: {
           "thread-1": {
             sessionId: "session-1",
             interactionMode: "plan",
             runtimeThreadId: "runtime-thread-1",
-            transcript: [{
-              role: "user",
-              text: "Keep this message",
-              timestamp: "2026-07-09T11:00:00.000Z",
-            }],
+            openFiles: ["/workspace/project/src/app.ts"],
+            diffScopeKind: "pull_request",
+            diffRevision: "17",
+            diffView: "side-by-side",
+            transcript: [
+              {
+                role: "user",
+                text: "Keep this message",
+                timestamp: "2026-07-09T11:00:00.000Z",
+              },
+            ],
           },
         },
       }),
@@ -55,6 +97,20 @@ test("Vite renderer hydrates legacy threads and preserves unknown persisted fiel
   assert.equal(state.activeThreadId, "thread-1");
   assert.equal(state.theme, "dark");
   assert.equal(state.threads[0]?.mode, "plan");
+  assert.equal(state.threads[0]?.workspaceMode, "local");
+  assert.equal(state.threads[0]?.workspaceBaseRef, "HEAD");
+  assert.equal(state.threads[0]?.workspaceSetupExecutable, "");
+  assert.deepEqual(state.threads[0]?.openFiles, [
+    "/workspace/project/src/app.ts",
+  ]);
+  assert.deepEqual(
+    [
+      state.threads[0]?.diffScopeKind,
+      state.threads[0]?.diffRevision,
+      state.threads[0]?.diffView,
+    ],
+    ["pull_request", "17", "side-by-side"],
+  );
 
   const next = appendRendererTranscript(state, "thread-1", {
     role: "assistant",
@@ -68,6 +124,20 @@ test("Vite renderer hydrates legacy threads and preserves unknown persisted fiel
   };
   assert.equal(store.summaries[0]?.titleLocked, true);
   assert.equal(store.states["thread-1"]?.runtimeThreadId, "runtime-thread-1");
+  assert.equal(store.states["thread-1"]?.workspaceMode, "local");
+  assert.equal(store.states["thread-1"]?.workspaceBaseRef, "HEAD");
+  assert.equal(store.states["thread-1"]?.workspaceSetupExecutable, "");
+  assert.deepEqual(store.states["thread-1"]?.openFiles, [
+    "/workspace/project/src/app.ts",
+  ]);
+  assert.deepEqual(
+    [
+      store.states["thread-1"]?.diffScopeKind,
+      store.states["thread-1"]?.diffRevision,
+      store.states["thread-1"]?.diffView,
+    ],
+    ["pull_request", "17", "side-by-side"],
+  );
   assert.equal((store.states["thread-1"]?.transcript as unknown[]).length, 2);
 });
 
@@ -80,11 +150,13 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     entries: {
       "kchat:web:active-thread:v1": "thread-waiting",
       "kchat:web:threads:v2": JSON.stringify({
-        summaries: [{
-          id: "thread-waiting",
-          title: "Waiting",
-          updatedAt: "2026-07-09T12:00:00.000Z",
-        }],
+        summaries: [
+          {
+            id: "thread-waiting",
+            title: "Waiting",
+            updatedAt: "2026-07-09T12:00:00.000Z",
+          },
+        ],
         states: {
           "thread-waiting": {
             sessionId: "session-waiting",
@@ -96,14 +168,11 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     },
   });
 
-  assert.deepEqual(
-    getRendererTurnContinuation(state.threads[0]!),
-    {
-      eventType: "user.approval",
-      resumeFromWait: true,
-      resumeBlockedRun: true,
-    },
-  );
+  assert.deepEqual(getRendererTurnContinuation(state.threads[0]!), {
+    eventType: "user.approval",
+    resumeFromWait: true,
+    resumeBlockedRun: true,
+  });
   const terminal = {
     id: "event-waiting",
     type: "run.completed",
@@ -161,15 +230,14 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
     capturedAt: "2026-07-09T12:01:00.000Z",
     entries: serialized,
   });
-  assert.equal(
-    hydrated.threads[0]?.pendingWaitEventType,
-    "user.approval",
-  );
+  assert.equal(hydrated.threads[0]?.pendingWaitEventType, "user.approval");
 });
 
 test("Vite renderer persists a project binding on project conversations", () => {
   const initial = readDesktopRendererState(null);
-  const scoped = addRendererThread(initial, { projectPath: "/workspace/project-a" });
+  const scoped = addRendererThread(initial, {
+    projectPath: "/workspace/project-a",
+  });
   const serialized = serializeDesktopRendererState(scoped);
   const hydrated = readDesktopRendererState({
     version: "desktop-ui-state-v1",
@@ -211,8 +279,33 @@ test("Vite renderer preserves a conversation project binding over the currently 
   assert.equal(projectPath, "/workspace/project-a");
 });
 
+test("Vite renderer prefers the authoritative thread workspace over renderer selection", () => {
+  const projectPath = resolveRendererThreadProjectPath({
+    thread: { projectPath: "/workspace/project-a" },
+    authoritativeProjectPath: "/workspace/project-b",
+    activeProjectPath: "/workspace/project-c",
+    projects: [
+      { path: "/workspace/project-a" },
+      { path: "/workspace/project-b" },
+      { path: "/workspace/project-c" },
+    ],
+  });
+
+  assert.equal(projectPath, "/workspace/project-b");
+});
+
 test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {
   const state = readDesktopRendererState(null);
+  const attachment = {
+    attachmentId: "attachment-1",
+    threadId: state.threads[0]!.sessionId,
+    filename: "app.ts",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    sha256: "a".repeat(64),
+    kind: "text" as const,
+    text: "hello",
+  };
   const thread = {
     ...state.threads[0]!,
     transcript: [
@@ -220,6 +313,7 @@ test("Vite renderer submits only tagged runtime waiting prompts as system histor
         role: "user" as const,
         text: "Inspect the workspace",
         timestamp: "2026-07-09T12:00:00.000Z",
+        attachments: [attachment],
       },
       {
         role: "system" as const,
@@ -240,6 +334,7 @@ test("Vite renderer submits only tagged runtime waiting prompts as system histor
       role: "user",
       text: "Inspect the workspace",
       timestamp: "2026-07-09T12:00:00.000Z",
+      attachments: [attachment],
     },
     {
       role: "system",
@@ -247,6 +342,21 @@ test("Vite renderer submits only tagged runtime waiting prompts as system histor
       timestamp: "2026-07-09T12:00:02.000Z",
       data: { kind: "runtime.waiting_prompt", runId: "run-waiting" },
     },
+  ]);
+
+  const serialized = serializeDesktopRendererState({
+    ...state,
+    threads: [thread],
+  });
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    sourceAppVersion: "0.6.0",
+    capturedAt: "2026-07-09T12:01:00.000Z",
+    entries: serialized,
+  });
+  assert.deepEqual(hydrated.threads[0]?.transcript[0]?.attachments, [
+    attachment,
   ]);
 });
 

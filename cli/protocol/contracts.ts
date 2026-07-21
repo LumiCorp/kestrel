@@ -14,6 +14,9 @@ import type {
   ProgressUpdateV1,
   AgentProgressUpdateV1,
   ModelReasoningUpdateV1,
+  ManagedTaskWorktreeCleanupResult,
+  ManagedTaskWorktreeBinding,
+  ManagedTaskWorktreeLifecycleInspection,
   RunConsoleUpdateV1,
   RunLogEntry,
   RunToolUpdateV1,
@@ -26,6 +29,16 @@ import type {
   WorkspacePromotionPreview,
   WorkspacePromotionRecord,
   WorkspaceRestoreRecord,
+  UserTerminalRecord,
+  WorkspaceChangeMutation,
+  WorkspaceChangeScope,
+  WorkspaceDiffOptions,
+  WorkspaceChangeSnapshot,
+  WorkspaceFeedbackSnapshot,
+  WorkspaceReviewSnapshot,
+  WorkspaceValidationSnapshot,
+  WorkspaceGitAction,
+  WorkspaceGitSnapshot,
 } from "../../src/index.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import type {
@@ -326,6 +339,95 @@ export interface WorkspacePromotionApplyCommandPayload {
   candidateFingerprint: string;
 }
 
+export interface WorkspaceManagedInspectCommandPayload {
+  sessionId: string;
+  threadId: string;
+}
+
+export interface WorkspaceManagedCleanupCommandPayload {
+  sessionId: string;
+  threadId: string;
+  reason: string;
+}
+
+export interface WorkspaceManagedRestoreCommandPayload {
+  sessionId: string;
+  threadId: string;
+  checkpointId: string;
+  reason?: string | undefined;
+}
+
+export interface WorkspaceManagedSetupRetryCommandPayload {
+  sessionId: string;
+  threadId: string;
+}
+
+export interface UserTerminalStartCommandPayload {
+  sessionId: string;
+  threadId: string;
+  cols?: number | undefined;
+  rows?: number | undefined;
+}
+
+export interface UserTerminalListCommandPayload {
+  sessionId: string;
+  threadId?: string | undefined;
+}
+
+export interface UserTerminalReadCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  cursor?: number | undefined;
+}
+
+export interface UserTerminalWriteCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  data: string;
+}
+
+export interface UserTerminalResizeCommandPayload {
+  sessionId: string;
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface UserTerminalStopCommandPayload {
+  sessionId: string;
+  terminalId: string;
+}
+
+export interface WorkspaceChangesInspectCommandPayload {
+  sessionId: string;
+  threadId: string;
+  scope: WorkspaceChangeScope;
+  options?: Partial<WorkspaceDiffOptions> | undefined;
+}
+
+export interface WorkspaceChangesMutateCommandPayload {
+  sessionId: string;
+  threadId: string;
+  expectedFingerprint: string;
+  scope?: WorkspaceChangeScope | undefined;
+  options?: Partial<WorkspaceDiffOptions> | undefined;
+  mutation: WorkspaceChangeMutation;
+}
+export interface WorkspaceFeedbackAddCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; path: string; line: number; side: "LEFT" | "RIGHT"; body: string }
+export interface WorkspaceFeedbackListCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceFeedbackRemoveCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; commentId: string }
+export interface WorkspaceFeedbackSubmitCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; commentIds: string[] }
+export interface WorkspaceReviewRunCommandPayload { sessionId: string; threadId: string; scope: WorkspaceChangeScope; mode?: "current_thread" | "detached_thread" | undefined; reviewerProfileId?: string | undefined; reviewerModel?: string | undefined }
+export interface WorkspaceReviewListCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceReviewUpdateCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingId: string; action: "accept" | "dismiss" | "reopen" | "mark_fixed"; reason?: string | undefined }
+export interface WorkspaceReviewSubmitCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingIds: string[]; request: "address" | "more_evidence" | "verify" }
+export interface WorkspaceValidationInspectCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceValidationRunCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; actionId?: string | undefined; suiteId?: string | undefined }
+export interface WorkspaceValidationCancelCommandPayload { sessionId: string; threadId: string; resultId: string }
+export interface WorkspaceValidationSubmitCommandPayload { sessionId: string; threadId: string; resultIds: string[] }
+export interface WorkspaceGitInspectCommandPayload { sessionId: string; threadId: string }
+export interface WorkspaceGitActionCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string | undefined; action: WorkspaceGitAction }
+
 export interface ProjectSnapshotUpdateCommandPayload {
   sessionId: string;
   snapshot: ProductProjectSnapshot;
@@ -373,6 +475,32 @@ export interface RunnerCommandPayloadByType {
   "workspace.promotion.preview": WorkspacePromotionPreviewCommandPayload;
   "workspace.promotion.apply": WorkspacePromotionApplyCommandPayload;
   "workspace.promotion.undo_latest": WorkspacePromotionUndoLatestCommandPayload;
+  "workspace.managed.inspect": WorkspaceManagedInspectCommandPayload;
+  "workspace.managed.cleanup": WorkspaceManagedCleanupCommandPayload;
+  "workspace.managed.restore": WorkspaceManagedRestoreCommandPayload;
+  "workspace.managed.setup.retry": WorkspaceManagedSetupRetryCommandPayload;
+  "user.terminal.start": UserTerminalStartCommandPayload;
+  "user.terminal.list": UserTerminalListCommandPayload;
+  "user.terminal.read": UserTerminalReadCommandPayload;
+  "user.terminal.write": UserTerminalWriteCommandPayload;
+  "user.terminal.resize": UserTerminalResizeCommandPayload;
+  "user.terminal.stop": UserTerminalStopCommandPayload;
+  "workspace.changes.inspect": WorkspaceChangesInspectCommandPayload;
+  "workspace.changes.mutate": WorkspaceChangesMutateCommandPayload;
+  "workspace.feedback.add": WorkspaceFeedbackAddCommandPayload;
+  "workspace.feedback.list": WorkspaceFeedbackListCommandPayload;
+  "workspace.feedback.remove": WorkspaceFeedbackRemoveCommandPayload;
+  "workspace.feedback.submit": WorkspaceFeedbackSubmitCommandPayload;
+  "workspace.review.run": WorkspaceReviewRunCommandPayload;
+  "workspace.review.list": WorkspaceReviewListCommandPayload;
+  "workspace.review.update": WorkspaceReviewUpdateCommandPayload;
+  "workspace.review.submit": WorkspaceReviewSubmitCommandPayload;
+  "workspace.validation.inspect": WorkspaceValidationInspectCommandPayload;
+  "workspace.validation.run": WorkspaceValidationRunCommandPayload;
+  "workspace.validation.cancel": WorkspaceValidationCancelCommandPayload;
+  "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
+  "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
+  "workspace.git.action": WorkspaceGitActionCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -646,7 +774,11 @@ export interface WorkspaceCheckpointEventPayload {
     | "promotion.list"
     | "promotion.preview"
     | "promotion.apply"
-    | "promotion.undo_latest";
+    | "promotion.undo_latest"
+    | "managed.inspect"
+    | "managed.cleanup"
+    | "managed.restore"
+    | "managed.setup.retry";
   checkpoint?: WorkspaceCheckpointDetail | undefined;
   checkpoints?: WorkspaceCheckpointRecord[] | undefined;
   diff?: WorkspaceDiffRecord | undefined;
@@ -658,7 +790,35 @@ export interface WorkspaceCheckpointEventPayload {
   promotions?: WorkspacePromotionRecord[] | undefined;
   preview?: WorkspacePromotionPreview | undefined;
   promotion?: WorkspacePromotionRecord | undefined;
+  managedInspection?: ManagedTaskWorktreeLifecycleInspection | undefined;
+  managedCleanup?: ManagedTaskWorktreeCleanupResult | undefined;
+  managedBinding?: ManagedTaskWorktreeBinding | undefined;
+  cleanupCheckpoint?: WorkspaceCheckpointDetail | undefined;
 }
+
+export interface UserTerminalEventPayload {
+  sessionId: string;
+  operation: "start" | "list" | "read" | "write" | "resize" | "stop";
+  terminal?: UserTerminalRecord | undefined;
+  terminals?: UserTerminalRecord[] | undefined;
+  output?: string | undefined;
+  cursor?: number | undefined;
+  nextCursor?: number | undefined;
+  truncated?: boolean | undefined;
+}
+
+export interface WorkspaceChangesEventPayload {
+  sessionId: string;
+  threadId: string;
+  operation: "inspect" | "mutate";
+  snapshot: WorkspaceChangeSnapshot;
+  previousFingerprint?: string | undefined;
+  mutationOperation?: WorkspaceChangeMutation["operation"] | undefined;
+}
+export interface WorkspaceFeedbackEventPayload { sessionId: string; threadId: string; operation: "add" | "list" | "remove" | "submit"; snapshot: WorkspaceFeedbackSnapshot; submissionRunId?: string | undefined }
+export interface WorkspaceReviewEventPayload { sessionId: string; threadId: string; operation: "run" | "list" | "update" | "submit"; snapshot: WorkspaceReviewSnapshot; runId?: string | undefined }
+export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: WorkspaceValidationSnapshot; runId?: string | undefined }
+export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: WorkspaceGitSnapshot }
 
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
@@ -714,6 +874,12 @@ export interface RunnerEventPayloadByType {
   "task.updated": TaskUpdatedEventPayload;
   "task.graph": TaskGraphEventPayload;
   "workspace.checkpoint": WorkspaceCheckpointEventPayload;
+  "user.terminal": UserTerminalEventPayload;
+  "workspace.changes": WorkspaceChangesEventPayload;
+  "workspace.feedback": WorkspaceFeedbackEventPayload;
+  "workspace.review": WorkspaceReviewEventPayload;
+  "workspace.validation": WorkspaceValidationEventPayload;
+  "workspace.git": WorkspaceGitEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;

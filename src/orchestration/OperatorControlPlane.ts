@@ -5,6 +5,7 @@ import type { ContextSummaryArtifactRecord, OperatorAttentionRecord } from "../k
 import type { ReplayStore } from "../kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { RunReplayService } from "../replay/RunReplayService.js";
+import { deriveThreadWorkspaceAuthorityProjection } from "../workspace/threadWorkspaceBinding.js";
 import type {
   ReplayAdaptationSummary,
   ReplayEvidenceRecoverySummary,
@@ -161,9 +162,14 @@ export class OperatorControlPlane {
       fanInDisposition,
       assemblyProposals[0],
     );
+    const workspace = deriveThreadWorkspaceAuthorityProjection({
+      threadMetadata: status.thread.metadata,
+      ...(session !== null && session !== undefined ? { sessionState: session.state } : {}),
+    });
     const inboxItems = await this.buildInboxItemsForThread(status.thread);
     return {
       thread: status.thread,
+      ...(workspace !== undefined ? { workspace } : {}),
       ...(focus !== null ? { focusedThreadId: focus.threadId } : {}),
       ...(parentThread !== null ? { parentThread } : {}),
       childThreads,

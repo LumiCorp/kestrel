@@ -43,9 +43,21 @@ export function parseDesktopPathTargetInput(
       message: `${options.methodName} requires a file path.`,
     });
   }
+  if (
+    record.threadId !== undefined
+    && (typeof record.threadId !== "string" || record.threadId.trim().length === 0)
+  ) {
+    throw createDesktopError({
+      code: "desktop.invalid_operator_thread_id",
+      message: `${options.methodName} requires a non-empty runtime thread ID when provided.`,
+    });
+  }
   return {
     rootPath: record.rootPath,
     targetPath: record.targetPath,
+    ...(typeof record.threadId === "string"
+      ? { threadId: record.threadId.trim() }
+      : {}),
   };
 }
 
@@ -101,7 +113,7 @@ export function resolveDesktopProjectRootForWatcherCleanup(
   });
 }
 
-function resolveDesktopProjectRootCandidate(
+export function resolveDesktopProjectRootCandidate(
   rootPath: string,
   candidateRootPaths: readonly string[],
 ): string | undefined {

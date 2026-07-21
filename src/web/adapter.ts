@@ -53,10 +53,27 @@ type WebControlTerminalEvent = Extract<
       | "operator.controlled"
       | "task.graph"
       | "workspace.checkpoint"
+      | "user.terminal"
+      | "workspace.changes"
+      | "workspace.feedback"
+      | "workspace.review"
+      | "workspace.validation"
+      | "workspace.git"
       | "project.snapshot"
       | "project.review";
   }
 >;
+
+function requireUserTerminalResponse(response: RunnerEvent): Extract<RunnerEvent, { type: "user.terminal" }> {
+  if (response.type !== "user.terminal") {
+    throw createRuntimeFailure(
+      "WEB_ADAPTER_UNEXPECTED_USER_TERMINAL_RESPONSE",
+      `Unexpected user terminal response '${response.type}'.`,
+      { responseType: response.type },
+    );
+  }
+  return response;
+}
 
 type DurableRunEntry = {
   threadId: string;
@@ -722,6 +739,45 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         return response;
       }
 
+      if (command.type === "workspace.promotion.list") {
+        const response = await sendCommand(activeClient, "workspace.promotion.list", {
+          sessionId: command.sessionId,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected workspace promotion response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "workspace.promotion.preview") {
+        const response = await sendCommand(activeClient, "workspace.promotion.preview", {
+          sessionId: command.sessionId,
+          promotionId: command.promotionId,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected workspace promotion response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "workspace.promotion.apply") {
+        const response = await sendCommand(activeClient, "workspace.promotion.apply", {
+          sessionId: command.sessionId,
+          promotionId: command.promotionId,
+          candidateFingerprint: command.candidateFingerprint,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected workspace promotion response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
       if (command.type === "workspace.promotion.undo_latest") {
         const response = await sendCommand(activeClient, "workspace.promotion.undo_latest", {
           sessionId: command.sessionId,
@@ -734,6 +790,159 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         }
         return response;
       }
+
+      if (command.type === "workspace.managed.inspect") {
+        const response = await sendCommand(activeClient, "workspace.managed.inspect", {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected managed workspace response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "workspace.managed.cleanup") {
+        const response = await sendCommand(activeClient, "workspace.managed.cleanup", {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+          reason: command.reason,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected managed workspace response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "workspace.managed.restore") {
+        const response = await sendCommand(activeClient, "workspace.managed.restore", {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+          checkpointId: command.checkpointId,
+          ...(command.reason !== undefined ? { reason: command.reason } : {}),
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected managed workspace response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "workspace.managed.setup.retry") {
+        const response = await sendCommand(activeClient, "workspace.managed.setup.retry", {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+        }, metadata);
+        if (response.type !== "workspace.checkpoint") {
+          throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHECKPOINT_RESPONSE", `Unexpected managed workspace response '${response.type}'.`, {
+            responseType: response.type,
+          });
+        }
+        return response;
+      }
+
+      if (command.type === "user.terminal.start") {
+        const response = await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+          ...(command.cols !== undefined ? { cols: command.cols } : {}),
+          ...(command.rows !== undefined ? { rows: command.rows } : {}),
+        }, metadata);
+        return requireUserTerminalResponse(response);
+      }
+      if (command.type === "user.terminal.list") {
+        const response = await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          ...(command.threadId !== undefined ? { threadId: command.threadId } : {}),
+        }, metadata);
+        return requireUserTerminalResponse(response);
+      }
+      if (command.type === "user.terminal.read") {
+        const response = await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          terminalId: command.terminalId,
+          ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+        }, metadata);
+        return requireUserTerminalResponse(response);
+      }
+      if (command.type === "user.terminal.write") {
+        return requireUserTerminalResponse(await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          terminalId: command.terminalId,
+          data: command.data,
+        }, metadata));
+      }
+      if (command.type === "user.terminal.resize") {
+        return requireUserTerminalResponse(await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          terminalId: command.terminalId,
+          cols: command.cols,
+          rows: command.rows,
+        }, metadata));
+      }
+      if (command.type === "user.terminal.stop") {
+        return requireUserTerminalResponse(await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          terminalId: command.terminalId,
+        }, metadata));
+      }
+      if (command.type === "workspace.changes.inspect") {
+        const response = await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+          scope: command.scope,
+          ...(command.options !== undefined ? { options: command.options } : {}),
+        }, metadata);
+        if (response.type !== "workspace.changes") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHANGES_RESPONSE", `Unexpected workspace changes response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.changes.mutate") {
+        const response = await sendCommand(activeClient, command.type, {
+          sessionId: command.sessionId,
+          threadId: command.threadId,
+          expectedFingerprint: command.expectedFingerprint,
+          ...(command.scope !== undefined ? { scope: command.scope } : {}),
+          ...(command.options !== undefined ? { options: command.options } : {}),
+          mutation: command.mutation,
+        }, metadata);
+        if (response.type !== "workspace.changes") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_CHANGES_RESPONSE", `Unexpected workspace changes response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.feedback.add") {
+        const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, path: command.path, line: command.line, side: command.side, body: command.body }, metadata);
+        if (response.type !== "workspace.feedback") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_FEEDBACK_RESPONSE", `Unexpected workspace feedback response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.feedback.list") {
+        const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata);
+        if (response.type !== "workspace.feedback") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_FEEDBACK_RESPONSE", `Unexpected workspace feedback response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.feedback.remove") {
+        const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, commentId: command.commentId }, metadata);
+        if (response.type !== "workspace.feedback") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_FEEDBACK_RESPONSE", `Unexpected workspace feedback response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.feedback.submit") {
+        const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, commentIds: command.commentIds }, metadata);
+        if (response.type !== "workspace.feedback") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_FEEDBACK_RESPONSE", `Unexpected workspace feedback response '${response.type}'.`);
+        return response;
+      }
+      if (command.type === "workspace.review.run") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, scope: command.scope, ...(command.mode ? { mode: command.mode } : {}), ...(command.reviewerProfileId ? { reviewerProfileId: command.reviewerProfileId } : {}), ...(command.reviewerModel ? { reviewerModel: command.reviewerModel } : {}) }, metadata); if (response.type !== "workspace.review") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_REVIEW_RESPONSE", `Unexpected workspace review response '${response.type}'.`); return response; }
+      if (command.type === "workspace.review.list") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata); if (response.type !== "workspace.review") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_REVIEW_RESPONSE", `Unexpected workspace review response '${response.type}'.`); return response; }
+      if (command.type === "workspace.review.update") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, reviewId: command.reviewId, findingId: command.findingId, action: command.action, ...(command.reason ? { reason: command.reason } : {}) }, metadata); if (response.type !== "workspace.review") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_REVIEW_RESPONSE", `Unexpected workspace review response '${response.type}'.`); return response; }
+      if (command.type === "workspace.review.submit") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, reviewId: command.reviewId, findingIds: command.findingIds, request: command.request }, metadata); if (response.type !== "workspace.review") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_REVIEW_RESPONSE", `Unexpected workspace review response '${response.type}'.`); return response; }
+      if (command.type === "workspace.validation.inspect") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata); if (response.type !== "workspace.validation") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_VALIDATION_RESPONSE", `Unexpected workspace validation response '${response.type}'.`); return response; }
+      if (command.type === "workspace.validation.run") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, ...(command.actionId ? { actionId: command.actionId } : {}), ...(command.suiteId ? { suiteId: command.suiteId } : {}) }, metadata); if (response.type !== "workspace.validation") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_VALIDATION_RESPONSE", `Unexpected workspace validation response '${response.type}'.`); return response; }
+      if (command.type === "workspace.validation.cancel") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, resultId: command.resultId }, metadata); if (response.type !== "workspace.validation") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_VALIDATION_RESPONSE", `Unexpected workspace validation response '${response.type}'.`); return response; }
+      if (command.type === "workspace.validation.submit") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, resultIds: command.resultIds }, metadata); if (response.type !== "workspace.validation") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_VALIDATION_RESPONSE", `Unexpected workspace validation response '${response.type}'.`); return response; }
+      if (command.type === "workspace.git.inspect") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
+      if (command.type === "workspace.git.action") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, ...(command.expectedHeadSha ? { expectedHeadSha: command.expectedHeadSha } : {}), action: command.action }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
 
       if (command.type === "project.snapshot.get") {
         const response = await sendCommand(activeClient, "project.snapshot.get", {

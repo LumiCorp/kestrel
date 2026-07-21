@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { DesktopRunnerEvent } from "../src/contracts.js";
-import { extractTerminalFailure } from "../renderer/src/DesktopApp.js";
+import { extractTerminalFailure } from "../renderer/src/runtimeCapabilityRecovery.js";
 
 function failed(code: string, details?: Record<string, unknown>): DesktopRunnerEvent {
   return {

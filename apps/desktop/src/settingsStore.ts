@@ -429,6 +429,7 @@ export function buildDesktopRunnerEnvironment(
   const env = buildDesktopModelEnvironment(baseEnv, settings, modelPolicy);
   env.KESTREL_HOME = runtimeHomePath;
   env.KESTREL_MODEL_PROMPT_DUMP = "1";
+  env.KESTREL_ENABLE_MANAGED_WORKTREES = "1";
   if (typeof options.databaseUrl === "string" && options.databaseUrl.trim().length > 0) {
     env.DATABASE_URL = options.databaseUrl;
     env.KESTREL_DATABASE_URL_SOURCE = options.databaseUrlSource ?? "environment";

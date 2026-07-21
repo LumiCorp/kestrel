@@ -13,6 +13,7 @@ import {
   shell,
   systemPreferences,
   webContents,
+  session,
   type WebContents,
 } from "electron";
 import {
@@ -47,6 +48,7 @@ import {
   type WebRunnerRequestContext,
 } from "../../../src/web/index.js";
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
+import { redactDiagnosticValue } from "../../../src/diagnostics/redaction.js";
 import { resolveDesktopCapabilityView } from "../../../src/desktopShell/capabilityRegistry.js";
 import {
   deriveDesktopOnboardingState,
@@ -73,6 +75,7 @@ import type {
   DesktopDatabaseStatus,
   DesktopDirectoryListing,
   DesktopFileContent,
+  DesktopFileContentSearchResponse,
   DesktopFileEntry,
   DesktopFileReadInput,
   DesktopOpenFileEditorInput,
@@ -106,7 +109,6 @@ import {
   assertWithinRoot,
   parseDesktopPathTargetInput,
   resolveDesktopProjectRootForWatcherCleanup,
-  resolveRegisteredDesktopProjectRoot,
   resolveVerifiedDesktopPathTarget,
 } from "./fileAccess.js";
 import { createDesktopBeforeQuitHandler } from "./lifecycle.js";
@@ -139,6 +141,7 @@ import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
 import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
 import { buildDesktopCapabilityConfigurationPlan } from "./capabilityConfiguration.js";
 import { resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
+import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
   getDesktopProjectSnapshot,
   getDesktopOperatorRun,
@@ -147,6 +150,28 @@ import {
   runDesktopProjectAction,
   runDesktopOperatorControl,
 } from "./missionControl.js";
+import {
+  applyDesktopWorkspacePromotion,
+  captureDesktopWorkspaceCheckpoint,
+  compareDesktopWorkspaceCheckpoint,
+  cleanupDesktopWorkspaceCheckpoints,
+  getDesktopWorkspaceLifecycle,
+  inspectDesktopWorkspaceCheckpoint,
+  inspectDesktopManagedWorktree,
+  previewDesktopWorkspacePromotion,
+  restoreDesktopWorkspaceCheckpoint,
+  undoLatestDesktopWorkspacePromotion,
+  cleanupDesktopManagedWorktree,
+  restoreDesktopManagedWorktree,
+  retryDesktopManagedWorktreeSetup,
+} from "./workspaceLifecycle.js";
+import { runDesktopUserTerminalCommand } from "./userTerminal.js";
+import { inspectDesktopWorkspaceChanges, mutateDesktopWorkspaceChanges } from "./workspaceChanges.js";
+import { runDesktopWorkspaceFeedback } from "./workspaceFeedback.js";
+import { runDesktopWorkspaceReview } from "./workspaceReview.js";
+import { runDesktopWorkspaceValidation } from "./workspaceValidation.js";
+import { runDesktopWorkspaceGit } from "./workspaceGit.js";
+import { isAllowedEmbeddedPreviewUrl } from "./previewSecurity.js";
 
 declare global {
   var __kestrelDesktopRunnerTransportFactory: (() => DesktopProtocolTransport) | undefined;
@@ -194,6 +219,8 @@ let currentDatabaseUrl: string | undefined;
 let currentDatabaseUrlSource: DatabaseUrlSource = "desktop_default";
 let mediaPermissionHandlerInstalled = false;
 const projectRunPreviewWindows = new Map<string, BrowserWindow>();
+const embeddedPreviewWebContentsIds = new Set<number>();
+let embeddedPreviewSecurityConfigured = false;
 const fileEditorWindows = new Map<string, BrowserWindow>();
 const projectFileWatchers = new Map<string, DesktopProjectFileWatcher>();
 const projectFileIndex = new DesktopProjectFileIndex();
@@ -307,6 +334,7 @@ async function main(): Promise<void> {
     return runnerTransport;
   };
 
+  configureEmbeddedPreviewSecurity();
   registerIpcHandlers(runnerTransport);
   installApplicationMenu();
   await ensureMainWindow();
@@ -381,7 +409,18 @@ async function ensureMainWindow(): Promise<void> {
       contextIsolation: true,
       sandbox: false,
       nodeIntegration: false,
+      webviewTag: true,
     },
+  });
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (params.partition !== "persist:kestrel-preview" || (params.src !== undefined && params.src !== "about:blank" && !isAllowedEmbeddedPreviewUrl(params.src))) {
+      event.preventDefault();
+      return;
+    }
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    delete webPreferences.preload;
   });
   window.on("ready-to-show", () => {
     window.show();
@@ -408,6 +447,50 @@ async function ensureMainWindow(): Promise<void> {
     config: desktopConfig,
     window,
     runnerTransport,
+  });
+}
+
+function configureEmbeddedPreviewSecurity(): void {
+  if (embeddedPreviewSecurityConfigured) return;
+  embeddedPreviewSecurityConfigured = true;
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() !== "webview") return;
+    embeddedPreviewWebContentsIds.add(contents.id);
+    contents.once("destroyed", () => embeddedPreviewWebContentsIds.delete(contents.id));
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.on("will-navigate", (event, url) => {
+      if (!isAllowedEmbeddedPreviewUrl(url)) event.preventDefault();
+    });
+    contents.on("console-message", (_event, level, message, _line, sourceId) => {
+      sendPreviewDiagnostic({ webContentsId: contents.id, kind: "console", level, message, ...(sourceId ? { url: sourceId } : {}) });
+    });
+    contents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+      if (errorCode === -3) return;
+      sendPreviewDiagnostic({ webContentsId: contents.id, kind: "load_error", message: `${errorDescription} (${errorCode})`, ...(validatedUrl ? { url: validatedUrl } : {}) });
+    });
+  });
+  const previewSession = session.fromPartition("persist:kestrel-preview");
+  previewSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  previewSession.setPermissionCheckHandler(() => false);
+  previewSession.webRequest.onErrorOccurred((details) => {
+    if (details.webContentsId === undefined || !embeddedPreviewWebContentsIds.has(details.webContentsId)) return;
+    sendPreviewDiagnostic({ webContentsId: details.webContentsId, kind: "network_error", message: details.error, url: details.url });
+  });
+}
+
+function sendPreviewDiagnostic(input: {
+  webContentsId: number;
+  kind: "console" | "network_error" | "load_error";
+  message: string;
+  url?: string | undefined;
+  level?: number | undefined;
+}): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("desktop:preview-diagnostic", {
+    ...input,
+    message: redactDiagnosticValue(input.message),
+    ...(input.url ? { url: redactDiagnosticValue(input.url) } : {}),
+    at: new Date().toISOString(),
   });
 }
 
@@ -788,7 +871,16 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    const { projectPath, threadId, attachmentIds, executionSelection, ...turnRequest } = request;
+    const {
+      projectPath,
+      workspaceMode,
+      workspaceBaseRef,
+      workspaceSetup,
+      threadId,
+      attachmentIds,
+      executionSelection,
+      ...turnRequest
+    } = request;
     const runProfile = resolveDesktopExecutionProfile(executionSelection);
     const canonicalThreadId = `thread-main:${request.sessionId}`;
     if (threadId !== undefined && threadId !== canonicalThreadId) {
@@ -815,6 +907,9 @@ function registerIpcHandlers(
       ...(projectPath !== undefined ? { projectPath } : {}),
       projects: desktopSettings.projects,
       defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+      ...(workspaceMode !== undefined ? { workspaceMode } : {}),
+      ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
+      ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
     });
     return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
       {
@@ -1017,7 +1112,11 @@ function registerIpcHandlers(
   });
   ipcMain.handle("desktop:open-file-editor", async (_event, input: unknown) => {
     const editorInput = parseDesktopOpenFileEditorInput(input);
-    await openFileEditorWindow(editorInput);
+    const projectPath = await resolveDesktopAuthorizedWorkspaceRoot(
+      editorInput.projectPath,
+      editorInput.threadId,
+    );
+    await openFileEditorWindow({ ...editorInput, projectPath });
   });
   ipcMain.handle("desktop:open-path", async (_event, input: unknown) => {
     const parsed = parseDesktopPathTargetInput(input, {
@@ -1025,9 +1124,10 @@ function registerIpcHandlers(
       invalidInputCode: "desktop.invalid_open_input",
       invalidTargetCode: "desktop.invalid_open_path",
     });
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
     const resolved = await resolveVerifiedDesktopPathTarget(
-      parsed,
-      registeredDesktopProjectRootPaths(),
+      { ...parsed, rootPath },
+      [rootPath],
     );
     await shell.openPath(resolved.targetPath);
   });
@@ -1037,9 +1137,10 @@ function registerIpcHandlers(
       invalidInputCode: "desktop.invalid_reveal_input",
       invalidTargetCode: "desktop.invalid_reveal_path",
     });
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
     const resolved = await resolveVerifiedDesktopPathTarget(
-      parsed,
-      registeredDesktopProjectRootPaths(),
+      { ...parsed, rootPath },
+      [rootPath],
     );
     shell.showItemInFolder(resolved.targetPath);
   });
@@ -1174,24 +1275,21 @@ function registerIpcHandlers(
     }
     shell.showItemInFolder(filePath);
   });
-  ipcMain.handle("desktop:list-directory", async (_event, rootPath: unknown, directoryPath: unknown): Promise<DesktopDirectoryListing> => {
+  ipcMain.handle("desktop:list-directory", async (_event, rootPath: unknown, directoryPath: unknown, threadId: unknown): Promise<DesktopDirectoryListing> => {
     if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
       throw createDesktopError({
         code: "desktop.invalid_root_path",
         message: "desktop.listDirectory requires a project root path.",
       });
     }
-    const resolvedRoot = resolveRegisteredDesktopProjectRoot(
-      rootPath,
-      registeredDesktopProjectRootPaths(),
-    );
+    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
     const resolvedDirectory = typeof directoryPath === "string" && directoryPath.trim().length > 0
       ? path.resolve(directoryPath)
       : resolvedRoot;
     assertWithinRoot(resolvedRoot, resolvedDirectory, "directoryPath");
     await resolveVerifiedDesktopPathTarget(
       { rootPath: resolvedRoot, targetPath: resolvedDirectory },
-      registeredDesktopProjectRootPaths(),
+      [resolvedRoot],
       "directoryPath",
     );
     const directoryEntries = await readdir(resolvedDirectory, { withFileTypes: true });
@@ -1231,17 +1329,14 @@ function registerIpcHandlers(
     projectFileIndex.rememberDirectoryListing(listing);
     return listing;
   });
-  ipcMain.handle("desktop:search-project-files", async (_event, rootPath: unknown, query: unknown): Promise<DesktopFileSearchResponse> => {
+  ipcMain.handle("desktop:search-project-files", async (_event, rootPath: unknown, query: unknown, threadId: unknown): Promise<DesktopFileSearchResponse> => {
     if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
       throw createDesktopError({
         code: "desktop.invalid_root_path",
         message: "desktop.searchProjectFiles requires a project root path.",
       });
     }
-    const resolvedRoot = resolveRegisteredDesktopProjectRoot(
-      rootPath,
-      registeredDesktopProjectRootPaths(),
-    );
+    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
     if (typeof query !== "string" || query.trim().length === 0) {
       return {
         rootPath: resolvedRoot,
@@ -1253,12 +1348,47 @@ function registerIpcHandlers(
     }
     await resolveVerifiedDesktopPathTarget(
       { rootPath: resolvedRoot, targetPath: resolvedRoot },
-      registeredDesktopProjectRootPaths(),
+      [resolvedRoot],
     );
     return projectFileIndex.search(resolvedRoot, query.trim());
   });
-  ipcMain.handle("desktop:watch-project-files", async (event, rootPath: unknown) => {
-    const resolvedRoot = await parseDesktopProjectWatchRoot(rootPath, "desktop.watchProjectFiles");
+  ipcMain.handle("desktop:search-project-content", async (_event, rootPath: unknown, query: unknown, threadId: unknown): Promise<DesktopFileContentSearchResponse> => {
+    if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
+      throw createDesktopError({
+        code: "desktop.invalid_root_path",
+        message: "desktop.searchProjectContent requires a project root path.",
+      });
+    }
+    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
+    if (typeof query !== "string" || query.trim().length === 0) {
+      return {
+        rootPath: resolvedRoot,
+        query: "",
+        results: [],
+        truncated: false,
+        fullSearchAvailable: true,
+        scannedFileCount: 0,
+        skippedFileCount: 0,
+      };
+    }
+    if (query.trim().length > 256) {
+      throw createDesktopError({
+        code: "desktop.invalid_content_search_query",
+        message: "desktop.searchProjectContent supports queries up to 256 characters.",
+      });
+    }
+    await resolveVerifiedDesktopPathTarget(
+      { rootPath: resolvedRoot, targetPath: resolvedRoot },
+      [resolvedRoot],
+    );
+    return projectFileIndex.searchContent(resolvedRoot, query.trim());
+  });
+  ipcMain.handle("desktop:watch-project-files", async (event, rootPath: unknown, threadId: unknown) => {
+    const resolvedRoot = await parseDesktopProjectWatchRoot(
+      rootPath,
+      parseOptionalThreadId(threadId),
+      "desktop.watchProjectFiles",
+    );
     startProjectFileWatcher(resolvedRoot, event.sender.id);
     event.sender.once("destroyed", () => {
       stopProjectFileWatcher(resolvedRoot, event.sender.id);
@@ -1270,9 +1400,10 @@ function registerIpcHandlers(
   });
   ipcMain.handle("desktop:read-file", async (_event, input: unknown): Promise<DesktopFileContent> => {
     const parsed = parseDesktopFileReadInput(input);
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
     const resolved = await resolveVerifiedDesktopPathTarget(
-      parsed,
-      registeredDesktopProjectRootPaths(),
+      { ...parsed, rootPath },
+      [rootPath],
     );
     const resolvedPath = resolved.targetPath;
     const fileStats = await stat(resolvedPath);
@@ -1308,9 +1439,10 @@ function registerIpcHandlers(
   });
   ipcMain.handle("desktop:write-file", async (_event, input: unknown): Promise<DesktopFileContent> => {
     const parsed = parseDesktopFileWriteInput(input);
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
     const resolved = await resolveVerifiedDesktopPathTarget(
-      parsed,
-      registeredDesktopProjectRootPaths(),
+      { ...parsed, rootPath },
+      [rootPath],
     );
     const resolvedPath = resolved.targetPath;
     const currentStats = await stat(resolvedPath);
@@ -1426,16 +1558,20 @@ function registerIpcHandlers(
     await runnerTransport.restart();
     return await readDesktopMcpInventory();
   });
-  ipcMain.handle("desktop:read-project-launcher", async (_event, projectPath: unknown, packageManagerOverride: unknown): Promise<DesktopProjectLauncherDescriptor | undefined> => {
+  ipcMain.handle("desktop:read-project-launcher", async (_event, projectPath: unknown, packageManagerOverride: unknown, threadId: unknown): Promise<DesktopProjectLauncherDescriptor | undefined> => {
     if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
       throw createDesktopError({
         code: "desktop.invalid_project_path",
         message: "desktop.readProjectLauncher requires a project path.",
       });
     }
+    const authorizedProjectPath = await resolveDesktopAuthorizedWorkspaceRoot(
+      projectPath,
+      parseOptionalThreadId(threadId),
+    );
     return requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.readDesktopProjectLauncher({
-        projectPath,
+        projectPath: authorizedProjectPath,
         ...(packageManagerOverride === "npm" || packageManagerOverride === "pnpm"
           ? { packageManagerOverride }
           : {}),
@@ -1465,7 +1601,10 @@ function registerIpcHandlers(
         message: "desktop.startProjectRun requires a script name.",
       });
     }
-    const projectPath = payload.projectPath;
+    const projectPath = await resolveDesktopAuthorizedWorkspaceRoot(
+      payload.projectPath,
+      parseOptionalThreadId(payload.threadId),
+    );
     const scriptName = payload.scriptName;
     const packageManagerOverride = payload.packageManagerOverride === "npm" || payload.packageManagerOverride === "pnpm"
       ? payload.packageManagerOverride
@@ -1525,6 +1664,83 @@ function registerIpcHandlers(
       runId,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
     }));
+  ipcMain.handle("desktop:get-workspace-lifecycle", async (_event, sessionId: unknown) => getDesktopWorkspaceLifecycle({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      sessionId,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:capture-workspace-checkpoint", async (_event, request: unknown) => captureDesktopWorkspaceCheckpoint({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:restore-workspace-checkpoint", async (_event, request: unknown) => restoreDesktopWorkspaceCheckpoint({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:inspect-workspace-checkpoint", async (_event, request: unknown) => inspectDesktopWorkspaceCheckpoint({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:compare-workspace-checkpoint", async (_event, request: unknown) => compareDesktopWorkspaceCheckpoint({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:cleanup-workspace-checkpoints", async (_event, request: unknown) => cleanupDesktopWorkspaceCheckpoints({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  ipcMain.handle("desktop:preview-workspace-promotion", async (_event, request: unknown) => previewDesktopWorkspacePromotion({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:apply-workspace-promotion", async (_event, request: unknown) => applyDesktopWorkspacePromotion({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:undo-latest-workspace-promotion", async (_event, request: unknown) => undoLatestDesktopWorkspacePromotion({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:inspect-managed-worktree", async (_event, request: unknown) => inspectDesktopManagedWorktree({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:cleanup-managed-worktree", async (_event, request: unknown) => cleanupDesktopManagedWorktree({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:restore-managed-worktree", async (_event, request: unknown) => restoreDesktopManagedWorktree({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  ipcMain.handle("desktop:retry-managed-worktree-setup", async (_event, request: unknown) => retryDesktopManagedWorktreeSetup({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  for (const operation of ["start", "list", "read", "write", "resize", "stop"] as const) {
+    ipcMain.handle(`desktop:${operation}-user-terminal`, async (_event, request: unknown) => runDesktopUserTerminalCommand({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      operation,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }));
+  }
+  ipcMain.handle("desktop:inspect-workspace-changes", async (_event, request: unknown) => inspectDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  ipcMain.handle("desktop:mutate-workspace-changes", async (_event, request: unknown) => mutateDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  for (const operation of ["add", "list", "remove", "submit"] as const) {
+    ipcMain.handle(`desktop:${operation}-workspace-feedback`, async (_event, request: unknown) => runDesktopWorkspaceFeedback({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  }
+  for (const operation of ["run", "list", "update", "submit"] as const) ipcMain.handle(`desktop:${operation}-workspace-review`, async (_event, request: unknown) => runDesktopWorkspaceReview({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  for (const operation of ["inspect", "run", "cancel", "submit"] as const) ipcMain.handle(`desktop:${operation}-workspace-validation`, async (_event, request: unknown) => runDesktopWorkspaceValidation({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  for (const operation of ["inspect", "action"] as const) ipcMain.handle(`desktop:${operation}-workspace-git`, async (_event, request: unknown) => runDesktopWorkspaceGit({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
 }
 
 async function openProjectRunPreviewWindow(
@@ -1610,6 +1826,9 @@ async function openFileEditorWindow(input: DesktopOpenFileEditorInput): Promise<
     filePath: resolvedFilePath,
     projectPath: resolvedProjectPath,
     projectLabel: input.projectLabel,
+    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+    ...(input.lineNumber !== undefined ? { lineNumber: String(input.lineNumber) } : {}),
+    ...(input.columnNumber !== undefined ? { columnNumber: String(input.columnNumber) } : {}),
   };
   const existing = fileEditorWindows.get(resolvedFilePath);
   if (existing !== undefined && existing.isDestroyed() === false) {
@@ -1768,6 +1987,7 @@ function applyDesktopProfileOverride(settings: DesktopSettings): void {
 
 async function parseDesktopProjectWatchRoot(
   rootPath: unknown,
+  threadId: string | undefined,
   methodName: string,
 ): Promise<string> {
   if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
@@ -1776,13 +1996,10 @@ async function parseDesktopProjectWatchRoot(
       message: `${methodName} requires a project root path.`,
     });
   }
-  const resolvedRoot = resolveRegisteredDesktopProjectRoot(
-    rootPath,
-    registeredDesktopProjectRootPaths(),
-  );
+  const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, threadId);
   await resolveVerifiedDesktopPathTarget(
     { rootPath: resolvedRoot, targetPath: resolvedRoot },
-    registeredDesktopProjectRootPaths(),
+    [resolvedRoot],
     "rootPath",
   );
   const rootStats = await stat(resolvedRoot);
@@ -1814,6 +2031,35 @@ function parseDesktopProjectUnwatchRoot(
 
 function registeredDesktopProjectRootPaths(): string[] {
   return desktopSettings.projects.map((project) => project.path);
+}
+
+async function resolveDesktopAuthorizedWorkspaceRoot(
+  rootPath: string,
+  threadId: string | undefined,
+): Promise<string> {
+  return resolveDesktopWorkspaceAccessRoot({
+    rootPath,
+    registeredRootPaths: registeredDesktopProjectRootPaths(),
+    ...(threadId !== undefined ? { threadId } : {}),
+    getOperatorThread: async (authoritativeThreadId) => getDesktopOperatorThread({
+      adapter: requireDesktopRunnerAdapter(requireDesktopRunnerTransport()),
+      threadId: authoritativeThreadId,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    }),
+  });
+}
+
+function parseOptionalThreadId(value: unknown): string | undefined {
+  if (value === undefined) {
+    return ;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw createDesktopError({
+      code: "desktop.invalid_operator_thread_id",
+      message: "Desktop workspace access requires a non-empty runtime thread ID.",
+    });
+  }
+  return value.trim();
 }
 
 function startProjectFileWatcher(rootPath: string, subscriberId: number): void {
@@ -2016,6 +2262,9 @@ function parseDesktopOpenFileEditorInput(input: unknown): DesktopOpenFileEditorI
       message: "desktop.openFileEditor requires a file path.",
     });
   }
+  const threadId = parseOptionalThreadId(record.threadId);
+  const lineNumber = parseOptionalSourcePosition(record.lineNumber, "lineNumber");
+  const columnNumber = parseOptionalSourcePosition(record.columnNumber, "columnNumber");
   return {
     projectPath: record.projectPath,
     filePath: record.filePath,
@@ -2023,7 +2272,23 @@ function parseDesktopOpenFileEditorInput(input: unknown): DesktopOpenFileEditorI
       typeof record.projectLabel === "string" && record.projectLabel.trim().length > 0
         ? record.projectLabel
         : path.basename(record.projectPath),
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(lineNumber !== undefined ? { lineNumber } : {}),
+    ...(columnNumber !== undefined ? { columnNumber } : {}),
   };
+}
+
+function parseOptionalSourcePosition(value: unknown, field: string): number | undefined {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "number" || Number.isInteger(value) === false || value < 1 || value > 10_000_000) {
+    throw createDesktopError({
+      code: "desktop.invalid_editor_position",
+      message: `desktop.openFileEditor ${field} must be a positive integer.`,
+    });
+  }
+  return value;
 }
 
 async function readEditableTextFileBuffer(filePath: string, sizeBytes: number): Promise<Buffer> {
@@ -2409,6 +2674,16 @@ function requireDesktopRunnerAdapter(
     });
   }
   return desktopRunnerAdapter;
+}
+
+function requireDesktopRunnerTransport(): DesktopRunnerControlTransport {
+  if (runnerTransport === undefined) {
+    throw createDesktopError({
+      code: "desktop.runtime_unavailable",
+      message: "Kestrel Local Core runtime is unavailable.",
+    });
+  }
+  return runnerTransport;
 }
 
 function resolveDesktopExecutionProfile(selection: DesktopExecutionSelection) {

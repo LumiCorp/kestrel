@@ -4,10 +4,33 @@ import type {
   RunnerWaitingPromptHistoryDataV2,
 } from "@kestrel-agents/protocol";
 import type { TaskAction } from "../missionControl/contracts.js";
+import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import type {
   ProductProjectBoardAction,
   ProductProjectSnapshot,
 } from "../project/contracts.js";
+import type {
+  WorkspaceCheckpointDetail,
+  WorkspaceCheckpointRecord,
+  WorkspaceCheckpointCleanupResult,
+  WorkspaceDiffRecord,
+  WorkspacePromotionPreview,
+  WorkspacePromotionRecord,
+  WorkspaceRestoreRecord,
+} from "../workspaceCheckpoints/contracts.js";
+import type {
+  ManagedTaskWorktreeBinding,
+  ManagedTaskWorktreeCleanupResult,
+  ManagedTaskWorktreeLifecycleInspection,
+  ManagedTaskWorktreeSetupSpec,
+} from "../workspace/ManagedTaskWorktreeService.js";
+import { parseManagedTaskWorktreeSetupSpec } from "../workspace/ManagedTaskWorktreeService.js";
+import type { UserTerminalReadResult, UserTerminalRecord } from "../terminal/UserTerminalService.js";
+import type { WorkspaceChangeMutation, WorkspaceChangeMutationResult, WorkspaceChangeScope, WorkspaceChangeSnapshot, WorkspaceDiffOptions } from "../changes/contracts.js";
+import type { WorkspaceFeedbackSnapshot } from "../review/contracts.js";
+import type { WorkspaceReviewSnapshot } from "../review/contracts.js";
+import type { WorkspaceValidationSnapshot } from "../validation/contracts.js";
+import type { WorkspaceGitAction, WorkspaceGitSnapshot } from "../git/contracts.js";
 import {
   parseDesktopExecutionSelection,
   parseDesktopModelConfigurations,
@@ -21,6 +44,7 @@ export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
 export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
 
 export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/supportBundle.js";
+export type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 
 export type DesktopBridgeCapabilityId =
   | "app_info"
@@ -44,6 +68,12 @@ export type DesktopBridgeCapabilityId =
   | "project_run_preview"
   | "mission_control"
   | "runtime_inspection"
+  | "workspace_lifecycle"
+  | "user_terminal"
+  | "workspace_changes"
+  | "workspace_review"
+  | "workspace_validation"
+  | "workspace_git"
   | "attachments"
   | "operator_control"
   | "external_open"
@@ -59,7 +89,7 @@ export interface DesktopBridgeInfo {
   capabilities: DesktopBridgeCapabilityId[];
 }
 
-export const DESKTOP_BRIDGE_VERSION = "4";
+export const DESKTOP_BRIDGE_VERSION = "6";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",
@@ -83,6 +113,12 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "project_run_preview",
   "mission_control",
   "runtime_inspection",
+  "workspace_lifecycle",
+  "user_terminal",
+  "workspace_changes",
+  "workspace_review",
+  "workspace_validation",
+  "workspace_git",
   "attachments",
   "operator_control",
   "external_open",
@@ -106,6 +142,9 @@ export const DESKTOP_LEGACY_UI_STORAGE_KEYS = [
   "kchat:web:task-graph:v1",
   "kchat:web:threads:v2",
   "kchat:web:active-thread:v1",
+  "kestrel:desktop:surface:v1",
+  "kestrel:desktop:inspector-open:v1",
+  "kestrel:desktop:inspector-width:v1",
   "kestrel:desktop-workspace:v5",
   "kestrel:desktop-workspace:v4",
   "kestrel:desktop-workspace:v3",
@@ -133,6 +172,7 @@ export interface DesktopUiStateSyncResult {
 interface DesktopRunHistoryLineBase {
   text: string;
   timestamp: string;
+  attachments?: RunTurnAttachment[] | undefined;
 }
 
 export type DesktopRunHistoryLine = DesktopRunHistoryLineBase & (
@@ -156,6 +196,10 @@ export interface DesktopRunTurnRequest {
   message: string;
   eventType: string;
   projectPath?: string | undefined;
+  workspaceMode?: "local" | "managed" | undefined;
+  workspaceBaseRef?: string | undefined;
+  workspaceSetup?: ManagedTaskWorktreeSetupSpec | undefined;
+  attachments?: RunTurnAttachment[] | undefined;
   history?: DesktopRunHistoryLine[] | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
@@ -264,6 +308,21 @@ export interface DesktopRunCancelRequest {
   commandId?: string | undefined;
 }
 
+export type DesktopUserTerminal = UserTerminalRecord;
+export type DesktopUserTerminalReadResult = UserTerminalReadResult;
+export type DesktopWorkspaceChangeScope = WorkspaceChangeScope;
+export type DesktopWorkspaceDiffOptions = WorkspaceDiffOptions;
+export type DesktopWorkspaceChangeMutation = WorkspaceChangeMutation;
+export type DesktopWorkspaceChangeSnapshot = WorkspaceChangeSnapshot;
+export type DesktopWorkspaceChangeMutationResult = WorkspaceChangeMutationResult;
+export type DesktopWorkspaceFeedbackSnapshot = WorkspaceFeedbackSnapshot;
+export type DesktopWorkspaceReviewSnapshot = WorkspaceReviewSnapshot;
+export type DesktopWorkspaceValidationSnapshot = WorkspaceValidationSnapshot;
+export type DesktopWorkspaceCheckpointCleanupResult = WorkspaceCheckpointCleanupResult;
+export type DesktopWorkspaceGitAction = WorkspaceGitAction;
+export type DesktopWorkspaceGitSnapshot = WorkspaceGitSnapshot;
+export interface DesktopWorkspaceFeedbackSubmitResult { snapshot: WorkspaceFeedbackSnapshot; submissionRunId?: string | undefined }
+
 export type DesktopProjectAction = TaskAction | ProductProjectBoardAction;
 
 export interface DesktopProjectSnapshotResponse {
@@ -336,6 +395,7 @@ export interface DesktopRuntimeThreadPlan {
 
 export interface DesktopRuntimeThreadInspection {
   thread: DesktopRuntimeThreadSummary;
+  workspace?: DesktopThreadWorkspaceContext | undefined;
   focusedThreadId?: string | undefined;
   parentThread?: DesktopRuntimeThreadSummary | undefined;
   childThreads: DesktopRuntimeThreadSummary[];
@@ -356,6 +416,80 @@ export interface DesktopRuntimeThreadInspection {
     at: string;
     runId?: string | undefined;
   } | undefined;
+}
+
+export interface DesktopThreadWorkspaceContext {
+  kind: "local" | "managed";
+  workspaceId?: string | undefined;
+  label: string;
+  workspaceRoot: string;
+  sourceWorkspaceRoot: string;
+  sourceRepoRoot?: string | undefined;
+  managedWorktreeRoot?: string | undefined;
+  baseRefName?: string | undefined;
+  baseHead?: string | undefined;
+  lastObservedSourceHead?: string | undefined;
+  leaseId?: string | undefined;
+  leaseKind?: "run" | "process" | undefined;
+  dirty?: boolean | undefined;
+}
+
+export interface DesktopWorkspaceLifecycleState {
+  sessionId: string;
+  checkpoints: WorkspaceCheckpointRecord[];
+  promotions: WorkspacePromotionRecord[];
+}
+
+export interface DesktopWorkspaceCheckpointCaptureResult {
+  sessionId: string;
+  checkpoint: WorkspaceCheckpointDetail;
+}
+
+export interface DesktopWorkspaceCheckpointRestoreResult {
+  sessionId: string;
+  restore: WorkspaceRestoreRecord;
+}
+
+export interface DesktopWorkspaceCheckpointInspectResult {
+  sessionId: string;
+  checkpoint: WorkspaceCheckpointDetail;
+}
+
+export interface DesktopWorkspaceCheckpointDiffResult {
+  sessionId: string;
+  diff: WorkspaceDiffRecord;
+}
+
+export interface DesktopWorkspacePromotionPreviewResult {
+  sessionId: string;
+  preview: WorkspacePromotionPreview;
+}
+
+export interface DesktopWorkspacePromotionApplyResult {
+  sessionId: string;
+  promotion: WorkspacePromotionRecord;
+}
+
+export interface DesktopWorkspacePromotionUndoResult {
+  sessionId: string;
+  restore: WorkspaceRestoreRecord;
+}
+
+export interface DesktopManagedWorktreeInspectionResult {
+  sessionId: string;
+  inspection: ManagedTaskWorktreeLifecycleInspection;
+}
+
+export interface DesktopManagedWorktreeCleanupResult {
+  sessionId: string;
+  checkpoint: WorkspaceCheckpointDetail;
+  cleanup: ManagedTaskWorktreeCleanupResult;
+}
+
+export interface DesktopManagedWorktreeRestoreResult {
+  sessionId: string;
+  binding: ManagedTaskWorktreeBinding;
+  restore: WorkspaceRestoreRecord;
 }
 
 export type DesktopRuntimeRunStatus = "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
@@ -490,6 +624,18 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
   const projectPath = input.projectPath === undefined
     ? undefined
     : parseRequiredDesktopString(input.projectPath, "projectPath");
+  const workspaceMode = input.workspaceMode;
+  if (workspaceMode !== undefined && workspaceMode !== "local" && workspaceMode !== "managed") {
+    throw new Error("Desktop run request workspaceMode is invalid.");
+  }
+  const workspaceBaseRef = input.workspaceBaseRef === undefined
+    ? undefined
+    : parseRequiredDesktopString(input.workspaceBaseRef, "workspaceBaseRef");
+  const workspaceSetup = parseManagedTaskWorktreeSetupSpec(input.workspaceSetup);
+  const attachments = parseDesktopRunTurnAttachments(input.attachments, "attachments");
+  if (attachments?.some((attachment) => attachment.threadId !== undefined && attachment.threadId !== sessionId)) {
+    throw new Error("Desktop run request attachments must belong to the active session.");
+  }
   const interactionMode = input.interactionMode;
   if (
     interactionMode !== undefined
@@ -521,6 +667,10 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
     message,
     eventType,
     ...(projectPath !== undefined ? { projectPath } : {}),
+    ...(workspaceMode !== undefined ? { workspaceMode } : {}),
+    ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
+    ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(history !== undefined ? { history } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
     ...(actSubmode !== undefined ? { actSubmode } : {}),
@@ -570,6 +720,7 @@ function parseDesktopRunHistoryLine(value: unknown, index: number): DesktopRunHi
   const parsed = {
     text: parseRequiredDesktopText(input.text, `history[${index}].text`),
     timestamp,
+    ...parseOptionalDesktopRunTurnAttachments(input.attachments, `history[${index}].attachments`),
   };
   if (input.role === "system") {
     const data = typeof input.data === "object" && input.data !== null && Array.isArray(input.data) === false
@@ -596,6 +747,85 @@ function parseDesktopRunHistoryLine(value: unknown, index: number): DesktopRunHi
     ...parsed,
     role: input.role,
   };
+}
+
+function parseOptionalDesktopRunTurnAttachments(
+  value: unknown,
+  field: string,
+): { attachments?: RunTurnAttachment[] | undefined } {
+  const attachments = parseDesktopRunTurnAttachments(value, field);
+  return attachments === undefined ? {} : { attachments };
+}
+
+function parseDesktopRunTurnAttachments(
+  value: unknown,
+  field: string,
+): RunTurnAttachment[] | undefined {
+  if (value === undefined) {
+    return;
+  }
+  if (Array.isArray(value) === false || value.length > 8) {
+    throw new Error(`Desktop request field '${field}' must contain at most 8 attachments.`);
+  }
+  let totalBytes = 0;
+  return value.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`Desktop request field '${field}[${index}]' must be an object.`);
+    }
+    const attachment = entry as Record<string, unknown>;
+    const attachmentId = parseRequiredDesktopString(attachment.attachmentId, `${field}[${index}].attachmentId`);
+    const filename = parseRequiredDesktopString(attachment.filename, `${field}[${index}].filename`);
+    const mimeType = parseRequiredDesktopString(attachment.mimeType, `${field}[${index}].mimeType`);
+    const sha256 = parseRequiredDesktopString(attachment.sha256, `${field}[${index}].sha256`);
+    if (/^[a-f0-9]{64}$/u.test(sha256) === false) {
+      throw new Error(`Desktop request field '${field}[${index}].sha256' must be a SHA-256 digest.`);
+    }
+    if (
+      typeof attachment.sizeBytes !== "number" ||
+      Number.isInteger(attachment.sizeBytes) === false ||
+      attachment.sizeBytes < 0 ||
+      attachment.sizeBytes > 5 * 1024 * 1024
+    ) {
+      throw new Error(`Desktop request field '${field}[${index}].sizeBytes' is invalid.`);
+    }
+    totalBytes += attachment.sizeBytes;
+    if (totalBytes > 10 * 1024 * 1024) {
+      throw new Error(`Desktop request field '${field}' exceeds the 10 MB attachment limit.`);
+    }
+    if (attachment.kind !== "text" && attachment.kind !== "image") {
+      throw new Error(`Desktop request field '${field}[${index}].kind' is invalid.`);
+    }
+    if (attachment.kind === "text" && typeof attachment.text !== "string") {
+      throw new Error(`Desktop text attachment '${field}[${index}]' requires text.`);
+    }
+    if (attachment.kind === "image" && typeof attachment.data !== "string") {
+      throw new Error(`Desktop image attachment '${field}[${index}]' requires data.`);
+    }
+    if (
+      (typeof attachment.text === "string" && new TextEncoder().encode(attachment.text).byteLength > 5 * 1024 * 1024) ||
+      (typeof attachment.data === "string" && attachment.data.length > 7 * 1024 * 1024)
+    ) {
+      throw new Error(`Desktop attachment '${field}[${index}]' payload is too large.`);
+    }
+    const threadId = attachment.threadId === undefined
+      ? undefined
+      : parseRequiredDesktopString(attachment.threadId, `${field}[${index}].threadId`);
+    const createdAt = attachment.createdAt === undefined
+      ? undefined
+      : parseRequiredDesktopString(attachment.createdAt, `${field}[${index}].createdAt`);
+    return {
+      attachmentId,
+      filename,
+      mimeType,
+      sizeBytes: attachment.sizeBytes,
+      sha256,
+      kind: attachment.kind,
+      ...(threadId !== undefined ? { threadId } : {}),
+      ...(createdAt !== undefined ? { createdAt } : {}),
+      ...(typeof attachment.data === "string" ? { data: attachment.data } : {}),
+      ...(typeof attachment.text === "string" ? { text: attachment.text } : {}),
+    };
+  });
 }
 
 function parseRequiredDesktopString(value: unknown, field: string): string {
@@ -854,6 +1084,15 @@ export interface DesktopManagedProjectRun {
   primaryPreviewUrl?: string | undefined;
   stdoutTail: string[];
   stderrTail: string[];
+}
+
+export interface DesktopPreviewDiagnostic {
+  webContentsId: number;
+  kind: "console" | "network_error" | "load_error";
+  message: string;
+  url?: string | undefined;
+  level?: number | undefined;
+  at: string;
 }
 
 export type DesktopModelProvider = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -1228,6 +1467,22 @@ export interface DesktopFileSearchResponse {
   fullSearchAvailable: boolean;
 }
 
+export interface DesktopFileContentSearchResult extends DesktopFileSearchResult {
+  lineNumber: number;
+  columnNumber: number;
+  preview: string;
+}
+
+export interface DesktopFileContentSearchResponse {
+  rootPath: string;
+  query: string;
+  results: DesktopFileContentSearchResult[];
+  truncated: boolean;
+  fullSearchAvailable: boolean;
+  scannedFileCount: number;
+  skippedFileCount: number;
+}
+
 export interface DesktopFileContent {
   path: string;
   content: string;
@@ -1244,6 +1499,7 @@ export interface DesktopFileContent {
 export interface DesktopPathTargetInput {
   rootPath: string;
   targetPath: string;
+  threadId?: string | undefined;
 }
 
 export interface DesktopFileReadInput extends DesktopPathTargetInput {}
@@ -1258,6 +1514,9 @@ export interface DesktopOpenFileEditorInput {
   filePath: string;
   projectPath: string;
   projectLabel: string;
+  threadId?: string | undefined;
+  lineNumber?: number | undefined;
+  columnNumber?: number | undefined;
 }
 
 export interface DesktopProjectFilesChangedEvent {

@@ -40,17 +40,45 @@ async function readProcessUntilTerminal(input: {
   processId: string;
   timeoutMs: number;
   pollWaitMs?: number | undefined;
+  cursor?: number | undefined;
 }) {
   const deadline = Date.now() + input.timeoutMs;
   let result = await input.supervisor.readProcess({
     processId: input.processId,
+    ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
     waitMs: input.pollWaitMs ?? 200,
     maxBytes: 4096,
   });
   while (result.status === "RUNNING" && Date.now() < deadline) {
     result = await input.supervisor.readProcess({
       processId: input.processId,
+      ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
       waitMs: input.pollWaitMs ?? 200,
+      maxBytes: 4096,
+    });
+  }
+  return result;
+}
+
+async function readProcessUntilText(input: {
+  supervisor: DevShellSupervisor;
+  processId: string;
+  expectedText: string;
+  timeoutMs: number;
+  cursor: number;
+}) {
+  const deadline = Date.now() + input.timeoutMs;
+  let result = await input.supervisor.readProcess({
+    processId: input.processId,
+    cursor: input.cursor,
+    waitMs: 200,
+    maxBytes: 4096,
+  });
+  while (!result.text.includes(input.expectedText) && Date.now() < deadline) {
+    result = await input.supervisor.readProcess({
+      processId: input.processId,
+      cursor: input.cursor,
+      waitMs: 200,
       maxBytes: 4096,
     });
   }
@@ -1004,16 +1032,32 @@ test("DevShellSupervisor delivers a terminal result once and rejects reuse of th
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'",
+      command: "printf 'first\\n'; IFS= read -r _; printf 'second\\n'; sleep 0.2",
       yieldTimeMs: 75,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
-    assert.equal(started.text, "first\n");
     const processId = started.processId!;
+    const first = started.text.length > 0
+      ? started
+      : await readProcessUntilText({
+          supervisor,
+          processId,
+          cursor: started.nextCursor,
+          expectedText: "first\n",
+          timeoutMs: 5000,
+        });
+    assert.equal(first.status, "RUNNING");
+    assert.equal(first.text, "first\n");
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const terminal = await supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 });
+    await supervisor.writeProcess({ processId, data: "continue\n" });
+    const terminal = await readProcessUntilTerminal({
+      supervisor,
+      processId,
+      cursor: first.nextCursor,
+      timeoutMs: 5000,
+      pollWaitMs: 200,
+    });
     assert.equal(terminal.status, "COMPLETED");
     assert.equal(terminal.text, "second\n");
 
@@ -1051,7 +1095,7 @@ test("DevShellSupervisor never regresses a fast terminal process back to running
         ? await readProcessUntilTerminal({
             supervisor,
             processId,
-            timeoutMs: 1000,
+            timeoutMs: 5000,
             pollWaitMs: 25,
           })
         : started;

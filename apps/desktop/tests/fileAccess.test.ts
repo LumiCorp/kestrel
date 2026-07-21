@@ -32,6 +32,44 @@ test("desktop path targets resolve paths within the selected root", () => {
   });
 });
 
+test("desktop path targets preserve a valid runtime thread scope", () => {
+  const parsed = parseDesktopPathTargetInput(
+    {
+      rootPath: "/tmp/project-a",
+      targetPath: "/tmp/project-a/src/index.ts",
+      threadId: " thread-1 ",
+    },
+    {
+      methodName: "desktop.readFile",
+      invalidInputCode: "desktop.invalid_read_input",
+      invalidTargetCode: "desktop.invalid_read_path",
+    },
+  );
+
+  assert.equal(parsed.threadId, "thread-1");
+});
+
+test("desktop path targets reject malformed runtime thread scopes", () => {
+  assert.throws(
+    () => parseDesktopPathTargetInput(
+      {
+        rootPath: "/tmp/project-a",
+        targetPath: "/tmp/project-a/src/index.ts",
+        threadId: 42,
+      },
+      {
+        methodName: "desktop.readFile",
+        invalidInputCode: "desktop.invalid_read_input",
+        invalidTargetCode: "desktop.invalid_read_path",
+      },
+    ),
+    {
+      name: "DesktopError",
+      code: "desktop.invalid_operator_thread_id",
+    },
+  );
+});
+
 test("desktop path targets reject paths outside the selected root", () => {
   const rootPath = path.join(path.sep, "tmp", "project-a");
   const targetPath = path.join(path.sep, "tmp", "project-b", "secret.txt");

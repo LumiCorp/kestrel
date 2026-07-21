@@ -12,8 +12,8 @@ import {
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
 
-test("Desktop bridge v4 exposes attachment and typed operator-control contracts", () => {
-  assert.equal(DESKTOP_BRIDGE_VERSION, "4");
+test("Desktop bridge v6 exposes workspace, attachment, and operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "6");
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
   assert.deepEqual(parseDesktopOperatorControlRequest({
@@ -99,9 +99,87 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       projectPath: "  /workspace/project-a  ",
+      workspaceMode: "managed",
       executionSelection,
     }).projectPath,
     "/workspace/project-a",
+  );
+  assert.equal(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceMode: "local",
+      executionSelection,
+    }).workspaceMode,
+    "local",
+  );
+  assert.equal(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      workspaceBaseRef: "release/v2",
+      executionSelection,
+    }).workspaceBaseRef,
+    "release/v2",
+  );
+  assert.deepEqual(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      executionSelection,
+      workspaceSetup: {
+        approvedIgnoredFiles: [".env"],
+        steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
+      },
+    }).workspaceSetup,
+    {
+      approvedIgnoredFiles: [".env"],
+      steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
+    },
+  );
+  const attachment = {
+    attachmentId: "attachment-1",
+    threadId: "session-1",
+    filename: "app.ts",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    sha256: "a".repeat(64),
+    kind: "text",
+    text: "hello",
+  };
+  assert.deepEqual(
+    parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Review this file",
+      eventType: "user.message",
+      executionSelection,
+      attachments: [attachment],
+      history: [{ role: "user", text: "Earlier file", timestamp, attachments: [attachment] }],
+    }).attachments,
+    [attachment],
+  );
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-2",
+      message: "Review this file",
+      eventType: "user.message",
+      executionSelection,
+      attachments: [attachment],
+    }),
+    /attachments must belong to the active session/u,
+  );
+  assert.throws(
+    () => parseDesktopRunTurnRequest({
+      sessionId: "session-1",
+      message: "Continue",
+      eventType: "user.reply",
+      executionSelection,
+      workspaceMode: "shared",
+    }),
+    /workspaceMode is invalid/u,
   );
   assert.throws(
     () => parseDesktopRunTurnRequest({

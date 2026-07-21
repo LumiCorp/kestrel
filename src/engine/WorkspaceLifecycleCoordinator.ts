@@ -10,6 +10,7 @@ import {
 } from "../runtime/userReplyIntent.js";
 import {
   deriveManagedWorktreeWorkspaceTaskKey,
+  parseManagedTaskWorktreeSetupSpec,
   type ManagedTaskWorktreeLeaseOwnerLookup,
 } from "../workspace/ManagedTaskWorktreeService.js";
 import { ManagedWorktreePromotionService } from "../workspace/ManagedWorktreePromotionService.js";
@@ -75,6 +76,7 @@ export class WorkspaceLifecycleCoordinator {
           runId,
           sourceWorkspaceRoot: existingBinding.sourceWorkspaceRoot,
           sourceRepoRoot: existingBinding.sourceRepoRoot,
+          ...(existingBinding.baseRefName !== undefined ? { baseRef: existingBinding.baseRefName } : {}),
           ...(existingBinding.taskId !== undefined ? { taskId: existingBinding.taskId } : {}),
           ...(existingBinding.taskKey !== undefined ? { taskKey: existingBinding.taskKey } : {}),
           ...(existingBinding.threadId !== undefined ? { threadId: existingBinding.threadId } : {}),
@@ -316,6 +318,8 @@ export class WorkspaceLifecycleCoordinator {
 
     const agent = asRecord(input.session.state.agent) ?? {};
     const sourceRepoRoot = asString(workspace?.sourceRepoRoot) ?? asString(workspace?.repoRoot);
+    const baseRef = asString(workspace?.managedWorktreeBaseRef);
+    const setup = parseManagedTaskWorktreeSetupSpec(workspace?.managedWorktreeSetup);
     const isolation = asManagedWorktreeIsolation(workspace?.managedWorktreeIsolation);
     const taskId =
       asString(asRecord(input.event.payload.orchestration)?.taskId) ??
@@ -332,6 +336,8 @@ export class WorkspaceLifecycleCoordinator {
       triggeringTool: toolName,
       sourceWorkspaceRoot,
       ...(sourceRepoRoot !== undefined ? { sourceRepoRoot } : {}),
+      ...(baseRef !== undefined ? { baseRef } : {}),
+      ...(setup !== undefined ? { setup } : {}),
       ...(taskId !== undefined ? { taskId } : {}),
       ...(taskKey !== undefined ? { taskKey } : {}),
       ...(threadId !== undefined ? { threadId } : {}),
@@ -345,6 +351,8 @@ export class WorkspaceLifecycleCoordinator {
         runId: input.runId,
         sourceWorkspaceRoot,
         ...(sourceRepoRoot !== undefined ? { sourceRepoRoot } : {}),
+        ...(baseRef !== undefined ? { baseRef } : {}),
+        ...(setup !== undefined ? { setup } : {}),
         ...(taskId !== undefined ? { taskId } : {}),
         ...(taskKey !== undefined ? { taskKey } : {}),
         ...(threadId !== undefined ? { threadId } : {}),
@@ -569,6 +577,7 @@ export class WorkspaceLifecycleCoordinator {
     const sourceRepoRoot = asString(binding.sourceRepoRoot);
     const worktreeRoot = asString(binding.worktreeRoot);
     const baseHead = asString(binding.baseHead);
+    const baseRefName = asString(binding.baseRefName);
     const lastObservedSourceHead = asString(binding.lastObservedSourceHead) ?? baseHead;
     const triggeringTool = asString(binding.triggeringTool) ?? "unknown";
     const boundAt = asString(binding.boundAt) ?? new Date(0).toISOString();
@@ -611,6 +620,7 @@ export class WorkspaceLifecycleCoordinator {
       sourceRepoRoot,
       worktreeRoot,
       baseHead,
+      ...(baseRefName !== undefined ? { baseRefName } : {}),
       lastObservedSourceHead,
       scope,
       leaseId: asString(binding.leaseId) ?? "legacy-lease",
@@ -803,6 +813,7 @@ function withManagedWorktreePayload(
         sourceRepoRoot: binding.sourceRepoRoot,
         worktreeRoot: binding.worktreeRoot,
         baseHead: binding.baseHead,
+        ...(binding.baseRefName !== undefined ? { baseRefName: binding.baseRefName } : {}),
         lastObservedSourceHead: binding.lastObservedSourceHead,
         scope: binding.scope,
         leaseId: binding.leaseId,
@@ -826,6 +837,7 @@ function toManagedWorktreeEventPayload(
     sourceRepoRoot: binding.sourceRepoRoot,
     worktreeRoot: binding.worktreeRoot,
     baseHead: binding.baseHead,
+    ...(binding.baseRefName !== undefined ? { baseRefName: binding.baseRefName } : {}),
     lastObservedSourceHead: binding.lastObservedSourceHead,
     scope: binding.scope,
     leaseId: binding.leaseId,

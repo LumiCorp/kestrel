@@ -75,6 +75,8 @@ export class WorkspaceLifecycleService {
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       triggeringTool: input.toolName,
       ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+      ...(input.baseRef !== undefined ? { baseRef: input.baseRef } : {}),
+      ...(input.setup !== undefined ? { setup: input.setup } : {}),
       ...(input.leaseOwnerLookup !== undefined ? { leaseOwnerLookup: input.leaseOwnerLookup } : {}),
     });
 
@@ -98,6 +100,7 @@ export class WorkspaceLifecycleService {
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       triggeringTool: input.triggeringTool,
       ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+      ...(input.baseRef !== undefined ? { baseRef: input.baseRef } : {}),
       approvedProposal: input.approvedProposal,
       ...(input.leaseOwnerLookup !== undefined ? { leaseOwnerLookup: input.leaseOwnerLookup } : {}),
     });

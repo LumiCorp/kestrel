@@ -399,6 +399,32 @@ class MockTransport implements ProtocolTransport {
       );
       return;
     }
+
+    if (
+      command.type === "workspace.promotion.list" ||
+      command.type === "workspace.promotion.preview" ||
+      command.type === "workspace.promotion.apply" ||
+      command.type === "workspace.managed.inspect" ||
+      command.type === "workspace.managed.cleanup" ||
+      command.type === "workspace.managed.restore"
+      || command.type === "workspace.managed.setup.retry"
+    ) {
+      const operation = command.type.slice("workspace.".length);
+      this.handlers.onLine(
+        JSON.stringify({
+          id: `evt-${operation}`,
+          type: "workspace.checkpoint",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          payload: {
+            sessionId: (command.payload as { sessionId?: string }).sessionId ?? "session-main",
+            operation,
+            ...(command.type === "workspace.promotion.list" ? { promotions: [] } : {}),
+          },
+        }),
+      );
+      return;
+    }
   }
 
   async stop(): Promise<void> {
@@ -409,11 +435,12 @@ class MockTransport implements ProtocolTransport {
 test("web adapter accepts a trusted per-turn inline profile and provenance metadata", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
-    profile: createWebDemoProfile("base"),
+    profile: { ...createWebDemoProfile(), id: "base" },
     transportFactory: () => transport,
   });
   const profile = {
-    ...createWebDemoProfile("selected"),
+    ...createWebDemoProfile(),
+    id: "selected",
     modelProvider: "openai" as const,
     model: "gpt-5.4",
     toolAllowlist: ["free.weather.current"],
@@ -1307,12 +1334,64 @@ test("web adapter forwards control commands", async () => {
   });
   assert.equal(fanIn.type, "operator.controlled");
 
+  const promotions = await adapter.sendControl({
+    type: "workspace.promotion.list",
+    sessionId: "session-main",
+  });
+  assert.equal(promotions.type, "workspace.checkpoint");
+  const promotionPreview = await adapter.sendControl({
+    type: "workspace.promotion.preview",
+    sessionId: "session-main",
+    promotionId: "promotion-1",
+  });
+  assert.equal(promotionPreview.type, "workspace.checkpoint");
+  const promotionApply = await adapter.sendControl({
+    type: "workspace.promotion.apply",
+    sessionId: "session-main",
+    promotionId: "promotion-1",
+    candidateFingerprint: "fingerprint-1",
+  });
+  assert.equal(promotionApply.type, "workspace.checkpoint");
+  const managedInspection = await adapter.sendControl({
+    type: "workspace.managed.inspect",
+    sessionId: "session-main",
+    threadId: "thread-main",
+  });
+  assert.equal(managedInspection.type, "workspace.checkpoint");
+  const managedCleanup = await adapter.sendControl({
+    type: "workspace.managed.cleanup",
+    sessionId: "session-main",
+    threadId: "thread-main",
+    reason: "operator cleanup",
+  });
+  assert.equal(managedCleanup.type, "workspace.checkpoint");
+  const managedRestore = await adapter.sendControl({
+    type: "workspace.managed.restore",
+    sessionId: "session-main",
+    threadId: "thread-main",
+    checkpointId: "checkpoint-1",
+  });
+  assert.equal(managedRestore.type, "workspace.checkpoint");
+  const managedSetupRetry = await adapter.sendControl({
+    type: "workspace.managed.setup.retry",
+    sessionId: "session-main",
+    threadId: "thread-main",
+  });
+  assert.equal(managedSetupRetry.type, "workspace.checkpoint");
+
   const commandTypes = transport.sent.map((item) => item.type);
   assert.equal(commandTypes.includes("operator.inbox"), true);
   assert.equal(commandTypes.includes("operator.thread"), true);
   assert.equal(commandTypes.includes("operator.runs"), true);
   assert.equal(commandTypes.includes("operator.run"), true);
   assert.equal(commandTypes.includes("operator.control"), true);
+  assert.equal(commandTypes.includes("workspace.promotion.list"), true);
+  assert.equal(commandTypes.includes("workspace.promotion.preview"), true);
+  assert.equal(commandTypes.includes("workspace.promotion.apply"), true);
+  assert.equal(commandTypes.includes("workspace.managed.inspect"), true);
+  assert.equal(commandTypes.includes("workspace.managed.cleanup"), true);
+  assert.equal(commandTypes.includes("workspace.managed.restore"), true);
+  assert.equal(commandTypes.includes("workspace.managed.setup.retry"), true);
   const policyControl = transport.sent.find(
     (item) =>
       item.type === "operator.control" &&

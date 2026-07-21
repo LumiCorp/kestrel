@@ -503,6 +503,10 @@ test("filesystem mutation tools auto-provision managed worktree before tool cont
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
   await initGitRepo(repo);
+  await writeFile(path.join(repo, ".gitignore"), ".env\n", "utf8");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "configure managed setup"]);
+  await writeFile(path.join(repo, ".env"), "RUNTIME_SETUP=ready\n", "utf8");
   const store = new InMemorySessionStore();
   const initialSession = await store.ensureSession("auto-fs-worktree-session", "agent.exec.dispatch");
   await store.patchSessionState?.({
@@ -566,6 +570,15 @@ test("filesystem mutation tools auto-provision managed worktree before tool cont
       workspace: {
         workspaceRoot: repo,
         managedWorktreeRequired: true,
+        managedWorktreeSetup: {
+          approvedIgnoredFiles: [".env"],
+          steps: [{
+            id: "runtime-setup",
+            label: "Configure managed workspace",
+            executable: process.execPath,
+            args: ["-e", "require('node:fs').writeFileSync('runtime-setup.marker', 'configured\\n')"],
+          }],
+        },
       },
     },
   });
@@ -583,6 +596,14 @@ test("filesystem mutation tools auto-provision managed worktree before tool cont
   assert.notEqual(refreshedWorkspace?.workspaceRoot, repo);
   assert.equal(refreshedBinding?.status, "bound");
   assert.equal(refreshedBinding?.sourceWorkspaceRoot, realRepo);
+  assert.equal(
+    await readFile(path.join(String(refreshedWorkspace?.workspaceRoot), ".env"), "utf8"),
+    "RUNTIME_SETUP=ready\n",
+  );
+  assert.equal(
+    await readFile(path.join(String(refreshedWorkspace?.workspaceRoot), "runtime-setup.marker"), "utf8"),
+    "configured\n",
+  );
 
   const persistedSession = await store.getSession("auto-fs-worktree-session");
   const persistedAgent = (persistedSession?.state.agent ?? {}) as Record<string, unknown>;

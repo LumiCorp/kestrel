@@ -88,6 +88,36 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
   }
 }
 
+test("ThreadRuntime exposes the authoritative workspace on operator thread views", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor: new QueueTurnExecutor(sessionStore, []),
+  });
+
+  await runtime.startThread({
+    threadId: "thread-workspace-authority",
+    sessionId: "session-workspace-authority",
+    title: "Workspace authority",
+    metadata: {
+      workspace: {
+        workspaceId: "workspace-a",
+        workspaceRoot: "/tmp/project-a",
+        label: "Project A",
+      },
+    },
+  });
+
+  const view = await runtime.getOperatorThreadView("thread-workspace-authority");
+  assert.deepEqual(view?.workspace, {
+    kind: "local",
+    workspaceId: "workspace-a",
+    label: "Project A",
+    workspaceRoot: "/tmp/project-a",
+    sourceWorkspaceRoot: "/tmp/project-a",
+  });
+});
+
 class OperatorRunWindowStore extends InMemorySessionStore {
   readonly listRunInputs: Array<Parameters<InMemorySessionStore["listRuns"]>[0]> = [];
   readonly getRunInputs: string[] = [];

@@ -26,6 +26,8 @@ export function createLocalCoreRunnerRuntimeFactory(
 ): RunnerRuntimeFactory {
   const runtimeEnvironmentResolver = options.runtimeEnvironmentResolver;
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
+    enableUserTerminals: true,
+    enableWorkspaceChanges: true,
     ...(options.homePath !== undefined
       ? { resolveAttachments: async (threadId, attachmentIds) => await new DesktopAttachmentStore(options.homePath!).resolve(threadId, attachmentIds) }
       : {}),

@@ -163,14 +163,17 @@ const desktopBridge: DesktopBridge = {
       ipcRenderer.removeListener("desktop:runtime-health", handler);
     };
   },
-  listDirectory(rootPath, directoryPath) {
-    return ipcRenderer.invoke("desktop:list-directory", rootPath, directoryPath);
+  listDirectory(rootPath, directoryPath, threadId) {
+    return ipcRenderer.invoke("desktop:list-directory", rootPath, directoryPath, threadId);
   },
-  searchProjectFiles(rootPath, query) {
-    return ipcRenderer.invoke("desktop:search-project-files", rootPath, query);
+  searchProjectFiles(rootPath, query, threadId) {
+    return ipcRenderer.invoke("desktop:search-project-files", rootPath, query, threadId);
   },
-  watchProjectFiles(rootPath) {
-    return ipcRenderer.invoke("desktop:watch-project-files", rootPath);
+  searchProjectContent(rootPath, query, threadId) {
+    return ipcRenderer.invoke("desktop:search-project-content", rootPath, query, threadId);
+  },
+  watchProjectFiles(rootPath, threadId) {
+    return ipcRenderer.invoke("desktop:watch-project-files", rootPath, threadId);
   },
   unwatchProjectFiles(rootPath) {
     return ipcRenderer.invoke("desktop:unwatch-project-files", rootPath);
@@ -199,8 +202,8 @@ const desktopBridge: DesktopBridge = {
   deleteMcpServer(id: string) {
     return ipcRenderer.invoke("desktop:delete-mcp-server", id);
   },
-  readProjectLauncher(projectPath, packageManagerOverride) {
-    return ipcRenderer.invoke("desktop:read-project-launcher", projectPath, packageManagerOverride);
+  readProjectLauncher(projectPath, packageManagerOverride, threadId?: string) {
+    return ipcRenderer.invoke("desktop:read-project-launcher", projectPath, packageManagerOverride, threadId);
   },
   listProjectRuns() {
     return ipcRenderer.invoke("desktop:list-project-runs");
@@ -218,6 +221,11 @@ const desktopBridge: DesktopBridge = {
   restartProjectRun(runId) {
     return ipcRenderer.invoke("desktop:restart-project-run", runId);
   },
+  onPreviewDiagnostic(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, diagnostic: import("./contracts.js").DesktopPreviewDiagnostic) => listener(diagnostic);
+    ipcRenderer.on("desktop:preview-diagnostic", handler);
+    return () => ipcRenderer.removeListener("desktop:preview-diagnostic", handler);
+  },
   getProjectSnapshot(sessionId): Promise<DesktopProjectSnapshotResponse> {
     return ipcRenderer.invoke("desktop:get-project-snapshot", sessionId);
   },
@@ -233,6 +241,83 @@ const desktopBridge: DesktopBridge = {
   getOperatorRun(runId) {
     return ipcRenderer.invoke("desktop:get-operator-run", runId);
   },
+  getWorkspaceLifecycle(sessionId) {
+    return ipcRenderer.invoke("desktop:get-workspace-lifecycle", sessionId);
+  },
+  captureWorkspaceCheckpoint(input) {
+    return ipcRenderer.invoke("desktop:capture-workspace-checkpoint", input);
+  },
+  restoreWorkspaceCheckpoint(input) {
+    return ipcRenderer.invoke("desktop:restore-workspace-checkpoint", input);
+  },
+  inspectWorkspaceCheckpoint(input) {
+    return ipcRenderer.invoke("desktop:inspect-workspace-checkpoint", input);
+  },
+  compareWorkspaceCheckpoint(input) {
+    return ipcRenderer.invoke("desktop:compare-workspace-checkpoint", input);
+  },
+  cleanupWorkspaceCheckpoints(input) {
+    return ipcRenderer.invoke("desktop:cleanup-workspace-checkpoints", input);
+  },
+  previewWorkspacePromotion(input) {
+    return ipcRenderer.invoke("desktop:preview-workspace-promotion", input);
+  },
+  applyWorkspacePromotion(input) {
+    return ipcRenderer.invoke("desktop:apply-workspace-promotion", input);
+  },
+  undoLatestWorkspacePromotion(input) {
+    return ipcRenderer.invoke("desktop:undo-latest-workspace-promotion", input);
+  },
+  inspectManagedWorktree(input) {
+    return ipcRenderer.invoke("desktop:inspect-managed-worktree", input);
+  },
+  cleanupManagedWorktree(input) {
+    return ipcRenderer.invoke("desktop:cleanup-managed-worktree", input);
+  },
+  restoreManagedWorktree(input) {
+    return ipcRenderer.invoke("desktop:restore-managed-worktree", input);
+  },
+  retryManagedWorktreeSetup(input) {
+    return ipcRenderer.invoke("desktop:retry-managed-worktree-setup", input);
+  },
+  startUserTerminal(input) {
+    return ipcRenderer.invoke("desktop:start-user-terminal", input);
+  },
+  listUserTerminals(input) {
+    return ipcRenderer.invoke("desktop:list-user-terminals", input);
+  },
+  readUserTerminal(input) {
+    return ipcRenderer.invoke("desktop:read-user-terminal", input);
+  },
+  writeUserTerminal(input) {
+    return ipcRenderer.invoke("desktop:write-user-terminal", input);
+  },
+  resizeUserTerminal(input) {
+    return ipcRenderer.invoke("desktop:resize-user-terminal", input);
+  },
+  stopUserTerminal(input) {
+    return ipcRenderer.invoke("desktop:stop-user-terminal", input);
+  },
+  inspectWorkspaceChanges(input) {
+    return ipcRenderer.invoke("desktop:inspect-workspace-changes", input);
+  },
+  mutateWorkspaceChanges(input) {
+    return ipcRenderer.invoke("desktop:mutate-workspace-changes", input);
+  },
+  addWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:add-workspace-feedback", input); },
+  listWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:list-workspace-feedback", input); },
+  removeWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:remove-workspace-feedback", input); },
+  submitWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:submit-workspace-feedback", input); },
+  runWorkspaceReview(input) { return ipcRenderer.invoke("desktop:run-workspace-review", input); },
+  listWorkspaceReviews(input) { return ipcRenderer.invoke("desktop:list-workspace-review", input); },
+  updateWorkspaceReviewFinding(input) { return ipcRenderer.invoke("desktop:update-workspace-review", input); },
+  submitWorkspaceReviewFindings(input) { return ipcRenderer.invoke("desktop:submit-workspace-review", input); },
+  inspectWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:inspect-workspace-validation", input); },
+  runWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:run-workspace-validation", input); },
+  cancelWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:cancel-workspace-validation", input); },
+  submitWorkspaceValidationFailures(input) { return ipcRenderer.invoke("desktop:submit-workspace-validation", input); },
+  inspectWorkspaceGit(input) { return ipcRenderer.invoke("desktop:inspect-workspace-git", input); },
+  performWorkspaceGitAction(input) { return ipcRenderer.invoke("desktop:action-workspace-git", input); },
   onProjectRuns(listener) {
     const handler = (_event: Electron.IpcRendererEvent, runs: DesktopManagedProjectRun[]) => {
       listener(runs);

@@ -156,6 +156,38 @@ export class Kestrel {
     return this.store.getSession(sessionId);
   }
 
+  async updateManagedWorktreeBinding(
+    sessionId: string,
+    binding: import("../workspace/ManagedTaskWorktreeService.js").ManagedTaskWorktreeBinding | undefined,
+  ) {
+    const session = await this.store.getSession(sessionId);
+    if (session === null) {
+      throw new Error(`Session '${sessionId}' does not exist.`);
+    }
+    const agent = typeof session.state.agent === "object" && session.state.agent !== null
+      ? session.state.agent as Record<string, unknown>
+      : {};
+    const exec = typeof agent.exec === "object" && agent.exec !== null
+      ? agent.exec as Record<string, unknown>
+      : {};
+    const nextAgent = {
+      ...agent,
+      exec: {
+        ...exec,
+        managedWorktreeBinding: binding,
+      },
+    };
+    if (this.store.patchSessionState === undefined) {
+      throw new Error("Session store does not support managed worktree binding updates.");
+    }
+    return this.store.patchSessionState({
+      sessionId,
+      expectedVersion: session.version,
+      reason: binding === undefined ? "managed_worktree_cleanup" : "managed_worktree_cleanup_rollback",
+      statePatch: { agent: nextAgent },
+    });
+  }
+
   async cancelActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
     return this.engine.cancelActiveRun(sessionId);
   }

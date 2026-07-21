@@ -1489,6 +1489,134 @@ test("workspace checkpoint commands dispatch through CommandRouter", async () =>
         remainingBytes: 0,
       };
     },
+    inspectManagedWorktree: async (input) => ({
+      sessionId: input.sessionId,
+      inspection: {
+        status: "valid",
+        binding: {
+          status: "bound",
+          sessionId: input.sessionId,
+          sourceWorkspaceRoot: "/tmp/repo",
+          sourceRepoRoot: "/tmp/repo",
+          worktreeRoot: "/tmp/managed",
+          baseHead: "base-1",
+          lastObservedSourceHead: "base-1",
+          scope: { kind: "threadId", value: input.threadId },
+          leaseId: "released-lease",
+          leaseKind: "run",
+          createdBySessionId: input.sessionId,
+          dirtyState: { dirty: false, porcelain: "", checkedAt: new Date().toISOString() },
+          threadId: input.threadId,
+          triggeringTool: "fs.write_text",
+          boundAt: new Date().toISOString(),
+        },
+        activeProcesses: [],
+        dirtyState: { dirty: false, porcelain: "", checkedAt: new Date().toISOString() },
+        storageBytes: 128,
+        storageScanTruncated: false,
+        aheadCommitCount: 0,
+        staleBase: false,
+        setup: { status: "not_configured", attempts: 0, approvedIgnoredFiles: [], completedStepIds: [] },
+        retention: { policy: "retain_until_explicit_cleanup", disposition: "clean_disposable", reasons: ["clean_and_no_commits"] },
+      },
+    }),
+    cleanupManagedWorktree: async (input) => ({
+      sessionId: input.sessionId,
+      checkpoint: {
+        checkpoint: {
+          checkpointId: "cleanup-checkpoint-1",
+          sessionId: input.sessionId,
+          workspaceRoot: "/tmp/managed",
+          repoRoot: "/tmp/managed",
+          label: "Before cleanup",
+          isExplicitLabel: true,
+          reason: input.reason,
+          createdBy: input.cleanedBy ?? "operator",
+          createdAt: new Date().toISOString(),
+          storageKind: "git_ref_v1",
+          gitRef: "refs/kestrel/checkpoints/cleanup-1",
+          kind: "recovery_anchor",
+          retentionClass: "recovery_anchor",
+          captureStatus: "CAPTURED",
+          manifestHash: "manifest-cleanup",
+          fileCount: 0,
+          totalBytes: 0,
+        },
+        files: [],
+      },
+      cleanup: {
+        status: "cleaned",
+        worktreeRoot: "/tmp/managed",
+        sourceRepoRoot: "/tmp/repo",
+        snapshotCheckpointId: "cleanup-checkpoint-1",
+        removedBytes: 128,
+        cleanedAt: new Date().toISOString(),
+        cleanedBy: input.cleanedBy ?? "operator",
+      },
+    }),
+    restoreManagedWorktree: async (input) => ({
+      sessionId: input.sessionId,
+      binding: {
+        status: "bound",
+        sessionId: input.sessionId,
+        sourceWorkspaceRoot: "/tmp/repo",
+        sourceRepoRoot: "/tmp/repo",
+        worktreeRoot: "/tmp/managed",
+        baseHead: "base-1",
+        lastObservedSourceHead: "base-1",
+        scope: { kind: "threadId", value: input.threadId },
+        leaseId: "restore-lease",
+        leaseKind: "run",
+        createdBySessionId: input.sessionId,
+        dirtyState: { dirty: true, porcelain: " M app.txt", checkedAt: new Date().toISOString() },
+        threadId: input.threadId,
+        triggeringTool: "workspace.managed.restore",
+        boundAt: new Date().toISOString(),
+      },
+      restore: {
+        restoreId: "managed-restore-1",
+        sessionId: input.sessionId,
+        checkpointId: input.checkpointId,
+        workspaceRoot: "/tmp/managed",
+        repoRoot: "/tmp/managed",
+        restoredBy: input.restoredBy ?? "operator",
+        reason: input.reason ?? "restore",
+        validationMessages: [],
+        status: "COMPLETED",
+        createdAt: new Date().toISOString(),
+      },
+    }),
+    retryManagedWorktreeSetup: async (input) => ({
+      sessionId: input.sessionId,
+      inspection: {
+        status: "valid",
+        binding: {
+          status: "bound",
+          sessionId: input.sessionId,
+          sourceWorkspaceRoot: "/tmp/repo",
+          sourceRepoRoot: "/tmp/repo",
+          worktreeRoot: "/tmp/managed",
+          baseHead: "base-1",
+          lastObservedSourceHead: "base-1",
+          scope: { kind: "threadId", value: input.threadId },
+          leaseId: "released-lease",
+          leaseKind: "run",
+          createdBySessionId: input.sessionId,
+          dirtyState: { dirty: false, porcelain: "", checkedAt: new Date().toISOString() },
+          threadId: input.threadId,
+          triggeringTool: "workspace.managed.setup.retry",
+          boundAt: new Date().toISOString(),
+        },
+        activeProcesses: [],
+        dirtyState: { dirty: false, porcelain: "", checkedAt: new Date().toISOString() },
+        storageBytes: 128,
+        storageScanTruncated: false,
+        aheadCommitCount: 0,
+        staleBase: false,
+        setup: { status: "completed", attempts: 2, approvedIgnoredFiles: [".env"], completedStepIds: ["install"] },
+        retention: { policy: "retain_until_explicit_cleanup", disposition: "clean_disposable", reasons: ["clean_and_no_commits"] },
+      },
+    }),
     close: async () => {},
   }));
   const router = new CommandRouter(host, writer);
@@ -1548,8 +1676,181 @@ test("workspace checkpoint commands dispatch through CommandRouter", async () =>
       source_post_promotion: 21,
     },
   });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-managed-inspect",
+    type: "workspace.managed.inspect",
+    payload: { sessionId: "session-main", threadId: "thread-main" },
+    metadata: { profile },
+  }));
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-managed-cleanup",
+    type: "workspace.managed.cleanup",
+    payload: { sessionId: "session-main", threadId: "thread-main", reason: "retire workspace" },
+    metadata: { profile, actor: { actorId: "operator-1", actorType: "operator" } },
+  }));
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-managed-restore",
+    type: "workspace.managed.restore",
+    payload: { sessionId: "session-main", threadId: "thread-main", checkpointId: "cleanup-checkpoint-1" },
+    metadata: { profile, actor: { actorId: "operator-1", actorType: "operator" } },
+  }));
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-managed-setup-retry",
+    type: "workspace.managed.setup.retry",
+    payload: { sessionId: "session-main", threadId: "thread-main" },
+    metadata: { profile },
+  }));
+  await tick();
+  assert.equal(events[2]?.payload.operation, "managed.inspect");
+  assert.equal(events[3]?.payload.operation, "managed.cleanup");
+  assert.equal((events[3]?.payload.managedCleanup as Record<string, unknown>)?.snapshotCheckpointId, "cleanup-checkpoint-1");
+  assert.equal(events[4]?.payload.operation, "managed.restore");
+  assert.equal((events[4]?.payload.restore as Record<string, unknown>)?.checkpointId, "cleanup-checkpoint-1");
+  assert.equal(events[5]?.payload.operation, "managed.setup.retry");
   rl.close();
   await host.close();
+});
+
+test("user terminal commands preserve raw input and emit typed responses", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const now = new Date().toISOString();
+  const terminal = {
+    terminalId: "terminal-1",
+    kind: "user_terminal" as const,
+    sessionId: "session-main",
+    threadId: "thread-main",
+    workspaceRoot: "/tmp/repo",
+    cwd: "/tmp/repo",
+    shellPath: "/bin/sh",
+    pid: 123,
+    status: "running" as const,
+    cols: 120,
+    rows: 32,
+    startedAt: now,
+    updatedAt: now,
+  };
+  let written = "";
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    startUserTerminal: async () => terminal,
+    listUserTerminals: async () => [terminal],
+    readUserTerminal: async () => ({ terminal, output: "ready", cursor: 0, nextCursor: 1, truncated: false }),
+    writeUserTerminal: async (input) => { written = input.data; return terminal; },
+    resizeUserTerminal: async (input) => ({ ...terminal, cols: input.cols, rows: input.rows }),
+    stopUserTerminal: async () => ({ ...terminal, status: "stopped" as const }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> }));
+
+  const commands = [
+    { type: "user.terminal.start", payload: { sessionId: "session-main", threadId: "thread-main" } },
+    { type: "user.terminal.list", payload: { sessionId: "session-main", threadId: "thread-main" } },
+    { type: "user.terminal.read", payload: { sessionId: "session-main", terminalId: "terminal-1", cursor: 0 } },
+    { type: "user.terminal.write", payload: { sessionId: "session-main", terminalId: "terminal-1", data: " " } },
+    { type: "user.terminal.resize", payload: { sessionId: "session-main", terminalId: "terminal-1", cols: 80, rows: 24 } },
+    { type: "user.terminal.stop", payload: { sessionId: "session-main", terminalId: "terminal-1" } },
+  ] as const;
+  for (const [index, command] of commands.entries()) {
+    await router.acceptLine(JSON.stringify({ id: `terminal-${index}`, ...command, metadata: { profile } }));
+  }
+  await tick();
+  assert.equal(written, " ");
+  assert.deepEqual(events.map((event) => event.type), commands.map(() => "user.terminal"));
+  assert.deepEqual(events.map((event) => event.payload.operation), ["start", "list", "read", "write", "resize", "stop"]);
+  assert.equal(events[2]?.payload.output, "ready");
+  rl.close();
+  await host.close();
+});
+
+test("workspace change commands emit authoritative typed snapshots and mutation evidence", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const snapshot = {
+    sessionId: "session-main", threadId: "thread-main", workspaceRoot: "/repo", repoRoot: "/repo",
+    scope: { kind: "uncommitted" as const }, options: { contextLines: 3, whitespace: "show" as const }, readOnly: false, candidateFingerprint: "sha256:current", ahead: 0, behind: 0,
+    conflicted: false, files: [], hunks: [], diff: "", diffBytes: 0, truncated: false, generatedAt: new Date().toISOString(),
+  };
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    inspectWorkspaceChanges: async () => snapshot,
+    mutateWorkspaceChanges: async () => ({ operation: "stage_file" as const, previousFingerprint: "sha256:previous", snapshot }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> }));
+  await router.acceptLine(JSON.stringify({ id: "changes-inspect", type: "workspace.changes.inspect", payload: { sessionId: "session-main", threadId: "thread-main", scope: { kind: "uncommitted" } }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "changes-mutate", type: "workspace.changes.mutate", payload: { sessionId: "session-main", threadId: "thread-main", expectedFingerprint: "sha256:previous", mutation: { operation: "stage_file", path: "src/app.ts" } }, metadata: { profile } }));
+  await tick();
+  assert.deepEqual(events.map((event) => event.type), ["workspace.changes", "workspace.changes"]);
+  assert.equal(events[0]?.payload.operation, "inspect");
+  assert.equal(events[1]?.payload.previousFingerprint, "sha256:previous");
+  assert.equal(events[1]?.payload.mutationOperation, "stage_file");
+  rl.close();
+  await host.close();
+});
+
+test("workspace review commands emit typed Local Core review snapshots", async () => {
+  const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
+  const snapshot = { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, reviews: [] };
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    runWorkspaceReview: async () => snapshot,
+    listWorkspaceReviews: async () => snapshot,
+    updateWorkspaceReviewFinding: async () => snapshot,
+    submitWorkspaceReviewFindings: async () => ({ snapshot, result: { output: { runId: "run-review-followup" } } as RunTurnResult }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer); const events: Array<{ type: string; payload: Record<string, unknown> }> = []; output.on("data", (chunk) => { for (const line of chunk.toString().trim().split("\n")) if (line) events.push(JSON.parse(line)); });
+  await router.acceptLine(JSON.stringify({ id: "review-run", type: "workspace.review.run", payload: { sessionId: "session-main", threadId: "thread-main", scope: { kind: "uncommitted" }, mode: "current_thread" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "review-list", type: "workspace.review.list", payload: { sessionId: "session-main", threadId: "thread-main" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "review-update", type: "workspace.review.update", payload: { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, reviewId: "review-1", findingId: "finding-1", action: "dismiss", reason: "Not applicable" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "review-submit", type: "workspace.review.submit", payload: { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, reviewId: "review-1", findingIds: ["finding-1"], request: "address" }, metadata: { profile } }));
+  await tick(); assert.deepEqual(events.map((event) => event.type), ["workspace.review", "workspace.review", "workspace.review", "workspace.review"]); assert.equal(events[3]?.payload.runId, "run-review-followup");
+  output.destroy(); await host.close();
+});
+
+test("workspace validation commands emit candidate-bound Local Core snapshots", async () => {
+  const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
+  const snapshot = { sessionId: "session-main", threadId: "thread-main", workspaceRoot: "/workspace", candidateFingerprint, actions: [], suites: [], results: [], readiness: { state: "not_run" as const, required: 0, passed: 0, failed: 0, stale: 0, message: "Not run" }, generatedAt: new Date().toISOString() };
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    inspectWorkspaceValidation: async () => snapshot,
+    runWorkspaceValidation: async () => snapshot,
+    cancelWorkspaceValidation: async () => snapshot,
+    submitWorkspaceValidationFailures: async () => ({ snapshot, result: { output: { runId: "run-validation-followup" } } as RunTurnResult }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer); const events: Array<{ type: string; payload: Record<string, unknown> }> = []; output.on("data", (chunk) => { for (const line of chunk.toString().trim().split("\n")) if (line) events.push(JSON.parse(line)); });
+  await router.acceptLine(JSON.stringify({ id: "validation-inspect", type: "workspace.validation.inspect", payload: { sessionId: "session-main", threadId: "thread-main" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "validation-run", type: "workspace.validation.run", payload: { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, actionId: "package:test" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "validation-cancel", type: "workspace.validation.cancel", payload: { sessionId: "session-main", threadId: "thread-main", resultId: "result-1" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "validation-submit", type: "workspace.validation.submit", payload: { sessionId: "session-main", threadId: "thread-main", resultIds: ["result-1"] }, metadata: { profile } }));
+  await tick(); assert.deepEqual(events.map((event) => event.type), ["workspace.validation", "workspace.validation", "workspace.validation", "workspace.validation"]); assert.equal(events[3]?.payload.runId, "run-validation-followup");
+  output.destroy(); await host.close();
+});
+
+test("workspace Git commands emit authoritative delivery snapshots", async () => {
+  const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
+  const snapshot = { sessionId: "session-main", threadId: "thread-main", workspaceRoot: "/workspace", repoRoot: "/workspace", candidateFingerprint, validationReadiness: "ready" as const, deliveryReady: true, deliveryReadinessMessage: "Ready", branch: "main", headSha: "abc", relation: "untracked" as const, pushState: "not_pushed" as const, ahead: 0, behind: 0, files: [], branches: ["main"], remotes: [], recentCommits: [], github: { available: false, authenticated: false }, audits: [], notifications: [], generatedAt: new Date().toISOString() };
+  const actions: unknown[] = [];
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    inspectWorkspaceGit: async () => snapshot,
+    performWorkspaceGitAction: async (input) => { actions.push(input.action); return snapshot; },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer); const events: Array<{ type: string; payload: Record<string, unknown> }> = []; output.on("data", (chunk) => { for (const line of chunk.toString().trim().split("\n")) if (line) events.push(JSON.parse(line)); });
+  await router.acceptLine(JSON.stringify({ id: "git-inspect", type: "workspace.git.inspect", payload: { sessionId: "session-main", threadId: "thread-main" }, metadata: { profile } }));
+  await router.acceptLine(JSON.stringify({ id: "git-action", type: "workspace.git.action", payload: { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, expectedHeadSha: "abc", action: { kind: "push", remote: "origin", branch: "main", setUpstream: true } }, metadata: { profile } }));
+  await tick(); assert.deepEqual(events.map((event) => event.type), ["workspace.git", "workspace.git"]); assert.deepEqual(actions, [{ kind: "push", remote: "origin", branch: "main", setUpstream: true }]);
+  output.destroy(); await host.close();
 });
 
 test("run.cancel aborts only the matching run command", async () => {

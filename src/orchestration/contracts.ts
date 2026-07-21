@@ -32,6 +32,7 @@ import type {
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
 import type { EvidenceRecoverySummary } from "../runtime/evidenceQuality.js";
+import type { ThreadWorkspaceAuthorityProjection } from "../workspace/threadWorkspaceBinding.js";
 
 export type ContextPolicyAction =
   | "continue"
@@ -584,6 +585,7 @@ export interface OperatorRunIndexView {
 
 export interface OperatorThreadView {
   thread: ThreadRecord;
+  workspace?: ThreadWorkspaceAuthorityProjection | undefined;
   focusedThreadId?: string | undefined;
   parentThread?: ThreadRecord | undefined;
   childThreads: ThreadRecord[];
