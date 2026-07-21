@@ -34,6 +34,7 @@ export function AppIcon({
           className="size-7 object-contain"
           height={28}
           src={icon}
+          unoptimized
           width={28}
         />
       </span>

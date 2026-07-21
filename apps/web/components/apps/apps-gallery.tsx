@@ -3,10 +3,8 @@
 import { Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AppIcon } from "@/components/apps/app-icon";
-import { Badge } from "@/components/ui/badge";
+import { AppGallery } from "@/components/apps/app-gallery";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
@@ -14,7 +12,6 @@ import type {
   AppCategory,
   AppsOverview,
 } from "@/lib/apps/types";
-import { cn } from "@/lib/utils";
 
 const CATEGORY_LABELS: Record<AppCategory, string> = {
   kestrel: "Kestrel",
@@ -35,16 +32,6 @@ const READINESS_LABELS: Record<AppCatalogItem["readiness"], string> = {
 };
 
 type GalleryView = "discover" | "installed" | "connections";
-
-function statusClasses(readiness: AppCatalogItem["readiness"]) {
-  if (readiness === "ready") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300";
-  }
-  if (readiness === "setup_required" || readiness === "degraded") {
-    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300";
-  }
-  return "border-border bg-muted/40 text-muted-foreground";
-}
 
 export function AppsGallery({ initial }: { initial: AppsOverview }) {
   const [view, setView] = useState<GalleryView>("discover");
@@ -139,58 +126,22 @@ export function AppsGallery({ initial }: { initial: AppsOverview }) {
       </div>
 
       {visibleApps.length ? (
-        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {visibleApps.map((app) => (
-            <Link
-              className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              href={`/apps/${encodeURIComponent(app.key)}`}
-              key={app.key}
-            >
-              <Card className="h-full transition-colors group-hover:border-foreground/25 group-hover:bg-muted/20">
-                <CardContent className="flex h-full flex-col p-5">
-                  <div className="flex items-start gap-4">
-                    <AppIcon appKey={app.key} icon={app.icon} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <h2 className="font-semibold text-lg leading-6">
-                          {app.displayName}
-                        </h2>
-                        <Badge
-                          className={cn("shrink-0", statusClasses(app.readiness))}
-                          variant="outline"
-                        >
-                          {READINESS_LABELS[app.readiness]}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-muted-foreground text-xs">
-                        {CATEGORY_LABELS[app.category]}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="mt-5 line-clamp-3 flex-1 text-muted-foreground text-sm leading-6">
-                    {app.description}
-                  </p>
-                  <div className="mt-5 flex items-center justify-between border-t pt-4 text-xs">
-                    <span className="text-muted-foreground">
-                      {app.capabilityCount} capabilit{app.capabilityCount === 1 ? "y" : "ies"}
-                    </span>
-                    <span className="font-medium text-foreground">
-                      {app.connectionModel === "none"
-                        ? "Built in"
-                        : app.connectionModel === "personal"
-                          ? "Personal account"
-                          : app.connectionModel === "hybrid"
-                            ? "Personal or shared"
-                            : app.connectionRequirement === "optional"
-                              ? "Optional connection"
-                              : "Environment connection"}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <AppGallery
+          getHref={(app) => `/apps/${encodeURIComponent(app.key)}`}
+          items={visibleApps.map((app) => ({
+            key: app.key,
+            name: app.displayName,
+            description: app.description,
+            icon: app.icon,
+            status: `${READINESS_LABELS[app.readiness]} · ${CATEGORY_LABELS[app.category]}`,
+            statusTone:
+              app.readiness === "ready"
+                ? "ready"
+                : app.readiness === "setup_required" || app.readiness === "degraded"
+                  ? "warning"
+                  : "neutral",
+          }))}
+        />
       ) : (
         <div className="rounded-xl border border-dashed px-6 py-16 text-center">
           <p className="font-medium">No Apps match this view</p>

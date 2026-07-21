@@ -1,8 +1,17 @@
 import { and, eq, isNull } from "drizzle-orm";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { WorkspaceBackupActions } from "./workspace-backup-actions";
 
 export default async function EnvironmentWorkspacesPage({
   params,
@@ -19,32 +28,50 @@ export default async function EnvironmentWorkspacesPage({
     ),
   });
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Workspaces</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
+    <SettingsSection
+      description="Persistent working directories assigned to this execution plane."
+      title="Workspaces"
+    >
+      <div className="border-y">
         {workspaces.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="py-8 text-center text-muted-foreground text-sm">
             No persistent Workspaces use this Environment yet.
           </p>
         ) : (
-          workspaces.map((workspace) => (
-            <div
-              className="flex items-center justify-between rounded-md border p-3"
-              key={workspace.id}
-            >
-              <div>
-                <div className="font-medium text-sm">{workspace.name}</div>
-                <div className="text-muted-foreground text-xs">
-                  {workspace.sourceType}
-                </div>
-              </div>
-              <Badge variant="outline">{workspace.status}</Badge>
-            </div>
-          ))
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Workspace</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Backups</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {workspaces.map((workspace) => (
+                <TableRow key={workspace.id}>
+                  <TableCell className="font-medium">
+                    {workspace.name}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {workspace.sourceType}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{workspace.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <WorkspaceBackupActions
+                      environmentId={id}
+                      workspaceId={workspace.id}
+                      workspaceStatus={workspace.status}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </SettingsSection>
   );
 }

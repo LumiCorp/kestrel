@@ -18,7 +18,7 @@ export default async function AppsPage() {
     canManageOrganization: canManage,
   });
   return (
-    <AppPage className="mx-auto w-full max-w-7xl p-6 lg:p-8">
+    <AppPage className="max-w-7xl">
       <AppsGallery initial={overview} />
     </AppPage>
   );

@@ -2,14 +2,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppPage } from "@/components/app-page";
+import { EnvironmentTabs } from "@/components/settings/environment-tabs";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { isEnvironmentPrivateInferenceEnabled } from "@/lib/ai/managed-runpod-config";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 
 const baseTabs = [
   ["Overview", ""],
+  ["Runtime", "/runtime"],
+  ["Access", "/access"],
   ["Workspaces", "/workspaces"],
   ["Apps", "/apps"],
   ["Activity", "/activity"],
@@ -40,8 +42,8 @@ export default async function EnvironmentDetailLayout({
     : baseTabs;
 
   return (
-    <AppPage className="p-6 lg:p-8">
-      <div className="space-y-2">
+    <AppPage className="max-w-7xl">
+      <div className="space-y-3">
         <Link
           className="text-muted-foreground text-sm hover:text-foreground"
           href="/settings/environments"
@@ -55,17 +57,11 @@ export default async function EnvironmentDetailLayout({
           {environment.isDefault ? <Badge>Default</Badge> : null}
           <Badge variant="outline">{environment.status}</Badge>
         </div>
-        <p className="text-muted-foreground">
-          {environment.region} · Organization execution and inference boundary
+        <p className="text-muted-foreground text-sm">
+          {environment.region} · {environment.runtimeTemplate}
         </p>
       </div>
-      <nav aria-label="Environment sections" className="flex flex-wrap gap-2">
-        {tabs.map(([label, suffix]) => (
-          <Button asChild key={label} size="sm" variant="outline">
-            <Link href={`${base}${suffix}`}>{label}</Link>
-          </Button>
-        ))}
-      </nav>
+      <EnvironmentTabs base={base} tabs={tabs} />
       {children}
     </AppPage>
   );
