@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
 import {
   type EnvironmentReconcileLock,
   withEnvironmentOperationLock,
   withEnvironmentReconcileLock,
 } from "./reconcile-lock";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("production Environment locks are transaction scoped for pooled Postgres", () => {
+
+contractTest("web.hermetic", "production Environment locks are transaction scoped for pooled Postgres", () => {
   const source = readFileSync(
     new URL("./reconcile-lock.ts", import.meta.url),
     "utf8"
@@ -16,7 +17,7 @@ test("production Environment locks are transaction scoped for pooled Postgres", 
   assert.doesNotMatch(source, /pg_advisory_unlock/u);
 });
 
-test("Environment reconciliation closes an unacquired lock without running", async () => {
+contractTest("web.hermetic", "Environment reconciliation closes an unacquired lock without running", async () => {
   const calls: string[] = [];
   const lock: EnvironmentReconcileLock = {
     async tryAcquire() {
@@ -41,7 +42,7 @@ test("Environment reconciliation closes an unacquired lock without running", asy
   assert.deepEqual(calls, ["try", "close"]);
 });
 
-test("Environment operation locks use a stable operation-specific key", async () => {
+contractTest("web.hermetic", "Environment operation locks use a stable operation-specific key", async () => {
   const lockKeys: string[] = [];
   const createLock = async (
     lockKey: string
@@ -68,7 +69,7 @@ test("Environment operation locks use a stable operation-specific key", async ()
   ]);
 });
 
-test("Environment operation locks reject an empty operation ID", async () => {
+contractTest("web.hermetic", "Environment operation locks reject an empty operation ID", async () => {
   await assert.rejects(
     withEnvironmentOperationLock({
       operationId: " ",
@@ -78,7 +79,7 @@ test("Environment operation locks reject an empty operation ID", async () => {
   );
 });
 
-test("Environment reconciliation releases its lock after success or failure", async () => {
+contractTest("web.hermetic", "Environment reconciliation releases its lock after success or failure", async () => {
   for (const shouldFail of [false, true]) {
     const calls: string[] = [];
     const lock: EnvironmentReconcileLock = {

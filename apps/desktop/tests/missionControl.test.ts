@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import { createEmptyProjectSnapshot } from "../../../src/project/state.js";
@@ -10,6 +9,8 @@ import {
   listDesktopOperatorRuns,
   runDesktopProjectAction,
 } from "../src/missionControl.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const context: WebRunnerRequestContext = {
   actor: {
@@ -18,7 +19,7 @@ const context: WebRunnerRequestContext = {
   },
 };
 
-test("Desktop Mission Control reads authoritative project snapshots through the runner", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control reads authoritative project snapshots through the runner", async () => {
   const calls: unknown[] = [];
   const snapshot = createEmptyProjectSnapshot();
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
@@ -46,7 +47,7 @@ test("Desktop Mission Control reads authoritative project snapshots through the 
   }]);
 });
 
-test("Desktop Mission Control validates and forwards task actions", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control validates and forwards task actions", async () => {
   const snapshot = createEmptyProjectSnapshot();
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
@@ -77,7 +78,7 @@ test("Desktop Mission Control validates and forwards task actions", async () => 
   }]);
 });
 
-test("Desktop Mission Control validates and forwards board actions", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control validates and forwards board actions", async () => {
   const snapshot = createEmptyProjectSnapshot();
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
@@ -110,7 +111,7 @@ test("Desktop Mission Control validates and forwards board actions", async () =>
   }]);
 });
 
-test("Desktop Mission Control rejects malformed renderer actions before runner use", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed renderer actions before runner use", async () => {
   let called = false;
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
@@ -136,7 +137,7 @@ test("Desktop Mission Control rejects malformed renderer actions before runner u
   assert.equal(called, false);
 });
 
-test("Desktop Mission Control projects runtime thread inspection through the runner", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control projects runtime thread inspection through the runner", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -267,7 +268,7 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   }]);
 });
 
-test("Desktop Mission Control rejects malformed runtime thread responses", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime thread responses", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {
@@ -307,7 +308,7 @@ test("Desktop Mission Control rejects malformed runtime thread responses", async
   );
 });
 
-test("Desktop Mission Control projects a bounded runtime run and session index", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control projects a bounded runtime run and session index", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -378,7 +379,7 @@ test("Desktop Mission Control projects a bounded runtime run and session index",
   }]);
 });
 
-test("Desktop Mission Control rejects malformed runtime run indexes", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime run indexes", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {
@@ -411,7 +412,7 @@ test("Desktop Mission Control rejects malformed runtime run indexes", async () =
   );
 });
 
-test("Desktop Mission Control projects bounded runtime run inspection through the runner", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control projects bounded runtime run inspection through the runner", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -510,7 +511,7 @@ test("Desktop Mission Control projects bounded runtime run inspection through th
   }]);
 });
 
-test("Desktop Mission Control rejects malformed runtime run responses", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime run responses", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {

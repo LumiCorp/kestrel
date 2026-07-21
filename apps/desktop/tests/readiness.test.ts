@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("blocked database owns the readiness summary ahead of provider setup", () => {
+
+contractTest("desktop.hermetic", "blocked database owns the readiness summary ahead of provider setup", () => {
   const settings = createDefaultDesktopSettings();
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,
@@ -31,7 +32,7 @@ test("blocked database owns the readiness summary ahead of provider setup", () =
   });
 });
 
-test("provider setup owns the summary when no higher-severity check is blocked", () => {
+contractTest("desktop.hermetic", "provider setup owns the summary when no higher-severity check is blocked", () => {
   const settings = createDefaultDesktopSettings();
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,

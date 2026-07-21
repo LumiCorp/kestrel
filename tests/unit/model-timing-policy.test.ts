@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   DEFAULT_MODEL_TIMING_POLICY,
   deriveModelTimeoutMs,
 } from "../../src/io/ModelTimingPolicy.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("deriveModelTimeoutMs uses phase cap when budget metadata is missing", () => {
+
+contractTest("runtime.hermetic", "deriveModelTimeoutMs uses phase cap when budget metadata is missing", () => {
   const timeout = deriveModelTimeoutMs(
     {
       input: "hello",
@@ -18,7 +19,7 @@ test("deriveModelTimeoutMs uses phase cap when budget metadata is missing", () =
   assert.equal(timeout, DEFAULT_MODEL_TIMING_POLICY.phaseCapMs);
 });
 
-test("deriveModelTimeoutMs clamps timeout to remaining budget minus reserve", () => {
+contractTest("runtime.hermetic", "deriveModelTimeoutMs clamps timeout to remaining budget minus reserve", () => {
   const timeout = deriveModelTimeoutMs(
     {
       input: "hello",
@@ -32,7 +33,7 @@ test("deriveModelTimeoutMs clamps timeout to remaining budget minus reserve", ()
   assert.equal(timeout, 4000);
 });
 
-test("deriveModelTimeoutMs never exceeds remaining budget reserve", () => {
+contractTest("runtime.hermetic", "deriveModelTimeoutMs never exceeds remaining budget reserve", () => {
   const timeout = deriveModelTimeoutMs(
     {
       input: "hello",

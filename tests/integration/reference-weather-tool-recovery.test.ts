@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
@@ -8,6 +7,8 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
   const record = output !== null && typeof output === "object" && !Array.isArray(output)
@@ -82,7 +83,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
   return [];
 }
 
-test("reference harness uses free.weather.current for 'whats the weather in cincy'", async () => {
+contractTest("runtime.process", "reference harness uses free.weather.current for 'whats the weather in cincy'", async () => {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
@@ -216,7 +217,7 @@ test("reference harness uses free.weather.current for 'whats the weather in cinc
   );
 });
 
-test("reference harness uses free.time.current for 'what time is it in utc'", async () => {
+contractTest("runtime.process", "reference harness uses free.time.current for 'what time is it in utc'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-time-1",
     message: "what time is it in utc",
@@ -249,7 +250,7 @@ test("reference harness uses free.time.current for 'what time is it in utc'", as
   );
 });
 
-test("reference harness uses read-only tools directly in Chat mode", async () => {
+contractTest("runtime.process", "reference harness uses read-only tools directly in Chat mode", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-weather-chat-1",
     message: "whats the weather in cincy",
@@ -274,7 +275,7 @@ test("reference harness uses read-only tools directly in Chat mode", async () =>
   assert.equal(result.finalized[0]?.message, "Cincinnati is 12C.");
 });
 
-test("reference harness routes default plan-mode weather asks into tooling route", async () => {
+contractTest("runtime.process", "reference harness routes default plan-mode weather asks into tooling route", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-weather-plan-1",
     message: "ayy whats the weather in cincy",
@@ -306,7 +307,7 @@ test("reference harness routes default plan-mode weather asks into tooling route
   assert.equal(result.toolCalls.some((entry) => entry.name === "free.weather.current"), true);
 });
 
-test("reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
+contractTest("runtime.process", "reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
   const forecastHandler = weatherForecastTool.createHandler({
     fetchImpl: async (url) => {
       const target = typeof url === "string" ? url : String(url);
@@ -382,7 +383,7 @@ test("reference harness answers Cincinnati through Wednesday from one model-visi
   );
 });
 
-test("reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
+contractTest("runtime.process", "reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-fx-1",
     message: "usd to eur exchange rate",
@@ -418,7 +419,7 @@ test("reference harness uses free.exchange.rate for 'usd to eur exchange rate'",
   );
 });
 
-test("reference harness uses internet.search for direct research intent", async () => {
+contractTest("runtime.process", "reference harness uses internet.search for direct research intent", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-search-1",
     message: "search wikipedia for Ada Lovelace",

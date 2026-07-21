@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { createRunnerServiceServer } from "../../../cli/runner/RunnerService.js";
 import {
@@ -14,8 +13,10 @@ import {
   runChildProcess,
   writePnpmWorkspaceOverrides,
 } from "./helpers.js";
+import { contractTest } from "../../helpers/contract-test.js";
 
-test("installed @kestrel-agents/next package builds and runs inside a real Next app fixture", async (t) => {
+
+contractTest("runtime.process", "installed @kestrel-agents/next package builds and runs inside a real Next app fixture", async (t) => {
   const abortedSessions: string[] = [];
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),

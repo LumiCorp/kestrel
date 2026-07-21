@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   assertGatewayCredentialLeaseEligible,
   authorizeGatewayCredentialBroker,
@@ -7,8 +6,10 @@ import {
   GATEWAY_CREDENTIAL_LEASE_TTL_MS,
   GatewayCredentialLeaseError,
 } from "./gateway-credential-lease-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("credential broker authentication uses a dedicated bearer token", () => {
+
+contractTest("web.hermetic", "credential broker authentication uses a dedicated bearer token", () => {
   assert.doesNotThrow(() =>
     authorizeGatewayCredentialBroker({
       authorization: "Bearer broker-secret",
@@ -26,7 +27,7 @@ test("credential broker authentication uses a dedicated bearer token", () => {
   );
 });
 
-test("credential lease eligibility rejects disabled and unapproved gateway models", () => {
+contractTest("web.hermetic", "credential lease eligibility rejects disabled and unapproved gateway models", () => {
   const approved = {
     gateway: { enabled: true, provider: "openai" as const },
     model: { approved: true, modality: "language" },
@@ -58,7 +59,7 @@ test("credential lease eligibility rejects disabled and unapproved gateway model
   }
 });
 
-test("gateway leases expire after exactly five minutes", () => {
+contractTest("web.hermetic", "gateway leases expire after exactly five minutes", () => {
   const now = new Date("2026-07-11T12:00:00.000Z");
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
@@ -82,7 +83,7 @@ test("gateway leases expire after exactly five minutes", () => {
   assert.equal(lease.apiKey, "provider-secret");
 });
 
-test("Lumi leases preserve their configured language protocol", () => {
+contractTest("web.hermetic", "Lumi leases preserve their configured language protocol", () => {
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
     environmentId: "env-1",
@@ -103,7 +104,7 @@ test("Lumi leases preserve their configured language protocol", () => {
   assert.equal(lease.baseUrl, "https://api.kestrelagents.dev");
 });
 
-test("credential leases fail closed when a provider key is missing", () => {
+contractTest("web.hermetic", "credential leases fail closed when a provider key is missing", () => {
   assert.throws(
     () =>
       buildGatewayCredentialLease({
@@ -124,7 +125,7 @@ test("credential leases fail closed when a provider key is missing", () => {
   );
 });
 
-test("validated RunPod models lease the OpenAI protocol and canonical endpoint", () => {
+contractTest("web.hermetic", "validated RunPod models lease the OpenAI protocol and canonical endpoint", () => {
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",
     environmentId: "env-1",
@@ -154,7 +155,7 @@ test("validated RunPod models lease the OpenAI protocol and canonical endpoint",
   assert.equal(lease.baseUrl, "https://api.runpod.ai/v2/endpoint_123/openai");
 });
 
-test("RunPod lease eligibility requires server-owned validation evidence", () => {
+contractTest("web.hermetic", "RunPod lease eligibility requires server-owned validation evidence", () => {
   assert.throws(
     () =>
       assertGatewayCredentialLeaseEligible({
@@ -167,7 +168,7 @@ test("RunPod lease eligibility requires server-owned validation evidence", () =>
   );
 });
 
-test("RunPod lease eligibility binds validation to model and endpoint", () => {
+contractTest("web.hermetic", "RunPod lease eligibility binds validation to model and endpoint", () => {
   const input = {
     gateway: {
       enabled: true,

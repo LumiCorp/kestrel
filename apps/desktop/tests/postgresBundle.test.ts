@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { resolveBundledPostgresInstallation } from "../src/postgresBundle.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("resolveBundledPostgresInstallation prefers platform-specific bundled layouts", () => {
+
+contractTest("desktop.hermetic", "resolveBundledPostgresInstallation prefers platform-specific bundled layouts", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-bundle-"));
   try {
     const platformRoot = path.join(root, "darwin-arm64");
@@ -26,7 +27,7 @@ test("resolveBundledPostgresInstallation prefers platform-specific bundled layou
   }
 });
 
-test("resolveBundledPostgresInstallation falls back to the bundle root when needed", () => {
+contractTest("desktop.hermetic", "resolveBundledPostgresInstallation falls back to the bundle root when needed", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-bundle-root-"));
   try {
     createBundleLayout(root);

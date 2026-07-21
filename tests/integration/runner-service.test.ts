@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import type { DelegationTaskUpdate } from "../../cli/runtime/KestrelChatRuntime.js";
@@ -12,6 +11,8 @@ import type {
   RunnerEventSubscriptionFilter,
 } from "../../cli/protocol/contracts.js";
 import type { ProgressUpdateV1, ReasoningUpdateV1, RunLogEntry } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference",
@@ -94,7 +95,7 @@ class MemoryRunnerServiceEventJournal implements RunnerServiceEventJournal {
   }
 }
 
-test("live reasoning reconnects in-process but restarts with redacted metadata", async () => {
+contractTest("runtime.process", "live reasoning reconnects in-process but restarts with redacted metadata", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   const bus = new RunnerServiceEventBus(journal);
   bus.emit("runner.pong", { nonce: "cursor" }, { runId: "run-reasoning-replay" });
@@ -130,7 +131,7 @@ test("live reasoning reconnects in-process but restarts with redacted metadata",
   assert.equal(update?.contentState, "not_retained");
 });
 
-test("journal-backed replay queries durable history beyond the in-memory history cap", async () => {
+contractTest("runtime.process", "journal-backed replay queries durable history beyond the in-memory history cap", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   for (let index = 0; index < 1002; index += 1) {
     journal.events.push({
@@ -166,7 +167,7 @@ test("journal-backed replay queries durable history beyond the in-memory history
   }
 });
 
-test("journal replay and live publication share one ordered subscription boundary", async () => {
+contractTest("runtime.process", "journal replay and live publication share one ordered subscription boundary", async () => {
   const seedCursor: RunnerEvent = {
     id: "seed-race-cursor",
     type: "runner.pong",
@@ -238,7 +239,7 @@ test("journal replay and live publication share one ordered subscription boundar
   unsubscribeLive();
 });
 
-test("durable replay cancellation removes its provisional listener", async () => {
+contractTest("runtime.process", "durable replay cancellation removes its provisional listener", async () => {
   const seedCursor: RunnerEvent = {
     id: "seed-cancel-cursor",
     type: "runner.pong",
@@ -287,7 +288,7 @@ test("durable replay cancellation removes its provisional listener", async () =>
   assert.deepEqual(received, []);
 });
 
-test("runner event bus close aborts and drains active durable replay", async () => {
+contractTest("runtime.process", "runner event bus close aborts and drains active durable replay", async () => {
   const seedCursor: RunnerEvent = {
     id: "seed-close-cursor",
     type: "runner.pong",
@@ -345,7 +346,7 @@ test("runner event bus close aborts and drains active durable replay", async () 
   assert.equal(closeSettled, true);
 });
 
-test("bounded in-memory replay reports an expired cursor after eviction", async () => {
+contractTest("runtime.process", "bounded in-memory replay reports an expired cursor after eviction", async () => {
   const eventBus = new RunnerServiceEventBus();
   let firstEventId: string | undefined;
   const unsubscribe = eventBus.subscribe("cmd-retention", (event) => {
@@ -369,7 +370,7 @@ test("bounded in-memory replay reports an expired cursor after eviction", async 
   assert.deepEqual(subscription, { status: "cursor_expired" });
 });
 
-test("runner events are appended to an injected journal before subscribers receive them", async () => {
+contractTest("runtime.process", "runner events are appended to an injected journal before subscribers receive them", async () => {
   let appendCompleted = false;
   const eventBus = new RunnerServiceEventBus({
     ready() {},
@@ -400,7 +401,7 @@ test("runner events are appended to an injected journal before subscribers recei
   }
 });
 
-test("subscriber failures do not poison durable event publication", async () => {
+contractTest("runtime.process", "subscriber failures do not poison durable event publication", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   const eventBus = new RunnerServiceEventBus(journal);
   await eventBus.ready();
@@ -436,7 +437,7 @@ test("subscriber failures do not poison durable event publication", async () => 
   }
 });
 
-test("filtered subscriber failure terminates and removes the subscription", async () => {
+contractTest("runtime.process", "filtered subscriber failure terminates and removes the subscription", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   const eventBus = new RunnerServiceEventBus(journal);
   await eventBus.ready();
@@ -469,7 +470,7 @@ test("filtered subscriber failure terminates and removes the subscription", asyn
   assert.equal(closeCalls, 1);
 });
 
-test("filtered replay failure terminates the subscription owner", async () => {
+contractTest("runtime.process", "filtered replay failure terminates the subscription owner", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   journal.events.push(
     {
@@ -509,7 +510,7 @@ test("filtered replay failure terminates the subscription owner", async () => {
   assert.equal(closeCalls, 1);
 });
 
-test("journal append failures do not poison later event publication", async () => {
+contractTest("runtime.process", "journal append failures do not poison later event publication", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   let rejectNextAppend = true;
   journal.append = async (event) => {
@@ -567,7 +568,7 @@ function isAbortSignalSet(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-test("runner service requires actor metadata", async () => {
+contractTest("runtime.process", "runner service requires actor metadata", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
@@ -602,7 +603,7 @@ test("runner service requires actor metadata", async () => {
   }
 });
 
-test("runner service rejects unknown command discriminants at the protocol boundary", async () => {
+contractTest("runtime.process", "runner service rejects unknown command discriminants at the protocol boundary", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
@@ -644,7 +645,7 @@ test("runner service rejects unknown command discriminants at the protocol bound
   }
 });
 
-test("runner service rejects malformed command envelopes at the protocol boundary", async () => {
+contractTest("runtime.process", "runner service rejects malformed command envelopes at the protocol boundary", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
@@ -680,7 +681,7 @@ test("runner service rejects malformed command envelopes at the protocol boundar
   }
 });
 
-test("runner service routes run.start and job.run through the canonical streaming boundary", async () => {
+contractTest("runtime.process", "runner service routes run.start and job.run through the canonical streaming boundary", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
@@ -751,7 +752,7 @@ test("runner service routes run.start and job.run through the canonical streamin
   }
 });
 
-test("runner service enforces bearer auth when configured", async () => {
+contractTest("runtime.process", "runner service enforces bearer auth when configured", async () => {
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
     runtimeFactory: () => ({
@@ -795,7 +796,7 @@ test("runner service enforces bearer auth when configured", async () => {
   }
 });
 
-test("runner service rejects malformed actor metadata with a structured error", async () => {
+contractTest("runtime.process", "runner service rejects malformed actor metadata with a structured error", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
@@ -836,7 +837,7 @@ test("runner service rejects malformed actor metadata with a structured error", 
   }
 });
 
-test("runner service exposes profiles and resolves profileId for run.start", async () => {
+contractTest("runtime.process", "runner service exposes profiles and resolves profileId for run.start", async () => {
   let capturedProfileId: string | undefined;
   const service = createInMemoryRunnerService({
     profileProvider: {
@@ -935,7 +936,7 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
   }
 });
 
-test("runner service settles an invalid job terminal without a journal", async () => {
+contractTest("runtime.process", "runner service settles an invalid job terminal without a journal", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => ({
@@ -1009,7 +1010,7 @@ test("runner service settles an invalid job terminal without a journal", async (
   }
 });
 
-test("runner service settles an invalid runtime scope without a journal", async () => {
+contractTest("runtime.process", "runner service settles an invalid runtime scope without a journal", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => ({
@@ -1080,7 +1081,7 @@ test("runner service settles an invalid runtime scope without a journal", async 
   }
 });
 
-test("runner service streams run events and preserves issuedBy for operator actions", async () => {
+contractTest("runtime.process", "runner service streams run events and preserves issuedBy for operator actions", async () => {
   let logListener: ((entry: RunLogEntry) => void) | undefined;
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
   let reasoningListener: ((update: ReasoningUpdateV1) => void) | undefined;
@@ -1247,7 +1248,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
   }
 });
 
-test("in-memory runner service cancels active runs when a streaming dispatch is aborted", async () => {
+contractTest("runtime.process", "in-memory runner service cancels active runs when a streaming dispatch is aborted", async () => {
   let aborted = false;
   let resolveRunTurnEntered: (() => void) | undefined;
   const runTurnEntered = new Promise<void>((resolve) => {
@@ -1326,7 +1327,7 @@ test("in-memory runner service cancels active runs when a streaming dispatch is 
   }
 });
 
-test("in-memory runner service resolves cleanly when a streaming dispatch is already aborted before start", async () => {
+contractTest("runtime.process", "in-memory runner service resolves cleanly when a streaming dispatch is already aborted before start", async () => {
   let runTurnCalled = false;
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
@@ -1385,7 +1386,7 @@ test("in-memory runner service resolves cleanly when a streaming dispatch is alr
   }
 });
 
-test("runner service streams filtered subscription events over /events/stream", async () => {
+contractTest("runtime.process", "runner service streams filtered subscription events over /events/stream", async () => {
   const server = await createRunnerServiceServer({
     runtimeFactory: (_profile, _onRunLog, _onProgress, _onConsole, _onReasoning, onTaskUpdate) => ({
       runTurn: async () => {
@@ -1505,7 +1506,7 @@ test("runner service streams filtered subscription events over /events/stream", 
   }
 });
 
-test("runner service graceful close ends open event subscriptions", async () => {
+contractTest("runtime.process", "runner service graceful close ends open event subscriptions", async () => {
   const server = await createRunnerServiceServer();
   let gracefullyClosed = false;
 
@@ -1551,7 +1552,7 @@ test("runner service graceful close ends open event subscriptions", async () => 
   }
 });
 
-test("runner service cancels active runs when a stream disconnects", async () => {
+contractTest("runtime.process", "runner service cancels active runs when a stream disconnects", async () => {
   let aborted = false;
   let resolveRunTurnEntered: (() => void) | undefined;
   const runTurnEntered = new Promise<void>((resolve) => {
@@ -1652,7 +1653,7 @@ test("runner service cancels active runs when a stream disconnects", async () =>
   }
 });
 
-test("runner service keeps durable runs active when a stream disconnects", async () => {
+contractTest("runtime.process", "runner service keeps durable runs active when a stream disconnects", async () => {
   let aborted = false;
   let resolveRunTurnEntered: (() => void) | undefined;
   const runTurnEntered = new Promise<void>((resolve) => {
@@ -1813,7 +1814,7 @@ test("runner service keeps durable runs active when a stream disconnects", async
   }
 });
 
-test("runner service replays journaled events from sinceEventId after host recreation", async () => {
+contractTest("runtime.process", "runner service replays journaled events from sinceEventId after host recreation", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
   const runtimeFactory = () => ({
     runTurn: async () => ({
@@ -1930,7 +1931,7 @@ test("runner service replays journaled events from sinceEventId after host recre
   }
 });
 
-test("runner service emits run.cancelled on the original stream after run.cancel", async () => {
+contractTest("runtime.process", "runner service emits run.cancelled on the original stream after run.cancel", async () => {
   let resolveAbort: (() => void) | undefined;
   const aborted = new Promise<void>((resolve) => {
     resolveAbort = resolve;

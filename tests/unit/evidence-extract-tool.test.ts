@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { evidenceExtractTool } from "../../tools/research/evidenceExtract.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("evidence.extract returns ranked snippets for claim overlap", async () => {
+
+contractTest("runtime.hermetic", "evidence.extract returns ranked snippets for claim overlap", async () => {
   const handler = evidenceExtractTool.createHandler({});
 
   const result = (await handler({

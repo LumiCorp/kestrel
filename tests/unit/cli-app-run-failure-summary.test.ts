@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveRunFailureSummaryForTests } from "../../cli/app/App.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveRunFailureSummaryForTests prefers normalized run error when available", () => {
+
+contractTest("runtime.hermetic", "resolveRunFailureSummaryForTests prefers normalized run error when available", () => {
   const summary = resolveRunFailureSummaryForTests({
     result: {
       output: {
@@ -27,7 +28,7 @@ test("resolveRunFailureSummaryForTests prefers normalized run error when availab
   });
 });
 
-test("resolveRunFailureSummaryForTests falls back to runner error code when result is missing", () => {
+contractTest("runtime.hermetic", "resolveRunFailureSummaryForTests falls back to runner error code when result is missing", () => {
   const summary = resolveRunFailureSummaryForTests({
     result: undefined,
     error: {
@@ -41,7 +42,7 @@ test("resolveRunFailureSummaryForTests falls back to runner error code when resu
   });
 });
 
-test("resolveRunFailureSummaryForTests falls back to RUN_FAILED when no non-empty code exists", () => {
+contractTest("runtime.hermetic", "resolveRunFailureSummaryForTests falls back to RUN_FAILED when no non-empty code exists", () => {
   const summary = resolveRunFailureSummaryForTests({
     result: undefined,
     error: {

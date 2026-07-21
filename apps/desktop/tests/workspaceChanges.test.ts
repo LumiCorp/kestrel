@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import { inspectDesktopWorkspaceChanges, mutateDesktopWorkspaceChanges } from "../src/workspaceChanges.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const context: WebRunnerRequestContext = { actor: { actorId: "desktop-shell", actorType: "operator" } };
 const snapshot = {
@@ -11,7 +12,7 @@ const snapshot = {
   conflicted: false, files: [], hunks: [], diff: "", diffBytes: 0, truncated: false, generatedAt: "2026-07-20T12:00:00.000Z",
 };
 
-test("Desktop workspace changes preserve typed scope and mutation fingerprints", async () => {
+contractTest("desktop.hermetic", "Desktop workspace changes preserve typed scope and mutation fingerprints", async () => {
   const calls: unknown[] = [];
   const adapter = {
     sendControl: async (command: { type: string; sessionId: string; threadId: string }) => {
@@ -34,7 +35,7 @@ test("Desktop workspace changes preserve typed scope and mutation fingerprints",
   ]);
 });
 
-test("Desktop workspace changes reject mismatched Local Core authority", async () => {
+contractTest("desktop.hermetic", "Desktop workspace changes reject mismatched Local Core authority", async () => {
   const adapter = { sendControl: async () => ({ id: "event-1", type: "workspace.changes" as const, ts: snapshot.generatedAt, payload: { sessionId: "other", threadId: "thread-1", operation: "inspect" as const, snapshot } }) } as Pick<WebRunnerAdapter, "sendControl">;
   await assert.rejects(inspectDesktopWorkspaceChanges({ adapter, request: { sessionId: "session-1", threadId: "thread-1", scope: { kind: "uncommitted" } }, context }), /invalid workspace change response/u);
 });

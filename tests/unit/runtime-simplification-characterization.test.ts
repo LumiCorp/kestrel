@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
@@ -10,6 +9,8 @@ import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import type { CommitStepInput, CommitStepResult, OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
 
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 class RecordingDispatcher {
   readonly delivered: OutboxEventRecord[] = [];
@@ -31,7 +32,7 @@ class RecordingCommitStore extends InMemorySessionStore {
   }
 }
 
-test("model provider identity prefers explicit metadata over multi-provider option bags", () => {
+contractTest("runtime.hermetic", "model provider identity prefers explicit metadata over multi-provider option bags", () => {
   assert.equal(readRequestedModelProvider({
     input: "decide",
     metadata: { requestedProvider: "anthropic" },
@@ -50,7 +51,7 @@ test("model provider identity prefers explicit metadata over multi-provider opti
   }), undefined);
 });
 
-test("runtime simplification characterization pins run lifecycle ordering", async () => {
+contractTest("runtime.hermetic", "runtime simplification characterization pins run lifecycle ordering", async () => {
   const store = new RecordingCommitStore();
   const dispatcher = new RecordingDispatcher();
   const modelRequests: ModelRequest[] = [];
@@ -181,7 +182,7 @@ test("runtime simplification characterization pins run lifecycle ordering", asyn
   ]);
 });
 
-test("runtime simplification characterization pins wait resume target", async () => {
+contractTest("runtime.hermetic", "runtime simplification characterization pins wait resume target", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -230,7 +231,7 @@ test("runtime simplification characterization pins wait resume target", async ()
   assert.equal(findEvent(events, "run.waiting")?.metadata?.finalStep, "char.wait");
 });
 
-test("runtime simplification characterization pins direct tool and model events", async () => {
+contractTest("runtime.hermetic", "runtime simplification characterization pins direct tool and model events", async () => {
   const store = new InMemorySessionStore();
   const progressCodes: string[] = [];
   const modelRequests: ModelRequest[] = [];
@@ -312,7 +313,7 @@ test("runtime simplification characterization pins direct tool and model events"
   assert.equal(findEvent(events, "model.completed")?.metadata?.provider, "mock-provider");
 });
 
-test("runtime simplification characterization pins atomic commit persistence payload", async () => {
+contractTest("runtime.hermetic", "runtime simplification characterization pins atomic commit persistence payload", async () => {
   const store = new RecordingCommitStore();
   const event: RuntimeEvent = {
     id: "evt-runtime-char-commit",

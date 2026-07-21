@@ -1,8 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { applySkillPackToProfile, getSkillPackById } from "../../cli/runtime/skillPacks.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function baseProfile(toolAllowlist: string[]): TuiProfile {
   return {
@@ -14,7 +15,7 @@ function baseProfile(toolAllowlist: string[]): TuiProfile {
   };
 }
 
-test("code skill pack preserves profile-allowed dev.shell tools", () => {
+contractTest("runtime.hermetic", "code skill pack preserves profile-allowed dev.shell tools", () => {
   const codePack = getSkillPackById("code");
   assert.notEqual(codePack, undefined);
 
@@ -35,7 +36,7 @@ test("code skill pack preserves profile-allowed dev.shell tools", () => {
   assert.equal(narrowed.toolAllowlist?.includes("effect_result_lookup"), true);
 });
 
-test("code skill pack does not invent dev.shell tools that profile disallows", () => {
+contractTest("runtime.hermetic", "code skill pack does not invent dev.shell tools that profile disallows", () => {
   const codePack = getSkillPackById("code");
   assert.notEqual(codePack, undefined);
 

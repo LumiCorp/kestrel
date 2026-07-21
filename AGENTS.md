@@ -25,7 +25,7 @@ Guide Codex and engineers to ship reliable Kestrel runtime changes quickly with 
 - Run `pnpm validate` before declaring a pull request ready. This is the same
   complete portable validation contract used by GitHub Actions.
 - Focused checks are useful while iterating, but they do not establish pull-request readiness.
-- When high- or critical-risk production code or owning tests change, run `pnpm run test-proofs:mutations`.
+- Use `pnpm run test-proofs:mutations -- <mutation-id>` for focused critical-contract iteration; `pnpm validate` audits all critical mutations.
 
 ## Escalation
 - Escalate when schema migrations, irreversible data moves, or policy changes are required.

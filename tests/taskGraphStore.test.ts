@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { SessionRecord, SessionStore } from "../src/kestrel/contracts/store.js";
 
 import { InMemorySessionStore } from "../src/store/InMemorySessionStore.js";
 import { ProductTaskGraphStore } from "../src/taskGraph/store.js";
+import { contractTest } from "./helpers/contract-test.js";
+
 
 class RejectOncePatchSessionStore extends InMemorySessionStore {
   failNextPatch = false;
@@ -26,7 +27,7 @@ class RejectOncePatchSessionStore extends InMemorySessionStore {
   }
 }
 
-test("ProductTaskGraphStore seeds runtime-backed graph from thread context", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore seeds runtime-backed graph from thread context", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await store.ensureSession("session-main");
@@ -88,7 +89,7 @@ test("ProductTaskGraphStore seeds runtime-backed graph from thread context", asy
   assert.equal(task.runtime.nextAction, "approve tool action");
 });
 
-test("ProductTaskGraphStore persists task memory and active task state", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore persists task memory and active task state", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await store.ensureSession("session-main");
@@ -135,7 +136,7 @@ test("ProductTaskGraphStore persists task memory and active task state", async (
   );
 });
 
-test("ProductTaskGraphStore applies delegation updates into persisted state", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore applies delegation updates into persisted state", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -187,7 +188,7 @@ test("ProductTaskGraphStore applies delegation updates into persisted state", as
   assert.equal(updated.tasks["task-child"]?.status, "waiting");
 });
 
-test("ProductTaskGraphStore aggregates child agent activity on active task by default", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore aggregates child agent activity on active task by default", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -291,7 +292,7 @@ test("ProductTaskGraphStore aggregates child agent activity on active task by de
   });
 });
 
-test("ProductTaskGraphStore moves repeated child updates between aggregate buckets", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore moves repeated child updates between aggregate buckets", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -364,7 +365,7 @@ test("ProductTaskGraphStore moves repeated child updates between aggregate bucke
   );
 });
 
-test("ProductTaskGraphStore ignores stale aggregate child updates", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore ignores stale aggregate child updates", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -437,7 +438,7 @@ test("ProductTaskGraphStore ignores stale aggregate child updates", async () => 
   );
 });
 
-test("ProductTaskGraphStore replaces stale aggregate result fields on later child updates", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore replaces stale aggregate result fields on later child updates", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -517,7 +518,7 @@ test("ProductTaskGraphStore replaces stale aggregate result fields on later chil
   assert.equal(runtime?.blocker, undefined);
 });
 
-test("ProductTaskGraphStore preserves aggregate result fields across unrelated child updates", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore preserves aggregate result fields across unrelated child updates", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -594,7 +595,7 @@ test("ProductTaskGraphStore preserves aggregate result fields across unrelated c
   });
 });
 
-test("ProductTaskGraphStore preserves existing child task cards when aggregate mode is enabled", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore preserves existing child task cards when aggregate mode is enabled", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -668,7 +669,7 @@ test("ProductTaskGraphStore preserves existing child task cards when aggregate m
   assert.equal(updated.tasks["task-parent"]?.runtime.childActivity, undefined);
 });
 
-test("ProductTaskGraphStore ignores stale updates for existing child task cards", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore ignores stale updates for existing child task cards", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await graphStore.saveGraph({
@@ -744,7 +745,7 @@ test("ProductTaskGraphStore ignores stale updates for existing child task cards"
   assert.equal((await store.getSession("session-main"))?.version, 1);
 });
 
-test("ProductTaskGraphStore continues queued mutations after a rejected patch", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore continues queued mutations after a rejected patch", async () => {
   const store = new RejectOncePatchSessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   const unhandledRejections: unknown[] = [];
@@ -792,7 +793,7 @@ test("ProductTaskGraphStore continues queued mutations after a rejected patch", 
   }
 });
 
-test("ProductTaskGraphStore falls back to delegation task when aggregate parent is missing", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore falls back to delegation task when aggregate parent is missing", async () => {
   const store = new InMemorySessionStore();
   const graphStore = new ProductTaskGraphStore(store);
   await store.ensureSession("session-main");
@@ -815,7 +816,7 @@ test("ProductTaskGraphStore falls back to delegation task when aggregate parent 
   assert.deepEqual(updated.rootTaskIds, ["task-child"]);
 });
 
-test("ProductTaskGraphStore aggregates in no-patch fallback path", async () => {
+contractTest("runtime.hermetic", "ProductTaskGraphStore aggregates in no-patch fallback path", async () => {
   const session = {
     sessionId: "session-main",
     version: 1,

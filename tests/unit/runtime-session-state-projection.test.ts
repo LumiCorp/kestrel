@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
@@ -14,8 +13,10 @@ import {
   buildRuntimeSessionStateProjection,
   type OperatorSessionProjectionRuntime,
 } from "../../src/orchestration/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("buildRuntimeSessionStateProjection composes session projection and task graph context", async () => {
+
+contractTest("runtime.hermetic", "buildRuntimeSessionStateProjection composes session projection and task graph context", async () => {
   const thread = buildThread("thread-main", "session-state");
   const status = buildThreadStatus(thread);
   const inbox = buildInbox(thread.threadId);
@@ -77,7 +78,7 @@ test("buildRuntimeSessionStateProjection composes session projection and task gr
   assert.deepEqual(runtime.viewLookups, ["thread-main"]);
 });
 
-test("buildRuntimeSessionStateProjection renders task graph with main thread view when focus is on a child", async () => {
+contractTest("runtime.hermetic", "buildRuntimeSessionStateProjection renders task graph with main thread view when focus is on a child", async () => {
   const mainThread = buildThread("thread-main", "session-focused");
   const childThread = buildThread("thread-child", "session-child");
   const mainView: OperatorThreadView = {
@@ -139,7 +140,7 @@ test("buildRuntimeSessionStateProjection renders task graph with main thread vie
   assert.deepEqual(runtime.viewLookups, [childThread.threadId, mainThread.threadId]);
 });
 
-test("buildRuntimeSessionStateProjection returns an empty graph without a task graph store", async () => {
+contractTest("runtime.hermetic", "buildRuntimeSessionStateProjection returns an empty graph without a task graph store", async () => {
   const projection = await buildRuntimeSessionStateProjection({
     sessionId: "session-minimal",
     session: {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { z } from "zod";
 import { getSafeGatewayAdminError } from "./gateway-admin-error";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("gateway admin errors do not expose database parameters or credential envelopes", () => {
+
+contractTest("web.hermetic", "gateway admin errors do not expose database parameters or credential envelopes", () => {
   const secretEnvelope = "kgc:v1:key:iv:tag:ciphertext";
   const result = getSafeGatewayAdminError(
     new Error(`Failed query params: ${secretEnvelope}`)
@@ -20,7 +21,7 @@ test("gateway admin errors do not expose database parameters or credential envel
   assert.equal(JSON.stringify(result).includes(secretEnvelope), false);
 });
 
-test("gateway admin errors preserve safe authentication and validation status", () => {
+contractTest("web.hermetic", "gateway admin errors preserve safe authentication and validation status", () => {
   assert.equal(getSafeGatewayAdminError(new Error("Unauthorized")).status, 401);
   assert.equal(
     getSafeGatewayAdminError(z.object({ id: z.string() }).safeParse({}).error)
@@ -29,7 +30,7 @@ test("gateway admin errors preserve safe authentication and validation status", 
   );
 });
 
-test("gateway admin encryption failures expose only a stable code", () => {
+contractTest("web.hermetic", "gateway admin encryption failures expose only a stable code", () => {
   const secret = "raw-key-material";
   const result = getSafeGatewayAdminError(
     new GatewayCredentialEncryptionError(

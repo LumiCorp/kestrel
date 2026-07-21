@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import test from "node:test";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
@@ -9,8 +8,10 @@ import {
   buildKestrelOneCapabilityDescriptors,
   parseRunnerKnowledgeCapabilityRequest,
 } from "@/lib/agent/kestrel-capabilities";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("buildKestrelOneCapabilityDescriptors exposes knowledge search without secrets", () => {
+
+contractTest("web.hermetic", "buildKestrelOneCapabilityDescriptors exposes knowledge search without secrets", () => {
   const [capability] = buildKestrelOneCapabilityDescriptors({
     request: new Request("https://app.example.test/api/threads/threads_123"),
   });
@@ -27,7 +28,7 @@ test("buildKestrelOneCapabilityDescriptors exposes knowledge search without secr
   assert.equal(JSON.stringify(capability).includes("secret-token"), false);
 });
 
-test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenant", () => {
+contractTest("web.hermetic", "parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenant", () => {
   const result = parseRunnerKnowledgeCapabilityRequest({
     expectedToken: "secret-token",
     request: new Request("https://app.example.test/api/kestrel/tools/search", {
@@ -44,7 +45,7 @@ test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenan
   });
 });
 
-test("parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", () => {
+contractTest("web.hermetic", "parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", () => {
   const contextGrantId = "3f33e85c-a682-4d54-a628-b970d4983f1d";
   const result = parseRunnerKnowledgeCapabilityRequest({
     expectedToken: "secret-token",
@@ -81,7 +82,7 @@ test("parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", (
   );
 });
 
-test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment ticket", () => {
+contractTest("web.hermetic", "parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment ticket", () => {
   const keys = generateKeyPairSync("ed25519");
   const privateKey = keys.privateKey
     .export({ type: "pkcs8", format: "pem" })
@@ -142,7 +143,7 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
   );
 });
 
-test("parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", () => {
+contractTest("web.hermetic", "parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", () => {
   assert.throws(
     () =>
       parseRunnerKnowledgeCapabilityRequest({

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ProtocolTransport } from "../../cli/client/ProtocolClient.js";
 import { NativeRunnerClient } from "../../cli/sdk/NativeRunnerClient.js";
 import type { TuiProfile } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference-react",
@@ -107,7 +108,7 @@ class MockTransport implements ProtocolTransport {
   }
 }
 
-test("NativeRunnerClient streams run events and returns terminal run response", async () => {
+contractTest("runtime.hermetic", "NativeRunnerClient streams run events and returns terminal run response", async () => {
   const transport = new MockTransport();
   const client = new NativeRunnerClient({ transport });
   const seen: string[] = [];
@@ -139,7 +140,7 @@ test("NativeRunnerClient streams run events and returns terminal run response", 
   await client.close();
 });
 
-test("NativeRunnerClient describes sessions over the native protocol", async () => {
+contractTest("runtime.hermetic", "NativeRunnerClient describes sessions over the native protocol", async () => {
   const transport = new MockTransport();
   const client = new NativeRunnerClient({ transport });
 

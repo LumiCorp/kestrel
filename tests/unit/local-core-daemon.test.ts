@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   ensureLocalCoreDaemonReady,
@@ -11,14 +10,16 @@ import {
   resolveLocalCoreDaemonNodeMode,
 } from "../../src/localCore/daemon.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core daemon runs Electron executables in Node mode", () => {
+
+contractTest("runtime.hermetic", "Local Core daemon runs Electron executables in Node mode", () => {
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "37.10.3" }), "1");
   assert.equal(resolveLocalCoreDaemonNodeMode({}), undefined);
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "  " }), undefined);
 });
 
-test("Local Core daemon resolves the emitted JavaScript entrypoint from compiled callers", () => {
+contractTest("runtime.hermetic", "Local Core daemon resolves the emitted JavaScript entrypoint from compiled callers", () => {
   assert.equal(resolveLocalCoreDaemonEntrypoint({
     env: {},
     moduleUrl: "file:///workspace/apps/desktop/dist/src/localCore/daemon.js",
@@ -35,7 +36,7 @@ test("Local Core daemon resolves the emitted JavaScript entrypoint from compiled
   }), "/bundle/kestrel-repo/src/localCore/daemonMain.ts");
 });
 
-test("Local Core daemon launch is rejected when Electron was not put in Node mode", () => {
+contractTest("runtime.hermetic", "Local Core daemon launch is rejected when Electron was not put in Node mode", () => {
   assert.equal(isLocalCoreDaemonElectronAppLaunch({
     env: { KESTREL_LOCAL_CORE_DAEMON: "1" },
     versions: { electron: "37.10.3" },
@@ -56,7 +57,7 @@ test("Local Core daemon launch is rejected when Electron was not put in Node mod
     versions: {},
   }), false);
 });
-test("Local Core daemon readiness returns a redaction-aware in-memory connection", async () => {
+contractTest("runtime.hermetic", "Local Core daemon readiness returns a redaction-aware in-memory connection", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kc-daemon-"));
   const env = { KESTREL_CORE_HOME: home };

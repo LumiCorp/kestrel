@@ -54,7 +54,7 @@ export function toDriverAbortPatterns(patterns: TuiAbortPattern[] | undefined): 
 export async function runTuiScenario(input: {
   sessionName: string;
   freshSessionName?: string | undefined;
-  databaseUrl: string;
+  databaseUrl?: string;
   steps: TuiScenarioStep[];
   timeoutSeconds?: number | undefined;
   startupTimeoutSeconds?: number | undefined;
@@ -68,7 +68,7 @@ export async function runTuiScenario(input: {
 export async function runTuiScenarioWithSession(input: {
   sessionName: string;
   freshSessionName?: string | undefined;
-  databaseUrl: string;
+  databaseUrl?: string;
   steps: TuiScenarioStep[];
   timeoutSeconds?: number | undefined;
   startupTimeoutSeconds?: number | undefined;
@@ -100,14 +100,17 @@ export async function runTuiScenarioWithSession(input: {
       ...process.env,
       ...(input.env ?? {}),
       HOME: homeDir,
-      DATABASE_URL: input.databaseUrl,
       KESTREL_CORE_HOME: coreProductRoot,
-      KESTREL_CORE_DATABASE_MODE: "external",
-      KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
+      KESTREL_CORE_DATABASE_MODE: input.databaseUrl ? "external" : "pglite",
+      ...(input.databaseUrl
+        ? {
+            DATABASE_URL: input.databaseUrl,
+            KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
+          }
+        : {}),
       KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
       KESTREL_DISABLE_DOTENV: "1",
-      // Prove every Core-owned child keeps using the explicit external URL.
-      KESTREL_DB_PORT: "1",
+      ...(input.databaseUrl ? { KESTREL_DB_PORT: "1" } : {}),
       OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
       TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
       FORCE_COLOR: "0",

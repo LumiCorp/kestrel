@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 
 import {
   RUHROH_PACKAGE_NAME,
@@ -10,10 +9,12 @@ import {
   resolveRuhrohInvocation,
   validateEvaluationOwnershipLedger,
 } from "../../scripts/validate-ruhroh-evals.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const ROOT = process.cwd();
 
-test("evaluation ownership ledger covers Ruhroh scenarios and evidenced runtime replacements", async () => {
+contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scenarios and evidenced runtime replacements", async () => {
   const validation = await validateEvaluationOwnershipLedger(ROOT);
 
   assert.deepEqual(validation.errors, []);
@@ -40,7 +41,7 @@ test("evaluation ownership ledger covers Ruhroh scenarios and evidenced runtime 
   assert.equal(ruhrohScenarios.every((entry) => entry.parityRecord?.startsWith("evals/migration/parity/") === true), true);
 });
 
-test("Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
+contractTest("runtime.hermetic", "Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
   const recordPaths = (await walk(path.join(ROOT, "evals", "migration", "parity")))
     .filter((filePath) => filePath.endsWith(".json"));
   assert.equal(recordPaths.length, 8);
@@ -108,7 +109,7 @@ test("Ruhroh parity records prove all semantic dimensions through the maintained
   assert.equal(packageArtifactHashes.size, 1);
 });
 
-test("Kestrel installs the exact released Ruhroh evaluator", async () => {
+contractTest("runtime.hermetic", "Kestrel installs the exact released Ruhroh evaluator", async () => {
   const rootPackage = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8")) as {
     devDependencies?: Record<string, string>;
   };
@@ -125,7 +126,7 @@ test("Kestrel installs the exact released Ruhroh evaluator", async () => {
   );
 });
 
-test("Kestrel eval targets reference Ruhroh's maintained adapter without copying it", async () => {
+contractTest("runtime.hermetic", "Kestrel eval targets reference Ruhroh's maintained adapter without copying it", async () => {
   const target = JSON.parse(
     await readFile(path.join(ROOT, "evals", "targets", "kestrel-reference.json"), "utf8"),
   ) as { targets: Array<{ adapterId?: string; adapterCommand?: string }> };

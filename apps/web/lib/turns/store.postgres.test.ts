@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
 
@@ -20,8 +21,8 @@ async function waitFor<T>(
   throw new Error("Timed out waiting for the durable turn to settle.");
 }
 
-test(
-  "durable turns converge across claims, dispatch failure, and worker recovery",
+contractTest(
+  ["web.interaction-request-identity", "web.worker-claim-recovery"], "durable turns converge across claims, dispatch failure, and worker recovery",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;

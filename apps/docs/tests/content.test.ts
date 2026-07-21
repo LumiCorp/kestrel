@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 
 import {
   getNavigation,
@@ -11,10 +10,12 @@ import {
 import { resolveDocsAppRoot } from "@/lib/site";
 import { DOCS_RELEASE } from "@/lib/release";
 import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/types";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const VERSION = "0.6.0";
 
-test("navigation exposes exactly six ordered public journeys", async () => {
+contractTest("docs.hermetic", "navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
   assert.deepEqual(navigation.map((group) => group.section), [...DOCS_NAV_SECTIONS]);
   assert.deepEqual(navigation.map((group) => group.title), [
@@ -27,7 +28,7 @@ test("navigation exposes exactly six ordered public journeys", async () => {
   ]);
 });
 
-test("every navigation, related, and Markdown link resolves to a public docs page", async () => {
+contractTest("docs.hermetic", "every navigation, related, and Markdown link resolves to a public docs page", async () => {
   const [pages, navigation] = await Promise.all([getPublicPages(), getNavigation()]);
   const publicUrls = new Set(pages.map(({ meta }) => meta.url));
   const redirectOnlyUrls = new Set([
@@ -61,7 +62,7 @@ test("every navigation, related, and Markdown link resolves to a public docs pag
   }
 });
 
-test("the complete 0.6 public baseline is represented", async () => {
+contractTest("docs.hermetic", "the complete 0.6 public baseline is represented", async () => {
   const required = [
     "start/quickstart",
     "desktop/providers",
@@ -88,7 +89,7 @@ test("the complete 0.6 public baseline is represented", async () => {
   }
 });
 
-test("every public page has an explicit consumer content model", async () => {
+contractTest("docs.hermetic", "every public page has an explicit consumer content model", async () => {
   const pages = await getPublicPages();
   for (const { meta } of pages) {
     assert.ok(CONTENT_ARCHETYPES.includes(meta.archetype), `${meta.url} has no valid archetype`);
@@ -99,7 +100,7 @@ test("every public page has an explicit consumer content model", async () => {
   }
 });
 
-test("journey progress resolves in order without skipping public pages", async () => {
+contractTest("docs.hermetic", "journey progress resolves in order without skipping public pages", async () => {
   const pages = await getPublicPages();
   const journeyPages = pages.filter(({ meta }) => meta.journey);
   assert.ok(journeyPages.length > 0);
@@ -111,7 +112,7 @@ test("journey progress resolves in order without skipping public pages", async (
   }
 });
 
-test("Kestrel One documentation uses the owned product routes", async () => {
+contractTest("docs.hermetic", "Kestrel One documentation uses the owned product routes", async () => {
   const pages = await Promise.all([
     getRenderedPageBySlug(["kestrel-one", "threads"]),
     getRenderedPageBySlug(["kestrel-one", "projects"]),
@@ -128,7 +129,7 @@ test("Kestrel One documentation uses the owned product routes", async () => {
   assert.match(pages[5]?.rawContent ?? "", /\/model-deployments/u);
 });
 
-test("released packages and compatibility are first-class public reference pages", async () => {
+contractTest("docs.hermetic", "released packages and compatibility are first-class public reference pages", async () => {
   const routes = ["protocol", "sdk", "nextjs", "ai-sdk", "observability"];
   for (const route of routes) assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   assert.ok(await getRenderedPageBySlug(["reference", "compatibility"]));
@@ -138,7 +139,7 @@ test("released packages and compatibility are first-class public reference pages
   );
 });
 
-test("release-sensitive public copy uses stable 0.6.0", async () => {
+contractTest("docs.hermetic", "release-sensitive public copy uses stable 0.6.0", async () => {
   const pages = await getPublicPages();
   const corpus = pages.map(({ rawContent }) => rawContent).join("\n");
   assert.equal(DOCS_RELEASE.version, VERSION);
@@ -147,7 +148,7 @@ test("release-sensitive public copy uses stable 0.6.0", async () => {
   assert.match(corpus, /\b0\.6\.0\b/u);
 });
 
-test("all seven product screenshots exist and have descriptive alt text and captions", async () => {
+contractTest("docs.hermetic", "all seven product screenshots exist and have descriptive alt text and captions", async () => {
   const pages = await getPublicPages();
   const images = pages.flatMap(({ meta, rawContent }) =>
     [...rawContent.matchAll(/<ProductFigure\s+src="(\/product\/[^"]+)"\s+alt="([^"]+)"\s+caption="([^"]+)"\s*\/>/gu)].map((match) => ({
@@ -166,7 +167,7 @@ test("all seven product screenshots exist and have descriptive alt text and capt
   }
 });
 
-test("public code fences name their language and package installs pin the stable version", async () => {
+contractTest("docs.hermetic", "public code fences name their language and package installs pin the stable version", async () => {
   const pages = await getPublicPages();
   for (const page of pages) {
     let insideFence = false;
@@ -190,7 +191,7 @@ test("public code fences name their language and package installs pin the stable
   }
 });
 
-test("the Build journey uses only the shipped Reference profile", async () => {
+contractTest("docs.hermetic", "the Build journey uses only the shipped Reference profile", async () => {
   const pages = await getPublicPages();
   const buildJourney = pages.filter(({ meta }) => meta.journey?.id === "reference-agent-build");
   assert.ok(buildJourney.length > 0);
@@ -200,7 +201,7 @@ test("the Build journey uses only the shipped Reference profile", async () => {
   assert.doesNotMatch(corpus, /workspace-copilot|Workspace Copilot/u);
 });
 
-test("retired automation tutorials are absent and permanently redirected", async () => {
+contractTest("docs.hermetic", "retired automation tutorials are absent and permanently redirected", async () => {
   const [pages, navigation, nextConfig] = await Promise.all([
     getPublicPages(),
     getNavigation(),
@@ -221,14 +222,14 @@ test("retired automation tutorials are absent and permanently redirected", async
   }
 });
 
-test("public copy does not reuse the retired universal template headings", async () => {
+contractTest("docs.hermetic", "public copy does not reuse the retired universal template headings", async () => {
   const pages = await getPublicPages();
   const corpus = pages.map(({ rawContent }) => rawContent).join("\n");
   assert.doesNotMatch(corpus, /^## Why this exists$/gmu);
   assert.doesNotMatch(corpus, /^## What To Read Next$/gmu);
 });
 
-test("public copy does not expose documentation planning or repository validation commentary", async () => {
+contractTest("docs.hermetic", "public copy does not expose documentation planning or repository validation commentary", async () => {
   const pages = await getPublicPages();
   const banned = [
     /canonical (?:demo|example)/iu,
@@ -250,7 +251,7 @@ test("public copy does not expose documentation planning or repository validatio
   }
 });
 
-test("consumer onboarding excludes repository contributor setup", async () => {
+contractTest("docs.hermetic", "consumer onboarding excludes repository contributor setup", async () => {
   const pages = await getPublicPages();
   const onboarding = pages
     .filter(({ meta }) => ["start", "desktop", "kestrel-one"].includes(meta.section))

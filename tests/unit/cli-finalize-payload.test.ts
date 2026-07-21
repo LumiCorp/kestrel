@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildFinalizePlainText, parseFinalizePayload } from "../../cli/output/FinalizePayload.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseFinalizePayload accepts {message,data?}", () => {
+
+contractTest("runtime.hermetic", "parseFinalizePayload accepts {message,data?}", () => {
   const result = parseFinalizePayload({
     message: "Done",
     data: {
@@ -16,7 +17,7 @@ test("parseFinalizePayload accepts {message,data?}", () => {
   assert.deepEqual(result.payload?.data, { id: 123 });
 });
 
-test("parseFinalizePayload rejects missing message", () => {
+contractTest("runtime.hermetic", "parseFinalizePayload rejects missing message", () => {
   const result = parseFinalizePayload({
     text: "nope",
   });
@@ -25,7 +26,7 @@ test("parseFinalizePayload rejects missing message", () => {
   assert.match(result.error ?? "", /message/);
 });
 
-test("parseFinalizePayload accepts coding finalize payload data envelope", () => {
+contractTest("runtime.hermetic", "parseFinalizePayload accepts coding finalize payload data envelope", () => {
   const result = parseFinalizePayload({
     message: "Implemented and verified.",
     data: {
@@ -51,7 +52,7 @@ test("parseFinalizePayload accepts coding finalize payload data envelope", () =>
   );
 });
 
-test("buildFinalizePlainText renders plan-shaped ui blocks into readable text", () => {
+contractTest("runtime.hermetic", "buildFinalizePlainText renders plan-shaped ui blocks into readable text", () => {
   const plainText = buildFinalizePlainText({
     ui: {
       blocks: [

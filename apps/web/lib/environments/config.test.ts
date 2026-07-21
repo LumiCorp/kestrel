@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
 import {
   assertHostedEnvironmentConfiguration,
   assertHostedEnvironmentRuntimeConfiguration,
@@ -12,8 +11,10 @@ import {
   hostedEnvironmentsEnabled,
   hostedEnvironmentsOrganizationEnabled,
 } from "./config";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Environment runtime mode defaults to Fly and selects local explicitly", () => {
+
+contractTest("web.hermetic", "Environment runtime mode defaults to Fly and selects local explicitly", () => {
   assert.equal(getHostedEnvironmentRuntimeMode({}), "fly");
   assert.equal(
     getHostedEnvironmentRuntimeMode({
@@ -38,7 +39,7 @@ test("Environment runtime mode defaults to Fly and selects local explicitly", ()
   );
 });
 
-test("local Environment mode needs only the loopback runner service", () => {
+contractTest("web.hermetic", "local Environment mode needs only the loopback runner service", () => {
   const local = {
     KESTREL_ENVIRONMENT_RUNTIME: "local",
     KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "http://127.0.0.1:43106",
@@ -62,7 +63,7 @@ test("local Environment mode needs only the loopback runner service", () => {
   );
 });
 
-test("production builds select a fail-closed hosted Environment preflight phase", () => {
+contractTest("web.hermetic", "production builds select a fail-closed hosted Environment preflight phase", () => {
   assert.equal(getHostedEnvironmentBuildPreflightPhase({}), null);
   assert.equal(
     getHostedEnvironmentBuildPreflightPhase({
@@ -101,7 +102,7 @@ test("production builds select a fail-closed hosted Environment preflight phase"
   );
 });
 
-test("the checked-in local environment enables hosted Environments", async () => {
+contractTest("web.hermetic", "the checked-in local environment enables hosted Environments", async () => {
   const envExample = await readFile(
     new URL("../../.env.example", import.meta.url),
     "utf8"
@@ -137,7 +138,7 @@ function validEnvironment() {
   };
 }
 
-test("Environment rollout defaults on with explicit off switches", () => {
+contractTest("web.hermetic", "Environment rollout defaults on with explicit off switches", () => {
   assert.equal(hostedEnvironmentsDeploymentEnabled({}), true);
   assert.equal(
     hostedEnvironmentsDeploymentEnabled({
@@ -175,13 +176,13 @@ test("Environment rollout defaults on with explicit off switches", () => {
   assert.equal(hostedEnvironmentsOrganizationEnabled(false), false);
 });
 
-test("hosted cutover accepts complete immutable Environment configuration", () => {
+contractTest("web.hermetic", "hosted cutover accepts complete immutable Environment configuration", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentConfiguration(validEnvironment())
   );
 });
 
-test("hosted runtime preparation permits the legacy runner during staged deployment", () => {
+contractTest("web.hermetic", "hosted runtime preparation permits the legacy runner during staged deployment", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentRuntimeConfiguration({
       ...validEnvironment(),
@@ -191,7 +192,7 @@ test("hosted runtime preparation permits the legacy runner during staged deploym
   );
 });
 
-test("hosted runtime image validation ignores surrounding deployment whitespace", () => {
+contractTest("web.hermetic", "hosted runtime image validation ignores surrounding deployment whitespace", () => {
   const environment = validEnvironment();
   assert.doesNotThrow(() =>
     assertHostedEnvironmentRuntimeConfiguration({
@@ -202,7 +203,7 @@ test("hosted runtime image validation ignores surrounding deployment whitespace"
   );
 });
 
-test("hosted cutover rejects missing values and legacy global runner configuration", () => {
+contractTest("web.hermetic", "hosted cutover rejects missing values and legacy global runner configuration", () => {
   assert.throws(
     () => assertHostedEnvironmentConfiguration({}),
     /Hosted Environment configuration is incomplete/u
@@ -217,7 +218,7 @@ test("hosted cutover rejects missing values and legacy global runner configurati
   );
 });
 
-test("hosted cutover rejects mutable images and mismatched ticket keys", () => {
+contractTest("web.hermetic", "hosted cutover rejects mutable images and mismatched ticket keys", () => {
   assert.throws(
     () =>
       assertHostedEnvironmentConfiguration({

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { StepContext, StepContractRegistry, StepIO, Transition } from "../../src/kestrel/contracts/execution.js";
@@ -29,6 +28,8 @@ import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultD
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function buildExecConfig() {
   return {
@@ -201,7 +202,7 @@ function assertReferenceFinalizeContractRejects(transition: Transition, context 
   );
 }
 
-test("exec.wait_effect clears stale retry feedback after successful durable write result evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect clears stale retry feedback after successful durable write result evidence", async () => {
   const step = createExecWaitEffectStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -270,7 +271,7 @@ test("exec.wait_effect clears stale retry feedback after successful durable writ
   assert.equal(agent.retryContext, undefined);
 });
 
-test("exec.wait_effect clears stale retry feedback after successful patch_text result evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect clears stale retry feedback after successful patch_text result evidence", async () => {
   const step = createExecWaitEffectStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -340,7 +341,7 @@ test("exec.wait_effect clears stale retry feedback after successful patch_text r
   assert.equal(agent.retryContext, undefined);
 });
 
-test("exec.wait_effect clears stale retry feedback after failed durable write result evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect clears stale retry feedback after failed durable write result evidence", async () => {
   const step = createExecWaitEffectStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -410,7 +411,7 @@ test("exec.wait_effect clears stale retry feedback after failed durable write re
   assert.equal(agent.retryContext, undefined);
 });
 
-test("exec.dispatch escalates to approval when autonomy evidence is insufficient", async () => {
+contractTest("runtime.hermetic", "exec.dispatch escalates to approval when autonomy evidence is insufficient", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalled = false;
   const io: StepIO = {
@@ -451,7 +452,7 @@ test("exec.dispatch escalates to approval when autonomy evidence is insufficient
   assert.equal(toolCalled, false);
 });
 
-test("exec.dispatch does not use stale agent goal as autonomy evidence when transcript lacks a task", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not use stale agent goal as autonomy evidence when transcript lacks a task", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalled = false;
   const transition = await step(
@@ -510,7 +511,7 @@ test("exec.dispatch does not use stale agent goal as autonomy evidence when tran
   assert.equal(toolCalled, false);
 });
 
-test("exec.dispatch returns stale missing nextAction state to loop feedback", async () => {
+contractTest("runtime.hermetic", "exec.dispatch returns stale missing nextAction state to loop feedback", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalled = false;
 
@@ -568,7 +569,7 @@ test("exec.dispatch returns stale missing nextAction state to loop feedback", as
   assert.equal(toolCalled, false);
 });
 
-test("exec.dispatch returns unsupported nextAction kind to loop feedback", async () => {
+contractTest("runtime.hermetic", "exec.dispatch returns unsupported nextAction kind to loop feedback", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalled = false;
 
@@ -613,7 +614,7 @@ test("exec.dispatch returns unsupported nextAction kind to loop feedback", async
   assert.equal(toolCalled, false);
 });
 
-test("direct Acter execution rejects malformed compiled nextAction", async () => {
+contractTest("runtime.hermetic", "direct Acter execution rejects malformed compiled nextAction", async () => {
   const step = createExecutionStepReducer({
     ...buildExecConfig(),
     acterStepId: "agent.exec.dispatch",
@@ -653,7 +654,7 @@ test("direct Acter execution rejects malformed compiled nextAction", async () =>
   );
 });
 
-test("direct Acter execution reuses cached filesystem inspection evidence", async () => {
+contractTest("runtime.hermetic", "direct Acter execution reuses cached filesystem inspection evidence", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -723,7 +724,7 @@ test("direct Acter execution reuses cached filesystem inspection evidence", asyn
   assert.equal((latestEvidence.facts as Record<string, unknown>).reused, true);
 });
 
-test("direct Acter execution clears filesystem inspection cache before filesystem mutation", async () => {
+contractTest("runtime.hermetic", "direct Acter execution clears filesystem inspection cache before filesystem mutation", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -780,7 +781,7 @@ test("direct Acter execution clears filesystem inspection cache before filesyste
   assert.deepEqual(agent.filesystemInspectionCache, []);
 });
 
-test("exec.wait_approval records processor-owned approval denials", async () => {
+contractTest("runtime.hermetic", "exec.wait_approval records processor-owned approval denials", async () => {
   const config = {
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -878,7 +879,7 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("GitHub external confirmation resumes only the exact approved mutation", async () => {
+contractTest("runtime.hermetic", "GitHub external confirmation resumes only the exact approved mutation", async () => {
   const definition = kestrelOneGitHubIssueCreateTool.definition;
   const toolInput = {
     repository: "acme/support",
@@ -1006,7 +1007,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   assert.equal(inlineToolCalls, 0);
 });
 
-test("exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -1054,7 +1055,7 @@ test("exec.wait_effect records processor-owned effect waits when result is unava
   assert.equal(workingPlan.status, "waiting");
 });
 
-test("exec.wait_effect records processor-owned non-tool effect collection", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records processor-owned non-tool effect collection", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -1106,7 +1107,7 @@ test("exec.wait_effect records processor-owned non-tool effect collection", asyn
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("exec.wait_effect routes completed filesystem writes through collect before loop", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect routes completed filesystem writes through collect before loop", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const context = buildContext({
     session: {
@@ -1174,7 +1175,7 @@ test("exec.wait_effect routes completed filesystem writes through collect before
   assert.equal(lastActionResult.name, "fs.write_text");
 });
 
-test("exec.wait_effect settles completed dev.shell.run results before loop", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect settles completed dev.shell.run results before loop", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const context = buildContext({
     session: {
@@ -1252,7 +1253,7 @@ test("exec.wait_effect settles completed dev.shell.run results before loop", asy
   assert.doesNotMatch(String(transcriptOutput?.text), /Tool result: effect_result_lookup/u);
 });
 
-test("exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode", async () => {
+contractTest("runtime.hermetic", "exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode", async () => {
   const step = createExecWaitUserStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -1344,7 +1345,7 @@ test("exec.wait_user resumes blocked mode-switch requests with transcript goal a
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("ask_user resume does not carry stale agent goal when transcript lacks a task", () => {
+contractTest("runtime.hermetic", "ask_user resume does not carry stale agent goal when transcript lacks a task", () => {
   const transition = handleAskUserAction({
     action: {
       kind: "ask_user",
@@ -1398,7 +1399,7 @@ test("ask_user resume does not carry stale agent goal when transcript lacks a ta
   assert.equal(lastActionResult.resumeGoal, undefined);
 });
 
-test("exec.dispatch records processor-owned ask_user waits", async () => {
+contractTest("runtime.hermetic", "exec.dispatch records processor-owned ask_user waits", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -1449,7 +1450,7 @@ test("exec.dispatch records processor-owned ask_user waits", async () => {
   assert.equal(workingPlan.status, "waiting");
 });
 
-test("exec.finalize converts handoff_to_build into a user reply wait", async () => {
+contractTest("runtime.hermetic", "exec.finalize converts handoff_to_build into a user reply wait", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -1536,7 +1537,7 @@ test("exec.finalize converts handoff_to_build into a user reply wait", async () 
   });
 });
 
-test("exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {
+contractTest("runtime.hermetic", "exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {
   const step = createExecWaitUserStep(buildExecConfig());
   let toolCalled = false;
   const io: StepIO = {
@@ -1596,7 +1597,7 @@ test("exec.wait_user clears stale waitingFor when action is no longer ask_user",
   assert.equal(toolCalled, false);
 });
 
-test("exec.wait_user consumes plan handoff user reply without carrying stale wait state", async () => {
+contractTest("runtime.hermetic", "exec.wait_user consumes plan handoff user reply without carrying stale wait state", async () => {
   const step = createExecWaitUserStep(buildExecConfig());
   const waitFor = {
     kind: "user" as const,
@@ -1660,7 +1661,7 @@ test("exec.wait_user consumes plan handoff user reply without carrying stale wai
   assert.equal(readActiveWaitState(react), undefined);
 });
 
-test("reference react execution checkpoint clears stale exec user waits", () => {
+contractTest("runtime.hermetic", "reference react execution checkpoint clears stale exec user waits", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -1696,7 +1697,7 @@ test("reference react execution checkpoint clears stale exec user waits", () => 
   assert.equal(react.waitingFor, undefined);
 });
 
-test("reference react non-wait command batches clear stale ask-user wait actions", () => {
+contractTest("runtime.hermetic", "reference react non-wait command batches clear stale ask-user wait actions", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -1752,7 +1753,7 @@ test("reference react non-wait command batches clear stale ask-user wait actions
   assert.equal(react.nextAction, undefined);
 });
 
-test("exec.dispatch emits blocked acter waits with prompt metadata", async () => {
+contractTest("runtime.hermetic", "exec.dispatch emits blocked acter waits with prompt metadata", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -1823,7 +1824,7 @@ test("exec.dispatch emits blocked acter waits with prompt metadata", async () =>
   assert.doesNotMatch(String(metadata.prompt ?? ""), /\bcontinue\b/u);
 });
 
-test("exec.dispatch reports capability-blocked tools with explicit policy metadata", async () => {
+contractTest("runtime.hermetic", "exec.dispatch reports capability-blocked tools with explicit policy metadata", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -1900,7 +1901,7 @@ test("exec.dispatch reports capability-blocked tools with explicit policy metada
   assert.match(String(metadata.prompt ?? ""), /blocks capability 'project\.task_queue\.write'/u);
 });
 
-test("exec.dispatch reuses cached tool outcomes instead of repeating the same call", async () => {
+contractTest("runtime.hermetic", "exec.dispatch reuses cached tool outcomes instead of repeating the same call", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalls = 0;
   const io: StepIO = {
@@ -1993,7 +1994,7 @@ test("exec.dispatch reuses cached tool outcomes instead of repeating the same ca
   assert.equal(toolCalls, 0);
 });
 
-test("exec.dispatch does not infer dev.process.read processId from active process state", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not infer dev.process.read processId from active process state", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -2054,7 +2055,7 @@ test("exec.dispatch does not infer dev.process.read processId from active proces
   assert.equal(pendingInput.processId, undefined);
 });
 
-test("exec.dispatch does not infer dev.process.write processId from active process state", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not infer dev.process.write processId from active process state", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -2118,7 +2119,7 @@ test("exec.dispatch does not infer dev.process.write processId from active proce
   assert.equal(pendingInput.data, "move N\nmove E\n");
 });
 
-test("exec.wait_effect records running dev.shell process state", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records running dev.shell process state", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2196,7 +2197,7 @@ test("exec.wait_effect records running dev.shell process state", async () => {
   assert.deepEqual(devShellState.liveProcessIds, ["proc-live"]);
 });
 
-test("exec.wait_effect records dev.process.write input and keeps process live", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records dev.process.write input and keeps process live", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2277,7 +2278,7 @@ test("exec.wait_effect records dev.process.write input and keeps process live", 
   assert.equal(typeof processes["proc-live"]?.lastStdinAt, "string");
 });
 
-test("exec.wait_effect records settled dev.shell process completion", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records settled dev.shell process completion", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2358,7 +2359,7 @@ test("exec.wait_effect records settled dev.shell process completion", async () =
   assert.equal(devShellState.lastCompletedExitCode, 0);
 });
 
-test("exec.wait_effect preserves live process state when a helper exec completes without processId", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect preserves live process state when a helper exec completes without processId", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2435,7 +2436,7 @@ test("exec.wait_effect preserves live process state when a helper exec completes
   assert.equal(devShellState.lastCompletedExitCode, 0);
 });
 
-test("exec.wait_effect records helper tactic failure as ledger evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records helper tactic failure as ledger evidence", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2528,7 +2529,7 @@ test("exec.wait_effect records helper tactic failure as ledger evidence", async 
   assert.equal((processEvidence?.facts as Record<string, unknown> | undefined)?.command, "python3 helper.py");
 });
 
-test("exec.wait_effect treats failed artifact check commands as process evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect treats failed artifact check commands as process evidence", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -2625,7 +2626,7 @@ test("exec.wait_effect treats failed artifact check commands as process evidence
   assert.equal((processEvidence?.facts as Record<string, unknown> | undefined)?.commandRole, "general_evidence");
 });
 
-test("exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence", async () => {
+contractTest("runtime.hermetic", "exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -2697,7 +2698,7 @@ test("exec.dispatch treats inline missing artifact reads as recoverable verify_a
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("exec.dispatch queues filesystem writes with continue failure policy", async () => {
+contractTest("runtime.hermetic", "exec.dispatch queues filesystem writes with continue failure policy", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -2755,7 +2756,7 @@ test("exec.dispatch queues filesystem writes with continue failure policy", asyn
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning", async () => {
+contractTest("runtime.hermetic", "exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning", async () => {
   const proposalCalls: unknown[] = [];
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -2828,7 +2829,7 @@ test("exec.dispatch leaves first filesystem mutation to runtime managed worktree
   assert.equal(exec.pendingEffectType, "execute_tool_call");
 });
 
-test("exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning", async () => {
+contractTest("runtime.hermetic", "exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -2905,7 +2906,7 @@ test("exec.dispatch leaves filesystem mutation batches to runtime managed worktr
   assert.equal(pendingItem.name, "fs.read_text");
 });
 
-test("exec.dispatch does not request managed worktree approval for dev shell auto-provision tools", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not request managed worktree approval for dev shell auto-provision tools", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -2960,7 +2961,7 @@ test("exec.dispatch does not request managed worktree approval for dev shell aut
   assert.notEqual(transition.waitFor?.metadata?.purpose, "managed_worktree");
 });
 
-test("exec.dispatch treats exec_command as the auto-provisioned dev shell alias", async () => {
+contractTest("runtime.hermetic", "exec.dispatch treats exec_command as the auto-provisioned dev shell alias", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -3017,7 +3018,7 @@ test("exec.dispatch treats exec_command as the auto-provisioned dev shell alias"
   assert.equal(transition.nextStepAgent, "agent.exec.wait_effect");
 });
 
-test("exec.dispatch does not request managed worktree approval for dev process auto-provision tools", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not request managed worktree approval for dev process auto-provision tools", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -3072,7 +3073,7 @@ test("exec.dispatch does not request managed worktree approval for dev process a
   assert.notEqual(transition.waitFor?.metadata?.purpose, "managed_worktree");
 });
 
-test("exec.dispatch skips managed worktree approval for ephemeral workspace mutations", async () => {
+contractTest("runtime.hermetic", "exec.dispatch skips managed worktree approval for ephemeral workspace mutations", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -3131,7 +3132,7 @@ test("exec.dispatch skips managed worktree approval for ephemeral workspace muta
   assert.equal(transition.effects?.[0]?.type, "execute_tool_call");
 });
 
-test("exec.dispatch ignores caller-supplied managedWorktree when no session binding exists", async () => {
+contractTest("runtime.hermetic", "exec.dispatch ignores caller-supplied managedWorktree when no session binding exists", async () => {
   let proposalCalled = false;
   let toolCalled = false;
   const step = createExecDispatchStep({
@@ -3204,7 +3205,7 @@ test("exec.dispatch ignores caller-supplied managedWorktree when no session bind
   assert.equal(toolCalled, false);
 });
 
-test("exec.dispatch does not request managed worktree approval for code.execute in the default build path", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not request managed worktree approval for code.execute in the default build path", async () => {
   let proposalCalled = false;
   const step = createExecDispatchStep({
     ...buildExecConfig(),
@@ -3267,7 +3268,7 @@ test("exec.dispatch does not request managed worktree approval for code.execute 
   assert.equal(transition.effects?.[0]?.type, "execute_tool_call");
 });
 
-test("exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation", async () => {
+contractTest("runtime.hermetic", "exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation", async () => {
   const execConfig = {
     ...buildExecConfig(),
     managedWorktreeProposalProvider: async (request: { triggeringTool: string }) => ({
@@ -3371,7 +3372,7 @@ test("exec.wait_approval denial for explicit managed worktree opt-in returns to 
   assert.equal(exec.pendingApproval, undefined);
 });
 
-test("exec.dispatch routes durable tool batches through processor-owned effect dispatch", async () => {
+contractTest("runtime.hermetic", "exec.dispatch routes durable tool batches through processor-owned effect dispatch", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -3438,7 +3439,7 @@ test("exec.dispatch routes durable tool batches through processor-owned effect d
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("exec.dispatch continues durable pending batch without a new nextAction", async () => {
+contractTest("runtime.hermetic", "exec.dispatch continues durable pending batch without a new nextAction", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -3495,7 +3496,7 @@ test("exec.dispatch continues durable pending batch without a new nextAction", a
   assert.equal(react.nextAction, undefined);
 });
 
-test("exec.wait_effect records failed artifact reads instead of terminating verification", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records failed artifact reads instead of terminating verification", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -3576,7 +3577,7 @@ test("exec.wait_effect records failed artifact reads instead of terminating veri
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("exec.wait_effect records durable batch filesystem failures as failed evidence", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records durable batch filesystem failures as failed evidence", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -3675,7 +3676,7 @@ test("exec.wait_effect records durable batch filesystem failures as failed evide
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("exec.dispatch records recoverable read-only batch filesystem failures as failed evidence", async () => {
+contractTest("runtime.hermetic", "exec.dispatch records recoverable read-only batch filesystem failures as failed evidence", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -3778,7 +3779,7 @@ test("exec.dispatch records recoverable read-only batch filesystem failures as f
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("exec.dispatch still throws non-recoverable read-only batch tool failures", async () => {
+contractTest("runtime.hermetic", "exec.dispatch still throws non-recoverable read-only batch tool failures", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -3821,7 +3822,7 @@ test("exec.dispatch still throws non-recoverable read-only batch tool failures",
   );
 });
 
-test("exec.wait_effect records helper outcome after empty helper read without entering repair", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect records helper outcome after empty helper read without entering repair", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -3923,7 +3924,7 @@ test("exec.wait_effect records helper outcome after empty helper read without en
   assert.equal(react.workItem, undefined);
 });
 
-test("exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec", async () => {
+contractTest("runtime.hermetic", "exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec", async () => {
   const step = createExecWaitEffectStep(buildExecConfig());
   const transition = await step(
     buildContext({
@@ -4007,7 +4008,7 @@ test("exec.wait_effect leaves stale helper diagnostics non-authoritative after s
   assert.equal(devShellState.helperFailure, undefined);
 });
 
-test("exec.dispatch does not reuse cached filesystem outcomes", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not reuse cached filesystem outcomes", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -4099,7 +4100,7 @@ test("exec.dispatch does not reuse cached filesystem outcomes", async () => {
   assert.equal(toolCalls, 1);
 });
 
-test("exec.dispatch does not reuse cached external side-effect outcomes", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not reuse cached external side-effect outcomes", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -4197,7 +4198,7 @@ test("exec.dispatch does not reuse cached external side-effect outcomes", async 
   assert.equal(toolCalls, 0);
 });
 
-test("exec.dispatch derives broadened search from prior low-signal cached research", async () => {
+contractTest("runtime.hermetic", "exec.dispatch derives broadened search from prior low-signal cached research", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -4301,7 +4302,7 @@ test("exec.dispatch derives broadened search from prior low-signal cached resear
   assert.equal(evidenceRecoverySummary.broadenedSearchUsed, true);
 });
 
-test("exec.dispatch does not derive broadened search after prior high-yield research", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not derive broadened search after prior high-yield research", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -4405,7 +4406,7 @@ test("exec.dispatch does not derive broadened search after prior high-yield rese
   assert.equal(evidenceRecoverySummary.broadenedSearchUsed, false);
 });
 
-test("exec.dispatch does not reuse lastActionResult when input hash is missing", async () => {
+contractTest("runtime.hermetic", "exec.dispatch does not reuse lastActionResult when input hash is missing", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   let toolCalls = 0;
   const io: StepIO = {
@@ -4474,7 +4475,7 @@ test("exec.dispatch does not reuse lastActionResult when input hash is missing",
   assert.equal(toolCalls, 1);
 });
 
-test("exec.dispatch marks duplicate_executed_result for repeated fresh web output", async () => {
+contractTest("runtime.hermetic", "exec.dispatch marks duplicate_executed_result for repeated fresh web output", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const repeatedOutput = {
     results: [
@@ -4558,7 +4559,7 @@ test("exec.dispatch marks duplicate_executed_result for repeated fresh web outpu
   assert.equal(duplicateResult.duplicateCount, 2);
 });
 
-test("exec.dispatch fails fast on repeated deduped tool reuse with no progress", async () => {
+contractTest("runtime.hermetic", "exec.dispatch fails fast on repeated deduped tool reuse with no progress", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const io: StepIO = {
     useModel: async () => {
@@ -4641,7 +4642,7 @@ test("exec.dispatch fails fast on repeated deduped tool reuse with no progress",
   assert.equal(retryContext.failure !== undefined, true);
 });
 
-test("exec.dispatch strips unadvertised internet.search domain filters before tool execution", async () => {
+contractTest("runtime.hermetic", "exec.dispatch strips unadvertised internet.search domain filters before tool execution", async () => {
   const step = createExecDispatchStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [

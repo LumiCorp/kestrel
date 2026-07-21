@@ -187,9 +187,10 @@ run the same complete portable validation contract used by GitHub Actions:
 pnpm validate
 ```
 
-The proof registry assigns every retained automated test to a named contract
-and execution environment. High- and critical-risk contracts also carry current
-killed-mutation evidence. Ruhroh owns model-quality evaluation execution;
+Every automated test declares a named contract and exactly one of four
+boundaries: hermetic, process, PostgreSQL, or Chromium. Critical contracts carry
+current targeted killed-mutation evidence, and the validation runner enforces
+phase and whole-suite runtime budgets. Ruhroh owns model-quality evaluation execution;
 Kestrel validates only its declarative Ruhroh configuration.
 
 ## Project Boundaries

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { UIMessage } from "ai";
 import {
   findGithubIssueApprovalRequest,
   hasGithubApprovalDecision,
   respondToGithubApproval,
 } from "./github-approval-canary-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const pendingMessage: UIMessage = {
   id: "assistant-canary",
@@ -27,7 +28,7 @@ const pendingMessage: UIMessage = {
   ],
 };
 
-test("approval canary selects only the exact GitHub issue request", () => {
+contractTest("web.hermetic", "approval canary selects only the exact GitHub issue request", () => {
   assert.equal(
     findGithubIssueApprovalRequest({
       messages: [pendingMessage],
@@ -47,7 +48,7 @@ test("approval canary selects only the exact GitHub issue request", () => {
   assert.equal(request?.toolCallId, "approval:runtime-run:4:canary");
 });
 
-test("approval canary produces and verifies an exact denied response", () => {
+contractTest("web.hermetic", "approval canary produces and verifies an exact denied response", () => {
   const request = findGithubIssueApprovalRequest({
     messages: [pendingMessage],
     repository: "acme/widgets",

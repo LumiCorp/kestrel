@@ -16,10 +16,6 @@ const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
 const fakeOpenRouterPort = requiredPort(
   "KESTREL_PRODUCT_FAKE_OPENROUTER_PORT"
 );
-const postgresPort = requiredPort("KESTREL_PRODUCT_POSTGRES_PORT");
-const redisPort = requiredPort("KESTREL_PRODUCT_REDIS_PORT");
-const minioApiPort = requiredPort("KESTREL_PRODUCT_MINIO_API_PORT");
-const minioConsolePort = requiredPort("KESTREL_PRODUCT_MINIO_CONSOLE_PORT");
 const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
 const workerReadyFile = process.env.KESTREL_PRODUCT_WORKER_READY_FILE;
 if (!workerReadyFile) {
@@ -27,14 +23,15 @@ if (!workerReadyFile) {
     "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher."
   );
 }
-const composeProjectName = process.env.COMPOSE_PROJECT_NAME;
-if (!composeProjectName) {
-  throw new Error(
-    "COMPOSE_PROJECT_NAME must be set by the product contract launcher."
-  );
-}
 const baseURL = `http://127.0.0.1:${port}`;
-const databaseUrl = `postgresql://postgres:postgres@127.0.0.1:${postgresPort}/kestrel_product_contract`;
+const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("KESTREL_PRODUCT_DATABASE_URL must be set by validation.");
+}
+const storageRoot = process.env.KESTREL_PRODUCT_STORAGE_ROOT;
+if (!storageRoot) {
+  throw new Error("KESTREL_PRODUCT_STORAGE_ROOT must be set by validation.");
+}
 const inheritedEnv = Object.fromEntries(
   Object.entries(process.env).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string"
@@ -60,33 +57,21 @@ const webServerEnv = {
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
   KESTREL_TURN_WORKER_READY_FILE: workerReadyFile,
-  COMPOSE_PROJECT_NAME: composeProjectName,
-  LOCAL_POSTGRES_PORT: String(postgresPort),
-  LOCAL_REDIS_PORT: String(redisPort),
-  LOCAL_MINIO_API_PORT: String(minioApiPort),
-  LOCAL_MINIO_CONSOLE_PORT: String(minioConsolePort),
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
-  KESTREL_RUNNER_DATABASE_URL: `postgresql://postgres:postgres@127.0.0.1:${postgresPort}/kestrel_product_runtime`,
+  KESTREL_RUNNER_DATABASE_URL: process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL ?? databaseUrl,
   KESTREL_SKIP_RAG_FIXTURES: "true",
   NEXT_PUBLIC_APP_URL: baseURL,
   OPENROUTER_API_KEY: "product-contract-key",
   OPENROUTER_BASE_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
   OPENROUTER_MODEL: "openai/gpt-5.2-chat",
-  STORAGE_ACCESS_KEY_ID: "minioadmin",
-  STORAGE_BUCKET: "unified-app-storage",
-  STORAGE_ENDPOINT: `http://127.0.0.1:${minioApiPort}`,
-  STORAGE_FORCE_PATH_STYLE: "true",
-  STORAGE_PROVIDER: "local-s3",
-  STORAGE_REGION: "us-east-1",
-  STORAGE_SECRET_ACCESS_KEY: "minioadmin",
-  REDIS_URL: `redis://127.0.0.1:${redisPort}`,
+  STORAGE_PROVIDER: "local",
+  STORAGE_LOCAL_ROOT: storageRoot,
 };
 
 export default defineConfig({
   metadata: {
     fakeOpenRouterUrl: `http://127.0.0.1:${fakeOpenRouterPort}`,
   },
-  globalSetup: "./tests/product/global-setup.ts",
   testDir: "./tests/product",
   fullyParallel: false,
   workers: 1,
@@ -107,7 +92,7 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "./scripts/product-dev-all.sh",
+      command: "node scripts/product-validation-stack.mjs",
       url: `${baseURL}/api/health`,
       gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
       reuseExistingServer: false,

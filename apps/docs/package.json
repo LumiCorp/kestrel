@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "WATCHPACK_POLLING=true next dev --port 43102",
-    "build": "next build",
+    "build": "pnpm run build:self",
+    "build:self": "next build",
     "start": "next start --port 43102",
     "lint": "next lint",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "pnpm run test:unit",
+    "test:unit": "node ../../scripts/validate.mjs --leaf hermetic apps/docs",
     "smoke:deployment": "tsx scripts/smoke-deployment.ts"
   },
   "dependencies": {

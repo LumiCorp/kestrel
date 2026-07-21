@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { createAnthropicHttpError } from "../../models/anthropic/AnthropicErrors.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Anthropic authentication failures use the shared refreshable error code", () => {
+
+contractTest("runtime.hermetic", "Anthropic authentication failures use the shared refreshable error code", () => {
   const unauthorized = createAnthropicHttpError(401, "unauthorized");
   const forbidden = createAnthropicHttpError(403, "forbidden");
 

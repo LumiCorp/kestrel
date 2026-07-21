@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -21,6 +20,8 @@ import {
   type RuntimeFactory,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { TuiProfile } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference",
@@ -102,7 +103,7 @@ async function waitForProjectCard(
   throw new Error("Timed out waiting for project card state.");
 }
 
-test("KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
+contractTest("runtime.process", "KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
   const runtime = new KestrelChatRuntime(profile, {
     create: () => {
       const kestrel = {
@@ -137,7 +138,7 @@ test("KestrelChatRuntime rejects non-string turn messages at the runtime boundar
   );
 });
 
-test("KestrelChatRuntime consumes hosted MCP authorization before compiling the turn", async () => {
+contractTest("runtime.process", "KestrelChatRuntime consumes hosted MCP authorization before compiling the turn", async () => {
   const events: RuntimeEvent[] = [];
   const prepared: unknown[] = [];
   const runtime = new KestrelChatRuntime(profile, {
@@ -190,7 +191,7 @@ test("KestrelChatRuntime consumes hosted MCP authorization before compiling the 
   );
 });
 
-test("KestrelChatRuntime consumes execution authorization without requiring an MCP grant", async () => {
+contractTest("runtime.process", "KestrelChatRuntime consumes execution authorization without requiring an MCP grant", async () => {
   const events: RuntimeEvent[] = [];
   const prepared: unknown[] = [];
   const released: string[] = [];
@@ -241,7 +242,7 @@ test("KestrelChatRuntime consumes execution authorization without requiring an M
   );
 });
 
-test("KestrelChatRuntime releases execution authorization when runtime preparation fails", async () => {
+contractTest("runtime.process", "KestrelChatRuntime releases execution authorization when runtime preparation fails", async () => {
   const released: string[] = [];
   const runtime = new KestrelChatRuntime(profile, {
     create: () => ({
@@ -270,7 +271,7 @@ test("KestrelChatRuntime releases execution authorization when runtime preparati
   assert.deepEqual(released, ["run-preparation-failure"]);
 });
 
-test("project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {
+contractTest("runtime.process", "project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {
   const sessionStore = new InMemorySessionStore();
   const taskGraphStore = new ProductTaskGraphStore(sessionStore);
   const projectStore = new ProductProjectStateStore(sessionStore, {
@@ -390,7 +391,7 @@ test("project autopilot tick runs planned card through implementation and testin
   assert.deepEqual((runEvents[1]?.payload.metadata as Record<string, unknown>)?.cardThreadKind, "testing");
 });
 
-test("KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance", async () => {
+contractTest("runtime.process", "KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance", async () => {
   const captured: RuntimeEvent[] = [];
 
   const fakeFactory: RuntimeFactory = {
@@ -471,7 +472,7 @@ test("KestrelChatRuntime delegates direct runtime turns with step agent and oper
   await runtime.close();
 });
 
-test("KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns", async () => {
+contractTest("runtime.process", "KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns", async () => {
   const captured: RuntimeEvent[] = [];
   const v2Profile: TuiProfile = {
     ...profile,
@@ -548,7 +549,7 @@ test("KestrelChatRuntime accepts explicit v2 interaction mode through direct run
   await runtime.close();
 });
 
-test("KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output", async () => {
+contractTest("runtime.process", "KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output", async () => {
   const captured: RuntimeEvent[] = [];
   let calls = 0;
 
@@ -668,7 +669,7 @@ test("KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and 
   await runtime.close();
 });
 
-test("KestrelChatRuntime forwards manual compaction into operator affordance context", async () => {
+contractTest("runtime.process", "KestrelChatRuntime forwards manual compaction into operator affordance context", async () => {
   const captured: RuntimeEvent[] = [];
 
   const fakeFactory: RuntimeFactory = {
@@ -754,7 +755,7 @@ test("KestrelChatRuntime forwards manual compaction into operator affordance con
   await runtime.close();
 });
 
-test("KestrelChatRuntime annotates forced legacy-mode migration for the reference harness", async () => {
+contractTest("runtime.process", "KestrelChatRuntime annotates forced legacy-mode migration for the reference harness", async () => {
   const captured: RuntimeEvent[] = [];
   const legacyProfile: TuiProfile = {
     ...profile,
@@ -826,7 +827,7 @@ test("KestrelChatRuntime annotates forced legacy-mode migration for the referenc
   await runtime.close();
 });
 
-test("KestrelChatRuntime captures finalized payload via onFinalize callback", async () => {
+contractTest("runtime.process", "KestrelChatRuntime captures finalized payload via onFinalize callback", async () => {
   const fakeFactory: RuntimeFactory = {
     create: (_profile, onFinalize) => {
       const kestrel = {
@@ -891,7 +892,7 @@ test("KestrelChatRuntime captures finalized payload via onFinalize callback", as
   await runtime.close();
 });
 
-test("KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted", async () => {
+contractTest("runtime.process", "KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted", async () => {
   const fakeFactory: RuntimeFactory = {
     create: () => {
       const kestrel = {
@@ -954,7 +955,7 @@ test("KestrelChatRuntime falls back to persisted finalized payload when no callb
   await runtime.close();
 });
 
-test("KestrelChatRuntime delegates tool runtime status APIs to Kestrel core", async () => {
+contractTest("runtime.process", "KestrelChatRuntime delegates tool runtime status APIs to Kestrel core", async () => {
   let statusCalls = 0;
   let refreshCalls = 0;
   const status: ToolRuntimeStatus = {
@@ -1022,7 +1023,7 @@ test("KestrelChatRuntime delegates tool runtime status APIs to Kestrel core", as
   await runtime.close();
 });
 
-test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata", async () => {
+contractTest("runtime.process", "KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata", async () => {
   const submitTurnCalls: Array<Record<string, unknown>> = [];
   const replyCalls: Array<Record<string, unknown>> = [];
   let startedThread = false;
@@ -1343,7 +1344,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
   await runtime.close();
 });
 
-test("resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs", () => {
+contractTest("runtime.process", "resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs", () => {
   const waitingSession = {
     sessionId: "session-1",
     version: 1,
@@ -1411,7 +1412,7 @@ function resolveThreadedStepAgent(
   });
 }
 
-test("KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model", async () => {
+contractTest("runtime.process", "KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model", async () => {
   const fakeFactory: RuntimeFactory = {
     create: () => {
       const kestrel = {
@@ -1515,7 +1516,7 @@ test("KestrelChatRuntime describeSession keeps focused thread and blocker parity
   await runtime.close();
 });
 
-test("KestrelChatRuntime maps operator child-thread tool policy into runtime policy", async () => {
+contractTest("runtime.process", "KestrelChatRuntime maps operator child-thread tool policy into runtime policy", async () => {
   let capturedPolicy: Record<string, unknown> | undefined;
 
   const fakeFactory: RuntimeFactory = {
@@ -1594,7 +1595,7 @@ test("KestrelChatRuntime maps operator child-thread tool policy into runtime pol
   await runtime.close();
 });
 
-test("KestrelChatRuntime forwards attachments when replying to a typed operator request", async () => {
+contractTest("runtime.process", "KestrelChatRuntime forwards attachments when replying to a typed operator request", async () => {
   let capturedAttachments: unknown;
   const fakeFactory: RuntimeFactory = {
     create: () => {
@@ -1629,7 +1630,7 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
   await runtime.close();
 });
 
-test("KestrelChatRuntime resolves session turns through the canonical orchestration thread", async () => {
+contractTest("runtime.process", "KestrelChatRuntime resolves session turns through the canonical orchestration thread", async () => {
   const submitTurnCalls: Array<{ threadId: string; eventType: string }> = [];
 
   const fakeFactory: RuntimeFactory = {
@@ -1758,7 +1759,7 @@ test("KestrelChatRuntime resolves session turns through the canonical orchestrat
   await runtime.close();
 });
 
-test("KestrelChatRuntime forwards abort signals through ThreadRuntime", async () => {
+contractTest("runtime.process", "KestrelChatRuntime forwards abort signals through ThreadRuntime", async () => {
   let observedSignal: AbortSignal | undefined;
 
   const fakeFactory: RuntimeFactory = {

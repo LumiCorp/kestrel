@@ -1,10 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import { buildAnthropicHttpRequest, mapAnthropicResponse } from "../../models/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
+
+contractTest("runtime.hermetic", "Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {
     model: "claude-test",
     input: {},
@@ -68,7 +69,7 @@ test("Anthropic request builder serializes assistant tool-call history with prov
   });
 });
 
-test("Anthropic request builder honors direct and OpenRouter fallback parallel-call controls", () => {
+contractTest("runtime.hermetic", "Anthropic request builder honors direct and OpenRouter fallback parallel-call controls", () => {
   const baseRequest: ModelRequest = {
     model: "claude-test",
     input: "Act now",
@@ -112,7 +113,7 @@ test("Anthropic request builder honors direct and OpenRouter fallback parallel-c
   });
 });
 
-test("Anthropic adaptive thinking is visible and its signed block is preserved exactly", () => {
+contractTest("runtime.hermetic", "Anthropic adaptive thinking is visible and its signed block is preserved exactly", () => {
   const signedThinking = {
     type: "thinking",
     thinking: "I checked the provider contract.",

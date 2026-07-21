@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import nextConfig from "../next.config";
 import { getNavigation, getPageMetaBySlug, getPublicPages, getSearchDocuments } from "@/lib/content";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("public surfaces never expose excluded content or Studio", async () => {
+
+contractTest("docs.hermetic", "public surfaces never expose excluded content or Studio", async () => {
   const [pages, navigation, search] = await Promise.all([getPublicPages(), getNavigation(), getSearchDocuments()]);
   const corpus = JSON.stringify({ pages, navigation, search });
   assert.doesNotMatch(corpus, /Kestrel Studio|\/studio(?:["/]|$)/iu);
@@ -17,7 +18,7 @@ test("public surfaces never expose excluded content or Studio", async () => {
   assert.equal(await getPageMetaBySlug(["runtime", "governance-and-invariants"]), null);
 });
 
-test("superseded product and operations URLs are permanent redirects", async () => {
+contractTest("docs.hermetic", "superseded product and operations URLs are permanent redirects", async () => {
   assert.equal(typeof nextConfig.redirects, "function");
   const redirects = await nextConfig.redirects!();
   assert.deepEqual(redirects, [

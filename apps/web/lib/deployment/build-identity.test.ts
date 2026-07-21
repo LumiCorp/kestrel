@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import nextConfig, {
   kestrelBuildIdentity,
 } from "../../next.config";
 import { resolveKestrelBuildIdentity } from "./build-identity";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const vercelRevision = "1".repeat(40);
 const gitRevision = "2".repeat(40);
@@ -20,7 +21,7 @@ function resolve(
   });
 }
 
-test("Kestrel One manifest version is canonical", () => {
+contractTest("web.hermetic", "Kestrel One manifest version is canonical", () => {
   assert.deepEqual(
     resolve({ KESTREL_APP_VERSION: "0.6.0" }),
     { revision: gitRevision, source: "git", version: "0.6.0" }
@@ -31,7 +32,7 @@ test("Kestrel One manifest version is canonical", () => {
   );
 });
 
-test("Vercel revision takes precedence over Git and legacy metadata", () => {
+contractTest("web.hermetic", "Vercel revision takes precedence over Git and legacy metadata", () => {
   let gitRead = false;
   assert.deepEqual(
     resolve(
@@ -49,21 +50,21 @@ test("Vercel revision takes precedence over Git and legacy metadata", () => {
   assert.equal(gitRead, false);
 });
 
-test("Git revision takes precedence over the legacy fallback", () => {
+contractTest("web.hermetic", "Git revision takes precedence over the legacy fallback", () => {
   assert.deepEqual(
     resolve({ KESTREL_BUILD_REVISION: legacyRevision }),
     { revision: gitRevision, source: "git", version: "0.6.0" }
   );
 });
 
-test("legacy revision is used only when Vercel and Git metadata are absent", () => {
+contractTest("web.hermetic", "legacy revision is used only when Vercel and Git metadata are absent", () => {
   assert.deepEqual(
     resolve({ KESTREL_BUILD_REVISION: legacyRevision }, () => {}),
     { revision: legacyRevision, source: "legacy", version: "0.6.0" }
   );
 });
 
-test("malformed revisions are rejected before fallback", () => {
+contractTest("web.hermetic", "malformed revisions are rejected before fallback", () => {
   assert.throws(
     () => resolve({ VERCEL_GIT_COMMIT_SHA: "short" }),
     /full 40-character Git commit SHA/u
@@ -79,14 +80,14 @@ test("malformed revisions are rejected before fallback", () => {
   );
 });
 
-test("production identity fails closed without a revision", () => {
+contractTest("web.hermetic", "production identity fails closed without a revision", () => {
   assert.throws(
     () => resolve({ VERCEL_ENV: "production" }, () => {}),
     /production builds require a full Git revision/u
   );
 });
 
-test("non-production identity uses an explicit development marker", () => {
+contractTest("web.hermetic", "non-production identity uses an explicit development marker", () => {
   assert.deepEqual(resolve({}, () => {}), {
     revision: "development",
     source: "development",
@@ -94,7 +95,7 @@ test("non-production identity uses an explicit development marker", () => {
   });
 });
 
-test("Next configuration embeds non-placeholder build identity", () => {
+contractTest("web.hermetic", "Next configuration embeds non-placeholder build identity", () => {
   assert.equal(nextConfig.env?.KESTREL_APP_VERSION, "0.6.0");
   assert.equal(
     nextConfig.env?.KESTREL_BUILD_REVISION,

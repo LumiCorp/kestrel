@@ -79,10 +79,11 @@ the current supported versions.
 
 ## Verification and evidence
 
-Kestrel uses registered executable contracts, package checks, and
-product-specific validation to detect regressions before a release. Every
-retained automated test belongs to a named contract and execution environment;
-high- and critical-risk contracts also carry current killed-mutation evidence.
+Kestrel uses registered executable contracts and one bounded validation graph
+to detect regressions before release. Every retained automated test names a
+contract and exactly one hermetic, process, PostgreSQL, or Chromium boundary.
+Critical contracts carry current targeted killed-mutation evidence. Shared
+artifacts, PostgreSQL, and Chromium are each provisioned once per validation.
 Run `pnpm validate` locally before opening or updating a pull request. GitHub
 Actions runs that exact complete portable suite without file-based selection.
 

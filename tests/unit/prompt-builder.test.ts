@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { renderPromptTemplate } from "../../agents/reference-react/src/prompt/promptBuilder.js";
 import { readPromptTemplate } from "../../agents/reference-react/src/prompt/templateLoader.js";
@@ -10,29 +9,31 @@ import {
   buildDeliberatorSystemPrompt,
   resolveDeliberatorPromptVariant,
 } from "../../agents/reference-react/src/prompt/deliberatorPrompt.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("prompt builder rejects missing required slots", () => {
+
+contractTest("runtime.hermetic", "prompt builder rejects missing required slots", () => {
   assert.throws(
     () => renderPromptTemplate("Hello {{role}}", {}, { requiredSlots: ["role"] }),
     /Missing required prompt slot: role/u,
   );
 });
 
-test("prompt builder allows optional missing slots", () => {
+contractTest("runtime.hermetic", "prompt builder allows optional missing slots", () => {
   assert.equal(
     renderPromptTemplate("Hello {{role}}\n{{extra_guidance}}", { role: "ROUTER" }),
     "Hello ROUTER",
   );
 });
 
-test("prompt builder rejects unknown placeholders", () => {
+contractTest("runtime.hermetic", "prompt builder rejects unknown placeholders", () => {
   assert.throws(
     () => renderPromptTemplate("Hello {{not_a_real_slot}}", {}),
     /Unknown prompt template slot: not_a_real_slot/u,
   );
 });
 
-test("prompt builder preserves critical slots when clipping", () => {
+contractTest("runtime.hermetic", "prompt builder preserves critical slots when clipping", () => {
   const rendered = renderPromptTemplate(
     "{{current_blocking_fact}}\n{{latest_result}}",
     {
@@ -49,7 +50,7 @@ test("prompt builder preserves critical slots when clipping", () => {
   assert.match(rendered, /\[prompt clipped\]/u);
 });
 
-test("template loader supports explicit prompt root override", () => {
+contractTest("runtime.hermetic", "template loader supports explicit prompt root override", () => {
   const root = mkdtempSync(path.join(tmpdir(), "reference-react-prompts-"));
   const previous = process.env.KESTREL_REFERENCE_REACT_PROMPT_ROOT;
   try {
@@ -66,7 +67,7 @@ test("template loader supports explicit prompt root override", () => {
   }
 });
 
-test("deliberator prompt keeps durable role rules out of context rendering", () => {
+contractTest("runtime.hermetic", "deliberator prompt keeps durable role rules out of context rendering", () => {
   const prompt = buildDeliberatorSystemPrompt({ interactionMode: "build" });
   const requiredFragments = [
     "You are Kestrel, a pragmatic software engineer.",
@@ -102,7 +103,7 @@ test("deliberator prompt keeps durable role rules out of context rendering", () 
   }
 });
 
-test("deliberator prompt preserves application instructions at system priority", () => {
+contractTest("runtime.hermetic", "deliberator prompt preserves application instructions at system priority", () => {
   const prompt = buildDeliberatorSystemPrompt({
     interactionMode: "chat",
     systemInstructions: [
@@ -116,7 +117,7 @@ test("deliberator prompt preserves application instructions at system priority",
   assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
 });
 
-test("deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
+contractTest("runtime.hermetic", "deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
   const desktopChat = buildDeliberatorSystemPrompt({
     interactionMode: "chat",
     environmentShellKind: "desktop",
@@ -139,7 +140,7 @@ test("deliberator prompt exposes typed host actions only for Desktop Chat and Bu
   assert.doesNotMatch(webChat, /desktop\.host\.open/u);
 });
 
-test("deliberator prompt resolver selects real mode prompts", () => {
+contractTest("runtime.hermetic", "deliberator prompt resolver selects real mode prompts", () => {
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "reference-react:plan");
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "reference-react:build");
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "chat" }), "reference-react:chat");
@@ -167,7 +168,7 @@ test("deliberator prompt resolver selects real mode prompts", () => {
   assert.notEqual(plan, chat);
 });
 
-test("build-mode deliberator prompt stays compact and generic", () => {
+contractTest("runtime.hermetic", "build-mode deliberator prompt stays compact and generic", () => {
   const act = buildDeliberatorSystemPrompt({ interactionMode: "build" });
 
   assert.match(act, /deliver working software/u);
@@ -195,7 +196,7 @@ test("build-mode deliberator prompt stays compact and generic", () => {
   assert.ok(act.length < 6000, `Expected compact build prompt, received ${act.length} characters.`);
 });
 
-test("shared deliberator prompt keeps authoritative evidence and structured response guidance across modes", () => {
+contractTest("runtime.hermetic", "shared deliberator prompt keeps authoritative evidence and structured response guidance across modes", () => {
   const plan = buildDeliberatorSystemPrompt({ interactionMode: "plan" });
   const act = buildDeliberatorSystemPrompt({ interactionMode: "build" });
   const chat = buildDeliberatorSystemPrompt({ interactionMode: "chat" });
@@ -212,7 +213,7 @@ test("shared deliberator prompt keeps authoritative evidence and structured resp
   }
 });
 
-test("plan-mode deliberator prompt requires session plan before handoff for execution-ready software build requests", () => {
+contractTest("runtime.hermetic", "plan-mode deliberator prompt requires session plan before handoff for execution-ready software build requests", () => {
   const plan = buildDeliberatorSystemPrompt({ interactionMode: "plan" });
 
   assert.match(

@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { createServer, type Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test, { type TestContext } from "node:test";
+import type { TestContext } from "node:test";
 import { promisify } from "node:util";
 
 import {
@@ -24,6 +24,8 @@ import {
 } from "../../packages/protocol/src/index.js";
 import { LocalCoreClient } from "../../src/localCore/client.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 const CURL_REQUEST_TIMEOUT_SECONDS = "5";
@@ -32,7 +34,7 @@ const KESTREL_SUITE_VERSION = (
   createRequire(import.meta.url)("../../package.json") as { version: string }
 ).version;
 
-test("kestrel web prints env exports and answers curl health checks", async (t) => {
+contractTest("runtime.process", "kestrel web prints env exports and answers curl health checks", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -61,7 +63,7 @@ test("kestrel web prints env exports and answers curl health checks", async (t) 
   });
 });
 
-test("kestrel web rejects unauthenticated curl command requests", async (t) => {
+contractTest("runtime.process", "kestrel web rejects unauthenticated curl command requests", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -97,7 +99,7 @@ test("kestrel web rejects unauthenticated curl command requests", async (t) => {
   assert.match(String(unauthorizedBody.payload?.message ?? ""), /authorization is required/i);
 });
 
-test("kestrel web answers authenticated curl runner.ping requests", async (t) => {
+contractTest("runtime.process", "kestrel web answers authenticated curl runner.ping requests", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -138,7 +140,7 @@ test("kestrel web answers authenticated curl runner.ping requests", async (t) =>
   assert.equal(pingBody.payload?.nonce, "ok");
 });
 
-test("kestrel web loads project provider credentials before starting Local Core", async () => {
+contractTest("runtime.process", "kestrel web loads project provider credentials before starting Local Core", async () => {
   const root = await mkdtemp(path.join("/tmp", "kestrel-web-dotenv-"));
   const cwd = path.join(root, "project");
   const coreHome = path.join(root, "core-home");
@@ -201,7 +203,7 @@ test("kestrel web loads project provider credentials before starting Local Core"
   }
 });
 
-test("kestrel web runs quick chat-lane agent interactions against a fake model backend", async (t) => {
+contractTest("runtime.process", "kestrel web runs quick chat-lane agent interactions against a fake model backend", async (t) => {
   await ensureCurlAvailable();
 
   const fakeModel = await startFakeOpenRouterServer();
@@ -348,7 +350,7 @@ test("kestrel web runs quick chat-lane agent interactions against a fake model b
   assert.equal(fakeModel.requests[1]?.userMessage, "what tools do you have");
 });
 
-test("kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
+contractTest("runtime.process", "kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
   const runner = await startWebRunner(
     t,
     {
@@ -370,7 +372,7 @@ test("kestrel web forces shutdown after the grace period when an event stream is
   assert.match(runner.stderrOutput(), /runner service stopped/u);
 });
 
-test("kestrel web forces shutdown immediately on a second signal", async (t) => {
+contractTest("runtime.process", "kestrel web forces shutdown immediately on a second signal", async (t) => {
   const runner = await startWebRunner(
     t,
     {

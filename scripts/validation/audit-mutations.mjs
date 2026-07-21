@@ -54,6 +54,8 @@ try {
     let result;
     const childEnvironment = { ...process.env, CI: "true" };
     delete childEnvironment.NODE_TEST_CONTEXT;
+    delete childEnvironment.KESTREL_CONTRACT_TIMINGS;
+    delete childEnvironment.NODE_V8_COVERAGE;
     try {
       writeFileSync(targetPath, original.replace(mutation.find, mutation.replace), "utf8");
       result = spawnSync(mutation.command, mutation.args, {

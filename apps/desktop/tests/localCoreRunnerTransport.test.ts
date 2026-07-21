@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import type { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import { LocalCoreRunnerTransport } from "../src/localCoreRunnerTransport.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Core", async () => {
+
+contractTest("desktop.hermetic", "LocalCoreRunnerTransport sends Desktop protocol commands through Local Core", async () => {
   const sent: string[] = [];
   let restartCalls = 0;
   const client = {
@@ -42,7 +43,7 @@ test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Cor
   assert.equal(restartCalls, 1);
 });
 
-test("LocalCoreRunnerTransport reports Core request failures as protocol events", async () => {
+contractTest("desktop.hermetic", "LocalCoreRunnerTransport reports Core request failures as protocol events", async () => {
   const client = {
     async sendRunnerCommand(): Promise<void> {
       throw new Error("socket unavailable");
@@ -66,7 +67,7 @@ test("LocalCoreRunnerTransport reports Core request failures as protocol events"
   assert.deepEqual(transport.getStatus().recentStderr, ["socket unavailable"]);
 });
 
-test("LocalCoreRunnerTransport forwards streamed run updates before the terminal event", async () => {
+contractTest("desktop.hermetic", "LocalCoreRunnerTransport forwards streamed run updates before the terminal event", async () => {
   let releaseTerminal: (() => void) | undefined;
   const terminalBarrier = new Promise<void>((resolve) => {
     releaseTerminal = resolve;

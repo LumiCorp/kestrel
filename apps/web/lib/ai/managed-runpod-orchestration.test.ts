@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   deleteManagedRunPodResources,
   ensureManagedRunPodResource,
   isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("resource creation recovers after a crash before provider ID persistence", async () => {
+
+contractTest("web.hermetic", "resource creation recovers after a crash before provider ID persistence", async () => {
   const providerResources: Array<{ id: string; name: string }> = [];
   let persistedId: string | null = null;
   let persistenceAttempts = 0;
@@ -41,7 +42,7 @@ test("resource creation recovers after a crash before provider ID persistence", 
   assert.equal(providerResources.length, 1);
 });
 
-test("resource cleanup is ordered and safe to retry after a partial failure", async () => {
+contractTest("web.hermetic", "resource cleanup is ordered and safe to retry after a partial failure", async () => {
   const remaining = new Set(["endpoint-1", "template-1"]);
   const events: string[] = [];
   let failTemplateOnce = true;
@@ -75,7 +76,7 @@ test("resource cleanup is ordered and safe to retry after a partial failure", as
   ]);
 });
 
-test("missing endpoints do not turn deletion retries back into provisioning failures", () => {
+contractTest("web.hermetic", "missing endpoints do not turn deletion retries back into provisioning failures", () => {
   assert.equal(isManagedRunPodDeletionStatus("deleting"), true);
   assert.equal(isManagedRunPodDeletionStatus("delete_failed"), true);
   assert.equal(isManagedRunPodDeletionStatus("deleted"), true);

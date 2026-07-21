@@ -79,11 +79,12 @@ Pull-request readiness:
 pnpm validate
 ```
 
-GitHub Actions runs this exact command. It always executes the complete portable
-suite, independent of which files changed. Focused commands below are useful
-while iterating, but they do not establish pull-request readiness. High- or
-critical-risk changes also require fresh `pnpm run test-proofs:mutations`
-evidence.
+GitHub Actions runs this exact command. The runner uses the same fixed DAG and
+budgets locally and remotely, independent of which files changed. It builds
+shared artifacts once, runs independent work concurrently, and enforces the
+four test boundaries: hermetic, process, PostgreSQL, and Chromium. Focused
+commands are useful while iterating, but do not establish pull-request
+readiness. `pnpm validate` includes the critical mutation audit.
 
 Docs work:
 
@@ -98,15 +99,16 @@ Desktop work:
 
 ```bash
 pnpm --filter @kestrel/desktop test
+pnpm --filter @kestrel/desktop test:integration
 pnpm --filter @kestrel/desktop build
 ```
 
 Kestrel One work:
 
 ```bash
-pnpm run web:typecheck
-pnpm run web:test
-pnpm run web:build
+pnpm --filter @kestrel/kestrel-one test:unit
+pnpm --filter @kestrel/kestrel-one typecheck:self
+pnpm --filter @kestrel/kestrel-one build:self
 ```
 
 Public package work should run the owning package tests and release check. See

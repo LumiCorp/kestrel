@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { GatewayCredentialEncryptionError } from "@/lib/ai/gateway-credential-crypto";
 import { getSafeEmailAdminError } from "./admin-error";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("email admin errors never expose credential material", () => {
+
+contractTest("web.hermetic", "email admin errors never expose credential material", () => {
   const secret = "re_super_secret";
   const result = getSafeEmailAdminError(
     new GatewayCredentialEncryptionError(

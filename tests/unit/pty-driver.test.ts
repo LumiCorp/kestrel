@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("pty driver abortPatterns fail fast with explicit reason", async () => {
+
+contractTest("runtime.process", "pty driver abortPatterns fail fast with explicit reason", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'boot\\n'; sleep 0.05; printf 'fatal marker\\n'; sleep 2"],
@@ -35,7 +36,7 @@ test("pty driver abortPatterns fail fast with explicit reason", async () => {
   assert.ok(durationMs < 5000, `expected fail-fast before timeout, duration=${durationMs}ms`);
 });
 
-test("pty driver abortPatterns support maxMatches thresholds", async () => {
+contractTest("runtime.process", "pty driver abortPatterns support maxMatches thresholds", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'loop marker\\n'; sleep 0.05; printf 'loop marker\\n'; sleep 2"],

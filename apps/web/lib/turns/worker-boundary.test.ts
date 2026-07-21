@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("the durable turn image builds workspace runtime dependencies", async () => {
+
+contractTest("web.hermetic", "the durable turn image builds workspace runtime dependencies", async () => {
   const [dockerfile, dockerignore, packageJsonSource] = await Promise.all([
     readFile(
       new URL(
@@ -41,7 +42,7 @@ test("the durable turn image builds workspace runtime dependencies", async () =>
   assert.equal((packageJson as { type?: string }).type, "module");
 });
 
-test("an exhausted queue job fails its durable turn visibly", async () => {
+contractTest("web.hermetic", "an exhausted queue job fails its durable turn visibly", async () => {
   const queueSource = await readFile(
     new URL("./queue.ts", import.meta.url),
     "utf8"
@@ -52,7 +53,7 @@ test("an exhausted queue job fails its durable turn visibly", async () => {
   assert.match(queueSource, /await finalizeExhaustedDurableTurnJob\(/u);
 });
 
-test("the running worker reconciles missing jobs and interrupted turns", async () => {
+contractTest("web.hermetic", "the running worker reconciles missing jobs and interrupted turns", async () => {
   const queueSource = await readFile(
     new URL("./queue.ts", import.meta.url),
     "utf8"
@@ -64,7 +65,7 @@ test("the running worker reconciles missing jobs and interrupted turns", async (
   assert.match(queueSource, /failureCode: "TURN_WORKER_INTERRUPTED"/u);
 });
 
-test("terminal pg-boss jobs cannot block durable turn recovery", async () => {
+contractTest("web.hermetic", "terminal pg-boss jobs cannot block durable turn recovery", async () => {
   const queueSource = await readFile(
     new URL("./queue.ts", import.meta.url),
     "utf8"
@@ -74,7 +75,7 @@ test("terminal pg-boss jobs cannot block durable turn recovery", async () => {
   assert.match(queueSource, /if \(!jobId\)/u);
 });
 
-test("the worker entrypoint starts without top-level await", async () => {
+contractTest("web.hermetic", "the worker entrypoint starts without top-level await", async () => {
   const workerSource = await readFile(
     new URL("../../scripts/turn-worker.ts", import.meta.url),
     "utf8"
@@ -84,7 +85,7 @@ test("the worker entrypoint starts without top-level await", async () => {
   assert.match(workerSource, /void main\(\)\.catch/u);
 });
 
-test("dev:all supervises the durable turn worker with the app", async () => {
+contractTest("web.hermetic", "dev:all supervises the durable turn worker with the app", async () => {
   const devAllSource = await readFile(
     new URL("../../scripts/dev-all.sh", import.meta.url),
     "utf8"

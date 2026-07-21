@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   collectDurableTurnPresentationParts,
   projectThreadConversation,
 } from "@/lib/turns/conversation-projector";
 import type { ChatMessage } from "@/lib/types";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const now = "2026-07-15T12:00:00.000Z";
 
@@ -68,7 +69,7 @@ function state(): ThreadConversationState {
   };
 }
 
-test("wait, reply, and resume project into one durable turn", () => {
+contractTest("web.hermetic", "wait, reply, and resume project into one durable turn", () => {
   const projection = projectThreadConversation({
     conversationState: state(),
     messages: [
@@ -90,7 +91,7 @@ test("wait, reply, and resume project into one durable turn", () => {
   );
 });
 
-test("legacy messages without explicit identities remain standalone", () => {
+contractTest("web.hermetic", "legacy messages without explicit identities remain standalone", () => {
   const projection = projectThreadConversation({
     conversationState: { ...state(), turns: [], interactions: [] },
     messages: [message("legacy-1", "user", "Old message")],
@@ -101,7 +102,7 @@ test("legacy messages without explicit identities remain standalone", () => {
   );
 });
 
-test("conflicting explicit identities become visible projection issues", () => {
+contractTest("web.hermetic", "conflicting explicit identities become visible projection issues", () => {
   const conversationState = state();
   conversationState.turns.push({
     ...conversationState.turns[0]!,
@@ -116,7 +117,7 @@ test("conflicting explicit identities become visible projection issues", () => {
   assert.equal(projection.issues[0]?.code, "MESSAGE_TURN_CONFLICT");
 });
 
-test("historical waiting precedes the resolved interaction in one timeline", () => {
+contractTest("web.hermetic", "historical waiting precedes the resolved interaction in one timeline", () => {
   const assistant = message(
     "assistant-wait",
     "assistant",

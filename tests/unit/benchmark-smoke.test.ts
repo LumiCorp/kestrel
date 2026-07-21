@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   parseBenchmarkSmokeArgs,
@@ -13,8 +12,10 @@ import {
   benchmarkTurnMode,
   loadBenchmarkDotEnv,
 } from "../../scripts/benchmark-provider-config.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("benchmark smoke defaults to offline mode", () => {
+
+contractTest("runtime.hermetic", "benchmark smoke defaults to offline mode", () => {
   assert.deepEqual(parseBenchmarkSmokeArgs([]), {
     livePreflight: false,
   });
@@ -23,13 +24,13 @@ test("benchmark smoke defaults to offline mode", () => {
   });
 });
 
-test("benchmark smoke validates offline benchmark contracts", async () => {
+contractTest("runtime.hermetic", "benchmark smoke validates offline benchmark contracts", async () => {
   const code = await runBenchmarkSmoke([]);
 
   assert.equal(code, 0);
 });
 
-test("benchmark mode helpers expose canonical build full-auto mode", () => {
+contractTest("runtime.hermetic", "benchmark mode helpers expose canonical build full-auto mode", () => {
   assert.deepEqual(benchmarkTurnMode(), {
     interactionMode: "build",
     actSubmode: "full_auto",
@@ -40,7 +41,7 @@ test("benchmark mode helpers expose canonical build full-auto mode", () => {
   });
 });
 
-test("benchmark dotenv loader ignores repo model while loading benchmark credentials", async () => {
+contractTest("runtime.hermetic", "benchmark dotenv loader ignores repo model while loading benchmark credentials", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-benchmark-dotenv-"));
   try {
     await writeFile(
@@ -70,7 +71,7 @@ test("benchmark dotenv loader ignores repo model while loading benchmark credent
   }
 });
 
-test("benchmark dotenv loader no-ops without .env and honors disable flag", async () => {
+contractTest("runtime.hermetic", "benchmark dotenv loader no-ops without .env and honors disable flag", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-benchmark-dotenv-disabled-"));
   try {
     const missingEnv: NodeJS.ProcessEnv = { OPENROUTER_API_KEY: "shell-key" };

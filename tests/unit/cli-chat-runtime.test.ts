@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
@@ -8,6 +7,8 @@ import {
   resolveManagedWorktreesEnabledForRuntime,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const BASE_PROFILE: TuiProfile = {
   id: "reference",
@@ -16,13 +17,13 @@ const BASE_PROFILE: TuiProfile = {
   sessionPrefix: "reference",
 };
 
-test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
+contractTest("runtime.hermetic", "resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "true" }), true);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "false" }), false);
 });
 
-test("required managed Workspace policy injects the Environment-owned canonical root", () => {
+contractTest("runtime.hermetic", "required managed Workspace policy injects the Environment-owned canonical root", () => {
   assert.deepEqual(
     applyRequiredManagedWorkspacePolicy(undefined, {
       KESTREL_REQUIRE_MANAGED_WORKTREE: "true",
@@ -42,7 +43,7 @@ test("required managed Workspace policy injects the Environment-owned canonical 
   );
 });
 
-test("required managed Workspace policy cannot be weakened by a client turn", () => {
+contractTest("runtime.hermetic", "required managed Workspace policy cannot be weakened by a client turn", () => {
   assert.deepEqual(
     applyRequiredManagedWorkspacePolicy(
       {
@@ -71,7 +72,7 @@ test("required managed Workspace policy cannot be weakened by a client turn", ()
   );
 });
 
-test("required managed Workspace policy fails closed when its root binding is incomplete", () => {
+contractTest("runtime.hermetic", "required managed Workspace policy fails closed when its root binding is incomplete", () => {
   assert.throws(
     () =>
       applyRequiredManagedWorkspacePolicy(undefined, {
@@ -82,7 +83,7 @@ test("required managed Workspace policy fails closed when its root binding is in
   );
 });
 
-test("gateway-managed profiles use the credential broker path instead of provider environment defaults", () => {
+contractTest("runtime.hermetic", "gateway-managed profiles use the credential broker path instead of provider environment defaults", () => {
   const brokeredGateway = { call: async <T>() => ({ ok: true }) as T } satisfies ModelGateway;
   let capturedProfile: TuiProfile | undefined;
 
@@ -112,7 +113,7 @@ test("gateway-managed profiles use the credential broker path instead of provide
   assert.equal(capturedProfile?.modelCredential?.gatewayId, "gateway-openrouter");
 });
 
-test("non-managed profiles retain their environment-backed provider behavior", () => {
+contractTest("runtime.hermetic", "non-managed profiles retain their environment-backed provider behavior", () => {
   const original = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "runner-environment-key";
   try {
@@ -132,7 +133,7 @@ test("non-managed profiles retain their environment-backed provider behavior", (
   }
 });
 
-test("non-model runtime surfaces initialize before environment provider credentials are present", async () => {
+contractTest("runtime.hermetic", "non-model runtime surfaces initialize before environment provider credentials are present", async () => {
   const original = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
   try {
@@ -154,7 +155,7 @@ test("non-model runtime surfaces initialize before environment provider credenti
   }
 });
 
-test("model gateway treats an explicit environment as authoritative", async () => {
+contractTest("runtime.hermetic", "model gateway treats an explicit environment as authoritative", async () => {
   const original = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "ambient-key-must-not-leak";
   try {

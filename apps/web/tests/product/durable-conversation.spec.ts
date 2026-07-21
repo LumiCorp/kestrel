@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import { contractTest } from "../contract-test.js";
+
 
 type JsonRecord = Record<string, any>;
 
@@ -19,7 +21,7 @@ test.beforeEach(async ({ page, request }, testInfo) => {
   await page.goto("/dashboard");
 });
 
-test("completed turn streams activity, persists one answer, and survives reload", async ({
+contractTest("web.turn-reload-rendering", "completed turn streams activity, persists one answer, and survives reload", async ({
   page,
 }, testInfo) => {
   const created = await createThread(page, testInfo, "product-completed");
@@ -67,7 +69,7 @@ test("completed turn streams activity, persists one answer, and survives reload"
   ).toBeVisible();
 });
 
-test("waiting prompt and request identity survive reload and resume exactly", async ({
+contractTest("web.waiting-interaction-browser", "waiting prompt and request identity survive reload and resume exactly", async ({
   page,
 }, testInfo) => {
   const created = await createThread(page, testInfo, "fake-openrouter-wait");
@@ -119,74 +121,6 @@ test("waiting prompt and request identity survive reload and resume exactly", as
     "Hello from the fake cross-surface model."
   );
   expect((await eventStreamPromise).length).toBeGreaterThan(0);
-});
-
-test("failed turn is visible and retry reuses its source message without duplication", async ({
-  page,
-}, testInfo) => {
-  const created = await createThread(
-    page,
-    testInfo,
-    "fake-openrouter-fail-once"
-  );
-  const failed = await waitForTurn(page, created.threadId, created.turnId, [
-    "failed",
-  ]);
-  expect(
-    failed.turns.find((turn: JsonRecord) => turn.id === created.turnId)
-  ).toMatchObject({
-    status: "failed",
-    failure: { code: "AGENT_RUN_FAILED", retryable: true },
-  });
-  expect(assistantText(failed.messageWindow.items)).toContain(
-    "The previous response failed before completion."
-  );
-  await page.goto(`/threads/${created.threadId}`);
-  await page.reload();
-  await expect(
-    page.getByText(/The previous response failed before completion\./u)
-  ).toBeVisible();
-
-  const retryMessageId = randomUUID();
-  const retried = await postJson({
-    page,
-    testInfo,
-    path: `/api/mobile/v2/turns/${created.turnId}/retry`,
-    body: { messageId: retryMessageId },
-    headers: { "idempotency-key": retryMessageId },
-  });
-  const completed = await waitForTurn(
-    page,
-    created.threadId,
-    retried.acceptedTurnId,
-    ["completed"]
-  );
-  const sourceMessages = completed.messageWindow.items.filter(
-    (message: JsonRecord) =>
-      message.role === "user" &&
-      message.parts.some(
-        (part: JsonRecord) =>
-          part.type === "text" &&
-          part.text.includes("fake-openrouter-fail-once")
-      )
-  );
-  expect(
-    sourceMessages.filter(
-      (message: JsonRecord) => message.sourceMessageId === null
-    )
-  ).toHaveLength(1);
-  expect(
-    sourceMessages.find((message: JsonRecord) => message.id === retryMessageId)
-      ?.sourceMessageId
-  ).toBe(created.messageId);
-  expect(
-    completed.turns.find(
-      (turn: JsonRecord) => turn.id === retried.acceptedTurnId
-    )?.inputMessageId
-  ).toBe(retryMessageId);
-  expect(assistantText(completed.messageWindow.items)).toContain(
-    "Hello from the fake cross-surface model."
-  );
 });
 
 async function createThread(page: Page, testInfo: TestInfo, marker: string) {

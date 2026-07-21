@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -13,8 +12,10 @@ import {
   setActiveTheme,
   theme,
 } from "../../cli/ink/theme/tokens.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveThemeTokens merges a base theme with overrides", () => {
+
+contractTest("runtime.hermetic", "resolveThemeTokens merges a base theme with overrides", () => {
   const resolved = resolveThemeTokens(
     {
       brandAlt: "#00ff00",
@@ -28,7 +29,7 @@ test("resolveThemeTokens merges a base theme with overrides", () => {
   assert.equal(resolved.text, resolveThemeConfig({ preset: DEFAULT_THEME_PRESET_ID }).text);
 });
 
-test("theme presets keep status colors semantically distinct", () => {
+contractTest("runtime.hermetic", "theme presets keep status colors semantically distinct", () => {
   for (const [presetId, tokens] of Object.entries(THEME_PRESETS)) {
     assert.notEqual(tokens.warn, tokens.error, `${presetId} warn/error`);
     assert.notEqual(tokens.warn, tokens.success, `${presetId} warn/success`);
@@ -36,11 +37,11 @@ test("theme presets keep status colors semantically distinct", () => {
   }
 });
 
-test("theme presets remain visually distinct", () => {
+contractTest("runtime.hermetic", "theme presets remain visually distinct", () => {
   assert.notDeepEqual(THEME_PRESETS["amber-watch"], THEME_PRESETS["midnight-flight"]);
 });
 
-test("parseThemeCommandArgs validates mode commands", () => {
+contractTest("runtime.hermetic", "parseThemeCommandArgs validates mode commands", () => {
   assert.deepEqual(parseThemeCommandArgs([]), { kind: "show" });
   assert.deepEqual(parseThemeCommandArgs(["list"]), { kind: "list" });
   assert.deepEqual(parseThemeCommandArgs(["dark"]), {
@@ -55,7 +56,7 @@ test("parseThemeCommandArgs validates mode commands", () => {
   }
 });
 
-test("resolveThemeModePreference uses env override before system detection", () => {
+contractTest("runtime.hermetic", "resolveThemeModePreference uses env override before system detection", () => {
   assert.equal(
     resolveThemeModePreference("light", {
       env: { KESTREL_TUI_COLOR_MODE: "dark" },
@@ -66,7 +67,7 @@ test("resolveThemeModePreference uses env override before system detection", () 
   );
 });
 
-test("resolveThemeModePreference resolves macOS appearance for system mode", () => {
+contractTest("runtime.hermetic", "resolveThemeModePreference resolves macOS appearance for system mode", () => {
   assert.equal(
     resolveThemeModePreference("system", {
       env: {},
@@ -85,7 +86,7 @@ test("resolveThemeModePreference resolves macOS appearance for system mode", () 
   );
 });
 
-test("resolveThemeSelection maps modes to preset tokens and keeps overrides", () => {
+contractTest("runtime.hermetic", "resolveThemeSelection maps modes to preset tokens and keeps overrides", () => {
   const selected = resolveThemeSelection({
     mode: "dark",
     overrides: { brandAlt: "#00ff00" },
@@ -97,7 +98,7 @@ test("resolveThemeSelection maps modes to preset tokens and keeps overrides", ()
   assert.equal(selected.tokens.brandAlt, "#00FF00");
 });
 
-test("buildThemeSummaryLines marks preset and override provenance", () => {
+contractTest("runtime.hermetic", "buildThemeSummaryLines marks preset and override provenance", () => {
   const effectiveTheme = resolveThemeConfig({
     preset: "paper-sky",
     overrides: { brandAlt: "#00FF00" },
@@ -117,7 +118,7 @@ test("buildThemeSummaryLines marks preset and override provenance", () => {
   assert.equal(lines.some((line) => line.endsWith("(preset)")), true);
 });
 
-test("theme proxy reflects the active theme", () => {
+contractTest("runtime.hermetic", "theme proxy reflects the active theme", () => {
   const nextTheme = resolveThemeConfig({
     preset: "midnight-flight",
     overrides: { brandAlt: "#00FF00" },

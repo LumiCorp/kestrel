@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { searchKnowledgeDocumentsCapabilityInputSchema } from "@/lib/agent/kestrel-knowledge-capability";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("searchKnowledgeDocumentsCapabilityInputSchema accepts bounded query input", () => {
+
+contractTest("web.hermetic", "searchKnowledgeDocumentsCapabilityInputSchema accepts bounded query input", () => {
   const parsed = searchKnowledgeDocumentsCapabilityInputSchema.parse({
     query: "  release checklist  ",
     limit: 5,
@@ -14,7 +15,7 @@ test("searchKnowledgeDocumentsCapabilityInputSchema accepts bounded query input"
   });
 });
 
-test("searchKnowledgeDocumentsCapabilityInputSchema rejects short query and excessive limit", () => {
+contractTest("web.hermetic", "searchKnowledgeDocumentsCapabilityInputSchema rejects short query and excessive limit", () => {
   assert.equal(
     searchKnowledgeDocumentsCapabilityInputSchema.safeParse({
       query: "no",

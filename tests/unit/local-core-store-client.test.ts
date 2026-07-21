@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { resolveLocalCoreStoreClient } from "../../cli/localCoreStoreClient.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core shell store client ignores an inherited missing API socket", async () => {
+
+contractTest("runtime.hermetic", "Local Core shell store client ignores an inherited missing API socket", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-missing-core-socket-"));
   const missingSocketPath = path.join(home, "core", "api.sock");
   const env = {

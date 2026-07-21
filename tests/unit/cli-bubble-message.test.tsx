@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
 
 import { BubbleMessage } from "../../cli/ink/components/BubbleMessage.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function childText(node: React.ReactNode): string {
   if (typeof node === "string") {
@@ -18,7 +19,7 @@ function childText(node: React.ReactNode): string {
   return "";
 }
 
-test("BubbleMessage renders flat transcript rows with full-width header and body lines", () => {
+contractTest("runtime.hermetic", "BubbleMessage renders flat transcript rows with full-width header and body lines", () => {
   const bubble = BubbleMessage({
     role: "assistant",
     lines: ["hello", "world"],

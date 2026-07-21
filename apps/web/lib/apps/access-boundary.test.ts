@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,7 +14,7 @@ function readAppSource(relativePath: string) {
   return fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 }
 
-test("Organization admins own App installation and Environment access ceilings", () => {
+contractTest("web.hermetic", "Organization admins own App installation and Environment access ceilings", () => {
   for (const relativePath of [
     "app/api/apps/[appKey]/installation/route.ts",
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
@@ -25,7 +26,7 @@ test("Organization admins own App installation and Environment access ceilings",
   }
 });
 
-test("Project editors own shared App and capability policy changes", () => {
+contractTest("web.hermetic", "Project editors own shared App and capability policy changes", () => {
   for (const relativePath of [
     "app/api/projects/[id]/apps/[appKey]/route.ts",
     "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
@@ -48,7 +49,7 @@ test("Project editors own shared App and capability policy changes", () => {
   );
 });
 
-test("Google Calendar runtime resolves the canonical personal App connection", () => {
+contractTest("web.hermetic", "Google Calendar runtime resolves the canonical personal App connection", () => {
   const policy = readAppSource("lib/integrations/google-calendar-policy.ts");
   const oauthService = readAppSource(
     "lib/integrations/google-calendar-oauth.ts"
@@ -66,7 +67,7 @@ test("Google Calendar runtime resolves the canonical personal App connection", (
   assert.doesNotMatch(oauthService, /organizationToolConnections/u);
 });
 
-test("GitHub App status and resources read the canonical App control plane", () => {
+contractTest("web.hermetic", "GitHub App status and resources read the canonical App control plane", () => {
   const statusRoute = readAppSource("app/api/apps/github/route.ts");
   const repositoriesRoute = readAppSource(
     "app/api/apps/github/repositories/route.ts"

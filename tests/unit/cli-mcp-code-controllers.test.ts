@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { CodeModeController } from "../../cli/app/CodeModeController.js";
@@ -8,6 +7,8 @@ import type { AppView, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import type { McpStatusSnapshot } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function createControllerHarness(): {
   context: TuiAppContext;
@@ -89,7 +90,7 @@ const emptyMcpStatus: McpStatusSnapshot = {
   tools: [],
 };
 
-test("CodeModeController enables and disables code.execute through profile persistence", async () => {
+contractTest("runtime.hermetic", "CodeModeController enables and disables code.execute through profile persistence", async () => {
   const harness = createControllerHarness();
   const controller = new CodeModeController(harness.context);
 
@@ -104,7 +105,7 @@ test("CodeModeController enables and disables code.execute through profile persi
   assert.equal(harness.persistedProfiles.length, 2);
 });
 
-test("McpController adds remote servers with parsed auth and header env flags", async () => {
+contractTest("runtime.hermetic", "McpController adds remote servers with parsed auth and header env flags", async () => {
   const harness = createControllerHarness();
   const fetchCalls: boolean[] = [];
   const controller = new McpController({
@@ -140,7 +141,7 @@ test("McpController adds remote servers with parsed auth and header env flags", 
   assert.match(harness.historyLines.join("\n"), /Added MCP server 'docs' \(http\)\. no enabled servers/u);
 });
 
-test("MCP formatting helpers preserve status and flag copy", () => {
+contractTest("runtime.hermetic", "MCP formatting helpers preserve status and flag copy", () => {
   assert.equal(
     summarizeMcpDetails({
       healthy: false,

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
@@ -7,8 +6,10 @@ import {
   discoverCapabilities,
   McpDiscoveryWorker,
 } from "../src/discovery-worker.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("MCP discovery snapshots every advertised list with stable tool projection", async () => {
+
+contractTest("services.hermetic", "MCP discovery snapshots every advertised list with stable tool projection", async () => {
   const client = {
     getServerCapabilities: () => ({
       tools: { listChanged: true },
@@ -88,7 +89,7 @@ test("MCP discovery snapshots every advertised list with stable tool projection"
   assert.equal(tool?.accessMode, "read");
 });
 
-test("MCP discovery gives colliding readable tool names distinct projections", async () => {
+contractTest("services.hermetic", "MCP discovery gives colliding readable tool names distinct projections", async () => {
   const client = {
     getServerCapabilities: () => ({ tools: {} }),
     getServerVersion: () => ({ name: "collision-test", version: "1" }),
@@ -116,7 +117,7 @@ test("MCP discovery gives colliding readable tool names distinct projections", a
   assert.notEqual(names[0], names[1]);
 });
 
-test("MCP discovery reclaims abandoned jobs with a bounded attempt count", async () => {
+contractTest("services.hermetic", "MCP discovery reclaims abandoned jobs with a bounded attempt count", async () => {
   const queries: Array<{ text: string; values: unknown[] | undefined }> = [];
   const client = {
     query: async (text: string, values?: unknown[]) => {
@@ -142,7 +143,7 @@ test("MCP discovery reclaims abandoned jobs with a bounded attempt count", async
   assert.deepEqual(claim?.values?.slice(1), [5]);
 });
 
-test("MCP discovery refuses to persist after claim ownership is lost", async () => {
+contractTest("services.hermetic", "MCP discovery refuses to persist after claim ownership is lost", async () => {
   const queries: Array<{ text: string; values: unknown[] | undefined }> = [];
   const client = {
     query: async (text: string, values?: unknown[]) => {

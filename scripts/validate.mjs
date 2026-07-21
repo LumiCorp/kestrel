@@ -1,0 +1,457 @@
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const REPORT_DIR = path.join(ROOT, "test-results", "validation");
+const COVERAGE_DIR = path.join(REPORT_DIR, "coverage");
+const REPORT_PATH = path.join(REPORT_DIR, "report.json");
+const TARGET_MS = 6 * 60_000;
+const MAXIMUM_MS = 8 * 60_000;
+const startedAt = Date.now();
+const active = new Set();
+const measurements = [];
+let dockerStarts = 0;
+let browserStarts = 0;
+let buildInvocations = 0;
+let processLaunches = 0;
+let postgres;
+
+const budgets = {
+  preflight: 20_000,
+  sharedBuild: 90_000,
+  static: 90_000,
+  hermetic: 90_000,
+  productionBuilds: 90_000,
+  process: 60_000,
+  postgres: 60_000,
+  chromium: 60_000,
+  audit: 60_000,
+};
+
+validateGraphContract();
+
+if (process.argv[2] === "--leaf") {
+  await runLeaf(process.argv[3], process.argv[4]);
+  process.exit(0);
+}
+
+if (process.argv.includes("--plan")) {
+  printPlan();
+  process.exit(0);
+}
+
+rmSync(REPORT_DIR, { recursive: true, force: true });
+mkdirSync(COVERAGE_DIR, { recursive: true });
+
+process.once("SIGINT", () => abortAll("SIGINT"));
+process.once("SIGTERM", () => abortAll("SIGTERM"));
+
+try {
+  requireNode22();
+  await phase("preflight", budgets.preflight, [
+    task("governance", PNPM, ["run", "governance:check"]),
+    task("ruhroh configuration", PNPM, ["run", "ruhroh:validate"]),
+  ]);
+
+  buildInvocations += 1;
+  await phase("sharedBuild", budgets.sharedBuild, [
+    task("shared artifacts", PNPM, [
+      "-r", "--workspace-concurrency=4",
+      "--filter", "@lumi/kestrel-environment-auth",
+      "--filter", "@kestrel/mcp-security",
+      "--filter", "@kestrel-agents/protocol",
+      "--filter", "@kestrel-agents/sdk",
+      "--filter", "@kestrel-agents/ai-sdk",
+      "--filter", "@kestrel-agents/next",
+      "--filter", "@kestrel-agents/observability",
+      "run", "build:self",
+    ]),
+    task("root artifact", PNPM, ["run", "build:self"]),
+  ], { sequential: true });
+
+  await Promise.all([
+    phase("static", budgets.static, staticTasks()),
+    phase("hermetic", budgets.hermetic, hermeticTasks()),
+    phase("productionBuilds", budgets.productionBuilds, productionBuildTasks()),
+  ]);
+
+  await phase("process", budgets.process, processTasks());
+
+  postgres = await startPostgres();
+  await phase("postgres", budgets.postgres, postgresTasks(postgres), { sequential: true });
+  await phase("chromium", budgets.chromium, await chromiumTasks(postgres));
+  await phase("audit", budgets.audit, auditTasks(), { sequential: true });
+
+  enforceInvariant(buildInvocations === 1, `expected one shared build invocation, observed ${buildInvocations}`);
+  enforceInvariant(dockerStarts === 1, `expected one PostgreSQL startup, observed ${dockerStarts}`);
+  enforceInvariant(browserStarts === 1, `expected one Chromium startup, observed ${browserStarts}`);
+  const elapsedMs = Date.now() - startedAt;
+  enforceInvariant(elapsedMs <= MAXIMUM_MS, `validation exceeded the 8 minute maximum (${formatMs(elapsedMs)})`);
+  writeReport("passed");
+  process.stdout.write(`\n[validate] passed in ${formatMs(elapsedMs)} (target ${formatMs(TARGET_MS)}, maximum ${formatMs(MAXIMUM_MS)})\n`);
+} catch (error) {
+  abortAll("SIGTERM");
+  writeReport("failed", error);
+  process.stderr.write(`\n[validate] FAILED: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+} finally {
+  stopPostgres();
+}
+
+function staticTasks() {
+  return [
+    task("root type analysis", PNPM, ["run", "typecheck:self"]),
+    task("workspace type analysis", PNPM, [
+      "-r", "--parallel", "--if-present",
+      "--filter", "@kestrel/desktop",
+      "--filter", "@lumi/kestrel-environment-auth",
+      "--filter", "@kestrel/mcp-security",
+      "--filter", "@kestrel/environment-router",
+      "--filter", "@kestrel/workspace-runtime",
+      "--filter", "@kestrel/mcp-service",
+      "run", "typecheck:self",
+    ]),
+  ];
+}
+
+function hermeticTasks() {
+  return testTasksForBoundary("hermetic");
+}
+
+function productionBuildTasks() {
+  return [
+    task("Web production build", PNPM, ["--filter", "@kestrel/kestrel-one", "run", "build:self"]),
+    task("Desktop portable build", PNPM, ["--filter", "@kestrel/desktop", "run", "build:self"]),
+    task("documentation build", PNPM, ["--filter", "@kestrel/docs", "run", "build:self"]),
+    task("service builds", PNPM, ["-r", "--parallel", "--filter", "./apps/environment-router", "--filter", "./apps/workspace-runtime", "--filter", "./apps/mcp-service", "run", "build:self"]),
+  ];
+}
+
+function processTasks() {
+  return testTasksForBoundary("process");
+}
+
+function testTasksForBoundary(boundary) {
+  const groups = new Map();
+  for (const file of trackedTests(["tests/", "agents/", "tools/", "packages/", "apps/"])) {
+    if (file.startsWith("tests/macos/") || file.includes("/tests/product/") || file.endsWith(".postgres.test.ts")) continue;
+    const source = readFileSync(path.join(ROOT, file), "utf8");
+    if (testBoundary(file, source) !== boundary) continue;
+    const execution = executionRoot(file);
+    const group = groups.get(execution.cwd) ?? { ...execution, files: [] };
+    group.files.push(execution.relativeFile);
+    groups.set(execution.cwd, group);
+  }
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)).map((group) =>
+    nodeTests(`${group.label} ${boundary}`, group.cwd, group.files.sort(), boundary === "hermetic" ? 4 : 1, group.prefix)
+  );
+}
+
+function executionRoot(file) {
+  if (file.startsWith("apps/web/")) return {
+    cwd: path.join(ROOT, "apps/web"),
+    relativeFile: file.slice("apps/web/".length),
+    label: "Web",
+    prefix: ["--import", "./scripts/register-server-only.mjs"],
+  };
+  const match = file.match(/^(apps\/(?:desktop|docs|environment-router|workspace-runtime|mcp-service)|packages\/[^/]+)\//u);
+  if (match) return { cwd: path.join(ROOT, match[1]), relativeFile: file.slice(match[1].length + 1), label: match[1], prefix: [] };
+  return { cwd: ROOT, relativeFile: file, label: "runtime", prefix: [] };
+}
+
+function testBoundary(file, source) {
+  if (/^tests\/(?:integration|smoke|ops|e2e)\//u.test(file) || file === "tests/unit/local-core-api.test.ts") return "process";
+  if (/from ["']node:(?:child_process|net|http|https|readline)["']|\b(?:spawn|spawnSync|execFile|execFileSync|createServer)\s*\(/u.test(source)) return "process";
+  return "hermetic";
+}
+
+function postgresTasks(context) {
+  return [
+    task("prepare PostgreSQL templates", process.execPath, ["--import", "tsx", "scripts/validation/prepare-postgres.ts"], {
+      env: context.environment,
+    }),
+    task("PostgreSQL contracts", process.execPath, ["--import", "tsx", "scripts/validation/run-postgres.ts"], {
+      env: context.environment,
+    }),
+  ];
+}
+
+async function chromiumTasks(context) {
+  browserStarts += 1;
+  const productEnvironment = await allocateProductEnvironment(context);
+  return [task("Chromium product contracts", PNPM, ["exec", "playwright", "test", "--config", "playwright.product.config.ts"], {
+    cwd: path.join(ROOT, "apps/web"),
+    env: { ...context.environment, ...productEnvironment },
+  })];
+}
+
+function auditTasks() {
+  return [
+    task("coverage baseline", process.execPath, ["scripts/validation/check-coverage.mjs", COVERAGE_DIR]),
+    task("critical mutations", process.execPath, ["scripts/validation/audit-mutations.mjs"]),
+    task("contract registry", process.execPath, ["scripts/check-contract-proofs.mjs"]),
+  ];
+}
+
+async function phase(name, budgetMs, tasks, options = {}) {
+  const phaseStart = Date.now();
+  process.stdout.write(`\n[validate:${name}] budget=${formatMs(budgetMs)}\n`);
+  const timer = setTimeout(() => abortAll("SIGTERM"), budgetMs);
+  try {
+    if (options.sequential) {
+      for (const item of tasks) await runTask(name, item, budgetMs - (Date.now() - phaseStart));
+    } else {
+      await Promise.all(tasks.map((item) => runTask(name, item, budgetMs)));
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  const durationMs = Date.now() - phaseStart;
+  if (durationMs > budgetMs) throw new Error(`${name} exceeded its ${formatMs(budgetMs)} budget`);
+  measurements.push({ kind: "phase", name, durationMs, budgetMs });
+}
+
+function runTask(phaseName, item, timeoutMs) {
+  const taskStart = Date.now();
+  const coveragePath = path.join(COVERAGE_DIR, safeName(`${phaseName}-${item.label}`));
+  mkdirSync(coveragePath, { recursive: true });
+  const env = {
+    ...process.env,
+    CI: "true",
+    NODE_V8_COVERAGE: coveragePath,
+    KESTREL_CONTRACT_TIMINGS: path.join(REPORT_DIR, "contract-timings.jsonl"),
+    ...item.env,
+  };
+  process.stdout.write(`[validate:${phaseName}] ${item.label}: ${item.command} ${item.args.join(" ")}\n`);
+  processLaunches += 1;
+  return new Promise((resolve, reject) => {
+    const child = spawn(item.command, item.args, {
+      cwd: item.cwd ?? ROOT,
+      env,
+      stdio: "inherit",
+      detached: process.platform !== "win32",
+    });
+    active.add(child);
+    const timer = setTimeout(() => {
+      terminate(child);
+      reject(new Error(`${item.label} exceeded ${formatMs(timeoutMs)}`));
+    }, Math.max(timeoutMs, 1));
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      active.delete(child);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      active.delete(child);
+      const durationMs = Date.now() - taskStart;
+      measurements.push({ kind: "task", phase: phaseName, name: item.label, durationMs });
+      if (code === 0) resolve();
+      else reject(new Error(`${item.label} failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`));
+    });
+  });
+}
+
+function task(label, command, args, options = {}) {
+  return { label, command, args, ...options };
+}
+
+function nodeTests(label, cwd, files, concurrency, prefix = []) {
+  if (files.length === 0) throw new Error(`${label} discovered no tests`);
+  return task(label, process.execPath, [
+    ...prefix, "--import", "tsx", "--test", `--test-concurrency=${concurrency}`, "--test-reporter=spec", ...files,
+  ], { cwd });
+}
+
+function trackedTests(prefixes) {
+  const output = spawnSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" });
+  if (output.status !== 0) throw new Error("git ls-files failed while building the fixed validation graph");
+  return output.stdout.split("\0").filter(Boolean)
+    .filter((file) => prefixes.some((prefix) => file.startsWith(prefix)))
+    .filter((file) => /(?:\.(?:test|spec)\.[cm]?[jt]sx?|\.ops\.ts)$/u.test(file))
+    .filter((file) => !file.startsWith("tests/macos/") && !file.includes("/.external/"))
+    .sort();
+}
+
+async function startPostgres() {
+  const port = await allocatePort();
+  const name = `kestrel-validation-${randomUUID()}`;
+  dockerStarts += 1;
+  runSync("docker", ["run", "-d", "--rm", "--name", name, "-e", "POSTGRES_PASSWORD=postgres", "-e", "POSTGRES_USER=postgres", "-e", "POSTGRES_DB=postgres", "-p", `${port}:5432`, "pgvector/pgvector:pg16"]);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const ready = spawnSync("docker", ["exec", name, "pg_isready", "-U", "postgres", "-d", "postgres"], { stdio: "ignore" });
+    if (ready.status === 0) break;
+    if (attempt === 59) throw new Error("PostgreSQL did not become ready within 60 seconds");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  const base = `postgresql://postgres:postgres@127.0.0.1:${port}`;
+  return {
+    name,
+    port,
+    environment: {
+      KESTREL_VALIDATION_POSTGRES_CONTAINER: name,
+      KESTREL_VALIDATION_POSTGRES_BASE_URL: base,
+      KESTREL_TURN_DB_TEST_URL: `${base}/kestrel_turns`,
+      KESTREL_ENVIRONMENT_DB_TEST_URL: `${base}/kestrel_environment`,
+      KESTREL_APPS_DB_TEST_URL: `${base}/kestrel_apps`,
+      KESTREL_PRODUCT_DATABASE_URL: `${base}/kestrel_product`,
+      KESTREL_PRODUCT_RUNNER_DATABASE_URL: `${base}/kestrel_runtime`,
+    },
+  };
+}
+
+async function allocateProductEnvironment(context) {
+  const [appPort, fakePort, runnerPort] = await allocatePorts(3);
+  const runId = `${process.pid}-${Date.now()}`;
+  const storageRoot = path.join(REPORT_DIR, "product-storage");
+  mkdirSync(storageRoot, { recursive: true });
+  return {
+    KESTREL_PRODUCT_APP_PORT: String(appPort),
+    KESTREL_PRODUCT_FAKE_OPENROUTER_PORT: String(fakePort),
+    KESTREL_PRODUCT_RUNNER_PORT: String(runnerPort),
+    KESTREL_PRODUCT_WORKER_READY_FILE: path.join(REPORT_DIR, `worker-${runId}.ready`),
+    KESTREL_PRODUCT_STORAGE_ROOT: storageRoot,
+    ...context.environment,
+  };
+}
+
+function allocatePorts(count) {
+  return Promise.all(Array.from({ length: count }, allocatePort)).then((ports) => {
+    if (new Set(ports).size !== ports.length) return allocatePorts(count);
+    return ports;
+  });
+}
+
+function allocatePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : undefined;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function runSync(command, args, env = process.env) {
+  const result = spawnSync(command, args, { cwd: ROOT, env, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status ?? 1}`);
+}
+
+function stopPostgres() {
+  if (!postgres?.name) return;
+  spawnSync("docker", ["stop", postgres.name], { stdio: "ignore" });
+  postgres = undefined;
+}
+
+function abortAll(signal) {
+  for (const child of active) terminate(child, signal);
+}
+
+function terminate(child, signal = "SIGTERM") {
+  if (!child.pid) return;
+  try {
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
+    else process.kill(-child.pid, signal);
+  } catch {}
+}
+
+function requireNode22() {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major !== 22) throw new Error(`Kestrel validation requires Node.js 22.x; received ${process.versions.node}. Install Node 22 and run pnpm install --frozen-lockfile.`);
+}
+
+function enforceInvariant(value, message) {
+  if (!value) throw new Error(message);
+}
+
+function safeName(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "");
+}
+
+function formatMs(value) {
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function writeReport(status, error) {
+  mkdirSync(REPORT_DIR, { recursive: true });
+  const tasks = measurements.filter((item) => item.kind === "task").sort((a, b) => b.durationMs - a.durationMs);
+  const testTimings = readContractTimings();
+  writeFileSync(REPORT_PATH, `${JSON.stringify({
+    version: 1,
+    status,
+    durationMs: Date.now() - startedAt,
+    targetMs: TARGET_MS,
+    maximumMs: MAXIMUM_MS,
+    invariants: { buildInvocations, dockerStarts, browserStarts },
+    telemetry: {
+      managedProcessLaunches: processLaunches,
+      assertionTimeMs: testTimings.reduce((sum, item) => sum + item.durationMs, 0),
+      environmentSetupTimeMs: measurements.filter((item) => item.kind === "task" && /prepare|build|type analysis/u.test(item.name)).reduce((sum, item) => sum + item.durationMs, 0),
+    },
+    slowestTasks: tasks.slice(0, 20),
+    slowestTests: testTimings.sort((a, b) => b.durationMs - a.durationMs).slice(0, 20),
+    measurements,
+    error: error instanceof Error ? error.message : error ? String(error) : null,
+  }, null, 2)}\n`);
+}
+
+function readContractTimings() {
+  const file = path.join(REPORT_DIR, "contract-timings.jsonl");
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function printPlan() {
+  process.stdout.write(`preflight (20s)\nsharedBuild (90s)\n  concurrent: static (90s), hermetic (90s), productionBuilds (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
+}
+
+function validateGraphContract() {
+  const packageFiles = spawnSync("git", ["ls-files", "-z", "package.json", "apps/*/package.json", "packages/*/package.json"], { cwd: ROOT, encoding: "utf8" });
+  if (packageFiles.status !== 0) throw new Error("Unable to inspect workspace validation leaves");
+  for (const file of packageFiles.stdout.split("\0").filter(Boolean)) {
+    const manifest = JSON.parse(readFileSync(path.join(ROOT, file), "utf8"));
+    for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
+      if (name.startsWith("ci:")) throw new Error(`${file}: obsolete ${name} command is prohibited`);
+      if (["build:self", "typecheck:self", "test:unit", "test:integration"].includes(name)) {
+        if (/\bdocker\b|\bcompose\b/u.test(command)) throw new Error(`${file}: ${name} must not start shared infrastructure`);
+        if (name !== "build:self" && /\b(?:pnpm|npm|yarn)\b[^\n]*\bbuild(?::self)?\b/u.test(command)) throw new Error(`${file}: ${name} must not build dependencies`);
+      }
+    }
+  }
+  const workflow = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const validationCalls = workflow.match(/\bpnpm validate\b/gu)?.length ?? 0;
+  if (validationCalls !== 1) throw new Error(`CI must invoke pnpm validate exactly once; found ${validationCalls}`);
+  const productConfig = readFileSync(path.join(ROOT, "apps/web/playwright.product.config.ts"), "utf8");
+  for (const forbidden of ["globalSetup", "REDIS_URL", "MINIO", "next dev", "product-dev-all"]) {
+    if (productConfig.includes(forbidden)) throw new Error(`Product validation config must not contain ${forbidden}`);
+  }
+}
+
+async function runLeaf(boundary, workspace) {
+  if (!["hermetic", "process"].includes(boundary) || !workspace) {
+    throw new Error("usage: node scripts/validate.mjs --leaf <hermetic|process> <workspace|.>");
+  }
+  const files = trackedTests(["tests/", "agents/", "tools/", "packages/", "apps/"]).filter((file) => {
+    if (file.startsWith("tests/macos/") || file.includes("/tests/product/") || file.endsWith(".postgres.test.ts")) return false;
+    const execution = executionRoot(file);
+    const ownsFile = workspace === "." ? execution.cwd === ROOT : execution.cwd === path.join(ROOT, workspace);
+    return ownsFile && testBoundary(file, readFileSync(path.join(ROOT, file), "utf8")) === boundary;
+  });
+  if (files.length === 0) throw new Error(`${workspace} has no ${boundary} tests`);
+  const execution = executionRoot(files[0]);
+  const relativeFiles = files.map((file) => executionRoot(file).relativeFile).sort();
+  const result = spawnSync(process.execPath, [
+    ...execution.prefix,
+    "--import", "tsx", "--test", `--test-concurrency=${boundary === "hermetic" ? 4 : 1}`, "--test-reporter=spec", ...relativeFiles,
+  ], { cwd: execution.cwd, env: { ...process.env, CI: "true" }, stdio: "inherit" });
+  if (result.error) throw result.error;
+  process.exitCode = result.status ?? 1;
+}

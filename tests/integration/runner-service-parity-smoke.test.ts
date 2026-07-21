@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import test, { type TestContext } from "node:test";
+import type { TestContext } from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { createRunnerServiceServer } from "../../cli/runner/RunnerService.js";
 import type { RunnerRuntime } from "../../cli/runner/RunnerHost.js";
 import type { ProgressUpdateV1 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference",
@@ -23,7 +25,7 @@ const actorMetadata = {
   tenantId: "internal",
 };
 
-test("runner service parity smoke matrix covers start, resume, and cancel telemetry paths", async (t) => {
+contractTest("runtime.process", "runner service parity smoke matrix covers start, resume, and cancel telemetry paths", async (t) => {
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
 
   const server = await createHttpServerOrSkip(t, {

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
 
-test(
-  "mobile Thread creation, retry, and queued removal are transactionally authoritative",
+contractTest(
+  ["web.turn-retry-lineage", "web.idempotency", "web.turn-transaction"], "mobile Thread creation, retry, and queued removal are transactionally authoritative",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;

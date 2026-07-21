@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { describeEnvironmentActivation } from "./execution-route";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Environment activation reports the user-visible wake sequence", () => {
+
+contractTest("web.hermetic", "Environment activation reports the user-visible wake sequence", () => {
   assert.deepEqual(
     describeEnvironmentActivation({
       environmentStatus: "provisioning",
@@ -60,7 +61,7 @@ test("Environment activation reports the user-visible wake sequence", () => {
   );
 });
 
-test("Environment activation surfaces the stored failure without leaking a false ready state", () => {
+contractTest("web.hermetic", "Environment activation surfaces the stored failure without leaking a false ready state", () => {
   assert.deepEqual(
     describeEnvironmentActivation({
       environmentStatus: "ready",

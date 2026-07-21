@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   buildToolOutputDigestForTests,
   compactInternetToolOutputForTests,
   shapeToolExecutionResultForTests,
 } from "../../agents/reference-react/src/steps/acter.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("compactInternetToolOutputForTests condenses internet.news results into agent-loop-friendly highlights", () => {
+
+contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses internet.news results into agent-loop-friendly highlights", () => {
   const compact = compactInternetToolOutputForTests("internet.news", {
     status: "ok",
     provider: "tavily",
@@ -60,7 +61,7 @@ test("compactInternetToolOutputForTests condenses internet.news results into age
   });
 });
 
-test("compactInternetToolOutputForTests condenses fetched page content to a preview", () => {
+contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses fetched page content to a preview", () => {
   const compact = compactInternetToolOutputForTests("internet.extract", {
     status: "ok",
     provider: "tavily",
@@ -78,7 +79,7 @@ test("compactInternetToolOutputForTests condenses fetched page content to a prev
   assert.equal((compact?.contentPreview as string).length <= 1600, true);
 });
 
-test("shapeToolExecutionResultForTests sanitizes malformed unicode in stored previews and artifacts", () => {
+contractTest("runtime.hermetic", "shapeToolExecutionResultForTests sanitizes malformed unicode in stored previews and artifacts", () => {
   const shaped = shapeToolExecutionResultForTests({
     runId: "run-1",
     stepIndex: 4,
@@ -97,7 +98,7 @@ test("shapeToolExecutionResultForTests sanitizes malformed unicode in stored pre
   );
 });
 
-test("buildToolOutputDigestForTests is deterministic and bounded for generic JSON outputs", () => {
+contractTest("runtime.hermetic", "buildToolOutputDigestForTests is deterministic and bounded for generic JSON outputs", () => {
   const output = {
     b: "second",
     a: {
@@ -118,7 +119,7 @@ test("buildToolOutputDigestForTests is deterministic and bounded for generic JSO
   assert.equal(typeof (first as { textPreview?: unknown }).textPreview, "string");
 });
 
-test("buildToolOutputDigestForTests applies tool adapter for code.execute outputs", () => {
+contractTest("runtime.hermetic", "buildToolOutputDigestForTests applies tool adapter for code.execute outputs", () => {
   const digest = buildToolOutputDigestForTests("code.execute", {
     status: "ok",
     summary: "Execution completed successfully.",
@@ -138,7 +139,7 @@ test("buildToolOutputDigestForTests applies tool adapter for code.execute output
   assert.equal(adapter?.artifactCount, 1);
 });
 
-test("shapeToolExecutionResultForTests persists digest artifact and digest pointers for large outputs", () => {
+contractTest("runtime.hermetic", "shapeToolExecutionResultForTests persists digest artifact and digest pointers for large outputs", () => {
   const shaped = shapeToolExecutionResultForTests({
     runId: "run-2",
     stepIndex: 7,
@@ -162,7 +163,7 @@ test("shapeToolExecutionResultForTests persists digest artifact and digest point
   assert.equal(shaped.artifacts.some((artifact) => artifact.type === "tool-output-digest"), true);
 });
 
-test("shapeToolExecutionResultForTests keeps compact fs.verify_json artifact facts for large outputs", () => {
+contractTest("runtime.hermetic", "shapeToolExecutionResultForTests keeps compact fs.verify_json artifact facts for large outputs", () => {
   const requirements = Array.from({ length: 80 }, (_, index) => ({
     id: `field_${index}`,
     status: "passed",
