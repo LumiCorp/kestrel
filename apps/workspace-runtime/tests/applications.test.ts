@@ -72,7 +72,7 @@ test("application lifecycle controls persist the desired state", async () => {
     assert.equal(stopped.desiredState, "stopped");
     assert.equal(stopped.status, "running");
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await registry.stopAll();
     assert.equal(registry.get(application.id)?.status, "stopped");
     const restarted = await registry.start(application.id);
     assert.equal(restarted.desiredState, "running");

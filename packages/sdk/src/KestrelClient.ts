@@ -609,6 +609,7 @@ export class KestrelClient {
     const commandId = randomUUID();
     let settled = false;
     let cancelRequested = false;
+    let cancellationPromise: Promise<void> | undefined;
     let latestRunId: string | undefined;
     let stream!: BufferedRunnerStream<TEvent, TTerminal>;
     const unsubscribe = this.client.onEvent((event) => {
@@ -630,15 +631,22 @@ export class KestrelClient {
     });
 
     const abortHandler = () => {
-      void stream.cancel();
+      cancellationPromise ??= stream.cancel();
+      void cancellationPromise.catch(() => undefined);
     };
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
     const result = this.client.sendCommandWithId(commandId, type, payload, toCommandMetadata(context))
-      .finally(() => {
-        settled = true;
-        unsubscribe();
-        options.signal?.removeEventListener("abort", abortHandler);
+      .finally(async () => {
+        try {
+          if (cancellationPromise !== undefined) {
+            await cancellationPromise;
+          }
+        } finally {
+          settled = true;
+          unsubscribe();
+          options.signal?.removeEventListener("abort", abortHandler);
+        }
       }) as unknown as Promise<TTerminal>;
 
     stream = new BufferedRunnerStream<TEvent, TTerminal>(

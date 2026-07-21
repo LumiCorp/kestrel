@@ -1747,8 +1747,6 @@ test("runner service keeps durable runs active when a stream disconnects", async
     assert.ok(startedEventId);
     await reader?.cancel();
     controller.abort();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(aborted, false);
 
     const unknownCursor = await fetch(`${server.url}/events/stream`, {
       method: "POST",
@@ -1808,6 +1806,7 @@ test("runner service keeps durable runs active when a stream disconnects", async
     );
     assert.match(replayCompletedBody, /"type":"run\.completed"/);
     assert.match(replayCompletedBody, /"runId":"run-durable-disconnect"/);
+    assert.equal(aborted, false);
     await replayReader?.cancel();
   } finally {
     await server.close();

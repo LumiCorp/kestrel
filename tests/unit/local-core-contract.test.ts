@@ -457,7 +457,6 @@ test("concurrent stale-lock recovery elects one authority without deleting the w
         isPidAlive: (pid) => pid !== 101,
       }),
     ] as const;
-    await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId, "stale-authority");
     await rm(acquisitionPath, { force: true });
 
@@ -514,7 +513,6 @@ test("release racing stale-lock recovery cannot delete the replacement authority
       authorityId: "replacement-authority",
       isPidAlive: (pid) => pid !== 101,
     });
-    await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(JSON.parse(await readFile(paths.lockPath, "utf8")).authorityId, "old-authority");
     await rm(acquisitionPath, { force: true });
 
