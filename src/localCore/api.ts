@@ -59,9 +59,15 @@ import {
   parseLocalCoreCredentialSecret,
   readLocalCoreCredentialStoreStatus,
   UnavailableLocalCoreCredentialStore,
+  type LocalCoreCredentialId,
   type LocalCoreCredentialStore,
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
+import {
+  parseLocalCoreMcpVerificationInput,
+  verifyAndStoreLocalCoreMcpServer,
+} from "./mcpVerification.js";
+import { verifyAndStoreLocalCoreExternalDatabase } from "./externalDatabaseVerification.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
@@ -631,8 +637,15 @@ async function createExecutionBundle(input: {
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),
-    ...(input.status.databaseUrl !== undefined
-      ? { externalDatabaseUrl: input.status.databaseUrl }
+    ...(input.status.dbMode === "external"
+      ? {
+          externalDatabaseUrl: (
+            await resolveCoreOwnedReadyOptions(
+              input.status.home.homePath,
+              input.options,
+            )
+          ).externalDatabaseUrl,
+        }
       : {}),
   });
   let runtimeFactory = input.options.executionRuntimeFactory;
@@ -640,6 +653,12 @@ async function createExecutionBundle(input: {
     const runtimeEnvironmentResolver = await createLocalCoreRuntimeEnvironmentResolver({
       baseEnv: input.options.env ?? process.env,
       runtimeConfiguration,
+      mcpCredentialBindings: await readConfiguredMcpCredentialBindings(
+        input.status.home.homePath,
+      ),
+      mcpEnvironmentOptions: await readDesktopDeveloperEnvironmentOptions(
+        input.status.home.homePath,
+      ),
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),
@@ -1004,6 +1023,39 @@ async function handleRequest(input: {
         deleted,
         credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
       });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/mcp/verify") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const verification = await verifyAndStoreLocalCoreMcpServer(
+        parseLocalCoreMcpVerificationInput(await readJsonBody(input.request)),
+        {
+          credentialStore,
+          baseEnv: input.ensureOptions.env ?? process.env,
+          environmentOptions: await readDesktopDeveloperEnvironmentOptions(
+            input.status.home.homePath,
+          ),
+        },
+      );
+      writeJson(input.response, 200, { ok: true, verification });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/database/external/verify") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const body = await readJsonBody(input.request);
+      const record = typeof body === "object" && body !== null && Array.isArray(body) === false
+        ? body as Record<string, unknown>
+        : {};
+      if (Object.keys(record).some((key) => key !== "databaseUrl")) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_EXTERNAL_DATABASE_INVALID", "External database verification request is invalid.");
+      }
+      const verification = await verifyAndStoreLocalCoreExternalDatabase(
+        record.databaseUrl,
+        { credentialStore },
+      );
+      writeJson(input.response, 200, { ok: true, verification });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
@@ -1764,16 +1816,24 @@ async function resolveCoreOwnedReadyOptions(
   options: StartLocalCoreApiServerOptions,
 ): Promise<EnsureLocalCoreReadyOptions> {
   const settings = await readLocalSettings(homePath);
-  const settingsDatabaseUrl = normalizeString(settings.databaseUrl);
+  const legacySettingsDatabaseUrl = normalizeString(settings.databaseUrl);
   const settingsDatabaseMode = settings.databaseMode === "external"
     ? "external"
     : settings.databaseMode === "default"
       ? "pglite"
       : undefined;
   const databaseMode = settingsDatabaseMode ?? options.databaseMode ?? "pglite";
-  const externalDatabaseUrl = settingsDatabaseMode === "external"
-    ? settingsDatabaseUrl
-    : settingsDatabaseUrl ?? options.externalDatabaseUrl;
+  let storedDatabaseUrl = options.credentialStore?.available === true
+    ? await options.credentialStore.get("data.database.external")
+    : undefined;
+  if (storedDatabaseUrl === undefined && legacySettingsDatabaseUrl !== undefined && options.credentialStore?.available === true) {
+    await options.credentialStore.set("data.database.external", legacySettingsDatabaseUrl);
+    await patchLocalSettings(homePath, { databaseUrl: null });
+    storedDatabaseUrl = legacySettingsDatabaseUrl;
+  }
+  const externalDatabaseUrl = storedDatabaseUrl
+    ?? legacySettingsDatabaseUrl
+    ?? options.externalDatabaseUrl;
   return {
     ...options,
     ownerExecutable: options.ownerExecutable ?? process.execPath,
@@ -1845,6 +1905,47 @@ async function readLocalSettings(homePath: string): Promise<Record<string, unkno
     }
     throw error;
   }
+}
+
+async function readConfiguredMcpCredentialBindings(homePath: string): Promise<{
+  credentialId: LocalCoreCredentialId;
+  envKey: string;
+}[]> {
+  const settings = await readLocalSettings(homePath);
+  if (Array.isArray(settings.mcpServers) === false) return [];
+  const bindings = new Map<string, { credentialId: LocalCoreCredentialId; envKey: string }>();
+  for (const rawServer of settings.mcpServers) {
+    if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) continue;
+    const server = rawServer as Record<string, unknown>;
+    if (server.enabled !== true || typeof server.id !== "string" || Array.isArray(server.credentials) === false) continue;
+    for (const rawBinding of server.credentials) {
+      if (typeof rawBinding !== "object" || rawBinding === null || Array.isArray(rawBinding)) continue;
+      const binding = rawBinding as Record<string, unknown>;
+      if (binding.configured !== true || typeof binding.envKey !== "string" || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.envKey) === false) continue;
+      try {
+        const credentialId = parseLocalCoreCredentialId(binding.credentialId);
+        if (credentialId.startsWith(`mcp.${server.id}.`) === false) continue;
+        bindings.set(binding.envKey, { credentialId, envKey: binding.envKey });
+      } catch {
+        // Ignore invalid credential references while retaining valid bindings.
+      }
+    }
+  }
+  return [...bindings.values()];
+}
+
+async function readDesktopDeveloperEnvironmentOptions(
+  homePath: string,
+): Promise<Partial<Record<"SHELL" | "PATH", string>>> {
+  const settings = await readLocalSettings(homePath);
+  return {
+    ...(typeof settings.developerShellPath === "string" && settings.developerShellPath.trim().length > 0
+      ? { SHELL: settings.developerShellPath.trim() }
+      : {}),
+    ...(typeof settings.developerPath === "string" && settings.developerPath.trim().length > 0
+      ? { PATH: settings.developerPath.trim() }
+      : {}),
+  };
 }
 
 async function writeLocalSettings(homePath: string, value: Record<string, unknown>): Promise<void> {

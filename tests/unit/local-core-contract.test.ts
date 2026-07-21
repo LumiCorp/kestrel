@@ -558,7 +558,7 @@ test("ensureLocalCoreReady blocks an unreachable external database", async () =>
     assert.equal(status.database.initialized, false);
     assert.equal(status.database.running, false);
     assert.equal(status.database.identityVerified, false);
-    assert.equal(status.databaseUrl, databaseUrl);
+    assert.equal(status.databaseUrl, undefined);
     assert.equal(status.lastError?.code, "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED");
     assert.equal(status.lock.state, "live");
     assert.equal(status.manifest?.coreVersion, "0.5.0-beta.0");

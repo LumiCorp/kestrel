@@ -3,15 +3,15 @@ import type {
   DesktopBootState,
   DesktopBridge,
   DesktopBridgeInfo,
+  DesktopCapabilityView,
+  DesktopCapabilityConfigurationInput,
   DesktopLegacyUiStateEntries,
   DesktopManagedProjectRun,
+  DesktopMcpServerMutationInput,
   DesktopPackageManager,
   DesktopProjectAction,
   DesktopProjectFilesChangedEvent,
   DesktopProjectSnapshotResponse,
-  DesktopProviderCredentialInput,
-  DesktopToolCredentialInput,
-  DesktopToolCredentialProvider,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
   DesktopRunnerEvent,
@@ -34,23 +34,17 @@ const desktopBridge: DesktopBridge = {
   getSupportBundle(): Promise<DesktopSupportBundle> {
     return ipcRenderer.invoke("desktop:get-support-bundle");
   },
+  getCapabilities(): Promise<DesktopCapabilityView> {
+    return ipcRenderer.invoke("desktop:get-capabilities");
+  },
+  configureCapability(input: DesktopCapabilityConfigurationInput) {
+    return ipcRenderer.invoke("desktop:configure-capability", input);
+  },
   getSettings() {
     return ipcRenderer.invoke("desktop:get-settings");
   },
   saveSettings(settings: DesktopRendererSettingsUpdate) {
     return ipcRenderer.invoke("desktop:save-settings", settings);
-  },
-  saveProviderCredential(input: DesktopProviderCredentialInput) {
-    return ipcRenderer.invoke("desktop:save-provider-credential", input);
-  },
-  getToolCredentialStatus(provider: DesktopToolCredentialProvider) {
-    return ipcRenderer.invoke("desktop:get-tool-credential-status", provider);
-  },
-  saveToolCredential(input: DesktopToolCredentialInput) {
-    return ipcRenderer.invoke("desktop:save-tool-credential", input);
-  },
-  deleteToolCredential(provider: DesktopToolCredentialProvider) {
-    return ipcRenderer.invoke("desktop:delete-tool-credential", provider);
   },
   getUiState(): Promise<DesktopUiStateV1 | null> {
     return ipcRenderer.invoke("desktop:get-ui-state");
@@ -90,12 +84,6 @@ const desktopBridge: DesktopBridge = {
   },
   getModelPolicy(): Promise<ModelPolicyV1> {
     return ipcRenderer.invoke("desktop:get-model-policy");
-  },
-  saveModelPolicy(policy: ModelPolicyV1) {
-    return ipcRenderer.invoke("desktop:save-model-policy", policy);
-  },
-  getModelCatalog(provider) {
-    return ipcRenderer.invoke("desktop:get-model-catalog", provider);
   },
   getBootState() {
     return ipcRenderer.invoke("desktop:get-boot-state");
@@ -201,6 +189,12 @@ const desktopBridge: DesktopBridge = {
   },
   discoverMcpServers() {
     return ipcRenderer.invoke("desktop:discover-mcp-servers");
+  },
+  saveMcpServer(input: DesktopMcpServerMutationInput) {
+    return ipcRenderer.invoke("desktop:save-mcp-server", input);
+  },
+  deleteMcpServer(id: string) {
+    return ipcRenderer.invoke("desktop:delete-mcp-server", id);
   },
   readProjectLauncher(projectPath, packageManagerOverride) {
     return ipcRenderer.invoke("desktop:read-project-launcher", projectPath, packageManagerOverride);

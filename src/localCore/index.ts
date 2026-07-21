@@ -26,6 +26,18 @@ export {
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
 export {
+  parseLocalCoreMcpVerificationInput,
+  verifyAndStoreLocalCoreMcpServer,
+  type LocalCoreMcpCredentialBindingInput,
+  type LocalCoreMcpVerificationInput,
+  type LocalCoreMcpVerificationResult,
+} from "./mcpVerification.js";
+export {
+  parseExternalDatabaseUrl,
+  verifyAndStoreLocalCoreExternalDatabase,
+  type LocalCoreExternalDatabaseVerificationResult,
+} from "./externalDatabaseVerification.js";
+export {
   LOCAL_CORE_RUNTIME_CONFIGURATION_VERSION,
   LocalCoreRuntimeConfigurationError,
   createDefaultLocalCoreRuntimeConfiguration,

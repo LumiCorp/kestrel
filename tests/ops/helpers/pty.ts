@@ -6,6 +6,7 @@ import path from "node:path";
 
 import type { TuiSessionMeta } from "../../../cli/contracts.js";
 import { SessionStore } from "../../../cli/session/SessionStore.js";
+import { LocalCoreClient } from "../../../src/localCore/client.js";
 import { resolveLocalCorePaths } from "../../../src/localCore/home.js";
 import { seedTuiHome } from "./tuiHome.js";
 
@@ -105,6 +106,8 @@ export async function runTuiScenarioWithSession(input: {
       KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
       KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
       KESTREL_DISABLE_DOTENV: "1",
+      // Prove every Core-owned child keeps using the explicit external URL.
+      KESTREL_DB_PORT: "1",
       OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
       TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
       FORCE_COLOR: "0",
@@ -125,7 +128,18 @@ export async function runTuiScenarioWithSession(input: {
   try {
     const result = await runPythonDriver(driverPath, payload);
     if (result.exitCode !== 0) {
-      throw new Error(normalizeTerminalOutput(result.stderr || result.stdout));
+      const transcript = normalizeTerminalOutput(result.stderr || result.stdout);
+      const daemonLog = await readOptionalText(path.join(corePaths.logsPath, "local-core-daemon.log"));
+      const coreFailure = await readLocalCoreFailure(corePaths.apiSocketPath, corePaths.apiTokenPath);
+      throw new Error([
+        transcript,
+        ...(coreFailure === undefined
+          ? []
+          : ["Local Core failure:", coreFailure]),
+        ...(daemonLog === undefined
+          ? []
+          : ["Local Core daemon log:", daemonLog.trimEnd()]),
+      ].join("\n"));
     }
     const sessionStore = new SessionStore(corePaths.stateRootPath);
     const sessionsFile = await sessionStore.load();
@@ -143,6 +157,28 @@ export async function runTuiScenarioWithSession(input: {
   } finally {
     await stopTestOwnedLocalCore(corePaths.lockPath);
     await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function readLocalCoreFailure(socketPath: string, tokenPath: string): Promise<string | undefined> {
+  try {
+    const token = (await readFile(tokenPath, "utf8")).trim();
+    const status = await new LocalCoreClient({ socketPath, token, timeoutMs: 2000 }).status();
+    return JSON.stringify({
+      state: status.state,
+      summary: status.summary,
+      lastError: status.lastError,
+    });
+  } catch {
+    return ;
+  }
+}
+
+async function readOptionalText(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return ;
   }
 }
 

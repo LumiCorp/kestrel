@@ -236,7 +236,7 @@ test("external Postgres readiness rejects an unreachable explicit database", asy
 
     assert.equal(status.state, "blocked");
     assert.equal(status.dbMode, "external");
-    assert.equal(status.databaseUrl, databaseUrl);
+    assert.equal(status.databaseUrl, undefined);
     assert.equal(status.database.state, "blocked");
     assert.equal(status.database.initialized, false);
     assert.equal(status.database.running, false);

@@ -425,6 +425,68 @@ export type DesktopModelProvider = "openrouter" | "openai" | "anthropic" | "olla
 export type DesktopDatabaseMode = "default" | "external";
 export type DesktopShellPresetId = "desktop_dev_local";
 export type DesktopCapabilityPackId = "balanced" | "filesystem" | "dev_shell" | "sandbox_code";
+export type DesktopCapabilityCategory = "models" | "tools_services" | "local_capabilities" | "connections" | "workspace_data" | "permissions";
+export type DesktopCapabilityId = "model.openrouter" | "model.openai" | "model.anthropic" | "model.ollama" | "model.lmstudio" | "tools.internet.tavily" | "tools.weather" | "tools.network.free" | "local.filesystem" | "local.developer_shell" | "local.sandbox_code" | "connections.mcp" | "data.workspace" | "data.database" | "permission.microphone";
+export type DesktopCapabilityReadiness = "ready" | "optional" | "setup_required" | "unavailable" | "verification_failed" | "disabled";
+export type DesktopCapabilityRequirementKind = "credential" | "configuration" | "connectivity" | "local_prerequisite" | "permission";
+export interface DesktopCapabilityRequirement {
+    kind: DesktopCapabilityRequirementKind;
+    label: string;
+    satisfied: boolean;
+    detail?: string | undefined;
+}
+export interface DesktopCapabilitySettingField {
+    key: string;
+    label: string;
+    kind: "text" | "url" | "secret" | "boolean" | "select";
+    required: boolean;
+    secret: boolean;
+    value?: string | boolean | undefined;
+    placeholder?: string | undefined;
+    options?: Array<{
+        value: string;
+        label: string;
+    }> | undefined;
+}
+export interface DesktopCapability {
+    id: DesktopCapabilityId;
+    category: DesktopCapabilityCategory;
+    name: string;
+    description: string;
+    toolNames: string[];
+    enabled: boolean;
+    readiness: DesktopCapabilityReadiness;
+    detail: string;
+    requirements: DesktopCapabilityRequirement[];
+    settings: DesktopCapabilitySettingField[];
+    verificationStrategy: string;
+    runtimeApplication: string;
+    settingsSection: string;
+    lastVerifiedAt?: string | undefined;
+}
+export interface DesktopCapabilityView {
+    capabilities: DesktopCapability[];
+    credentialStore: {
+        available: boolean;
+        backend: DesktopCredentialBackend;
+    };
+    refreshedAt: string;
+}
+export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
+export type DesktopCapabilitySettingValue = string | boolean | null;
+export interface DesktopCapabilityConfigurationInput {
+    capabilityId: DesktopCapabilityId;
+    enabled?: boolean | undefined;
+    settings?: Record<string, DesktopCapabilitySettingValue> | undefined;
+    credential?: string | null | undefined;
+}
+export interface DesktopCapabilityConfigurationResult {
+    capabilityId: DesktopCapabilityId;
+    applied: boolean;
+    runtimeRestarted: boolean;
+    view: DesktopCapabilityView;
+}
+export declare function parseDesktopCapabilityConfigurationInput(value: unknown): DesktopCapabilityConfigurationInput;
 export interface DesktopAgentStageConfig {
     modelByStage?: Record<string, string> | undefined;
 }
@@ -434,6 +496,13 @@ export interface DesktopSettings {
     presetId: DesktopShellPresetId;
     capabilityPacks: DesktopCapabilityPackId[];
     projects: DesktopProjectRegistration[];
+    mcpServers: DesktopMcpServerConfig[];
+    capabilityVerifications: Partial<Record<DesktopCapabilityId, string>>;
+    developerShellPath?: string | undefined;
+    developerPath?: string | undefined;
+    developerShellEnvMode: "inherit" | "allowlist";
+    developerShellAllowedEnvNames: string[];
+    approvalPolicyPackId: "dev" | "ci_bot" | "production";
     agentStageConfig?: DesktopAgentStageConfig | undefined;
     modelTimeoutMs?: number | undefined;
     databaseUrl?: string | undefined;
@@ -485,7 +554,6 @@ export interface DesktopProviderCredentialInput {
     apiKey: string;
 }
 export type DesktopToolCredentialProvider = "visual-crossing";
-export type DesktopCredentialBackend = "macos_keychain" | "unavailable";
 export interface DesktopToolCredentialStatus {
     provider: DesktopToolCredentialProvider;
     configured: boolean;
@@ -562,10 +630,27 @@ export interface DesktopProjectFilesChangedEvent {
     changedPath?: string | undefined;
 }
 export type DesktopMcpTransport = "stdio" | "http" | "sse";
-export type DesktopMcpDiscoverySourceKind = "config-file" | "docker-toolkit";
+export type DesktopMcpDiscoverySourceKind = "desktop-managed" | "config-file" | "docker-toolkit";
 export interface DesktopMcpToolSummary {
     name: string;
     description?: string | undefined;
+    approvalMode?: "auto" | "ask" | undefined;
+    allowedInteractionModes?: ("chat" | "plan" | "build")[] | undefined;
+}
+export type DesktopMcpCredentialKind = "bearer" | "header" | "environment";
+export interface DesktopMcpCredentialBinding {
+    kind: DesktopMcpCredentialKind;
+    name?: string | undefined;
+    credentialId: `mcp.${string}`;
+    envKey: string;
+    configured: boolean;
+}
+export interface DesktopMcpCredentialMutationInput {
+    kind: DesktopMcpCredentialKind;
+    name?: string | undefined;
+    credentialId?: `mcp.${string}` | undefined;
+    envKey?: string | undefined;
+    secret?: string | undefined;
 }
 export interface DesktopMcpServerConfig {
     id: string;
@@ -582,7 +667,9 @@ export interface DesktopMcpServerConfig {
     sourcePath?: string | undefined;
     toolCount?: number | undefined;
     tools?: DesktopMcpToolSummary[] | undefined;
+    credentials?: DesktopMcpCredentialBinding[] | undefined;
     setupWarning?: string | undefined;
+    verifiedAt?: string | undefined;
 }
 export interface DesktopMcpDiscoveryDiagnostic {
     source: string;
@@ -595,6 +682,21 @@ export interface DesktopMcpDiscoveryResult {
     diagnostics: DesktopMcpDiscoveryDiagnostic[];
     discoveredAt: string;
 }
+export interface DesktopMcpServerMutationInput {
+    id: string;
+    name: string;
+    transport: DesktopMcpTransport;
+    command?: string | undefined;
+    args?: string[] | undefined;
+    url?: string | undefined;
+    credentials?: DesktopMcpCredentialMutationInput[] | undefined;
+    toolPolicies?: Record<string, {
+        approvalMode: "auto" | "ask";
+        allowedInteractionModes: ("chat" | "plan" | "build")[];
+    }> | undefined;
+    enabled: boolean;
+}
+export declare function parseDesktopMcpServerMutationInput(value: unknown): DesktopMcpServerMutationInput;
 export type DesktopMicrophoneAccessState = "granted" | "denied" | "restricted" | "not-determined" | "unknown";
 export interface DesktopMicrophoneAccess {
     state: DesktopMicrophoneAccessState;

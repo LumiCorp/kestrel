@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
 
 import {
   buildDesktopRunnerEnvironment,
@@ -12,25 +13,8 @@ import {
   describeDesktopProviderCredentialRequirement,
   hasConfiguredDesktopProviderCredential,
   readDesktopSettings,
-  normalizeDesktopSettings,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
-
-test("legacy desktop settings seed the Default model configuration from Local Core policy", () => {
-  const settings = normalizeDesktopSettings({ selectedProvider: "openrouter" }, {
-    fallbackModelPolicy: {
-      version: 1,
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      modelByStage: {},
-      modelCapabilities: { visionInputEnabled: true },
-    },
-  });
-
-  assert.equal(settings.modelConfigurations[0]?.name, "Default");
-  assert.equal(settings.modelConfigurations[0]?.revisions[0]?.policy.provider, "anthropic");
-  assert.equal(settings.modelConfigurations[0]?.revisions[0]?.policy.model, "claude-sonnet-4-5");
-});
 
 test("readDesktopSettings returns default settings when the file is missing", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
@@ -103,7 +87,7 @@ test("readDesktopSettings backfills provider selection for intentional legacy pr
   assert.equal(restored.ollamaBaseUrl, "http://127.0.0.1:11434");
 });
 
-test("writeDesktopSettings persists provider-aware settings and trims blank values", async () => {
+test("writeDesktopSettings persists provider options without serializing credentials", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -151,12 +135,12 @@ test("writeDesktopSettings persists provider-aware settings and trims blank valu
     { path: path.resolve("../workspace-a"), label: "Workspace A" },
     { path: "/tmp/workspace-b", label: "workspace-b" },
   ]);
-  assert.equal(saved.openrouterApiKey, "legacy-key");
+  assert.equal(saved.openrouterApiKey, undefined);
   assert.equal(saved.openrouterModel, "openai/gpt-5.2");
   assert.equal(saved.openrouterBaseUrl, "https://openrouter.ai");
   assert.equal(saved.openrouterSiteUrl, "https://kestrel.example");
   assert.equal(saved.openrouterAppName, "kestrel-desktop");
-  assert.equal(saved.openaiApiKey, "openai-key");
+  assert.equal(saved.openaiApiKey, undefined);
   assert.equal(saved.openaiModel, "gpt-5.4-2026-03-05");
   assert.equal(saved.openaiBaseUrl, "https://api.openai.com");
   assert.equal(saved.openaiOrgId, "org-123");
@@ -165,7 +149,7 @@ test("writeDesktopSettings persists provider-aware settings and trims blank valu
   assert.equal(saved.anthropicModel, "claude-3-5-haiku-latest");
   assert.equal(saved.anthropicBaseUrl, "https://api.anthropic.com");
   assert.equal(saved.anthropicVersion, "2023-06-01");
-  assert.equal(saved.tavilyApiKey, "tavily-key");
+  assert.equal(saved.tavilyApiKey, undefined);
   assert.equal(saved.tavilyBaseUrl, "https://api.tavily.com");
   assert.equal(saved.tavilyProject, "project-123");
   assert.equal(saved.tavilyHttpProxy, "http://proxy.internal:8080");
@@ -173,22 +157,23 @@ test("writeDesktopSettings persists provider-aware settings and trims blank valu
   assert.equal(saved.providerSelectionCompletedAt, "2026-04-18T00:00:00.000Z");
   assert.equal(saved.advancedWorkspaceEnabled, false);
   assert.equal(restored.selectedProvider, "openai");
-  assert.equal(restored.openaiApiKey, "openai-key");
+  assert.equal(restored.openaiApiKey, undefined);
   assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
-  assert.equal(restored.tavilyApiKey, "tavily-key");
+  assert.equal(restored.tavilyApiKey, undefined);
   assert.deepEqual(restored.projects, saved.projects);
-  assert.match(raw, /"version": 10/u);
+  assert.match(raw, /"version": 9/u);
   assert.match(raw, /"selectedProvider": "openai"/u);
   assert.match(raw, /"databaseMode": "default"/u);
-  assert.match(raw, /"openaiApiKey": "openai-key"/u);
+  assert.equal(raw.includes("openai-key"), false);
   assert.match(raw, /"openaiModel": "gpt-5\.4-2026-03-05"/u);
   assert.match(raw, /"anthropicVersion": "2023-06-01"/u);
-  assert.match(raw, /"tavilyApiKey": "tavily-key"/u);
+  assert.equal(raw.includes("tavily-key"), false);
+  assert.equal(raw.includes("legacy-key"), false);
   assert.match(raw, /"providerSelectionCompletedAt": "2026-04-18T00:00:00.000Z"/u);
   assert.match(raw, /"projects": \[/u);
 });
 
-test("writeDesktopSettings persists external database mode and trims database URL", async () => {
+test("writeDesktopSettings persists external database mode without serializing its credential", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -207,12 +192,12 @@ test("writeDesktopSettings persists external database mode and trims database UR
   const raw = await readFile(settingsPath, "utf8");
 
   assert.equal(saved.databaseMode, "external");
-  assert.equal(saved.databaseUrl, "postgres://user:password@db.example:5432/kestrel");
+  assert.equal(saved.databaseUrl, undefined);
   assert.equal(restored.databaseMode, "external");
-  assert.equal(restored.databaseUrl, "postgres://user:password@db.example:5432/kestrel");
-  assert.match(raw, /"version": 10/u);
+  assert.equal(restored.databaseUrl, undefined);
+  assert.match(raw, /"version": 9/u);
   assert.match(raw, /"databaseMode": "external"/u);
-  assert.match(raw, /"databaseUrl": "postgres:\/\/user:password@db\.example:5432\/kestrel"/u);
+  assert.equal(raw.includes("user:password"), false);
 });
 
 test("writeDesktopSettings round-trips local-provider settings", async () => {
@@ -647,6 +632,24 @@ test("buildDesktopRunnerProfile applies the selected model policy to run.start",
     profile.agentStageConfig?.modelByStage?.["agent.loop"],
     "qwen3:14b",
   );
+});
+
+test("buildDesktopRunnerProfile applies verified managed MCP servers and tools", () => {
+  const settings = {
+    ...createDefaultDesktopSettings(),
+    mcpServers: [{
+      id: "docs", name: "Docs", transport: "http" as const,
+      url: "https://mcp.example.test/", enabled: true,
+      source: "Kestrel Desktop", sourceKind: "desktop-managed" as const,
+      tools: [{ name: "search" }], toolCount: 1,
+    }],
+  };
+  const profile = buildDesktopRunnerProfile(createDefaultModelPolicy(), settings);
+  assert.equal(profile.mcpServers?.[0]?.id, "docs");
+  assert.equal(profile.mcpServers?.[0]?.transport, "http");
+  assert.equal(profile.mcpServers?.[0]?.toolMetadata?.search?.approvalMode, "ask");
+  assert.deepEqual(profile.mcpServers?.[0]?.toolMetadata?.search?.allowedInteractionModes, ["build"]);
+  assert.equal(profile.toolAllowlist?.includes("mcp.docs.search"), true);
 });
 
 test("hasConfiguredDesktopProviderCredential follows the selected provider", () => {

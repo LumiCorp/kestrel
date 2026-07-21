@@ -17,6 +17,10 @@ export const LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS = Object.freeze([
   "VISUAL_CROSSING_API_KEY",
 ] as const);
 
+const LOCAL_CORE_RUNTIME_CREDENTIAL_IDS = LOCAL_CORE_CREDENTIAL_IDS.filter(
+  (credentialId) => credentialId !== "data.database.external",
+);
+
 export type LocalCoreManagedRuntimeEnvKey =
   (typeof LOCAL_CORE_MANAGED_RUNTIME_ENV_KEYS)[number];
 
@@ -83,12 +87,19 @@ export interface ResolveLocalCoreRuntimeEnvironmentInput {
   readonly resolvedProfile: LocalCoreResolvedModelProfile;
   readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   readonly credentialStore?: Pick<LocalCoreCredentialStore, "get"> | undefined;
+  readonly mcpCredentialBindings?: CreateLocalCoreRuntimeEnvironmentResolverInput["mcpCredentialBindings"];
+  readonly mcpEnvironmentOptions?: CreateLocalCoreRuntimeEnvironmentResolverInput["mcpEnvironmentOptions"];
 }
 
 export interface CreateLocalCoreRuntimeEnvironmentResolverInput {
   readonly baseEnv: Readonly<NodeJS.ProcessEnv>;
   readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   readonly credentialStore?: Pick<LocalCoreCredentialStore, "get"> | undefined;
+  readonly mcpCredentialBindings?: readonly {
+    readonly credentialId: LocalCoreCredentialId;
+    readonly envKey: string;
+  }[] | undefined;
+  readonly mcpEnvironmentOptions?: Readonly<Partial<Record<"SHELL" | "PATH", string>>> | undefined;
 }
 
 export interface LocalCoreRuntimeEnvironmentResolver {
@@ -164,6 +175,7 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
       input.baseEnv,
       credentialStoreIsAuthoritative,
       runtimeOptionsAreAuthoritative,
+      input.mcpCredentialBindings?.map((binding) => binding.envKey) ?? [],
     ),
   );
   const runtimeConfiguration = input.runtimeConfiguration;
@@ -172,8 +184,12 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
   >;
   const credentialStore = input.credentialStore;
   if (credentialStore !== undefined) {
+    const credentialIds = [...new Set<LocalCoreCredentialId>([
+      ...LOCAL_CORE_RUNTIME_CREDENTIAL_IDS,
+      ...(input.mcpCredentialBindings?.map((binding) => binding.credentialId) ?? []),
+    ])];
     const entries = await Promise.all(
-      LOCAL_CORE_CREDENTIAL_IDS.map(
+      credentialIds.map(
         async (credentialId) =>
           [
             credentialId,
@@ -197,6 +213,8 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
         credentials,
         credentialStoreIsAuthoritative,
         runtimeConfiguration,
+        mcpCredentialBindings: input.mcpCredentialBindings ?? [],
+        mcpEnvironmentOptions: input.mcpEnvironmentOptions ?? {},
       }),
   );
   return Object.freeze({ resolve });
@@ -210,6 +228,11 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
   >;
   readonly credentialStoreIsAuthoritative: boolean;
   readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+  readonly mcpCredentialBindings: readonly {
+    readonly credentialId: LocalCoreCredentialId;
+    readonly envKey: string;
+  }[];
+  readonly mcpEnvironmentOptions: Readonly<Partial<Record<"SHELL" | "PATH", string>>>;
 }): LocalCoreRuntimeEnvironmentSnapshot {
   const modelProvider = parseModelProvider(input.resolvedProfile.modelProvider);
   const model = requireNonEmpty(
@@ -262,10 +285,17 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
     input.baseEnv,
     !input.credentialStoreIsAuthoritative,
   );
-  const mcpEnv = createRuntimeEnvironmentView(
-    input.baseEnv,
-    !input.credentialStoreIsAuthoritative,
-  );
+  const mcpBaseEnv = copyEnvironment(input.baseEnv);
+  for (const [key, value] of Object.entries(input.mcpEnvironmentOptions)) {
+    if (value !== undefined) mcpBaseEnv[key] = value;
+  }
+  const mcpCredentials = input.mcpCredentialBindings.flatMap((binding) => {
+    const value = input.credentials[binding.credentialId];
+    return value === undefined ? [] : [{ key: binding.envKey, value }];
+  });
+  const mcpEnv = mcpCredentials.length > 0
+    ? createArbitrarySecretBearingEnvironmentView(mcpBaseEnv, mcpCredentials)
+    : createRuntimeEnvironmentView(mcpBaseEnv, !input.credentialStoreIsAuthoritative);
 
   const snapshot = {
     modelProvider,
@@ -312,6 +342,16 @@ function createSecretBearingEnvironmentView(
   return Object.freeze(env);
 }
 
+function createArbitrarySecretBearingEnvironmentView(
+  baseEnv: Readonly<NodeJS.ProcessEnv>,
+  credentials: readonly { readonly key: string; readonly value: string }[],
+): Readonly<NodeJS.ProcessEnv> {
+  const env = copyEnvironment(baseEnv);
+  for (const credential of credentials) env[credential.key] = credential.value;
+  installEnvironmentRedactionHooks(env);
+  return Object.freeze(env);
+}
+
 function createRuntimeEnvironmentView(
   baseEnv: Readonly<NodeJS.ProcessEnv>,
   mayContainManagedSecrets: boolean,
@@ -327,10 +367,13 @@ function copyBaseEnvironment(
   baseEnv: Readonly<NodeJS.ProcessEnv>,
   scrubManagedSecrets: boolean,
   scrubManagedOptions: boolean,
+  additionalSecretKeys: readonly string[] = [],
 ): NodeJS.ProcessEnv {
+  const additionalSecretKeySet = new Set(additionalSecretKeys);
   const env = Object.create(null) as NodeJS.ProcessEnv;
   for (const key of Object.keys(baseEnv).sort()) {
     if (
+      additionalSecretKeySet.has(key) ||
       (scrubManagedOptions && MANAGED_RUNTIME_OPTION_ENV_KEY_SET.has(key)) ||
       (scrubManagedSecrets && MANAGED_RUNTIME_ENV_KEY_SET.has(key))
     ) {

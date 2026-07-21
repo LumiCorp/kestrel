@@ -21,6 +21,7 @@ test("Local Core credential IDs are stable and parsed exactly", () => {
     "provider.anthropic.default",
     "tool.tavily.default",
     "tool.visual-crossing.default",
+    "data.database.external",
   ]);
   for (const id of LOCAL_CORE_CREDENTIAL_IDS) {
     assert.equal(parseLocalCoreCredentialId(id), id);
@@ -72,6 +73,7 @@ test("Memory credential store provides async CRUD without serializing raw values
       { id: "provider.anthropic.default", configured: false },
       { id: "tool.tavily.default", configured: false },
       { id: "tool.visual-crossing.default", configured: false },
+      { id: "data.database.external", configured: false },
     ],
   });
   assert.doesNotMatch(JSON.stringify(store), new RegExp(secret, "u"));
@@ -92,6 +94,7 @@ test("Credential status parser accepts only the exact redacted contract", () => 
       { id: "provider.openai.default", configured: true },
       { id: "provider.openrouter.default", configured: true },
       { id: "tool.visual-crossing.default", configured: false },
+      { id: "data.database.external", configured: false },
     ],
   });
   assert.deepEqual(parsed.credentials.map((entry) => entry.id), LOCAL_CORE_CREDENTIAL_IDS);

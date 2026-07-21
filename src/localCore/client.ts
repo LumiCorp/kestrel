@@ -36,6 +36,11 @@ import {
   parseLocalCoreRuntimeConfiguration,
   type LocalCoreRuntimeConfigurationV1,
 } from "./runtimeConfiguration.js";
+import type {
+  LocalCoreMcpVerificationInput,
+  LocalCoreMcpVerificationResult,
+} from "./mcpVerification.js";
+import type { LocalCoreExternalDatabaseVerificationResult } from "./externalDatabaseVerification.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -148,6 +153,28 @@ export class LocalCoreClient {
         ),
       ),
     };
+  }
+
+  async verifyMcpServer(
+    input: LocalCoreMcpVerificationInput,
+  ): Promise<LocalCoreMcpVerificationResult> {
+    const response = await this.post("/v1/mcp/verify", input);
+    return readObjectField<LocalCoreMcpVerificationResult>(
+      response,
+      "verification",
+      "MCP verification",
+    );
+  }
+
+  async verifyExternalDatabase(
+    databaseUrl: string,
+  ): Promise<LocalCoreExternalDatabaseVerificationResult> {
+    const response = await this.post("/v1/database/external/verify", { databaseUrl });
+    return readObjectField<LocalCoreExternalDatabaseVerificationResult>(
+      response,
+      "verification",
+      "external database verification",
+    );
   }
 
   async desktopExecutionConfig(): Promise<LocalCoreDesktopExecutionConfig> {

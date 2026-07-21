@@ -958,16 +958,13 @@ test("Local Core captures injected credentials once per execution bundle", async
   });
 
   try {
-    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+    assert.deepEqual(new Set(reads), new Set(LOCAL_CORE_CREDENTIAL_IDS));
     await memory.set("provider.openrouter.default", "core-key-generation-two");
-    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+    assert.equal(reads.length, LOCAL_CORE_CREDENTIAL_IDS.length);
 
     const restarted = await client.restart();
     assert.equal(restarted.state, "healthy");
-    assert.deepEqual(reads, [
-      ...LOCAL_CORE_CREDENTIAL_IDS,
-      ...LOCAL_CORE_CREDENTIAL_IDS,
-    ]);
+    assert.equal(reads.length, LOCAL_CORE_CREDENTIAL_IDS.length * 2);
   } finally {
     await server.close();
     await rm(home, { recursive: true, force: true });
@@ -1068,6 +1065,30 @@ test("Local Core credential mutations are write-only and return sanitized status
       )?.configured,
       false,
     );
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core migrates a legacy plaintext external database URL into credential storage", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "klc-db-migrate-"));
+  const settingsDirectory = resolveLocalCorePaths(home).settingsPath;
+  await mkdir(settingsDirectory, { recursive: true });
+  const legacyUrl = "postgresql://user:secret@db.example.test/kestrel";
+  await writeFile(path.join(settingsDirectory, "local-core-settings.json"), JSON.stringify({ databaseMode: "default", databaseUrl: legacyUrl }));
+  const credentialStore = new MemoryLocalCoreCredentialStore();
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    credentialStore,
+  });
+  try {
+    assert.equal(await credentialStore.get("data.database.external"), legacyUrl);
+    const persisted = await readFile(path.join(settingsDirectory, "local-core-settings.json"), "utf8");
+    assert.equal(persisted.includes("user:secret"), false);
   } finally {
     await server.close();
     await rm(home, { recursive: true, force: true });

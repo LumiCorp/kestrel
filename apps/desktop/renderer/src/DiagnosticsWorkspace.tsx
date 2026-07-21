@@ -13,12 +13,14 @@ import type {
   DesktopDatabaseStatus,
   DesktopRuntimeHealth,
   DesktopRuntimeStatus,
+  DesktopReadinessItemId,
 } from "../../src/contracts";
 
 export function DiagnosticsWorkspace(props: {
   runtimeHealth: DesktopRuntimeHealth | undefined;
   onRuntimeHealth: (health: DesktopRuntimeHealth) => void;
   onError: (message: string | undefined) => void;
+  onOpenReadinessSettings: (itemId: DesktopReadinessItemId) => void;
 }) {
   const [database, setDatabase] = useState<DesktopDatabaseStatus>();
   const [runtime, setRuntime] = useState<DesktopRuntimeStatus>();
@@ -183,6 +185,9 @@ export function DiagnosticsWorkspace(props: {
                 <span className={`readiness-dot state-${item.state}`} aria-hidden="true" />
                 <span><strong>{item.label}</strong><small>{item.detail}</small></span>
                 <em>{item.state}</em>
+                {item.action?.command === "open_settings" ? (
+                  <button className="secondary-button" type="button" onClick={() => props.onOpenReadinessSettings(item.id)}>{item.action.label}</button>
+                ) : null}
               </div>
             ))}
             {boot?.readiness === undefined ? <p className="panel-empty">No readiness report</p> : null}

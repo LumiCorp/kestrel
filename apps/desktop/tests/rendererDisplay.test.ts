@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { safeMcpEndpointDisplay } from "../renderer/src/McpWorkspace.js";
+import { buildMcpMutationInput, safeMcpEndpointDisplay } from "../renderer/src/McpWorkspace.js";
 import { filterRuntimeRunIndexEntries } from "../renderer/src/RuntimeRunsWorkspace.js";
 import type { DesktopRuntimeRunIndexEntry } from "../src/contracts.js";
 
@@ -18,6 +18,35 @@ test("MCP endpoint display does not echo malformed endpoint input", () => {
     safeMcpEndpointDisplay("token=sensitive"),
     "Configured endpoint"
   );
+});
+
+test("MCP runtime mutations preserve credential references without leaking renderer-only status", () => {
+  const input = buildMcpMutationInput({
+    id: "company",
+    name: "Company tools",
+    transport: "http",
+    url: "https://mcp.example.test/",
+    enabled: false,
+    source: "Desktop settings",
+    sourceKind: "desktop-managed",
+    credentials: [{
+      kind: "header",
+      name: "X-API-Key",
+      credentialId: "mcp.company.header.x-api-key",
+      envKey: "KESTREL_MCP_COMPANY_X_API_KEY",
+      configured: true,
+    }],
+    tools: [{ name: "lookup", approvalMode: "ask", allowedInteractionModes: ["build"] }],
+  }, false);
+
+  assert.deepEqual(input.credentials, [{
+    kind: "header",
+    name: "X-API-Key",
+    credentialId: "mcp.company.header.x-api-key",
+    envKey: "KESTREL_MCP_COMPANY_X_API_KEY",
+  }]);
+  assert.equal(JSON.stringify(input).includes("configured"), false);
+  assert.equal(input.enabled, false);
 });
 
 test("runtime run index search covers run, session, thread, and diagnosis fields", () => {

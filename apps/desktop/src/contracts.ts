@@ -1,6 +1,9 @@
 import type {
   DesktopBridgeInfo,
   DesktopBootState,
+  DesktopCapabilityView,
+  DesktopCapabilityConfigurationInput,
+  DesktopCapabilityConfigurationResult,
   DesktopAttachmentMetadata,
   DesktopDatabaseStatus,
   DesktopDirectoryListing,
@@ -14,18 +17,15 @@ import type {
   DesktopManagedProjectRun,
   DesktopLegacyUiStateEntries,
   DesktopMicrophoneAccess,
+  DesktopMicrophoneAccessState,
   DesktopMcpDiscoveryResult,
+  DesktopMcpServerMutationInput,
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
   DesktopProjectFilesChangedEvent,
   DesktopProjectAction,
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
-  DesktopProviderCredentialInput,
-  DesktopProviderModelCatalog,
-  DesktopToolCredentialInput,
-  DesktopToolCredentialProvider,
-  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
@@ -59,6 +59,17 @@ export type {
   DesktopBridgeCapabilityId,
   DesktopBridgeInfo,
   DesktopBootState,
+  DesktopCapability,
+  DesktopCapabilityCategory,
+  DesktopCapabilityId,
+  DesktopCapabilityReadiness,
+  DesktopCapabilityRequirement,
+  DesktopCapabilityRequirementKind,
+  DesktopCapabilitySettingField,
+  DesktopCapabilityView,
+  DesktopCapabilityConfigurationInput,
+  DesktopCapabilityConfigurationResult,
+  DesktopCapabilitySettingValue,
   DesktopDatabaseMode,
   DesktopDatabaseStatus,
   DesktopDirectoryListing,
@@ -76,9 +87,14 @@ export type {
   DesktopLegacyUiStateEntries,
   DesktopMcpDiscoveryDiagnostic,
   DesktopMicrophoneAccess,
+  DesktopMicrophoneAccessState,
   DesktopMcpDiscoveryResult,
   DesktopMcpDiscoverySourceKind,
+  DesktopMcpCredentialBinding,
+  DesktopMcpCredentialKind,
+  DesktopMcpCredentialMutationInput,
   DesktopMcpServerConfig,
+  DesktopMcpServerMutationInput,
   DesktopMcpToolSummary,
   DesktopModelProvider,
   DesktopPackageManager,
@@ -87,16 +103,10 @@ export type {
   DesktopProjectAction,
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
-  DesktopProviderCredentialInput,
-  DesktopProviderModelCatalog,
-  DesktopProviderReadiness,
-  DesktopAppearanceTheme,
-  DesktopToolCredentialInput,
-  DesktopToolCredentialProvider,
-  DesktopToolCredentialStatus,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopReadinessView,
+  DesktopReadinessItemId,
   DesktopRunHistoryLine,
   DesktopRunCancelRequest,
   DesktopRunnerEvent,
@@ -124,14 +134,7 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
-export type {
-  DesktopAppDefinition,
-  DesktopAppRef,
-  DesktopExecutionSelection,
-  DesktopModelConfiguration,
-  DesktopModelConfigurationRef,
-  DesktopModelConfigurationRevision,
-} from "../../../src/desktopShell/configuration.js";
+export type { DesktopExecutionSelection } from "../../../src/desktopShell/configuration.js";
 
 export interface DesktopAppInfo {
   name: string;
@@ -173,12 +176,10 @@ export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
   getSupportBundle(): Promise<DesktopSupportBundle>;
+  getCapabilities(): Promise<DesktopCapabilityView>;
+  configureCapability(input: DesktopCapabilityConfigurationInput): Promise<DesktopCapabilityConfigurationResult>;
   getSettings(): Promise<DesktopRendererSettings>;
   saveSettings(settings: DesktopRendererSettingsUpdate): Promise<DesktopRendererSettings>;
-  saveProviderCredential(input: DesktopProviderCredentialInput): Promise<DesktopRendererSettings>;
-  getToolCredentialStatus(provider: DesktopToolCredentialProvider): Promise<DesktopToolCredentialStatus>;
-  saveToolCredential(input: DesktopToolCredentialInput): Promise<DesktopToolCredentialStatus>;
-  deleteToolCredential(provider: DesktopToolCredentialProvider): Promise<DesktopToolCredentialStatus>;
   getUiState(): Promise<DesktopUiStateV1 | null>;
   syncLegacyUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
   saveUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
@@ -190,8 +191,6 @@ export interface DesktopBridge {
   cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
-  saveModelPolicy(policy: ModelPolicyV1): Promise<ModelPolicyV1>;
-  getModelCatalog(provider: DesktopRendererSettings["selectedProvider"]): Promise<DesktopProviderModelCatalog>;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   pickWorkspace(): Promise<string | undefined>;
@@ -221,6 +220,8 @@ export interface DesktopBridge {
   readFile(input: DesktopFileReadInput): Promise<DesktopFileContent>;
   writeFile(input: DesktopFileWriteInput): Promise<DesktopFileContent>;
   discoverMcpServers(): Promise<DesktopMcpDiscoveryResult>;
+  saveMcpServer(input: DesktopMcpServerMutationInput): Promise<DesktopMcpDiscoveryResult>;
+  deleteMcpServer(id: string): Promise<DesktopMcpDiscoveryResult>;
   readProjectLauncher(projectPath: string, packageManagerOverride?: DesktopPackageManager): Promise<DesktopProjectLauncherDescriptor | undefined>;
   listProjectRuns(): Promise<DesktopManagedProjectRun[]>;
   startProjectRun(input: {
