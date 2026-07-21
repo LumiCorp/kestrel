@@ -8,6 +8,18 @@ type JsonRecord = Record<string, any>;
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 test.beforeEach(async ({ page, request }, testInfo) => {
+  const signInResponse = await request.post("/api/auth/sign-in/email", {
+    data: {
+      email: "admin@dev.local",
+      password: "devpass123",
+      rememberMe: true,
+    },
+  });
+  if (!signInResponse.ok()) {
+    throw new Error(
+      `Failed to authenticate product contract: ${signInResponse.status()} ${await signInResponse.text()}`
+    );
+  }
   const fakeOpenRouterUrl = testInfo.config.metadata.fakeOpenRouterUrl;
   if (typeof fakeOpenRouterUrl !== "string" || fakeOpenRouterUrl.length === 0) {
     throw new Error("Product contract requires fakeOpenRouterUrl metadata.");

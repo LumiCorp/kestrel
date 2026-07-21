@@ -132,7 +132,15 @@ function hermeticTasks() {
 
 function productionBuildTasks() {
   return [
-    task("Web production build", PNPM, ["--filter", "@kestrel/kestrel-one", "run", "build:self"]),
+    task("Web production build", PNPM, ["--filter", "@kestrel/kestrel-one", "run", "build:self"], {
+      env: {
+        BETTER_AUTH_SECRET: "kestrel-validation-build-secret-0000000000000000",
+        BETTER_AUTH_URL: "http://127.0.0.1:43103",
+        DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/kestrel_build_guard",
+        KESTREL_DISABLE_DOTENV: "1",
+        NEXT_PUBLIC_APP_URL: "http://127.0.0.1:43103",
+      },
+    }),
     task("Desktop portable build", PNPM, ["--filter", "@kestrel/desktop", "run", "build:self"]),
     task("documentation build", PNPM, ["--filter", "@kestrel/docs", "run", "build:self"]),
     task("service builds", PNPM, ["-r", "--parallel", "--filter", "./apps/environment-router", "--filter", "./apps/workspace-runtime", "--filter", "./apps/mcp-service", "run", "build:self"]),

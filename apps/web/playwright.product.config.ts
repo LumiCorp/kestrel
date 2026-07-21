@@ -23,7 +23,7 @@ if (!workerReadyFile) {
     "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher."
   );
 }
-const baseURL = `http://127.0.0.1:${port}`;
+const baseURL = `http://localhost:${port}`;
 const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
 if (!databaseUrl) {
   throw new Error("KESTREL_PRODUCT_DATABASE_URL must be set by validation.");
@@ -43,6 +43,7 @@ const webServerEnv = {
   AI_AGENT_BASE_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
   AI_AGENT_MODEL: "openai/gpt-5.2-chat",
   AI_PROVIDER: "openrouter",
+  BETTER_AUTH_SECRET: "kestrel-product-contract-secret-0000000000000000",
   BETTER_AUTH_URL: baseURL,
   DATABASE_URL: databaseUrl,
   DEV_ALL_HOST: "127.0.0.1",
@@ -52,12 +53,16 @@ const webServerEnv = {
   KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "product-contract-key",
   KESTREL_GATEWAY_CREDENTIAL_KEYS:
     '{"product-contract-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}',
+  KESTREL_ENVIRONMENT_RUNTIME: "local",
+  KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: `http://127.0.0.1:${runnerPort}`,
+  KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN: "product-contract-runner-token",
   KESTREL_ONE_APP_URL: baseURL,
   KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "product-contract-broker",
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
   KESTREL_TURN_WORKER_READY_FILE: workerReadyFile,
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
+  KESTREL_RUNNER_SERVICE_TOKEN: "product-contract-runner-token",
   KESTREL_RUNNER_DATABASE_URL: process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL ?? databaseUrl,
   KESTREL_SKIP_RAG_FIXTURES: "true",
   NEXT_PUBLIC_APP_URL: baseURL,
