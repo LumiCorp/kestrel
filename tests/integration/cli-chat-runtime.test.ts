@@ -1508,6 +1508,41 @@ test("KestrelChatRuntime maps operator child-thread tool policy into runtime pol
   await runtime.close();
 });
 
+test("KestrelChatRuntime forwards attachments when replying to a typed operator request", async () => {
+  let capturedAttachments: unknown;
+  const fakeFactory: RuntimeFactory = {
+    create: () => {
+      const threadRuntime = {
+        getThreadStatus: async () => ({ openRequests: [{ requestId: "request-1" }] }),
+        replyToRequest: async (input: { attachments?: unknown }) => {
+          capturedAttachments = input.attachments;
+          return {
+            thread: { threadId: "thread-reply", sessionId: "session-reply", title: "Reply", status: "COMPLETED", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+            output: { status: "COMPLETED", runId: "run-reply", sessionId: "session-reply", quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 }, errors: [], telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 } },
+            assistantText: "done",
+          };
+        },
+        getOperatorThreadView: async () => ({
+          thread: { threadId: "thread-reply", sessionId: "session-reply", title: "Reply", status: "COMPLETED", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+          childThreads: [],
+        }),
+        listOperatorInbox: async () => ({ items: [], summary: { total: 0, actionable: 0, approvals: 0, userInputs: 0, checkpoints: 0, childBlockers: 0, stalled: 0, assemblyProposals: 0, compatibilityAlerts: 0 } }),
+      };
+      return {
+        kestrel: {} as Kestrel,
+        threadRuntime: threadRuntime as unknown as ThreadRuntime,
+        entryStepAgent: "example.step",
+        close: async () => {},
+      };
+    },
+  };
+  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "a".repeat(64), kind: "text" as const, createdAt: new Date().toISOString(), text: "context" }];
+  await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Continue", attachments });
+  assert.deepEqual(capturedAttachments, attachments);
+  await runtime.close();
+});
+
 test("KestrelChatRuntime resolves session turns through the canonical orchestration thread", async () => {
   const submitTurnCalls: Array<{ threadId: string; eventType: string }> = [];
 

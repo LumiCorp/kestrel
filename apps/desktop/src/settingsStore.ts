@@ -9,15 +9,26 @@ import {
 import { buildDesktopModelEnvironment } from "../../../src/desktopShell/modelEnvironment.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import {
+  createDefaultModelPolicy,
+  type ModelPolicyV1,
   type ResolvedModelPolicy,
   resolveProfileWithModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
+import {
+  createDesktopModelConfiguration,
+  DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
+  DESKTOP_WEATHER_APP_ID,
+  getDesktopAppDefinition,
+  parseDesktopModelConfigurations,
+} from "../../../src/desktopShell/configuration.js";
 import { createWebDemoProfile } from "../../../src/web/profile.js";
+import type { McpServerConfig } from "../../../src/mcp/contracts.js";
 import type {
   DesktopCapabilityPackId,
   DesktopDatabaseMode,
   DesktopModelProvider,
   DesktopProjectRegistration,
+  DesktopMcpServerConfig,
   DesktopSettings,
 } from "./contracts.js";
 
@@ -53,6 +64,17 @@ type DesktopSettingsFileBase = {
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled?: boolean | undefined;
+  mcpServers?: DesktopSettings["mcpServers"] | undefined;
+  capabilityVerifications?: DesktopSettings["capabilityVerifications"] | undefined;
+  developerShellPath?: string | undefined;
+  developerPath?: string | undefined;
+  developerShellEnvMode?: DesktopSettings["developerShellEnvMode"] | undefined;
+  developerShellAllowedEnvNames?: string[] | undefined;
+  approvalPolicyPackId?: DesktopSettings["approvalPolicyPackId"] | undefined;
+  modelConfigurations?: DesktopSettings["modelConfigurations"] | undefined;
+  defaultModelConfigurationId?: string | undefined;
+  defaultEnabledAppIds?: string[] | undefined;
+  appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
 };
 
 type DesktopSettingsFileV1 = {
@@ -112,12 +134,20 @@ type DesktopSettingsFileV9 = DesktopSettingsFileBase & {
   projects?: DesktopProjectRegistration[] | undefined;
 };
 
+type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
+  version: 10;
+  presetId?: DesktopSettings["presetId"] | undefined;
+  capabilityPacks?: DesktopSettings["capabilityPacks"] | undefined;
+  projects?: DesktopProjectRegistration[] | undefined;
+};
+
 const LEGACY_SETUP_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const LEGACY_PROVIDER_SELECTION_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const DESKTOP_PRESET_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
   "balanced",
   "filesystem",
   "dev_shell",
+  "desktop_host",
   "sandbox_code",
 ];
 
@@ -131,22 +161,35 @@ function normalizeDesktopCapabilityPacks(
       pack === "balanced" ||
       pack === "filesystem" ||
       pack === "dev_shell" ||
+      pack === "desktop_host" ||
       pack === "sandbox_code"
     ) {
       next.add(pack);
     }
   }
+  next.add("desktop_host");
   return next.size > 0 ? [...next] : [...DESKTOP_PRESET_CAPABILITY_PACKS];
 }
 
-export function createDefaultDesktopSettings(): DesktopSettings {
+export function createDefaultDesktopSettings(
+  fallbackModelPolicy: ModelPolicyV1 = createDefaultModelPolicy(),
+): DesktopSettings {
   return {
     selectedProvider: "openrouter",
     databaseMode: "default",
     presetId: "desktop_dev_local",
     capabilityPacks: [...DESKTOP_PRESET_CAPABILITY_PACKS],
     projects: [],
+    mcpServers: [],
+    capabilityVerifications: {},
+    developerShellEnvMode: "inherit",
+    developerShellAllowedEnvNames: [],
+    approvalPolicyPackId: "dev",
     advancedWorkspaceEnabled: false,
+    modelConfigurations: [createDesktopModelConfiguration(fallbackModelPolicy)],
+    defaultModelConfigurationId: DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
+    defaultEnabledAppIds: [DESKTOP_WEATHER_APP_ID],
+    appearanceTheme: "system",
   };
 }
 
@@ -166,6 +209,7 @@ export function normalizeDesktopSettings(
     legacySetupCompletedFromKeys?: boolean | undefined;
     legacyAdvancedWorkspaceEnabled?: boolean | undefined;
     backfillProviderSelection?: boolean | undefined;
+    fallbackModelPolicy?: ModelPolicyV1 | undefined;
   } = {},
 ): DesktopSettings {
   const openrouterApiKey = normalizeOptionalSecret(settings?.openrouterApiKey);
@@ -199,6 +243,13 @@ export function normalizeDesktopSettings(
       : undefined;
   const selectedProvider = normalizeProvider(settings?.selectedProvider);
   const databaseMode = normalizeDatabaseMode(settings?.databaseMode);
+  const developerShellPath = normalizeOptionalSecret(settings?.developerShellPath);
+  const developerPath = normalizeOptionalSecret(settings?.developerPath);
+  const developerShellEnvMode = settings?.developerShellEnvMode === "allowlist" ? "allowlist" : "inherit";
+  const developerShellAllowedEnvNames = Array.isArray(settings?.developerShellAllowedEnvNames)
+    ? [...new Set(settings.developerShellAllowedEnvNames.filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)))].sort()
+    : [];
+  const approvalPolicyPackId = settings?.approvalPolicyPackId === "ci_bot" || settings?.approvalPolicyPackId === "production" ? settings.approvalPolicyPackId : "dev";
   const hasAnyKey =
     openrouterApiKey !== undefined ||
     openrouterModel !== undefined ||
@@ -260,6 +311,31 @@ export function normalizeDesktopSettings(
     )
       ? LEGACY_PROVIDER_SELECTION_COMPLETED_AT
       : undefined);
+  let modelConfigurations: DesktopSettings["modelConfigurations"];
+  try {
+    modelConfigurations = settings?.modelConfigurations === undefined
+      ? [createDesktopModelConfiguration(options.fallbackModelPolicy ?? createDefaultModelPolicy())]
+      : parseDesktopModelConfigurations(settings.modelConfigurations);
+  } catch {
+    modelConfigurations = [createDesktopModelConfiguration(options.fallbackModelPolicy ?? createDefaultModelPolicy())];
+  }
+  const requestedDefaultConfigurationId = typeof settings?.defaultModelConfigurationId === "string"
+    ? settings.defaultModelConfigurationId.trim()
+    : "";
+  const defaultModelConfigurationId = modelConfigurations.some(
+    (configuration) => configuration.id === requestedDefaultConfigurationId && configuration.archivedAt === undefined,
+  )
+    ? requestedDefaultConfigurationId
+    : modelConfigurations.find((configuration) => configuration.archivedAt === undefined)?.id
+      ?? modelConfigurations[0]!.id;
+  const defaultEnabledAppIds = Array.isArray(settings?.defaultEnabledAppIds)
+    ? [...new Set(settings.defaultEnabledAppIds.filter(
+        (id): id is string => typeof id === "string" && getDesktopAppDefinition(id.trim()) !== undefined,
+      ).map((id) => id.trim()))].sort()
+    : [DESKTOP_WEATHER_APP_ID];
+  const appearanceTheme = settings?.appearanceTheme === "light" || settings?.appearanceTheme === "dark"
+    ? settings.appearanceTheme
+    : "system";
 
   return {
     selectedProvider,
@@ -267,6 +343,13 @@ export function normalizeDesktopSettings(
     presetId: "desktop_dev_local",
     capabilityPacks: normalizeDesktopCapabilityPacks(settings?.capabilityPacks),
     projects: normalizeDesktopProjects(settings?.projects),
+    mcpServers: normalizeDesktopMcpServers(settings?.mcpServers),
+    capabilityVerifications: normalizeCapabilityVerifications(settings?.capabilityVerifications),
+    ...(developerShellPath !== undefined ? { developerShellPath } : {}),
+    ...(developerPath !== undefined ? { developerPath } : {}),
+    developerShellEnvMode,
+    developerShellAllowedEnvNames,
+    approvalPolicyPackId,
     ...(databaseUrl !== undefined ? { databaseUrl } : {}),
     ...(openrouterApiKey !== undefined ? { openrouterApiKey } : {}),
     ...(openrouterModel !== undefined ? { openrouterModel } : {}),
@@ -299,14 +382,38 @@ export function normalizeDesktopSettings(
       typeof settings?.advancedWorkspaceEnabled === "boolean"
         ? settings.advancedWorkspaceEnabled
         : options.legacyAdvancedWorkspaceEnabled === true,
+    modelConfigurations,
+    defaultModelConfigurationId,
+    defaultEnabledAppIds,
+    appearanceTheme,
   };
 }
 
-export function buildDesktopRunnerProfile(modelPolicy: ResolvedModelPolicy) {
-  return resolveProfileWithModelPolicy(
+export function buildDesktopRunnerProfile(
+  modelPolicy: ResolvedModelPolicy,
+  settings?: DesktopSettings | undefined,
+) {
+  const profile = resolveProfileWithModelPolicy(
     createWebDemoProfile("desktop"),
     modelPolicy,
   );
+  if (settings === undefined) return profile;
+  const enabledServers = settings.mcpServers.filter((server) => server.enabled);
+  return {
+    ...profile,
+    approvalPolicyPackId: settings.approvalPolicyPackId,
+    devShell: {
+      ...(profile.devShell ?? { enabled: false }),
+      enabled: settings.capabilityPacks.includes("dev_shell"),
+      envMode: settings.developerShellEnvMode,
+      allowedEnvNames: [...settings.developerShellAllowedEnvNames],
+    },
+    mcpServers: enabledServers.map(toRuntimeMcpServer),
+    toolAllowlist: [
+      ...(profile.toolAllowlist ?? []),
+      ...enabledServers.flatMap((server) => server.tools?.map((tool) => `mcp.${server.id}.${tool.name}`) ?? []),
+    ],
+  };
 }
 
 export function buildDesktopRunnerEnvironment(
@@ -361,7 +468,7 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
       parsed.version !== 6 &&
       parsed.version !== 7 &&
       parsed.version !== 8 &&
-      parsed.version !== 9
+      parsed.version !== 9 && parsed.version !== 10
     ) {
       return createDefaultDesktopSettings();
     }
@@ -378,6 +485,11 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
         ? parsed.databaseMode
         : undefined;
     const databaseUrl = typeof parsed.databaseUrl === "string" ? parsed.databaseUrl : undefined;
+    const developerShellPath = typeof parsed.developerShellPath === "string" ? parsed.developerShellPath : undefined;
+    const developerPath = typeof parsed.developerPath === "string" ? parsed.developerPath : undefined;
+    const developerShellEnvMode = parsed.developerShellEnvMode === "allowlist" ? "allowlist" as const : parsed.developerShellEnvMode === "inherit" ? "inherit" as const : undefined;
+    const developerShellAllowedEnvNames = Array.isArray(parsed.developerShellAllowedEnvNames) ? parsed.developerShellAllowedEnvNames.filter((name): name is string => typeof name === "string") : undefined;
+    const approvalPolicyPackId = parsed.approvalPolicyPackId === "dev" || parsed.approvalPolicyPackId === "ci_bot" || parsed.approvalPolicyPackId === "production" ? parsed.approvalPolicyPackId : undefined;
     const openrouterApiKey = typeof parsed.openrouterApiKey === "string" ? parsed.openrouterApiKey : undefined;
     const openrouterModel = typeof parsed.openrouterModel === "string" ? parsed.openrouterModel : undefined;
     const openrouterBaseUrl = typeof parsed.openrouterBaseUrl === "string" ? parsed.openrouterBaseUrl : undefined;
@@ -410,6 +522,19 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
       parsed.advancedWorkspaceEnabled === true || parsed.advancedWorkspaceEnabled === false
         ? parsed.advancedWorkspaceEnabled
         : undefined;
+    const modelConfigurations = parsed.version === 10 && Array.isArray(parsed.modelConfigurations)
+      ? parsed.modelConfigurations
+      : undefined;
+    const defaultModelConfigurationId = parsed.version === 10 && typeof parsed.defaultModelConfigurationId === "string"
+      ? parsed.defaultModelConfigurationId
+      : undefined;
+    const defaultEnabledAppIds = parsed.version === 10 && Array.isArray(parsed.defaultEnabledAppIds)
+      ? parsed.defaultEnabledAppIds
+      : undefined;
+    const appearanceTheme = parsed.version === 10
+      && (parsed.appearanceTheme === "system" || parsed.appearanceTheme === "light" || parsed.appearanceTheme === "dark")
+      ? parsed.appearanceTheme
+      : undefined;
     const presetId = parsed.presetId === "desktop_dev_local" ? parsed.presetId : undefined;
     const capabilityPacks =
       Array.isArray(parsed.capabilityPacks) &&
@@ -418,18 +543,28 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
           entry === "balanced" ||
           entry === "filesystem" ||
           entry === "dev_shell" ||
+          entry === "desktop_host" ||
           entry === "sandbox_code",
       )
         ? parsed.capabilityPacks
         : undefined;
     const projects = Array.isArray(parsed.projects) ? normalizeDesktopProjects(parsed.projects) : undefined;
+    const mcpServers = Array.isArray(parsed.mcpServers) ? normalizeDesktopMcpServers(parsed.mcpServers) : undefined;
+    const capabilityVerifications = normalizeCapabilityVerifications(parsed.capabilityVerifications);
     return normalizeDesktopSettings({
       ...(presetId !== undefined ? { presetId } : {}),
       ...(capabilityPacks !== undefined ? { capabilityPacks } : {}),
       ...(projects !== undefined ? { projects } : {}),
+      ...(mcpServers !== undefined ? { mcpServers } : {}),
+      capabilityVerifications,
       ...(selectedProvider !== undefined ? { selectedProvider } : {}),
       ...(databaseMode !== undefined ? { databaseMode } : {}),
       ...(databaseUrl !== undefined ? { databaseUrl } : {}),
+      ...(developerShellPath !== undefined ? { developerShellPath } : {}),
+      ...(developerPath !== undefined ? { developerPath } : {}),
+      ...(developerShellEnvMode !== undefined ? { developerShellEnvMode } : {}),
+      ...(developerShellAllowedEnvNames !== undefined ? { developerShellAllowedEnvNames } : {}),
+      ...(approvalPolicyPackId !== undefined ? { approvalPolicyPackId } : {}),
       ...(openrouterApiKey !== undefined ? { openrouterApiKey } : {}),
       ...(openrouterModel !== undefined ? { openrouterModel } : {}),
       ...(openrouterBaseUrl !== undefined ? { openrouterBaseUrl } : {}),
@@ -458,8 +593,12 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
         : {}),
       ...(setupCompletedAt !== undefined ? { setupCompletedAt } : {}),
       ...(advancedWorkspaceEnabled !== undefined ? { advancedWorkspaceEnabled } : {}),
+      ...(modelConfigurations !== undefined ? { modelConfigurations } : {}),
+      ...(defaultModelConfigurationId !== undefined ? { defaultModelConfigurationId } : {}),
+      ...(defaultEnabledAppIds !== undefined ? { defaultEnabledAppIds } : {}),
+      ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
     }, {
-      backfillProviderSelection: parsed.version !== 9,
+      backfillProviderSelection: parsed.version !== 9 && parsed.version !== 10,
     });
   } catch {
     return createDefaultDesktopSettings();
@@ -468,25 +607,28 @@ export async function readDesktopSettings(settingsPath: string): Promise<Desktop
 
 export async function writeDesktopSettings(settingsPath: string, settings: DesktopSettings): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
-  const payload: DesktopSettingsFileV9 = {
-    version: 9,
+  const payload: DesktopSettingsFileV10 = {
+    version: 10,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
     presetId: normalized.presetId,
     capabilityPacks: [...normalized.capabilityPacks],
     projects: [...normalized.projects],
-    ...(normalized.databaseUrl !== undefined ? { databaseUrl: normalized.databaseUrl } : {}),
-    ...(normalized.openrouterApiKey !== undefined ? { openrouterApiKey: normalized.openrouterApiKey } : {}),
+    mcpServers: normalized.mcpServers.map((server) => ({ ...server, args: server.args !== undefined ? [...server.args] : undefined, tools: server.tools?.map((tool) => ({ ...tool, allowedInteractionModes: tool.allowedInteractionModes !== undefined ? [...tool.allowedInteractionModes] : undefined })), credentials: server.credentials?.map((binding) => ({ ...binding })) })),
+    capabilityVerifications: { ...normalized.capabilityVerifications },
+    ...(normalized.developerShellPath !== undefined ? { developerShellPath: normalized.developerShellPath } : {}),
+    ...(normalized.developerPath !== undefined ? { developerPath: normalized.developerPath } : {}),
+    developerShellEnvMode: normalized.developerShellEnvMode,
+    developerShellAllowedEnvNames: [...normalized.developerShellAllowedEnvNames],
+    approvalPolicyPackId: normalized.approvalPolicyPackId,
     ...(normalized.openrouterModel !== undefined ? { openrouterModel: normalized.openrouterModel } : {}),
     ...(normalized.openrouterBaseUrl !== undefined ? { openrouterBaseUrl: normalized.openrouterBaseUrl } : {}),
     ...(normalized.openrouterSiteUrl !== undefined ? { openrouterSiteUrl: normalized.openrouterSiteUrl } : {}),
     ...(normalized.openrouterAppName !== undefined ? { openrouterAppName: normalized.openrouterAppName } : {}),
-    ...(normalized.openaiApiKey !== undefined ? { openaiApiKey: normalized.openaiApiKey } : {}),
     ...(normalized.openaiModel !== undefined ? { openaiModel: normalized.openaiModel } : {}),
     ...(normalized.openaiBaseUrl !== undefined ? { openaiBaseUrl: normalized.openaiBaseUrl } : {}),
     ...(normalized.openaiOrgId !== undefined ? { openaiOrgId: normalized.openaiOrgId } : {}),
     ...(normalized.openaiProjectId !== undefined ? { openaiProjectId: normalized.openaiProjectId } : {}),
-    ...(normalized.anthropicApiKey !== undefined ? { anthropicApiKey: normalized.anthropicApiKey } : {}),
     ...(normalized.anthropicModel !== undefined ? { anthropicModel: normalized.anthropicModel } : {}),
     ...(normalized.anthropicBaseUrl !== undefined ? { anthropicBaseUrl: normalized.anthropicBaseUrl } : {}),
     ...(normalized.anthropicVersion !== undefined ? { anthropicVersion: normalized.anthropicVersion } : {}),
@@ -494,7 +636,6 @@ export async function writeDesktopSettings(settingsPath: string, settings: Deskt
     ...(normalized.ollamaBaseUrl !== undefined ? { ollamaBaseUrl: normalized.ollamaBaseUrl } : {}),
     ...(normalized.lmstudioModel !== undefined ? { lmstudioModel: normalized.lmstudioModel } : {}),
     ...(normalized.lmstudioBaseUrl !== undefined ? { lmstudioBaseUrl: normalized.lmstudioBaseUrl } : {}),
-    ...(normalized.tavilyApiKey !== undefined ? { tavilyApiKey: normalized.tavilyApiKey } : {}),
     ...(normalized.tavilyBaseUrl !== undefined ? { tavilyBaseUrl: normalized.tavilyBaseUrl } : {}),
     ...(normalized.tavilyProject !== undefined ? { tavilyProject: normalized.tavilyProject } : {}),
     ...(normalized.tavilyHttpProxy !== undefined ? { tavilyHttpProxy: normalized.tavilyHttpProxy } : {}),
@@ -504,10 +645,22 @@ export async function writeDesktopSettings(settingsPath: string, settings: Deskt
       : {}),
     ...(normalized.setupCompletedAt !== undefined ? { setupCompletedAt: normalized.setupCompletedAt } : {}),
     advancedWorkspaceEnabled: normalized.advancedWorkspaceEnabled,
+    modelConfigurations: normalized.modelConfigurations,
+    defaultModelConfigurationId: normalized.defaultModelConfigurationId,
+    defaultEnabledAppIds: normalized.defaultEnabledAppIds,
+    appearanceTheme: normalized.appearanceTheme,
   };
   await mkdir(path.dirname(settingsPath), { recursive: true });
   await writeFile(settingsPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  return normalized;
+  const {
+    databaseUrl: _databaseUrl,
+    openrouterApiKey: _openrouterApiKey,
+    openaiApiKey: _openaiApiKey,
+    anthropicApiKey: _anthropicApiKey,
+    tavilyApiKey: _tavilyApiKey,
+    ...sanitized
+  } = normalized;
+  return sanitized;
 }
 
 function normalizeOptionalSecret(value: unknown): string | undefined {
@@ -568,4 +721,96 @@ function normalizeDesktopProjects(
     });
   }
   return normalized;
+}
+
+function normalizeDesktopMcpServers(
+  servers: readonly DesktopMcpServerConfig[] | undefined,
+): DesktopMcpServerConfig[] {
+  if (Array.isArray(servers) === false) return [];
+  const normalized = new Map<string, DesktopMcpServerConfig>();
+  for (const candidate of servers) {
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    if (/^[a-zA-Z0-9._-]+$/u.test(id) === false) continue;
+    const name = typeof candidate.name === "string" && candidate.name.trim().length > 0
+      ? candidate.name.trim()
+      : id;
+    const enabled = candidate.enabled === true;
+    const tools = Array.isArray(candidate.tools)
+      ? candidate.tools
+        .filter((tool: { name?: unknown }) => typeof tool?.name === "string" && tool.name.trim().length > 0)
+        .map((tool: { name: string; description?: unknown; approvalMode?: unknown; allowedInteractionModes?: unknown }) => ({
+          name: tool.name.trim(),
+          ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+          approvalMode: tool.approvalMode === "auto" ? "auto" as const : "ask" as const,
+          allowedInteractionModes: Array.isArray(tool.allowedInteractionModes)
+            ? [...new Set(tool.allowedInteractionModes.filter((mode): mode is "chat" | "plan" | "build" => mode === "chat" || mode === "plan" || mode === "build"))]
+            : ["build" as const],
+        }))
+      : [];
+    const credentials = Array.isArray(candidate.credentials)
+      ? candidate.credentials.flatMap((raw: unknown) => {
+          if (typeof raw !== "object" || raw === null) return [];
+          const binding = raw as Record<string, unknown>;
+          if ((binding.kind !== "bearer" && binding.kind !== "header" && binding.kind !== "environment")
+            || typeof binding.credentialId !== "string"
+            || binding.credentialId.startsWith(`mcp.${id}.`) === false
+            || typeof binding.envKey !== "string"
+            || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.envKey) === false) return [];
+          const name = typeof binding.name === "string" ? binding.name : undefined;
+          if (binding.kind !== "bearer" && name === undefined) return [];
+          return [{ kind: binding.kind, ...(name !== undefined ? { name } : {}), credentialId: binding.credentialId as `mcp.${string}`, envKey: binding.envKey, configured: binding.configured === true }];
+        })
+      : [];
+    if (candidate.transport === "stdio" && typeof candidate.command === "string" && candidate.command.trim().length > 0) {
+      normalized.set(id, {
+        id, name, transport: "stdio", command: candidate.command.trim(),
+        ...(Array.isArray(candidate.args) ? { args: candidate.args.filter((arg: unknown): arg is string => typeof arg === "string") } : {}),
+        enabled, source: "Kestrel Desktop", sourceKind: "desktop-managed", tools, toolCount: tools.length, credentials,
+        ...(typeof candidate.verifiedAt === "string" && Number.isNaN(Date.parse(candidate.verifiedAt)) === false ? { verifiedAt: new Date(candidate.verifiedAt).toISOString() } : {}),
+      });
+    } else if ((candidate.transport === "http" || candidate.transport === "sse") && typeof candidate.url === "string") {
+      try {
+        const url = new URL(candidate.url.trim());
+        if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+        normalized.set(id, {
+          id, name, transport: candidate.transport, url: url.toString(), enabled,
+          source: "Kestrel Desktop", sourceKind: "desktop-managed", tools, toolCount: tools.length, credentials,
+          ...(typeof candidate.verifiedAt === "string" && Number.isNaN(Date.parse(candidate.verifiedAt)) === false ? { verifiedAt: new Date(candidate.verifiedAt).toISOString() } : {}),
+        });
+      } catch {
+        // Ignore invalid remote URLs while retaining other managed servers.
+      }
+    }
+  }
+  return [...normalized.values()];
+}
+
+function normalizeCapabilityVerifications(value: unknown): DesktopSettings["capabilityVerifications"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const normalized: DesktopSettings["capabilityVerifications"] = {};
+  for (const [id, timestamp] of Object.entries(value)) {
+    if (typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp))) continue;
+    normalized[id as keyof DesktopSettings["capabilityVerifications"]] = new Date(timestamp).toISOString();
+  }
+  return normalized;
+}
+
+function toRuntimeMcpServer(server: DesktopMcpServerConfig): McpServerConfig {
+  const toolMetadata = Object.fromEntries((server.tools ?? []).map((tool) => [tool.name, {
+    displayName: tool.name,
+    aliases: [],
+    keywords: [],
+    provider: server.name,
+    toolFamily: "mcp",
+    capabilityClasses: ["mcp.invoke"],
+    approvalMode: tool.approvalMode ?? "ask",
+    allowedInteractionModes: tool.allowedInteractionModes ?? ["build"],
+  }]));
+  if (server.transport === "stdio") {
+    return { id: server.id, transport: "stdio", command: server.command!, ...(server.args !== undefined ? { args: [...server.args] } : {}), enabled: true, ...(Object.keys(toolMetadata).length > 0 ? { toolMetadata } : {}) };
+  }
+  const bearer = server.credentials?.find((binding) => binding.kind === "bearer");
+  const headers = server.credentials?.filter((binding) => binding.kind === "header") ?? [];
+  return { id: server.id, transport: server.transport, url: server.url!, enabled: true, ...(bearer !== undefined ? { authTokenEnv: bearer.envKey } : {}), ...(headers.length > 0 ? { headerEnvs: Object.fromEntries(headers.map((binding) => [binding.name!, binding.envKey])) } : {}), ...(Object.keys(toolMetadata).length > 0 ? { toolMetadata } : {}) };
 }

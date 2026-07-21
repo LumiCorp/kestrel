@@ -34,6 +34,8 @@ const screenshotPath = path.join(evidenceDir, "renderer.png");
 const missionControlScreenshotPath = path.join(evidenceDir, "mission-control.png");
 const projectsScreenshotPath = path.join(evidenceDir, "projects.png");
 const mcpScreenshotPath = path.join(evidenceDir, "mcp.png");
+const mcpEditorScreenshotPath = path.join(evidenceDir, "mcp-editor.png");
+const settingsScreenshotPath = path.join(evidenceDir, "settings.png");
 const diagnosticsScreenshotPath = path.join(evidenceDir, "diagnostics.png");
 const evidencePath = path.join(evidenceDir, "evidence.json");
 
@@ -115,6 +117,7 @@ try {
   await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
   await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
+  await window.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
   const terminalBootState = await window.evaluate(async () => {
     const bridge = (globalThis as typeof globalThis & {
       kestrelDesktop?: {
@@ -178,9 +181,12 @@ try {
   assert.equal(renderer.appInfo.version, mainProcess.version, "Main and preload versions must agree.");
   assert.equal(renderer.appInfo.version, expectedDesktopVersion, "Packaged Desktop must report its manifest version.");
   assert.equal(renderer.bridgeInfo.connected, true, "Desktop preload bridge must be connected.");
-  assert.equal(renderer.bridgeInfo.version, "3", "Packaged Desktop must expose bridge version 3.");
+  assert.equal(renderer.bridgeInfo.version, "4", "Packaged Desktop must expose bridge version 4.");
+  assert.equal(renderer.bridgeInfo.capabilities.includes("capability_registry"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("runtime_inspection"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("mission_control"), true);
+  assert.equal(renderer.bridgeInfo.capabilities.includes("attachments"), true);
+  assert.equal(renderer.bridgeInfo.capabilities.includes("operator_control"), true);
   assert.equal(renderer.bootState.phase, "ready", renderer.bootState.code ?? renderer.bootState.message);
   assert.equal(renderer.hasRoot, true, "Packaged Desktop must mount the Vite renderer root.");
   assert.equal(renderer.hasNextAsset, false, "Packaged Desktop must not load Next.js assets.");
@@ -355,14 +361,19 @@ function readDesktopVersion(root: string): string {
 }
 
 async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string, string>> {
-  await window.getByRole("button", { name: "Configure provider and model", exact: true }).click();
-  await window.getByRole("dialog", { name: "Model provider", exact: true }).waitFor({ timeout: 30_000 });
-  assert.equal(
-    (await window.getByRole("textbox", { name: "Model ID", exact: true }).inputValue()).length > 0,
-    true,
-    "Provider settings must expose the configured model ID.",
-  );
-  await window.getByRole("button", { name: "Close model provider settings", exact: true }).click();
+  await openRendererSurface(window, "Settings", "Settings");
+  for (const capability of ["OpenRouter", "MCP connections", "Developer shell", "Sandboxed code execution", "Runtime database", "Microphone"]) {
+    await window.getByRole("heading", { name: capability, exact: true }).waitFor({ timeout: 30_000 });
+  }
+  const databaseCard = window.locator(".capability-card").filter({ hasText: "Runtime database" });
+  await databaseCard.getByRole("button", { name: "Configure", exact: true }).click();
+  await window.getByRole("dialog", { name: "Runtime database", exact: true }).waitFor({ timeout: 30_000 });
+  await window.getByRole("combobox", { name: /Storage mode/u }).selectOption("external");
+  assert.equal(await window.getByRole("option", { name: "External PostgreSQL", exact: true }).count(), 1);
+  assert.equal(await window.getByLabel(/PostgreSQL connection URL/u).getAttribute("type"), "password");
+  await window.getByRole("button", { name: "Close capability settings", exact: true }).click();
+  await assertNoSurfaceError(window, "Settings");
+  await window.screenshot({ path: settingsScreenshotPath, fullPage: true });
 
   await openRendererSurface(window, "Mission control", "Mission control");
   await window.getByText("No tasks in this session", { exact: true }).waitFor({ timeout: 30_000 });
@@ -383,6 +394,16 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
   await openRendererSurface(window, "MCP servers", "MCP servers");
   await assertNoSurfaceError(window, "MCP servers");
   await window.screenshot({ path: mcpScreenshotPath, fullPage: true });
+  await window.getByRole("button", { name: "Add server", exact: true }).click();
+  await window.getByRole("dialog", { name: "Add server", exact: true }).waitFor({ timeout: 30_000 });
+  await window.getByRole("button", { name: "Add credential", exact: true }).click();
+  assert.equal(
+    await window.locator(".mcp-credential-row input[type='password']").count(),
+    1,
+    "MCP credentials must use a write-only password field.",
+  );
+  await window.screenshot({ path: mcpEditorScreenshotPath, fullPage: true });
+  await window.getByRole("button", { name: "Close MCP server editor", exact: true }).click();
 
   await openRendererSurface(window, "Diagnostics", "Diagnostics");
   await assertNoSurfaceError(window, "Diagnostics");
@@ -393,6 +414,8 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
     missionControl: missionControlScreenshotPath,
     projects: projectsScreenshotPath,
     mcp: mcpScreenshotPath,
+    mcpEditor: mcpEditorScreenshotPath,
+    settings: settingsScreenshotPath,
     diagnostics: diagnosticsScreenshotPath,
   };
 }

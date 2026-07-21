@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  acceptRendererPrompt,
   addRendererThread,
   appendRendererTranscript,
   createRendererThread,
@@ -13,6 +14,8 @@ import {
   readDesktopRendererState,
   resolveRendererThreadProjectPath,
   serializeDesktopRendererState,
+  updateRendererDraft,
+  updateRendererDraftAttachments,
   toDesktopRunHistory,
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
@@ -381,4 +384,52 @@ test("Vite renderer bounds persisted transcript history below the UI-state cap",
   );
   assert.ok(persisted.length <= MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD);
   assert.match(persisted.at(-1)?.text ?? "", /^699:/u);
+});
+
+test("Vite renderer persists independent drafts, attachment references, and bounded prompt history", () => {
+  let state = readDesktopRendererState(null);
+  const firstId = state.activeThreadId;
+  state = updateRendererDraft(state, firstId, "unfinished first");
+  for (let index = 0; index < 105; index += 1) {
+    state = acceptRendererPrompt(state, firstId, `prompt ${index}`);
+  }
+  state = updateRendererDraft(state, firstId, "unfinished first");
+  state = updateRendererDraftAttachments(state, firstId, ["attachment-1"]);
+  state = addRendererThread(state);
+  const secondId = state.activeThreadId;
+  state = updateRendererDraft(state, secondId, "unfinished second");
+
+  const reloaded = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "vite-renderer",
+    sourceAppVersion: "0.6.0",
+    capturedAt: new Date().toISOString(),
+    entries: serializeDesktopRendererState(state),
+  });
+  const first = reloaded.threads.find((thread) => thread.id === firstId)!;
+  const second = reloaded.threads.find((thread) => thread.id === secondId)!;
+  assert.equal(first.draft, "unfinished first");
+  assert.deepEqual(first.draftAttachmentIds, ["attachment-1"]);
+  assert.equal(first.promptHistory.length, 100);
+  assert.equal(first.promptHistory[0], "prompt 5");
+  assert.equal(second.draft, "unfinished second");
+});
+
+test("Vite renderer migrates legacy per-thread composer drafts and prompt history", () => {
+  const initial = readDesktopRendererState(null);
+  const thread = initial.threads[0]!;
+  const entries = serializeDesktopRendererState(initial);
+  entries["kchat:web:composer-drafts:v1"] = JSON.stringify({ [thread.id]: "legacy draft" });
+  entries["kchat:web:prompt-history:v1"] = JSON.stringify({ [thread.id]: ["one", "two"] });
+  delete entries["kestrel:desktop-interaction-state:v1"];
+
+  const migrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "legacy-local-storage",
+    sourceAppVersion: "0.5.0",
+    capturedAt: new Date().toISOString(),
+    entries,
+  });
+  assert.equal(migrated.threads[0]?.draft, "legacy draft");
+  assert.deepEqual(migrated.threads[0]?.promptHistory, ["one", "two"]);
 });

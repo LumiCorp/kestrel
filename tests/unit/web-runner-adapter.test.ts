@@ -432,6 +432,38 @@ class MockTransport implements ProtocolTransport {
   }
 }
 
+test("web adapter accepts a trusted per-turn inline profile and provenance metadata", async () => {
+  const transport = new MockTransport();
+  const adapter = createWebRunnerAdapter({
+    profile: { ...createWebDemoProfile(), id: "base" },
+    transportFactory: () => transport,
+  });
+  const profile = {
+    ...createWebDemoProfile(),
+    id: "selected",
+    modelProvider: "openai" as const,
+    model: "gpt-5.4",
+    toolAllowlist: ["free.weather.current"],
+  };
+
+  await adapter.runTurnStream({
+    sessionId: "profile-selection-session",
+    message: "weather",
+    eventType: "user.message",
+    metadata: { desktopExecutionSelection: { revision: 2 } },
+  }, { onEvent() {} }, { profile });
+
+  const command = transport.sent.find((entry) => entry.type === "run.start");
+  const payload = command?.payload as {
+    profile?: { id?: string; model?: string; toolAllowlist?: string[] };
+    turn?: { metadata?: Record<string, unknown> };
+  };
+  assert.equal(payload.profile?.id, profile.id);
+  assert.equal(payload.profile?.model, "gpt-5.4");
+  assert.deepEqual(payload.profile?.toolAllowlist, ["free.weather.current"]);
+  assert.deepEqual(payload.turn?.metadata, { desktopExecutionSelection: { revision: 2 } });
+});
+
 class SlowRunTransport implements ProtocolTransport {
   constructor(private readonly runtimeThreadId?: string) {}
 

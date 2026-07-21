@@ -73,7 +73,7 @@ const WEATHER_HOURLY_ENTRY_LIMIT = 12;
 const CONTROL_TOOLS: ModelToolSpec[] = [
   {
     name: "kestrel.finalize",
-    description: "Finish the run with a user-facing answer. Use status goal_satisfied only when the requested outcome and explicit constraints are supported by observed evidence. Before finalizing, every visible todo must be done; if evidence already proves the last item complete, combine its kestrel.todo_update closure with this call. Do not call this tool by itself while a visible todo remains open. Claim only checks that actually ran. Preserve any user-required literal marker or output token exactly, including capitalization. Report any unverified result in the message and data.openGap or data.knownWarnings; otherwise keep working or report the concrete blocker. Do not put changedFiles, checksRun, or checksFailed in data; the runtime derives those facts from observed tool results.",
+    description: "Finish the run with a user-facing answer. Use status goal_satisfied only when the requested outcome and explicit constraints are supported by observed evidence. Before finalizing, every visible todo must be done; if evidence already proves the last item complete, combine its kestrel.todo_update closure with this call. Do not call this tool by itself while a visible todo remains open. Claim only checks that actually ran. Preserve any user-required literal marker or output token exactly, including capitalization. Report any unverified result in the message and data.openGap or data.knownWarnings; otherwise keep working or report the concrete blocker. When a running exec_command process is itself part of the requested completed result, list its exact active sessionId in data.keepRunningSessionIds and state in the message that it remains running, including an observed endpoint when available. Do not retain tests, installers, validation commands, or accidental watchers. Do not put changedFiles, checksRun, or checksFailed in data; the runtime derives those facts from observed tool results.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -82,7 +82,15 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
         message: { type: "string", minLength: 1 },
         data: {
           type: "object",
-          description: "Optional caller-facing structured data. Do not include changedFiles, checksRun, or checksFailed; runtime evidence owns those facts.",
+          description: "Optional caller-facing structured data. keepRunningSessionIds may identify exact active exec_command sessions that are intentionally part of the completed result. Do not include changedFiles, checksRun, or checksFailed; runtime evidence owns those facts.",
+          properties: {
+            keepRunningSessionIds: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+              uniqueItems: true,
+            },
+          },
+          additionalProperties: true,
         },
       },
       required: ["status", "message"],

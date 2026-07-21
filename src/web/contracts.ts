@@ -23,6 +23,7 @@ import type {
 } from "../mode/contracts.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
 import type { WorkspaceGitAction } from "../git/contracts.js";
+import type { TuiProfile } from "../../cli/contracts.js";
 
 interface WebHistoryLineBase {
   text: string;
@@ -60,6 +61,7 @@ export interface WebRunTurnRequest {
   resumeRequestId?: string | undefined;
   workspace?: WorkspaceRuntimeContext | undefined;
   attachments?: RunTurnAttachment[] | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export type WebControlCommand =
@@ -113,14 +115,20 @@ export type WebControlCommand =
         | "reply"
         | "steer"
         | "retry"
+        | "continue_waiting"
         | "focus_thread"
         | "resolve_context_checkpoint"
         | "approve_assembly_change"
         | "reject_assembly_change"
         | "spawn_child_thread"
         | "supersede_child_thread"
-        | "resolve_fan_in_checkpoint";
+        | "resolve_fan_in_checkpoint"
+        | "enqueue_follow_up"
+        | "edit_follow_up"
+        | "cancel_follow_up"
+        | "resume_follow_up_queue";
       threadId: string;
+      followUpId?: string | undefined;
       requestId?: string | undefined;
       proposalId?: string | undefined;
       checkpointId?: string | undefined;
@@ -137,6 +145,9 @@ export type WebControlCommand =
         | undefined;
       message?: string | undefined;
       attachments?: RunTurnAttachment[] | undefined;
+      attachmentIds?: string[] | undefined;
+      interactionMode?: "chat" | "plan" | "build" | undefined;
+      actSubmode?: "strict" | "safe" | "full_auto" | undefined;
       title?: string | undefined;
       rolePrompt?: string | undefined;
       goal?: string | undefined;
@@ -384,4 +395,6 @@ export interface WebRunTurnStreamOptions {
 export interface WebRunnerRequestContext {
   actor?: RunnerActorMetadata | undefined;
   tenantId?: string | undefined;
+  /** Trusted caller-only inline profile override for this request. */
+  profile?: TuiProfile | undefined;
 }

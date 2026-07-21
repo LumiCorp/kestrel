@@ -37,6 +37,7 @@ test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
 
     assert.equal(config.repoRoot, repoRoot);
     assert.equal(config.bootHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "boot.html"));
+    assert.equal(config.iconPath, path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png"));
     assert.equal(config.rendererHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "renderer", "index.html"));
     assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
     assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
@@ -61,6 +62,7 @@ test("resolveDesktopPathConfig uses packaged resource paths in production", () =
 
   assert.equal(config.repoRoot, path.join(resourcesPath, "kestrel-repo"));
   assert.equal(config.bootHtmlPath, path.join(resourcesPath, "static", "boot.html"));
+  assert.equal(config.iconPath, path.join(resourcesPath, "kestrel-head.png"));
   assert.equal(config.rendererHtmlPath, path.join(resourcesPath, "static", "renderer", "index.html"));
   assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
   assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");

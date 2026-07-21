@@ -10,7 +10,7 @@ const bodySchema = z.object({ messageId: routeIdSchema }).strict();
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { id } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     const readState = await markMobileV2ThreadRead({ threadId: id, organizationId, userId: session.user.id, messageId: body.messageId });

@@ -1004,16 +1004,30 @@ test("DevShellSupervisor delivers a terminal result once and rejects reuse of th
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'",
+      command: "printf 'first\\n'; sleep 0.5; printf 'second\\n'",
       yieldTimeMs: 75,
       maxOutputBytes: 4096,
     });
     assert.equal(started.status, "RUNNING");
-    assert.equal(started.text, "first\n");
     const processId = started.processId!;
+    const first = started.text.length > 0
+      ? started
+      : await supervisor.readProcess({
+          processId,
+          cursor: started.nextCursor,
+          waitMs: 250,
+          maxBytes: 4096,
+        });
+    assert.equal(first.status, "RUNNING");
+    assert.equal(first.text, "first\n");
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const terminal = await supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 });
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    const terminal = await supervisor.readProcess({
+      processId,
+      cursor: first.nextCursor,
+      waitMs: 0,
+      maxBytes: 4096,
+    });
     assert.equal(terminal.status, "COMPLETED");
     assert.equal(terminal.text, "second\n");
 

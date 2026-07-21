@@ -2,12 +2,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DESKTOP_BRIDGE_CAPABILITIES,
+  DESKTOP_BRIDGE_VERSION,
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
+  parseDesktopOperatorControlRequest,
   parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
+
+test("Desktop bridge v6 exposes workspace, attachment, and operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "6");
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
+  assert.deepEqual(parseDesktopOperatorControlRequest({
+    action: "reply",
+    threadId: "thread-1",
+    requestId: "request-1",
+    message: "Use these files",
+    attachmentIds: ["attachment-1"],
+  }), {
+    action: "reply",
+    threadId: "thread-1",
+    requestId: "request-1",
+    message: "Use these files",
+    attachmentIds: ["attachment-1"],
+  });
+  assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
+});
 
 test("Desktop UI state accepts only the versioned legacy storage contract", () => {
   const state = parseDesktopUiStateV1({
@@ -41,10 +64,15 @@ test("Desktop UI state rejects unknown storage keys and non-string values", () =
 
 test("Desktop run requests admit only tagged runtime system prompts", () => {
   const timestamp = "2026-07-09T12:00:00.000Z";
+  const executionSelection = {
+    modelConfiguration: { id: "desktop-default", revision: 1 },
+    apps: [],
+  };
   const request = parseDesktopRunTurnRequest({
     sessionId: "session-1",
     message: "Continue",
     eventType: "user.reply",
+    executionSelection,
     history: [
       { role: "user", text: "Start", timestamp },
       {
@@ -72,6 +100,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       eventType: "user.reply",
       projectPath: "  /workspace/project-a  ",
       workspaceMode: "managed",
+      executionSelection,
     }).projectPath,
     "/workspace/project-a",
   );
@@ -81,6 +110,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       workspaceMode: "local",
+      executionSelection,
     }).workspaceMode,
     "local",
   );
@@ -90,6 +120,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       workspaceBaseRef: "release/v2",
+      executionSelection,
     }).workspaceBaseRef,
     "release/v2",
   );
@@ -98,6 +129,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-1",
       message: "Continue",
       eventType: "user.reply",
+      executionSelection,
       workspaceSetup: {
         approvedIgnoredFiles: [".env"],
         steps: [{ id: "install", label: "Install", executable: "pnpm", args: ["install"] }],
@@ -123,6 +155,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-1",
       message: "Review this file",
       eventType: "user.message",
+      executionSelection,
       attachments: [attachment],
       history: [{ role: "user", text: "Earlier file", timestamp, attachments: [attachment] }],
     }).attachments,
@@ -133,6 +166,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-2",
       message: "Review this file",
       eventType: "user.message",
+      executionSelection,
       attachments: [attachment],
     }),
     /attachments must belong to the active session/u,
@@ -142,6 +176,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-1",
       message: "Continue",
       eventType: "user.reply",
+      executionSelection,
       workspaceMode: "shared",
     }),
     /workspaceMode is invalid/u,
@@ -152,6 +187,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       projectPath: 42,
+      executionSelection,
     }),
     /projectPath.*must be a non-empty string/u,
   );
@@ -160,6 +196,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-1",
       message: "Continue",
       eventType: "user.reply",
+      executionSelection,
       history: [{ role: "system", text: "Local status", timestamp }],
     }),
     /must be tagged as runtime\.waiting_prompt/u,

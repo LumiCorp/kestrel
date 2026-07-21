@@ -4,9 +4,9 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { mobileErrorResponse } from "@/lib/mobile/http";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const organizations = await knowledgeDb
       .select({
         id: schema.organizations.id,

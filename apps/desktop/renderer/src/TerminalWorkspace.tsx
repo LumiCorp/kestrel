@@ -9,7 +9,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import "@xterm/xterm/css/xterm.css";
 
 import type { DesktopUserTerminal } from "../../src/contracts";
 

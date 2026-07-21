@@ -42,7 +42,7 @@ const createSchema = z
 
 export async function GET(request: NextRequest) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const query = querySchema.parse(
       Object.fromEntries(request.nextUrl.searchParams.entries())
     );
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const body = createSchema.parse(await request.json());
     const idempotencyKey = request.headers.get("idempotency-key")?.trim();
     if (!idempotencyKey) {

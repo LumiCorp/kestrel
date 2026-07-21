@@ -125,6 +125,9 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     }
   }
   const databaseMode = normalizeDatabaseMode(options.databaseMode);
+  const externalDatabaseUrl = databaseMode === "external"
+    ? resolveExternalDatabaseUrl(options)
+    : undefined;
   const manifestCapabilities = [
     "local-core.contract.v2",
     "local-core.state-epoch.0.6",
@@ -156,7 +159,12 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     await writeCoreManifest(home.homePath, manifest);
   }
 
-  const database = await resolveDatabaseStatus(options, paths, databaseMode);
+  const database = await resolveDatabaseStatus(
+    options,
+    paths,
+    databaseMode,
+    externalDatabaseUrl,
+  );
   if (database.state === "blocked") {
     return blockedStatus({
       summary: database.summary,
@@ -208,7 +216,7 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
         coreVersion: options.coreVersion,
         schemaVersion,
         ownerExecutable: options.ownerExecutable ?? process.execPath,
-        databaseUrl: database.databaseUrl ?? "",
+        databaseUrl: externalDatabaseUrl ?? "",
         repoRoot: options.repoRoot ?? "",
         env: options.env,
         now: options.now,
@@ -240,7 +248,6 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
     dbMode: database.mode,
     database,
     ...(migrations !== undefined ? { migrations } : {}),
-    databaseUrl: database.databaseUrl,
     databaseSocketPath: database.socketPath,
     settingsReady: true,
     workspaceRegistryReady: true,
@@ -253,11 +260,11 @@ async function resolveDatabaseStatus(
   options: EnsureLocalCoreReadyOptions,
   paths: ReturnType<typeof resolveLocalCorePaths>,
   mode: LocalCoreConfiguredDatabaseMode,
+  externalDatabaseUrl?: string | undefined,
 ): Promise<LocalCoreDatabaseStatus> {
   const repoRoot = normalizeString(options.repoRoot);
   if (mode === "external") {
-    const databaseUrl = options.externalDatabaseUrl
-      ?? (options.allowInheritedDatabaseUrl === true ? normalizeString(options.env?.DATABASE_URL) : undefined);
+    const databaseUrl = externalDatabaseUrl;
     if (databaseUrl === undefined) {
       return {
         mode: "external",
@@ -287,7 +294,6 @@ async function resolveDatabaseStatus(
         initialized: true,
         running: true,
         identityVerified: true,
-        databaseUrl,
       };
     } catch (error) {
       return {
@@ -298,7 +304,6 @@ async function resolveDatabaseStatus(
         initialized: false,
         running: false,
         identityVerified: false,
-        databaseUrl,
         lastError: {
           code: "LOCAL_CORE_EXTERNAL_DATABASE_INIT_FAILED",
           message: error instanceof Error ? error.message : String(error),
@@ -363,6 +368,15 @@ function classifyManifestCompatibility(
     };
   }
   return ;
+}
+
+function resolveExternalDatabaseUrl(
+  options: EnsureLocalCoreReadyOptions,
+): string | undefined {
+  return normalizeString(options.externalDatabaseUrl)
+    ?? (options.allowInheritedDatabaseUrl === true
+      ? normalizeString(options.env?.DATABASE_URL)
+      : undefined);
 }
 
 function normalizeDatabaseMode(

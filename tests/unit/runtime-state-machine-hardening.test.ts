@@ -1418,6 +1418,70 @@ test("dev shell tools reuse valid persisted managed worktree bindings without au
   assert.equal(runEventTypes.includes("managed_worktree.bound"), false);
 });
 
+test("successful finalization leaves an intentionally retained exec_command session running", async () => {
+  const store = new InMemorySessionStore();
+  const initialSession = await store.ensureSession("retained-process-session", "agent.exec.finalize");
+  await store.patchSessionState?.({
+    sessionId: "retained-process-session",
+    expectedVersion: initialSession.version,
+    statePatch: {
+      agent: {
+        exec: {
+          devShell: {
+            processes: {
+              "proc-app": {
+                processId: "proc-app",
+                ownerRunId: "run-retained-process",
+                status: "RUNNING",
+              },
+            },
+          },
+        },
+        nextAction: {
+          kind: "finalize",
+          finalizeReason: "goal_satisfied",
+          input: {
+            message: "The app remains running at http://localhost:3000.",
+            data: { keepRunningSessionIds: ["proc-app"] },
+          },
+        },
+      },
+    },
+  });
+  const cleanupCalls: Array<{ name: string; input: unknown }> = [];
+  const kestrel = createRuntime(store, {}, {
+    toolGateway: {
+      call: async (name, input) => {
+        cleanupCalls.push({ name, input });
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { status: "stopped" } });
+      },
+    },
+  });
+  kestrel.registerStep("agent.exec.finalize", async (context) => ({
+    status: "COMPLETED",
+    statePatch: {
+      agent: context.session.state.agent,
+    },
+  }));
+
+  const output = await kestrel.run({
+    id: "evt-retained-process",
+    type: "system.resume",
+    sessionId: "retained-process-session",
+    stepAgent: "agent.exec.finalize",
+    payload: {},
+  });
+
+  assert.equal(output.status, "COMPLETED");
+  assert.deepEqual(cleanupCalls, []);
+  const completedSession = await store.getSession("retained-process-session");
+  const agent = completedSession?.state.agent as Record<string, unknown>;
+  const exec = agent.exec as Record<string, unknown>;
+  const devShell = exec.devShell as Record<string, unknown>;
+  const processes = devShell.processes as Record<string, Record<string, unknown>>;
+  assert.equal(processes["proc-app"]?.status, "RUNNING");
+});
+
 test("cancelActiveRun releases persisted managed worktree leases and records terminal events", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-cancel-managed-worktree-"));
   const repo = path.join(root, "repo");

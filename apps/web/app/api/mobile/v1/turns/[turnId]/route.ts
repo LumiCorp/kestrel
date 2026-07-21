@@ -14,7 +14,7 @@ export async function DELETE(
   context: { params: Promise<{ turnId: string }> }
 ) {
   try {
-    const { session, organizationId } = await requireActiveOrganization();
+    const { session, organizationId } = await requireActiveOrganization(request);
     const { turnId } = paramsSchema.parse(await context.params);
     const removed = await removeQueuedDurableTurn({
       turnId,

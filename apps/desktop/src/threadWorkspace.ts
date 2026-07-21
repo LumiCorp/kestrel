@@ -29,6 +29,11 @@ export function resolveDesktopThreadWorkspace(input: {
   return {
     workspaceId: deriveDesktopWorkspaceId(workspaceRoot),
     workspaceRoot,
+    ...(requestedProjectPath !== undefined
+      ? {
+          sourceWorkspaceRoot: workspaceRoot,
+        }
+      : {}),
     launchCwd: workspaceRoot,
     appRoot: ".",
     commands: {},

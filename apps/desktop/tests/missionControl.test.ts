@@ -201,6 +201,30 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               expectedNextCommand: "pnpm desktop:test",
               commandNames: ["pnpm desktop:test"],
             },
+            activeRun: { runId: "run-1", status: "RUNNING" },
+            followUpQueue: {
+              state: "paused",
+              pauseReason: "operator",
+              items: [{
+                followUpId: "follow-up-1",
+                message: "Run the package smoke next.",
+                attachmentIds: ["attachment-1"],
+                interactionMode: "build",
+                actSubmode: "safe",
+                createdAt: "2026-07-10T12:00:00.000Z",
+                state: "queued",
+              }],
+            },
+            inboxItems: [{
+              itemId: "request:request-1",
+              kind: "user_input_request",
+              threadId: "thread-main:session-1",
+              sessionId: "session-1",
+              title: "Choose the verification target.",
+              actionable: true,
+              requestId: "request-1",
+              createdAt: "2026-07-10T12:00:00.000Z",
+            }],
           },
         },
       };
@@ -232,6 +256,10 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   assert.equal(response.blocker?.summary, "Desktop package smoke is required.");
   assert.equal(response.nextAction?.checkpointId, "checkpoint-1");
   assert.deepEqual(response.runtimePlan?.commandNames, ["pnpm desktop:test"]);
+  assert.deepEqual(response.activeRun, { runId: "run-1", status: "RUNNING" });
+  assert.equal(response.followUpQueue.pauseReason, "operator");
+  assert.equal(response.followUpQueue.items[0]?.attachmentIds[0], "attachment-1");
+  assert.equal(response.inboxItems[0]?.requestId, "request-1");
   assert.deepEqual(response.childThreads.map((thread) => thread.threadId), ["thread-child:session-1"]);
   assert.deepEqual(calls, [{
     command: { type: "operator.thread", threadId: "thread-main:session-1" },

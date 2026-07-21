@@ -9,6 +9,8 @@ import {
   normalizeToolActionInput,
   sanitizeToolInputForSchema,
 } from "../../agents/reference-react/src/toolInputNormalization.js";
+import { execCommandTool } from "../../tools/devshell/execCommand.js";
+import { devShellRunTool } from "../../tools/devshell/run.js";
 
 const CODE_EXECUTE_TOOLS: ModelToolSpec[] = [
   {
@@ -210,6 +212,10 @@ const DEV_SHELL_TOOLS: ModelToolSpec[] = [
         envMode: {
           type: "string",
           enum: ["inherit", "allowlist"],
+        },
+        sourceMutation: {
+          type: "string",
+          enum: ["reject", "capture"],
         },
         yieldTimeMs: { type: "number" },
         timeoutMs: { type: "number" },
@@ -866,6 +872,7 @@ test("normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps ex
     envNames: ["OPENAI_API_KEY", "  "],
     envMode: "inherit",
     yieldTimeMs: "250",
+    timeoutMs: "3000",
     maxOutputBytes: "4096",
     extra: "drop-me",
   });
@@ -877,6 +884,8 @@ test("normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps ex
     requiredTools: ["pnpm", "node"],
     envNames: ["OPENAI_API_KEY"],
     envMode: "inherit",
+    yieldTimeMs: 250,
+    timeoutMs: 3000,
     maxOutputBytes: 4096,
   });
 
@@ -933,6 +942,7 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
     requiredTools: "bash,python3",
     envNames: ["OPENROUTER_API_KEY", "  "],
     envMode: "inherit",
+    sourceMutation: "capture",
     yieldTimeMs: "100",
     timeoutMs: "1000",
     maxOutputBytes: "4096",
@@ -952,6 +962,7 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
     requiredTools: ["bash", "python3"],
     envNames: ["OPENROUTER_API_KEY"],
     envMode: "inherit",
+    sourceMutation: "capture",
     yieldTimeMs: 100,
     timeoutMs: 1000,
     maxOutputBytes: 4096,
@@ -983,6 +994,55 @@ test("normalizeToolActionInput keeps exec_command lifecycle fields visible for v
       DEV_SHELL_TOOLS,
     ),
   );
+});
+
+test("normalizeToolActionInput preserves every advertised dev-shell command field", () => {
+  const activeWorkspaceRoot = path.resolve(".");
+  const runInput = {
+    workspaceRoot: activeWorkspaceRoot,
+    command: "pnpm test",
+    cwd: "apps/desktop",
+    requiredTools: ["pnpm"],
+    envNames: ["CI"],
+    envMode: "allowlist",
+    yieldTimeMs: 250,
+    timeoutMs: 5000,
+    maxOutputBytes: 8192,
+  };
+  const execInput = {
+    command: "pnpm test",
+    cwd: "apps/desktop",
+    requiredTools: ["pnpm"],
+    envNames: ["CI"],
+    envMode: "allowlist",
+    sourceMutation: "capture",
+    yieldTimeMs: 250,
+    timeoutMs: 5000,
+    maxOutputBytes: 8192,
+  };
+
+  assert.deepEqual(normalizeToolActionInput("dev.shell.run", runInput), runInput);
+  assert.deepEqual(normalizeToolActionInput("exec_command", execInput), execInput);
+
+  const runSchemaFields = Object.keys(devShellRunTool.definition.inputSchema.properties ?? {}).sort();
+  const execSchemaFields = Object.keys(execCommandTool.definition.inputSchema.properties ?? {}).sort();
+  assert.deepEqual(Object.keys(normalizeToolActionInput("dev.shell.run", runInput)).sort(), runSchemaFields);
+  assert.deepEqual(Object.keys(normalizeToolActionInput("exec_command", execInput)).sort(), execSchemaFields.filter(
+    (field) => field !== "sessionId" && field !== "stdin" && field !== "stop",
+  ));
+});
+
+test("normalizeToolActionInput keeps typed desktop host-open fields and drops extras", () => {
+  assert.deepEqual(normalizeToolActionInput("desktop.host.open", {
+    kind: " workspace_path ",
+    path: " reports/result.html ",
+    application: " Safari ",
+    extra: "drop-me",
+  }), {
+    kind: "workspace_path",
+    path: "reports/result.html",
+    application: "Safari",
+  });
 });
 
 test("normalizeToolActionInput preserves invalid exec_command cwd for explicit boundary rejection", () => {

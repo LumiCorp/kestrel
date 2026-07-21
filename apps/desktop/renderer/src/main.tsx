@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { DesktopApp } from "./DesktopApp";
 import { FileEditorApp } from "./FileEditorApp";
 import { ensureBrowserPreviewBridge } from "./browserPreview";
+import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 const root = document.getElementById("root");

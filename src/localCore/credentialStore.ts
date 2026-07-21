@@ -4,9 +4,13 @@ export const LOCAL_CORE_CREDENTIAL_IDS = Object.freeze([
   "provider.anthropic.default",
   "tool.tavily.default",
   "tool.visual-crossing.default",
+  "data.database.external",
 ] as const);
 
-export type LocalCoreCredentialId = (typeof LOCAL_CORE_CREDENTIAL_IDS)[number];
+export type LocalCoreBuiltInCredentialId = (typeof LOCAL_CORE_CREDENTIAL_IDS)[number];
+export type LocalCoreCredentialId =
+  | LocalCoreBuiltInCredentialId
+  | `mcp.${string}`;
 
 export type LocalCoreCredentialStoreBackend =
   | "memory"
@@ -14,7 +18,7 @@ export type LocalCoreCredentialStoreBackend =
   | "unavailable";
 
 export interface LocalCoreCredentialStatus {
-  id: LocalCoreCredentialId;
+  id: LocalCoreBuiltInCredentialId;
   configured: boolean;
 }
 
@@ -59,7 +63,10 @@ export class LocalCoreCredentialStoreUnavailableError extends Error {
 export function parseLocalCoreCredentialId(value: unknown): LocalCoreCredentialId {
   if (
     typeof value !== "string"
-    || LOCAL_CORE_CREDENTIAL_IDS.includes(value as LocalCoreCredentialId) === false
+    || (
+      LOCAL_CORE_CREDENTIAL_IDS.includes(value as LocalCoreBuiltInCredentialId) === false
+      && /^mcp\.[a-zA-Z0-9._-]{1,128}$/u.test(value) === false
+    )
   ) {
     throw new LocalCoreCredentialValidationError(
       "Local Core credential id is not supported.",
@@ -116,7 +123,7 @@ export function parseLocalCoreCredentialStoreStatus(
     );
   }
 
-  const seen = new Set<LocalCoreCredentialId>();
+  const seen = new Set<LocalCoreBuiltInCredentialId>();
   const credentials = record.credentials.map((entry) => {
     const credential = requireRecord(entry, "Credential status");
     rejectUnknownFields(
@@ -124,7 +131,13 @@ export function parseLocalCoreCredentialStoreStatus(
       new Set(["id", "configured"]),
       "Credential status",
     );
-    const id = parseLocalCoreCredentialId(credential.id);
+    const parsedId = parseLocalCoreCredentialId(credential.id);
+    if (LOCAL_CORE_CREDENTIAL_IDS.includes(parsedId as LocalCoreBuiltInCredentialId) === false) {
+      throw new LocalCoreCredentialValidationError(
+        "Local Core credential store status can only enumerate built-in credentials.",
+      );
+    }
+    const id = parsedId as LocalCoreBuiltInCredentialId;
     if (seen.has(id)) {
       throw new LocalCoreCredentialValidationError(
         "Local Core credential store status includes a duplicate credential id.",

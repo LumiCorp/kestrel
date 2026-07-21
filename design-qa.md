@@ -1,12 +1,12 @@
 **Source visual truth**
 
-- `/var/folders/cl/_t5qmxn134j19nhj0pj1zqj40000gn/T/codex-clipboard-b7136795-e7aa-48bb-a556-6cfcb6bc2239.png`
+- User-provided cut-and-paste mockup for the Desktop navigation and title bar.
 
 **Implementation evidence**
 
-- `/Users/gregasher/.codex/visualizations/2026/07/20/019f80f2-dd3e-74b2-bb25-148f6ec38899/desktop-ui-audit/navigation-final.png`
-- Full comparison: `/Users/gregasher/.codex/visualizations/2026/07/20/019f80f2-dd3e-74b2-bb25-148f6ec38899/desktop-ui-audit/navigation-comparison.png`
-- Focused header and navigation comparison: `/Users/gregasher/.codex/visualizations/2026/07/20/019f80f2-dd3e-74b2-bb25-148f6ec38899/desktop-ui-audit/navigation-focus-comparison.png`
+- Final full-window capture reviewed during implementation.
+- Full source-to-implementation comparison reviewed during implementation.
+- Focused header and navigation comparison reviewed during implementation.
 
 **Viewport and state**
 

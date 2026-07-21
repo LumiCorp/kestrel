@@ -6,6 +6,7 @@ import type {
   DevShellProfileConfig,
   DevShellServicePort,
 } from "../src/devshell/contracts.js";
+import type { DesktopHostOpenServicePort } from "../src/desktopShell/hostOpen.js";
 import type {
   AgentToolResult,
   ModelToolContract,
@@ -164,6 +165,7 @@ export interface SharedToolContext {
   codeExecutionService?: CodeExecutionServicePort | undefined;
   devShell?: DevShellProfileConfig | undefined;
   devShellService?: DevShellServicePort | undefined;
+  desktopHostOpenService?: DesktopHostOpenServicePort | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   delegationService?: DelegationServicePort | undefined;
   runtime?: RuntimeToolRunContext | undefined;

@@ -31,7 +31,7 @@ export async function POST(
   context: { params: Promise<{ id: string; checkpointId: string }> }
 ) {
   try {
-    const { organizationId, session } = await requireActiveOrganization();
+    const { organizationId, session } = await requireActiveOrganization(request);
     const params = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     const ledger = await listThreadInteractionsForUser({

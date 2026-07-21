@@ -51,6 +51,7 @@ import {
   DesktopProjectRunRegistry,
 } from "./desktopProjectRuns.js";
 import { DesktopUiStateStore } from "./desktopUiState.js";
+import { DesktopAttachmentStore, DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES } from "./desktopAttachments.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
@@ -58,9 +59,15 @@ import {
   parseLocalCoreCredentialSecret,
   readLocalCoreCredentialStoreStatus,
   UnavailableLocalCoreCredentialStore,
+  type LocalCoreCredentialId,
   type LocalCoreCredentialStore,
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
+import {
+  parseLocalCoreMcpVerificationInput,
+  verifyAndStoreLocalCoreMcpServer,
+} from "./mcpVerification.js";
+import { verifyAndStoreLocalCoreExternalDatabase } from "./externalDatabaseVerification.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
@@ -87,6 +94,7 @@ import {
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
+const MAX_DESKTOP_ATTACHMENT_BODY_BYTES = Math.ceil(DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES * 4 / 3) + 1024 * 1024;
 
 export interface LocalCoreApiServer {
   status: LocalCoreStatus;
@@ -170,6 +178,7 @@ export async function startLocalCoreApiServer(
   const projectRunEventClients = new Set<ProjectRunEventClient>();
 
   try {
+    await new DesktopAttachmentStore(home.homePath).cleanup();
     const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
     let status = await ensureLocalCoreReady({
       ...readyOptions,
@@ -628,8 +637,15 @@ async function createExecutionBundle(input: {
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),
-    ...(input.status.databaseUrl !== undefined
-      ? { externalDatabaseUrl: input.status.databaseUrl }
+    ...(input.status.dbMode === "external"
+      ? {
+          externalDatabaseUrl: (
+            await resolveCoreOwnedReadyOptions(
+              input.status.home.homePath,
+              input.options,
+            )
+          ).externalDatabaseUrl,
+        }
       : {}),
   });
   let runtimeFactory = input.options.executionRuntimeFactory;
@@ -637,12 +653,19 @@ async function createExecutionBundle(input: {
     const runtimeEnvironmentResolver = await createLocalCoreRuntimeEnvironmentResolver({
       baseEnv: input.options.env ?? process.env,
       runtimeConfiguration,
+      mcpCredentialBindings: await readConfiguredMcpCredentialBindings(
+        input.status.home.homePath,
+      ),
+      mcpEnvironmentOptions: await readDesktopDeveloperEnvironmentOptions(
+        input.status.home.homePath,
+      ),
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),
     });
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
+      homePath: input.status.home.homePath,
     });
   }
   const handler = createRunnerServiceHttpHandler({
@@ -1002,6 +1025,39 @@ async function handleRequest(input: {
       });
       return;
     }
+    if (method === "POST" && url.pathname === "/v1/mcp/verify") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const verification = await verifyAndStoreLocalCoreMcpServer(
+        parseLocalCoreMcpVerificationInput(await readJsonBody(input.request)),
+        {
+          credentialStore,
+          baseEnv: input.ensureOptions.env ?? process.env,
+          environmentOptions: await readDesktopDeveloperEnvironmentOptions(
+            input.status.home.homePath,
+          ),
+        },
+      );
+      writeJson(input.response, 200, { ok: true, verification });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/database/external/verify") {
+      const credentialStore = input.ensureOptions.credentialStore
+        ?? new UnavailableLocalCoreCredentialStore();
+      const body = await readJsonBody(input.request);
+      const record = typeof body === "object" && body !== null && Array.isArray(body) === false
+        ? body as Record<string, unknown>
+        : {};
+      if (Object.keys(record).some((key) => key !== "databaseUrl")) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_EXTERNAL_DATABASE_INVALID", "External database verification request is invalid.");
+      }
+      const verification = await verifyAndStoreLocalCoreExternalDatabase(
+        record.databaseUrl,
+        { credentialStore },
+      );
+      writeJson(input.response, 200, { ok: true, verification });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/desktop/execution-config") {
       const runtimeConfiguration = await input.runtimeConfigurationStore.read();
       writeJson(input.response, 200, {
@@ -1011,6 +1067,59 @@ async function handleRequest(input: {
           { runtimeConfiguration },
         ),
       });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/desktop/attachments") {
+      const threadId = normalizeString(url.searchParams.get("threadId"));
+      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
+      writeJson(input.response, 200, { ok: true, attachments: await new DesktopAttachmentStore(input.status.home.homePath).list(threadId) });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/desktop/attachments") {
+      const body = await readJsonBody(input.request, MAX_DESKTOP_ATTACHMENT_BODY_BYTES);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment body must be an object.");
+      }
+      const record = body as Record<string, unknown>;
+      const threadId = normalizeString(record.threadId);
+      const filename = normalizeString(record.filename);
+      const data = normalizeString(record.data);
+      if (threadId === undefined || filename === undefined || data === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, filename, and data are required.");
+      }
+      const attachment = await new DesktopAttachmentStore(input.status.home.homePath).import({
+        threadId,
+        filename,
+        data: decodeStrictBase64(data),
+        ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
+        ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
+      });
+      writeJson(input.response, 201, { ok: true, attachment });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/desktop/attachments/resolve") {
+      const body = await readJsonBody(input.request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment resolution body must be an object.");
+      }
+      const record = body as Record<string, unknown>;
+      const threadId = normalizeString(record.threadId);
+      const attachmentIds = Array.isArray(record.attachmentIds)
+        ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
+        : undefined;
+      if (threadId === undefined || attachmentIds === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId and attachmentIds are required.");
+      }
+      const attachments = await new DesktopAttachmentStore(input.status.home.homePath).resolve(threadId, attachmentIds);
+      writeJson(input.response, 200, { ok: true, attachments });
+      return;
+    }
+    const attachmentMatch = url.pathname.match(/^\/v1\/desktop\/attachments\/([^/]+)$/u);
+    if (method === "DELETE" && attachmentMatch?.[1] !== undefined) {
+      const threadId = normalizeString(url.searchParams.get("threadId"));
+      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
+      const removed = await new DesktopAttachmentStore(input.status.home.homePath).remove(threadId, decodeURIComponent(attachmentMatch[1]));
+      writeJson(input.response, 200, { ok: true, removed });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/ui-state") {
@@ -1707,16 +1816,24 @@ async function resolveCoreOwnedReadyOptions(
   options: StartLocalCoreApiServerOptions,
 ): Promise<EnsureLocalCoreReadyOptions> {
   const settings = await readLocalSettings(homePath);
-  const settingsDatabaseUrl = normalizeString(settings.databaseUrl);
+  const legacySettingsDatabaseUrl = normalizeString(settings.databaseUrl);
   const settingsDatabaseMode = settings.databaseMode === "external"
     ? "external"
     : settings.databaseMode === "default"
       ? "pglite"
       : undefined;
   const databaseMode = settingsDatabaseMode ?? options.databaseMode ?? "pglite";
-  const externalDatabaseUrl = settingsDatabaseMode === "external"
-    ? settingsDatabaseUrl
-    : settingsDatabaseUrl ?? options.externalDatabaseUrl;
+  let storedDatabaseUrl = options.credentialStore?.available === true
+    ? await options.credentialStore.get("data.database.external")
+    : undefined;
+  if (storedDatabaseUrl === undefined && legacySettingsDatabaseUrl !== undefined && options.credentialStore?.available === true) {
+    await options.credentialStore.set("data.database.external", legacySettingsDatabaseUrl);
+    await patchLocalSettings(homePath, { databaseUrl: null });
+    storedDatabaseUrl = legacySettingsDatabaseUrl;
+  }
+  const externalDatabaseUrl = storedDatabaseUrl
+    ?? legacySettingsDatabaseUrl
+    ?? options.externalDatabaseUrl;
   return {
     ...options,
     ownerExecutable: options.ownerExecutable ?? process.execPath,
@@ -1788,6 +1905,47 @@ async function readLocalSettings(homePath: string): Promise<Record<string, unkno
     }
     throw error;
   }
+}
+
+async function readConfiguredMcpCredentialBindings(homePath: string): Promise<{
+  credentialId: LocalCoreCredentialId;
+  envKey: string;
+}[]> {
+  const settings = await readLocalSettings(homePath);
+  if (Array.isArray(settings.mcpServers) === false) return [];
+  const bindings = new Map<string, { credentialId: LocalCoreCredentialId; envKey: string }>();
+  for (const rawServer of settings.mcpServers) {
+    if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) continue;
+    const server = rawServer as Record<string, unknown>;
+    if (server.enabled !== true || typeof server.id !== "string" || Array.isArray(server.credentials) === false) continue;
+    for (const rawBinding of server.credentials) {
+      if (typeof rawBinding !== "object" || rawBinding === null || Array.isArray(rawBinding)) continue;
+      const binding = rawBinding as Record<string, unknown>;
+      if (binding.configured !== true || typeof binding.envKey !== "string" || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.envKey) === false) continue;
+      try {
+        const credentialId = parseLocalCoreCredentialId(binding.credentialId);
+        if (credentialId.startsWith(`mcp.${server.id}.`) === false) continue;
+        bindings.set(binding.envKey, { credentialId, envKey: binding.envKey });
+      } catch {
+        // Ignore invalid credential references while retaining valid bindings.
+      }
+    }
+  }
+  return [...bindings.values()];
+}
+
+async function readDesktopDeveloperEnvironmentOptions(
+  homePath: string,
+): Promise<Partial<Record<"SHELL" | "PATH", string>>> {
+  const settings = await readLocalSettings(homePath);
+  return {
+    ...(typeof settings.developerShellPath === "string" && settings.developerShellPath.trim().length > 0
+      ? { SHELL: settings.developerShellPath.trim() }
+      : {}),
+    ...(typeof settings.developerPath === "string" && settings.developerPath.trim().length > 0
+      ? { PATH: settings.developerPath.trim() }
+      : {}),
+  };
 }
 
 async function writeLocalSettings(homePath: string, value: Record<string, unknown>): Promise<void> {
@@ -2057,6 +2215,18 @@ function asError(error: unknown): Error {
 
 function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function decodeStrictBase64(value: string): Buffer {
+  const normalized = value.replace(/\s/gu, "");
+  if (normalized.length === 0 || normalized.length % 4 !== 0 || /^[A-Za-z0-9+/]+={0,2}$/u.test(normalized) === false) {
+    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be valid base64.");
+  }
+  const decoded = Buffer.from(normalized, "base64");
+  if (decoded.toString("base64") !== normalized) {
+    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be canonical base64.");
+  }
+  return decoded;
 }
 
 function isNotFoundError(error: unknown): boolean {

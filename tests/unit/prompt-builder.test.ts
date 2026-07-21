@@ -116,6 +116,29 @@ test("deliberator prompt preserves application instructions at system priority",
   assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
 });
 
+test("deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
+  const desktopChat = buildDeliberatorSystemPrompt({
+    interactionMode: "chat",
+    environmentShellKind: "desktop",
+  });
+  const desktopBuild = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    environmentShellKind: "desktop",
+  });
+  const desktopPlan = buildDeliberatorSystemPrompt({
+    interactionMode: "plan",
+    environmentShellKind: "desktop",
+  });
+  const cliBuild = buildDeliberatorSystemPrompt({ interactionMode: "build", environmentShellKind: "cli" });
+  const webChat = buildDeliberatorSystemPrompt({ interactionMode: "chat", environmentShellKind: "web" });
+
+  assert.match(desktopChat, /use desktop\.host\.open/u);
+  assert.match(desktopBuild, /use desktop\.host\.open/u);
+  assert.doesNotMatch(desktopPlan, /desktop\.host\.open/u);
+  assert.doesNotMatch(cliBuild, /desktop\.host\.open/u);
+  assert.doesNotMatch(webChat, /desktop\.host\.open/u);
+});
+
 test("deliberator prompt resolver selects real mode prompts", () => {
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "reference-react:plan");
   assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "reference-react:build");
@@ -164,7 +187,8 @@ test("build-mode deliberator prompt stays compact and generic", () => {
   assert.match(act, /continue that exact sessionId without command/u);
   assert.match(act, /Do not start a duplicate command/u);
   assert.match(act, /A mutation makes earlier validation stale/u);
-  assert.match(act, /settle every live process before finalizing/u);
+  assert.match(act, /settle every live process before finalizing unless a running process is itself part of the requested completed result/u);
+  assert.match(act, /data\.keepRunningSessionIds/u);
   assert.match(act, /visible plan agent-owned/u);
   assert.match(act, /Never create a todo whose work is closing todos, finalizing, or reporting itself/u);
   assert.match(act, /do not finalize by itself while an item remains open/u);

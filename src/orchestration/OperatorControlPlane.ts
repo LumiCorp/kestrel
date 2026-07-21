@@ -25,6 +25,7 @@ import {
   updateDelegationOutcomePolicy,
 } from "./Supervision.js";
 import { enqueuePendingSteer } from "./SteeringQueue.js";
+import { readFollowUpQueue } from "./FollowUpQueue.js";
 import type {
   AssemblyChangeProposalRecord,
   ContextCheckpointAction,
@@ -165,6 +166,7 @@ export class OperatorControlPlane {
       threadMetadata: status.thread.metadata,
       ...(session !== null && session !== undefined ? { sessionState: session.state } : {}),
     });
+    const inboxItems = await this.buildInboxItemsForThread(status.thread);
     return {
       thread: status.thread,
       ...(workspace !== undefined ? { workspace } : {}),
@@ -225,6 +227,11 @@ export class OperatorControlPlane {
         ? { nextAction }
         : {}),
       ...(runtimePlan !== undefined ? { runtimePlan } : {}),
+      ...(status.thread.activeRunId !== undefined && (status.thread.status === "RUNNING" || status.thread.status === "WAITING")
+        ? { activeRun: { runId: status.thread.activeRunId, status: status.thread.status } }
+        : {}),
+      followUpQueue: readFollowUpQueue(status.thread),
+      inboxItems,
     };
   }
 
@@ -470,6 +477,29 @@ export class OperatorControlPlane {
         retryRequestedBy: "operator",
       },
     });
+  }
+
+  async continueWaiting(input: { threadId: string }): Promise<ThreadStatusSnapshot> {
+    const status = await this.requireThreadStatus(input.threadId);
+    const now = new Date().toISOString();
+    const attentions = await this.store.listOperatorAttention({
+      threadId: input.threadId,
+      kind: "stalled_thread_attention",
+      status: "ACTIVE",
+    });
+    for (const attention of attentions) {
+      await this.store.upsertOperatorAttention({
+        ...attention,
+        status: "RESOLVED",
+        updatedAt: now,
+        resolvedAt: now,
+        metadata: {
+          ...(attention.metadata ?? {}),
+          deferredThreadUpdatedAt: status.thread.updatedAt,
+        },
+      });
+    }
+    return status;
   }
 
   async resolveContextCheckpoint(input: {
@@ -1000,12 +1030,13 @@ export class OperatorControlPlane {
       activeKeys.add(attentionIdentity(record));
     }
     if (doctor?.status === "STALLED") {
-      const record = await this.upsertAttentionRecord(
-        existing,
-        buildStalledAttention(thread, doctor.dominantFailure?.message),
-      );
-      activeRecords.push(record);
-      activeKeys.add(attentionIdentity(record));
+      const proposed = buildStalledAttention(thread, doctor.dominantFailure?.message);
+      const prior = existing.find((record) => attentionIdentity(record) === attentionIdentity(proposed));
+      if (prior?.status !== "RESOLVED" || prior.metadata?.deferredThreadUpdatedAt !== thread.updatedAt) {
+        const record = await this.upsertAttentionRecord(existing, proposed);
+        activeRecords.push(record);
+        activeKeys.add(attentionIdentity(record));
+      }
     }
     for (const record of existing) {
       if (record.status !== "ACTIVE") {

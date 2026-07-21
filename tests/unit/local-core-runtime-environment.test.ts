@@ -4,6 +4,7 @@ import { inspect } from "node:util";
 
 import {
   LOCAL_CORE_CREDENTIAL_IDS,
+  MemoryLocalCoreCredentialStore,
   type LocalCoreCredentialId,
 } from "../../src/localCore/credentialStore.js";
 import {
@@ -440,7 +441,7 @@ test("Core does not request or inject hosted-provider credentials for local prov
       ),
     });
 
-    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+    assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS.filter((id) => id !== "data.database.external"));
     assert.equal(snapshot.modelEnv.OPENROUTER_API_KEY, undefined);
     assert.equal(snapshot.modelEnv.OPENAI_API_KEY, undefined);
     assert.equal(snapshot.modelEnv.ANTHROPIC_API_KEY, undefined);
@@ -482,7 +483,7 @@ test("Core captures base environment and credentials once for synchronous profil
 
   assert.equal(Object.isFrozen(resolver), true);
   assert.equal(Object.isFrozen(resolver.resolve), true);
-  assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS);
+  assert.deepEqual(reads, LOCAL_CORE_CREDENTIAL_IDS.filter((id) => id !== "data.database.external"));
   assert.equal(openRouter.modelEnv.HOME, "/captured/home");
   assert.equal(openRouter.modelEnv.OPENROUTER_API_KEY, "captured-openrouter");
   assert.equal(openRouter.internetEnv.TAVILY_API_KEY, "captured-tavily");
@@ -660,4 +661,20 @@ test("Core runtime snapshots reject unresolved provider and model values", async
     }),
     /runtime model must be a non-empty string/u,
   );
+});
+
+test("Core materializes referenced MCP credentials without exposing them to other runtime views", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.docs.header.default", "mcp-secret");
+  const snapshot = await resolveLocalCoreRuntimeEnvironment({
+    baseEnv: { KESTREL_MCP_DOCS_HEADER: "ambient-secret", SAFE: "safe" },
+    resolvedProfile: { modelProvider: "ollama", model: "qwen3:8b" },
+    runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration(),
+    credentialStore: store,
+    mcpCredentialBindings: [{ credentialId: "mcp.docs.header.default", envKey: "KESTREL_MCP_DOCS_HEADER" }],
+  });
+  assert.equal(snapshot.mcpEnv.KESTREL_MCP_DOCS_HEADER, "mcp-secret");
+  assert.equal(snapshot.runtimeEnv.KESTREL_MCP_DOCS_HEADER, undefined);
+  assert.equal(snapshot.mcpEnv.SAFE, "safe");
+  assert.equal(JSON.stringify(snapshot).includes("mcp-secret"), false);
 });

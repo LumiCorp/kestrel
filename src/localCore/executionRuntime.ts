@@ -6,11 +6,13 @@ import {
   type KestrelRuntimeEnvironment,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { LocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
+import { DesktopAttachmentStore } from "./desktopAttachments.js";
 
 type RunnerRuntimeFactory = NonNullable<ConstructorParameters<typeof RunnerHost>[1]>;
 
 export interface LocalCoreRunnerRuntimeFactoryOptions {
   runtimeEnvironmentResolver?: LocalCoreRuntimeEnvironmentResolver | undefined;
+  homePath?: string | undefined;
 }
 
 /**
@@ -26,6 +28,9 @@ export function createLocalCoreRunnerRuntimeFactory(
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
+    ...(options.homePath !== undefined
+      ? { resolveAttachments: async (threadId, attachmentIds) => await new DesktopAttachmentStore(options.homePath!).resolve(threadId, attachmentIds) }
+      : {}),
     ...(runtimeEnvironmentResolver !== undefined
       ? {
           resolveEnvironment: (profile) => toKestrelRuntimeEnvironment(

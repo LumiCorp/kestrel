@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  DesktopExecutionSelection,
   DesktopWorkspaceGitAction,
   DesktopWorkspaceGitSnapshot,
 } from "../../src/contracts";
@@ -17,6 +18,7 @@ export function GitWorkspace(props: {
   sessionId: string;
   threadId: string;
   defaultBaseRef: string;
+  executionSelection: DesktopExecutionSelection;
   onError: (message: string | undefined) => void;
 }) {
   const [snapshot, setSnapshot] = useState<DesktopWorkspaceGitSnapshot>();
@@ -126,6 +128,7 @@ export function GitWorkspace(props: {
         actSubmode: "safe",
         workspaceMode: "local",
         projectPath: snapshot.workspaceRoot,
+        executionSelection: props.executionSelection,
         message: [
           "Address these failing pull request checks and validate the exact current candidate.",
           "",

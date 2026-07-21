@@ -14,6 +14,7 @@ export * from "./profileProvider.js";
 export * from "./daemon.js";
 export * from "./connectionManager.js";
 export * from "./desktopUiState.js";
+export * from "./desktopAttachments.js";
 export {
   LOCAL_CORE_CREDENTIAL_IDS,
   parseLocalCoreCredentialId,
@@ -24,6 +25,18 @@ export {
   type LocalCoreCredentialStoreBackend,
   type LocalCoreCredentialStoreStatus,
 } from "./credentialStore.js";
+export {
+  parseLocalCoreMcpVerificationInput,
+  verifyAndStoreLocalCoreMcpServer,
+  type LocalCoreMcpCredentialBindingInput,
+  type LocalCoreMcpVerificationInput,
+  type LocalCoreMcpVerificationResult,
+} from "./mcpVerification.js";
+export {
+  parseExternalDatabaseUrl,
+  verifyAndStoreLocalCoreExternalDatabase,
+  type LocalCoreExternalDatabaseVerificationResult,
+} from "./externalDatabaseVerification.js";
 export {
   LOCAL_CORE_RUNTIME_CONFIGURATION_VERSION,
   LocalCoreRuntimeConfigurationError,

@@ -32,7 +32,11 @@ test("UserTerminalService runs an interactive PTY with bounded output and secret
     sessionId: "session-1",
     data: "printf 'PTY_READY:%s\\n' \"$PWD\"\n",
   });
-  const ready = await waitForTerminal(service, terminal.terminalId, (output) => output.includes("PTY_READY:"));
+  const ready = await waitForTerminal(
+    service,
+    terminal.terminalId,
+    (output) => output.includes(`PTY_READY:${terminal.workspaceRoot}`),
+  );
   assert.match(ready.output, /PTY_READY:/u);
   assert.match(ready.output, new RegExp(escapeRegExp(terminal.workspaceRoot), "u"));
 
