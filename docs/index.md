@@ -55,7 +55,7 @@ task instead of reading the repository as one long manual.
 - [Architecture](../ARCHITECTURE.md)
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
-- [CI contract-proof audit](ci-contract-proof-audit.md)
+- [CI validation-contract audit](ci-contract-proof-audit.md)
 - [Contributor guardrails](../AGENTS.md)
 
 ## Root Truth Docs

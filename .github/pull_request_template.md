@@ -15,16 +15,13 @@
 
 ## Validation
 
-List the commands you ran, for example:
+Confirm the canonical pull-request validation:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
-pnpm run ci:local -- --base origin/main
-pnpm --filter @kestrel/desktop test
-pnpm --filter @kestrel/desktop build
+pnpm validate
 ```
+
+List focused iteration commands separately if they provide useful review evidence.
 
 ## Notes
 

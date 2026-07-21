@@ -2,10 +2,10 @@
   "version": 1,
   "contracts": [
     {
-      "id": "ci.planning",
+      "id": "ci.proof-registry",
       "owner": "runtime-platform",
       "risk": "medium",
-      "counterexample": "A changed component selects the wrong required proof lane or the stable aggregate accepts an invalid result.",
+      "counterexample": "The proof registry accepts orphan tests, stale catalog entries, invalid mutation specifications, or prohibited skips.",
       "lane": "policy",
       "environment": "linux",
       "prefixes": ["scripts/ci/"]

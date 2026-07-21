@@ -15,7 +15,10 @@ const files = execFileSync(
 
 if (files.length === 0) throw new Error("No runtime tests were discovered.");
 
-const isolatedProcessContracts = new Set(["tests/unit/local-core-api.test.ts"]);
+const isolatedProcessContracts = new Set([
+  "tests/integration/web-command.test.ts",
+  "tests/unit/local-core-api.test.ts",
+]);
 const concurrentFiles = files.filter((file) => !isolatedProcessContracts.has(file));
 const isolatedFiles = files.filter((file) => isolatedProcessContracts.has(file));
 
@@ -31,11 +34,9 @@ function run(selectedFiles, concurrency, label) {
     "node",
     ["--import", "tsx", "--test", `--test-concurrency=${concurrency}`, ...selectedFiles],
     {
-      encoding: "utf8",
       env: { ...process.env, ...(process.platform === "darwin" ? { TMPDIR: "/tmp" } : {}) },
+      stdio: "inherit",
     },
   );
-  process.stdout.write(result.stdout ?? "");
-  process.stderr.write(result.stderr ?? "");
   if (result.status !== 0) process.exit(result.status ?? 1);
 }

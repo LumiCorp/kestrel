@@ -3,7 +3,19 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { CI_LANES } from "./proof-model.mjs";
+
+const PROOF_LANES = [
+  "policy",
+  "runtime",
+  "packages",
+  "web",
+  "services",
+  "postgres",
+  "product",
+  "desktop",
+  "docs",
+  "package-macos",
+];
 
 const root = process.cwd();
 const registryPath = path.join(root, "tests/proof/registry.json");
@@ -24,7 +36,7 @@ const contractIds = new Set();
 for (const contract of registry.contracts) {
   if (contractIds.has(contract.id)) errors.push(`duplicate contract id: ${contract.id}`);
   contractIds.add(contract.id);
-  if (!CI_LANES.includes(contract.lane)) errors.push(`${contract.id}: unknown lane ${contract.lane}`);
+  if (!PROOF_LANES.includes(contract.lane)) errors.push(`${contract.id}: unknown lane ${contract.lane}`);
   for (const field of ["owner", "risk", "counterexample", "environment"]) {
     if (typeof contract[field] !== "string" || contract[field].trim().length === 0) {
       errors.push(`${contract.id}: ${field} is required`);

@@ -81,10 +81,13 @@ the current supported versions.
 
 Kestrel uses registered executable contracts, package checks, and
 product-specific validation to detect regressions before a release. Every
-retained automated test belongs to a required proof lane; high- and
-critical-risk contracts also carry current killed-mutation evidence. Run the
-same selection locally with `pnpm run ci:local -- --base origin/main` and verify
-the registry with `pnpm run test-proofs:check`.
+retained automated test belongs to a named contract and execution environment;
+high- and critical-risk contracts also carry current killed-mutation evidence.
+Run `pnpm validate` locally before opening or updating a pull request. GitHub
+Actions runs that exact complete portable suite without file-based selection.
+
+macOS package validation is an explicit release-preparation step:
+`pnpm run validate:release:macos`.
 
 Ruhroh owns model-quality evaluation. Kestrel's `pnpm run ruhroh:validate`
 command validates evaluation configuration only; it does not claim to execute

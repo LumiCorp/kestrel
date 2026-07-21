@@ -73,18 +73,17 @@ heuristic runtime behavior require escalation before implementation or release.
 Run the narrowest useful test while iterating, then widen according to the
 surface and risk.
 
-Repository baseline:
+Pull-request readiness:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
+pnpm validate
 ```
 
-Use `pnpm run ci:local -- --base origin/main` to execute the lanes selected by
-the same ownership planner as pull-request CI. Evaluation configuration changes
-also require `pnpm run ruhroh:validate`; high- or critical-risk changes require
-fresh `pnpm run test-proofs:mutations` evidence.
+GitHub Actions runs this exact command. It always executes the complete portable
+suite, independent of which files changed. Focused commands below are useful
+while iterating, but they do not establish pull-request readiness. High- or
+critical-risk changes also require fresh `pnpm run test-proofs:mutations`
+evidence.
 
 Docs work:
 
@@ -112,6 +111,13 @@ pnpm run web:build
 
 Public package work should run the owning package tests and release check. See
 [Reliability](RELIABILITY.md) for the complete verification ladder.
+
+macOS CLI and Desktop package validation is release preparation rather than a
+pull-request gate:
+
+```bash
+pnpm run validate:release:macos
+```
 
 If governance fails at `check:desktop-resources` after a source change that is
 mirrored into Desktop, refresh the resources and rerun governance:
