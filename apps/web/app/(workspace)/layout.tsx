@@ -45,7 +45,10 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
   const isCollapsed = cookieStore.get("sidebar_state")?.value !== "true";
 
   return (
-    <SidebarProvider defaultOpen={!isCollapsed}>
+    <SidebarProvider
+      className="h-dvh overflow-hidden"
+      defaultOpen={!isCollapsed}
+    >
       <AppSidebar
         activeOrganization={activeOrganization}
         canManageOrganization={canManageActiveOrganization}
@@ -54,10 +57,12 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
         )}
         session={session}
       />
-      <SidebarInset>
-        <div className="flex min-h-dvh min-w-0 flex-col md:flex-row">
+      <SidebarInset className="min-h-0 overflow-hidden">
+        <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
           <WorkspaceRail organizationId={activeOrganization?.id ?? "unknown"} />
-          <main className="min-w-0 flex-1">{children}</main>
+          <main className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto">
+            {children}
+          </main>
         </div>
       </SidebarInset>
     </SidebarProvider>

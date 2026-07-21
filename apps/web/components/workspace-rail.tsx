@@ -228,7 +228,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
           </Link>
         </Button>
       </div>
-      <aside className="hidden h-dvh w-72 shrink-0 flex-col border-r bg-sidebar md:flex">
+      <aside className="hidden h-full min-h-0 w-72 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="border-b p-3">{projectSwitcher}</div>
         <div className="space-y-2 border-b p-3">
           <div className="flex items-center gap-2">
