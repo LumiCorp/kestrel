@@ -27,7 +27,7 @@ const budgets = {
   preflight: 20_000,
   sharedBuild: 90_000,
   hermetic: 90_000,
-  productionBuilds: 90_000,
+  productionBuilds: 180_000,
   process: 60_000,
   postgres: 60_000,
   chromium: 60_000,
@@ -86,7 +86,7 @@ try {
     ]),
   ], { sequential: true });
 
-  await phase("productionBuilds", budgets.productionBuilds, productionBuildTasks());
+  await phase("productionBuilds", budgets.productionBuilds, productionBuildTasks(), { sequential: true });
   await phase("hermetic", budgets.hermetic, hermeticTasks());
 
   await phase("process", budgets.process, processTasks(), {
@@ -482,7 +482,7 @@ function readContractTimings() {
 }
 
 function printPlan() {
-  process.stdout.write(`preflight (20s)\nshared build and type analysis (90s)\nproduction builds (90s)\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
+  process.stdout.write(`preflight (20s)\nshared build and type analysis (90s)\nproduction builds (${formatMs(budgets.productionBuilds)})\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
 }
 
 function validateGraphContract() {
