@@ -632,7 +632,7 @@ export class KestrelClient {
 
     const abortHandler = () => {
       cancellationPromise ??= stream.cancel();
-      void cancellationPromise.catch(() => undefined);
+      void cancellationPromise.catch(() => {});
     };
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
