@@ -167,6 +167,7 @@ test("KestrelChatRuntime consumes hosted MCP authorization before compiling the 
   };
 
   await runtime.runTurn({
+    runId: "run-hosted-mcp",
     sessionId: "session-hosted-mcp",
     message: "use the environment tools",
     eventType: "user.message",
@@ -176,6 +177,7 @@ test("KestrelChatRuntime consumes hosted MCP authorization before compiling the 
 
   assert.deepEqual(prepared, [
     {
+      runId: "run-hosted-mcp",
       sessionId: "session-hosted-mcp",
       mcpContext,
       mcpAuthorization: { executionTicket: "signed-run-ticket" },
@@ -206,8 +208,8 @@ test("KestrelChatRuntime consumes execution authorization without requiring an M
       prepareHostedMcpRuntime: async (input) => {
         prepared.push(input);
       },
-      releaseRuntimeAuthorization: (sessionId) => {
-        released.push(sessionId);
+      releaseRuntimeAuthorization: (runId) => {
+        released.push(runId);
       },
       close: async () => {},
     }),
@@ -220,13 +222,18 @@ test("KestrelChatRuntime consumes execution authorization without requiring an M
     mcpAuthorization: { executionTicket: "signed-run-ticket" },
   });
 
-  assert.deepEqual(prepared, [
-    {
-      sessionId: "session-environment-app",
-      mcpAuthorization: { executionTicket: "signed-run-ticket" },
-    },
-  ]);
-  assert.deepEqual(released, ["session-environment-app"]);
+  const preparedTurn = prepared[0] as {
+    runId?: unknown;
+    sessionId?: unknown;
+    mcpAuthorization?: unknown;
+  };
+  assert.equal(typeof preparedTurn.runId, "string");
+  assert.equal(preparedTurn.sessionId, "session-environment-app");
+  assert.deepEqual(preparedTurn.mcpAuthorization, {
+    executionTicket: "signed-run-ticket",
+  });
+  assert.deepEqual(released, [preparedTurn.runId]);
+  assert.equal(events[0]?.id, preparedTurn.runId);
   assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
   assert.equal(
     JSON.stringify(events[0]?.payload).includes("signed-run-ticket"),
@@ -243,8 +250,8 @@ test("KestrelChatRuntime releases execution authorization when runtime preparati
       prepareHostedMcpRuntime: async () => {
         throw new Error("Synthetic preparation failure");
       },
-      releaseRuntimeAuthorization: (sessionId) => {
-        released.push(sessionId);
+      releaseRuntimeAuthorization: (runId) => {
+        released.push(runId);
       },
       close: async () => {},
     }),
@@ -252,6 +259,7 @@ test("KestrelChatRuntime releases execution authorization when runtime preparati
 
   await assert.rejects(
     runtime.runTurn({
+      runId: "run-preparation-failure",
       sessionId: "session-preparation-failure",
       message: "search the web",
       eventType: "user.message",
@@ -259,7 +267,7 @@ test("KestrelChatRuntime releases execution authorization when runtime preparati
     }),
     /Synthetic preparation failure/u
   );
-  assert.deepEqual(released, ["session-preparation-failure"]);
+  assert.deepEqual(released, ["run-preparation-failure"]);
 });
 
 test("project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {

@@ -152,9 +152,9 @@ interface RuntimeBootstrap {
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
   prepareHostedMcpRuntime?:
-    | ((input: Pick<RunTurnInput, "sessionId" | "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
+    | ((input: Pick<RunTurnInput, "runId" | "sessionId" | "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
     | undefined;
-  releaseRuntimeAuthorization?: ((sessionId: string) => void) | undefined;
+  releaseRuntimeAuthorization?: ((runId: string) => void) | undefined;
   reasoningPolicyReady?: Promise<unknown> | undefined;
 }
 
@@ -362,6 +362,9 @@ export class KestrelChatRuntime {
     const policyBoundWorkspace = applyRequiredManagedWorkspacePolicy(effectiveInput.workspace);
     const authorizedInput: RunTurnInput = {
       ...effectiveInput,
+      ...(effectiveInput.mcpAuthorization !== undefined && effectiveInput.runId === undefined
+        ? { runId: randomUUID() }
+        : {}),
       ...(policyBoundWorkspace !== undefined
         ? {
             workspace:
@@ -382,6 +385,7 @@ export class KestrelChatRuntime {
           throw new Error("Runtime execution authorization is unavailable");
         }
         await this.prepareHostedMcpRuntime({
+          runId: persistableInput.runId,
           sessionId: persistableInput.sessionId,
           ...(persistableInput.mcpContext !== undefined
             ? { mcpContext: persistableInput.mcpContext }
@@ -396,7 +400,7 @@ export class KestrelChatRuntime {
       return result as RunTurnResult;
     } finally {
       if (mcpAuthorization !== undefined) {
-        this.releaseRuntimeAuthorization?.(persistableInput.sessionId);
+        this.releaseRuntimeAuthorization?.(persistableInput.runId!);
       }
     }
   }
@@ -2129,7 +2133,7 @@ function createRuntimeWithStore(
       return asRecord(session?.state.agent)?.finalOutput;
     },
     prepareHostedMcpRuntime: (input) => toolRegistry.refreshForRuntimeTurn(input),
-    releaseRuntimeAuthorization: (sessionId) => toolRegistry.clearRuntimeTurnAuthorization(sessionId),
+    releaseRuntimeAuthorization: (runId) => toolRegistry.clearRuntimeTurnAuthorization(runId),
     close: async () => {
       clearInterval(providerReasoningPurgeTimer);
       await userTerminalReady?.catch(() => {});
