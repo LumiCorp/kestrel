@@ -14883,7 +14883,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 466,
+      "line": 474,
       "ancestors": [],
       "title": "KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns",
       "contractId": "runtime.integration",
@@ -14898,7 +14898,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime annotates forced legacy-mode migration for the reference harness",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 749,
+      "line": 757,
       "ancestors": [],
       "title": "KestrelChatRuntime annotates forced legacy-mode migration for the reference harness",
       "contractId": "runtime.integration",
@@ -14913,7 +14913,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 543,
+      "line": 551,
       "ancestors": [],
       "title": "KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output",
       "contractId": "runtime.integration",
@@ -14928,7 +14928,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime captures finalized payload via onFinalize callback",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 821,
+      "line": 829,
       "ancestors": [],
       "title": "KestrelChatRuntime captures finalized payload via onFinalize callback",
       "contractId": "runtime.integration",
@@ -14943,7 +14943,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime consumes execution authorization without requiring an MCP grant",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 191,
+      "line": 193,
       "ancestors": [],
       "title": "KestrelChatRuntime consumes execution authorization without requiring an MCP grant",
       "contractId": "runtime.integration",
@@ -14973,7 +14973,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 385,
+      "line": 393,
       "ancestors": [],
       "title": "KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance",
       "contractId": "runtime.integration",
@@ -14988,7 +14988,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime delegates tool runtime status APIs to Kestrel core",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 949,
+      "line": 957,
       "ancestors": [],
       "title": "KestrelChatRuntime delegates tool runtime status APIs to Kestrel core",
       "contractId": "runtime.integration",
@@ -15003,7 +15003,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1406,
+      "line": 1414,
       "ancestors": [],
       "title": "KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model",
       "contractId": "runtime.integration",
@@ -15018,7 +15018,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 886,
+      "line": 894,
       "ancestors": [],
       "title": "KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted",
       "contractId": "runtime.integration",
@@ -15033,7 +15033,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1753,
+      "line": 1761,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "contractId": "runtime.integration",
@@ -15048,7 +15048,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards attachments when replying to a typed operator request",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1589,
+      "line": 1597,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards attachments when replying to a typed operator request",
       "contractId": "runtime.integration",
@@ -15063,7 +15063,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards manual compaction into operator affordance context",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 663,
+      "line": 671,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards manual compaction into operator affordance context",
       "contractId": "runtime.integration",
@@ -15078,7 +15078,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime maps operator child-thread tool policy into runtime policy",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1510,
+      "line": 1518,
       "ancestors": [],
       "title": "KestrelChatRuntime maps operator child-thread tool policy into runtime policy",
       "contractId": "runtime.integration",
@@ -15108,7 +15108,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime releases execution authorization when runtime preparation fails",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 237,
+      "line": 244,
       "ancestors": [],
       "title": "KestrelChatRuntime releases execution authorization when runtime preparation fails",
       "contractId": "runtime.integration",
@@ -15123,7 +15123,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1624,
+      "line": 1632,
       "ancestors": [],
       "title": "KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "contractId": "runtime.integration",
@@ -15138,7 +15138,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1017,
+      "line": 1025,
       "ancestors": [],
       "title": "KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata",
       "contractId": "runtime.integration",
@@ -15153,7 +15153,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: project autopilot tick runs planned card through implementation and testing full-auto threads",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 265,
+      "line": 273,
       "ancestors": [],
       "title": "project autopilot tick runs planned card through implementation and testing full-auto threads",
       "contractId": "runtime.integration",
@@ -15168,7 +15168,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1338,
+      "line": 1346,
       "ancestors": [],
       "title": "resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs",
       "contractId": "runtime.integration",
@@ -51303,7 +51303,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: agent.spawn accepts only a task string",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2199,
+      "line": 2200,
       "ancestors": [],
       "title": "agent.spawn accepts only a task string",
       "contractId": "runtime.behavior",
@@ -51318,7 +51318,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: agent.spawn delegates using the active runtime context",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2242,
+      "line": 2243,
       "ancestors": [],
       "title": "agent.spawn delegates using the active runtime context",
       "contractId": "runtime.behavior",
@@ -51333,7 +51333,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry accepts valid built-in internet URLs",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1100,
+      "line": 1101,
       "ancestors": [],
       "title": "UnifiedToolRegistry accepts valid built-in internet URLs",
       "contractId": "runtime.behavior",
@@ -51348,7 +51348,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry applies only advertised schemas to MCP tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1133,
+      "line": 1134,
       "ancestors": [],
       "title": "UnifiedToolRegistry applies only advertised schemas to MCP tools",
       "contractId": "runtime.behavior",
@@ -51363,7 +51363,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2108,
+      "line": 2109,
       "ancestors": [],
       "title": "UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted",
       "contractId": "runtime.behavior",
@@ -51393,7 +51393,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry carries source-write authority and write roots for default source workspaces",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1679,
+      "line": 1680,
       "ancestors": [],
       "title": "UnifiedToolRegistry carries source-write authority and write roots for default source workspaces",
       "contractId": "runtime.behavior",
@@ -51423,7 +51423,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1621,
+      "line": 1622,
       "ancestors": [],
       "title": "UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding",
       "contractId": "runtime.behavior",
@@ -51438,7 +51438,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1380,
+      "line": 1381,
       "ancestors": [],
       "title": "UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding",
       "contractId": "runtime.behavior",
@@ -51453,7 +51453,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2074,
+      "line": 2075,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool",
       "contractId": "runtime.behavior",
@@ -51468,7 +51468,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1794,
+      "line": 1795,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy",
       "contractId": "runtime.behavior",
@@ -51483,7 +51483,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1838,
+      "line": 1839,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection",
       "contractId": "runtime.behavior",
@@ -51528,7 +51528,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry gates dev.shell tools by devShell profile config",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1330,
+      "line": 1331,
       "ancestors": [],
       "title": "UnifiedToolRegistry gates dev.shell tools by devShell profile config",
       "contractId": "runtime.behavior",
@@ -51543,7 +51543,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry hides code.execute when profile code-mode is disabled",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1288,
+      "line": 1289,
       "ancestors": [],
       "title": "UnifiedToolRegistry hides code.execute when profile code-mode is disabled",
       "contractId": "runtime.behavior",
@@ -51573,7 +51573,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1739,
+      "line": 1740,
       "ancestors": [],
       "title": "UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract",
       "contractId": "runtime.behavior",
@@ -51603,7 +51603,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry passes valid internet.search_advanced domains to provider",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 951,
+      "line": 952,
       "ancestors": [],
       "title": "UnifiedToolRegistry passes valid internet.search_advanced domains to provider",
       "contractId": "runtime.behavior",
@@ -51618,7 +51618,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1240,
+      "line": 1241,
       "ancestors": [],
       "title": "UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers",
       "contractId": "runtime.behavior",
@@ -51633,7 +51633,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1185,
+      "line": 1186,
       "ancestors": [],
       "title": "UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
       "contractId": "runtime.behavior",
@@ -51648,7 +51648,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2038,
+      "line": 2039,
       "ancestors": [],
       "title": "UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools",
       "contractId": "runtime.behavior",
@@ -51663,7 +51663,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 854,
+      "line": 855,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls",
       "contractId": "runtime.behavior",
@@ -51678,7 +51678,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 824,
+      "line": 825,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls",
       "contractId": "runtime.behavior",
@@ -51693,7 +51693,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 982,
+      "line": 983,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls",
       "contractId": "runtime.behavior",
@@ -51708,7 +51708,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 704,
+      "line": 705,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls",
       "contractId": "runtime.behavior",
@@ -51723,7 +51723,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 675,
+      "line": 676,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls",
       "contractId": "runtime.behavior",
@@ -51738,7 +51738,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 795,
+      "line": 796,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls",
       "contractId": "runtime.behavior",
@@ -51753,7 +51753,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects local built-in internet URLs before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1019,
+      "line": 1020,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects local built-in internet URLs before provider calls",
       "contractId": "runtime.behavior",
@@ -51768,7 +51768,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1539,
+      "line": 1540,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace",
       "contractId": "runtime.behavior",
@@ -51783,7 +51783,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1071,
+      "line": 1072,
       "ancestors": [],
       "title": "UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors",
       "contractId": "runtime.behavior",
@@ -51813,7 +51813,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes allowlists per run context",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1984,
+      "line": 1985,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes allowlists per run context",
       "contractId": "runtime.behavior",
@@ -51828,7 +51828,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes filesystem root per workspace payload",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2328,
+      "line": 2329,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes filesystem root per workspace payload",
       "contractId": "runtime.behavior",
@@ -51843,7 +51843,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev-shell calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1468,
+      "line": 1469,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev-shell calls",
       "contractId": "runtime.behavior",
@@ -51858,7 +51858,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 915,
+      "line": 916,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites",
       "contractId": "runtime.behavior",
@@ -51873,7 +51873,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips internet.search_advanced country outside general topic",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 734,
+      "line": 735,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips internet.search_advanced country outside general topic",
       "contractId": "runtime.behavior",
@@ -51888,7 +51888,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 764,
+      "line": 765,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present",
       "contractId": "runtime.behavior",
@@ -51903,7 +51903,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 884,
+      "line": 885,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites",
       "contractId": "runtime.behavior",
@@ -51918,7 +51918,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 620,
+      "line": 621,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls",
       "contractId": "runtime.behavior",
@@ -51933,7 +51933,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unadvertised internet.search domain filters before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 648,
+      "line": 649,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unadvertised internet.search domain filters before provider calls",
       "contractId": "runtime.behavior",
@@ -51948,7 +51948,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unsupported fields for strict schemas before validation",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1907,
+      "line": 1908,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unsupported fields for strict schemas before validation",
       "contractId": "runtime.behavior",
@@ -51978,7 +51978,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry validates evidence.extract after canonicalizing content aliases",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1957,
+      "line": 1958,
       "ancestors": [],
       "title": "UnifiedToolRegistry validates evidence.extract after canonicalizing content aliases",
       "contractId": "runtime.behavior",
@@ -51993,7 +51993,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry validates internet.research after canonicalizing topic aliases",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1930,
+      "line": 1931,
       "ancestors": [],
       "title": "UnifiedToolRegistry validates internet.research after canonicalizing topic aliases",
       "contractId": "runtime.behavior",

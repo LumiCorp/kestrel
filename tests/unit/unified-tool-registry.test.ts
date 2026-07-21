@@ -594,6 +594,7 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
     }),
   });
   await registry.refreshForRuntimeTurn({
+    runId: "run-environment-app",
     sessionId: "session-environment-app",
     mcpAuthorization: { executionTicket: "signed-run-ticket" },
   });
@@ -614,7 +615,7 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
     "https://kestrel.example/api/runtime/apps/tavily/usage/auto/usage"
   );
   assert.equal(authorization, "Bearer signed-run-ticket");
-  registry.clearRuntimeTurnAuthorization("session-environment-app");
+  registry.clearRuntimeTurnAuthorization("run-environment-app");
 });
 
 test("UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls", async () => {
