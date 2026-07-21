@@ -1,4 +1,5 @@
 import type {
+  DesktopExecutionSelection,
   DesktopLegacyUiStateEntries,
   DesktopRunHistoryLine,
   DesktopRunnerEvent,
@@ -17,7 +18,7 @@ export const MAX_PERSISTED_TRANSCRIPT_BYTES = 6 * 1024 * 1024;
 export const MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD = 500;
 const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
 
-export type RendererTheme = "light" | "dark";
+export type RendererTheme = "system" | "light" | "dark";
 export type RendererMode = "chat" | "plan" | "build";
 
 export interface RendererTranscriptLine {
@@ -39,6 +40,9 @@ export interface RendererThread {
   draft: string;
   draftAttachmentIds: string[];
   promptHistory: string[];
+  modelConfigurationId: string;
+  modelConfigurationRevision: number;
+  enabledAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
 }
@@ -52,13 +56,19 @@ export interface DesktopRendererState {
 
 export function readDesktopRendererState(
   uiState: DesktopUiStateV1 | null,
+  defaults: {
+    modelConfigurationId?: string | undefined;
+    modelConfigurationRevision?: number | undefined;
+    enabledAppIds?: string[] | undefined;
+    theme?: RendererTheme | undefined;
+  } = {},
 ): DesktopRendererState {
   const entries = { ...(uiState?.entries ?? {}) };
   const store = parseThreadStore(entries[THREADS_STORAGE_KEY]);
   const interactionState = parseInteractionState(entries[INTERACTION_STATE_STORAGE_KEY]);
   const legacyDrafts = parseLegacyStringMap(entries[LEGACY_DRAFTS_STORAGE_KEY]);
   const legacyHistory = parseLegacyHistory(entries[LEGACY_HISTORY_STORAGE_KEY]);
-  const threads = collectThreads(store).map((thread) => {
+  const threads = collectThreads(store, defaults).map((thread) => {
     const interaction = interactionState[thread.id] ?? interactionState[thread.sessionId];
     return {
       ...thread,
@@ -67,7 +77,7 @@ export function readDesktopRendererState(
       promptHistory: interaction?.promptHistory ?? legacyHistory[thread.id] ?? legacyHistory[thread.sessionId] ?? [],
     };
   });
-  const normalizedThreads = threads.length > 0 ? threads : [createRendererThread()];
+  const normalizedThreads = threads.length > 0 ? threads : [createRendererThread(defaults)];
   const requestedActive = entries[ACTIVE_THREAD_STORAGE_KEY];
   const activeThreadId = normalizedThreads.some((thread) => thread.id === requestedActive)
     ? requestedActive!
@@ -76,11 +86,19 @@ export function readDesktopRendererState(
     entries,
     activeThreadId,
     threads: normalizedThreads,
-    theme: entries[THEME_STORAGE_KEY] === "dark" ? "dark" : "light",
+    theme: defaults.theme
+      ?? (entries[THEME_STORAGE_KEY] === "dark" || entries[THEME_STORAGE_KEY] === "light"
+        ? entries[THEME_STORAGE_KEY]
+        : "system"),
   };
 }
 
-export function createRendererThread(input: { projectPath?: string | undefined } = {}): RendererThread {
+export function createRendererThread(input: {
+  projectPath?: string | undefined;
+  modelConfigurationId?: string | undefined;
+  modelConfigurationRevision?: number | undefined;
+  enabledAppIds?: string[] | undefined;
+} = {}): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   return {
@@ -94,6 +112,9 @@ export function createRendererThread(input: { projectPath?: string | undefined }
     draft: "",
     draftAttachmentIds: [],
     promptHistory: [],
+    modelConfigurationId: input.modelConfigurationId ?? "desktop-default",
+    modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
+    enabledAppIds: [...(input.enabledAppIds ?? ["weather"])],
     rawSummary: {},
     rawState: {},
   };
@@ -134,7 +155,7 @@ export function updateRendererThread(
 
 export function addRendererThread(
   state: DesktopRendererState,
-  input: { projectPath?: string | undefined } = {},
+  input: Parameters<typeof createRendererThread>[0] = {},
 ): DesktopRendererState {
   const thread = createRendererThread(input);
   return {
@@ -238,6 +259,9 @@ export function serializeDesktopRendererState(
         ? { pendingWaitEventType: thread.pendingWaitEventType }
         : { pendingWaitEventType: undefined }),
       interactionMode: thread.mode,
+      modelConfigurationId: thread.modelConfigurationId,
+      modelConfigurationRevision: thread.modelConfigurationRevision,
+      enabledAppIds: [...thread.enabledAppIds],
       ...(thread.mode === "build" ? { actSubmode: "safe" } : { actSubmode: undefined }),
     },
   ]));
@@ -254,6 +278,22 @@ export function serializeDesktopRendererState(
         promptHistory: thread.promptHistory.slice(-MAX_PROMPT_HISTORY),
       }])),
     }),
+  };
+}
+
+export function toDesktopExecutionSelection(
+  thread: RendererThread,
+  apps: readonly { id: string; contractVersion: number }[],
+): DesktopExecutionSelection {
+  const enabled = new Set(thread.enabledAppIds);
+  return {
+    modelConfiguration: {
+      id: thread.modelConfigurationId,
+      revision: thread.modelConfigurationRevision,
+    },
+    apps: apps
+      .filter((app) => enabled.has(app.id))
+      .map((app) => ({ id: app.id, contractVersion: app.contractVersion })),
   };
 }
 
@@ -391,6 +431,10 @@ function parseStringArray(value: unknown, max: number): string[] {
 function collectThreads(store: {
   summaries: unknown[];
   states: Record<string, unknown>;
+}, defaults: {
+  modelConfigurationId?: string | undefined;
+  modelConfigurationRevision?: number | undefined;
+  enabledAppIds?: string[] | undefined;
 }): RendererThread[] {
   const summaries = new Map<string, Record<string, unknown>>();
   for (const candidate of store.summaries) {
@@ -434,6 +478,18 @@ function collectThreads(store: {
       draft: "",
       draftAttachmentIds: [],
       promptHistory: [],
+      modelConfigurationId: typeof rawState.modelConfigurationId === "string"
+        ? rawState.modelConfigurationId
+        : defaults.modelConfigurationId ?? "desktop-default",
+      modelConfigurationRevision:
+        typeof rawState.modelConfigurationRevision === "number"
+        && Number.isSafeInteger(rawState.modelConfigurationRevision)
+        && rawState.modelConfigurationRevision > 0
+          ? rawState.modelConfigurationRevision
+          : defaults.modelConfigurationRevision ?? 1,
+      enabledAppIds: Array.isArray(rawState.enabledAppIds)
+        ? rawState.enabledAppIds.filter((id): id is string => typeof id === "string")
+        : [...(defaults.enabledAppIds ?? ["weather"])],
       rawSummary,
       rawState,
     }];

@@ -9,7 +9,6 @@ import {
   Paperclip,
   Plug,
   Plus,
-  RefreshCw,
   Send,
   Settings,
   Square,
@@ -18,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   useEffect,
   useMemo,
@@ -40,6 +40,7 @@ import type {
 } from "../../src/contracts";
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
+import { ContextSidebar } from "./ContextSidebar";
 import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
@@ -103,6 +104,7 @@ export function DesktopApp() {
   const [error, setError] = useState<string>();
   const [errorCapability, setErrorCapability] = useState<DesktopCapabilityId>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
@@ -635,7 +637,7 @@ export function DesktopApp() {
   const activeProject = settings?.projects.find(
     (project) => project.path === activeProjectPath
   ) ?? settings?.projects[0];
-  const showInspector = surface === "chat" && inspectorOpen;
+  const showInspector = inspectorOpen;
   return (
     <div className="desktop-app">
       <header className="titlebar">
@@ -662,21 +664,22 @@ export function DesktopApp() {
           >
             {state.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          {surface === "chat" ? (
-            <button
-              className="icon-button"
-              type="button"
-              title={inspectorOpen ? "Close inspector" : "Open inspector"}
-              aria-label={inspectorOpen ? "Close inspector" : "Open inspector"}
-              onClick={() => setInspectorOpen((open) => !open)}
-            >
-              {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
-            </button>
-          ) : null}
+          <button
+            className="icon-button"
+            type="button"
+            title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+            aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+            onClick={() => setInspectorOpen((open) => !open)}
+          >
+            {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+          </button>
         </div>
       </header>
 
-      <div className={`workspace ${showInspector ? "with-inspector" : ""}`}>
+      <div
+        className={`workspace ${showInspector ? "with-inspector" : ""}`}
+        style={{ "--inspector-width": `${sidebarWidth}px` } as CSSProperties}
+      >
         <aside className="conversation-rail" aria-label="Conversations">
           <nav className="surface-tabs" aria-label="Kestrel views">
             <button className={surface === "chat" ? "active" : ""} type="button" title="Conversations" aria-label="Conversations" onClick={() => setSurface("chat")}>
@@ -966,99 +969,38 @@ export function DesktopApp() {
           </div>
         )}
 
-        {showInspector ? (
-          <aside className="inspector" aria-label="Desktop status">
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Runtime</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Restart runtime"
-                  aria-label="Restart runtime"
-                  onClick={() => void restartRuntime()}
-                >
-                  <RefreshCw size={16} />
-                </button>
-              </div>
-              <dl className="status-list">
-                <div><dt>Status</dt><dd>{runtimeHealth?.state ?? "unknown"}</dd></div>
-                <div><dt>Bridge</dt><dd>v{bridgeInfo?.version ?? "-"}</dd></div>
-                <div><dt>Process</dt><dd>{runtimeHealth?.running === true ? "running" : "stopped"}</dd></div>
-              </dl>
-              <p className="status-summary">{runtimeHealth?.summary ?? "Runtime status unavailable."}</p>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Apps</span>
-              </div>
-              <button
-                className="app-readiness-row"
-                type="button"
-                onClick={() => openCapabilitySettings("tools.weather")}
-              >
-                <span className="app-readiness-copy">
-                  <strong>Weather</strong>
-                  <small>Open-Meteo + Visual Crossing fallback</small>
-                </span>
-                <span className="provider-status">
-                  <span aria-hidden="true" />
-                  View readiness
-                </span>
-              </button>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Projects</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Add project"
-                  aria-label="Add project"
-                  onClick={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
-                >
-                  <Folder size={16} />
-                </button>
-              </div>
-              <div className="project-list">
-                {settings?.projects.length === 0 ? (
-                  <span className="muted">No projects</span>
-                ) : settings?.projects.map((project) => (
-                  <div className="project-row" key={project.path} title={project.path}>
-                    <Folder size={14} />
-                    <span>{project.label}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-heading">
-                <span>Provider</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Configure provider and model"
-                  aria-label="Configure provider and model"
-                  onClick={() => settings !== undefined && openCapabilitySettings(`model.${settings.selectedProvider}`)}
-                >
-                  <Settings size={15} aria-hidden="true" />
-                </button>
-              </div>
-              <div className="provider-status">
-                <span aria-hidden="true" />
-                {settings?.selectedProvider ?? "Provider unavailable"}
-              </div>
-              {modelPolicy !== undefined ? (
-                <p className="provider-model" title={modelPolicy.model}>{modelPolicy.model}</p>
-              ) : null}
-              <button className="secondary-button" type="button" onClick={() => settings !== undefined && openCapabilitySettings(`model.${settings.selectedProvider}`)}>
-                Open capability settings
-              </button>
-            </section>
-          </aside>
+        {showInspector && settings !== undefined ? (
+          <ContextSidebar
+            surface={surface}
+            settings={settings}
+            modelPolicy={modelPolicy}
+            runtimeHealth={runtimeHealth}
+            bridgeInfo={bridgeInfo}
+            activeProjectPath={activeProject?.path}
+            onProjectChange={(path) => {
+              setActiveProjectPath(path);
+              setState((current) => current === undefined
+                ? current
+                : updateRendererThread(current, activeThread.id, (thread) => ({ ...thread, projectPath: path })));
+            }}
+            onAddProject={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
+            onRestartRuntime={() => void restartRuntime()}
+            onOpenCapability={openCapabilitySettings}
+            onResizeStart={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              const startX = event.clientX;
+              const startWidth = sidebarWidth;
+              const move = (pointerEvent: PointerEvent) => {
+                setSidebarWidth(Math.min(420, Math.max(248, startWidth + startX - pointerEvent.clientX)));
+              };
+              const stop = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", stop);
+              };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", stop, { once: true });
+            }}
+          />
         ) : null}
       </div>
 

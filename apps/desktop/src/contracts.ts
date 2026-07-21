@@ -134,6 +134,7 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
+export type { DesktopExecutionSelection } from "../../../src/desktopShell/configuration.js";
 
 export interface DesktopAppInfo {
   name: string;
