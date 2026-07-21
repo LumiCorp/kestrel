@@ -111,6 +111,31 @@ contractTest(
       /writeReport\("passed", undefined, validationRequest\)/u,
     );
     assert.match(runner, /writeReport\("failed", error, validationRequest\)/u);
+    assert.match(
+      runner,
+      /if \(validationRequest\.mode === "full"\) \{\s*rmSync\(REPORT_DIR/u,
+    );
+  },
+);
+
+contractTest(
+  "runtime.hermetic",
+  "focused audit consumes retained evidence without replaying validation boundaries",
+  () => {
+    const auditLeaf = runner.slice(
+      runner.indexOf('if (boundary === "audit")'),
+      runner.indexOf('if (boundary === "postgres")'),
+    );
+    assert.match(auditLeaf, /await phase\("audit", auditTasks\(\)\)/u);
+    for (const replayed of [
+      "productionBuildTasks",
+      "hermeticTasks",
+      "processTasks",
+      "startPostgres",
+      "chromiumTasks",
+    ]) {
+      assert.doesNotMatch(auditLeaf, new RegExp(replayed, "u"));
+    }
   },
 );
 

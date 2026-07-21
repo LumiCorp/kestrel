@@ -39,7 +39,9 @@ await runValidation(request);
 
 async function runValidation(validationRequest) {
   cleanupValidationProcesses();
-  rmSync(REPORT_DIR, { recursive: true, force: true });
+  if (validationRequest.mode === "full") {
+    rmSync(REPORT_DIR, { recursive: true, force: true });
+  }
   mkdirSync(COVERAGE_DIR, { recursive: true });
 
   process.once("SIGINT", () => abortAll("SIGINT"));
@@ -764,17 +766,6 @@ async function runLeaf(boundary, workspace) {
     throw new Error(`${boundary} focused validation requires workspace 'all'`);
   }
   if (boundary === "audit") {
-    await phase(
-      "productionBuilds",
-      productionBuildTasks().filter(
-        (item) => item.label === "Web production build",
-      ),
-    );
-    await phase("hermetic", hermeticTasks());
-    await phase("process", processTasks(), { setup: processSetupTasks() });
-    postgres = await startPostgres();
-    await phase("postgres", postgresTasks(postgres));
-    await phase("chromium", await chromiumTasks(postgres));
     await phase("audit", auditTasks());
     return;
   }

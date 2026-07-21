@@ -76,3 +76,7 @@ pnpm run validate:postgres
 pnpm run validate:chromium
 pnpm run validate:audit
 ```
+
+Focused boundary runs retain their coverage and timing evidence. The focused
+audit consumes that evidence and runs only coverage, mutation, and contract
+checks; it does not replay the preceding boundaries.
