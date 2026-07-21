@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "WATCHPACK_POLLING=true next dev --port 43102",
     "build": "pnpm run build:self",
-    "build:self": "next build",
+    "build:self": "next build --turbopack",
     "start": "next start --port 43102",
     "lint": "next lint",
     "test": "pnpm run test:unit",
