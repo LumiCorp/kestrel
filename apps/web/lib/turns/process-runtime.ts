@@ -200,6 +200,7 @@ export async function processDurableThreadTurn(turnId: string) {
       durableTurnId: turn.id,
       messages,
       modelId: turn.requestedModelId ?? undefined,
+      interactionMode: turn.requestedInteractionMode,
       approvalDecision:
         turn.approvalId && turn.approvalApproved !== null
           ? {

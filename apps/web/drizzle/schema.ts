@@ -613,6 +613,11 @@ export const threadTurns = pgTable(
       .notNull()
       .default("web"),
     requestedModelId: text("requested_model_id"),
+    requestedInteractionMode: text("requested_interaction_mode", {
+      enum: ["chat", "plan", "build"],
+    })
+      .notNull()
+      .default("chat"),
     status: text("status", {
       enum: [
         "queued",

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChatFirstTurnHandoff } from "@/lib/types";
+import { isKestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
 const HANDOFF_KEY_PREFIX = "chat:first-turn:";
 const HANDOFF_TTL_MS = 60_000;
@@ -27,6 +28,7 @@ function isValidRecord(value: unknown): value is ChatFirstTurnHandoff {
         part && typeof part === "object" && typeof part.type === "string"
     ) &&
     typeof candidate.modelId === "string" &&
+    isKestrelOneInteractionMode(candidate.interactionMode) &&
     typeof candidate.createdAt === "number" &&
     typeof candidate.pendingAssistant === "boolean"
   );
