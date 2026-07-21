@@ -56,7 +56,6 @@ test("external replies use the hosted chat id and canonical SDK context", async 
 
   const result = await generateKestrelOneExternalReplyFromAgent({
     agent,
-    runId: "run_123",
     sessionId: "chat_123",
     prompt: "Summarize the thread",
     context,
@@ -69,7 +68,6 @@ test("external replies use the hosted chat id and canonical SDK context", async 
   });
 
   assert.deepEqual(capturedTurn, {
-    runId: "run_123",
     sessionId: "chat_123",
     message: "Summarize the thread",
     clientCapabilities: {

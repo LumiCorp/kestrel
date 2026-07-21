@@ -4461,7 +4461,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts :: external bot replies submit the gateway-managed inline profile",
       "file": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts",
-      "line": 145,
+      "line": 143,
       "ancestors": [],
       "title": "external bot replies submit the gateway-managed inline profile",
       "contractId": "web.unit-contract",
@@ -4476,7 +4476,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts :: external replies surface canonical runner failures",
       "file": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts",
-      "line": 95,
+      "line": 93,
       "ancestors": [],
       "title": "external replies surface canonical runner failures",
       "contractId": "web.unit-contract",

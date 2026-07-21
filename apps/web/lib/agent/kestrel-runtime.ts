@@ -281,7 +281,6 @@ function createModelAwareKestrelOneAgent(input: {
           const eventType = turn.eventType || "user.message";
           const normalizedTurn = {
             ...turn,
-            runId: route.runId,
             eventType,
             ...(resumeRequestId !== undefined
               ? {
@@ -525,7 +524,6 @@ export async function generateKestrelOneExternalReply(input: {
             }
           ),
       }),
-      runId: route.runId,
       sessionId: input.sessionId,
       prompt: input.prompt,
       context,
