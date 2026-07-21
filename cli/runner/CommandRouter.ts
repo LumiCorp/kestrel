@@ -1,4 +1,5 @@
 import {
+  parseExecutionTicketAuthorization,
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
@@ -1642,16 +1643,15 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
           turnRecord.mcpContext,
           "run.start payload.turn.mcpContext"
         );
-  if (turnRecord.mcpAuthorization !== undefined && mcpContext === undefined) {
-    throw new Error("run.start payload.turn.mcpAuthorization requires mcpContext");
-  }
   const mcpAuthorization =
     turnRecord.mcpAuthorization === undefined
       ? undefined
-      : parseHostedMcpRuntimeConnection({
-          mcpContext,
-          mcpAuthorization: turnRecord.mcpAuthorization,
-        }).executionTicket;
+      : mcpContext === undefined
+        ? parseExecutionTicketAuthorization(turnRecord.mcpAuthorization)
+        : parseHostedMcpRuntimeConnection({
+            mcpContext,
+            mcpAuthorization: turnRecord.mcpAuthorization,
+          }).executionTicket;
   if (
     turnRecord.clientCapabilities !== undefined &&
     (typeof turnRecord.clientCapabilities !== "object" ||

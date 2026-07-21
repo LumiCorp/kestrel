@@ -150,7 +150,10 @@ interface RuntimeBootstrap {
   close: () => Promise<void>;
   entryStepAgent: string;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
-  prepareHostedMcpRuntime?: ((input: Pick<RunTurnInput, "mcpContext" | "mcpAuthorization">) => Promise<unknown>) | undefined;
+  prepareHostedMcpRuntime?:
+    | ((input: Pick<RunTurnInput, "sessionId" | "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
+    | undefined;
+  releaseRuntimeAuthorization?: ((sessionId: string) => void) | undefined;
   reasoningPolicyReady?: Promise<unknown> | undefined;
 }
 
@@ -230,6 +233,7 @@ export class KestrelChatRuntime {
   private readonly readFinalizedPayload: ((sessionId: string) => Promise<unknown | undefined>) | undefined;
   private readonly turnCoordinator: RuntimeTurnCoordinatorService;
   private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
+  private readonly releaseRuntimeAuthorization: RuntimeBootstrap["releaseRuntimeAuthorization"];
   private readonly reasoningPolicyReady: Promise<unknown>;
 
   private finalizedPayload: unknown;
@@ -306,6 +310,7 @@ export class KestrelChatRuntime {
     this.closePool = bootstrap.close;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
     this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
+    this.releaseRuntimeAuthorization = bootstrap.releaseRuntimeAuthorization;
     this.reasoningPolicyReady = bootstrap.reasoningPolicyReady ?? Promise.resolve();
     this.forceModeSystemV2 = profile.agent === "reference-react";
     this.modeSystemV2Enabled = this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
@@ -370,23 +375,29 @@ export class KestrelChatRuntime {
         : {}),
     };
     const { mcpAuthorization, ...persistableInput } = authorizedInput;
-    if (mcpAuthorization !== undefined) {
-      if (persistableInput.mcpContext === undefined) {
-        throw new Error("mcpAuthorization requires mcpContext");
+    try {
+      if (mcpAuthorization !== undefined) {
+        if (this.prepareHostedMcpRuntime === undefined) {
+          throw new Error("Runtime execution authorization is unavailable");
+        }
+        await this.prepareHostedMcpRuntime({
+          sessionId: persistableInput.sessionId,
+          ...(persistableInput.mcpContext !== undefined
+            ? { mcpContext: persistableInput.mcpContext }
+            : {}),
+          mcpAuthorization,
+        });
       }
-      if (this.prepareHostedMcpRuntime === undefined) {
-        throw new Error("Hosted MCP runtime preparation is unavailable");
+      const result = await this.turnCoordinator.runTurn(persistableInput, options);
+      if (result.finalizedPayload !== undefined) {
+        this.finalizedPayload = result.finalizedPayload;
       }
-      await this.prepareHostedMcpRuntime({
-        mcpContext: persistableInput.mcpContext,
-        mcpAuthorization,
-      });
+      return result as RunTurnResult;
+    } finally {
+      if (mcpAuthorization !== undefined) {
+        this.releaseRuntimeAuthorization?.(persistableInput.sessionId);
+      }
     }
-    const result = await this.turnCoordinator.runTurn(persistableInput, options);
-    if (result.finalizedPayload !== undefined) {
-      this.finalizedPayload = result.finalizedPayload;
-    }
-    return result as RunTurnResult;
   }
 
   async getToolRuntimeStatus(): Promise<ToolRuntimeStatus> {
@@ -2019,6 +2030,7 @@ function createRuntimeWithStore(
       return asRecord(session?.state.agent)?.finalOutput;
     },
     prepareHostedMcpRuntime: (input) => toolRegistry.refreshForRuntimeTurn(input),
+    releaseRuntimeAuthorization: (sessionId) => toolRegistry.clearRuntimeTurnAuthorization(sessionId),
     close: async () => {
       clearInterval(providerReasoningPurgeTimer);
       await userTerminalReady?.catch(() => {});

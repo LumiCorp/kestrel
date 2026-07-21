@@ -98,12 +98,18 @@ export function parseHostedMcpRuntimeConnection(input: {
   mcpAuthorization: unknown;
 }): HostedMcpRuntimeConnection {
   const context = parseHostedMcpContext(input.mcpContext);
-  const authorization = asRecord(input.mcpAuthorization);
-  const executionTicket = requireNonEmptyString(
+  const executionTicket = parseExecutionTicketAuthorization(
+    input.mcpAuthorization
+  );
+  return { context, executionTicket };
+}
+
+export function parseExecutionTicketAuthorization(value: unknown): string {
+  const authorization = asRecord(value);
+  return requireNonEmptyString(
     authorization?.executionTicket,
     "mcpAuthorization.executionTicket"
   );
-  return { context, executionTicket };
 }
 
 function requireNonEmptyString(value: unknown, fieldName: string): string {

@@ -565,6 +565,58 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
   ]);
 });
 
+test("UnifiedToolRegistry routes a direct Environment App through scoped execution authorization", async () => {
+  let requestUrl = "";
+  let authorization = "";
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["internet.usage"],
+    context: {
+      kestrelOne: {
+        appUrl: "https://kestrel.example",
+        appApprovalModes: { "internet.usage": "auto" },
+      },
+      fetchImpl: (async (url, init) => {
+        requestUrl = String(url);
+        authorization = String(
+          (init?.headers as Record<string, string> | undefined)?.Authorization
+        );
+        return new Response(JSON.stringify({ key: { usage: 1 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refreshForRuntimeTurn({
+    sessionId: "session-environment-app",
+    mcpAuthorization: { executionTicket: "signed-run-ticket" },
+  });
+
+  await registry.call(
+    "internet.usage",
+    {},
+    {
+      runContext: createToolRunContext({
+        runId: "run-environment-app",
+        sessionId: "session-environment-app",
+      }),
+    }
+  );
+
+  assert.equal(
+    requestUrl,
+    "https://kestrel.example/api/runtime/apps/tavily/usage/auto/usage"
+  );
+  assert.equal(authorization, "Bearer signed-run-ticket");
+  registry.clearRuntimeTurnAuthorization("session-environment-app");
+});
+
 test("UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({

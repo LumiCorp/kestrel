@@ -684,6 +684,85 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
   await host.close();
 });
 
+test("run.start forwards execution authorization without requiring an MCP grant", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let receivedAuthorization: Record<string, unknown> | undefined;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async (input) => {
+      receivedAuthorization = input.mcpAuthorization as unknown as Record<
+        string,
+        unknown
+      >;
+      return {
+        assistantText: null,
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: input.runId ?? "run-environment-app",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as { type: string; payload: Record<string, unknown> }
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-environment-app",
+      type: "run.start",
+      payload: {
+        profile,
+        turn: {
+          sessionId: "session-environment-app",
+          runId: "run-environment-app",
+          message: "search the web",
+          eventType: "user.message",
+          mcpAuthorization: {
+            executionTicket: "must-not-cross-event-boundary",
+          },
+        },
+      },
+    })
+  );
+
+  await tick();
+  const startedPayload = events.find(
+    (event) => event.type === "run.started"
+  )?.payload;
+  assert.equal(
+    receivedAuthorization?.executionTicket,
+    "must-not-cross-event-boundary"
+  );
+  assert.equal("mcpAuthorization" in (startedPayload ?? {}), false);
+  assert.equal(
+    events.some((event) => event.type === "runner.error"),
+    false
+  );
+  rl.close();
+  await host.close();
+});
+
 test("run.start fails closed when runtime returns a different runId than requested", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
