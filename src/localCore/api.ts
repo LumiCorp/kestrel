@@ -16,6 +16,7 @@ import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import { DiagnosticLogStore, type DiagnosticLogEntry } from "../../cli/diagnostics/DiagnosticLogStore.js";
 import { KcronStateStore, type KcronStateFile } from "../../cli/kcron/state.js";
+import { withLocalCoreDaemonStoreOwnership } from "../../cli/localCoreStoreOwnership.js";
 import type { SessionsFile, TuiHistoryRecord, TuiProfile, UiState, WorkspacesFile } from "../../cli/contracts.js";
 import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "../../cli/config/RuntimeSettings.js";
 import { buildSupportBundle } from "../diagnostics/supportBundle.js";
@@ -834,30 +835,6 @@ class LocalCoreApiRequestError extends Error {
     this.name = "LocalCoreApiRequestError";
     this.statusCode = statusCode;
     this.code = code;
-  }
-}
-
-let localCoreDaemonStoreOwnershipDepth = 0;
-let previousLocalCoreDaemonEnv: string | undefined;
-
-async function withLocalCoreDaemonStoreOwnership<T>(callback: () => Promise<T>): Promise<T> {
-  if (localCoreDaemonStoreOwnershipDepth === 0) {
-    previousLocalCoreDaemonEnv = process.env.KESTREL_LOCAL_CORE_DAEMON;
-    process.env.KESTREL_LOCAL_CORE_DAEMON = "1";
-  }
-  localCoreDaemonStoreOwnershipDepth += 1;
-  try {
-    return await callback();
-  } finally {
-    localCoreDaemonStoreOwnershipDepth -= 1;
-    if (localCoreDaemonStoreOwnershipDepth === 0) {
-      if (previousLocalCoreDaemonEnv === undefined) {
-        delete process.env.KESTREL_LOCAL_CORE_DAEMON;
-      } else {
-        process.env.KESTREL_LOCAL_CORE_DAEMON = previousLocalCoreDaemonEnv;
-      }
-      previousLocalCoreDaemonEnv = undefined;
-    }
   }
 }
 
