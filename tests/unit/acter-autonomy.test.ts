@@ -29,6 +29,7 @@ import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultD
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 
 function buildExecConfig() {
   return {
@@ -1565,7 +1566,11 @@ test("exec.finalize commits switch_mode as a terminal mode-switch payload", asyn
       useTool: async (name, input) => {
         assert.equal(name, "FinalizeAnswer");
         finalizedInput = input;
-        return { finalized: true, payload: input };
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { finalized: true, payload: input },
+        });
       },
     },
   );

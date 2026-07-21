@@ -18498,7 +18498,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: ask_user resume does not carry stale agent goal when transcript lacks a task",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1347,
+      "line": 1348,
       "ancestors": [],
       "title": "ask_user resume does not carry stale agent goal when transcript lacks a task",
       "contractId": "runtime.behavior",
@@ -18513,7 +18513,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: direct Acter execution clears filesystem inspection cache before filesystem mutation",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 726,
+      "line": 727,
       "ancestors": [],
       "title": "direct Acter execution clears filesystem inspection cache before filesystem mutation",
       "contractId": "runtime.behavior",
@@ -18528,7 +18528,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: direct Acter execution rejects malformed compiled nextAction",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 616,
+      "line": 617,
       "ancestors": [],
       "title": "direct Acter execution rejects malformed compiled nextAction",
       "contractId": "runtime.behavior",
@@ -18543,7 +18543,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: direct Acter execution reuses cached filesystem inspection evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 656,
+      "line": 657,
       "ancestors": [],
       "title": "direct Acter execution reuses cached filesystem inspection evidence",
       "contractId": "runtime.behavior",
@@ -18558,7 +18558,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch continues durable pending batch without a new nextAction",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3489,
+      "line": 3494,
       "ancestors": [],
       "title": "exec.dispatch continues durable pending batch without a new nextAction",
       "contractId": "runtime.behavior",
@@ -18573,7 +18573,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch derives broadened search from prior low-signal cached research",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4248,
+      "line": 4253,
       "ancestors": [],
       "title": "exec.dispatch derives broadened search from prior low-signal cached research",
       "contractId": "runtime.behavior",
@@ -18588,7 +18588,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not derive broadened search after prior high-yield research",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4352,
+      "line": 4357,
       "ancestors": [],
       "title": "exec.dispatch does not derive broadened search after prior high-yield research",
       "contractId": "runtime.behavior",
@@ -18603,7 +18603,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not infer dev.process.read processId from active process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2044,
+      "line": 2049,
       "ancestors": [],
       "title": "exec.dispatch does not infer dev.process.read processId from active process state",
       "contractId": "runtime.behavior",
@@ -18618,7 +18618,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not infer dev.process.write processId from active process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2105,
+      "line": 2110,
       "ancestors": [],
       "title": "exec.dispatch does not infer dev.process.write processId from active process state",
       "contractId": "runtime.behavior",
@@ -18633,7 +18633,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for code.execute in the default build path",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3255,
+      "line": 3260,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for code.execute in the default build path",
       "contractId": "runtime.behavior",
@@ -18648,7 +18648,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for dev process auto-provision tools",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3068,
+      "line": 3073,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for dev process auto-provision tools",
       "contractId": "runtime.behavior",
@@ -18663,7 +18663,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for dev shell auto-provision tools",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2956,
+      "line": 2961,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for dev shell auto-provision tools",
       "contractId": "runtime.behavior",
@@ -18678,7 +18678,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse cached external side-effect outcomes",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4150,
+      "line": 4155,
       "ancestors": [],
       "title": "exec.dispatch does not reuse cached external side-effect outcomes",
       "contractId": "runtime.behavior",
@@ -18693,7 +18693,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse cached filesystem outcomes",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4058,
+      "line": 4063,
       "ancestors": [],
       "title": "exec.dispatch does not reuse cached filesystem outcomes",
       "contractId": "runtime.behavior",
@@ -18708,7 +18708,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse lastActionResult when input hash is missing",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4456,
+      "line": 4461,
       "ancestors": [],
       "title": "exec.dispatch does not reuse lastActionResult when input hash is missing",
       "contractId": "runtime.behavior",
@@ -18723,7 +18723,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not use stale agent goal as autonomy evidence when transcript lacks a task",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 454,
+      "line": 455,
       "ancestors": [],
       "title": "exec.dispatch does not use stale agent goal as autonomy evidence when transcript lacks a task",
       "contractId": "runtime.behavior",
@@ -18738,7 +18738,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch emits blocked acter waits with prompt metadata",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1803,
+      "line": 1808,
       "ancestors": [],
       "title": "exec.dispatch emits blocked acter waits with prompt metadata",
       "contractId": "runtime.behavior",
@@ -18753,7 +18753,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch escalates to approval when autonomy evidence is insufficient",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 413,
+      "line": 414,
       "ancestors": [],
       "title": "exec.dispatch escalates to approval when autonomy evidence is insufficient",
       "contractId": "runtime.behavior",
@@ -18768,7 +18768,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch fails fast on repeated deduped tool reuse with no progress",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4609,
+      "line": 4614,
       "ancestors": [],
       "title": "exec.dispatch fails fast on repeated deduped tool reuse with no progress",
       "contractId": "runtime.behavior",
@@ -18783,7 +18783,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch ignores caller-supplied managedWorktree when no session binding exists",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3182,
+      "line": 3187,
       "ancestors": [],
       "title": "exec.dispatch ignores caller-supplied managedWorktree when no session binding exists",
       "contractId": "runtime.behavior",
@@ -18798,7 +18798,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2879,
+      "line": 2884,
       "ancestors": [],
       "title": "exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning",
       "contractId": "runtime.behavior",
@@ -18813,7 +18813,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2806,
+      "line": 2811,
       "ancestors": [],
       "title": "exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning",
       "contractId": "runtime.behavior",
@@ -18828,7 +18828,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch marks duplicate_executed_result for repeated fresh web output",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4525,
+      "line": 4530,
       "ancestors": [],
       "title": "exec.dispatch marks duplicate_executed_result for repeated fresh web output",
       "contractId": "runtime.behavior",
@@ -18843,7 +18843,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch queues filesystem writes with continue failure policy",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2748,
+      "line": 2753,
       "ancestors": [],
       "title": "exec.dispatch queues filesystem writes with continue failure policy",
       "contractId": "runtime.behavior",
@@ -18858,7 +18858,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch records processor-owned ask_user waits",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1401,
+      "line": 1402,
       "ancestors": [],
       "title": "exec.dispatch records processor-owned ask_user waits",
       "contractId": "runtime.behavior",
@@ -18873,7 +18873,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch records recoverable read-only batch filesystem failures as failed evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3726,
+      "line": 3731,
       "ancestors": [],
       "title": "exec.dispatch records recoverable read-only batch filesystem failures as failed evidence",
       "contractId": "runtime.behavior",
@@ -18888,7 +18888,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch reports capability-blocked tools with explicit policy metadata",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1874,
+      "line": 1879,
       "ancestors": [],
       "title": "exec.dispatch reports capability-blocked tools with explicit policy metadata",
       "contractId": "runtime.behavior",
@@ -18903,7 +18903,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch returns stale missing nextAction state to loop feedback",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 513,
+      "line": 514,
       "ancestors": [],
       "title": "exec.dispatch returns stale missing nextAction state to loop feedback",
       "contractId": "runtime.behavior",
@@ -18918,7 +18918,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch returns unsupported nextAction kind to loop feedback",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 571,
+      "line": 572,
       "ancestors": [],
       "title": "exec.dispatch returns unsupported nextAction kind to loop feedback",
       "contractId": "runtime.behavior",
@@ -18933,7 +18933,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch reuses cached tool outcomes instead of repeating the same call",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1951,
+      "line": 1956,
       "ancestors": [],
       "title": "exec.dispatch reuses cached tool outcomes instead of repeating the same call",
       "contractId": "runtime.behavior",
@@ -18948,7 +18948,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch routes durable tool batches through processor-owned effect dispatch",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3422,
+      "line": 3427,
       "ancestors": [],
       "title": "exec.dispatch routes durable tool batches through processor-owned effect dispatch",
       "contractId": "runtime.behavior",
@@ -18963,7 +18963,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch skips managed worktree approval for ephemeral workspace mutations",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3123,
+      "line": 3128,
       "ancestors": [],
       "title": "exec.dispatch skips managed worktree approval for ephemeral workspace mutations",
       "contractId": "runtime.behavior",
@@ -18978,7 +18978,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch still throws non-recoverable read-only batch tool failures",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3829,
+      "line": 3834,
       "ancestors": [],
       "title": "exec.dispatch still throws non-recoverable read-only batch tool failures",
       "contractId": "runtime.behavior",
@@ -18993,7 +18993,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch strips unadvertised internet.search domain filters before tool execution",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4692,
+      "line": 4697,
       "ancestors": [],
       "title": "exec.dispatch strips unadvertised internet.search domain filters before tool execution",
       "contractId": "runtime.behavior",
@@ -19008,7 +19008,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch treats exec_command as the auto-provisioned dev shell alias",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3011,
+      "line": 3016,
       "ancestors": [],
       "title": "exec.dispatch treats exec_command as the auto-provisioned dev shell alias",
       "contractId": "runtime.behavior",
@@ -19023,7 +19023,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2676,
+      "line": 2681,
       "ancestors": [],
       "title": "exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
       "contractId": "runtime.behavior",
@@ -19038,7 +19038,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.finalize commits switch_mode as a terminal mode-switch payload",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1539,
+      "line": 1540,
       "ancestors": [],
       "title": "exec.finalize commits switch_mode as a terminal mode-switch payload",
       "contractId": "runtime.behavior",
@@ -19053,7 +19053,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.finalize converts handoff_to_build into a user reply wait",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1452,
+      "line": 1453,
       "ancestors": [],
       "title": "exec.finalize converts handoff_to_build into a user reply wait",
       "contractId": "runtime.behavior",
@@ -19068,7 +19068,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3318,
+      "line": 3323,
       "ancestors": [],
       "title": "exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation",
       "contractId": "runtime.behavior",
@@ -19083,7 +19083,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_approval records processor-owned approval denials",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 783,
+      "line": 784,
       "ancestors": [],
       "title": "exec.wait_approval records processor-owned approval denials",
       "contractId": "runtime.behavior",
@@ -19098,7 +19098,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect clears stale retry feedback after failed durable write result evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 343,
+      "line": 344,
       "ancestors": [],
       "title": "exec.wait_effect clears stale retry feedback after failed durable write result evidence",
       "contractId": "runtime.behavior",
@@ -19113,7 +19113,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect clears stale retry feedback after successful durable write result evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 204,
+      "line": 205,
       "ancestors": [],
       "title": "exec.wait_effect clears stale retry feedback after successful durable write result evidence",
       "contractId": "runtime.behavior",
@@ -19128,7 +19128,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect clears stale retry feedback after successful patch_text result evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 273,
+      "line": 274,
       "ancestors": [],
       "title": "exec.wait_effect clears stale retry feedback after successful patch_text result evidence",
       "contractId": "runtime.behavior",
@@ -19143,7 +19143,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3974,
+      "line": 3979,
       "ancestors": [],
       "title": "exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec",
       "contractId": "runtime.behavior",
@@ -19158,7 +19158,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect preserves live process state when a helper exec completes without processId",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2409,
+      "line": 2414,
       "ancestors": [],
       "title": "exec.wait_effect preserves live process state when a helper exec completes without processId",
       "contractId": "runtime.behavior",
@@ -19173,7 +19173,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records dev.process.write input and keeps process live",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2247,
+      "line": 2252,
       "ancestors": [],
       "title": "exec.wait_effect records dev.process.write input and keeps process live",
       "contractId": "runtime.behavior",
@@ -19188,7 +19188,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records durable batch filesystem failures as failed evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3627,
+      "line": 3632,
       "ancestors": [],
       "title": "exec.wait_effect records durable batch filesystem failures as failed evidence",
       "contractId": "runtime.behavior",
@@ -19203,7 +19203,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records failed artifact reads instead of terminating verification",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3546,
+      "line": 3551,
       "ancestors": [],
       "title": "exec.wait_effect records failed artifact reads instead of terminating verification",
       "contractId": "runtime.behavior",
@@ -19218,7 +19218,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records helper outcome after empty helper read without entering repair",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3872,
+      "line": 3877,
       "ancestors": [],
       "title": "exec.wait_effect records helper outcome after empty helper read without entering repair",
       "contractId": "runtime.behavior",
@@ -19233,7 +19233,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records helper tactic failure as ledger evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2486,
+      "line": 2491,
       "ancestors": [],
       "title": "exec.wait_effect records helper tactic failure as ledger evidence",
       "contractId": "runtime.behavior",
@@ -19248,7 +19248,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records processor-owned effect waits when result is unavailable",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1009,
+      "line": 1010,
       "ancestors": [],
       "title": "exec.wait_effect records processor-owned effect waits when result is unavailable",
       "contractId": "runtime.behavior",
@@ -19263,7 +19263,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records processor-owned non-tool effect collection",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1057,
+      "line": 1058,
       "ancestors": [],
       "title": "exec.wait_effect records processor-owned non-tool effect collection",
       "contractId": "runtime.behavior",
@@ -19278,7 +19278,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records running dev.shell process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2169,
+      "line": 2174,
       "ancestors": [],
       "title": "exec.wait_effect records running dev.shell process state",
       "contractId": "runtime.behavior",
@@ -19293,7 +19293,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records settled dev.shell process completion",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2328,
+      "line": 2333,
       "ancestors": [],
       "title": "exec.wait_effect records settled dev.shell process completion",
       "contractId": "runtime.behavior",
@@ -19308,7 +19308,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect routes completed filesystem writes through collect before loop",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1109,
+      "line": 1110,
       "ancestors": [],
       "title": "exec.wait_effect routes completed filesystem writes through collect before loop",
       "contractId": "runtime.behavior",
@@ -19323,7 +19323,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect settles completed dev.shell.run results before loop",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1177,
+      "line": 1178,
       "ancestors": [],
       "title": "exec.wait_effect settles completed dev.shell.run results before loop",
       "contractId": "runtime.behavior",
@@ -19338,7 +19338,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect treats failed artifact check commands as process evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2579,
+      "line": 2584,
       "ancestors": [],
       "title": "exec.wait_effect treats failed artifact check commands as process evidence",
       "contractId": "runtime.behavior",
@@ -19353,7 +19353,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_user clears stale waitingFor when action is no longer ask_user",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1587,
+      "line": 1592,
       "ancestors": [],
       "title": "exec.wait_user clears stale waitingFor when action is no longer ask_user",
       "contractId": "runtime.behavior",
@@ -19368,7 +19368,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_user consumes plan handoff user reply without carrying stale wait state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1647,
+      "line": 1652,
       "ancestors": [],
       "title": "exec.wait_user consumes plan handoff user reply without carrying stale wait state",
       "contractId": "runtime.behavior",
@@ -19383,7 +19383,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1255,
+      "line": 1256,
       "ancestors": [],
       "title": "exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode",
       "contractId": "runtime.behavior",
@@ -19398,7 +19398,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: GitHub external confirmation resumes only the exact approved mutation",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 881,
+      "line": 882,
       "ancestors": [],
       "title": "GitHub external confirmation resumes only the exact approved mutation",
       "contractId": "runtime.behavior",
@@ -19413,7 +19413,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: reference react execution checkpoint clears stale exec user waits",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1711,
+      "line": 1716,
       "ancestors": [],
       "title": "reference react execution checkpoint clears stale exec user waits",
       "contractId": "runtime.behavior",
@@ -19428,7 +19428,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: reference react non-wait command batches clear stale ask-user wait actions",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1747,
+      "line": 1752,
       "ancestors": [],
       "title": "reference react non-wait command batches clear stale ask-user wait actions",
       "contractId": "runtime.behavior",
