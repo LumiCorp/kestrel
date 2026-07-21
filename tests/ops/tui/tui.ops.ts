@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { describe } from "node:test";
 
 import { runTuiScenario } from "../helpers/pty.js";
 import { contractTest } from "../../helpers/contract-test.js";
 
+describe("TUI PTY journeys", { concurrency: true }, () => {
 
-contractTest("runtime.process", "TUI workspace journey can be opened and exited back to chat deterministically", async () => {
+contractTest("runtime.process", "TUI workspace journey can be opened and exited back to chat deterministically", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     timeoutSeconds: 8,
@@ -33,7 +34,7 @@ contractTest("runtime.process", "TUI workspace journey can be opened and exited 
   assert.match(transcript, /Back to Chat/i);
 });
 
-contractTest("runtime.process", "TUI MCP journey opens from slash command and returns to chat with Esc", async () => {
+contractTest("runtime.process", "TUI MCP journey opens from slash command and returns to chat with Esc", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     timeoutSeconds: 8,
@@ -49,7 +50,7 @@ contractTest("runtime.process", "TUI MCP journey opens from slash command and re
   assert.match(transcript, /Back to Chat/i);
 });
 
-contractTest("runtime.process", "TUI Code journey opens from slash command and returns to chat with Esc", async () => {
+contractTest("runtime.process", "TUI Code journey opens from slash command and returns to chat with Esc", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     timeoutSeconds: 8,
@@ -65,7 +66,7 @@ contractTest("runtime.process", "TUI Code journey opens from slash command and r
   assert.match(transcript, /Back to Chat/i);
 });
 
-contractTest("runtime.process", "TUI Delegation and Recovery journeys open from slash commands", async () => {
+contractTest("runtime.process", "TUI Delegation and Recovery journeys open from slash commands", { concurrency: true }, async () => {
   const delegationTranscript = await runTuiScenario({
     sessionName: "ops-root",
     timeoutSeconds: 8,
@@ -89,7 +90,7 @@ contractTest("runtime.process", "TUI Delegation and Recovery journeys open from 
   assert.match(recoveryTranscript, /ops-root · RECOVERY/i);
 });
 
-contractTest("runtime.process", "TUI scripted fresh-session startup lands in prompt-ready chat", async () => {
+contractTest("runtime.process", "TUI scripted fresh-session startup lands in prompt-ready chat", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     freshSessionName: "ops-fresh-chat",
@@ -104,7 +105,7 @@ contractTest("runtime.process", "TUI scripted fresh-session startup lands in pro
   assert.match(transcript, /ops-fresh-chat · CHAT/i);
 });
 
-contractTest("runtime.process", "TUI scripted chat submits non-command messages with Enter", async () => {
+contractTest("runtime.process", "TUI scripted chat submits non-command messages with Enter", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     freshSessionName: "ops-submit-message",
@@ -128,7 +129,7 @@ contractTest("runtime.process", "TUI scripted chat submits non-command messages 
   assert.match(transcript, /RUNNING|Run in progress|Calling decision model/i);
 });
 
-contractTest("runtime.process", "TUI workspace journey supports deterministic arrow-key navigation", async () => {
+contractTest("runtime.process", "TUI workspace journey supports deterministic arrow-key navigation", { concurrency: true }, async () => {
   const transcript = await runTuiScenario({
     sessionName: "ops-root",
     timeoutSeconds: 10,
@@ -147,4 +148,5 @@ contractTest("runtime.process", "TUI workspace journey supports deterministic ar
   assert.match(transcript, />\s*Open History Home/i);
   assert.match(transcript, />\s*Back to Chat/i);
   assert.match(transcript, /ops-root · CHAT/i);
+});
 });

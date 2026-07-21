@@ -75,7 +75,10 @@ export async function runTuiScenarioWithSession(input: {
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
-  const tempDir = path.join(os.tmpdir(), `kestrel-pty-${randomUUID()}`);
+  const tempDir = path.join(
+    process.env.KESTREL_VALIDATION_TEMP_ROOT ?? os.tmpdir(),
+    `kestrel-pty-${randomUUID()}`,
+  );
   const homeDir = path.join(tempDir, "home");
   const coreProductRoot = path.join(tempDir, "core-home");
   const corePaths = resolveLocalCorePaths(coreProductRoot);
@@ -83,6 +86,29 @@ export async function runTuiScenarioWithSession(input: {
   await seedTuiHome(corePaths.stateRootPath);
 
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
+  const tuiEnvironment: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(input.env ?? {}),
+    HOME: homeDir,
+    KESTREL_CORE_HOME: coreProductRoot,
+    KESTREL_CORE_DATABASE_MODE: input.databaseUrl ? "external" : "pglite",
+    ...(input.databaseUrl
+      ? {
+          DATABASE_URL: input.databaseUrl,
+          KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
+        }
+      : {}),
+    KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
+    KESTREL_DISABLE_DOTENV: "1",
+    ...(input.databaseUrl ? { KESTREL_DB_PORT: "1" } : {}),
+    OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
+    TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
+    FORCE_COLOR: "0",
+    TERM: "xterm-256color",
+  };
+  delete tuiEnvironment.CI;
+  delete tuiEnvironment.NODE_V8_COVERAGE;
+  delete tuiEnvironment.KESTREL_CONTRACT_TIMINGS;
   const payload = JSON.stringify({
     command: [
       process.execPath,
@@ -96,26 +122,7 @@ export async function runTuiScenarioWithSession(input: {
       "--profile",
       "reference",
     ],
-    env: {
-      ...process.env,
-      ...(input.env ?? {}),
-      HOME: homeDir,
-      KESTREL_CORE_HOME: coreProductRoot,
-      KESTREL_CORE_DATABASE_MODE: input.databaseUrl ? "external" : "pglite",
-      ...(input.databaseUrl
-        ? {
-            DATABASE_URL: input.databaseUrl,
-            KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
-          }
-        : {}),
-      KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
-      KESTREL_DISABLE_DOTENV: "1",
-      ...(input.databaseUrl ? { KESTREL_DB_PORT: "1" } : {}),
-      OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
-      TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
-      FORCE_COLOR: "0",
-      TERM: "xterm-256color",
-    },
+    env: tuiEnvironment,
     steps: input.steps.map((step, index) => ({
       pattern: typeof step.waitFor === "string" ? step.waitFor : step.waitFor.source,
       regex: typeof step.waitFor !== "string",

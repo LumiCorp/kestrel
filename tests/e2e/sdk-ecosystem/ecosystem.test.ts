@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,11 +12,10 @@ import { createAgent } from "../../../packages/sdk/src/index.js";
 import {
   createProfileProvider,
   createSdkE2eRuntimeFactory,
-  packPackage,
+  preparePackedConsumerFixture,
   runChildProcess,
   sdkE2eContext,
   sdkE2eProfile,
-  writePnpmWorkspaceOverrides,
 } from "./helpers.js";
 import { contractTest } from "../../helpers/contract-test.js";
 
@@ -446,41 +444,7 @@ contractTest("runtime.process", "packed tarball consumer fixture installs and ex
     await server.close();
   });
 
-  const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-ecosystem-pack-"));
-  const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-ecosystem-fixture-"));
-  const storeDir = path.join(os.tmpdir(), "kestrel-ecosystem-pnpm-store");
-  t.after(() => {
-    rmSync(packDir, { recursive: true, force: true });
-    rmSync(fixtureDir, { recursive: true, force: true });
-  });
-
-  const protocolTarball = packPackage(path.join(process.cwd(), "packages/protocol"), packDir);
-  const sdkTarball = packPackage(path.join(process.cwd(), "packages/sdk"), packDir);
-  const observabilityTarball = packPackage(path.join(process.cwd(), "packages/observability"), packDir);
-  writeFileSync(path.join(fixtureDir, "package.json"), JSON.stringify({
-    name: "kestrel-sdk-e2e-fixture",
-    private: true,
-    type: "module",
-    packageManager: "pnpm@9.12.2",
-    pnpm: {
-      overrides: {
-        "@kestrel-agents/protocol": protocolTarball,
-        "@kestrel-agents/sdk": sdkTarball,
-      },
-    },
-  }, null, 2));
-  writePnpmWorkspaceOverrides(fixtureDir, {
-    "@kestrel-agents/protocol": protocolTarball,
-    "@kestrel-agents/sdk": sdkTarball,
-  });
-
-  await runChildProcess("pnpm", ["add", "--workspace-root", protocolTarball, sdkTarball, observabilityTarball], {
-    cwd: fixtureDir,
-    env: {
-      ...process.env,
-      npm_config_store_dir: storeDir,
-    },
-  });
+  const fixtureDir = preparePackedConsumerFixture();
 
   writeFileSync(path.join(fixtureDir, "consumer.mjs"), `
 import assert from "node:assert/strict";

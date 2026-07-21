@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 
 import { createRunnerServiceServer } from "../../../cli/runner/RunnerService.js";
 import {
   createProfileProvider,
   createSdkE2eRuntimeFactory,
-  packPackage,
+  preparePackedConsumerFixture,
   runChildProcess,
-  writePnpmWorkspaceOverrides,
 } from "./helpers.js";
 import { contractTest } from "../../helpers/contract-test.js";
 
@@ -30,27 +28,8 @@ contractTest("runtime.process", "installed @kestrel-agents/next package builds a
     await server.close();
   });
 
-  const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-next-app-pack-"));
-  const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-next-app-fixture-"));
-  const storeDir = path.join(os.tmpdir(), "kestrel-next-app-pnpm-store");
-  t.after(() => {
-    rmSync(packDir, { recursive: true, force: true });
-    rmSync(fixtureDir, { recursive: true, force: true });
-  });
-
-  const protocolTarball = packPackage(path.join(process.cwd(), "packages/protocol"), packDir);
-  const sdkTarball = packPackage(path.join(process.cwd(), "packages/sdk"), packDir);
-  const nextTarball = packPackage(path.join(process.cwd(), "packages/next"), packDir);
-
-  writeFixtureApp(fixtureDir, { protocolTarball, sdkTarball, nextTarball });
-
-  await runChildProcess("pnpm", ["install"], {
-    cwd: fixtureDir,
-    env: {
-      ...process.env,
-      npm_config_store_dir: storeDir,
-    },
-  });
+  const fixtureDir = preparePackedConsumerFixture();
+  writeFixtureApp(fixtureDir);
   await runChildProcess("pnpm", ["build"], {
     cwd: fixtureDir,
     env: {
@@ -67,6 +46,7 @@ contractTest("runtime.process", "installed @kestrel-agents/next package builds a
       RUNNER_URL: server.url,
     },
     stdio: "pipe",
+    detached: process.platform !== "win32",
   });
   let appStdout = "";
   let appStderr = "";
@@ -82,8 +62,19 @@ contractTest("runtime.process", "installed @kestrel-agents/next package builds a
     appExitCode = code;
     appExitSignal = signal;
   });
-  t.after(() => {
-    app.kill("SIGTERM");
+  t.after(async () => {
+    if (appExitCode !== null || appExitSignal !== null) return;
+    const exited = new Promise<void>((resolve) => app.once("exit", () => resolve()));
+    if (process.platform === "win32" || app.pid === undefined) app.kill("SIGTERM");
+    else process.kill(-app.pid, "SIGTERM");
+    await Promise.race([
+      exited,
+      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+    if (appExitCode !== null || appExitSignal !== null) return;
+    if (process.platform === "win32" || app.pid === undefined) app.kill("SIGKILL");
+    else process.kill(-app.pid, "SIGKILL");
+    await exited;
   });
 
   await waitForHttp(`http://127.0.0.1:${port}`, () => ({
@@ -144,51 +135,11 @@ contractTest("runtime.process", "installed @kestrel-agents/next package builds a
   await waitFor(() => abortedSessions.includes("next-fixture-stream"), 10_000, "Next fixture did not propagate request abort to the runner.");
 });
 
-function writeFixtureApp(
-  fixtureDir: string,
-  tarballs: {
-    protocolTarball: string;
-    sdkTarball: string;
-    nextTarball: string;
-  },
-): void {
+function writeFixtureApp(fixtureDir: string): void {
   mkdirSync(path.join(fixtureDir, "app", "api", "agent", "stream"), { recursive: true });
   mkdirSync(path.join(fixtureDir, "app", "api", "agent"), { recursive: true });
   mkdirSync(path.join(fixtureDir, "app", "api", "webhook"), { recursive: true });
   mkdirSync(path.join(fixtureDir, "lib"), { recursive: true });
-
-  writeFileSync(path.join(fixtureDir, "package.json"), JSON.stringify({
-    name: "kestrel-next-runtime-fixture",
-    private: true,
-    type: "module",
-    packageManager: "pnpm@9.12.2",
-    pnpm: {
-      overrides: {
-        "@kestrel-agents/protocol": tarballs.protocolTarball,
-        "@kestrel-agents/sdk": tarballs.sdkTarball,
-      },
-    },
-    dependencies: {
-      next: "15.5.3",
-      react: "19.2.4",
-      "react-dom": "19.2.4",
-      "@kestrel-agents/protocol": tarballs.protocolTarball,
-      "@kestrel-agents/sdk": tarballs.sdkTarball,
-      "@kestrel-agents/next": tarballs.nextTarball,
-    },
-    scripts: {
-      build: "next build",
-      start: "next start",
-    },
-  }, null, 2));
-  writePnpmWorkspaceOverrides(fixtureDir, {
-    "@kestrel-agents/protocol": tarballs.protocolTarball,
-    "@kestrel-agents/sdk": tarballs.sdkTarball,
-  }, {
-    allowBuilds: {
-      sharp: true,
-    },
-  });
 
   writeFileSync(path.join(fixtureDir, "next.config.mjs"), "export default {};\n");
   writeFileSync(path.join(fixtureDir, "app", "layout.js"), `

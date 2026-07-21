@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,8 @@ const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const REPORT_DIR = path.join(ROOT, "test-results", "validation");
 const COVERAGE_DIR = path.join(REPORT_DIR, "coverage");
 const REPORT_PATH = path.join(REPORT_DIR, "report.json");
+const PACKED_CONSUMER_DIR = path.join(REPORT_DIR, "packed-consumer");
+const TEMP_DIR = path.join(REPORT_DIR, "tmp");
 const TARGET_MS = 6 * 60_000;
 const MAXIMUM_MS = 8 * 60_000;
 const startedAt = Date.now();
@@ -45,6 +47,7 @@ if (process.argv.includes("--plan")) {
   process.exit(0);
 }
 
+cleanupValidationProcesses();
 rmSync(REPORT_DIR, { recursive: true, force: true });
 mkdirSync(COVERAGE_DIR, { recursive: true });
 
@@ -80,7 +83,10 @@ try {
     phase("productionBuilds", budgets.productionBuilds, productionBuildTasks()),
   ]);
 
-  await phase("process", budgets.process, processTasks());
+  await phase("process", budgets.process, processTasks(), {
+    setup: processSetupTasks(),
+    setupParallel: true,
+  });
 
   postgres = await startPostgres();
   await phase("postgres", budgets.postgres, postgresTasks(postgres), { sequential: true });
@@ -101,6 +107,7 @@ try {
   process.exitCode = 1;
 } finally {
   stopPostgres();
+  cleanupValidationProcesses();
 }
 
 function staticTasks() {
@@ -136,20 +143,50 @@ function processTasks() {
   return testTasksForBoundary("process");
 }
 
+function processSetupTasks() {
+  return [
+    task("packed consumer fixture", process.execPath, ["--import", "tsx", "scripts/validation/prepare-packed-consumer.ts"]),
+    nodeTests("TUI PTY journeys", ROOT, ["tests/ops/tui/tui.ops.ts"], 1, [], { coverage: false }),
+  ];
+}
+
 function testTasksForBoundary(boundary) {
   const groups = new Map();
   for (const file of trackedTests(["tests/", "agents/", "tools/", "packages/", "apps/"])) {
     if (file.startsWith("tests/macos/") || file.includes("/tests/product/") || file.endsWith(".postgres.test.ts")) continue;
     const source = readFileSync(path.join(ROOT, file), "utf8");
     if (testBoundary(file, source) !== boundary) continue;
+    if (boundary === "process" && file === "tests/ops/tui/tui.ops.ts") continue;
     const execution = executionRoot(file);
     const group = groups.get(execution.cwd) ?? { ...execution, files: [] };
     group.files.push(execution.relativeFile);
     groups.set(execution.cwd, group);
   }
-  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)).map((group) =>
-    nodeTests(`${group.label} ${boundary}`, group.cwd, group.files.sort(), boundary === "hermetic" ? 4 : 1, group.prefix)
-  );
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)).flatMap((group) => {
+    const files = group.files.sort();
+    if (boundary !== "process" || group.label !== "runtime") {
+      return [nodeTests(`${group.label} ${boundary}`, group.cwd, files, 4, group.prefix)];
+    }
+    const isolated = [
+      "tests/unit/local-core-api.test.ts",
+      "tests/integration/web-command.test.ts",
+      "tests/smoke/local-dev-shell-service.smoke.ts",
+      "tests/e2e/sdk-ecosystem/next-fixture.test.ts",
+    ];
+    const present = isolated.filter((file) => files.includes(file));
+    const remainder = files.filter((file) => !isolated.includes(file));
+    return [
+      ...present.map((file) => nodeTests(
+        `runtime process: ${file}`,
+        group.cwd,
+        [file],
+        1,
+        group.prefix,
+        { coverage: false },
+      )),
+      ...(remainder.length > 0 ? [nodeTests("runtime process: remaining", group.cwd, remainder, 4, group.prefix)] : []),
+    ];
+  });
 }
 
 function executionRoot(file) {
@@ -203,6 +240,13 @@ async function phase(name, budgetMs, tasks, options = {}) {
   process.stdout.write(`\n[validate:${name}] budget=${formatMs(budgetMs)}\n`);
   const timer = setTimeout(() => abortAll("SIGTERM"), budgetMs);
   try {
+    if (options.setupParallel) {
+      await Promise.all((options.setup ?? []).map((item) => runTask(name, item, budgetMs)));
+    } else {
+      for (const item of options.setup ?? []) {
+        await runTask(name, item, budgetMs - (Date.now() - phaseStart));
+      }
+    }
     if (options.sequential) {
       for (const item of tasks) await runTask(name, item, budgetMs - (Date.now() - phaseStart));
     } else {
@@ -225,8 +269,11 @@ function runTask(phaseName, item, timeoutMs) {
     CI: "true",
     NODE_V8_COVERAGE: coveragePath,
     KESTREL_CONTRACT_TIMINGS: path.join(REPORT_DIR, "contract-timings.jsonl"),
+    KESTREL_PACKED_CONSUMER_DIR: PACKED_CONSUMER_DIR,
+    KESTREL_VALIDATION_TEMP_ROOT: TEMP_DIR,
     ...item.env,
   };
+  if (item.coverage === false) delete env.NODE_V8_COVERAGE;
   process.stdout.write(`[validate:${phaseName}] ${item.label}: ${item.command} ${item.args.join(" ")}\n`);
   processLaunches += 1;
   return new Promise((resolve, reject) => {
@@ -261,11 +308,11 @@ function task(label, command, args, options = {}) {
   return { label, command, args, ...options };
 }
 
-function nodeTests(label, cwd, files, concurrency, prefix = []) {
+function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
   if (files.length === 0) throw new Error(`${label} discovered no tests`);
   return task(label, process.execPath, [
     ...prefix, "--import", "tsx", "--test", `--test-concurrency=${concurrency}`, "--test-reporter=spec", ...files,
-  ], { cwd });
+  ], { cwd, ...options });
 }
 
 function trackedTests(prefixes) {
@@ -353,6 +400,28 @@ function stopPostgres() {
 
 function abortAll(signal) {
   for (const child of active) terminate(child, signal);
+  cleanupValidationProcesses();
+}
+
+function cleanupValidationProcesses() {
+  if (!existsSync(TEMP_DIR)) return;
+  const pending = [TEMP_DIR];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(entryPath);
+        continue;
+      }
+      if (entry.name !== "lock.json") continue;
+      try {
+        const lock = JSON.parse(readFileSync(entryPath, "utf8"));
+        if (Number.isInteger(lock.ownerPid) && lock.ownerPid !== process.pid) process.kill(lock.ownerPid, "SIGTERM");
+      } catch {}
+    }
+  }
 }
 
 function terminate(child, signal = "SIGTERM") {
@@ -439,6 +508,18 @@ async function runLeaf(boundary, workspace) {
   if (!["hermetic", "process"].includes(boundary) || !workspace) {
     throw new Error("usage: node scripts/validate.mjs --leaf <hermetic|process> <workspace|.>");
   }
+  if (boundary === "process" && workspace === ".") {
+    cleanupValidationProcesses();
+    rmSync(TEMP_DIR, { recursive: true, force: true });
+    rmSync(PACKED_CONSUMER_DIR, { recursive: true, force: true });
+    await phase(
+      "process",
+      budgets.process,
+      processTasks().filter((item) => item.label.startsWith("runtime process")),
+      { setup: processSetupTasks(), setupParallel: true },
+    );
+    return;
+  }
   const files = trackedTests(["tests/", "agents/", "tools/", "packages/", "apps/"]).filter((file) => {
     if (file.startsWith("tests/macos/") || file.includes("/tests/product/") || file.endsWith(".postgres.test.ts")) return false;
     const execution = executionRoot(file);
@@ -450,8 +531,17 @@ async function runLeaf(boundary, workspace) {
   const relativeFiles = files.map((file) => executionRoot(file).relativeFile).sort();
   const result = spawnSync(process.execPath, [
     ...execution.prefix,
-    "--import", "tsx", "--test", `--test-concurrency=${boundary === "hermetic" ? 4 : 1}`, "--test-reporter=spec", ...relativeFiles,
-  ], { cwd: execution.cwd, env: { ...process.env, CI: "true" }, stdio: "inherit" });
+    "--import", "tsx", "--test", "--test-concurrency=4", "--test-reporter=spec", ...relativeFiles,
+  ], {
+    cwd: execution.cwd,
+    env: {
+      ...process.env,
+      CI: "true",
+      KESTREL_PACKED_CONSUMER_DIR: PACKED_CONSUMER_DIR,
+      KESTREL_VALIDATION_TEMP_ROOT: TEMP_DIR,
+    },
+    stdio: "inherit",
+  });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 }

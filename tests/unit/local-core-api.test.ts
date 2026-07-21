@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { describe } from "node:test";
 import { existsSync } from "node:fs";
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -43,6 +44,7 @@ import {
 } from "../../packages/protocol/src/index.js";
 import { contractTest } from "../helpers/contract-test.js";
 
+describe("Local Core API process contracts", { concurrency: 2 }, () => {
 
 contractTest("runtime.process", "Local Core API serves health/status with bearer token auth", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-"));
@@ -2057,6 +2059,8 @@ contractTest("runtime.process", "Local Core API owns Desktop project runs and st
     await rm(project, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
   }
+});
+
 });
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
