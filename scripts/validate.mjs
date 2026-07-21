@@ -79,9 +79,9 @@ try {
 
   await Promise.all([
     phase("static", budgets.static, staticTasks()),
-    phase("hermetic", budgets.hermetic, hermeticTasks()),
     phase("productionBuilds", budgets.productionBuilds, productionBuildTasks()),
   ]);
+  await phase("hermetic", budgets.hermetic, hermeticTasks());
 
   await phase("process", budgets.process, processTasks(), {
     setup: processSetupTasks(),
@@ -173,14 +173,7 @@ function testTasksForBoundary(boundary) {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)).flatMap((group) => {
     const files = group.files.sort();
     if (boundary === "hermetic" && group.label === "runtime") {
-      const shards = partitionRoundRobin(files, 2);
-      return shards.map((shard, index) => nodeTests(
-        `runtime hermetic ${index + 1}/${shards.length}`,
-        group.cwd,
-        shard,
-        3,
-        group.prefix,
-      ));
+      return [nodeTests("runtime hermetic", group.cwd, files, 6, group.prefix)];
     }
     if (boundary !== "process" || group.label !== "runtime") {
       return [nodeTests(`${group.label} ${boundary}`, group.cwd, files, 4, group.prefix)];
@@ -333,12 +326,6 @@ function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
   return task(label, process.execPath, [
     ...prefix, "--import", "tsx", "--test", `--test-concurrency=${concurrency}`, "--test-reporter=spec", ...files,
   ], { cwd, coverage: true, ...options });
-}
-
-function partitionRoundRobin(items, count) {
-  const partitions = Array.from({ length: count }, () => []);
-  for (const [index, item] of items.entries()) partitions[index % count].push(item);
-  return partitions.filter((partition) => partition.length > 0);
 }
 
 function trackedTests(prefixes) {
@@ -505,7 +492,7 @@ function readContractTimings() {
 }
 
 function printPlan() {
-  process.stdout.write(`preflight (20s)\nsharedBuild (90s)\n  concurrent: static (90s), hermetic (90s), productionBuilds (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
+  process.stdout.write(`preflight (20s)\nsharedBuild (90s)\n  concurrent: static (90s), productionBuilds (90s)\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
 }
 
 function validateGraphContract() {
