@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3598,
+  "testCount": 3599,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -29178,7 +29178,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 677,
+      "line": 707,
       "ancestors": [],
       "title": "DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable",
       "contractId": "runtime.behavior",
@@ -29193,7 +29193,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor allows source writes in managed checkpoint worktree mode",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 732,
+      "line": 762,
       "ancestors": [],
       "title": "DevShellSupervisor allows source writes in managed checkpoint worktree mode",
       "contractId": "runtime.behavior",
@@ -29208,7 +29208,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor capture mode restores source and returns an exact patch",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 759,
+      "line": 789,
       "ancestors": [],
       "title": "DevShellSupervisor capture mode restores source and returns an exact patch",
       "contractId": "runtime.behavior",
@@ -29238,7 +29238,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1030,
+      "line": 1060,
       "ancestors": [],
       "title": "DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session",
       "contractId": "runtime.behavior",
@@ -29283,7 +29283,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1180,
+      "line": 1210,
       "ancestors": [],
       "title": "DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "contractId": "runtime.behavior",
@@ -29328,7 +29328,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor keeps an explicit timeout active after startProcess returns",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 863,
+      "line": 893,
       "ancestors": [],
       "title": "DevShellSupervisor keeps an explicit timeout active after startProcess returns",
       "contractId": "runtime.behavior",
@@ -29343,7 +29343,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor marks lost guarded processes as not finally source-write checked",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 791,
+      "line": 821,
       "ancestors": [],
       "title": "DevShellSupervisor marks lost guarded processes as not finally source-write checked",
       "contractId": "runtime.behavior",
@@ -29358,7 +29358,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor never regresses a fast terminal process back to running",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1094,
+      "line": 1124,
       "ancestors": [],
       "title": "DevShellSupervisor never regresses a fast terminal process back to running",
       "contractId": "runtime.behavior",
@@ -29418,7 +29418,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1125,
+      "line": 1155,
       "ancestors": [],
       "title": "DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "contractId": "runtime.behavior",
@@ -29433,7 +29433,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1221,
+      "line": 1251,
       "ancestors": [],
       "title": "DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "contractId": "runtime.behavior",
@@ -29478,7 +29478,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rejects source-write authority before spawning source-readonly commands",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 547,
+      "line": 577,
       "ancestors": [],
       "title": "DevShellSupervisor rejects source-write authority before spawning source-readonly commands",
       "contractId": "runtime.behavior",
@@ -29493,7 +29493,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor releases managed worktree process leases during lost-process recovery",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 819,
+      "line": 849,
       "ancestors": [],
       "title": "DevShellSupervisor releases managed worktree process leases during lost-process recovery",
       "contractId": "runtime.behavior",
@@ -29538,7 +29538,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor returns timed-out one-shot runs as failed process results",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 844,
+      "line": 874,
       "ancestors": [],
       "title": "DevShellSupervisor returns timed-out one-shot runs as failed process results",
       "contractId": "runtime.behavior",
@@ -29598,7 +29598,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard allows a matching per-command approved path",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 630,
+      "line": 660,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard allows a matching per-command approved path",
       "contractId": "runtime.behavior",
@@ -29626,9 +29626,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard ignores its own state under the workspace",
+      "file": "tests/unit/dev-shell-supervisor.test.ts",
+      "line": 521,
+      "ancestors": [],
+      "title": "DevShellSupervisor source-write guard ignores its own state under the workspace",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: DevShellSupervisor source-write guard ignores its own state under the workspace",
+      "dimension": "DevShellSupervisor source-write guard ignores its own state under the workspace",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard protects managed worktree gitfile",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 705,
+      "line": 735,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard protects managed worktree gitfile",
       "contractId": "runtime.behavior",
@@ -29643,7 +29658,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard removes created directories after restoring files",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 521,
+      "line": 551,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard removes created directories after restoring files",
       "contractId": "runtime.behavior",
@@ -29658,7 +29673,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor source-write guard stops and restores unauthorized managed process writes",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 595,
+      "line": 625,
       "ancestors": [],
       "title": "DevShellSupervisor source-write guard stops and restores unauthorized managed process writes",
       "contractId": "runtime.behavior",
@@ -29673,7 +29688,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops a live process and rejects writes after completion",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1247,
+      "line": 1277,
       "ancestors": [],
       "title": "DevShellSupervisor stops a live process and rejects writes after completion",
       "contractId": "runtime.behavior",
@@ -29688,7 +29703,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops descendant processes when stopping a live process",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1271,
+      "line": 1301,
       "ancestors": [],
       "title": "DevShellSupervisor stops descendant processes when stopping a live process",
       "contractId": "runtime.behavior",
@@ -29703,7 +29718,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 934,
+      "line": 964,
       "ancestors": [],
       "title": "DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input",
       "contractId": "runtime.behavior",
@@ -29718,7 +29733,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor writes stdin and reads resulting output in one process call",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 990,
+      "line": 1020,
       "ancestors": [],
       "title": "DevShellSupervisor writes stdin and reads resulting output in one process call",
       "contractId": "runtime.behavior",
@@ -29733,7 +29748,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: InMemoryDevShellStore deep clones source-write guard results",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 889,
+      "line": 919,
       "ancestors": [],
       "title": "InMemoryDevShellStore deep clones source-write guard results",
       "contractId": "runtime.behavior",

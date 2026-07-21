@@ -21,10 +21,15 @@ export function hasCompletedExecCommandCanaryProof(
       if (!isRecord(part) || part.type !== "data-kestrel-tool") return false;
       const data = isRecord(part.data) ? part.data : undefined;
       const output = isRecord(data?.output) ? data.output : undefined;
+      const auditRecord = isRecord(output?.auditRecord) ? output.auditRecord : undefined;
+      const commandOutput = isRecord(auditRecord?.output) ? auditRecord.output : undefined;
       return data?.toolName === "exec_command" &&
         data.phase === "completed" &&
         output?.status === "OK" &&
-        JSON.stringify(output).includes(marker);
+        commandOutput?.status === "completed" &&
+        commandOutput.exitCode === 0 &&
+        [commandOutput.output, commandOutput.text, commandOutput.stdout]
+          .some((value) => typeof value === "string" && value.includes(marker));
     });
   });
 }

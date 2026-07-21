@@ -518,6 +518,36 @@ test("DevShellSupervisor source-write guard fails and restores unauthorized shel
   }
 });
 
+test("DevShellSupervisor source-write guard ignores its own state under the workspace", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-nested-state-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const stateDir = path.join(workspaceRootPath, ".local", "share", "kestrel", "dev-shell");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const supervisor = new DevShellSupervisor(new InMemoryDevShellStore(), stateDir);
+  await supervisor.initialize();
+  try {
+    const result = await supervisor.runCommand({
+      workspaceRoot,
+      command: "printf nested-state-ok",
+      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+      maxOutputBytes: 4096,
+      sourceWriteGuard: {
+        enabled: true,
+        mutationPolicy: "reject",
+      },
+    });
+
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.text, "nested-state-ok");
+    assert.deepEqual(result.unauthorizedSourceWrites, undefined);
+    assert.deepEqual(result.sourceWriteGuard?.allowedWriteRoots, []);
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const generatedDir = path.join(workspaceRoot, "generated");

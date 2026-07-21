@@ -13,7 +13,10 @@ test("workspace command canary requires a completed OK exec_command record conta
       data: {
         toolName: "exec_command",
         phase: "completed",
-        output: { status: "OK", auditRecord: { output: { text: marker } } },
+        output: {
+          status: "OK",
+          auditRecord: { output: { status: "completed", exitCode: 0, output: marker } },
+        },
       },
     }],
   }];
@@ -30,6 +33,26 @@ test("workspace command canary requires a completed OK exec_command record conta
           toolName: "exec_command",
           phase: "completed",
           output: { status: "FAILED", auditRecord: { output: { text: marker } } },
+        },
+      }],
+    }], "turn-1", marker),
+    false,
+  );
+  assert.equal(
+    hasCompletedExecCommandCanaryProof([{
+      ...messages[0],
+      parts: [{
+        type: "data-kestrel-tool",
+        data: {
+          toolName: "exec_command",
+          phase: "completed",
+          output: {
+            status: "OK",
+            auditRecord: {
+              output: { status: "failed", exitCode: 126 },
+              modelContext: { command: `printf ${marker}` },
+            },
+          },
         },
       }],
     }], "turn-1", marker),
