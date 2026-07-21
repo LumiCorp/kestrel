@@ -54,10 +54,8 @@ export function toDriverAbortPatterns(patterns: TuiAbortPattern[] | undefined): 
 export async function runTuiScenario(input: {
   sessionName: string;
   freshSessionName?: string | undefined;
-  databaseUrl: string;
+  databaseUrl?: string;
   steps: TuiScenarioStep[];
-  timeoutSeconds?: number | undefined;
-  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<string> {
@@ -68,14 +66,15 @@ export async function runTuiScenario(input: {
 export async function runTuiScenarioWithSession(input: {
   sessionName: string;
   freshSessionName?: string | undefined;
-  databaseUrl: string;
+  databaseUrl?: string;
   steps: TuiScenarioStep[];
-  timeoutSeconds?: number | undefined;
-  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
-  const tempDir = path.join(os.tmpdir(), `kestrel-pty-${randomUUID()}`);
+  const tempDir = path.join(
+    process.env.KESTREL_VALIDATION_TEMP_ROOT ?? os.tmpdir(),
+    `kestrel-pty-${randomUUID()}`,
+  );
   const homeDir = path.join(tempDir, "home");
   const coreProductRoot = path.join(tempDir, "core-home");
   const corePaths = resolveLocalCorePaths(coreProductRoot);
@@ -83,6 +82,29 @@ export async function runTuiScenarioWithSession(input: {
   await seedTuiHome(corePaths.stateRootPath);
 
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
+  const tuiEnvironment: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(input.env ?? {}),
+    HOME: homeDir,
+    KESTREL_CORE_HOME: coreProductRoot,
+    KESTREL_CORE_DATABASE_MODE: input.databaseUrl ? "external" : "pglite",
+    ...(input.databaseUrl
+      ? {
+          DATABASE_URL: input.databaseUrl,
+          KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
+        }
+      : {}),
+    KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
+    KESTREL_DISABLE_DOTENV: "1",
+    ...(input.databaseUrl ? { KESTREL_DB_PORT: "1" } : {}),
+    OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
+    TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
+    FORCE_COLOR: "0",
+    TERM: "xterm-256color",
+  };
+  delete tuiEnvironment.CI;
+  delete tuiEnvironment.NODE_V8_COVERAGE;
+  delete tuiEnvironment.KESTREL_CONTRACT_TIMINGS;
   const payload = JSON.stringify({
     command: [
       process.execPath,
@@ -96,36 +118,16 @@ export async function runTuiScenarioWithSession(input: {
       "--profile",
       "reference",
     ],
-    env: {
-      ...process.env,
-      ...(input.env ?? {}),
-      HOME: homeDir,
-      DATABASE_URL: input.databaseUrl,
-      KESTREL_CORE_HOME: coreProductRoot,
-      KESTREL_CORE_DATABASE_MODE: "external",
-      KESTREL_CORE_EXTERNAL_DATABASE_URL: input.databaseUrl,
-      KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
-      KESTREL_DISABLE_DOTENV: "1",
-      // Prove every Core-owned child keeps using the explicit external URL.
-      KESTREL_DB_PORT: "1",
-      OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
-      TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
-      FORCE_COLOR: "0",
-      TERM: "xterm-256color",
-    },
-    steps: input.steps.map((step, index) => ({
+    env: tuiEnvironment,
+    steps: input.steps.map((step) => ({
       pattern: typeof step.waitFor === "string" ? step.waitFor : step.waitFor.source,
       regex: typeof step.waitFor !== "string",
       fromCursor: step.fromCursor ?? false,
       send: step.send ?? null,
       actions: toDriverActions(step.actions),
       abortPatterns: toDriverAbortPatterns(step.abortPatterns),
-      ...(index === 0
-        ? { timeoutSeconds: input.startupTimeoutSeconds ?? 30 }
-        : {}),
     })),
     abortPatterns: toDriverAbortPatterns(input.abortPatterns),
-    timeoutSeconds: input.timeoutSeconds ?? 5,
   });
 
   try {
@@ -201,8 +203,7 @@ async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
   } catch {
     return;
   }
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
+  while (true) {
     try {
       process.kill(ownerPid, 0);
     } catch {
@@ -210,7 +211,6 @@ async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Test-owned Local Core pid ${ownerPid} did not stop.`);
 }
 
 async function runPythonDriver(scriptPath: string, payload: string): Promise<{

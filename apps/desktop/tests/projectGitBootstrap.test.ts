@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -10,10 +9,12 @@ import {
   ensureDesktopProjectGitBootstrap,
   prepareDesktopProjectRegistrations,
 } from "../src/projectGitBootstrap.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 
-test("ensureDesktopProjectGitBootstrap initializes an empty project with a HEAD commit", async () => {
+contractTest("desktop.process", "ensureDesktopProjectGitBootstrap initializes an empty project with a HEAD commit", async () => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "kestrel-empty-project-"));
 
   const result = await ensureDesktopProjectGitBootstrap(projectPath);
@@ -23,7 +24,7 @@ test("ensureDesktopProjectGitBootstrap initializes an empty project with a HEAD 
   assert.match(head, /^[0-9a-f]{40}$/u);
 });
 
-test("ensureDesktopProjectGitBootstrap initializes a Kestrel-only project without deleting managed files", async () => {
+contractTest("desktop.process", "ensureDesktopProjectGitBootstrap initializes a Kestrel-only project without deleting managed files", async () => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "kestrel-managed-only-project-"));
   const notePath = path.join(projectPath, ".kestrel", "session-note.md");
   await mkdir(path.dirname(notePath), { recursive: true });
@@ -37,7 +38,7 @@ test("ensureDesktopProjectGitBootstrap initializes a Kestrel-only project withou
   assert.match(head, /^[0-9a-f]{40}$/u);
 });
 
-test("ensureDesktopProjectGitBootstrap leaves non-empty non-git folders untouched", async () => {
+contractTest("desktop.process", "ensureDesktopProjectGitBootstrap leaves non-empty non-git folders untouched", async () => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "kestrel-existing-folder-"));
   await writeFile(path.join(projectPath, "notes.txt"), "user content\n", "utf8");
 
@@ -47,7 +48,7 @@ test("ensureDesktopProjectGitBootstrap leaves non-empty non-git folders untouche
   assert.deepEqual(await readdir(projectPath), ["notes.txt"]);
 });
 
-test("prepareDesktopProjectRegistrations drops missing project paths during settings saves", async () => {
+contractTest("desktop.process", "prepareDesktopProjectRegistrations drops missing project paths during settings saves", async () => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "kestrel-registered-project-"));
   const missingProjectPath = path.join(projectPath, "missing-project");
 

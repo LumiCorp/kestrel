@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   authorizeEnvironmentReconcileCron,
   EnvironmentReconcileCronError,
 } from "./cron-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Environment reconciliation cron requires its dedicated bearer", () => {
+
+contractTest("web.hermetic", "Environment reconciliation cron requires its dedicated bearer", () => {
   assert.doesNotThrow(() =>
     authorizeEnvironmentReconcileCron({
       authorization: "Bearer cron-secret",

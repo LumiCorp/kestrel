@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import {
   lstat,
@@ -18,6 +17,8 @@ import { isToolClassAllowed } from "../../src/mode/contracts.js";
 import type { AgentToolResult } from "../../src/kestrel/contracts/model-io.js";
 import { defaultToolCatalog, FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 import { isAgentToolResult, unwrapAgentToolOutput } from "../../tools/toolResult.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 interface FsTestHandlers {
   "fs.list": (input: unknown) => Promise<unknown>;
@@ -37,7 +38,7 @@ interface FsTestHandlers {
 
 const execFileAsync = promisify(execFile);
 
-test("filesystem tools allow workspace-relative and temp-root paths and reject escapes", async () => {
+contractTest("runtime.process", "filesystem tools allow workspace-relative and temp-root paths and reject escapes", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "notes.txt"), "workspace data", "utf8");
   await writeFile(path.join(policyRoots.tempRoot, "cache.txt"), "temp data", "utf8");
@@ -62,7 +63,7 @@ test("filesystem tools allow workspace-relative and temp-root paths and reject e
   );
 });
 
-test("filesystem tools reject symlink escapes outside allowed roots", async () => {
+contractTest("runtime.process", "filesystem tools reject symlink escapes outside allowed roots", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   const outsideFile = path.join(policyRoots.outsideRoot, "linked-secret.txt");
   const linkPath = path.join(policyRoots.workspaceRoot, "escape-link.txt");
@@ -76,7 +77,7 @@ test("filesystem tools reject symlink escapes outside allowed roots", async () =
   );
 });
 
-test("filesystem read_text returns bounded content and read metadata", async () => {
+contractTest("runtime.process", "filesystem read_text returns bounded content and read metadata", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "large-read.txt"), "abcdefghij", "utf8");
 
@@ -96,7 +97,7 @@ test("filesystem read_text returns bounded content and read metadata", async () 
   assert.equal(result.maxBytes, 5);
 });
 
-test("filesystem read_text pages a large file without losing mutation authority", async () => {
+contractTest("runtime.process", "filesystem read_text pages a large file without losing mutation authority", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   const content = `${"x".repeat(14_750)}\nsetup()\n`;
   await writeFile(path.join(policyRoots.workspaceRoot, "sphinx.py"), content, "utf8");
@@ -127,7 +128,7 @@ test("filesystem read_text pages a large file without losing mutation authority"
   assert.match(second.content, /setup\(\)/u);
 });
 
-test("structured text tools reject collisions, ambiguity, and stale revisions", async () => {
+contractTest("runtime.process", "structured text tools reject collisions, ambiguity, and stale revisions", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await handlers["fs.create_text"]({ path: "source.txt", content: "alpha alpha\n" });
   const collision = await failedToolResult(handlers["fs.create_text"]({ path: "source.txt", content: "lost\n" }));
@@ -152,7 +153,7 @@ test("structured text tools reject collisions, ambiguity, and stale revisions", 
   assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "source.txt"), "utf8"), "newer\n");
 });
 
-test("filesystem apply_patch validates revisions and applies an exact unified diff", async () => {
+contractTest("runtime.process", "filesystem apply_patch validates revisions and applies an exact unified diff", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await execFileAsync("git", ["init", "-q"], { cwd: policyRoots.workspaceRoot });
   await writeFile(path.join(policyRoots.workspaceRoot, "patch.txt"), "alpha\n", "utf8");
@@ -178,7 +179,7 @@ test("filesystem apply_patch validates revisions and applies an exact unified di
   assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "patch.txt"), "utf8"), "beta\n");
 });
 
-test("filesystem list semantic facts do not follow hidden control symlinks outside allowed roots", async () => {
+contractTest("runtime.process", "filesystem list semantic facts do not follow hidden control symlinks outside allowed roots", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "hidden-symlink"), { recursive: true });
   await mkdir(path.join(policyRoots.outsideRoot, "external-git"), { recursive: true });
@@ -205,7 +206,7 @@ test("filesystem list semantic facts do not follow hidden control symlinks outsi
   assert.equal(result.message, "This directory contains Git repository metadata and no visible project files.");
 });
 
-test("filesystem text tools honor overwrite, append, replace, and delete defaults", async () => {
+contractTest("runtime.process", "filesystem text tools honor overwrite, append, replace, and delete defaults", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await handlers["fs.write_text"]({
     path: "nested/empty.txt",
@@ -273,7 +274,7 @@ test("filesystem text tools honor overwrite, append, replace, and delete default
   );
 });
 
-test("filesystem write_text reports compact overwrite facts for existing files", async () => {
+contractTest("runtime.process", "filesystem write_text reports compact overwrite facts for existing files", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "constrained.txt"), "alpha beta gamma\nsecond line\n", "utf8");
 
@@ -310,7 +311,7 @@ test("filesystem write_text reports compact overwrite facts for existing files",
   assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "constrained.txt"), "utf8"), "alpha gamma\nsecond line\n");
 });
 
-test("filesystem write_text keeps new-file and append outputs simple", async () => {
+contractTest("runtime.process", "filesystem write_text keeps new-file and append outputs simple", async () => {
   const { handlers, policyRoots } = await createFsHarness();
 
   const created = await rawToolOutput<Record<string, unknown>>(handlers["fs.write_text"]({
@@ -335,7 +336,7 @@ test("filesystem write_text keeps new-file and append outputs simple", async () 
   assert.equal(await readFile(path.join(policyRoots.workspaceRoot, "new.txt"), "utf8"), "hello world\nagain\n");
 });
 
-test("filesystem write_text reports bounded facts for large existing appends", async () => {
+contractTest("runtime.process", "filesystem write_text reports bounded facts for large existing appends", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   const largeContent = "x".repeat(1024 * 1024 + 1);
   await writeFile(path.join(policyRoots.workspaceRoot, "large-append.txt"), largeContent, "utf8");
@@ -353,7 +354,7 @@ test("filesystem write_text reports bounded facts for large existing appends", a
   assert.equal((await stat(path.join(policyRoots.workspaceRoot, "large-append.txt"))).size, appended.bytesAfter);
 });
 
-test("filesystem replace_text reports compact token and line deltas", async () => {
+contractTest("runtime.process", "filesystem replace_text reports compact token and line deltas", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   const filePath = path.join(policyRoots.workspaceRoot, "replace.txt");
   await writeFile(filePath, "alpha a great deal more omega\nsecond line\n", "utf8");
@@ -408,7 +409,7 @@ test("filesystem replace_text reports compact token and line deltas", async () =
   assert.equal(noMatch.whitespaceTokenCountDelta, undefined);
 });
 
-test("filesystem replace_text rejects empty needles and oversized files", async () => {
+contractTest("runtime.process", "filesystem replace_text rejects empty needles and oversized files", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "replace-small.txt"), "alpha", "utf8");
 
@@ -428,7 +429,7 @@ test("filesystem replace_text rejects empty needles and oversized files", async 
   assert.match(String((oversized.auditRecord.error as { message?: unknown }).message), /too large/u);
 });
 
-test("filesystem search and list outputs are bounded and deterministic", async () => {
+contractTest("runtime.process", "filesystem search and list outputs are bounded and deterministic", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "search"), { recursive: true });
   await mkdir(path.join(policyRoots.workspaceRoot, "search/nested"), { recursive: true });
@@ -498,7 +499,7 @@ test("filesystem search and list outputs are bounded and deterministic", async (
   assert.equal(searchResult.matches[0]?.preview, "needle alpha");
 });
 
-test("filesystem search clips previews and total returned preview payload", async () => {
+contractTest("runtime.process", "filesystem search clips previews and total returned preview payload", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "maps"), { recursive: true });
   const longLine = `${"x".repeat(2000)} FIXME ${"y".repeat(2000)}`;
@@ -537,7 +538,7 @@ test("filesystem search clips previews and total returned preview payload", asyn
   assert.equal(result.matches.every((match) => match.previewChars === match.preview.length), true);
 });
 
-test("filesystem search total preview budget stops result accumulation", async () => {
+contractTest("runtime.process", "filesystem search total preview budget stops result accumulation", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "budget"), { recursive: true });
   const longLine = `${"a".repeat(300)} TODO ${"b".repeat(300)}`;
@@ -564,7 +565,7 @@ test("filesystem search total preview budget stops result accumulation", async (
   assert.equal(result.maxTotalPreviewChars, 1000);
 });
 
-test("filesystem search glob narrows without widening into ignored roots", async () => {
+contractTest("runtime.process", "filesystem search glob narrows without widening into ignored roots", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, ".gitignore"), "node_modules/\n.next/\n", "utf8");
   await mkdir(path.join(policyRoots.workspaceRoot, "src"), { recursive: true });
@@ -684,7 +685,7 @@ test("filesystem search glob narrows without widening into ignored roots", async
   );
 });
 
-test("filesystem search requires ripgrep for directory fallback but allows direct file fallback", async () => {
+contractTest("runtime.process", "filesystem search requires ripgrep for directory fallback but allows direct file fallback", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "no-rg"), { recursive: true });
   await writeFile(path.join(policyRoots.workspaceRoot, "no-rg/file.txt"), "needle direct\n", "utf8");
@@ -728,7 +729,7 @@ test("filesystem search requires ripgrep for directory fallback but allows direc
   }
 });
 
-test("filesystem list reports truncation at the entry cap", async () => {
+contractTest("runtime.process", "filesystem list reports truncation at the entry cap", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "many"), { recursive: true });
   for (let index = 0; index < 1001; index += 1) {
@@ -748,7 +749,7 @@ test("filesystem list reports truncation at the entry cap", async () => {
   assert.equal(result.maxEntries, 1000);
 });
 
-test("filesystem JSON verifier returns structured artifact verification results", async () => {
+contractTest("runtime.process", "filesystem JSON verifier returns structured artifact verification results", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(
     path.join(policyRoots.workspaceRoot, "newsletter-report.json"),
@@ -833,7 +834,7 @@ test("filesystem JSON verifier returns structured artifact verification results"
   );
 });
 
-test("filesystem JSON verifier fails before parsing truncated content", async () => {
+contractTest("runtime.process", "filesystem JSON verifier fails before parsing truncated content", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "large-json.json"), JSON.stringify({ stories: ["abcdef"] }), "utf8");
 
@@ -860,7 +861,7 @@ test("filesystem JSON verifier fails before parsing truncated content", async ()
   assert.match(String(result.artifactVerification.failures?.[0]), /exceeds JSON verification read budget/u);
 });
 
-test("filesystem JSON verifier caps emitted per-entry details", async () => {
+contractTest("runtime.process", "filesystem JSON verifier caps emitted per-entry details", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(
     path.join(policyRoots.workspaceRoot, "many-valid.json"),
@@ -893,7 +894,7 @@ test("filesystem JSON verifier caps emitted per-entry details", async () => {
   assert.equal(result.artifactVerification.requirementsOmitted, 53);
 });
 
-test("filesystem list output explicitly describes empty visible directories", async () => {
+contractTest("runtime.process", "filesystem list output explicitly describes empty visible directories", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "hidden-only"), { recursive: true });
   await mkdir(path.join(policyRoots.workspaceRoot, "hidden-only/.git"), { recursive: true });
@@ -986,7 +987,7 @@ test("filesystem list output explicitly describes empty visible directories", as
   assert.equal(hiddenIncludedResult.message, undefined);
 });
 
-test("filesystem tool execution classes match interaction mode policy", () => {
+contractTest("runtime.process", "filesystem tool execution classes match interaction mode policy", () => {
   const manifest = defaultToolCatalog.toCapabilityManifest(["fs.list", "fs.write_text", "fs.delete"]);
   const readOnlyClass = manifest[0]?.executionClass;
   const sandboxedClass = manifest[1]?.executionClass;
@@ -1014,7 +1015,7 @@ test("filesystem tool execution classes match interaction mode policy", () => {
   );
 });
 
-test("filesystem copy and move overwrite replace existing destinations instead of merging", async () => {
+contractTest("runtime.process", "filesystem copy and move overwrite replace existing destinations instead of merging", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await mkdir(path.join(policyRoots.workspaceRoot, "src"), { recursive: true });
   await mkdir(path.join(policyRoots.workspaceRoot, "dest"), { recursive: true });
@@ -1061,7 +1062,7 @@ test("filesystem copy and move overwrite replace existing destinations instead o
   );
 });
 
-test("filesystem copy and move return stable parent-path errors", async () => {
+contractTest("runtime.process", "filesystem copy and move return stable parent-path errors", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "source.txt"), "data", "utf8");
 

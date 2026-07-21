@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
@@ -12,8 +11,10 @@ import {
   resolveProfileWithModelPolicy,
 } from "../../src/profile/modelPolicy.js";
 import { createWebDemoProfile } from "../../src/web/profile.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("model policy store bootstraps defaults when the file is missing", async () => {
+
+contractTest("runtime.hermetic", "model policy store bootstraps defaults when the file is missing", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "kestrel-model-policy-unit-"));
 
   try {
@@ -29,7 +30,7 @@ test("model policy store bootstraps defaults when the file is missing", async ()
   }
 });
 
-test("model policy store recovers from invalid JSON by rewriting defaults", async () => {
+contractTest("runtime.hermetic", "model policy store recovers from invalid JSON by rewriting defaults", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "kestrel-model-policy-unit-"));
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
 
@@ -46,7 +47,7 @@ test("model policy store recovers from invalid JSON by rewriting defaults", asyn
   }
 });
 
-test("model policy store rewrites defaults when persisted stage overrides are invalid", async () => {
+contractTest("runtime.hermetic", "model policy store rewrites defaults when persisted stage overrides are invalid", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "kestrel-model-policy-unit-"));
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
 
@@ -73,7 +74,7 @@ test("model policy store rewrites defaults when persisted stage overrides are in
   }
 });
 
-test("model policy store rejects unknown stage ids on write", async () => {
+contractTest("runtime.hermetic", "model policy store rejects unknown stage ids on write", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "kestrel-model-policy-unit-"));
 
   try {
@@ -96,7 +97,7 @@ test("model policy store rejects unknown stage ids on write", async () => {
   }
 });
 
-test("resolveProfileWithModelPolicy overlays shared model authority onto shell-local profiles", () => {
+contractTest("runtime.hermetic", "resolveProfileWithModelPolicy overlays shared model authority onto shell-local profiles", () => {
   const baseProfile = {
     ...createWebDemoProfile(),
     modelProvider: "anthropic",
@@ -133,7 +134,7 @@ test("resolveProfileWithModelPolicy overlays shared model authority onto shell-l
   assert.equal(resolved.modelCapabilities?.visionInputEnabled, true);
 });
 
-test("resolveProfileWithModelPolicy defaults agent.loop to the shared model when stage overrides are empty", () => {
+contractTest("runtime.hermetic", "resolveProfileWithModelPolicy defaults agent.loop to the shared model when stage overrides are empty", () => {
   const baseProfile = {
     ...createWebDemoProfile(),
     modelProvider: "openrouter",
@@ -165,7 +166,7 @@ test("resolveProfileWithModelPolicy defaults agent.loop to the shared model when
   });
 });
 
-test("model policy store accepts local provider ids", async () => {
+contractTest("runtime.hermetic", "model policy store accepts local provider ids", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "kestrel-model-policy-unit-"));
 
   try {

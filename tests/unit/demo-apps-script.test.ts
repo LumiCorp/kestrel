@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   parseDemoArgs,
   resolveDemoProcessSpecs,
   type DemoAppId,
 } from "../../scripts/demo-apps.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseDemoArgs defaults to every Kestrel demo app with runner and root db", () => {
+
+contractTest("runtime.hermetic", "parseDemoArgs defaults to every Kestrel demo app with runner and root db", () => {
   assert.deepEqual(parseDemoArgs([]), {
     apps: ["web", "docs", "desktop"],
     open: false,
@@ -17,7 +18,7 @@ test("parseDemoArgs defaults to every Kestrel demo app with runner and root db",
   });
 });
 
-test("parseDemoArgs supports browser-only prospect mode", () => {
+contractTest("runtime.hermetic", "parseDemoArgs supports browser-only prospect mode", () => {
   assert.deepEqual(parseDemoArgs(["--", "--no-desktop", "--open", "--wait-ms", "30000"]), {
     apps: ["web", "docs"],
     open: true,
@@ -27,11 +28,11 @@ test("parseDemoArgs supports browser-only prospect mode", () => {
   });
 });
 
-test("parseDemoArgs supports explicit app subsets and skips", () => {
+contractTest("runtime.hermetic", "parseDemoArgs supports explicit app subsets and skips", () => {
   assert.deepEqual(parseDemoArgs(["--only=web,docs", "--skip", "docs"]).apps, ["web"] satisfies DemoAppId[]);
 });
 
-test("resolveDemoProcessSpecs wires unique demo ports and shared runner env", () => {
+contractTest("runtime.hermetic", "resolveDemoProcessSpecs wires unique demo ports and shared runner env", () => {
   const specs = resolveDemoProcessSpecs(parseDemoArgs(["--no-desktop"]));
   const byId = new Map(specs.map((spec) => [spec.id, spec]));
 
@@ -41,7 +42,7 @@ test("resolveDemoProcessSpecs wires unique demo ports and shared runner env", ()
   assert.equal(byId.get("web")?.env?.KESTREL_RUNNER_SERVICE_TOKEN, "dev-secret");
 });
 
-test("resolveDemoProcessSpecs can omit the shared runner when one is already running", () => {
+contractTest("runtime.hermetic", "resolveDemoProcessSpecs can omit the shared runner when one is already running", () => {
   const specs = resolveDemoProcessSpecs(parseDemoArgs(["--only", "web", "--no-runner"]));
   assert.deepEqual(specs.map((spec) => spec.id), ["web"]);
 });

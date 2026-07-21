@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   clientSupportsGenerativeUi,
@@ -8,8 +7,10 @@ import {
   getSupportedGenerativeUiBlocks,
   normalizeClientCapabilities,
 } from "../../src/clientCapabilities.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("web client capabilities enable typed blocks by default", () => {
+
+contractTest("runtime.hermetic", "web client capabilities enable typed blocks by default", () => {
   const capabilities = createWebClientCapabilities();
   assert.equal(capabilities.surface, "web");
   assert.equal(clientSupportsGenerativeUi(capabilities), true);
@@ -25,14 +26,14 @@ test("web client capabilities enable typed blocks by default", () => {
   ]);
 });
 
-test("tui client capabilities disable typed blocks", () => {
+contractTest("runtime.hermetic", "tui client capabilities disable typed blocks", () => {
   const capabilities = createTuiClientCapabilities();
   assert.equal(capabilities.surface, "tui");
   assert.equal(clientSupportsGenerativeUi(capabilities), false);
   assert.deepEqual(getSupportedGenerativeUiBlocks(capabilities), []);
 });
 
-test("normalizeClientCapabilities drops malformed block identifiers", () => {
+contractTest("runtime.hermetic", "normalizeClientCapabilities drops malformed block identifiers", () => {
   const capabilities = normalizeClientCapabilities({
     surface: "web",
     generativeUi: {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("the runner cannot downgrade the production PGlite store", async () => {
+
+contractTest("runtime.hermetic", "the runner cannot downgrade the production PGlite store", async () => {
   const packageJson = JSON.parse(
     await readFile(new URL("../../package.json", import.meta.url), "utf8")
   ) as { dependencies?: Record<string, string> };
@@ -18,7 +19,7 @@ test("the runner cannot downgrade the production PGlite store", async () => {
   );
 });
 
-test("the runner image builds and launches compiled runtime artifacts", async () => {
+contractTest("runtime.hermetic", "the runner image builds and launches compiled runtime artifacts", async () => {
   const dockerfile = await readFile(
     new URL(
       "../../deploy/fly/kestrel-one-runner/Dockerfile",

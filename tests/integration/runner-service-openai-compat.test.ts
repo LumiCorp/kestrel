@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { createInMemoryRunnerService } from "../../cli/runner/RunnerService.js";
 import type { RunnerRuntime } from "../../cli/runner/RunnerHost.js";
 import type { ProgressUpdateV1 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference-react",
@@ -13,7 +14,7 @@ const profile: TuiProfile = {
   sessionPrefix: "reference-react",
 };
 
-test("OpenAI compatibility lists supported models", async () => {
+contractTest("runtime.process", "OpenAI compatibility lists supported models", async () => {
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
     runtimeFactory: () => ({
@@ -46,7 +47,7 @@ test("OpenAI compatibility lists supported models", async () => {
   }
 });
 
-test("OpenAI compatibility returns non-streaming chat completions with sticky session metadata", async () => {
+contractTest("runtime.process", "OpenAI compatibility returns non-streaming chat completions with sticky session metadata", async () => {
   const seenSessionIds: string[] = [];
   const seenHistory: Array<Array<{ role: string; text: string }>> = [];
   const seenSystemInstructions: string[][] = [];
@@ -184,7 +185,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
   }
 });
 
-test("OpenAI compatibility streams chat completion chunks and mirrors internal tool calls", async () => {
+contractTest("runtime.process", "OpenAI compatibility streams chat completion chunks and mirrors internal tool calls", async () => {
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
@@ -273,7 +274,7 @@ test("OpenAI compatibility streams chat completion chunks and mirrors internal t
   }
 });
 
-test("OpenAI compatibility returns responses output and enforces structured output schemas", async () => {
+contractTest("runtime.process", "OpenAI compatibility returns responses output and enforces structured output schemas", async () => {
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
     runtimeFactory: (): RunnerRuntime => ({
@@ -355,7 +356,7 @@ test("OpenAI compatibility returns responses output and enforces structured outp
   }
 });
 
-test("OpenAI compatibility rejects unknown models deterministically", async () => {
+contractTest("runtime.process", "OpenAI compatibility rejects unknown models deterministically", async () => {
   const service = createInMemoryRunnerService({
     authToken: "secret-token",
     runtimeFactory: () => ({

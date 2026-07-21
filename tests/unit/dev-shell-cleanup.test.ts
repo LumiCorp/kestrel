@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -6,8 +5,10 @@ import path from "node:path";
 
 import { cleanupDevShellServices } from "../../src/devshell/cleanup.js";
 import { DEV_SHELL_BOOTSTRAP_STATUS_FILE } from "../../src/devshell/paths.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("cleanupDevShellServices dry-run reports owner-exited services without signalling", async () => {
+
+contractTest("runtime.hermetic", "cleanupDevShellServices dry-run reports owner-exited services without signalling", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-cleanup-"));
   const serviceDir = path.join(root, "service");
   await mkdir(serviceDir, { recursive: true });
@@ -35,7 +36,7 @@ test("cleanupDevShellServices dry-run reports owner-exited services without sign
   assert.equal(result.candidates[0]?.pid, process.pid);
 });
 
-test("cleanupDevShellServices refuses to signal unverified stale pids", async () => {
+contractTest("runtime.hermetic", "cleanupDevShellServices refuses to signal unverified stale pids", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-cleanup-"));
   await writeFile(
     path.join(root, DEV_SHELL_BOOTSTRAP_STATUS_FILE),
@@ -60,7 +61,7 @@ test("cleanupDevShellServices refuses to signal unverified stale pids", async ()
   assert.match(result.candidates[0]?.error ?? "", /did not match/u);
 });
 
-test("cleanupDevShellServices reports missing owner metadata without signalling", async () => {
+contractTest("runtime.hermetic", "cleanupDevShellServices reports missing owner metadata without signalling", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-cleanup-"));
   await writeFile(
     path.join(root, DEV_SHELL_BOOTSTRAP_STATUS_FILE),

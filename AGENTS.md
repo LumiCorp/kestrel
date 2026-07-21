@@ -22,11 +22,13 @@ Guide Codex and engineers to ship reliable Kestrel runtime changes quickly with 
 - Parse and validate boundary input before use.
 
 ## Validation Gates
-- Run `pnpm run governance:check`.
-- Run `pnpm run test`.
-- Run `pnpm run test-proofs:check`.
-- When evaluation configuration changes, run `pnpm run ruhroh:validate`.
-- When high- or critical-risk production code or owning tests change, run `pnpm run test-proofs:mutations`.
+- Run `pnpm validate` before declaring a pull request ready. GitHub Actions runs
+  this same portable gate: public-boundary validation, shared and root builds,
+  workspace typechecks, and hermetic tests.
+- Run `validate:process`, `validate:postgres`, `validate:chromium`, or
+  `validate:audit` explicitly when changing the boundary they own.
+- Use `pnpm run test-proofs:mutations -- <mutation-id>` for focused
+  critical-contract iteration.
 
 ## Escalation
 - Escalate when schema migrations, irreversible data moves, or policy changes are required.

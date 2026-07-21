@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { mobileErrorResponse } from "./http";
 import { MobileSessionError } from "./session";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("only tagged session failures become 401", async () => {
+
+contractTest("web.hermetic", "only tagged session failures become 401", async () => {
   const sessionResponse = mobileErrorResponse(
     new MobileSessionError("UNAUTHORIZED", "Mobile session required")
   );
@@ -19,7 +20,7 @@ test("only tagged session failures become 401", async () => {
   }
 });
 
-test("organization failures have distinct public responses", async () => {
+contractTest("web.hermetic", "organization failures have distinct public responses", async () => {
   const membership = mobileErrorResponse(
     new MobileSessionError(
       "ORGANIZATION_MEMBERSHIP_REQUIRED",

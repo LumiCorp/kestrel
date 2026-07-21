@@ -1,11 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("RetryingModelGateway retries timeout and surfaces IO_MODEL_TIMEOUT code", async () => {
+
+contractTest("runtime.hermetic", "RetryingModelGateway retries timeout and surfaces IO_MODEL_TIMEOUT code", async () => {
   let calls = 0;
   const gateway = new RetryingModelGateway(
     async <T>() => {
@@ -43,7 +44,7 @@ test("RetryingModelGateway retries timeout and surfaces IO_MODEL_TIMEOUT code", 
   );
 });
 
-test("RetryingModelGateway returns immediately when invocation resolves before timeout", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway returns immediately when invocation resolves before timeout", async () => {
   const gateway = new RetryingModelGateway(
     async <T>() => ({ ok: true } as T),
     {
@@ -61,7 +62,7 @@ test("RetryingModelGateway returns immediately when invocation resolves before t
   assert.equal(response.ok, true);
 });
 
-test("RetryingModelGateway retries transient provider 502 failures", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway retries transient provider 502 failures", async () => {
   let calls = 0;
   const gateway = new RetryingModelGateway(
     async <T>() => {
@@ -87,7 +88,7 @@ test("RetryingModelGateway retries transient provider 502 failures", async () =>
   assert.equal(calls, 3);
 });
 
-test("RetryingModelGateway does not retry non-transient provider errors", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway does not retry non-transient provider errors", async () => {
   let calls = 0;
   const gateway = new RetryingModelGateway(
     async <T>() => {
@@ -115,7 +116,7 @@ test("RetryingModelGateway does not retry non-transient provider errors", async 
   );
 });
 
-test("RetryingModelGateway reduces retry timeout as run budget burns", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway reduces retry timeout as run budget burns", async () => {
   let calls = 0;
   const gateway = new RetryingModelGateway(
     async <T>() => {
@@ -152,7 +153,7 @@ test("RetryingModelGateway reduces retry timeout as run budget burns", async () 
   );
 });
 
-test("RetryingModelGateway forwards attempt timeout metadata to the invoker", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway forwards attempt timeout metadata to the invoker", async () => {
   let seenRemaining: unknown;
   const gateway = new RetryingModelGateway(
     async <T>(request: ModelRequest) => {
@@ -182,7 +183,7 @@ test("RetryingModelGateway forwards attempt timeout metadata to the invoker", as
   assert.equal((seenRemaining as number) <= 25, true);
 });
 
-test("RetryingModelGateway preserves timeout diagnostics from request metadata", async () => {
+contractTest("runtime.hermetic", "RetryingModelGateway preserves timeout diagnostics from request metadata", async () => {
   const gateway = new RetryingModelGateway(
     async <T>() => await new Promise<T>((resolve) => {
         setTimeout(() => resolve({ ok: true } as T), 40);

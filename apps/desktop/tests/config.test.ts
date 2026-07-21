@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import {
   resolveDesktopLibexecRoot,
   resolveDesktopPathConfig,
 } from "../src/config.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
+
+contractTest("desktop.hermetic", "resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: true,
     repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-repo",
@@ -24,7 +25,7 @@ test("resolveDesktopLibexecRoot points Local Core bootstrap at the active Deskto
   }), "/workspace/kestrel");
 });
 
-test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
+contractTest("desktop.hermetic", "resolveDesktopPathConfig uses repo-relative paths in development", () => {
   const repoRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-config-"));
   const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   try {
@@ -50,7 +51,7 @@ test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
   }
 });
 
-test("resolveDesktopPathConfig uses packaged resource paths in production", () => {
+contractTest("desktop.hermetic", "resolveDesktopPathConfig uses packaged resource paths in production", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
   const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   const config = resolveDesktopPathConfig({
@@ -72,7 +73,7 @@ test("resolveDesktopPathConfig uses packaged resource paths in production", () =
   assert.equal(config.isPackaged, true);
 });
 
-test("resolveDesktopPathConfig can root shell state in Kestrel Local Core", () => {
+contractTest("desktop.hermetic", "resolveDesktopPathConfig can root shell state in Kestrel Local Core", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
   const localCoreHomePath = "/tmp/kestrel-core";
   const stateRoot = path.join(localCoreHomePath, "state", "0.6");

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { DesktopRuntimeThreadInspection } from "../src/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "../src/workspaceAccess.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("registered source roots remain available without runtime lookup", async () => {
+
+contractTest("desktop.hermetic", "registered source roots remain available without runtime lookup", async () => {
   let lookedUp = false;
   const root = await resolveDesktopWorkspaceAccessRoot({
     rootPath: "/tmp/project-a",
@@ -19,7 +20,7 @@ test("registered source roots remain available without runtime lookup", async ()
   assert.equal(lookedUp, false);
 });
 
-test("managed worktree roots require and accept Local Core thread authority", async () => {
+contractTest("desktop.hermetic", "managed worktree roots require and accept Local Core thread authority", async () => {
   const root = await resolveDesktopWorkspaceAccessRoot({
     rootPath: "/tmp/managed/project-a",
     registeredRootPaths: ["/tmp/project-a"],
@@ -33,7 +34,7 @@ test("managed worktree roots require and accept Local Core thread authority", as
   assert.equal(root, "/tmp/managed/project-a");
 });
 
-test("thread scope cannot authorize a different managed worktree", async () => {
+contractTest("desktop.hermetic", "thread scope cannot authorize a different managed worktree", async () => {
   await assert.rejects(
     resolveDesktopWorkspaceAccessRoot({
       rootPath: "/tmp/managed/forged",
@@ -48,7 +49,7 @@ test("thread scope cannot authorize a different managed worktree", async () => {
   );
 });
 
-test("unregistered roots remain denied without thread authority", async () => {
+contractTest("desktop.hermetic", "unregistered roots remain denied without thread authority", async () => {
   await assert.rejects(
     resolveDesktopWorkspaceAccessRoot({
       rootPath: "/tmp/managed/project-a",

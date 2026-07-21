@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import {
   parseLocalCoreMcpVerificationInput,
   verifyAndStoreLocalCoreMcpServer,
 } from "../../src/localCore/mcpVerification.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core verifies MCP with transient candidates before storing them", async () => {
+
+contractTest("runtime.hermetic", "Local Core verifies MCP with transient candidates before storing them", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   let observedSecret: string | undefined;
   let observedPath: string | undefined;
@@ -62,7 +63,7 @@ test("Local Core verifies MCP with transient candidates before storing them", as
   assert.equal(JSON.stringify(result).includes("candidate-token"), false);
 });
 
-test("Local Core keeps the previous MCP credential when candidate verification fails", async () => {
+contractTest("runtime.hermetic", "Local Core keeps the previous MCP credential when candidate verification fails", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("mcp.docs.bearer.default", "working-token");
   await assert.rejects(
@@ -85,7 +86,7 @@ test("Local Core keeps the previous MCP credential when candidate verification f
   assert.equal(await store.get("mcp.docs.bearer.default"), "working-token");
 });
 
-test("Local Core rejects remote authentication without an owned credential binding", () => {
+contractTest("runtime.hermetic", "Local Core rejects remote authentication without an owned credential binding", () => {
   assert.throws(
     () => parseLocalCoreMcpVerificationInput({
       server: { id: "docs", transport: "http", url: "https://mcp.example.test", enabled: true, authTokenEnv: "UNBOUND_TOKEN" },

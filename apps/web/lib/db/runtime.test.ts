@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   classifyDbError,
   getDbHealth,
@@ -9,6 +8,8 @@ import {
   getPgPool,
   resetDbRuntimeForTests,
 } from "./runtime";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function withEnv(overrides: Record<string, string | undefined>) {
   const originalEnv = new Map<string, string | undefined>();
@@ -36,7 +37,7 @@ function withEnv(overrides: Record<string, string | undefined>) {
   };
 }
 
-test("runtime config applies bounded development defaults", async () => {
+contractTest("web.hermetic", "runtime config applies bounded development defaults", async () => {
   const restore = withEnv({
     DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
     NODE_ENV: "development",
@@ -53,7 +54,7 @@ test("runtime config applies bounded development defaults", async () => {
   }
 });
 
-test("classifyDbError recognizes missing database configuration", () => {
+contractTest("web.hermetic", "classifyDbError recognizes missing database configuration", () => {
   const classified = classifyDbError(
     new Error("DATABASE_URL or POSTGRES_URL not configured")
   );
@@ -62,14 +63,14 @@ test("classifyDbError recognizes missing database configuration", () => {
   assert.equal(classified.retryable, false);
 });
 
-test("classifyDbError does not misclassify non-database required errors", () => {
+contractTest("web.hermetic", "classifyDbError does not misclassify non-database required errors", () => {
   const classified = classifyDbError(new Error("Active organization required"));
 
   assert.equal(classified.category, "unknown");
   assert.equal(classified.retryable, false);
 });
 
-test("classifyDbError recognizes too many clients failures", () => {
+contractTest("web.hermetic", "classifyDbError recognizes too many clients failures", () => {
   const classified = classifyDbError({
     cause: { code: "53300", message: "sorry, too many clients already" },
     message: "Failed query: insert into organization_tool_connections",
@@ -79,7 +80,7 @@ test("classifyDbError recognizes too many clients failures", () => {
   assert.equal(classified.retryable, true);
 });
 
-test("classifyDbError recognizes transient network failures", () => {
+contractTest("web.hermetic", "classifyDbError recognizes transient network failures", () => {
   const classified = classifyDbError(
     new Error("connect ECONNREFUSED 127.0.0.1:5432")
   );
@@ -88,7 +89,7 @@ test("classifyDbError recognizes transient network failures", () => {
   assert.equal(classified.retryable, true);
 });
 
-test("classifyDbError recognizes authentication failures", () => {
+contractTest("web.hermetic", "classifyDbError recognizes authentication failures", () => {
   const classified = classifyDbError(
     new Error("password authentication failed for user postgres")
   );
@@ -97,7 +98,7 @@ test("classifyDbError recognizes authentication failures", () => {
   assert.equal(classified.retryable, false);
 });
 
-test("runtime reuses shared db clients across repeated lookups", async () => {
+contractTest("web.hermetic", "runtime reuses shared db clients across repeated lookups", async () => {
   const restore = withEnv({
     DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
     NODE_ENV: "development",
@@ -119,7 +120,7 @@ test("runtime reuses shared db clients across repeated lookups", async () => {
   }
 });
 
-test("getDbHealth reports stable category when database is missing", async () => {
+contractTest("web.hermetic", "getDbHealth reports stable category when database is missing", async () => {
   const restore = withEnv({
     DATABASE_URL: undefined,
     POSTGRES_URL: undefined,

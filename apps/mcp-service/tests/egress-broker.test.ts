@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { normalizeHttpsOrigin } from "../src/egress-broker.js";
 import { buildOciEgressBrokerCommands } from "../src/oci-egress-runtime.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("OCI egress broker topology isolates the MCP container network", () => {
+
+contractTest("services.hermetic", "OCI egress broker topology isolates the MCP container network", () => {
   const digest = `sha256:${"b".repeat(64)}`;
   const commands = buildOciEgressBrokerCommands({
     networkName: "kestrel-mcp-net-run",
@@ -35,7 +36,7 @@ test("OCI egress broker topology isolates the MCP container network", () => {
   assert.equal(commands.start[1]?.includes("PORT=8080"), true);
 });
 
-test("OCI egress allowlists accept only credential-free HTTPS origins", () => {
+contractTest("services.hermetic", "OCI egress allowlists accept only credential-free HTTPS origins", () => {
   assert.equal(
     normalizeHttpsOrigin("https://api.example.com/v1"),
     "https://api.example.com"

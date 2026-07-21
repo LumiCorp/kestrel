@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
@@ -6,6 +5,8 @@ import {
   buildOpenAiHttpRequest,
   mapOpenAiResponse,
 } from "../../models/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const env = {
   providerName: "openai" as const,
@@ -14,7 +15,7 @@ const env = {
   baseUrl: "https://api.openai.com",
 };
 
-test("OpenAI request builder enables native parallel tool calls", () => {
+contractTest("runtime.hermetic", "OpenAI request builder enables native parallel tool calls", () => {
   const request: ModelRequest = {
     input: {
       taskInstruction: "Run the check.",
@@ -72,7 +73,7 @@ test("OpenAI request builder enables native parallel tool calls", () => {
   ]);
 });
 
-test("OpenAI mapper ignores JSON toolIntents when native tool calls are absent", () => {
+contractTest("runtime.hermetic", "OpenAI mapper ignores JSON toolIntents when native tool calls are absent", () => {
   const mapped = mapOpenAiResponse<{
     toolIntents: Array<{ name: string; input: Record<string, unknown> }>;
   }>(
@@ -102,7 +103,7 @@ test("OpenAI mapper ignores JSON toolIntents when native tool calls are absent",
   assert.equal(mapped.toolIntents.length, 0);
 });
 
-test("OpenAI-compatible request builder serializes assistant tool-call history with provider aliases", () => {
+contractTest("runtime.hermetic", "OpenAI-compatible request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {
     model: "local-model",
     input: {},
@@ -160,7 +161,7 @@ test("OpenAI-compatible request builder serializes assistant tool-call history w
   assert.equal(tool.name, "dev_shell_run");
 });
 
-test("OpenAI-compatible response mapper returns canonical provider tool intent names from local providers", () => {
+contractTest("runtime.hermetic", "OpenAI-compatible response mapper returns canonical provider tool intent names from local providers", () => {
   const mapped = mapOpenAiResponse(
     {
       model: "local-model",
@@ -204,7 +205,7 @@ test("OpenAI-compatible response mapper returns canonical provider tool intent n
   assert.equal(mapped.provider.name, "ollama");
 });
 
-test("Ollama OpenAI-compatible request builder serializes tool history with provider aliases", () => {
+contractTest("runtime.hermetic", "Ollama OpenAI-compatible request builder serializes tool history with provider aliases", () => {
   const request: ModelRequest = {
     model: "llama-local",
     input: {},
@@ -262,7 +263,7 @@ test("Ollama OpenAI-compatible request builder serializes tool history with prov
   assert.equal(mapped.body.parallel_tool_calls, true);
 });
 
-test("LM Studio OpenAI-compatible response mapper returns native tool intents", () => {
+contractTest("runtime.hermetic", "LM Studio OpenAI-compatible response mapper returns native tool intents", () => {
   const mapped = mapOpenAiResponse(
     {
       model: "qwen-local",
@@ -300,7 +301,7 @@ test("LM Studio OpenAI-compatible response mapper returns native tool intents", 
   assert.equal(mapped.provider.name, "lmstudio");
 });
 
-test("OpenAI Responses requests provider summaries without storing raw reasoning", () => {
+contractTest("runtime.hermetic", "OpenAI Responses requests provider summaries without storing raw reasoning", () => {
   const mapped = buildOpenAiHttpRequest({
     model: "gpt-5.2",
     input: "decide",
@@ -313,7 +314,7 @@ test("OpenAI Responses requests provider summaries without storing raw reasoning
   assert.deepEqual(mapped.body.include, ["reasoning.encrypted_content"]);
 });
 
-test("OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
+contractTest("runtime.hermetic", "OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
   const encryptedItem = {
     type: "reasoning",
     summary: [{ type: "summary_text", text: "Checked the constraints." }],

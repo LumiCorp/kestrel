@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { Session } from "@/lib/auth-types";
 import {
   MobileSessionError,
   mobileSessionFailureFacts,
   resolveMobileSession,
 } from "./session";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const validSession = {
   user: { id: "user-1", name: "Mobile User", email: "mobile@example.test" },
@@ -67,13 +68,13 @@ async function assertValidCredential(headers: HeadersInit) {
   assert.deepEqual(fixture.calls, ["session", "membership", "environment"]);
 }
 
-test("accepts a valid Better Auth cookie through the incoming request headers", () =>
+contractTest("web.hermetic", "accepts a valid Better Auth cookie through the incoming request headers", () =>
   assertValidCredential({ cookie: "better-auth.session_token=signed-cookie" }));
 
-test("accepts a valid signed-session Bearer through the incoming request headers", () =>
+contractTest("web.hermetic", "accepts a valid signed-session Bearer through the incoming request headers", () =>
   assertValidCredential({ authorization: "Bearer signed-session" }));
 
-test("accepts a valid personal API key through the incoming request headers", () =>
+contractTest("web.hermetic", "accepts a valid personal API key through the incoming request headers", () =>
   assertValidCredential({ "x-api-key": "personal-key" }));
 
 async function assertRejectedSession() {
@@ -90,13 +91,13 @@ async function assertRejectedSession() {
   assert.deepEqual(fixture.calls, ["session"]);
 }
 
-test("missing sessions stop at the authentication boundary", assertRejectedSession);
+contractTest("web.hermetic", "missing sessions stop at the authentication boundary", assertRejectedSession);
 
-test("expired sessions stop at the authentication boundary", assertRejectedSession);
+contractTest("web.hermetic", "expired sessions stop at the authentication boundary", assertRejectedSession);
 
-test("revoked sessions stop at the authentication boundary", assertRejectedSession);
+contractTest("web.hermetic", "revoked sessions stop at the authentication boundary", assertRejectedSession);
 
-test("organization membership is resolved only after the session and is not a 401", async () => {
+contractTest("web.hermetic", "organization membership is resolved only after the session and is not a 401", async () => {
   const fixture = dependencies({ membership: null });
 
   await assert.rejects(
@@ -125,17 +126,17 @@ async function assertConfigurationFailure(
   );
 }
 
-test("membership lookup failures remain configuration errors", () =>
+contractTest("web.hermetic", "membership lookup failures remain configuration errors", () =>
   assertConfigurationFailure(
     dependencies({ membershipError: new Error("db") })
   ));
 
-test("environment configuration failures remain configuration errors", () =>
+contractTest("web.hermetic", "environment configuration failures remain configuration errors", () =>
   assertConfigurationFailure(
     dependencies({ environmentError: new Error("config") })
   ));
 
-test("failure telemetry records only safe authentication-presence facts", () => {
+contractTest("web.hermetic", "failure telemetry records only safe authentication-presence facts", () => {
   const request = new Request(
     "https://kestrel.one/api/mobile/v2/threads/thread-secret",
     {

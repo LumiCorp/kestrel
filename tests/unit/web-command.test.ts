@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   createWebCommandStartupMetadata,
@@ -10,8 +9,10 @@ import {
   resolveWebCommandLocalCoreTarget,
 } from "../../cli/webCommand.js";
 import { DEFAULT_KESTREL_RUNNER_SERVICE_PORT } from "../../src/config/localDev.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseWebCommandArgs parses host, port, and token flags", () => {
+
+contractTest("runtime.hermetic", "parseWebCommandArgs parses host, port, and token flags", () => {
   assert.deepEqual(parseWebCommandArgs(["--host", "0.0.0.0", "--port", "43120", "--token", "secret"]), {
     host: "0.0.0.0",
     port: 43_120,
@@ -19,7 +20,7 @@ test("parseWebCommandArgs parses host, port, and token flags", () => {
   });
 });
 
-test("resolveWebCommandConfig uses stable defaults and generates a token", () => {
+contractTest("runtime.hermetic", "resolveWebCommandConfig uses stable defaults and generates a token", () => {
   const resolved = resolveWebCommandConfig([], {});
 
   assert.equal(resolved.host, "127.0.0.1");
@@ -28,7 +29,7 @@ test("resolveWebCommandConfig uses stable defaults and generates a token", () =>
   assert.match(resolved.token, /^[0-9a-f]{48}$/u);
 });
 
-test("resolveWebCommandConfig prefers explicit token and port inputs", () => {
+contractTest("runtime.hermetic", "resolveWebCommandConfig prefers explicit token and port inputs", () => {
   const resolved = resolveWebCommandConfig(["--port", "43155", "--token", "flag-token"], {
     KESTREL_RUNNER_SERVICE_PORT: "49999",
     KESTREL_RUNNER_SERVICE_TOKEN: "env-token",
@@ -39,7 +40,7 @@ test("resolveWebCommandConfig prefers explicit token and port inputs", () => {
   assert.equal(resolved.tokenSource, "provided");
 });
 
-test("resolveWebCommandConfig accepts env-provided token and port", () => {
+contractTest("runtime.hermetic", "resolveWebCommandConfig accepts env-provided token and port", () => {
   const resolved = resolveWebCommandConfig([], {
     KESTREL_RUNNER_SERVICE_HOST: "0.0.0.0",
     KESTREL_RUNNER_SERVICE_PORT: "43144",
@@ -52,7 +53,7 @@ test("resolveWebCommandConfig accepts env-provided token and port", () => {
   assert.equal(resolved.tokenSource, "provided");
 });
 
-test("resolveWebCommandLocalCoreTarget requires the ready Core socket and private token", () => {
+contractTest("runtime.hermetic", "resolveWebCommandLocalCoreTarget requires the ready Core socket and private token", () => {
   assert.deepEqual(resolveWebCommandLocalCoreTarget({
     KESTREL_LOCAL_CORE_API_SOCKET: " /tmp/kestrel-core.sock ",
     KESTREL_LOCAL_CORE_API_TOKEN: " core-private-token ",
@@ -75,7 +76,7 @@ test("resolveWebCommandLocalCoreTarget requires the ready Core socket and privat
   );
 });
 
-test("formatWebCommandStartupLines redacts a provided token from startup output", () => {
+contractTest("runtime.hermetic", "formatWebCommandStartupLines redacts a provided token from startup output", () => {
   const metadata = createWebCommandStartupMetadata(
     {
       url: "http://127.0.0.1:43102",
@@ -96,7 +97,7 @@ test("formatWebCommandStartupLines redacts a provided token from startup output"
   assert.doesNotMatch(lines.join("\n"), /abc|def/u);
 });
 
-test("formatWebCommandStartupLines emits a generated token for local setup", () => {
+contractTest("runtime.hermetic", "formatWebCommandStartupLines emits a generated token for local setup", () => {
   const metadata = createWebCommandStartupMetadata(
     {
       url: "http://127.0.0.1:43102",
@@ -115,7 +116,7 @@ test("formatWebCommandStartupLines emits a generated token for local setup", () 
   assert.equal(lines[3], "export KESTREL_RUNNER_SERVICE_TOKEN='generated-token'");
 });
 
-test("createWebCommandStartupMetadata rewrites wildcard bind hosts to a local connect URL", () => {
+contractTest("runtime.hermetic", "createWebCommandStartupMetadata rewrites wildcard bind hosts to a local connect URL", () => {
   const metadata = createWebCommandStartupMetadata(
     {
       url: "http://0.0.0.0:43102",
@@ -133,7 +134,7 @@ test("createWebCommandStartupMetadata rewrites wildcard bind hosts to a local co
   assert.equal(metadata.host, "0.0.0.0");
 });
 
-test("generateRunnerServiceToken returns unique hex tokens", () => {
+contractTest("runtime.hermetic", "generateRunnerServiceToken returns unique hex tokens", () => {
   const first = generateRunnerServiceToken();
   const second = generateRunnerServiceToken();
 

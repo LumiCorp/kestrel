@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   createEnvironmentAppConnectionSchema,
   environmentAppCapabilityGrantSchema,
 } from "./contracts";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Environment connection input accepts named Tavily connections", () => {
+
+contractTest("web.hermetic", "Environment connection input accepts named Tavily connections", () => {
   assert.deepEqual(
     createEnvironmentAppConnectionSchema.parse({
       name: "Primary",
@@ -21,7 +22,7 @@ test("Environment connection input accepts named Tavily connections", () => {
   );
 });
 
-test("Environment connection endpoints must be HTTPS and contain no credentials", () => {
+contractTest("web.hermetic", "Environment connection endpoints must be HTTPS and contain no credentials", () => {
   assert.throws(() =>
     createEnvironmentAppConnectionSchema.parse({
       name: "Primary",
@@ -31,7 +32,7 @@ test("Environment connection endpoints must be HTTPS and contain no credentials"
   );
 });
 
-test("disabling a capability always makes the ceiling deny", () => {
+contractTest("web.hermetic", "disabling a capability always makes the ceiling deny", () => {
   assert.deepEqual(
     environmentAppCapabilityGrantSchema.parse({
       enabled: false,

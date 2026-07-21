@@ -47,8 +47,8 @@
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp-pack', { recursive: true, force: true });\"",
     "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run build:self",
     "build:self": "pnpm run clean && tsc -p tsconfig.json",
-    "test": "pnpm --filter @kestrel-agents/sdk build && pnpm run test:self",
-    "test:self": "node --import tsx --test tests/**/*.test.ts",
+    "test": "pnpm run test:unit",
+    "test:unit": "node ../../scripts/validate.mjs --leaf hermetic packages/next",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ createJsonRunRouteHandler, readRequestCorrelation }) => { void createJsonRunRouteHandler; void readRequestCorrelation; })\"",
     "release:check": "pnpm run build && node --import tsx ./scripts/release-check.ts"
   }

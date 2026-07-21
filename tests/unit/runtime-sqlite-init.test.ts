@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import type { RunnerEventType, RunnerEventPayloadByType } from "../../cli/protocol/contracts.js";
 import { RunnerHost } from "../../cli/runner/RunnerHost.js";
@@ -10,8 +9,10 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import { createSessionStoreFromEnv } from "../../src/store/createSessionStore.js";
 import { runRuntimeCli } from "../ops/helpers/runtimeCli.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("sqlite store init failures are normalized and do not leak unhandled rejections", async () => {
+
+contractTest("runtime.hermetic", "sqlite store init failures are normalized and do not leak unhandled rejections", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-sqlite-init-failure-"));
   const sqlitePath = path.join(root, "runtime.db");
   await writeFile(sqlitePath, "not-a-directory", "utf8");
@@ -52,7 +53,7 @@ test("sqlite store init failures are normalized and do not leak unhandled reject
   }
 });
 
-test("runtime cli does not open a client-selected sqlite store", async () => {
+contractTest("runtime.hermetic", "runtime cli does not open a client-selected sqlite store", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-cli-sqlite-init-"));
   const sqlitePath = path.join(root, "runtime.db");
   await writeFile(sqlitePath, "not-a-directory", "utf8");
@@ -72,7 +73,7 @@ test("runtime cli does not open a client-selected sqlite store", async () => {
   assert.doesNotMatch(result.stderr, /\[object Object\]/u);
 });
 
-test("runner host surfaces sqlite init failures with a typed runtime code", async () => {
+contractTest("runtime.hermetic", "runner host surfaces sqlite init failures with a typed runtime code", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runner-host-sqlite-init-"));
   const sqlitePath = path.join(root, "runtime.db");
   await writeFile(sqlitePath, "not-a-directory", "utf8");
@@ -129,7 +130,7 @@ test("runner host surfaces sqlite init failures with a typed runtime code", asyn
   assert.match(payload.error.message, /Failed to initialize local runtime store/u);
 });
 
-test("runner host diagnostics store defaults under expanded ~/ KESTREL_HOME", () => {
+contractTest("runtime.hermetic", "runner host diagnostics store defaults under expanded ~/ KESTREL_HOME", () => {
   const previousHome = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = "~/kestrel-runner-host-home";
   try {

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopAppPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
 
-test("Desktop replies request accepted completion in the selected interaction mode", async () => {
+contractTest("desktop.hermetic", "Desktop replies request accepted completion in the selected interaction mode", async () => {
   const source = await readFile(desktopAppPath, "utf8");
 
   assert.match(source, /completionMode:\s*"accepted"/u);
@@ -17,7 +17,7 @@ test("Desktop replies request accepted completion in the selected interaction mo
   assert.match(source, /setDraft\(\(current\) => current\.trim\(\)\.length > 0 \? current : message\)/u);
 });
 
-test("Desktop forwards runner events from one centralized transport observer", async () => {
+contractTest("desktop.hermetic", "Desktop forwards runner events from one centralized transport observer", async () => {
   const source = await readFile(mainPath, "utf8");
 
   assert.match(source, /runnerTransport\.observe\(\{/u);

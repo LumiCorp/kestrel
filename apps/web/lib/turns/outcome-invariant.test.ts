@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { assertVisibleCompletedOutcome } from "./outcome-invariant";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("completed durable Turns require a user-visible assistant message", () => {
+
+contractTest("web.hermetic", "completed durable Turns require a user-visible assistant message", () => {
   assert.throws(
     () => assertVisibleCompletedOutcome("completed", 0),
     /without a user-visible answer/u

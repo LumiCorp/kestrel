@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 
 import { createOpenRouterInvoker } from "../../models/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const BASE_ENV = {
   apiKey: "key",
@@ -26,7 +27,7 @@ function decisionRequest(): ModelRequest {
   };
 }
 
-test("OpenRouter invoker fails fast on constrained schema rejection", async () => {
+contractTest("runtime.hermetic", "OpenRouter invoker fails fast on constrained schema rejection", async () => {
   let calls = 0;
   const invoker = createOpenRouterInvoker({
     env: BASE_ENV,
@@ -79,7 +80,7 @@ test("OpenRouter invoker fails fast on constrained schema rejection", async () =
   assert.equal(calls, 1);
 });
 
-test("OpenRouter invoker reports text fallback parse separately from schema request", async () => {
+contractTest("runtime.hermetic", "OpenRouter invoker reports text fallback parse separately from schema request", async () => {
   let calls = 0;
   const invoker = createOpenRouterInvoker({
     env: BASE_ENV,
@@ -120,7 +121,7 @@ test("OpenRouter invoker reports text fallback parse separately from schema requ
   );
 });
 
-test("OpenRouter invoker rejects error payloads returned with successful HTTP status", async () => {
+contractTest("runtime.hermetic", "OpenRouter invoker rejects error payloads returned with successful HTTP status", async () => {
   const invoker = createOpenRouterInvoker({
     env: BASE_ENV,
     fetchImpl: async () =>
@@ -146,7 +147,7 @@ test("OpenRouter invoker rejects error payloads returned with successful HTTP st
   );
 });
 
-test("OpenRouter invoker reports provider parsed structured output", async () => {
+contractTest("runtime.hermetic", "OpenRouter invoker reports provider parsed structured output", async () => {
   const invoker = createOpenRouterInvoker({
     env: BASE_ENV,
     fetchImpl: async () =>
@@ -173,7 +174,7 @@ test("OpenRouter invoker reports provider parsed structured output", async () =>
   assert.equal(response.provider.structuredOutput?.source, "provider");
 });
 
-test("OpenRouter invoker reports structured parse failure without success telemetry", async () => {
+contractTest("runtime.hermetic", "OpenRouter invoker reports structured parse failure without success telemetry", async () => {
   const invoker = createOpenRouterInvoker({
     env: BASE_ENV,
     fetchImpl: async () =>

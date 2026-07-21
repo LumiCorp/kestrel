@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   EXECUTION_PROTOCOL_VERSION,
@@ -15,8 +14,10 @@ import {
   parseRunnerTerminalPayloadV2,
   parseRunnerHealthV1,
 } from "../src/index.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("runner health contract round-trips through the canonical parser", () => {
+
+contractTest("packages.hermetic", "runner health contract round-trips through the canonical parser", () => {
   const health = createRunnerHealthV1({ serviceVersion: "0.5.0-beta.0" });
   assert.deepEqual(parseRunnerHealthV1(health), health);
   assert.equal(health.version, RUNNER_HEALTH_VERSION);
@@ -40,7 +41,7 @@ test("runner health contract round-trips through the canonical parser", () => {
   }
 });
 
-test("runner health contract rejects legacy unversioned payloads", () => {
+contractTest("packages.hermetic", "runner health contract rejects legacy unversioned payloads", () => {
   assert.throws(
     () => parseRunnerHealthV1({ ok: true }),
     (error: unknown) => (
@@ -51,7 +52,7 @@ test("runner health contract rejects legacy unversioned payloads", () => {
   );
 });
 
-test("runner health rejects the v1 event contract", () => {
+contractTest("packages.hermetic", "runner health rejects the v1 event contract", () => {
   const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
   assert.throws(
     () => parseRunnerHealthV1({
@@ -62,7 +63,7 @@ test("runner health rejects the v1 event contract", () => {
   );
 });
 
-test("runner health requires the aggregate Execution Protocol v3 contract", () => {
+contractTest("packages.hermetic", "runner health requires the aggregate Execution Protocol v3 contract", () => {
   const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
   const { execution: _execution, ...withoutExecution } = health.contracts;
   assert.throws(
@@ -84,7 +85,7 @@ test("runner health requires the aggregate Execution Protocol v3 contract", () =
   );
 });
 
-test("v2 runner results require explicit assistant text without interpreting structured output", () => {
+contractTest("packages.hermetic", "v2 runner results require explicit assistant text without interpreting structured output", () => {
   const finalizedPayload = {
     message: "must not become assistant text",
     content: "also structured",
@@ -111,7 +112,7 @@ test("v2 runner results require explicit assistant text without interpreting str
   );
 });
 
-test("every v2 terminal payload requires a result while operator results are validated when present", () => {
+contractTest("packages.hermetic", "every v2 terminal payload requires a result while operator results are validated when present", () => {
   for (const type of ["run.completed", "run.failed", "run.cancelled"]) {
     assert.throws(
       () => parseRunnerTerminalPayloadV2(type, {}),
@@ -131,7 +132,7 @@ test("every v2 terminal payload requires a result while operator results are val
   );
 });
 
-test("public run stream event names separate operational, provider, and agent activity", () => {
+contractTest("packages.hermetic", "public run stream event names separate operational, provider, and agent activity", () => {
   assert.equal(RUNNER_WAITING_PROMPT_HISTORY_KIND, "runtime.waiting_prompt");
   assert.deepEqual(RUNNER_RUN_STREAM_EVENT_TYPES, [
     "run.started",

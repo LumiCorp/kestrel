@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   readDatabaseUrlSource,
   shouldKeepEnvironmentDatabaseUrl,
 } from "../../cli/localCoreEnv.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("readDatabaseUrlSource preserves trusted Desktop and CLI source markers", () => {
+
+contractTest("runtime.hermetic", "readDatabaseUrlSource preserves trusted Desktop and CLI source markers", () => {
   assert.equal(
     readDatabaseUrlSource({ KESTREL_DATABASE_URL_SOURCE: "local_core_managed" }),
     "local_core_managed",
@@ -18,12 +19,12 @@ test("readDatabaseUrlSource preserves trusted Desktop and CLI source markers", (
   );
 });
 
-test("readDatabaseUrlSource falls back to environment for unknown source markers", () => {
+contractTest("runtime.hermetic", "readDatabaseUrlSource falls back to environment for unknown source markers", () => {
   assert.equal(readDatabaseUrlSource({ KESTREL_DATABASE_URL_SOURCE: "unknown" }), "environment");
   assert.equal(readDatabaseUrlSource({}), "environment");
 });
 
-test("shouldKeepEnvironmentDatabaseUrl preserves only trusted sources or explicit postgres store", () => {
+contractTest("runtime.hermetic", "shouldKeepEnvironmentDatabaseUrl preserves only trusted sources or explicit postgres store", () => {
   assert.equal(
     shouldKeepEnvironmentDatabaseUrl({ KESTREL_DATABASE_URL_SOURCE: "local_core_managed" }),
     true,

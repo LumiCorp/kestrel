@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import test from "node:test";
 import {
   AppCredentialEncryptionError,
   decryptAppCredential,
   encryptAppCredential,
   isEncryptedAppCredential,
 } from "./credential-crypto";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function keyEnv(): NodeJS.ProcessEnv {
   return {
@@ -25,7 +26,7 @@ const identity = {
   credentialId: "credential-1",
 };
 
-test("App credentials round trip without exposing plaintext", () => {
+contractTest("web.hermetic", "App credentials round trip without exposing plaintext", () => {
   const env = keyEnv();
   const encrypted = encryptAppCredential({
     ...identity,
@@ -40,7 +41,7 @@ test("App credentials round trip without exposing plaintext", () => {
   );
 });
 
-test("App credential envelopes are bound to the App identity", () => {
+contractTest("web.hermetic", "App credential envelopes are bound to the App identity", () => {
   const env = keyEnv();
   const encrypted = encryptAppCredential({
     ...identity,
@@ -61,7 +62,7 @@ test("App credential envelopes are bound to the App identity", () => {
   );
 });
 
-test("App credential decrypt rejects plaintext", () => {
+contractTest("web.hermetic", "App credential decrypt rejects plaintext", () => {
   assert.throws(
     () =>
       decryptAppCredential({
@@ -75,7 +76,7 @@ test("App credential decrypt rejects plaintext", () => {
   );
 });
 
-test("App credentials can use the legacy MCP keyring during expansion", () => {
+contractTest("web.hermetic", "App credentials can use the legacy MCP keyring during expansion", () => {
   const key = randomBytes(32).toString("base64");
   const env = {
     NODE_ENV: "test",

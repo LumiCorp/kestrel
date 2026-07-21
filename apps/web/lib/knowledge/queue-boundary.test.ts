@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
 
 import nextConfig from "../../next.config";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("knowledge queue status does not eagerly load worker runtimes", async () => {
+
+contractTest("web.hermetic", "knowledge queue status does not eagerly load worker runtimes", async () => {
   const [
     queueSource,
     documentRuntimeSource,
@@ -41,7 +42,7 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
   assert.doesNotMatch(documentsRouteSource, /knowledge\/queue["']/u);
 });
 
-test("document ingestion traces the canvas JavaScript and native runtime", () => {
+contractTest("web.hermetic", "document ingestion traces the canvas JavaScript and native runtime", () => {
   const apiIncludes =
     nextConfig.outputFileTracingIncludes?.["/api/knowledge/documents/**"];
   const pageIncludes = nextConfig.outputFileTracingIncludes?.["/knowledge"];

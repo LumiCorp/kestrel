@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("pty driver abortPatterns fail fast with explicit reason", async () => {
+
+contractTest("runtime.process", "pty driver abortPatterns fail fast with explicit reason", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'boot\\n'; sleep 0.05; printf 'fatal marker\\n'; sleep 2"],
@@ -12,7 +13,6 @@ test("pty driver abortPatterns fail fast with explicit reason", async () => {
       {
         pattern: "THIS_PATTERN_SHOULD_NOT_MATCH",
         regex: false,
-        timeoutSeconds: 5,
       },
     ],
     abortPatterns: [
@@ -22,20 +22,16 @@ test("pty driver abortPatterns fail fast with explicit reason", async () => {
         reason: "fatal_marker",
       },
     ],
-    timeoutSeconds: 5,
   };
 
-  const startedAt = Date.now();
   const result = await runPythonDriver(driverPath, JSON.stringify(payload));
-  const durationMs = Date.now() - startedAt;
 
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:fatal_marker/u);
   assert.doesNotMatch(result.stderr, /Timed out waiting/u);
-  assert.ok(durationMs < 5000, `expected fail-fast before timeout, duration=${durationMs}ms`);
 });
 
-test("pty driver abortPatterns support maxMatches thresholds", async () => {
+contractTest("runtime.process", "pty driver abortPatterns support maxMatches thresholds", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'loop marker\\n'; sleep 0.05; printf 'loop marker\\n'; sleep 2"],
@@ -44,7 +40,6 @@ test("pty driver abortPatterns support maxMatches thresholds", async () => {
       {
         pattern: "THIS_PATTERN_SHOULD_NOT_MATCH",
         regex: false,
-        timeoutSeconds: 5,
       },
     ],
     abortPatterns: [
@@ -55,17 +50,13 @@ test("pty driver abortPatterns support maxMatches thresholds", async () => {
         maxMatches: 1,
       },
     ],
-    timeoutSeconds: 5,
   };
 
-  const startedAt = Date.now();
   const result = await runPythonDriver(driverPath, JSON.stringify(payload));
-  const durationMs = Date.now() - startedAt;
 
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:repeat_loop/u);
   assert.match(result.stderr, /maxMatches=1/u);
-  assert.ok(durationMs < 5000, `expected threshold fail-fast before timeout, duration=${durationMs}ms`);
 });
 
 function readStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {

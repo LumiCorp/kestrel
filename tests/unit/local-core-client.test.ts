@@ -3,11 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { LocalCoreClient } from "../../src/localCore/client.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("LocalCoreClient lets a runtime store reset outlive the generic request timeout", async () => {
+
+contractTest("runtime.process", "LocalCoreClient lets a runtime store reset outlive the generic request timeout", async () => {
   const genericTimeoutMs = 20;
   const responseDelayMs = 80;
   const fixture = await startDelayedLocalCore(responseDelayMs);
@@ -33,7 +34,7 @@ test("LocalCoreClient lets a runtime store reset outlive the generic request tim
   }
 });
 
-test("LocalCoreClient keeps the generic timeout for ordinary requests", async () => {
+contractTest("runtime.process", "LocalCoreClient keeps the generic timeout for ordinary requests", async () => {
   const genericTimeoutMs = 20;
   const fixture = await startDelayedLocalCore(80);
   try {
@@ -52,7 +53,7 @@ test("LocalCoreClient keeps the generic timeout for ordinary requests", async ()
   }
 });
 
-test("LocalCoreClient strictly parses nested runtime configuration and credential status", async () => {
+contractTest("runtime.process", "LocalCoreClient strictly parses nested runtime configuration and credential status", async () => {
   const fixture = await startStaticLocalCore((requestPath) => {
     if (requestPath === "/v1/runtime/configuration") {
       return {

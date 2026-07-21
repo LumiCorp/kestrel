@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const migrations = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "migrations"
 );
 
-test("committed migration names, timestamps, and contents are immutable", () => {
+contractTest("web.hermetic", "committed migration names, timestamps, and contents are immutable", () => {
   const journal = JSON.parse(
     fs.readFileSync(path.join(migrations, "meta/_journal.json"), "utf8")
   ) as { entries: Array<{ idx: number; tag: string; when: number }> };

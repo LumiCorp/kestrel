@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 
 import {
   KestrelClient,
@@ -22,6 +21,8 @@ import {
   type ProtocolTransport,
 } from "../src/internal/ProtocolClient.js";
 import { RemoteRunnerTransport } from "../src/internal/RemoteRunnerTransport.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const profile: RunnerProfile = {
   id: "reference",
@@ -96,7 +97,7 @@ function completedResult(sessionId: string, runId: string) {
   };
 }
 
-test("KestrelClient reads and validates runner health", async () => {
+contractTest("packages.hermetic", "KestrelClient reads and validates runner health", async () => {
   const requests: Array<{ url: string; headers: Headers }> = [];
   const client = createRemoteClient({
     baseUrl: "http://runner.internal/path?secret=value",
@@ -120,7 +121,7 @@ test("KestrelClient reads and validates runner health", async () => {
   await client.close();
 });
 
-test("SDK session contracts preserve typed operator and continuation fields", () => {
+contractTest("packages.hermetic", "SDK session contracts preserve typed operator and continuation fields", () => {
   const description: RunnerSessionDescription = {
     sessionId: "session-sdk-shape",
     version: 1,
@@ -141,7 +142,7 @@ test("SDK session contracts preserve typed operator and continuation fields", ()
   assert.deepEqual(blockerChain, ["thread-child"]);
 });
 
-test("KestrelClient rejects unversioned runner health", async () => {
+contractTest("packages.hermetic", "KestrelClient rejects unversioned runner health", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => Response.json({ ok: true }),
@@ -155,7 +156,7 @@ test("KestrelClient rejects unversioned runner health", async () => {
   await client.close();
 });
 
-test("KestrelClient lists profiles and runs using profileId", async () => {
+contractTest("packages.hermetic", "KestrelClient lists profiles and runs using profileId", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
@@ -246,7 +247,7 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
   await client.close();
 });
 
-test("KestrelClient streams jobs and exposes operator run and promotion undo commands", async () => {
+contractTest("packages.hermetic", "KestrelClient streams jobs and exposes operator run and promotion undo commands", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   const replay = {
     version: "job_replay_pointer_v1" as const,
@@ -417,7 +418,7 @@ test("KestrelClient streams jobs and exposes operator run and promotion undo com
   await client.close();
 });
 
-test("KestrelClient does not dispatch a job for an already-aborted signal", async () => {
+contractTest("packages.hermetic", "KestrelClient does not dispatch a job for an already-aborted signal", async () => {
   let requestCount = 0;
   const client = new KestrelClient({
     target: {
@@ -451,7 +452,7 @@ test("KestrelClient does not dispatch a job for an already-aborted signal", asyn
   await client.close();
 });
 
-test("KestrelClient streamRun stays request-scoped", async () => {
+contractTest("packages.hermetic", "KestrelClient streamRun stays request-scoped", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -515,7 +516,7 @@ test("KestrelClient streamRun stays request-scoped", async () => {
   await client.close();
 });
 
-test("KestrelClient exposes workspace checkpoint helpers", async () => {
+contractTest("packages.hermetic", "KestrelClient exposes workspace checkpoint helpers", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
@@ -670,7 +671,7 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
   await client.close();
 });
 
-test("KestrelClient cancel resolves the run stream with run.cancelled", async () => {
+contractTest("packages.hermetic", "KestrelClient cancel resolves the run stream with run.cancelled", async () => {
   const requests: Array<Record<string, unknown>> = [];
   let runController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let runCommandId = "";
@@ -764,7 +765,7 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
   await client.close();
 });
 
-test("KestrelClient cancel includes runId after the stream learns it", async () => {
+contractTest("packages.hermetic", "KestrelClient cancel includes runId after the stream learns it", async () => {
   const requests: Array<Record<string, unknown>> = [];
   let runController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let runCommandId = "";
@@ -882,7 +883,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal event", async () => {
+contractTest("packages.hermetic", "RemoteRunnerTransport rejects an SSE stream that ends before a terminal event", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -921,7 +922,7 @@ test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal ev
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects a terminal SSE event without a command id", async () => {
+contractTest("packages.hermetic", "RemoteRunnerTransport rejects a terminal SSE event without a command id", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
@@ -971,7 +972,7 @@ test("RemoteRunnerTransport rejects a terminal SSE event without a command id", 
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects a nonterminal SSE event for another command", async () => {
+contractTest("packages.hermetic", "RemoteRunnerTransport rejects a nonterminal SSE event for another command", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
@@ -1007,7 +1008,7 @@ test("RemoteRunnerTransport rejects a nonterminal SSE event for another command"
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects mismatched terminal events without cross-settling another run", async (t) => {
+contractTest("packages.hermetic", "RemoteRunnerTransport rejects mismatched terminal events without cross-settling another run", async (t) => {
   let victimCommandId: string | undefined;
   let sourceCommandId: string | undefined;
   let markVictimReady!: () => void;
@@ -1115,7 +1116,7 @@ test("RemoteRunnerTransport rejects mismatched terminal events without cross-set
   assert.equal(closedVictim.status, "rejected");
 });
 
-test("RemoteRunnerTransport does not emit protocol errors when a local close aborts an SSE stream", async () => {
+contractTest("packages.hermetic", "RemoteRunnerTransport does not emit protocol errors when a local close aborts an SSE stream", async () => {
   const events: Array<{ type: string; payload?: { code?: string } }> = [];
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
@@ -1185,7 +1186,7 @@ test("RemoteRunnerTransport does not emit protocol errors when a local close abo
   );
 });
 
-test("ProtocolClient rejects malformed terminal payloads without dangling requests or listeners", async () => {
+contractTest("packages.hermetic", "ProtocolClient rejects malformed terminal payloads without dangling requests or listeners", async () => {
   const transport = new ControlledProtocolTransport();
   const client = new ProtocolClient(transport);
   const seen: Array<{ type: string; code?: string | undefined }> = [];
@@ -1271,7 +1272,7 @@ test("ProtocolClient rejects malformed terminal payloads without dangling reques
   );
 });
 
-test("ProtocolClient rejects malformed and unknown runner events", async () => {
+contractTest("packages.hermetic", "ProtocolClient rejects malformed and unknown runner events", async () => {
   const transport = new ControlledProtocolTransport();
   const client = new ProtocolClient(transport);
 
@@ -1317,7 +1318,7 @@ test("ProtocolClient rejects malformed and unknown runner events", async () => {
   await client.close();
 });
 
-test("ProtocolClient rejects a terminal response for the wrong command contract", async () => {
+contractTest("packages.hermetic", "ProtocolClient rejects a terminal response for the wrong command contract", async () => {
   const transport = new ControlledProtocolTransport();
   const client = new ProtocolClient(transport);
 
@@ -1367,7 +1368,7 @@ test("ProtocolClient rejects a terminal response for the wrong command contract"
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects unary responses with a mismatched command id", async () => {
+contractTest("packages.hermetic", "RemoteRunnerTransport rejects unary responses with a mismatched command id", async () => {
   const client = new KestrelClient({
     target: {
       kind: "remote",
@@ -1391,7 +1392,7 @@ test("RemoteRunnerTransport rejects unary responses with a mismatched command id
   await client.close();
 });
 
-test("KestrelClient subscribe uses filtered SSE subscriptions", async () => {
+contractTest("packages.hermetic", "KestrelClient subscribe uses filtered SSE subscriptions", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   let closed = false;
   const client = createRemoteClient({
@@ -1460,7 +1461,7 @@ test("KestrelClient subscribe uses filtered SSE subscriptions", async () => {
   await client.close();
 });
 
-test("KestrelClient subscribe surfaces runner errors through async iteration", async () => {
+contractTest("packages.hermetic", "KestrelClient subscribe surfaces runner errors through async iteration", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
@@ -1499,7 +1500,7 @@ test("KestrelClient subscribe surfaces runner errors through async iteration", a
   await client.close();
 });
 
-test("KestrelClient getSessionState returns an atomic session snapshot", async () => {
+contractTest("packages.hermetic", "KestrelClient getSessionState returns an atomic session snapshot", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -1540,7 +1541,7 @@ test("KestrelClient getSessionState returns an atomic session snapshot", async (
   await client.close();
 });
 
-test("KestrelClient preserves structured HTTP and service errors", async () => {
+contractTest("packages.hermetic", "KestrelClient preserves structured HTTP and service errors", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -1590,7 +1591,7 @@ test("KestrelClient preserves structured HTTP and service errors", async () => {
   await client.close();
 });
 
-test("SDK package manifest and README are publish-ready", async () => {
+contractTest("packages.hermetic", "SDK package manifest and README are publish-ready", async () => {
   const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const manifest = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8")) as {
     license?: string;

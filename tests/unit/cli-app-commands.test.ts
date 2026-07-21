@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -37,8 +36,10 @@ import type { TuiSessionMeta } from "../../cli/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core platform parsing accepts exact Node platform values", () => {
+
+contractTest("runtime.process", "Local Core platform parsing accepts exact Node platform values", () => {
   assert.equal(parseLocalCorePlatform("linux"), "linux");
   assert.equal(parseLocalCorePlatform("darwin"), "darwin");
   assert.equal(parseLocalCorePlatform("LINUX"), undefined);
@@ -217,7 +218,7 @@ function buildManagedLocalCoreStatus(input: {
   };
 }
 
-test("App appends surfaced timeout details to the diagnostics log", async () => {
+contractTest("runtime.process", "App appends surfaced timeout details to the diagnostics log", async () => {
   const { app, home } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -241,7 +242,7 @@ test("App appends surfaced timeout details to the diagnostics log", async () => 
   assert.match(rawDiagnostics, /internet\.news/u);
 });
 
-test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
+contractTest("runtime.process", "bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
   const root = await mkdtemp(path.join("/tmp", "kbth-"));
   const cwd = path.join(root, "cwd");
   const fakeHome = path.join(root, "home");
@@ -284,7 +285,7 @@ test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
   }
 });
 
-test("bootstrapTuiApp defaults to shared Local Core home", async () => {
+contractTest("runtime.process", "bootstrapTuiApp defaults to shared Local Core home", async () => {
   const root = await mkdtemp(path.join("/tmp", "kbch-"));
   const cwd = path.join(root, "cwd");
   const coreHome = path.join(root, "Kestrel");
@@ -331,7 +332,7 @@ test("bootstrapTuiApp defaults to shared Local Core home", async () => {
   }
 });
 
-test("bootstrapTuiApp ignores legacy client persistence defaults", async () => {
+contractTest("runtime.process", "bootstrapTuiApp ignores legacy client persistence defaults", async () => {
   const root = await mkdtemp(path.join("/tmp", "kestrel-legacy-store-"));
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
@@ -357,7 +358,7 @@ test("bootstrapTuiApp ignores legacy client persistence defaults", async () => {
   }
 });
 
-test("bootstrapTuiApp carries a custom home's resolved Core transport into the App client", async () => {
+contractTest("runtime.process", "bootstrapTuiApp carries a custom home's resolved Core transport into the App client", async () => {
   const root = await mkdtemp(path.join("/tmp", "kestrel-custom-home-core-"));
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
@@ -407,7 +408,7 @@ test("bootstrapTuiApp carries a custom home's resolved Core transport into the A
   }
 });
 
-test("applyLocalCoreShellEnvironment exports the Core database URL for runner storage", () => {
+contractTest("runtime.process", "applyLocalCoreShellEnvironment exports the Core database URL for runner storage", () => {
   const coreHome = "/tmp/kestrel-core";
   const coreDatabaseUrl = "postgres://kestrel:kestrel@localhost/kestrel?host=%2Ftmp%2Fkestrel-core%2Fcore%2Fpostgres%2Fsocket&port=5432";
   const env: NodeJS.ProcessEnv = {
@@ -467,7 +468,7 @@ test("applyLocalCoreShellEnvironment exports the Core database URL for runner st
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, "local_core_managed");
 });
 
-test("applyLocalCoreShellEnvironment clears untrusted DATABASE_URL when managed Core is blocked", () => {
+contractTest("runtime.process", "applyLocalCoreShellEnvironment clears untrusted DATABASE_URL when managed Core is blocked", () => {
   const env: NodeJS.ProcessEnv = {
     DATABASE_URL: "postgres://host-machine.example/kestrel",
   };
@@ -488,7 +489,7 @@ test("applyLocalCoreShellEnvironment clears untrusted DATABASE_URL when managed 
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, undefined);
 });
 
-test("applyLocalCoreShellEnvironment clears stale source marker when managed Core has no URL", () => {
+contractTest("runtime.process", "applyLocalCoreShellEnvironment clears stale source marker when managed Core has no URL", () => {
   const env: NodeJS.ProcessEnv = {
     KESTREL_DATABASE_URL_SOURCE: "local_core_managed",
   };
@@ -507,7 +508,7 @@ test("applyLocalCoreShellEnvironment clears stale source marker when managed Cor
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, undefined);
 });
 
-test("formatCliLocalCoreStatus reports isolated dev homes visibly", async () => {
+contractTest("runtime.process", "formatCliLocalCoreStatus reports isolated dev homes visibly", async () => {
   const root = await mkdtemp(path.join("/tmp", "kbih-"));
   const cwd = path.join(root, "cwd");
   const isolatedHome = path.join(root, "isolated");
@@ -544,7 +545,7 @@ test("formatCliLocalCoreStatus reports isolated dev homes visibly", async () => 
   }
 });
 
-test("runSplashDatabasePreflight auto-starts the default local postgres target by default", async () => {
+contractTest("runtime.process", "runSplashDatabasePreflight auto-starts the default local postgres target by default", async () => {
   const port = await reserveLocalPort();
   const server = createServer();
   const updates: Array<{ state?: string | undefined; detail?: string | undefined }> = [];
@@ -598,7 +599,7 @@ test("runSplashDatabasePreflight auto-starts the default local postgres target b
   }
 });
 
-test("runSplashDatabasePreflight reports blocked Local Core before missing DATABASE_URL", async () => {
+contractTest("runtime.process", "runSplashDatabasePreflight reports blocked Local Core before missing DATABASE_URL", async () => {
   const updates: Array<{ state?: string | undefined; detail?: string | undefined }> = [];
   const status = buildManagedLocalCoreStatus({
     state: "blocked",
@@ -640,7 +641,7 @@ test("runSplashDatabasePreflight reports blocked Local Core before missing DATAB
   });
 });
 
-test("runSplashDatabasePreflight trusts healthy managed Local Core instead of probing its socket URL as TCP", async () => {
+contractTest("runtime.process", "runSplashDatabasePreflight trusts healthy managed Local Core instead of probing its socket URL as TCP", async () => {
   const updates: Array<{ state?: string | undefined; detail?: string | undefined }> = [];
   const databaseUrl = "postgres://kestrel:kestrel@localhost/kestrel?host=%2Ftmp%2Fkestrel-core%2Fcore%2Fpostgres%2Fsocket";
   const status = buildManagedLocalCoreStatus({
@@ -674,7 +675,7 @@ test("runSplashDatabasePreflight trusts healthy managed Local Core instead of pr
   });
 });
 
-test("runSplashDatabasePreflight still requires DATABASE_URL for explicit postgres store mode", async () => {
+contractTest("runtime.process", "runSplashDatabasePreflight still requires DATABASE_URL for explicit postgres store mode", async () => {
   await assert.rejects(
     runSplashDatabasePreflight({
       setSummary() {},
@@ -689,7 +690,7 @@ test("runSplashDatabasePreflight still requires DATABASE_URL for explicit postgr
   );
 });
 
-test("profiles use rebinds the active session and subsequent history to the selected profile", async () => {
+contractTest("runtime.process", "profiles use rebinds the active session and subsequent history to the selected profile", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -753,7 +754,7 @@ async function reserveLocalPort(): Promise<number> {
   });
 }
 
-test("model commands update shared model policy and refresh the active profile authority", async () => {
+contractTest("runtime.process", "model commands update shared model policy and refresh the active profile authority", async () => {
   const { app, home, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -785,7 +786,7 @@ test("model commands update shared model policy and refresh the active profile a
   assert.doesNotMatch(rawHistory, /Model set to 'gpt-5.4-2026-03-05'/u);
 });
 
-test("model command falls back to local policy when cached Local Core client has a missing socket", async () => {
+contractTest("runtime.process", "model command falls back to local policy when cached Local Core client has a missing socket", async () => {
   const { app, home, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const missingSocketPath = path.join(home, "core", "api.sock");
@@ -831,7 +832,7 @@ test("model command falls back to local policy when cached Local Core client has
   }
 });
 
-test("model command lists current provider options", async () => {
+contractTest("runtime.process", "model command lists current provider options", async () => {
   const { app, home, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -854,7 +855,7 @@ test("model command lists current provider options", async () => {
   assert.match(rawHistory, /Use \/model search <query> to browse/u);
 });
 
-test("model command prefers the live OpenRouter catalog when available", async () => {
+contractTest("runtime.process", "model command prefers the live OpenRouter catalog when available", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const originalApiKey = process.env.OPENROUTER_API_KEY;
@@ -900,7 +901,7 @@ test("model command prefers the live OpenRouter catalog when available", async (
   }
 });
 
-test("model set-provider requires a follow-up model selection before mutating policy", async () => {
+contractTest("runtime.process", "model set-provider requires a follow-up model selection before mutating policy", async () => {
   const { app, home, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const originalFetch = globalThis.fetch;
@@ -973,7 +974,7 @@ test("model set-provider requires a follow-up model selection before mutating po
   }
 });
 
-test("model set-provider uses the live Ollama catalog when available", async () => {
+contractTest("runtime.process", "model set-provider uses the live Ollama catalog when available", async () => {
   const { app, home, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const originalFetch = globalThis.fetch;
@@ -1022,7 +1023,7 @@ test("model set-provider uses the live Ollama catalog when available", async () 
   }
 });
 
-test("model search uses the pending provider during provider selection", async () => {
+contractTest("runtime.process", "model search uses the pending provider during provider selection", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const originalFetch = globalThis.fetch;
@@ -1058,7 +1059,7 @@ test("model search uses the pending provider during provider selection", async (
   }
 });
 
-test("model set rejects values outside the current provider allowlist", async () => {
+contractTest("runtime.process", "model set rejects values outside the current provider allowlist", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1073,7 +1074,7 @@ test("model set rejects values outside the current provider allowlist", async ()
   assert.match(rawHistory, /Recommended models for 'openrouter':/u);
 });
 
-test("theme command switches persisted theme mode", async () => {
+contractTest("runtime.process", "theme command switches persisted theme mode", async () => {
   const { app, home } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1103,7 +1104,7 @@ test("theme command switches persisted theme mode", async () => {
   assert.equal(persisted.state.themePreset, undefined);
 });
 
-test("start task journey creates a session with selected profile, mode, and launch summary", async () => {
+contractTest("runtime.process", "start task journey creates a session with selected profile, mode, and launch summary", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1136,7 +1137,7 @@ test("start task journey creates a session with selected profile, mode, and laun
   assert.match(rawHistory, /Task=Investigate queue latency/u);
 });
 
-test("start task journey clears inherited preset metadata when preset none is selected", async () => {
+contractTest("runtime.process", "start task journey clears inherited preset metadata when preset none is selected", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1158,7 +1159,7 @@ test("start task journey clears inherited preset metadata when preset none is se
   assert.equal(state.activeSession.launchPresetId, undefined);
 });
 
-test("start task journey rejects active workspace binding when no workspace is available", async () => {
+contractTest("runtime.process", "start task journey rejects active workspace binding when no workspace is available", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1178,7 +1179,7 @@ test("start task journey rejects active workspace binding when no workspace is a
   assert.match(rawHistory, /No active workspace is available\. Use detached or a discovered workspace id\/root\./u);
 });
 
-test("start task journey treats launch workspace as current when active session is detached", async () => {
+contractTest("runtime.process", "start task journey treats launch workspace as current when active session is detached", async () => {
   const { app, cwd } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceRoot = path.join(cwd, "launch-project");
@@ -1210,7 +1211,7 @@ test("start task journey treats launch workspace as current when active session 
   assert.equal(state.activeSession.workspaceRoot, workspace.rootPath);
 });
 
-test("/workspace list shows discovered workspaces and /workspace use binds the active session", async () => {
+contractTest("runtime.process", "/workspace list shows discovered workspaces and /workspace use binds the active session", async () => {
   const { app, cwd, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -1243,7 +1244,7 @@ test("/workspace list shows discovered workspaces and /workspace use binds the a
   assert.match(rawHistory, /Bound the active session to workspace/u);
 });
 
-test("bare /workspace opens workspace journey surface", async () => {
+contractTest("runtime.process", "bare /workspace opens workspace journey surface", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1258,7 +1259,7 @@ test("bare /workspace opens workspace journey surface", async () => {
   assert.equal(state.activeRegion, "sessions");
 });
 
-test("start task journey accepts a discovered workspace id", async () => {
+contractTest("runtime.process", "start task journey accepts a discovered workspace id", async () => {
   const { app, cwd } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -1285,7 +1286,7 @@ test("start task journey accepts a discovered workspace id", async () => {
   assert.equal(state.activeSession.workspaceBinding, "active");
 });
 
-test("/mcp opens the MCP workspace and stores the latest MCP snapshot", async () => {
+contractTest("runtime.process", "/mcp opens the MCP workspace and stores the latest MCP snapshot", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   appState.client = {
@@ -1316,7 +1317,7 @@ test("/mcp opens the MCP workspace and stores the latest MCP snapshot", async ()
   assert.equal(state.mcpStatus?.healthy, true);
 });
 
-test("/code opens the code workspace", async () => {
+contractTest("runtime.process", "/code opens the code workspace", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1330,7 +1331,7 @@ test("/code opens the code workspace", async () => {
   assert.equal(state.activeView, "code");
 });
 
-test("/child opens delegation review by default", async () => {
+contractTest("runtime.process", "/child opens delegation review by default", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1359,7 +1360,7 @@ test("/child opens delegation review by default", async () => {
   assert.equal(state.activeView, "delegation");
 });
 
-test("guided child mission sends operator control through the active runner profile", async () => {
+contractTest("runtime.process", "guided child mission sends operator control through the active runner profile", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{
@@ -1394,7 +1395,7 @@ test("guided child mission sends operator control through the active runner prof
   assert.equal((control?.metadata?.profile as { id?: string } | undefined)?.id, "reference");
 });
 
-test("/checkpoint opens recovery center by default and loads workspace checkpoints", async () => {
+contractTest("runtime.process", "/checkpoint opens recovery center by default and loads workspace checkpoints", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1454,7 +1455,7 @@ test("/checkpoint opens recovery center by default and loads workspace checkpoin
   assert.equal(state.workspaceCheckpoints?.length, 1);
 });
 
-test("/checkpoint accept refreshes describe before resolving a stale local context checkpoint", async () => {
+contractTest("runtime.process", "/checkpoint accept refreshes describe before resolving a stale local context checkpoint", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1525,7 +1526,7 @@ test("/checkpoint accept refreshes describe before resolving a stale local conte
   assert.equal(control?.payload.actionValue, "compact");
 });
 
-test("/checkpoint accept falls back to operator inbox when describe has no latest checkpoint", async () => {
+contractTest("runtime.process", "/checkpoint accept falls back to operator inbox when describe has no latest checkpoint", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1600,7 +1601,7 @@ test("/checkpoint accept falls back to operator inbox when describe has no lates
   assert.equal(control?.payload.actionValue, "summarize_forward");
 });
 
-test("/checkpoint defer with explicit id resolves via continue", async () => {
+contractTest("runtime.process", "/checkpoint defer with explicit id resolves via continue", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1675,7 +1676,7 @@ test("/checkpoint defer with explicit id resolves via continue", async () => {
   assert.equal(control?.payload.actionValue, "continue");
 });
 
-test("/snapshot captures a workspace snapshot with an optional label", async () => {
+contractTest("runtime.process", "/snapshot captures a workspace snapshot with an optional label", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1734,7 +1735,7 @@ test("/snapshot captures a workspace snapshot with an optional label", async () 
   assert.match(rawHistory, /Saved snapshot before changes/u);
 });
 
-test("/restore opens recovery center without an id and restores explicit snapshots with an id", async () => {
+contractTest("runtime.process", "/restore opens recovery center without an id and restores explicit snapshots with an id", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1807,7 +1808,7 @@ test("/restore opens recovery center without an id and restores explicit snapsho
   assert.match(rawHistory, /Restore restored for snapshot 'snapshot-1'/u);
 });
 
-test("/deny aliases the reject operator control path", async () => {
+contractTest("runtime.process", "/deny aliases the reject operator control path", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -1843,7 +1844,7 @@ test("/deny aliases the reject operator control path", async () => {
   assert.equal(sent[0]?.payload.threadId, "session-1");
 });
 
-test("SessionsView renders additive assembly state in the detail drawer", async () => {
+contractTest("runtime.process", "SessionsView renders additive assembly state in the detail drawer", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -1967,7 +1968,7 @@ test("SessionsView renders additive assembly state in the detail drawer", async 
   assert.match(rendered, /childThreads=total:3 running:0 waiting:1 completed:2 failed:0 cancelled:1/u);
 });
 
-test("TasksView renders additive assembly provider, variant, and downgrade markers", async () => {
+contractTest("runtime.process", "TasksView renders additive assembly provider, variant, and downgrade markers", async () => {
   const session: TuiSessionMeta = {
     name: "delegated-task",
     sessionId: "task-session-1",
@@ -2100,7 +2101,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
   assert.match(rendered, /evidenceOutcome=continue/u);
 });
 
-test("SessionsView keeps focused thread and blocker parity in the detail drawer", async () => {
+contractTest("runtime.process", "SessionsView keeps focused thread and blocker parity in the detail drawer", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2163,7 +2164,7 @@ test("SessionsView keeps focused thread and blocker parity in the detail drawer"
   assert.match(rendered, /activity=next:switch_thread/u);
 });
 
-test("SessionsView and TasksView surface stalled attention in row statuses", () => {
+contractTest("runtime.process", "SessionsView and TasksView surface stalled attention in row statuses", () => {
   const now = new Date(0).toISOString();
   const session: TuiSessionMeta = {
     name: "stalled-session",
@@ -2230,7 +2231,7 @@ test("SessionsView and TasksView surface stalled attention in row statuses", () 
   assert.match(tasksRendered, /\[WAITING:stalled\]/u);
 });
 
-test("skill status output remains tool and instruction focused", async () => {
+contractTest("runtime.process", "skill status output remains tool and instruction focused", async () => {
   const { app, historyPath } = await createAppHarness({
     activeSkillPackId: "research",
   });
@@ -2248,7 +2249,7 @@ test("skill status output remains tool and instruction focused", async () => {
   assert.doesNotMatch(rawHistory, /MCP profile/u);
 });
 
-test("palette draft actions seed the composer instead of executing immediately", async () => {
+contractTest("runtime.process", "palette draft actions seed the composer instead of executing immediately", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2270,7 +2271,7 @@ test("palette draft actions seed the composer instead of executing immediately",
   assert.equal(next.paletteOpen, false);
 });
 
-test("stop command aliases to operator steer with a default stop message", async () => {
+contractTest("runtime.process", "stop command aliases to operator steer with a default stop message", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -2310,7 +2311,7 @@ test("stop command aliases to operator steer with a default stop message", async
   );
 });
 
-test("stop command cancels the active run before sending steering when the session is running", async () => {
+contractTest("runtime.process", "stop command cancels the active run before sending steering when the session is running", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2348,7 +2349,7 @@ test("stop command cancels the active run before sending steering when the sessi
   assert.equal(sent[1]?.payload.action, "steer");
 });
 
-test("interactive operator commands bypass the queued input drain while a run is active", async () => {
+contractTest("runtime.process", "interactive operator commands bypass the queued input drain while a run is active", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2378,7 +2379,7 @@ test("interactive operator commands bypass the queued input drain while a run is
   assert.equal((sent[0]?.metadata?.profile as { id?: string } | undefined)?.id, "reference");
 });
 
-test("/steer during a pending wait sends operator control instead of resuming the wait", async () => {
+contractTest("runtime.process", "/steer during a pending wait sends operator control instead of resuming the wait", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -2414,7 +2415,7 @@ test("/steer during a pending wait sends operator control instead of resuming th
   assert.equal(operatorControl?.payload.message, "stop doing copy edits");
 });
 
-test("interactive operator command failures surface in the TUI instead of escaping", async () => {
+contractTest("runtime.process", "interactive operator command failures surface in the TUI instead of escaping", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2447,7 +2448,7 @@ test("interactive operator command failures surface in the TUI instead of escapi
   assert.match(rawHistory, /Input failed: Postgres is not reachable/u);
 });
 
-test("plain submissions during a running turn stay on the queued turn path", async () => {
+contractTest("runtime.process", "plain submissions during a running turn stay on the queued turn path", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2463,7 +2464,7 @@ test("plain submissions during a running turn stay on the queued turn path", asy
   assert.equal(queued, "also check the failing test output");
 });
 
-test("queue command strips the control prefix before starting the queued turn", async () => {
+contractTest("runtime.process", "queue command strips the control prefix before starting the queued turn", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const turns: Array<{ submittedMessage: string }> = [];
@@ -2478,7 +2479,7 @@ test("queue command strips the control prefix before starting the queued turn", 
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
 });
 
-test("queue command during a running turn waits for queue drain before starting", async () => {
+contractTest("runtime.process", "queue command during a running turn waits for queue drain before starting", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2500,7 +2501,7 @@ test("queue command during a running turn waits for queue drain before starting"
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
 });
 
-test("delegation workspace renders result-only error and reference child outcomes", async () => {
+contractTest("runtime.process", "delegation workspace renders result-only error and reference child outcomes", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2584,7 +2585,7 @@ test("delegation workspace renders result-only error and reference child outcome
   assert.match(rendered, /Outcome state only status=COMPLETED/u);
 });
 
-test("controller submitLine drops duplicate same-event composer submissions", async () => {
+contractTest("runtime.process", "controller submitLine drops duplicate same-event composer submissions", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2605,7 +2606,7 @@ test("controller submitLine drops duplicate same-event composer submissions", as
   assert.equal(state.chatDraft, "");
 });
 
-test("controller submitLine allows intentional resubmit after the draft changes", async () => {
+contractTest("runtime.process", "controller submitLine allows intentional resubmit after the draft changes", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const controller = (appState.buildController as () => InkAppController)();
@@ -2625,7 +2626,7 @@ test("controller submitLine allows intentional resubmit after the draft changes"
   assert.deepEqual(turns.map((turn) => turn.submittedMessage), ["hello world", "hello world"]);
 });
 
-test("controller submitLine drops duplicate interactive operator commands while running", async () => {
+contractTest("runtime.process", "controller submitLine drops duplicate interactive operator commands while running", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2654,7 +2655,7 @@ test("controller submitLine drops duplicate interactive operator commands while 
   assert.equal(operatorCommands[0]?.payload.action, "steer");
 });
 
-test("closing the palette restores the previously visible region", async () => {
+contractTest("runtime.process", "closing the palette restores the previously visible region", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2675,7 +2676,7 @@ test("closing the palette restores the previously visible region", async () => {
   assert.equal(next.focusRegion, "logs");
 });
 
-test("workspace status registers the current folder in the catalog", async () => {
+contractTest("runtime.process", "workspace status registers the current folder in the catalog", async () => {
   const { app, home, cwd, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const expectedCwd = await realpath(cwd);
@@ -2699,7 +2700,7 @@ test("workspace status registers the current folder in the catalog", async () =>
   assert.match(rawHistory, /Workspace: local:/u);
 });
 
-test("workspace status preserves an explicit detached session binding", async () => {
+contractTest("runtime.process", "workspace status preserves an explicit detached session binding", async () => {
   const { app, home, cwd, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const expectedCwd = await realpath(cwd);
@@ -2729,7 +2730,7 @@ test("workspace status preserves an explicit detached session binding", async ()
   assert.match(rawHistory, /Session binding: detached/u);
 });
 
-test("closing command-bar search restores the prior chat region", async () => {
+contractTest("runtime.process", "closing command-bar search restores the prior chat region", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2750,7 +2751,7 @@ test("closing command-bar search restores the prior chat region", async () => {
   assert.equal(next.focusRegion, "chat_list");
 });
 
-test("slash palette opens the full command catalog while manual palette stays collapsed", async () => {
+contractTest("runtime.process", "slash palette opens the full command catalog while manual palette stays collapsed", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2805,7 +2806,7 @@ test("slash palette opens the full command catalog while manual palette stays co
   );
 });
 
-test("exact palette commands move the operator back to chat", async () => {
+contractTest("runtime.process", "exact palette commands move the operator back to chat", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2836,7 +2837,7 @@ test("exact palette commands move the operator back to chat", async () => {
   assert.equal(next.activeRegion, "composer");
 });
 
-test("startup workspace conflict creates a new session bound to the launch workspace", async () => {
+contractTest("runtime.process", "startup workspace conflict creates a new session bound to the launch workspace", async () => {
   const { app, cwd, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -2892,7 +2893,7 @@ test("startup workspace conflict creates a new session bound to the launch works
   assert.match(rawHistory, /launch workspace/u);
 });
 
-test("startup preserves an explicit detached session instead of binding the launch workspace", async () => {
+contractTest("runtime.process", "startup preserves an explicit detached session instead of binding the launch workspace", async () => {
   const { app, cwd } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
@@ -2925,7 +2926,7 @@ test("startup preserves an explicit detached session instead of binding the laun
   assert.equal(selection.session.workspaceRoot, undefined);
 });
 
-test("startup repairs a stale active workspace binding to the launch workspace", async () => {
+contractTest("runtime.process", "startup repairs a stale active workspace binding to the launch workspace", async () => {
   const { app, cwd } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
@@ -2963,7 +2964,7 @@ test("startup repairs a stale active workspace binding to the launch workspace",
   );
 });
 
-test("startup resolves a unique session id fragment to the matching session", async () => {
+contractTest("runtime.process", "startup resolves a unique session id fragment to the matching session", async () => {
   const { app } = await createAppHarness({ sessionName: "3373851798-178" });
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
@@ -2991,7 +2992,7 @@ test("startup resolves a unique session id fragment to the matching session", as
   assert.equal(sessionsFile.activeSessionName, targetSession.name);
 });
 
-test("fresh-session startup ignores restored active session and creates a new active session", async () => {
+contractTest("runtime.process", "fresh-session startup ignores restored active session and creates a new active session", async () => {
   const { app, cwd } = await createAppHarness({ freshSessionName: "fresh-session" });
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
@@ -3019,7 +3020,7 @@ test("fresh-session startup ignores restored active session and creates a new ac
   assert.equal(sessionStore.getActive(sessionsFile)?.name, "fresh-session");
 });
 
-test("scripted fresh-session startup forces initial chat view without mutating other persisted state", async () => {
+contractTest("runtime.process", "scripted fresh-session startup forces initial chat view without mutating other persisted state", async () => {
   const derived = deriveStartupPersistedUiState(
     { freshSessionName: "fresh-session", scripted: true },
     {
@@ -3037,7 +3038,7 @@ test("scripted fresh-session startup forces initial chat view without mutating o
   assert.equal(derived.lastSelectedSession, "default");
 });
 
-test("non-scripted fresh-session startup preserves persisted navigation state", async () => {
+contractTest("runtime.process", "non-scripted fresh-session startup preserves persisted navigation state", async () => {
   const derived = deriveStartupPersistedUiState(
     { freshSessionName: "fresh-session" },
     {
@@ -3051,7 +3052,7 @@ test("non-scripted fresh-session startup preserves persisted navigation state", 
   assert.equal(derived.activeRegion, "sessions");
 });
 
-test("scripted restored-session startup preserves persisted navigation state", async () => {
+contractTest("runtime.process", "scripted restored-session startup preserves persisted navigation state", async () => {
   const derived = deriveStartupPersistedUiState(
     { scripted: true },
     {
@@ -3065,7 +3066,7 @@ test("scripted restored-session startup preserves persisted navigation state", a
   assert.equal(derived.activeRegion, "sessions");
 });
 
-test("Esc/goBack from history returns to the previous screen", async () => {
+contractTest("runtime.process", "Esc/goBack from history returns to the previous screen", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3087,7 +3088,7 @@ test("Esc/goBack from history returns to the previous screen", async () => {
   assert.deepEqual(next.navigationStack, []);
 });
 
-test("goBack closes the detail drawer before changing screens", async () => {
+contractTest("runtime.process", "goBack closes the detail drawer before changing screens", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3114,7 +3115,7 @@ test("goBack closes the detail drawer before changing screens", async () => {
   assert.equal(next.focusRegion, "sessions");
 });
 
-test("workspace navigation clears stale contextual search modes", async () => {
+contractTest("runtime.process", "workspace navigation clears stale contextual search modes", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3142,7 +3143,7 @@ test("workspace navigation clears stale contextual search modes", async () => {
   assert.equal(next.logsFilterMode, false);
 });
 
-test("delegation and recovery views use workspace action lists for selection", async () => {
+contractTest("runtime.process", "delegation and recovery views use workspace action lists for selection", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3181,7 +3182,7 @@ test("delegation and recovery views use workspace action lists for selection", a
   assert.equal(uiStore.getState().scroll.sessions.cursor, 1);
 });
 
-test("tasks maintain an independent scroll state from sessions", async () => {
+contractTest("runtime.process", "tasks maintain an independent scroll state from sessions", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3252,7 +3253,7 @@ test("tasks maintain an independent scroll state from sessions", async () => {
   assert.equal(next.scroll.sessions.cursor, 0);
 });
 
-test("splash dismissal stays blocked until pre-flight reaches ready", async () => {
+contractTest("runtime.process", "splash dismissal stays blocked until pre-flight reaches ready", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3288,7 +3289,7 @@ test("splash dismissal stays blocked until pre-flight reaches ready", async () =
   assert.equal(uiStore.getState().splashVisible, false);
 });
 
-test("scripted mode auto-dismisses splash when pre-flight reaches ready", async () => {
+contractTest("runtime.process", "scripted mode auto-dismisses splash when pre-flight reaches ready", async () => {
   const { app } = await createAppHarness({ scripted: true });
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3320,7 +3321,7 @@ test("scripted mode auto-dismisses splash when pre-flight reaches ready", async 
   assert.equal(next.splashPreflight.summary, "pre-flight complete");
 });
 
-test("scripted mode auto-dismisses splash when pre-flight fails", async () => {
+contractTest("runtime.process", "scripted mode auto-dismisses splash when pre-flight fails", async () => {
   const { app } = await createAppHarness({ scripted: true });
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3354,7 +3355,7 @@ test("scripted mode auto-dismisses splash when pre-flight fails", async () => {
   assert.equal(next.statusLine, "startup failed | mcp:unknown");
 });
 
-test("assistant replies keep chat pinned to the tail when already following", async () => {
+contractTest("runtime.process", "assistant replies keep chat pinned to the tail when already following", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3392,7 +3393,7 @@ test("assistant replies keep chat pinned to the tail when already following", as
   assert.equal(next.scroll.chat.cursor, Math.max(0, totalRows - 1));
 });
 
-test("assistant replies keep tail-following when tail lock is true but cursor drifted", async () => {
+contractTest("runtime.process", "assistant replies keep tail-following when tail lock is true but cursor drifted", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3442,7 +3443,7 @@ test("assistant replies keep tail-following when tail lock is true but cursor dr
   assert.equal(next.scroll.chat.cursor, Math.max(0, totalAfter - 1));
 });
 
-test("natural-language mode switches are forwarded for runtime intent classification", async () => {
+contractTest("runtime.process", "natural-language mode switches are forwarded for runtime intent classification", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3503,7 +3504,7 @@ test("natural-language mode switches are forwarded for runtime intent classifica
   assert.match(rawHistory, /switch to build/u);
 });
 
-test("mode command resumes blocked runs with an explicit resume flag", async () => {
+contractTest("runtime.process", "mode command resumes blocked runs with an explicit resume flag", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3568,7 +3569,7 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
 });
 
-test("mode build succeeds without a trailing submode and does not print usage", async () => {
+contractTest("runtime.process", "mode build succeeds without a trailing submode and does not print usage", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3589,7 +3590,7 @@ test("mode build succeeds without a trailing submode and does not print usage", 
   assert.doesNotMatch(rawHistory, /Usage: \/mode build(?: \[ask\|guarded\|auto\])?/u);
 });
 
-test("mode command rejects extra trailing arguments", async () => {
+contractTest("runtime.process", "mode command rejects extra trailing arguments", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3610,7 +3611,7 @@ test("mode command rejects extra trailing arguments", async () => {
   assert.doesNotMatch(rawHistory, /Mode set to Chat/u);
 });
 
-test("mode command resets the TUI input box to the normal composer state", async () => {
+contractTest("runtime.process", "mode command resets the TUI input box to the normal composer state", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3656,7 +3657,7 @@ test("mode command resets the TUI input box to the normal composer state", async
   assert.deepEqual(next.navigationStack, []);
 });
 
-test("mode build forwards canonical build mode on run.start", async () => {
+contractTest("runtime.process", "mode build forwards canonical build mode on run.start", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3715,7 +3716,7 @@ test("mode build forwards canonical build mode on run.start", async () => {
   );
 });
 
-test("re-entering build mode preserves the canonical execution policy", async () => {
+contractTest("runtime.process", "re-entering build mode preserves the canonical execution policy", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3737,7 +3738,7 @@ test("re-entering build mode preserves the canonical execution policy", async ()
   assert.equal(state.executionPolicy?.toolClassPolicy?.external_side_effect, undefined);
 });
 
-test("run completion appends finalize provenance notice when reporting grounding is present", async () => {
+contractTest("runtime.process", "run completion appends finalize provenance notice when reporting grounding is present", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3789,7 +3790,7 @@ test("run completion appends finalize provenance notice when reporting grounding
   assert.match(rawHistory, /model_authored are narrative and not runtime-verified facts\./u);
 });
 
-test("continuation grant history line is driven by runtime output", async () => {
+contractTest("runtime.process", "continuation grant history line is driven by runtime output", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3850,7 +3851,7 @@ test("continuation grant history line is driven by runtime output", async () => 
   assert.match(rawHistory, /Granted 10 more steps\. Resuming run\./u);
 });
 
-test("assembly command resolves the pending proposal id from operator inbox when omitted", async () => {
+contractTest("runtime.process", "assembly command resolves the pending proposal id from operator inbox when omitted", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -3911,7 +3912,7 @@ test("assembly command resolves the pending proposal id from operator inbox when
   assert.equal(sent[1]?.payload.proposalId, "assembly-proposal-1");
 });
 
-test("continuation replies are forwarded for runtime intent classification", async () => {
+contractTest("runtime.process", "continuation replies are forwarded for runtime intent classification", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -3977,7 +3978,7 @@ test("continuation replies are forwarded for runtime intent classification", asy
   assert.equal(capturedTurn?.resumeBlockedRun, undefined);
 });
 
-test("non-continuation replies during pending waits start a fresh user turn", async () => {
+contractTest("runtime.process", "non-continuation replies during pending waits start a fresh user turn", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4035,7 +4036,7 @@ test("non-continuation replies during pending waits start a fresh user turn", as
   assert.equal(capturedTurn?.resumeBlockedRun, undefined);
 });
 
-test("exact continuation replies during pending waits resume the blocked run", async () => {
+contractTest("runtime.process", "exact continuation replies during pending waits resume the blocked run", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4093,7 +4094,7 @@ test("exact continuation replies during pending waits resume the blocked run", a
   assert.equal(capturedTurn?.resumeBlockedRun, true);
 });
 
-test("approval replies during pending waits resume the blocked run", async () => {
+contractTest("runtime.process", "approval replies during pending waits resume the blocked run", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4151,7 +4152,7 @@ test("approval replies during pending waits resume the blocked run", async () =>
   assert.equal(capturedTurn?.resumeBlockedRun, true);
 });
 
-test("continuation replies apply manual compaction when adaptation already recommends compact", async () => {
+contractTest("runtime.process", "continuation replies apply manual compaction when adaptation already recommends compact", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4232,7 +4233,7 @@ test("continuation replies apply manual compaction when adaptation already recom
   assert.equal(capturedTurn?.manualCompaction, true);
 });
 
-test("continuation-like replies do not synthesize a grant line without runtime confirmation", async () => {
+contractTest("runtime.process", "continuation-like replies do not synthesize a grant line without runtime confirmation", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4293,7 +4294,7 @@ test("continuation-like replies do not synthesize a grant line without runtime c
   assert.doesNotMatch(rawHistory, /Granted(?: \d+)? more steps\. Resuming run\./u);
 });
 
-test("run.agent_progress appends durable assistant progress transcript lines", async () => {
+contractTest("runtime.process", "run.agent_progress appends durable assistant progress transcript lines", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4331,7 +4332,7 @@ test("run.agent_progress appends durable assistant progress transcript lines", a
   assert.fail("expected reasoning line to be appended to transcript");
 });
 
-test("run.agent_progress coalesces bursty durable transcript updates", async () => {
+contractTest("runtime.process", "run.agent_progress coalesces bursty durable transcript updates", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4401,7 +4402,7 @@ test("run.agent_progress coalesces bursty durable transcript updates", async () 
   assert.equal(maxConcurrentAppends, 1);
 });
 
-test("chat resize and append preserve tail visibility using shared chat layout budget", async () => {
+contractTest("runtime.process", "chat resize and append preserve tail visibility using shared chat layout budget", async () => {
   const { app } = await createAppHarness({ scripted: true });
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   assertNoMcpOauthRedirect,
   discoverMcpOauthConfiguration,
 } from "./oauth-flow";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const noHeaders: Record<string, string> = {};
 
-test("MCP OAuth follows protected-resource and authorization-server metadata", async () => {
+contractTest("web.hermetic", "MCP OAuth follows protected-resource and authorization-server metadata", async () => {
   const requested: string[] = [];
   const discovered = await discoverMcpOauthConfiguration({
     resource: "https://mcp.example.com/mcp",
@@ -62,7 +63,7 @@ test("MCP OAuth follows protected-resource and authorization-server metadata", a
   assert.equal(requested.length, 3);
 });
 
-test("MCP OAuth falls back through well-known and OIDC discovery and requires PKCE", async () => {
+contractTest("web.hermetic", "MCP OAuth falls back through well-known and OIDC discovery and requires PKCE", async () => {
   const discovered = await discoverMcpOauthConfiguration({
     resource: "https://mcp.example.com/public/mcp",
     request: async (url) => {
@@ -143,7 +144,7 @@ test("MCP OAuth falls back through well-known and OIDC discovery and requires PK
   );
 });
 
-test("MCP OAuth cancels redirect bodies before rejecting them", async () => {
+contractTest("web.hermetic", "MCP OAuth cancels redirect bodies before rejecting them", async () => {
   const events: string[] = [];
   const response = new Response(
     new ReadableStream({

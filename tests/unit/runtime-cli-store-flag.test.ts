@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { runRuntimeCli } from "../ops/helpers/runtimeCli.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("runtime cli rejects client-owned --store selection", async () => {
+
+contractTest("runtime.hermetic", "runtime cli rejects client-owned --store selection", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-cli-store-invalid-"));
   const outPath = path.join(root, "bundle.json");
   const result = await runRuntimeCli({
@@ -34,7 +35,7 @@ test("runtime cli rejects client-owned --store selection", async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-test("runtime cli exports replay bundles from the Core-owned store", async () => {
+contractTest("runtime.hermetic", "runtime cli exports replay bundles from the Core-owned store", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-cli-core-store-"));
   const outPath = path.join(root, "bundle.json");
   const server = await startLocalCoreApiServer({

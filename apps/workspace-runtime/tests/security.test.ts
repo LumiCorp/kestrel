@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { generateKeyPairSync } from "node:crypto";
 import { ENVIRONMENT_ROUTER_AUDIENCE, signEnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { authorizeWorkspaceRequest, resolveWorkspacePath } from "../src/security.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const keys = generateKeyPairSync("ed25519");
 const privateKey = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -29,7 +30,7 @@ const token = signEnvironmentExecutionTicket({
   },
 });
 
-test("Workspace service revalidates the signed tenant boundary", () => {
+contractTest("services.hermetic", "Workspace service revalidates the signed tenant boundary", () => {
   assert.equal(authorizeWorkspaceRequest({
     authorization: `Bearer ${token}`,
     publicKey,
@@ -49,7 +50,7 @@ test("Workspace service revalidates the signed tenant boundary", () => {
   }));
 });
 
-test("Workspace paths cannot escape the mounted volume", () => {
+contractTest("services.hermetic", "Workspace paths cannot escape the mounted volume", () => {
   assert.equal(resolveWorkspacePath("/workspace", "src/app.ts"), "/workspace/src/app.ts");
   assert.throws(() => resolveWorkspacePath("/workspace", "../secret"));
 });

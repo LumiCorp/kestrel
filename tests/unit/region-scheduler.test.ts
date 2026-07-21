@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RegionScheduler } from "../../src/engine/RegionScheduler.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("RegionScheduler surfaces structured failure when authoritative current step is missing", async () => {
+
+contractTest("runtime.hermetic", "RegionScheduler surfaces structured failure when authoritative current step is missing", async () => {
   const scheduler = new RegionScheduler({
     store: {} as never,
   });

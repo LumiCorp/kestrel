@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   buildMcpRunGrant,
   createMcpServerInputSchema,
   MCP_RUN_GRANT_TTL_SECONDS,
   resolveEffectiveMcpCapabilities,
 } from "./contracts";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const BASE_SERVER = {
   name: "GitHub MCP",
@@ -15,7 +16,7 @@ const BASE_SERVER = {
   resources: { cpuMillicores: 500, memoryMib: 512, pidsLimit: 128 },
 };
 
-test("remote MCP requires HTTPS, public addressing, and explicit egress", () => {
+contractTest("web.hermetic", "remote MCP requires HTTPS, public addressing, and explicit egress", () => {
   const valid = createMcpServerInputSchema.parse({
     ...BASE_SERVER,
     sourceType: "remote",
@@ -56,7 +57,7 @@ test("remote MCP requires HTTPS, public addressing, and explicit egress", () => 
   );
 });
 
-test("OCI MCP installation requires a matching digest-pinned reference", () => {
+contractTest("web.hermetic", "OCI MCP installation requires a matching digest-pinned reference", () => {
   const digest = `sha256:${"a".repeat(64)}`;
   const valid = createMcpServerInputSchema.parse({
     ...BASE_SERVER,
@@ -79,7 +80,7 @@ test("OCI MCP installation requires a matching digest-pinned reference", () => {
   );
 });
 
-test("Project MCP policy can narrow but cannot widen Environment authority", () => {
+contractTest("web.hermetic", "Project MCP policy can narrow but cannot widen Environment authority", () => {
   const environmentCapabilities = [
     {
       id: "read",
@@ -120,7 +121,7 @@ test("Project MCP policy can narrow but cannot widen Environment authority", () 
   );
 });
 
-test("standalone Threads inherit enabled Environment authority", () => {
+contractTest("web.hermetic", "standalone Threads inherit enabled Environment authority", () => {
   assert.deepEqual(
     resolveEffectiveMcpCapabilities({
       environmentCapabilities: [
@@ -136,7 +137,7 @@ test("standalone Threads inherit enabled Environment authority", () => {
   );
 });
 
-test("run grants are short lived and contain capability IDs only", () => {
+contractTest("web.hermetic", "run grants are short lived and contain capability IDs only", () => {
   const now = new Date("2026-07-13T12:00:00.000Z");
   const grant = buildMcpRunGrant({
     id: "018f1f73-4ce2-7b0f-8e14-3b977e1577a5",

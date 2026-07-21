@@ -2,20 +2,21 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   DesktopAttachmentStore,
   DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS,
 } from "../../src/localCore/desktopAttachments.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 async function withStore(run: (store: DesktopAttachmentStore, home: string) => Promise<void>) {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-attachments-"));
   await run(new DesktopAttachmentStore(home), home);
 }
 
-test("Desktop attachment store validates, deduplicates, and resolves opaque thread-scoped attachments", async () => {
+contractTest("runtime.hermetic", "Desktop attachment store validates, deduplicates, and resolves opaque thread-scoped attachments", async () => {
   await withStore(async (store, home) => {
     const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from("image")]);
     const first = await store.import({ threadId: "thread-1", filename: "/private/example.png", mimeType: "image/png", data: png });
@@ -35,7 +36,7 @@ test("Desktop attachment store validates, deduplicates, and resolves opaque thre
   });
 });
 
-test("Desktop attachment store rejects unsupported, malformed, mismatched, and oversized content", async () => {
+contractTest("runtime.hermetic", "Desktop attachment store rejects unsupported, malformed, mismatched, and oversized content", async () => {
   await withStore(async (store) => {
     await assert.rejects(store.import({ threadId: "thread-1", filename: "archive.zip", data: Buffer.from("PK") }), /unsupported/u);
     await assert.rejects(store.import({ threadId: "thread-1", filename: "bad.txt", data: Buffer.from([0xff]) }), /valid UTF-8/u);
@@ -46,7 +47,7 @@ test("Desktop attachment store rejects unsupported, malformed, mismatched, and o
   });
 });
 
-test("Desktop attachment store accepts each bounded image format by content signature", async () => {
+contractTest("runtime.hermetic", "Desktop attachment store accepts each bounded image format by content signature", async () => {
   await withStore(async (store) => {
     const images = [
       ["image.png", "image/png", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
@@ -62,7 +63,7 @@ test("Desktop attachment store accepts each bounded image format by content sign
   });
 });
 
-test("Desktop attachment store enforces the aggregate message limit", async () => {
+contractTest("runtime.hermetic", "Desktop attachment store enforces the aggregate message limit", async () => {
   await withStore(async (store) => {
     const ids: string[] = [];
     for (let index = 0; index < 3; index += 1) {
@@ -74,7 +75,7 @@ test("Desktop attachment store enforces the aggregate message limit", async () =
   });
 });
 
-test("Desktop attachment cleanup removes only expired unsubmitted references", async () => {
+contractTest("runtime.hermetic", "Desktop attachment cleanup removes only expired unsubmitted references", async () => {
   await withStore(async (store) => {
     const old = new Date(Date.now() - DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS - 1000);
     const expired = await store.import({ threadId: "thread-1", filename: "expired.txt", data: Buffer.from("expired"), now: old });

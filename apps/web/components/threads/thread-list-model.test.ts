@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { filterAndSortThreads } from "./thread-list-model";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const threads = [
   {
@@ -17,14 +18,14 @@ const threads = [
   },
 ];
 
-test("filters thread titles without changing the source collection", () => {
+contractTest("web.hermetic", "filters thread titles without changing the source collection", () => {
   assert.deepEqual(filterAndSortThreads(threads, "agent", "recent"), [
     threads[1],
   ]);
   assert.equal(threads[0]?.id, "one");
 });
 
-test("sorts threads by explicit recent, oldest, title, and unread modes", () => {
+contractTest("web.hermetic", "sorts threads by explicit recent, oldest, title, and unread modes", () => {
   assert.deepEqual(
     filterAndSortThreads(threads, "", "recent").map((thread) => thread.id),
     ["one", "two"]

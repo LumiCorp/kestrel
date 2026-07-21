@@ -17,7 +17,9 @@ const root = process.cwd();
 const specPath = path.join(root, "tests/proof/mutations.json");
 const evidencePath = path.join(root, "tests/proof/mutation-evidence.json");
 const specs = JSON.parse(readFileSync(specPath, "utf8"));
-const requested = process.argv.slice(2).filter((value) => value !== "--write");
+const requested = process.argv
+  .slice(2)
+  .filter((value) => value !== "--write" && value !== "--");
 const selected = requested.length > 0
   ? specs.mutations.filter((mutation) => requested.includes(mutation.id))
   : specs.mutations;
@@ -54,6 +56,8 @@ try {
     let result;
     const childEnvironment = { ...process.env, CI: "true" };
     delete childEnvironment.NODE_TEST_CONTEXT;
+    delete childEnvironment.KESTREL_CONTRACT_TIMINGS;
+    delete childEnvironment.NODE_V8_COVERAGE;
     try {
       writeFileSync(targetPath, original.replace(mutation.find, mutation.replace), "utf8");
       result = spawnSync(mutation.command, mutation.args, {
@@ -61,7 +65,6 @@ try {
         env: childEnvironment,
         encoding: "utf8",
         stdio: "pipe",
-        timeout: 20 * 60 * 1000,
       });
     } finally {
       writeFileSync(targetPath, original, "utf8");

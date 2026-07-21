@@ -10,7 +10,8 @@
     "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev --port 43103 --webpack",
     "dev:all": "./scripts/dev-all.sh",
     "dev:secure": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev --port 43103 --webpack --experimental-https",
-    "build": "pnpm run clean && next build --webpack",
+    "build": "pnpm run build:self",
+    "build:self": "pnpm run clean && next build",
     "start": "next start --port 43103",
     "worker:turns": "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts",
     "worker:runpod": "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts",
@@ -19,7 +20,8 @@
     "lint": "ultracite check",
     "lint:fix": "ultracite fix",
     "lint:check": "ultracite check",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm run typecheck:self",
+    "typecheck:self": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:migrate:deploy": "tsx lib/db/migrate.ts",
@@ -52,9 +54,9 @@
     "canary:github:approval": "tsx scripts/github-approval-canary.ts",
     "preflight:environment:hosted": "tsx scripts/hosted-environment-preflight.ts",
     "preflight:vercel:production": "tsx scripts/vercel-production-preflight.ts",
-    "test:e2e": "node --import tsx scripts/run-e2e.ts",
-    "test:unit": "pnpm run check:kestrel-boundary && node ../../scripts/ci/run-web-unit.mjs",
-    "test": "pnpm run test:unit"
+    "test:unit": "pnpm run check:kestrel-boundary && node ../../scripts/validate.mjs --leaf hermetic apps/web",
+    "test": "pnpm run test:unit",
+    "test:integration": "node --conditions=react-server --import tsx --test lib/**/*.postgres.test.ts"
   },
   "dependencies": {
     "@lumi/kestrel-environment-auth": "workspace:*",

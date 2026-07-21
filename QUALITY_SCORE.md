@@ -48,10 +48,11 @@ broad conclusion.
 The scorecard answers “where might risk be accumulating?” It does not make an
 automatic product or release decision.
 
-Direct readiness is established by the required contract-proof lanes. Locally,
-run `pnpm run governance:check`, `pnpm run test`, and
-`pnpm run test-proofs:check`; evaluation configuration changes also run
-`pnpm run ruhroh:validate`.
+Direct pull-request readiness is established by `pnpm validate`. GitHub Actions
+runs the same minimal portable gate and reports task, contract, and duration
+evidence without turning elapsed time into a correctness gate. Process,
+PostgreSQL, Chromium, mutation, documentation, Desktop, and macOS package
+readiness are established separately with their focused commands.
 
 ## Current data
 

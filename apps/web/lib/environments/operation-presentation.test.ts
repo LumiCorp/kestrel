@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { describeEnvironmentOperation } from "./operation-presentation";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Environment operations expose human-readable provisioning and wake progress", () => {
+
+contractTest("web.hermetic", "Environment operations expose human-readable provisioning and wake progress", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.provision",
@@ -53,7 +54,7 @@ test("Environment operations expose human-readable provisioning and wake progres
   );
 });
 
-test("Environment operations surface retained sleep and stored failures", () => {
+contractTest("web.hermetic", "Environment operations surface retained sleep and stored failures", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "workspace.stop",
@@ -81,7 +82,7 @@ test("Environment operations surface retained sleep and stored failures", () => 
   );
 });
 
-test("queued Environment operations identify Kestrel One as the control plane", () => {
+contractTest("web.hermetic", "queued Environment operations identify Kestrel One as the control plane", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.provision",
@@ -96,7 +97,7 @@ test("queued Environment operations identify Kestrel One as the control plane", 
   );
 });
 
-test("Environment updates expose the durable rollout stage", () => {
+contractTest("web.hermetic", "Environment updates expose the durable rollout stage", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.update",

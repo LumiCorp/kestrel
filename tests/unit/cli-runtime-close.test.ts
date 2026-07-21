@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { closeRuntimeResources } from "../../cli/runtime/KestrelChatRuntime.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("closeRuntimeResources always attempts pool close when tool close fails", async () => {
+
+contractTest("runtime.hermetic", "closeRuntimeResources always attempts pool close when tool close fails", async () => {
   const calls: string[] = [];
 
   await assert.rejects(
@@ -22,7 +23,7 @@ test("closeRuntimeResources always attempts pool close when tool close fails", a
   assert.deepEqual(calls, ["tool", "pool"]);
 });
 
-test("closeRuntimeResources closes dev shell service before pool", async () => {
+contractTest("runtime.hermetic", "closeRuntimeResources closes dev shell service before pool", async () => {
   const calls: string[] = [];
 
   await closeRuntimeResources(
@@ -40,7 +41,7 @@ test("closeRuntimeResources closes dev shell service before pool", async () => {
   assert.deepEqual(calls, ["tool", "dev-shell", "pool"]);
 });
 
-test("closeRuntimeResources throws AggregateError when both closes fail", async () => {
+contractTest("runtime.hermetic", "closeRuntimeResources throws AggregateError when both closes fail", async () => {
   await assert.rejects(
     async () => {
       await closeRuntimeResources(

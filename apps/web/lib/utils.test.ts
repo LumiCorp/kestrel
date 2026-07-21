@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   createAssistantFailureText,
   ensureAssistantFailureVisibility,
@@ -7,8 +6,10 @@ import {
   isPersistableAssistantMessage,
   sanitizeMessagesForModelInput,
 } from "./utils";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("assistant messages with approval-only tool state are persistable", () => {
+
+contractTest("web.hermetic", "assistant messages with approval-only tool state are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_approval",
@@ -31,7 +32,7 @@ test("assistant messages with approval-only tool state are persistable", () => {
   );
 });
 
-test("assistant messages with completed tool output are persistable", () => {
+contractTest("web.hermetic", "assistant messages with completed tool output are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_output",
@@ -56,7 +57,7 @@ test("assistant messages with completed tool output are persistable", () => {
   );
 });
 
-test("assistant messages with in-progress tool state are persistable", () => {
+contractTest("web.hermetic", "assistant messages with in-progress tool state are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_pending",
@@ -76,7 +77,7 @@ test("assistant messages with in-progress tool state are persistable", () => {
   );
 });
 
-test("sanitizeMessagesForModelInput strips unresolved tool states", () => {
+contractTest("web.hermetic", "sanitizeMessagesForModelInput strips unresolved tool states", () => {
   const sanitized = sanitizeMessagesForModelInput([
     {
       id: "assistant_pending",
@@ -123,7 +124,7 @@ test("sanitizeMessagesForModelInput strips unresolved tool states", () => {
   assert.equal(sanitized[0].id, "assistant_resolved");
 });
 
-test("ensureAssistantFailureVisibility appends a persisted failure note", () => {
+contractTest("web.hermetic", "ensureAssistantFailureVisibility appends a persisted failure note", () => {
   const messages = ensureAssistantFailureVisibility(
     [
       {
@@ -158,7 +159,7 @@ test("ensureAssistantFailureVisibility appends a persisted failure note", () => 
   );
 });
 
-test("sanitizeMessagesForModelInput strips persisted failure notes", () => {
+contractTest("web.hermetic", "sanitizeMessagesForModelInput strips persisted failure notes", () => {
   const sanitized = sanitizeMessagesForModelInput([
     {
       id: "assistant_failed",
@@ -175,7 +176,7 @@ test("sanitizeMessagesForModelInput strips persisted failure notes", () => {
   assert.equal(sanitized.length, 0);
 });
 
-test("ensureAssistantFailureVisibility creates an assistant failure message when needed", () => {
+contractTest("web.hermetic", "ensureAssistantFailureVisibility creates an assistant failure message when needed", () => {
   const messages = ensureAssistantFailureVisibility(
     [
       {

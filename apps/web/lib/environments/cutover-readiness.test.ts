@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   evaluateHostedEnvironmentCutoverReadiness,
   evaluateHostedEnvironmentSchemaReadiness,
   type HostedEnvironmentCutoverSnapshot,
 } from "./cutover-readiness";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("hosted preparation requires every Environment and GitHub migration relation", () => {
+
+contractTest("web.hermetic", "hosted preparation requires every Environment and GitHub migration relation", () => {
   assert.deepEqual(evaluateHostedEnvironmentSchemaReadiness([]), {
     ready: true,
     missingRelations: [],
@@ -43,7 +44,7 @@ function validSnapshot(
   };
 }
 
-test("cutover readiness permits historical Threads to remain lazily unbound", () => {
+contractTest("web.hermetic", "cutover readiness permits historical Threads to remain lazily unbound", () => {
   assert.deepEqual(evaluateHostedEnvironmentCutoverReadiness(validSnapshot()), {
     ready: true,
     blockers: [],
@@ -51,7 +52,7 @@ test("cutover readiness permits historical Threads to remain lazily unbound", ()
   });
 });
 
-test("cutover readiness fails closed on missing defaults and relational drift", () => {
+contractTest("web.hermetic", "cutover readiness fails closed on missing defaults and relational drift", () => {
   const result = evaluateHostedEnvironmentCutoverReadiness(
     validSnapshot({
       enabledOrganizationWithoutReadyDefaultCount: 2,
@@ -68,7 +69,7 @@ test("cutover readiness fails closed on missing defaults and relational drift", 
   assert.match(result.blockers[3] ?? "", /4 Environment execution record/u);
 });
 
-test("cutover readiness requires an enabled organization and a quiet execution boundary", () => {
+contractTest("web.hermetic", "cutover readiness requires an enabled organization and a quiet execution boundary", () => {
   const result = evaluateHostedEnvironmentCutoverReadiness(
     validSnapshot({
       enabledOrganizationCount: 0,

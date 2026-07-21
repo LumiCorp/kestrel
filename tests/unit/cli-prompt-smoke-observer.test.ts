@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { RunnerEvent } from "../../packages/protocol/src/index.js";
 import {
@@ -7,8 +6,10 @@ import {
   derivePromptSmokeOutcome,
   observeDurableSessionTerminal,
 } from "../../scripts/lib/cli-prompt-smoke-observer.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("progress events never classify as durable completion", () => {
+
+contractTest("runtime.hermetic", "progress events never classify as durable completion", () => {
   const event = {
     id: "event-progress",
     type: "job.progress",
@@ -26,7 +27,7 @@ test("progress events never classify as durable completion", () => {
   assert.equal(classifyDurableTerminalEvent(event), undefined);
 });
 
-test("canonical job completion, waiting, and failure remain distinct", () => {
+contractTest("runtime.hermetic", "canonical job completion, waiting, and failure remain distinct", () => {
   const completed = classifyDurableTerminalEvent(terminalEvent("job.completed", "COMPLETED"));
   const waiting = classifyDurableTerminalEvent(terminalEvent("job.completed", "WAITING"));
   const failed = classifyDurableTerminalEvent(terminalEvent("job.failed", "FAILED"));
@@ -37,7 +38,7 @@ test("canonical job completion, waiting, and failure remain distinct", () => {
   assert.equal(failed?.reasonCode, "DECISION_SCHEMA_FAILED");
 });
 
-test("canonical TUI run completion is normalized by the same observer contract", () => {
+contractTest("runtime.hermetic", "canonical TUI run completion is normalized by the same observer contract", () => {
   const completed = classifyDurableTerminalEvent(runTerminalEvent("run.completed", "COMPLETED"));
   const failed = classifyDurableTerminalEvent(runTerminalEvent("run.failed", "FAILED"));
 
@@ -48,7 +49,7 @@ test("canonical TUI run completion is normalized by the same observer contract",
   assert.equal(failed?.reasonCode, "DECISION_SCHEMA_FAILED");
 });
 
-test("durable observer reconnects and follows the same session to terminal", async () => {
+contractTest("runtime.hermetic", "durable observer reconnects and follows the same session to terminal", async () => {
   let connectionCount = 0;
   const terminal = terminalEvent("job.completed", "COMPLETED");
   const observed = await observeDurableSessionTerminal({
@@ -68,7 +69,7 @@ test("durable observer reconnects and follows the same session to terminal", asy
   assert.equal(observed.reconnectCount, 1);
 });
 
-test("artifact success cannot override a failed or missing durable execution outcome", () => {
+contractTest("runtime.hermetic", "artifact success cannot override a failed or missing durable execution outcome", () => {
   assert.deepEqual(derivePromptSmokeOutcome({
     terminalStatus: "failed",
     assertionsConfigured: true,

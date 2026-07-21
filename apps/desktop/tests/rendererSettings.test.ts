@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { toDesktopRendererSettings } from "../src/rendererSettings.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("Desktop renderer settings never project persisted credentials", () => {
+
+contractTest("desktop.hermetic", "Desktop renderer settings never project persisted credentials", () => {
   const settings = {
     ...createDefaultDesktopSettings(),
     openrouterApiKey: "openrouter-secret",

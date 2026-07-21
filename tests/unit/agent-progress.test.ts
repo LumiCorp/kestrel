@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { Kestrel, RetryingModelGateway, RunReplayService } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("agent progress is durable only after the action transition commits", async () => {
+
+contractTest("runtime.hermetic", "agent progress is durable only after the action transition commits", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -35,7 +36,7 @@ test("agent progress is durable only after the action transition commits", async
   assert.equal(replay.events.filter((event) => event.type === "agent.progress").length, 1);
 });
 
-test("rejected step output never emits agent progress", async () => {
+contractTest("runtime.hermetic", "rejected step output never emits agent progress", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -56,7 +57,7 @@ test("rejected step output never emits agent progress", async () => {
   assert.equal(replay.events.some((event) => event.type === "agent.progress"), false);
 });
 
-test("terminal finalization emits no agent progress and makes no extra model call", async () => {
+contractTest("runtime.hermetic", "terminal finalization emits no agent progress and makes no extra model call", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   const kestrel = new Kestrel({

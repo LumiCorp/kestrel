@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import type { DesktopManagedProjectRun } from "../../../src/desktopShell/contracts.js";
 import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
 } from "../src/projectRuns.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 function run(input: Partial<DesktopManagedProjectRun> = {}): DesktopManagedProjectRun {
   return {
@@ -29,7 +30,7 @@ function run(input: Partial<DesktopManagedProjectRun> = {}): DesktopManagedProje
   };
 }
 
-test("Desktop project run ledger persists bounded redacted runs", async () => {
+contractTest("desktop.hermetic", "Desktop project run ledger persists bounded redacted runs", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledgerPath = path.join(dir, "project-runs.json");
   const ledger = createDesktopProjectRunLedger({ ledgerPath, limit: 2 });
@@ -48,7 +49,7 @@ test("Desktop project run ledger persists bounded redacted runs", async () => {
   assert.match(raw, /redacted:env/);
 });
 
-test("DesktopProjectRunRegistry hydrates runs from ledger", async () => {
+contractTest("desktop.hermetic", "DesktopProjectRunRegistry hydrates runs from ledger", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledger = createDesktopProjectRunLedger({
     ledgerPath: path.join(dir, "project-runs.json"),
@@ -62,7 +63,7 @@ test("DesktopProjectRunRegistry hydrates runs from ledger", async () => {
   assert.deepEqual(registry.listRuns().map((entry) => entry.runId), ["run-ledger"]);
 });
 
-test("Desktop project run ledger restores stale active runs as stopped history", async () => {
+contractTest("desktop.hermetic", "Desktop project run ledger restores stale active runs as stopped history", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledger = createDesktopProjectRunLedger({
     ledgerPath: path.join(dir, "project-runs.json"),

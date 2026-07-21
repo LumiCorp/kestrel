@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const migration = fs.readFileSync(
   path.join(
@@ -63,7 +64,7 @@ const webPackage = JSON.parse(
   )
 ) as { type?: string; scripts: Record<string, string> };
 
-test("durable turns establish the shared queue and replay ledger", () => {
+contractTest("web.hermetic", "durable turns establish the shared queue and replay ledger", () => {
   for (const table of [
     "thread_turns",
     "thread_turn_events",
@@ -80,7 +81,7 @@ test("durable turns establish the shared queue and replay ledger", () => {
   assert.match(migration, /DEFAULT now\(\) \+ interval '7 days'/u);
 });
 
-test("durable turns pin context, authorship, and terminal state invariants", () => {
+contractTest("web.hermetic", "durable turns pin context, authorship, and terminal state invariants", () => {
   assert.match(migration, /thread_turns_context_revision_id_fk/u);
   assert.match(migration, /thread_turns_author_user_id_fk/u);
   assert.match(migration, /thread_turns_input_message_id_fk/u);
@@ -92,7 +93,7 @@ test("durable turns pin context, authorship, and terminal state invariants", () 
   assert.match(migration, /thread_turn_queue_state_pause_reason_check/u);
 });
 
-test("mobile registrations remain user-owned and platform bounded", () => {
+contractTest("web.hermetic", "mobile registrations remain user-owned and platform bounded", () => {
   assert.match(migration, /mobile_device_registrations_user_id_fk/u);
   assert.match(migration, /ON DELETE cascade/u);
   assert.match(migration, /CHECK \("platform" IN \('ios', 'android'\)\)/u);
@@ -101,15 +102,15 @@ test("mobile registrations remain user-owned and platform bounded", () => {
   assert.match(migration, /mobile_push_deliveries_status_check/u);
 });
 
-test("durable turn migration is registered with the unified migrator", () => {
+contractTest("web.hermetic", "durable turn migration is registered with the unified migrator", () => {
   assert.match(journal, /"tag": "0023_durable_thread_turns"/u);
 });
 
-test("the durable turn worker runs the web package as ESM", () => {
+contractTest("web.hermetic", "the durable turn worker runs the web package as ESM", () => {
   assert.equal(webPackage.type, "module");
 });
 
-test("the production worker image retains its TypeScript runtime toolchain", () => {
+contractTest("web.hermetic", "the production worker image retains its TypeScript runtime toolchain", () => {
   assert.match(
     workerDockerfile,
     /pnpm install --frozen-lockfile --prod=false/u
@@ -117,7 +118,7 @@ test("the production worker image retains its TypeScript runtime toolchain", () 
   assert.match(workerDockerfile, /"worker:turns"/u);
 });
 
-test("the production worker entrypoint starts without top-level await", () => {
+contractTest("web.hermetic", "the production worker entrypoint starts without top-level await", () => {
   assert.doesNotMatch(
     workerEntrypoint,
     /\nawait\s+startDurableThreadTurnWorker\(\);/u
@@ -131,13 +132,13 @@ test("the production worker entrypoint starts without top-level await", () => {
   assert.match(workerServerOnlyLoader, /specifier === "server-only"/u);
 });
 
-test("the durable worker uses pinned organization context without request auth", () => {
+contractTest("web.hermetic", "the durable worker uses pinned organization context without request auth", () => {
   assert.doesNotMatch(workerRuntime, /@\/lib\/chat\/actions/u);
   assert.match(workerRuntime, /generateTitleForOrganization/u);
   assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
 });
 
-test("the durable worker records requested and effective interaction modes at runtime start", () => {
+contractTest("web.hermetic", "the durable worker records requested and effective interaction modes at runtime start", () => {
   assert.match(
     workerRuntime,
     /requestedInteractionMode: turn\.requestedInteractionMode/u
@@ -150,7 +151,7 @@ test("the durable worker records requested and effective interaction modes at ru
   assert.match(workerRuntime, /appendDurableTurnEvent\(/u);
 });
 
-test("durable replay binds the cutoff through the timestamp column encoder", () => {
+contractTest("web.hermetic", "durable replay binds the cutoff through the timestamp column encoder", () => {
   assert.match(
     turnStore,
     /lte\(schema\.threadMessages\.createdAt, turn\.createdAt\)/u

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import test from "node:test";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import postgres from "postgres";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
-test(
-  "Environment Apps persist encrypted named connections and capability ceilings",
+contractTest(
+  "web.postgres", "Environment Apps persist encrypted named connections and capability ceilings",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;

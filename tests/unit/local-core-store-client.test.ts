@@ -2,14 +2,16 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { resolveLocalCoreStoreClient } from "../../cli/localCoreStoreClient.js";
+import { withLocalCoreDaemonStoreOwnership } from "../../cli/localCoreStoreOwnership.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core shell store client ignores an inherited missing API socket", async () => {
+
+contractTest("runtime.hermetic", "Local Core shell store client ignores an inherited missing API socket", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-missing-core-socket-"));
   const missingSocketPath = path.join(home, "core", "api.sock");
   const env = {
@@ -77,6 +79,42 @@ test("Local Core shell store client ignores an inherited missing API socket", as
       restoreEnv("KESTREL_LOCAL_CORE_API_TOKEN", previousToken);
     }
   } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "Local Core direct-store ownership is request scoped", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-store-ownership-"));
+  const socketPath = path.join(home, "api.sock");
+  const env = {
+    KESTREL_CORE_HOME: home,
+    KESTREL_LOCAL_CORE_API_SOCKET: socketPath,
+    KESTREL_LOCAL_CORE_API_TOKEN: "token",
+  };
+  let releaseOwnership: (() => void) | undefined;
+  const ownershipHeld = new Promise<void>((resolve) => {
+    releaseOwnership = resolve;
+  });
+
+  try {
+    await writeFile(socketPath, "", "utf8");
+    let ownershipStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      ownershipStarted = resolve;
+    });
+    const ownedRequest = withLocalCoreDaemonStoreOwnership(async () => {
+      assert.equal(resolveLocalCoreStoreClient(home, env), undefined);
+      ownershipStarted?.();
+      await ownershipHeld;
+      assert.equal(resolveLocalCoreStoreClient(home, env), undefined);
+    });
+
+    await started;
+    assert.notEqual(resolveLocalCoreStoreClient(home, env), undefined);
+    releaseOwnership?.();
+    await ownedRequest;
+  } finally {
+    releaseOwnership?.();
     await rm(home, { recursive: true, force: true });
   }
 });

@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   DESKTOP_FILE_SEARCH_RESULT_LIMIT,
   DesktopProjectFileIndex,
 } from "../src/projectFileIndex.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("DesktopProjectFileIndex searches Git tracked and untracked files with deterministic cap metadata", async () => {
+
+contractTest("desktop.hermetic", "DesktopProjectFileIndex searches Git tracked and untracked files with deterministic cap metadata", async () => {
   const rootPath = "/tmp/project-a";
   const gitFiles = [
     "src/zeta.ts",
@@ -34,7 +35,7 @@ test("DesktopProjectFileIndex searches Git tracked and untracked files with dete
   assert.equal(response.results.at(-1)?.path, path.join(rootPath, "src/file-199.ts"));
 });
 
-test("DesktopProjectFileIndex can be invalidated after watcher events", async () => {
+contractTest("desktop.hermetic", "DesktopProjectFileIndex can be invalidated after watcher events", async () => {
   const rootPath = "/tmp/project-a";
   let gitFiles = ["src/before.ts"];
   const index = new DesktopProjectFileIndex({
@@ -55,7 +56,7 @@ test("DesktopProjectFileIndex can be invalidated after watcher events", async ()
   );
 });
 
-test("DesktopProjectFileIndex matches repository-relative paths as well as filenames", async () => {
+contractTest("desktop.hermetic", "DesktopProjectFileIndex matches repository-relative paths as well as filenames", async () => {
   const rootPath = "/tmp/project-path-search";
   const index = new DesktopProjectFileIndex({
     gitListFiles: async () => ["features/billing/index.ts", "src/app.ts"],
@@ -68,7 +69,7 @@ test("DesktopProjectFileIndex matches repository-relative paths as well as filen
   ]);
 });
 
-test("DesktopProjectFileIndex refreshes a cached non-Git root after project registration retention", async () => {
+contractTest("desktop.hermetic", "DesktopProjectFileIndex refreshes a cached non-Git root after project registration retention", async () => {
   const rootPath = "/tmp/project-a";
   let gitFiles: string[] | undefined;
   const index = new DesktopProjectFileIndex({
@@ -89,7 +90,7 @@ test("DesktopProjectFileIndex refreshes a cached non-Git root after project regi
   );
 });
 
-test("DesktopProjectFileIndex falls back to known directory listings for non-Git roots", async () => {
+contractTest("desktop.hermetic", "DesktopProjectFileIndex falls back to known directory listings for non-Git roots", async () => {
   const rootPath = "/tmp/project-a";
   const index = new DesktopProjectFileIndex({
     gitListFiles: async () => {},
@@ -121,7 +122,7 @@ test("DesktopProjectFileIndex falls back to known directory listings for non-Git
   }]);
 });
 
-test("DesktopProjectFileIndex returns bounded full-text match previews and skips unsafe or unsupported files", async () => {
+contractTest("desktop.hermetic", "DesktopProjectFileIndex returns bounded full-text match previews and skips unsafe or unsupported files", async () => {
   const rootPath = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-content-search-"));
   const outsidePath = path.join(path.dirname(rootPath), `${path.basename(rootPath)}-outside.txt`);
   await mkdir(path.join(rootPath, "src"));

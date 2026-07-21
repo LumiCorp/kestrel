@@ -114,16 +114,21 @@ pnpm run docs:dev
 | [`packages/`](packages) | Protocol, SDK, Next.js, AI SDK, and observability packages |
 | [`apps/docs/`](apps/docs) | Documentation site |
 
-Before submitting a change:
+## Quality Gates
+
+Before any pull request is considered ready, run the same minimal portable
+validation contract used by GitHub Actions:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
+pnpm validate
 ```
 
-Read the [contributing guide](CONTRIBUTING.md) for the complete development and
-review process.
+The required gate checks the public repository boundary, builds shared and root
+artifacts, typechecks workspaces, and runs hermetic tests. Process, PostgreSQL,
+Chromium, mutation, documentation, Desktop, Ruhroh, and release checks remain
+explicit commands for their owning surfaces. The runner records phase, task,
+and contract durations without treating machine-dependent elapsed time as
+correctness evidence; GitHub's job timeout is the operational hang watchdog.
 
 ## Learn more
 

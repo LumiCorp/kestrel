@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { ensureDesktopRunnerResponsive, type RunnerHandshakeTransport } from "../src/runnerHandshake.js";
 import type { RunnerProtocolObserver } from "../src/runnerTransport.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
   private observer: RunnerProtocolObserver | undefined;
@@ -38,7 +39,7 @@ class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
   }
 }
 
-test("ensureDesktopRunnerResponsive resolves only after a matching runner.pong", async () => {
+contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive resolves only after a matching runner.pong", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -59,7 +60,7 @@ test("ensureDesktopRunnerResponsive resolves only after a matching runner.pong",
   await handshake;
 });
 
-test("ensureDesktopRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
+contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -81,7 +82,7 @@ test("ensureDesktopRunnerResponsive surfaces top-level runner startup errors wit
   });
 });
 
-test("ensureDesktopRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
+contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -105,7 +106,7 @@ test("ensureDesktopRunnerResponsive preserves diagnostics for malformed runner e
   });
 });
 
-test("ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping", async () => {
+contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping", async () => {
   let sendCalls = 0;
   const transport: RunnerHandshakeTransport = {
     observe(observer) {
@@ -139,7 +140,7 @@ test("ensureDesktopRunnerResponsive handles synchronous observer errors without 
   assert.equal(sendCalls, 0);
 });
 
-test("ensureDesktopRunnerResponsive rejects when the runner exits before responding", async () => {
+contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive rejects when the runner exits before responding", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   decryptMcpCredential,
@@ -11,8 +10,10 @@ import {
 import type { AuthorizedMcpServer } from "../src/contracts.js";
 import type { McpCredentialStore } from "../src/credential-store.js";
 import { resolveRemoteCredentialHeaders } from "../src/upstream.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("expired OAuth credentials refresh inside the MCP service and remain encrypted", async () => {
+
+contractTest("services.hermetic", "expired OAuth credentials refresh inside the MCP service and remain encrypted", async () => {
   const previousActiveKey = process.env[MCP_CREDENTIAL_ACTIVE_KEY_ID_ENV];
   const previousKeys = process.env[MCP_CREDENTIAL_KEYS_ENV];
   process.env[MCP_CREDENTIAL_ACTIVE_KEY_ID_ENV] = "test-key";
@@ -135,7 +136,7 @@ test("expired OAuth credentials refresh inside the MCP service and remain encryp
   }
 });
 
-test("rejected OAuth refresh cancels its body before closing the dispatcher", async () => {
+contractTest("services.hermetic", "rejected OAuth refresh cancels its body before closing the dispatcher", async () => {
   const previousActiveKey = process.env[MCP_CREDENTIAL_ACTIVE_KEY_ID_ENV];
   const previousKeys = process.env[MCP_CREDENTIAL_KEYS_ENV];
   process.env[MCP_CREDENTIAL_ACTIVE_KEY_ID_ENV] = "test-key";

@@ -1,11 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveChatLayout } from "../../cli/ink/views/ChatView.js";
 import { resolveChatComposerInputRows, resolveChatLayoutBudget } from "../../cli/ink/views/chatLayout.js";
 import { buildChatVisualRows, buildTranscriptStartScroll } from "../../cli/ink/views/chatRows.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveChatLayout keeps bubble width aligned with wrapped conversation width", () => {
+
+contractTest("runtime.hermetic", "resolveChatLayout keeps bubble width aligned with wrapped conversation width", () => {
   const compact = resolveChatLayout(80);
   assert.equal(compact.bubbleWidth, compact.conversationWidth);
 
@@ -14,7 +15,7 @@ test("resolveChatLayout keeps bubble width aligned with wrapped conversation wid
   assert.equal(wide.conversationWidth > compact.conversationWidth, true);
 });
 
-test("buildTranscriptStartScroll pins the selected transcript to the top of the viewport", () => {
+contractTest("runtime.hermetic", "buildTranscriptStartScroll pins the selected transcript to the top of the viewport", () => {
   const rows = buildChatVisualRows(
     [
       {
@@ -42,7 +43,7 @@ test("buildTranscriptStartScroll pins the selected transcript to the top of the 
   assert.equal(scroll?.tailLocked, false);
 });
 
-test("shared chat layout budget keeps ChatView layout in sync with controller math", () => {
+contractTest("runtime.hermetic", "shared chat layout budget keeps ChatView layout in sync with controller math", () => {
   const view = resolveChatLayout(120);
   const budget = resolveChatLayoutBudget({
     viewportColumns: 120,
@@ -56,7 +57,7 @@ test("shared chat layout budget keeps ChatView layout in sync with controller ma
   assert.equal(budget.transcriptRows > 0, true);
 });
 
-test("composer input rows are not capped below available viewport space", () => {
+contractTest("runtime.hermetic", "composer input rows are not capped below available viewport space", () => {
   const rows = resolveChatComposerInputRows({
     draft: Array.from({ length: 12 }, (_, index) => `draft line ${index + 1}`).join("\n"),
     inputWidth: 80,

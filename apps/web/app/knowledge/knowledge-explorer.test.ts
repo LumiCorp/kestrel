@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   buildKnowledgeExplorerItems,
   type DocumentRecord,
@@ -11,6 +10,8 @@ import {
   getSourceForm,
   type SourceRecord,
 } from "./knowledge-explorer";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function createSource(overrides: Partial<SourceRecord> = {}): SourceRecord {
   return {
@@ -43,7 +44,7 @@ function createDocument(
   };
 }
 
-test("buildKnowledgeExplorerItems mixes sources and documents in descending activity order", () => {
+contractTest("web.hermetic", "buildKnowledgeExplorerItems mixes sources and documents in descending activity order", () => {
   const source = createSource({
     id: "source-recent",
     label: "source-recent",
@@ -82,7 +83,7 @@ test("buildKnowledgeExplorerItems mixes sources and documents in descending acti
   );
 });
 
-test("buildKnowledgeExplorerItems falls back to document updatedAt when there is no latest run", () => {
+contractTest("web.hermetic", "buildKnowledgeExplorerItems falls back to document updatedAt when there is no latest run", () => {
   const items = buildKnowledgeExplorerItems({
     sources: [
       createSource({ id: "source-1", updatedAt: "2026-03-19T09:00:00.000Z" }),
@@ -100,7 +101,7 @@ test("buildKnowledgeExplorerItems falls back to document updatedAt when there is
   assert.equal(items[0]?.item.id, "document-1");
 });
 
-test("getSourceForm resets to the default create state and normalizes edit values", () => {
+contractTest("web.hermetic", "getSourceForm resets to the default create state and normalizes edit values", () => {
   assert.deepEqual(getSourceForm(), emptySourceForm);
   assert.deepEqual(
     getSourceForm(
@@ -126,7 +127,7 @@ test("getSourceForm resets to the default create state and normalizes edit value
   );
 });
 
-test("knowledge explorer helpers normalize mixed source and document rows for the table", () => {
+contractTest("web.hermetic", "knowledge explorer helpers normalize mixed source and document rows for the table", () => {
   const items = buildKnowledgeExplorerItems({
     sources: [
       createSource({
@@ -168,7 +169,7 @@ test("knowledge explorer helpers normalize mixed source and document rows for th
   );
 });
 
-test("filterKnowledgeExplorerItems supports compact grid column filters", () => {
+contractTest("web.hermetic", "filterKnowledgeExplorerItems supports compact grid column filters", () => {
   const items = buildKnowledgeExplorerItems({
     sources: [
       createSource({
