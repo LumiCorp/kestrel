@@ -26,7 +26,7 @@ let postgres;
 const budgets = {
   preflight: 20_000,
   sharedBuild: 90_000,
-  hermetic: 90_000,
+  hermetic: 180_000,
   productionBuilds: 180_000,
   process: 60_000,
   postgres: 60_000,
@@ -87,7 +87,7 @@ try {
   ], { sequential: true });
 
   await phase("productionBuilds", budgets.productionBuilds, productionBuildTasks(), { sequential: true });
-  await phase("hermetic", budgets.hermetic, hermeticTasks());
+  await phase("hermetic", budgets.hermetic, hermeticTasks(), { sequential: true });
 
   await phase("process", budgets.process, processTasks(), {
     setup: processSetupTasks(),
@@ -482,7 +482,7 @@ function readContractTimings() {
 }
 
 function printPlan() {
-  process.stdout.write(`preflight (20s)\nshared build and type analysis (90s)\nproduction builds (${formatMs(budgets.productionBuilds)})\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
+  process.stdout.write(`preflight (${formatMs(budgets.preflight)})\nshared build and type analysis (${formatMs(budgets.sharedBuild)})\nproduction builds (${formatMs(budgets.productionBuilds)})\nhermetic (${formatMs(budgets.hermetic)})\nprocess (${formatMs(budgets.process)})\npostgres: one container (${formatMs(budgets.postgres)})\nchromium: one browser (${formatMs(budgets.chromium)})\naudit: contracts, coverage, mutations (${formatMs(budgets.audit)})\nmaximum: ${formatMs(MAXIMUM_MS)}\n`);
 }
 
 function validateGraphContract() {
@@ -509,7 +509,11 @@ function validateGraphContract() {
 
 async function runLeaf(boundary, workspace) {
   if (!["hermetic", "process"].includes(boundary) || !workspace) {
-    throw new Error("usage: node scripts/validate.mjs --leaf <hermetic|process> <workspace|.>");
+    throw new Error("usage: node scripts/validate.mjs --leaf <hermetic|process> <workspace|all|.>");
+  }
+  if (boundary === "hermetic" && workspace === "all") {
+    await phase("hermetic", budgets.hermetic, hermeticTasks(), { sequential: true });
+    return;
   }
   if (boundary === "process" && workspace === ".") {
     cleanupValidationProcesses();
