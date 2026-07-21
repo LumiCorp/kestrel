@@ -1,13 +1,11 @@
 "use client";
 
 import { KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { AppIcon } from "@/components/apps/app-icon";
+import { AppSettingsHeader } from "@/components/apps/app-settings-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +33,7 @@ import type {
 
 type Props = {
   environmentId: string;
-  initialConfigurations: EnvironmentAppConfiguration[];
+  initialConfiguration: EnvironmentAppConfiguration;
 };
 
 function message(error: unknown, fallback: string) {
@@ -304,31 +302,17 @@ function CapabilityRow({
   );
 }
 
-export function EnvironmentAppsPanel({
+export function EnvironmentAppSettings({
   environmentId,
-  initialConfigurations,
+  initialConfiguration,
 }: Props) {
-  const [configurations, setConfigurations] = useState(initialConfigurations);
+  const [configuration, setConfiguration] = useState(initialConfiguration);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-  const configuredCount = useMemo(
-    () =>
-      configurations.filter(
-        (configuration) => configuration.app.readiness === "ready"
-      ).length,
-    [configurations]
-  );
 
   function updateConfiguration(
-    appKey: string,
-    update: (
-      current: EnvironmentAppConfiguration
-    ) => EnvironmentAppConfiguration
+    update: (current: EnvironmentAppConfiguration) => EnvironmentAppConfiguration
   ) {
-    setConfigurations((current) =>
-      current.map((configuration) =>
-        configuration.app.key === appKey ? update(configuration) : configuration
-      )
-    );
+    setConfiguration(update);
   }
 
   async function disconnect(appKey: string, connectionId: string) {
@@ -345,9 +329,9 @@ export function EnvironmentAppsPanel({
       if (!(response.ok && body.connection)) {
         throw new Error(body.error ?? "Connection could not be disconnected.");
       }
-      updateConfiguration(appKey, (configuration) => ({
-        ...configuration,
-        connections: configuration.connections.map((connection) =>
+      updateConfiguration((current) => ({
+        ...current,
+        connections: current.connections.map((connection) =>
           connection.id === body.connection!.id ? body.connection! : connection
         ),
       }));
@@ -361,233 +345,166 @@ export function EnvironmentAppsPanel({
     }
   }
 
-  if (!configurations.length) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-start gap-4 p-6">
-          <div className="flex size-11 items-center justify-center rounded-full bg-muted">
-            <KeyRound className="size-5" />
-          </div>
-          <div>
-            <p className="font-medium">No shared Apps installed</p>
-            <p className="mt-1 text-muted-foreground text-sm">
-              Install an App from the gallery, then return here to add shared
-              connections and set the Environment access ceiling.
-            </p>
-          </div>
-          <Button asChild variant="outline">
-            <Link href="/apps">Browse Apps</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-xl">Environment Apps</h2>
-          <p className="mt-1 text-muted-foreground text-sm">
-            {configuredCount} of {configurations.length} ready for Projects
-          </p>
-        </div>
-        <Button asChild size="sm" variant="outline">
-          <Link href="/apps">Browse Apps</Link>
-        </Button>
-      </div>
+    <div className="space-y-8">
+      <AppSettingsHeader
+        action={<ConnectionDialog
+          app={configuration.app}
+          environmentId={environmentId}
+          onSaved={(connection) =>
+            updateConfiguration((current) => ({
+              ...current,
+              connections: [
+                ...current.connections.filter((item) => item.id !== connection.id),
+                connection,
+              ].sort((left, right) => left.name.localeCompare(right.name)),
+            }))
+          }
+        />}
+        appKey={configuration.app.key}
+        backHref={`/settings/environments/${environmentId}/apps`}
+        backLabel="Environment Apps"
+        description={configuration.app.description}
+        icon={configuration.app.icon}
+        name={configuration.app.displayName}
+        status={
+          configuration.app.readiness === "ready"
+            ? "Ready"
+            : configuration.app.readiness.replaceAll("_", " ")
+        }
+      />
 
-      {configurations.map((configuration) => (
-        <Card key={configuration.app.key}>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div className="flex items-start gap-3">
-              <AppIcon
-                appKey={configuration.app.key}
-                className="size-11"
-                icon={configuration.app.icon}
-              />
+      {configuration.app.key === "built_in.weather" ? (
+        <section>
+          <h3 className="font-medium text-sm">Providers</h3>
+          <div className="mt-3 divide-y border-y">
+            <div className="flex items-center justify-between gap-4 py-3">
               <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle>{configuration.app.displayName}</CardTitle>
-                  <Badge
-                    variant={
-                      configuration.app.readiness === "ready"
-                        ? "default"
-                        : "outline"
-                    }
-                  >
-                    {configuration.app.readiness === "ready"
-                      ? "Ready"
-                      : configuration.app.readiness.replaceAll("_", " ")}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-muted-foreground text-sm">
-                  {configuration.app.description}
+                <p className="font-medium text-sm">Open-Meteo</p>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  Free primary provider. No Environment credential is required.
                 </p>
               </div>
+              <Badge variant="outline">Primary · ready</Badge>
             </div>
-            <ConnectionDialog
-              app={configuration.app}
+            <div className="flex items-center justify-between gap-4 py-3">
+              <div>
+                <p className="font-medium text-sm">Visual Crossing</p>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  Optional fallback used only when the primary provider fails.
+                </p>
+              </div>
+              <Badge variant="outline">
+                {configuration.connections.some(
+                  (connection) => connection.status === "connected"
+                )
+                  ? "Fallback · ready"
+                  : "Fallback · optional"}
+              </Badge>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <section>
+        <div className="flex items-center gap-2">
+          <KeyRound className="size-4 text-muted-foreground" />
+          <h3 className="font-medium text-sm">
+            {configuration.app.connectionModel === "none"
+              ? "Connection"
+              : configuration.app.connectionModel === "personal"
+                ? "Personal connections"
+                : configuration.app.connectionModel === "hybrid"
+                  ? "Shared and personal connections"
+                  : "Connections"}
+          </h3>
+        </div>
+        <div className="mt-3 divide-y border-y">
+          {configuration.app.connectionModel === "none" ? (
+            <p className="py-3 text-muted-foreground text-sm">
+              No connection required. Kestrel provides this App directly.
+            </p>
+          ) : configuration.app.connectionModel === "personal" ? (
+            <p className="py-3 text-muted-foreground text-sm">
+              Members connect their own accounts inside Projects. No shared
+              credential is stored in this Environment.
+            </p>
+          ) : configuration.connections.length ? (
+            configuration.connections.map((connection) => (
+              <div
+                className="flex items-center justify-between gap-3 py-3"
+                key={connection.id}
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-sm">{connection.name}</p>
+                  <p className="mt-1 text-muted-foreground text-xs">
+                    Shared with Projects in this Environment
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={connection.status === "connected" ? "default" : "outline"}
+                  >
+                    {connection.status}
+                  </Badge>
+                  {connection.ownerType === "environment" &&
+                  connection.status !== "disconnected" ? (
+                    <Button
+                      aria-label={`Disconnect ${connection.name}`}
+                      disabled={disconnecting === connection.id}
+                      onClick={() =>
+                        void disconnect(configuration.app.key, connection.id)
+                      }
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="py-3 text-muted-foreground text-sm">
+              {configuration.app.connectionRequirement === "optional"
+                ? "No shared connection is required. Add one to enable the optional provider path."
+                : configuration.app.connectionModel === "hybrid"
+                  ? "Add a shared connection, or let members attach personal connections inside Projects."
+                  : "Add a connection to make this App available to Projects."}
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          <div>
+            <h3 className="font-medium text-sm">Access ceiling</h3>
+            <p className="mt-1 text-muted-foreground text-xs">
+              Projects can narrow these settings, but can never broaden them.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 divide-y border-y">
+          {configuration.capabilities.map((capability) => (
+            <CapabilityRow
+              appKey={configuration.app.key}
+              capability={capability}
               environmentId={environmentId}
-              onSaved={(connection) =>
-                updateConfiguration(configuration.app.key, (current) => ({
+              key={capability.key}
+              onSaved={(saved) =>
+                updateConfiguration((current) => ({
                   ...current,
-                  connections: [
-                    ...current.connections.filter(
-                      (item) => item.id !== connection.id
-                    ),
-                    connection,
-                  ].sort((left, right) => left.name.localeCompare(right.name)),
+                  capabilities: current.capabilities.map((item) =>
+                    item.key === saved.key ? saved : item
+                  ),
                 }))
               }
             />
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {configuration.app.key === "built_in.weather" ? (
-              <section className="grid gap-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2">
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium text-sm">Open-Meteo</p>
-                    <Badge variant="outline">Primary · ready</Badge>
-                  </div>
-                  <p className="mt-2 text-muted-foreground text-xs">
-                    Free provider. No Environment credential is required.
-                  </p>
-                </div>
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium text-sm">Visual Crossing</p>
-                    <Badge variant="outline">
-                      {configuration.connections.some(
-                        (connection) => connection.status === "connected"
-                      )
-                        ? "Fallback · ready"
-                        : "Fallback · optional"}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-muted-foreground text-xs">
-                    Used only when the primary provider fails under the Weather
-                    policy.
-                  </p>
-                </div>
-              </section>
-            ) : null}
-            <section>
-              <div className="flex items-center gap-2">
-                <KeyRound className="size-4 text-muted-foreground" />
-                <h3 className="font-medium text-sm">
-                  {configuration.app.connectionModel === "none"
-                    ? "Connection"
-                    : configuration.app.connectionModel === "personal"
-                      ? "Personal connections"
-                      : configuration.app.connectionModel === "hybrid"
-                        ? "Shared and personal connections"
-                        : "Connections"}
-                </h3>
-              </div>
-              <div className="mt-3 divide-y rounded-lg border">
-                {configuration.app.connectionModel === "none" ? (
-                  <p className="px-4 py-3 text-muted-foreground text-sm">
-                    No connection required. Kestrel provides this App directly,
-                    while the access ceiling below controls what Projects can
-                    use.
-                  </p>
-                ) : configuration.app.connectionModel === "personal" ? (
-                  <p className="px-4 py-3 text-muted-foreground text-sm">
-                    Members connect their own accounts inside Projects. No
-                    shared account or credential is stored in this Environment.
-                  </p>
-                ) : configuration.connections.length ? (
-                  configuration.connections.map((connection) => (
-                    <div
-                      className="flex items-center justify-between gap-3 px-4 py-3"
-                      key={connection.id}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-sm">
-                          {connection.name}
-                        </p>
-                        <p className="mt-1 text-muted-foreground text-xs">
-                          {configuration.app.key === "built_in.weather"
-                            ? "Verified Visual Crossing fallback · available to attach to Projects"
-                            : "Shared with Projects in this Environment"}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            connection.status === "connected"
-                              ? "default"
-                              : "outline"
-                          }
-                        >
-                          {connection.status}
-                        </Badge>
-                        {connection.ownerType === "environment" &&
-                        connection.status !== "disconnected" ? (
-                          <Button
-                            aria-label={`Disconnect ${connection.name}`}
-                            disabled={disconnecting === connection.id}
-                            onClick={() =>
-                              void disconnect(
-                                configuration.app.key,
-                                connection.id
-                              )
-                            }
-                            size="icon"
-                            variant="ghost"
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="px-4 py-3 text-muted-foreground text-sm">
-                    {configuration.app.connectionRequirement === "optional"
-                      ? "No shared connection is required. Add one to enable the optional provider path."
-                      : configuration.app.connectionModel === "hybrid"
-                        ? "Add a shared connection, or let members attach personal connections inside Projects."
-                        : "Add a connection to make this App available to Projects."}
-                  </p>
-                )}
-              </div>
-            </section>
-
-            <section>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="size-4 text-muted-foreground" />
-                <div>
-                  <h3 className="font-medium text-sm">Access ceiling</h3>
-                  <p className="mt-1 text-muted-foreground text-xs">
-                    Projects can narrow these settings, but can never broaden
-                    them.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 divide-y rounded-lg border">
-                {configuration.capabilities.map((capability) => (
-                  <CapabilityRow
-                    appKey={configuration.app.key}
-                    capability={capability}
-                    environmentId={environmentId}
-                    key={capability.key}
-                    onSaved={(saved) =>
-                      updateConfiguration(configuration.app.key, (current) => ({
-                        ...current,
-                        capabilities: current.capabilities.map((item) =>
-                          item.key === saved.key ? saved : item
-                        ),
-                      }))
-                    }
-                  />
-                ))}
-              </div>
-            </section>
-          </CardContent>
-        </Card>
-      ))}
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

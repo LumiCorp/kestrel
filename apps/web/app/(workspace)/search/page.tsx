@@ -22,7 +22,7 @@ export default async function SearchPage({
   });
 
   return (
-    <AppPage className="mx-auto w-full max-w-5xl p-6">
+    <AppPage className="max-w-5xl">
       <header>
         <h1 className="font-semibold text-3xl">Search</h1>
         <p className="mt-1 text-muted-foreground">

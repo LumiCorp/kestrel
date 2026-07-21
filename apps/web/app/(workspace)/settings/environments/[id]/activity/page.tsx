@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { RetainedReasoningInspector } from "./retained-reasoning-inspector";
@@ -29,20 +29,20 @@ export default async function EnvironmentActivityPage({
     limit: 20,
   });
   return (
-    <div className="grid gap-6">
-    <Card>
-      <CardHeader>
-        <CardTitle>Activity</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
+    <div>
+    <SettingsSection
+      description="Provisioning, recovery, and lifecycle operations for this execution plane."
+      title="Environment activity"
+    >
+      <div className="divide-y border-y">
         {operations.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="py-6 text-center text-muted-foreground text-sm">
             No Environment activity yet.
           </p>
         ) : (
           operations.map((operation) => (
             <div
-              className="flex items-center justify-between rounded-md border p-3"
+              className="flex items-center justify-between py-3"
               key={operation.id}
             >
               <div>
@@ -55,15 +55,15 @@ export default async function EnvironmentActivityPage({
             </div>
           ))
         )}
-      </CardContent>
-    </Card>
-    <Card>
-      <CardHeader>
-        <CardTitle>Run inspection</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {runs.length === 0 ? <p className="text-muted-foreground text-sm">No Environment runs yet.</p> : runs.map((run) => (
-          <div className="grid gap-3 rounded-md border p-3" key={run.id}>
+      </div>
+    </SettingsSection>
+    <SettingsSection
+      description="Inspect retention readiness and provider-visible reasoning for recent runs."
+      title="Run inspection"
+    >
+      <div className="divide-y border-y">
+        {runs.length === 0 ? <p className="py-6 text-center text-muted-foreground text-sm">No Environment runs yet.</p> : runs.map((run) => (
+          <div className="grid gap-3 py-3" key={run.id}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-mono text-xs">{run.id}</div>
@@ -82,8 +82,8 @@ export default async function EnvironmentActivityPage({
             ) : null}
           </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </SettingsSection>
     </div>
   );
 }

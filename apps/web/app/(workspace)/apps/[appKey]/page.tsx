@@ -26,7 +26,7 @@ export default async function AppDetailPage({
   });
   if (!app) notFound();
   return (
-    <AppPage className="mx-auto w-full max-w-6xl p-6 lg:p-8">
+    <AppPage>
       <AppDetail app={app} />
     </AppPage>
   );

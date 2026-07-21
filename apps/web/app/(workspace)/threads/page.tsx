@@ -1,10 +1,13 @@
-import { Archive, MessageSquare, Plus } from "lucide-react";
+import { Archive, Plus } from "lucide-react";
 import Link from "next/link";
 import { AppPage } from "@/components/app-page";
+import { ThreadIndex } from "@/components/threads/thread-index";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { listThreadsForUser } from "@/lib/threads/store";
+import {
+  getThreadUnreadCountsForUser,
+  listThreadsForUser,
+} from "@/lib/threads/store";
 
 export default async function ThreadsPage({
   searchParams,
@@ -21,9 +24,14 @@ export default async function ThreadsPage({
   const threads = showArchived
     ? allThreads.filter((thread) => Boolean(thread.archivedAt))
     : allThreads;
+  const unreadCounts = await getThreadUnreadCountsForUser({
+    userId: session.user.id,
+    organizationId,
+    threadIds: threads.map((thread) => thread.id),
+  });
 
   return (
-    <AppPage className="mx-auto w-full max-w-5xl p-6">
+    <AppPage className="max-w-5xl">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-semibold text-3xl">Threads</h1>
@@ -46,33 +54,15 @@ export default async function ThreadsPage({
           </Button>
         </div>
       </div>
-      {threads.length ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {threads.map((thread) => (
-            <Link href={`/threads/${thread.id}`} key={thread.id}>
-              <Card className="h-full transition-colors hover:bg-muted/40">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <MessageSquare className="size-4" />
-                    {thread.title || "New thread"}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="text-muted-foreground text-sm">
-                  Updated {thread.updatedAt.toLocaleString()}
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">
-            {showArchived
-              ? "No archived standalone Threads."
-              : "Start a standalone Thread, or open a Project to work with shared context."}
-          </CardContent>
-        </Card>
-      )}
+      <ThreadIndex
+        archived={showArchived}
+        threads={threads.map((thread) => ({
+          id: thread.id,
+          title: thread.title || "New thread",
+          updatedAt: thread.updatedAt.toISOString(),
+          unreadCount: unreadCounts.get(thread.id) ?? 0,
+        }))}
+      />
     </AppPage>
   );
 }

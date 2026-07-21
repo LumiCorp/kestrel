@@ -213,6 +213,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in"
   ),
   page(
+    "app/(workspace)/projects/new/page.tsx",
+    "/projects/new",
+    "projects",
+    "authenticated",
+    "redirect-sign-in"
+  ),
+  page(
     "app/(workspace)/apps/page.tsx",
     "/apps",
     "apps",
@@ -277,6 +284,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied"
   ),
   page(
+    "app/(workspace)/settings/environments/[id]/runtime/page.tsx",
+    "/settings/environments/:id/runtime",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/access/page.tsx",
+    "/settings/environments/:id/access",
+    "environments",
+    "admin",
+    "admin-denied"
+  ),
+  page(
     "app/(workspace)/settings/environments/[id]/workspaces/page.tsx",
     "/settings/environments/:id/workspaces",
     "environments",
@@ -293,6 +314,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/(workspace)/settings/environments/[id]/apps/page.tsx",
     "/settings/environments/:id/apps",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  page(
+    "app/(workspace)/settings/environments/[id]/apps/[appKey]/page.tsx",
+    "/settings/environments/:id/apps/:appKey",
     "apps",
     "admin",
     "admin-denied"

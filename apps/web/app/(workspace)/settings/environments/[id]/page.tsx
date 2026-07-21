@@ -1,7 +1,11 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+} from "@/components/settings/settings-section";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
-import { ReasoningPolicyForm } from "./reasoning-policy-form";
+import { EnvironmentOverviewActions } from "./environment-overview-actions";
 
 export default async function EnvironmentOverviewPage({
   params,
@@ -14,45 +18,29 @@ export default async function EnvironmentOverviewPage({
     organizationId,
     environmentId: id,
   });
+  if (!environment) return null;
+
   return (
-    <div className="grid gap-6">
-    <Card>
-      <CardHeader>
-        <CardTitle>Overview</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4 text-sm md:grid-cols-3">
-        <div>
-          <div className="text-muted-foreground">Region</div>
-          {environment?.region}
-        </div>
-        <div>
-          <div className="text-muted-foreground">Runtime</div>
-          {environment?.runtimeTemplate}
-        </div>
-        <div>
-          <div className="text-muted-foreground">Idle timeout</div>
-          {environment?.idleTimeoutMinutes} minutes
-        </div>
-      </CardContent>
-    </Card>
-    {environment ? (
-      <Card>
-        <CardHeader>
-          <CardTitle>Provider reasoning</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ReasoningPolicyForm
+    <SettingsSection
+      description="Core identity and lifecycle state for this execution plane."
+      title="Environment details"
+    >
+      <SettingsRows>
+        <SettingsRow label="Region">{environment.region}</SettingsRow>
+        <SettingsRow label="Runtime template">
+          {environment.runtimeTemplate}
+        </SettingsRow>
+        <SettingsRow label="Idle timeout">
+          {environment.idleTimeoutMinutes} minutes
+        </SettingsRow>
+        <SettingsRow label="Lifecycle status">{environment.status}</SettingsRow>
+        <SettingsRow label="Default Environment">
+          <EnvironmentOverviewActions
             environmentId={environment.id}
-            initial={{
-              requestMode: environment.reasoningRequestMode,
-              ...(environment.reasoningEffort ? { effort: environment.reasoningEffort } : {}),
-              retentionMode: environment.reasoningRetentionMode,
-              retentionDays: environment.reasoningRetentionDays,
-            }}
+            initialIsDefault={environment.isDefault}
           />
-        </CardContent>
-      </Card>
-    ) : null}
-    </div>
+        </SettingsRow>
+      </SettingsRows>
+    </SettingsSection>
   );
 }

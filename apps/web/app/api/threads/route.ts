@@ -7,6 +7,7 @@ import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import {
   createThreadForUser,
+  getThreadUnreadCountsForUser,
   listThreadsForUser,
   saveThreadMessages,
 } from "@/lib/threads/store";
@@ -42,12 +43,18 @@ export async function GET(request: NextRequest) {
     });
     const hasMore = threads.length > pageSize;
     const page = hasMore ? threads.slice(0, pageSize) : threads;
+    const unreadCounts = await getThreadUnreadCountsForUser({
+      userId: session.user.id,
+      organizationId,
+      threadIds: page.map((thread) => thread.id),
+    });
 
     return NextResponse.json({
       threads: page.map((thread) => ({
         ...thread,
         title: thread.title || "New thread",
         visibility: thread.isPublic ? "public" : "private",
+        unreadCount: unreadCounts.get(thread.id) ?? 0,
       })),
       hasMore,
     });

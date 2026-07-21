@@ -58,7 +58,7 @@ export default async function ProjectPage({
     })),
   };
   return (
-    <AppPage className="mx-auto w-full max-w-6xl p-6">
+    <AppPage>
       <header className="relative">
         <p className="text-muted-foreground text-sm capitalize">
           {detail.role} · context revision{" "}

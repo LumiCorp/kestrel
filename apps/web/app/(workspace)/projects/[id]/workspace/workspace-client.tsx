@@ -142,7 +142,7 @@ export function ProjectWorkspaceClient({
   }
 
   return (
-    <AppPage className="mx-auto w-full max-w-3xl p-6">
+    <AppPage className="max-w-3xl">
       <div className="mb-6">
         <Button asChild size="sm" variant="ghost">
           <Link href={`/projects/${projectId}`}>← {projectName}</Link>
