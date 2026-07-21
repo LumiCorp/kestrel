@@ -9,6 +9,7 @@ import {
   appendBoundedDevShellOutput,
   isCompatibleDevShellHealth,
   LocalDevShellService,
+  resolveDevShellServiceLaunch,
 } from "../../src/devshell/LocalDevShellService.js";
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
 import {
@@ -19,6 +20,74 @@ import {
 } from "../../src/devshell/paths.js";
 import { contractTest } from "../helpers/contract-test.js";
 
+contractTest("runtime.process", "developer shell launch resolution selects the source TypeScript entrypoint", () => {
+  const launch = resolveDevShellServiceLaunch(
+    "file:///repo/src/devshell/LocalDevShellService.ts",
+    "/repo/node_modules/tsx/dist/loader.mjs",
+  );
+
+  assert.equal(launch.entrypointPath, "/repo/cli/dev-shell/service.ts");
+  assert.deepEqual(launch.nodeArguments, [
+    "--import",
+    "/repo/node_modules/tsx/dist/loader.mjs",
+    "/repo/cli/dev-shell/service.ts",
+  ]);
+});
+
+contractTest("runtime.process", "developer shell launch resolution selects the compiled JavaScript entrypoint without tsx", () => {
+  const launch = resolveDevShellServiceLaunch(
+    "file:///app/dist/src/devshell/LocalDevShellService.js",
+    "/app/node_modules/tsx/dist/loader.mjs",
+  );
+
+  assert.equal(launch.entrypointPath, "/app/dist/cli/dev-shell/service.js");
+  assert.deepEqual(launch.nodeArguments, ["/app/dist/cli/dev-shell/service.js"]);
+});
+
+contractTest("runtime.process", "developer shell launch resolution rejects unsupported runtime module extensions", () => {
+  assert.throws(
+    () => resolveDevShellServiceLaunch("file:///app/dist/src/devshell/LocalDevShellService.mjs"),
+    /Unsupported LocalDevShellService runtime module extension: \.mjs/u,
+  );
+});
+
+contractTest("runtime.process", "LocalDevShellService reports a missing resolved entrypoint before spawn", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-missing-entrypoint-"));
+  const previousStoreDriver = process.env.KESTREL_STORE_DRIVER;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.KESTREL_STORE_DRIVER = "sqlite";
+  delete process.env.DATABASE_URL;
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+    runtimeModuleUrl: new URL("dist/src/devshell/LocalDevShellService.js", `file://${baseDir}/`).href,
+  });
+
+  try {
+    await assert.rejects(
+      service.runCommand({ workspaceRoot: baseDir, command: "printf unreachable" }),
+      (error: unknown) => {
+        const failure = error as Error & { code?: string; details?: Record<string, unknown> };
+        assert.equal(failure.code, "DEV_SHELL_SERVICE_UNAVAILABLE");
+        assert.equal(failure.details?.bootstrapReason, "entrypoint_missing");
+        assert.equal(failure.details?.reasonCode, "entrypoint_missing");
+        assert.equal(
+          failure.details?.entrypointPath,
+          path.join(baseDir, "dist", "cli", "dev-shell", "service.js"),
+        );
+        assert.equal(failure.details?.exitCode, null);
+        assert.match(String(failure.details?.nextSuggestedAction), /Rebuild the runtime package/u);
+        return true;
+      },
+    );
+  } finally {
+    await service.close();
+    if (previousStoreDriver === undefined) delete process.env.KESTREL_STORE_DRIVER;
+    else process.env.KESTREL_STORE_DRIVER = previousStoreDriver;
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+  }
+});
 
 contractTest("runtime.process", "appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () => {
   const first = appendBoundedDevShellOutput(

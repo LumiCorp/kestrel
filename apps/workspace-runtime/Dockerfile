@@ -24,7 +24,7 @@ RUN pnpm --filter @kestrel-agents/sdk build \
 
 FROM node:22-bookworm-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
@@ -35,7 +35,10 @@ COPY --from=build /app/packages/protocol ./packages/protocol
 COPY --from=build /app/packages/sdk ./packages/sdk
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && test -f /app/dist/cli/runner/service.js \
-    && mkdir -p /workspace
+    && test -f /app/dist/cli/dev-shell/service.js \
+    && python3 --version \
+    && mkdir -p /workspace \
+    && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs
 ENV NODE_ENV=production KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]

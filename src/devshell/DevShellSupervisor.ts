@@ -335,6 +335,7 @@ export class DevShellSupervisor {
       cwd,
       command: normalizedCommand,
       request: input.sourceWriteGuard,
+      internalStateRoots: [await realpath(this.baseDir).catch(() => resolve(this.baseDir))],
     });
     assertSourceWriteAuthority({
       authority: input.sourceWriteAuthority,
