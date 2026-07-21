@@ -26,7 +26,6 @@ let postgres;
 const budgets = {
   preflight: 20_000,
   sharedBuild: 90_000,
-  static: 90_000,
   hermetic: 90_000,
   productionBuilds: 90_000,
   process: 60_000,
@@ -75,12 +74,19 @@ try {
       "run", "build:self",
     ]),
     task("root artifact", PNPM, ["run", "build:self"]),
+    task("workspace type analysis", PNPM, [
+      "-r", "--parallel", "--if-present",
+      "--filter", "@kestrel/desktop",
+      "--filter", "@lumi/kestrel-environment-auth",
+      "--filter", "@kestrel/mcp-security",
+      "--filter", "@kestrel/environment-router",
+      "--filter", "@kestrel/workspace-runtime",
+      "--filter", "@kestrel/mcp-service",
+      "run", "typecheck:self",
+    ]),
   ], { sequential: true });
 
-  await Promise.all([
-    phase("static", budgets.static, staticTasks()),
-    phase("productionBuilds", budgets.productionBuilds, productionBuildTasks()),
-  ]);
+  await phase("productionBuilds", budgets.productionBuilds, productionBuildTasks());
   await phase("hermetic", budgets.hermetic, hermeticTasks());
 
   await phase("process", budgets.process, processTasks(), {
@@ -108,22 +114,6 @@ try {
 } finally {
   stopPostgres();
   cleanupValidationProcesses();
-}
-
-function staticTasks() {
-  return [
-    task("root type analysis", PNPM, ["run", "typecheck:self"]),
-    task("workspace type analysis", PNPM, [
-      "-r", "--parallel", "--if-present",
-      "--filter", "@kestrel/desktop",
-      "--filter", "@lumi/kestrel-environment-auth",
-      "--filter", "@kestrel/mcp-security",
-      "--filter", "@kestrel/environment-router",
-      "--filter", "@kestrel/workspace-runtime",
-      "--filter", "@kestrel/mcp-service",
-      "run", "typecheck:self",
-    ]),
-  ];
 }
 
 function hermeticTasks() {
@@ -492,7 +482,7 @@ function readContractTimings() {
 }
 
 function printPlan() {
-  process.stdout.write(`preflight (20s)\nsharedBuild (90s)\n  concurrent: static (90s), productionBuilds (90s)\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
+  process.stdout.write(`preflight (20s)\nshared build and type analysis (90s)\nproduction builds (90s)\nhermetic (90s)\nprocess (60s)\npostgres: one container (60s)\nchromium: one browser (60s)\naudit: contracts, coverage, mutations (60s)\nmaximum: 480s\n`);
 }
 
 function validateGraphContract() {
