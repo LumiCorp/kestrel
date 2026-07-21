@@ -51,6 +51,7 @@ interface NormalizedGuardConfig {
   command: string;
   sourceRoots: string[];
   allowedWriteRoots: string[];
+  internalStateRoots: string[];
   mode: DevShellSourceWriteMode;
   approvedGrantId?: string | undefined;
   gitVisibleOnly: boolean;
@@ -69,6 +70,7 @@ export async function createDevShellSourceWriteGuard(input: {
   cwd: string;
   command: string;
   request?: DevShellSourceWriteGuardRequest | undefined;
+  internalStateRoots?: string[] | undefined;
 }): Promise<ActiveDevShellSourceWriteGuard | undefined> {
   if (input.request?.enabled !== true) {
     return ;
@@ -77,6 +79,7 @@ export async function createDevShellSourceWriteGuard(input: {
   const workspaceRoot = path.resolve(input.workspaceRoot);
   const cwd = path.resolve(input.cwd);
   const sourceRoots = normalizeRoots(workspaceRoot, input.request.sourceRoots, [workspaceRoot]);
+  const internalStateRoots = normalizeRoots(workspaceRoot, input.internalStateRoots, []);
   const mutationPolicy = input.request.mutationPolicy ?? "direct";
   if (input.request.managedWorktree === true && mutationPolicy === "direct") {
     return {
@@ -87,6 +90,7 @@ export async function createDevShellSourceWriteGuard(input: {
         command: input.command,
         sourceRoots,
         allowedWriteRoots: sourceRoots,
+        internalStateRoots,
         mode: "checkpoint_worktree",
         gitVisibleOnly: false,
       },
@@ -117,6 +121,7 @@ export async function createDevShellSourceWriteGuard(input: {
     command: input.command,
     sourceRoots,
     allowedWriteRoots: mutationPolicy === "direct" ? [...new Set(allowedWriteRoots)] : [],
+    internalStateRoots,
     mode: mutationPolicy === "capture"
       ? "captured_source_write"
       : mutationPolicy === "reject"
@@ -293,6 +298,7 @@ async function snapshotSourceRoots(
   const snapshot = new Map<string, SnapshotEntry>();
   if (config.gitVisibleOnly) {
     for (const absolutePath of await listGitVisiblePaths(config.workspaceRoot)) {
+      if (isInternalStatePath(config, absolutePath)) continue;
       await snapshotPath(absolutePath, snapshot);
     }
     return snapshot;
@@ -333,6 +339,7 @@ async function collectCurrentFileStates(
   const files = new Map<string, FileState>();
   if (config.gitVisibleOnly) {
     for (const absolutePath of await listGitVisiblePaths(config.workspaceRoot)) {
+      if (isInternalStatePath(config, absolutePath)) continue;
       const info = await lstat(absolutePath).catch(() => {});
       if (info === undefined) continue;
       if (info.isSymbolicLink()) {
@@ -382,7 +389,7 @@ async function visitSourcePaths(
   const queue = [root];
   while (queue.length > 0) {
     const current = queue.pop()!;
-    if (isAllowedWritePath(config, current)) {
+    if (isAllowedWritePath(config, current) || isInternalStatePath(config, current)) {
       continue;
     }
     let info: Awaited<ReturnType<typeof lstat>>;
@@ -457,6 +464,13 @@ function isAllowedWritePath(
   candidate: string,
 ): boolean {
   return config.allowedWriteRoots.some((root) => isWithinRoot(candidate, root));
+}
+
+function isInternalStatePath(
+  config: NormalizedGuardConfig,
+  candidate: string,
+): boolean {
+  return config.internalStateRoots.some((root) => isWithinRoot(candidate, root));
 }
 
 function isWithinRoot(candidate: string, root: string): boolean {

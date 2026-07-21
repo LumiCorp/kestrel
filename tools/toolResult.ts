@@ -237,6 +237,10 @@ function buildVisibleFailureOutput(toolName: string, input: unknown, error: Reco
     errorCode: asString(error.code) ?? "TOOL_EXECUTION_FAILED",
     message: asString(error.message) ?? "Tool execution failed.",
     recoverable: details?.recoverable !== false && error.recoverable !== false,
+    bootstrapReason: details?.bootstrapReason,
+    reasonCode: details?.reasonCode,
+    entrypointPath: details?.entrypointPath,
+    statusMessage: details?.statusMessage,
     path: firstString(details?.path, asRecord(input)?.path),
     sourcePath: firstString(details?.sourcePath, asRecord(input)?.sourcePath),
     destinationPath: firstString(details?.destinationPath, asRecord(input)?.destinationPath),
@@ -248,7 +252,9 @@ function buildVisibleFailureOutput(toolName: string, input: unknown, error: Reco
     nextSuggestedAction: details?.nextSuggestedAction,
     processId: firstString(details?.processId, output?.processId, asRecord(input)?.processId),
     statusCode: details?.statusCode,
-    exitCode: details?.exitCode ?? output?.exitCode,
+    exitCode: details !== undefined && Object.hasOwn(details, "exitCode")
+      ? details.exitCode
+      : output?.exitCode,
     failureReason: details?.failureReason ?? output?.failureReason,
     failurePhase: details?.failurePhase ?? output?.failurePhase,
     commandKind: details?.commandKind ?? output?.commandKind,

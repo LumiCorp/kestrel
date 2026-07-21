@@ -1,3 +1,5 @@
+import { hasCompletedExecCommandCanaryProof } from "../lib/environments/workspace-command-canary";
+
 type EnvironmentState = {
   binding?: {
     threadId?: string;
@@ -29,6 +31,7 @@ export {};
 const ACTIVATION_TIMEOUT_MS = 120_000;
 const APPLICATION_TIMEOUT_MS = 20_000;
 const PTY_TIMEOUT_MS = 15_000;
+const AGENT_TURN_TIMEOUT_MS = 300_000;
 const APP_NAME = "Kestrel post-cutover canary";
 const APP_RESPONSE = "kestrel-one-workspace-canary";
 const APP_COMMAND = `node -e "require('http').createServer((_request,response)=>response.end('${APP_RESPONSE}')).listen(Number(process.env.PORT),'0.0.0.0')"`;
@@ -43,6 +46,7 @@ const filePath = `kestrel-one-canary-${nonce}.txt`;
 const initialContent = `initial-${nonce}\n`;
 const updatedContent = `updated-${nonce}\n`;
 const ptyMarker = `pty-${nonce}`;
+const agentCommandMarker = `kestrel-command-canary-${nonce}`;
 const activationStages = new Set<string>();
 let terminalSessionId: string | null = null;
 let canaryApplication: WorkspaceApplication | null = null;
@@ -62,6 +66,8 @@ const environmentId = readyState.environment!.id!;
 const workspaceId = readyState.workspace!.id!;
 
 try {
+  await runAgentCommandCanary(agentCommandMarker);
+
   const created = await workspaceJson<{
     exitCode?: number | null;
     stderr?: string;
@@ -227,6 +233,7 @@ process.stdout.write(
         "optimistic_file_editing",
         "stale_file_write_rejected",
         "audited_terminal_execution",
+        "agent_exec_command_completed",
         "audited_pty_round_trip",
         "supervised_application_start_stop",
         "private_application_proxy",
@@ -257,6 +264,58 @@ async function waitForActivation(initial: EnvironmentState) {
     );
   }
   return state;
+}
+
+async function runAgentCommandCanary(marker: string) {
+  const messageId = crypto.randomUUID();
+  const command = `printf '%s' ${shellQuote(marker)}`;
+  const created = await requestJson<{ turn?: { id?: string; status?: string } }>(
+    `/api/threads/${threadId}/turns`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": messageId,
+      },
+      body: JSON.stringify({
+        message: {
+          id: messageId,
+          parts: [{
+            type: "text",
+            text: `Run exactly one exec_command with this exact command: ${command}`,
+          }],
+        },
+        interactionMode: "build",
+      }),
+    },
+  );
+  const turnId = created.turn?.id;
+  assert(Boolean(turnId), "The build-mode command canary turn was not queued.");
+
+  const deadline = Date.now() + AGENT_TURN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const queue = await requestJson<{
+      turns?: Array<{ id?: string; status?: string }>;
+    }>(`/api/threads/${threadId}/turns`);
+    const turn = queue.turns?.find((candidate) => candidate.id === turnId);
+    if (turn?.status === "completed") {
+      const snapshot = await requestJson<{ messages?: Array<{
+        role?: unknown;
+        metadata?: { kestrelTurnId?: unknown } | null;
+        parts?: unknown;
+      }> }>(`/api/threads/${threadId}`);
+      assert(
+        hasCompletedExecCommandCanaryProof(snapshot.messages ?? [], turnId!, marker),
+        "The build-mode turn completed without an OK exec_command tool record containing the marker.",
+      );
+      return;
+    }
+    if (turn && ["failed", "cancelled", "contract_failure"].includes(turn.status ?? "")) {
+      throw new Error(`The build-mode command canary ended with status ${turn.status}.`);
+    }
+    await sleep(1000);
+  }
+  throw new Error("The build-mode command canary turn timed out.");
 }
 
 function recordActivation(state: EnvironmentState) {
