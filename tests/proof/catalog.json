@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3604,
+  "testCount": 3608,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -4911,7 +4911,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 335,
+      "line": 384,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "contractId": "web.unit-contract",
@@ -4926,7 +4926,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 222,
+      "line": 269,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "contractId": "web.unit-contract",
@@ -4941,7 +4941,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 154,
+      "line": 200,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "contractId": "web.unit-contract",
@@ -4954,9 +4954,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
+      "line": 154,
+      "ancestors": [],
+      "title": "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "dimension": "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 277,
+      "line": 325,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "contractId": "web.unit-contract",
@@ -4971,7 +4986,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 494,
+      "line": 546,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "contractId": "web.unit-contract",
@@ -5001,7 +5016,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces cancelled runner output once",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 457,
+      "line": 508,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces cancelled runner output once",
       "contractId": "web.unit-contract",
@@ -5016,7 +5031,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces failed runner output",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 395,
+      "line": 445,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces failed runner output",
       "contractId": "web.unit-contract",
@@ -7551,7 +7566,7 @@
     {
       "identity": "apps/web/lib/db/durable-thread-turns-migration.test.ts :: durable replay binds the cutoff through the timestamp column encoder",
       "file": "apps/web/lib/db/durable-thread-turns-migration.test.ts",
-      "line": 140,
+      "line": 153,
       "ancestors": [],
       "title": "durable replay binds the cutoff through the timestamp column encoder",
       "contractId": "web.unit-contract",
@@ -7634,6 +7649,21 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: the durable turn worker runs the web package as ESM",
       "dimension": "the durable turn worker runs the web package as ESM",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/db/durable-thread-turns-migration.test.ts :: the durable worker records requested and effective interaction modes at runtime start",
+      "file": "apps/web/lib/db/durable-thread-turns-migration.test.ts",
+      "line": 140,
+      "ancestors": [],
+      "title": "the durable worker records requested and effective interaction modes at runtime start",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: the durable worker records requested and effective interaction modes at runtime start",
+      "dimension": "the durable worker records requested and effective interaction modes at runtime start",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -14028,7 +14058,7 @@
     {
       "identity": "packages/sdk/tests/agent.test.ts :: agent session memory reads and writes through task graph state",
       "file": "packages/sdk/tests/agent.test.ts",
-      "line": 124,
+      "line": 129,
       "ancestors": [],
       "title": "agent session memory reads and writes through task graph state",
       "contractId": "package.public-contract",
@@ -38266,9 +38296,24 @@
       "environment": "linux"
     },
     {
-      "identity": "tests/unit/mode-contracts.test.ts :: Chat allows read-only tools and only explicitly Chat-enabled app mutations",
+      "identity": "tests/unit/mode-contracts.test.ts :: Build exposes sandboxed workspace mutations while Chat and Plan do not",
       "file": "tests/unit/mode-contracts.test.ts",
       "line": 153,
+      "ancestors": [],
+      "title": "Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "dimension": "Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/mode-contracts.test.ts :: Chat allows read-only tools and only explicitly Chat-enabled app mutations",
+      "file": "tests/unit/mode-contracts.test.ts",
+      "line": 177,
       "ancestors": [],
       "title": "Chat allows read-only tools and only explicitly Chat-enabled app mutations",
       "contractId": "runtime.behavior",
@@ -40758,7 +40803,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime allows child spawn at maxDepth and records normalized depth policy",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1779,
+      "line": 1829,
       "ancestors": [],
       "title": "ThreadRuntime allows child spawn at maxDepth and records normalized depth policy",
       "contractId": "runtime.behavior",
@@ -40773,7 +40818,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime appends completed assistant output to durable thread history",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 748,
+      "line": 798,
       "ancestors": [],
       "title": "ThreadRuntime appends completed assistant output to durable thread history",
       "contractId": "runtime.behavior",
@@ -40788,7 +40833,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3328,
+      "line": 3378,
       "ancestors": [],
       "title": "ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text",
       "contractId": "runtime.behavior",
@@ -40803,7 +40848,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3255,
+      "line": 3305,
       "ancestors": [],
       "title": "ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe",
       "contractId": "runtime.behavior",
@@ -40818,7 +40863,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 974,
+      "line": 1024,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted",
       "contractId": "runtime.behavior",
@@ -40833,7 +40878,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2072,
+      "line": 2122,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution",
       "contractId": "runtime.behavior",
@@ -40848,7 +40893,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2212,
+      "line": 2262,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution",
       "contractId": "runtime.behavior",
@@ -40878,7 +40923,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime blocks auto compact when a continuation brief cannot be grounded",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2155,
+      "line": 2205,
       "ancestors": [],
       "title": "ThreadRuntime blocks auto compact when a continuation brief cannot be grounded",
       "contractId": "runtime.behavior",
@@ -40893,7 +40938,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime blocks submit when a non-auto context checkpoint is pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2262,
+      "line": 2312,
       "ancestors": [],
       "title": "ThreadRuntime blocks submit when a non-auto context checkpoint is pending",
       "contractId": "runtime.behavior",
@@ -40908,7 +40953,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime can surface failed child delegations as the dominant blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3500,
+      "line": 3550,
       "ancestors": [],
       "title": "ThreadRuntime can surface failed child delegations as the dominant blocker",
       "contractId": "runtime.behavior",
@@ -40923,7 +40968,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime child spawn preserves managed worktree fan-in context",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1854,
+      "line": 1904,
       "ancestors": [],
       "title": "ThreadRuntime child spawn preserves managed worktree fan-in context",
       "contractId": "runtime.behavior",
@@ -40938,7 +40983,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime clears stale waits when a later turn completes without waiting",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 683,
+      "line": 733,
       "ancestors": [],
       "title": "ThreadRuntime clears stale waits when a later turn completes without waiting",
       "contractId": "runtime.behavior",
@@ -40953,7 +40998,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime composes and injects a thread-scoped runtime assembly",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4004,
+      "line": 4054,
       "ancestors": [],
       "title": "ThreadRuntime composes and injects a thread-scoped runtime assembly",
       "contractId": "runtime.behavior",
@@ -40983,7 +41028,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime delegation service preserves agent spawn lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1381,
+      "line": 1431,
       "ancestors": [],
       "title": "ThreadRuntime delegation service preserves agent spawn lineage",
       "contractId": "runtime.behavior",
@@ -40998,7 +41043,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime derives operator session summaries only from the returned run window",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 295,
+      "line": 345,
       "ancestors": [],
       "title": "ThreadRuntime derives operator session summaries only from the returned run window",
       "contractId": "runtime.behavior",
@@ -41013,7 +41058,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2645,
+      "line": 2695,
       "ancestors": [],
       "title": "ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting",
       "contractId": "runtime.behavior",
@@ -41028,7 +41073,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime exposes bounded operator run inspection from persisted replay evidence",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 202,
+      "line": 252,
       "ancestors": [],
       "title": "ThreadRuntime exposes bounded operator run inspection from persisted replay evidence",
       "contractId": "runtime.behavior",
@@ -41043,7 +41088,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime exposes checkpoint disposition in operator thread view after resolution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3955,
+      "line": 4005,
       "ancestors": [],
       "title": "ThreadRuntime exposes checkpoint disposition in operator thread view after resolution",
       "contractId": "runtime.behavior",
@@ -41073,7 +41118,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 528,
+      "line": 578,
       "ancestors": [],
       "title": "ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread",
       "contractId": "runtime.behavior",
@@ -41088,7 +41133,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime focusThread updates operator inbox focus deterministically",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3691,
+      "line": 3741,
       "ancestors": [],
       "title": "ThreadRuntime focusThread updates operator inbox focus deterministically",
       "contractId": "runtime.behavior",
@@ -41101,9 +41146,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "file": "tests/unit/orchestration-thread-runtime.test.ts",
+      "line": 202,
+      "ancestors": [],
+      "title": "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "dimension": "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime merges short continuation history with durable thread history",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1053,
+      "line": 1103,
       "ancestors": [],
       "title": "ThreadRuntime merges short continuation history with durable thread history",
       "contractId": "runtime.behavior",
@@ -41118,7 +41178,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4070,
+      "line": 4120,
       "ancestors": [],
       "title": "ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals",
       "contractId": "runtime.behavior",
@@ -41133,7 +41193,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime operator child spawn preserves policy supervision intent",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1908,
+      "line": 1958,
       "ancestors": [],
       "title": "ThreadRuntime operator child spawn preserves policy supervision intent",
       "contractId": "runtime.behavior",
@@ -41148,7 +41208,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists delegation lifecycle events under the parent session id",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3905,
+      "line": 3955,
       "ancestors": [],
       "title": "ThreadRuntime persists delegation lifecycle events under the parent session id",
       "contractId": "runtime.behavior",
@@ -41163,7 +41223,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists focused thread across runtime recreation with shared store",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3762,
+      "line": 3812,
       "ancestors": [],
       "title": "ThreadRuntime persists focused thread across runtime recreation with shared store",
       "contractId": "runtime.behavior",
@@ -41178,7 +41238,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists operator-facing user input requests from waits",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 564,
+      "line": 614,
       "ancestors": [],
       "title": "ThreadRuntime persists operator-facing user input requests from waits",
       "contractId": "runtime.behavior",
@@ -41193,7 +41253,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves identical waiting prompts from separate runs",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 909,
+      "line": 959,
       "ancestors": [],
       "title": "ThreadRuntime preserves identical waiting prompts from separate runs",
       "contractId": "runtime.behavior",
@@ -41208,7 +41268,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves pre-start kernel failures whose run row was never created",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 379,
+      "line": 429,
       "ancestors": [],
       "title": "ThreadRuntime preserves pre-start kernel failures whose run row was never created",
       "contractId": "runtime.behavior",
@@ -41223,7 +41283,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves submitted history and appends the waiting assistant prompt",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 822,
+      "line": 872,
       "ancestors": [],
       "title": "ThreadRuntime preserves submitted history and appends the waiting assistant prompt",
       "contractId": "runtime.behavior",
@@ -41238,7 +41298,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime queues steering during a running turn and drains it after the boundary",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2574,
+      "line": 2624,
       "ancestors": [],
       "title": "ThreadRuntime queues steering during a running turn and drains it after the boundary",
       "contractId": "runtime.behavior",
@@ -41253,7 +41313,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime records replay-aware compaction artifacts when compaction is applied",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1970,
+      "line": 2020,
       "ancestors": [],
       "title": "ThreadRuntime records replay-aware compaction artifacts when compaction is applied",
       "contractId": "runtime.behavior",
@@ -41268,7 +41328,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1481,
+      "line": 1531,
       "ancestors": [],
       "title": "ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth",
       "contractId": "runtime.behavior",
@@ -41283,7 +41343,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3188,
+      "line": 3238,
       "ancestors": [],
       "title": "ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending",
       "contractId": "runtime.behavior",
@@ -41298,7 +41358,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects resolving a non-pending checkpoint twice",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3633,
+      "line": 3683,
       "ancestors": [],
       "title": "ThreadRuntime rejects resolving a non-pending checkpoint twice",
       "contractId": "runtime.behavior",
@@ -41313,7 +41373,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime requires approval for model-originated provider changes",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4147,
+      "line": 4197,
       "ancestors": [],
       "title": "ThreadRuntime requires approval for model-originated provider changes",
       "contractId": "runtime.behavior",
@@ -41328,7 +41388,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves approval requests and expires turn-scoped grants after resume",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1130,
+      "line": 1180,
       "ancestors": [],
       "title": "ThreadRuntime resolves approval requests and expires turn-scoped grants after resume",
       "contractId": "runtime.behavior",
@@ -41343,7 +41403,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2312,
+      "line": 2362,
       "ancestors": [],
       "title": "ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint",
       "contractId": "runtime.behavior",
@@ -41358,7 +41418,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves context checkpoints and persists compaction lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2772,
+      "line": 2822,
       "ancestors": [],
       "title": "ThreadRuntime resolves context checkpoints and persists compaction lineage",
       "contractId": "runtime.behavior",
@@ -41373,7 +41433,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2909,
+      "line": 2959,
       "ancestors": [],
       "title": "ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references",
       "contractId": "runtime.behavior",
@@ -41388,7 +41448,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2840,
+      "line": 2890,
       "ancestors": [],
       "title": "ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage",
       "contractId": "runtime.behavior",
@@ -41403,7 +41463,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves superseded child blockers out of actionable attention state",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3423,
+      "line": 3473,
       "ancestors": [],
       "title": "ThreadRuntime resolves superseded child blockers out of actionable attention state",
       "contractId": "runtime.behavior",
@@ -41418,7 +41478,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resumes the active blocked request and derives approval grants",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1224,
+      "line": 1274,
       "ancestors": [],
       "title": "ThreadRuntime resumes the active blocked request and derives approval grants",
       "contractId": "runtime.behavior",
@@ -41433,7 +41493,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime retryThread allows retry for failed threads and blocks idle threads",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2717,
+      "line": 2767,
       "ancestors": [],
       "title": "ThreadRuntime retryThread allows retry for failed threads and blocks idle threads",
       "contractId": "runtime.behavior",
@@ -41448,7 +41508,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime skips side-band reply events when the active run row is stale",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 431,
+      "line": 481,
       "ancestors": [],
       "title": "ThreadRuntime skips side-band reply events when the active run row is stale",
       "contractId": "runtime.behavior",
@@ -41463,7 +41523,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime spawns delegated child threads with reconstructable lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1310,
+      "line": 1360,
       "ancestors": [],
       "title": "ThreadRuntime spawns delegated child threads with reconstructable lineage",
       "contractId": "runtime.behavior",
@@ -41478,7 +41538,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime steerThread persists operator steering events",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2482,
+      "line": 2532,
       "ancestors": [],
       "title": "ThreadRuntime steerThread persists operator steering events",
       "contractId": "runtime.behavior",
@@ -41493,7 +41553,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime steerThread starts a fresh steering turn when user input is pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2520,
+      "line": 2570,
       "ancestors": [],
       "title": "ThreadRuntime steerThread starts a fresh steering turn when user input is pending",
       "contractId": "runtime.behavior",
@@ -41508,7 +41568,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores blocked child result envelope when child waits",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1643,
+      "line": 1693,
       "ancestors": [],
       "title": "ThreadRuntime stores blocked child result envelope when child waits",
       "contractId": "runtime.behavior",
@@ -41523,7 +41583,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores completed child result envelope from finalize payload",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1534,
+      "line": 1584,
       "ancestors": [],
       "title": "ThreadRuntime stores completed child result envelope from finalize payload",
       "contractId": "runtime.behavior",
@@ -41538,7 +41598,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores failed child result envelope from returned failed output",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1735,
+      "line": 1785,
       "ancestors": [],
       "title": "ThreadRuntime stores failed child result envelope from returned failed output",
       "contractId": "runtime.behavior",
@@ -41553,7 +41613,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores failed child result envelope from runtime failure",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1694,
+      "line": 1744,
       "ancestors": [],
       "title": "ThreadRuntime stores failed child result envelope from runtime failure",
       "contractId": "runtime.behavior",
@@ -41568,7 +41628,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2390,
+      "line": 2440,
       "ancestors": [],
       "title": "ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints",
       "contractId": "runtime.behavior",
@@ -41583,7 +41643,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime supersedes stale waits when a new continuation wait replaces them",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 609,
+      "line": 659,
       "ancestors": [],
       "title": "ThreadRuntime supersedes stale waits when a new continuation wait replaces them",
       "contractId": "runtime.behavior",
@@ -41598,7 +41658,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2995,
+      "line": 3045,
       "ancestors": [],
       "title": "ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker",
       "contractId": "runtime.behavior",
@@ -41613,7 +41673,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3124,
+      "line": 3174,
       "ancestors": [],
       "title": "ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability",
       "contractId": "runtime.behavior",
@@ -41628,7 +41688,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces compatibility downgrades as operator inbox alerts",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4179,
+      "line": 4229,
       "ancestors": [],
       "title": "ThreadRuntime surfaces compatibility downgrades as operator inbox alerts",
       "contractId": "runtime.behavior",
@@ -41643,7 +41703,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces dominant descendant child blocker for parent thread views",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3830,
+      "line": 3880,
       "ancestors": [],
       "title": "ThreadRuntime surfaces dominant descendant child blocker for parent thread views",
       "contractId": "runtime.behavior",
@@ -41658,7 +41718,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces missing run rows for non-pre-start failures",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 496,
+      "line": 546,
       "ancestors": [],
       "title": "ThreadRuntime surfaces missing run rows for non-pre-start failures",
       "contractId": "runtime.behavior",
@@ -41673,7 +41733,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2433,
+      "line": 2483,
       "ancestors": [],
       "title": "ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints",
       "contractId": "runtime.behavior",
@@ -41688,7 +41748,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces split-created waiting children in supervision blocker truth",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3552,
+      "line": 3602,
       "ancestors": [],
       "title": "ThreadRuntime surfaces split-created waiting children in supervision blocker truth",
       "contractId": "runtime.behavior",
@@ -41703,7 +41763,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3066,
+      "line": 3116,
       "ancestors": [],
       "title": "ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker",
       "contractId": "runtime.behavior",
@@ -41718,7 +41778,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime treats explicit failed child result envelope as failed outcome",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1589,
+      "line": 1639,
       "ancestors": [],
       "title": "ThreadRuntime treats explicit failed child result envelope as failed outcome",
       "contractId": "runtime.behavior",

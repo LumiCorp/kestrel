@@ -285,6 +285,8 @@ export class ThreadRuntime implements ThreadRuntimePort {
     const turnMetadata = {
       ...(submittedMetadata ?? {}),
       ...(latestSummary !== undefined ? { authoritativeContextSummary: latestSummary } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
       turnId,
       activeTurnId: turnId,
     };

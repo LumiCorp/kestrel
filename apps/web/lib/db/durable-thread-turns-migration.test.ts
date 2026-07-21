@@ -137,6 +137,19 @@ test("the durable worker uses pinned organization context without request auth",
   assert.match(workerRuntime, /organizationId: turn\.organizationId/u);
 });
 
+test("the durable worker records requested and effective interaction modes at runtime start", () => {
+  assert.match(
+    workerRuntime,
+    /requestedInteractionMode: turn\.requestedInteractionMode/u
+  );
+  assert.match(
+    workerRuntime,
+    /effectiveInteractionMode:[\s\S]*event\.payload\.interactionMode/u
+  );
+  assert.match(workerRuntime, /type: "runtime\.started"/u);
+  assert.match(workerRuntime, /appendDurableTurnEvent\(/u);
+});
+
 test("durable replay binds the cutoff through the timestamp column encoder", () => {
   assert.match(
     turnStore,

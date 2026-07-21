@@ -196,7 +196,7 @@ export type KestrelOneAgentResponseInput = {
       }
     | undefined;
   modelId?: string;
-  interactionMode?: KestrelOneInteractionMode;
+  interactionMode: KestrelOneInteractionMode;
   projectContext?: {
     projectId: string;
     contextRevisionId: string;
