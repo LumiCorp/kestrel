@@ -1446,7 +1446,7 @@
     {
       "identity": "apps/desktop/tests/projectRuns.test.ts :: DesktopProjectRunRegistry fails runs when spawn emits an error and stop resolves without the force-kill delay",
       "file": "apps/desktop/tests/projectRuns.test.ts",
-      "line": 601,
+      "line": 603,
       "ancestors": [],
       "title": "DesktopProjectRunRegistry fails runs when spawn emits an error and stop resolves without the force-kill delay",
       "contractId": "desktop.contract",
@@ -1476,7 +1476,7 @@
     {
       "identity": "apps/desktop/tests/projectRuns.test.ts :: DesktopProjectRunRegistry resolves previews only for recorded credential-free HTTP URLs",
       "file": "apps/desktop/tests/projectRuns.test.ts",
-      "line": 469,
+      "line": 471,
       "ancestors": [],
       "title": "DesktopProjectRunRegistry resolves previews only for recorded credential-free HTTP URLs",
       "contractId": "desktop.contract",
@@ -1491,7 +1491,7 @@
     {
       "identity": "apps/desktop/tests/projectRuns.test.ts :: DesktopProjectRunRegistry restarts the current live attempt when restart is invoked from history",
       "file": "apps/desktop/tests/projectRuns.test.ts",
-      "line": 522,
+      "line": 524,
       "ancestors": [],
       "title": "DesktopProjectRunRegistry restarts the current live attempt when restart is invoked from history",
       "contractId": "desktop.contract",
@@ -1506,7 +1506,7 @@
     {
       "identity": "apps/desktop/tests/projectRuns.test.ts :: DesktopProjectRunRegistry signals the owned process group on POSIX stops",
       "file": "apps/desktop/tests/projectRuns.test.ts",
-      "line": 660,
+      "line": 662,
       "ancestors": [],
       "title": "DesktopProjectRunRegistry signals the owned process group on POSIX stops",
       "contractId": "desktop.contract",
@@ -1536,7 +1536,7 @@
     {
       "identity": "apps/desktop/tests/projectRuns.test.ts :: DesktopProjectRunRegistry stopAll waits for the terminal ledger flush",
       "file": "apps/desktop/tests/projectRuns.test.ts",
-      "line": 398,
+      "line": 400,
       "ancestors": [],
       "title": "DesktopProjectRunRegistry stopAll waits for the terminal ledger flush",
       "contractId": "desktop.contract",
@@ -12741,7 +12741,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: Apps endpoint requires auth",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 24,
+      "line": 22,
       "ancestors": [
         "API smoke checks"
       ],
@@ -12758,7 +12758,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: health endpoint is reachable",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 6,
+      "line": 4,
       "ancestors": [
         "API smoke checks"
       ],
@@ -12775,7 +12775,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: legacy admin tools endpoint is removed",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 29,
+      "line": 27,
       "ancestors": [
         "API smoke checks"
       ],
@@ -12792,7 +12792,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: sources endpoint requires auth",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 14,
+      "line": 12,
       "ancestors": [
         "API smoke checks"
       ],
@@ -12809,7 +12809,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: stats/me requires auth",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 19,
+      "line": 17,
       "ancestors": [
         "API smoke checks"
       ],
@@ -12826,7 +12826,7 @@
     {
       "identity": "apps/web/tests/e2e/api-smoke.test.ts :: API smoke checks :: webhook platform route rejects invalid platforms",
       "file": "apps/web/tests/e2e/api-smoke.test.ts",
-      "line": 34,
+      "line": 32,
       "ancestors": [
         "API smoke checks"
       ],
@@ -14793,7 +14793,7 @@
     {
       "identity": "tests/e2e/sdk-ecosystem/ecosystem.test.ts :: packed tarball consumer fixture installs and executes real SDK behavior against the live runner service",
       "file": "tests/e2e/sdk-ecosystem/ecosystem.test.ts",
-      "line": 440,
+      "line": 439,
       "ancestors": [],
       "title": "packed tarball consumer fixture installs and executes real SDK behavior against the live runner service",
       "contractId": "package.consumer-integration",
@@ -16698,7 +16698,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service emits run.cancelled on the original stream after run.cancel",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1934,
+      "line": 1933,
       "ancestors": [],
       "title": "runner service emits run.cancelled on the original stream after run.cancel",
       "contractId": "runtime.integration",
@@ -16818,7 +16818,7 @@
     {
       "identity": "tests/integration/runner-service.test.ts :: runner service replays journaled events from sinceEventId after host recreation",
       "file": "tests/integration/runner-service.test.ts",
-      "line": 1817,
+      "line": 1816,
       "ancestors": [],
       "title": "runner service replays journaled events from sinceEventId after host recreation",
       "contractId": "runtime.integration",
@@ -17553,7 +17553,7 @@
     {
       "identity": "tests/ops/tui/tui.ops.ts :: TUI workspace journey supports deterministic arrow-key navigation",
       "file": "tests/ops/tui/tui.ops.ts",
-      "line": 140,
+      "line": 144,
       "ancestors": [],
       "title": "TUI workspace journey supports deterministic arrow-key navigation",
       "contractId": "product.tui-postgres",
@@ -29223,7 +29223,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1168,
+      "line": 1180,
       "ancestors": [],
       "title": "DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env",
       "contractId": "runtime.behavior",
@@ -29298,7 +29298,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor never regresses a fast terminal process back to running",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1082,
+      "line": 1094,
       "ancestors": [],
       "title": "DevShellSupervisor never regresses a fast terminal process back to running",
       "contractId": "runtime.behavior",
@@ -29358,7 +29358,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1113,
+      "line": 1125,
       "ancestors": [],
       "title": "DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
       "contractId": "runtime.behavior",
@@ -29373,7 +29373,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1209,
+      "line": 1221,
       "ancestors": [],
       "title": "DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root",
       "contractId": "runtime.behavior",
@@ -29613,7 +29613,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops a live process and rejects writes after completion",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1235,
+      "line": 1247,
       "ancestors": [],
       "title": "DevShellSupervisor stops a live process and rejects writes after completion",
       "contractId": "runtime.behavior",
@@ -29628,7 +29628,7 @@
     {
       "identity": "tests/unit/dev-shell-supervisor.test.ts :: DevShellSupervisor stops descendant processes when stopping a live process",
       "file": "tests/unit/dev-shell-supervisor.test.ts",
-      "line": 1259,
+      "line": 1271,
       "ancestors": [],
       "title": "DevShellSupervisor stops descendant processes when stopping a live process",
       "contractId": "runtime.behavior",
@@ -34803,7 +34803,7 @@
     {
       "identity": "tests/unit/kestrel-tool-runtime.test.ts :: Kestrel returns RUN_CANCELLED when aborted during a model call",
       "file": "tests/unit/kestrel-tool-runtime.test.ts",
-      "line": 204,
+      "line": 209,
       "ancestors": [],
       "title": "Kestrel returns RUN_CANCELLED when aborted during a model call",
       "contractId": "runtime.behavior",
@@ -34818,7 +34818,7 @@
     {
       "identity": "tests/unit/kestrel-tool-runtime.test.ts :: Kestrel runtime IO forwards runtime budget metadata into model calls",
       "file": "tests/unit/kestrel-tool-runtime.test.ts",
-      "line": 260,
+      "line": 265,
       "ancestors": [],
       "title": "Kestrel runtime IO forwards runtime budget metadata into model calls",
       "contractId": "runtime.behavior",
@@ -34833,7 +34833,7 @@
     {
       "identity": "tests/unit/kestrel-tool-runtime.test.ts :: Kestrel runtime IO streams dev-shell console updates through the console listener",
       "file": "tests/unit/kestrel-tool-runtime.test.ts",
-      "line": 311,
+      "line": 316,
       "ancestors": [],
       "title": "Kestrel runtime IO streams dev-shell console updates through the console listener",
       "contractId": "runtime.behavior",
@@ -35658,7 +35658,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: ensureLocalCoreReady blocks a manifest from a different state epoch",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 625,
+      "line": 623,
       "ancestors": [],
       "title": "ensureLocalCoreReady blocks a manifest from a different state epoch",
       "contractId": "runtime.behavior",
@@ -35673,7 +35673,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: ensureLocalCoreReady blocks an incompatible state schema independently of executable version",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 599,
+      "line": 597,
       "ancestors": [],
       "title": "ensureLocalCoreReady blocks an incompatible state schema independently of executable version",
       "contractId": "runtime.behavior",
@@ -35688,7 +35688,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: ensureLocalCoreReady blocks an unreachable external database",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 539,
+      "line": 537,
       "ancestors": [],
       "title": "ensureLocalCoreReady blocks an unreachable external database",
       "contractId": "runtime.behavior",
@@ -35703,7 +35703,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: ensureLocalCoreReady does not silently use inherited DATABASE_URL for external mode",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 652,
+      "line": 650,
       "ancestors": [],
       "title": "ensureLocalCoreReady does not silently use inherited DATABASE_URL for external mode",
       "contractId": "runtime.behavior",
@@ -35718,7 +35718,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: ensureLocalCoreReady updates executable metadata without changing compatible epoch state",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 572,
+      "line": 570,
       "ancestors": [],
       "title": "ensureLocalCoreReady updates executable metadata without changing compatible epoch state",
       "contractId": "runtime.behavior",
@@ -35793,7 +35793,7 @@
     {
       "identity": "tests/unit/local-core-contract.test.ts :: release racing stale-lock recovery cannot delete the replacement authority",
       "file": "tests/unit/local-core-contract.test.ts",
-      "line": 485,
+      "line": 484,
       "ancestors": [],
       "title": "release racing stale-lock recovery cannot delete the replacement authority",
       "contractId": "runtime.behavior",

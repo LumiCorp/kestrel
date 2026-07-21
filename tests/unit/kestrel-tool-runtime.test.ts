@@ -157,6 +157,10 @@ test("Kestrel delegates tool runtime status hooks when gateway implements them",
 test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", async () => {
   const store = new InMemorySessionStore();
   let releaseFirstRun: (() => void) | undefined;
+  let markFirstRunEntered: (() => void) | undefined;
+  const firstRunEntered = new Promise<void>((resolve) => {
+    markFirstRunEntered = resolve;
+  });
 
   const kestrel = new Kestrel({
     store,
@@ -167,6 +171,7 @@ test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", 
   });
 
   kestrel.registerStep("blocking", async () => {
+    markFirstRunEntered?.();
     await new Promise<void>((resolve) => {
       releaseFirstRun = resolve;
     });
@@ -183,7 +188,7 @@ test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", 
     stepAgent: "blocking",
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await firstRunEntered;
 
   const secondOutput = await kestrel.run({
     id: "evt-overlap-2",

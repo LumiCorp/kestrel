@@ -6,16 +6,16 @@ import { toDriverAbortPatterns, toDriverActions } from "../ops/helpers/pty.js";
 test("toDriverActions preserves ordered text and key actions", () => {
   const actions = toDriverActions([
     { typeText: "/mcp" },
-    { key: "enter", settleMs: 100 },
-    { key: "ctrl-p", settleMs: 50 },
-    { key: "ctrl-2", settleMs: 50 },
+    { key: "enter" },
+    { key: "ctrl-p" },
+    { key: "ctrl-2" },
     { key: "esc" },
   ]);
   assert.deepEqual(actions, [
     { typeText: "/mcp" },
-    { key: "enter", settleMs: 100 },
-    { key: "ctrl-p", settleMs: 50 },
-    { key: "ctrl-2", settleMs: 50 },
+    { key: "enter" },
+    { key: "ctrl-p" },
+    { key: "ctrl-2" },
     { key: "esc" },
   ]);
 });

@@ -74,9 +74,6 @@ def main() -> int:
                     write_all(master_fd, b"\x10")
                 elif key == "ctrl-2":
                     write_all(master_fd, b"\x00")
-                settle_ms = action.get("settleMs")
-                if settle_ms:
-                    time.sleep(float(settle_ms) / 1000.0)
 
         if stdin_closed:
             request_interrupt(master_fd)

@@ -23,11 +23,11 @@ test("TUI workspace journey can be opened and exited back to chat deterministica
       },
       {
         waitFor: />\s*\/workspace/i,
-        actions: [{ key: "enter", settleMs: 250 }],
+        actions: [{ key: "enter" }],
       },
       {
         waitFor: /ops-root · WORKSPACE/i,
-        actions: [{ key: "esc", settleMs: 100 }],
+        actions: [{ key: "esc" }],
       },
       {
         waitFor: /ops-root · CHAT/i,
@@ -47,8 +47,8 @@ test("TUI MCP journey opens from slash command and returns to chat with Esc", as
     timeoutSeconds: 8,
     steps: [
       { waitFor: /ops-root · CHAT/i, actions: [{ typeText: "/mcp" }] },
-      { waitFor: />\s*\/mcp/i, actions: [{ key: "enter", settleMs: 250 }] },
-      { waitFor: /ops-root · MCP/i, actions: [{ key: "esc", settleMs: 100 }] },
+      { waitFor: />\s*\/mcp/i, actions: [{ key: "enter" }] },
+      { waitFor: /ops-root · MCP/i, actions: [{ key: "esc" }] },
       { waitFor: /ops-root · CHAT/i },
     ],
   });
@@ -64,8 +64,8 @@ test("TUI Code journey opens from slash command and returns to chat with Esc", a
     timeoutSeconds: 8,
     steps: [
       { waitFor: /ops-root · CHAT/i, actions: [{ typeText: "/code" }] },
-      { waitFor: />\s*\/code/i, actions: [{ key: "enter", settleMs: 250 }] },
-      { waitFor: /ops-root · CODE/i, actions: [{ key: "esc", settleMs: 100 }] },
+      { waitFor: />\s*\/code/i, actions: [{ key: "enter" }] },
+      { waitFor: /ops-root · CODE/i, actions: [{ key: "esc" }] },
       { waitFor: /ops-root · CHAT/i },
     ],
   });
@@ -81,7 +81,7 @@ test("TUI Delegation and Recovery journeys open from slash commands", async () =
     timeoutSeconds: 8,
     steps: [
       { waitFor: /ops-root · CHAT/i, actions: [{ typeText: "/child" }] },
-      { waitFor: />\s*\/child/i, actions: [{ key: "enter", settleMs: 250 }] },
+      { waitFor: />\s*\/child/i, actions: [{ key: "enter" }] },
       { waitFor: /ops-root · DELEGATION/i },
     ],
   });
@@ -91,7 +91,7 @@ test("TUI Delegation and Recovery journeys open from slash commands", async () =
     timeoutSeconds: 8,
     steps: [
       { waitFor: /ops-root · CHAT/i, actions: [{ typeText: "/checkpoint" }] },
-      { waitFor: />\s*\/checkpoint/i, actions: [{ key: "enter", settleMs: 250 }] },
+      { waitFor: />\s*\/checkpoint/i, actions: [{ key: "enter" }] },
       { waitFor: /ops-root · RECOVERY/i },
     ],
   });
@@ -125,10 +125,14 @@ test("TUI scripted chat submits non-command messages with Enter", async () => {
     steps: [
       {
         waitFor: /ops-submit-message · CHAT/i,
-        actions: [{ typeText: "hello from scripted enter", settleMs: 250 }, { key: "enter", settleMs: 700 }],
+        actions: [{ typeText: "hello from scripted enter" }],
       },
       {
-        waitFor: />> hello from scripted enter|Run in progress|mode=act/i,
+        waitFor: />\s*hello from scripted enter/i,
+        actions: [{ key: "enter" }],
+      },
+      {
+        waitFor: /RUNNING|Run in progress|Calling decision model/i,
       },
     ],
   });
@@ -144,11 +148,11 @@ test("TUI workspace journey supports deterministic arrow-key navigation", async 
     timeoutSeconds: 10,
     steps: [
       { waitFor: /ops-root · CHAT/i, actions: [{ typeText: "/workspace" }] },
-      { waitFor: />\s*\/workspace/i, actions: [{ key: "enter", settleMs: 250 }] },
-      { waitFor: />\s*Start task in selected workspace/i, actions: [{ key: "down", settleMs: 100 }] },
-      { waitFor: />\s*Switch to detached/i, actions: [{ key: "down", settleMs: 100 }] },
-      { waitFor: />\s*Open History Home/i, actions: [{ key: "down", settleMs: 100 }] },
-      { waitFor: />\s*Back to Chat/i, actions: [{ key: "enter", settleMs: 150 }] },
+      { waitFor: />\s*\/workspace/i, actions: [{ key: "enter" }] },
+      { waitFor: />\s*Start task in selected workspace/i, actions: [{ key: "down" }] },
+      { waitFor: />\s*Switch to detached/i, actions: [{ key: "down" }] },
+      { waitFor: />\s*Open History Home/i, actions: [{ key: "down" }] },
+      { waitFor: />\s*Back to Chat/i, actions: [{ key: "enter" }] },
       { waitFor: /ops-root · CHAT/i },
     ],
   });
