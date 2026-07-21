@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   buildAgentToolFailedOutputResult,
@@ -11,8 +10,10 @@ import {
   RunCancelledError,
   createRuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("runAgentTool wraps successful output in model context and audit evidence", async () => {
+
+contractTest("runtime.hermetic", "runAgentTool wraps successful output in model context and audit evidence", async () => {
   const result = await runAgentTool({
     toolName: "fs.read_text",
     toolInput: { path: "README.md" },
@@ -44,7 +45,7 @@ test("runAgentTool wraps successful output in model context and audit evidence",
   assert.equal(typeof result.auditRecord.durationMs, "number");
 });
 
-test("fs.read_text preserves source indentation in model-visible content", () => {
+contractTest("runtime.hermetic", "fs.read_text preserves source indentation in model-visible content", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "fs.read_text",
     input: { path: "src/inventory.mjs" },
@@ -66,7 +67,7 @@ test("fs.read_text preserves source indentation in model-visible content", () =>
   );
 });
 
-test("fs.read_text keeps empty and clipping annotations outside exact content delimiters", () => {
+contractTest("runtime.hermetic", "fs.read_text keeps empty and clipping annotations outside exact content delimiters", () => {
   const empty = buildAgentToolSuccessResult({
     toolName: "fs.read_text",
     input: { path: "empty.txt" },
@@ -93,7 +94,7 @@ test("fs.read_text keeps empty and clipping annotations outside exact content de
   assert.match(clipped.modelContext.text, /- omittedContentChars: 50/u);
 });
 
-test("model-facing mutation feedback names changed files and stale validation only for observed changes", () => {
+contractTest("runtime.hermetic", "model-facing mutation feedback names changed files and stale validation only for observed changes", () => {
   const changed = buildAgentToolSuccessResult({
     toolName: "exec_command",
     input: { command: "node generator.js" },
@@ -125,7 +126,7 @@ test("model-facing mutation feedback names changed files and stale validation on
   assert.doesNotMatch(unchanged.modelContext.text, /validation predates/u);
 });
 
-test("exec_command model context renders cwd in workspace-relative coordinates", () => {
+contractTest("runtime.hermetic", "exec_command model context renders cwd in workspace-relative coordinates", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "exec_command",
     input: { command: "npm test", cwd: "coding-fixture" },
@@ -146,7 +147,7 @@ test("exec_command model context renders cwd in workspace-relative coordinates",
   assert.match(result.modelContext.text, /- sessionId: proc-1/u);
 });
 
-test("exec_command model context resolves a relative cwd from the workspace root", () => {
+contractTest("runtime.hermetic", "exec_command model context resolves a relative cwd from the workspace root", () => {
   const result = buildAgentToolFailedOutputResult({
     toolName: "exec_command",
     input: { command: "npm test", cwd: "missing" },
@@ -164,7 +165,7 @@ test("exec_command model context resolves a relative cwd from the workspace root
   assert.doesNotMatch(result.modelContext.text, /outside-active-workspace/u);
 });
 
-test("fs.replace_text NO_CHANGE gives exact retry guidance", () => {
+contractTest("runtime.hermetic", "fs.replace_text NO_CHANGE gives exact retry guidance", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "fs.replace_text",
     input: {
@@ -186,7 +187,7 @@ test("fs.replace_text NO_CHANGE gives exact retry guidance", () => {
   assert.match(result.modelContext.text, /Avoid leading indentation/u);
 });
 
-test("runAgentTool returns FAILED envelope for recoverable runtime failures", async () => {
+contractTest("runtime.hermetic", "runAgentTool returns FAILED envelope for recoverable runtime failures", async () => {
   const result = await runAgentTool({
     toolName: "dev.shell.run",
     toolInput: { command: "pytest -q", cwd: "/testbed" },
@@ -214,7 +215,7 @@ test("runAgentTool returns FAILED envelope for recoverable runtime failures", as
   assert.match(result.modelContext.text, /- stderr:\n {2}traceback/u);
 });
 
-test("runAgentTool preserves nested output from plain object failures", async () => {
+contractTest("runtime.hermetic", "runAgentTool preserves nested output from plain object failures", async () => {
   const result = await runAgentTool({
     toolName: "dev.shell.run",
     toolInput: { command: "pytest -q", cwd: "/testbed" },
@@ -247,7 +248,7 @@ test("runAgentTool preserves nested output from plain object failures", async ()
   assert.doesNotMatch(result.modelContext.text, /\[object Object\]/u);
 });
 
-test("buildAgentToolFailedOutputResult preserves raw failed shell output", () => {
+contractTest("runtime.hermetic", "buildAgentToolFailedOutputResult preserves raw failed shell output", () => {
   const failedOutput = {
     status: "FAILED",
     command: "python -m pytest -q tests/test_build_gettext.py::test_catalog_iter_dedupes_normalized_locations -vv",
@@ -280,7 +281,7 @@ test("buildAgentToolFailedOutputResult preserves raw failed shell output", () =>
   assert.doesNotMatch(result.modelContext.text, /\[object Object\]/u);
 });
 
-test("runAgentTool rethrows cancellation and nonrecoverable runtime failures", async () => {
+contractTest("runtime.hermetic", "runAgentTool rethrows cancellation and nonrecoverable runtime failures", async () => {
   await assert.rejects(
     () => runAgentTool({
       toolName: "dev.shell.run",
@@ -306,7 +307,7 @@ test("runAgentTool rethrows cancellation and nonrecoverable runtime failures", a
   );
 });
 
-test("generic fallback envelopes unknown dynamic tool shapes", () => {
+contractTest("runtime.hermetic", "generic fallback envelopes unknown dynamic tool shapes", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "mcp.remote.lookup",
     input: { q: "hello" },

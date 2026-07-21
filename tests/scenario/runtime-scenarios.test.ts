@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,8 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
 
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 class CollectingDispatcher {
   readonly delivered: OutboxEventRecord[] = [];
@@ -43,7 +44,7 @@ class CountingInMemorySessionStore extends InMemorySessionStore {
   }
 }
 
-test("Kestrel executes multi-step run with effect barrier", async () => {
+contractTest("runtime.hermetic", "Kestrel executes multi-step run with effect barrier", async () => {
   const store = new InMemorySessionStore();
   const dispatcher = new CollectingDispatcher();
 
@@ -110,7 +111,7 @@ test("Kestrel executes multi-step run with effect barrier", async () => {
   assert.equal(commit1 > result0, true);
 });
 
-test("Kestrel does not auto-sync session-scoped notes from persisted progress state", async () => {
+contractTest("runtime.hermetic", "Kestrel does not auto-sync session-scoped notes from persisted progress state", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-plan-doc-runtime-"));
   const store = new InMemorySessionStore();
 
@@ -159,7 +160,7 @@ test("Kestrel does not auto-sync session-scoped notes from persisted progress st
   }
 });
 
-test("Kestrel skips plan document sync when workspace disables it", async () => {
+contractTest("runtime.hermetic", "Kestrel skips plan document sync when workspace disables it", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-plan-doc-disabled-"));
   const store = new InMemorySessionStore();
 
@@ -205,7 +206,7 @@ test("Kestrel skips plan document sync when workspace disables it", async () => 
   }
 });
 
-test("Kestrel effect policy WAIT returns waiting status", async () => {
+contractTest("runtime.hermetic", "Kestrel effect policy WAIT returns waiting status", async () => {
   const store = new InMemorySessionStore();
 
   const kestrel = new Kestrel({
@@ -237,7 +238,7 @@ test("Kestrel effect policy WAIT returns waiting status", async () => {
   assert.equal(output.errors.length, 1);
 });
 
-test("Kestrel accepts assistant.respond as a message-effect compatibility alias", async () => {
+contractTest("runtime.hermetic", "Kestrel accepts assistant.respond as a message-effect compatibility alias", async () => {
   const store = new InMemorySessionStore();
 
   const kestrel = new Kestrel({
@@ -271,7 +272,7 @@ test("Kestrel accepts assistant.respond as a message-effect compatibility alias"
   assert.equal(output.errors.length, 0);
 });
 
-test("Kestrel terminal WAITING output includes waitFor matcher", async () => {
+contractTest("runtime.hermetic", "Kestrel terminal WAITING output includes waitFor matcher", async () => {
   const store = new InMemorySessionStore();
 
   const kestrel = new Kestrel({
@@ -305,7 +306,7 @@ test("Kestrel terminal WAITING output includes waitFor matcher", async () => {
   assert.equal(output.waitFor?.metadata?.promptId, "p-1");
 });
 
-test("Kestrel resumes pending effects before new step execution", async () => {
+contractTest("runtime.hermetic", "Kestrel resumes pending effects before new step execution", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("s-3", "finalStep");
@@ -367,7 +368,7 @@ test("Kestrel resumes pending effects before new step execution", async () => {
   assert.equal(resultSaved, true);
 });
 
-test("Kestrel emits run logs to optional listener during execution", async () => {
+contractTest("runtime.hermetic", "Kestrel emits run logs to optional listener during execution", async () => {
   const store = new InMemorySessionStore();
   const seenEventNames: string[] = [];
 
@@ -399,7 +400,7 @@ test("Kestrel emits run logs to optional listener during execution", async () =>
   assert.equal(seenEventNames.includes("run_terminal"), true);
 });
 
-test("step-frame buffering reduces hot-path run-event write calls", async () => {
+contractTest("runtime.hermetic", "step-frame buffering reduces hot-path run-event write calls", async () => {
   const runScenario = async (bufferEnabled: boolean): Promise<CountingInMemorySessionStore> => {
     const previous = process.env.KESTREL_STEP_FRAME_BUFFER;
     process.env.KESTREL_STEP_FRAME_BUFFER = bufferEnabled ? "1" : "0";
@@ -462,7 +463,7 @@ test("step-frame buffering reduces hot-path run-event write calls", async () => 
   );
 });
 
-test("Kestrel failure output preserves last executed step without explicit event stepAgent", async () => {
+contractTest("runtime.hermetic", "Kestrel failure output preserves last executed step without explicit event stepAgent", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("s-final-step-failure", "explodeStep");
 

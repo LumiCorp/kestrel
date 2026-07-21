@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const FIXTURE_DIR = path.join(process.cwd(), "tests", "scenario", "fixtures");
 const FILES = ["max-step-loop.jsonl", "no-action.jsonl", "invalid-finalize.jsonl"];
 
-test("scenario regression fixtures are present and valid jsonl", async () => {
+contractTest("runtime.hermetic", "scenario regression fixtures are present and valid jsonl", async () => {
   for (const fileName of FILES) {
     const fullPath = path.join(FIXTURE_DIR, fileName);
     const raw = await readFile(fullPath, "utf8");

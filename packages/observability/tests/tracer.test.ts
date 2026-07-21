@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import type {
@@ -14,6 +13,8 @@ import type {
 import type { RunnerEventEnvelope } from "@kestrel-agents/sdk/runner";
 import { createTracer, InMemoryTraceProcessor } from "../src/index.js";
 import { OpenTelemetryTraceExporter } from "../src/otel.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const context: KestrelRequestContext = {
   actor: {
@@ -25,7 +26,7 @@ const context: KestrelRequestContext = {
   tenantId: "acme",
 };
 
-test("createTracer records Kestrel-native run traces", async () => {
+contractTest("packages.hermetic", "createTracer records Kestrel-native run traces", async () => {
   const processor = new InMemoryTraceProcessor();
   const tracer = createTracer({ processors: [processor] });
   const agent = tracer.wrapAgent(createFakeAgent());
@@ -49,7 +50,7 @@ test("createTracer records Kestrel-native run traces", async () => {
   assert.equal(trace?.spans[0]?.status, "ok");
 });
 
-test("OpenTelemetryTraceExporter exports real spans with correlation metadata", async () => {
+contractTest("packages.hermetic", "OpenTelemetryTraceExporter exports real spans with correlation metadata", async () => {
   const exporter = new InMemorySpanExporter();
   const tracer = createTracer({ exporters: [new OpenTelemetryTraceExporter(exporter)] });
   const agent = tracer.wrapAgent(createFakeAgent());
@@ -70,7 +71,7 @@ test("OpenTelemetryTraceExporter exports real spans with correlation metadata", 
   assert.equal(spans[0]?.attributes["kestrel.outcome"], "ok");
 });
 
-test("stream traces record terminal outcomes exactly once", async () => {
+contractTest("packages.hermetic", "stream traces record terminal outcomes exactly once", async () => {
   const processor = new InMemoryTraceProcessor();
   const tracer = createTracer({ processors: [processor] });
   const agent = tracer.wrapAgent(createFakeAgent());
@@ -94,7 +95,7 @@ test("stream traces record terminal outcomes exactly once", async () => {
   assert.equal(terminalEvents.length, 1);
 });
 
-test("stream traces capture events even when the caller only awaits result", async () => {
+contractTest("packages.hermetic", "stream traces capture events even when the caller only awaits result", async () => {
   const processor = new InMemoryTraceProcessor();
   const tracer = createTracer({ processors: [processor] });
   const agent = tracer.wrapAgent(createFakeAgent());
@@ -115,7 +116,7 @@ test("stream traces capture events even when the caller only awaits result", asy
   assert.deepEqual(eventNames, ["run.started", "run.completed"]);
 });
 
-test("OpenTelemetryTraceExporter marks cancelled traces with explicit outcome", async () => {
+contractTest("packages.hermetic", "OpenTelemetryTraceExporter marks cancelled traces with explicit outcome", async () => {
   const exporter = new InMemorySpanExporter();
   const tracer = createTracer({ exporters: [new OpenTelemetryTraceExporter(exporter)] });
   const agent = tracer.wrapAgent(createCancelledAgent());
@@ -135,7 +136,7 @@ test("OpenTelemetryTraceExporter marks cancelled traces with explicit outcome", 
   assert.equal(spans[0]?.status.code, 0);
 });
 
-test("stream traces expose provider-reasoning and terminal dispatch latency metrics", async () => {
+contractTest("packages.hermetic", "stream traces expose provider-reasoning and terminal dispatch latency metrics", async () => {
   const processor = new InMemoryTraceProcessor();
   const tracer = createTracer({ processors: [processor] });
   const agent = tracer.wrapAgent(createMetricAgent());

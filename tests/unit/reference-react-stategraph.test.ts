@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -9,10 +8,12 @@ import {
   agentGraphEdges,
 } from "../../agents/reference-react/src/graph.js";
 import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const LIVE_STEP_IDS = Object.values(AGENT_STEP_IDS) as string[];
 
-test("agent graph renders the single-loop runtime path", () => {
+contractTest("runtime.hermetic", "agent graph renders the single-loop runtime path", () => {
   const agentMermaid = renderAgentGraphMermaid();
   const agentDot = renderAgentGraphDot();
   const runtimeMermaid = renderRuntimeStateGraphMermaid();
@@ -27,7 +28,7 @@ test("agent graph renders the single-loop runtime path", () => {
   }
 });
 
-test("agent graph keeps all live steps reachable from the loop", () => {
+contractTest("runtime.hermetic", "agent graph keeps all live steps reachable from the loop", () => {
   const edges = agentGraphEdges();
   assert.deepEqual(
     edges

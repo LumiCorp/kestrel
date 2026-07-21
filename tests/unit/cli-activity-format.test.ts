@@ -1,8 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { AgentRunLogLine } from "../../cli/contracts.js";
 import { formatActivityPresentation } from "../../cli/ink/views/activityFormat.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function line(
   eventName: string,
@@ -18,7 +19,7 @@ function line(
   };
 }
 
-test("formats progress tool updates with human-readable tool status", () => {
+contractTest("runtime.hermetic", "formats progress tool updates with human-readable tool status", () => {
   const formatted = formatActivityPresentation(
     line("progress_tool", {
       tool: { name: "free.weather.current", status: "DONE", latencyMs: 812 },
@@ -28,7 +29,7 @@ test("formats progress tool updates with human-readable tool status", () => {
   assert.equal(formatted.summary, "Tool 'free.weather.current' completed in 812ms.");
 });
 
-test("formats route decision with lane", () => {
+contractTest("runtime.hermetic", "formats route decision with lane", () => {
   const formatted = formatActivityPresentation(
     line("route_decision", {
       executionLane: "tooling",
@@ -38,7 +39,7 @@ test("formats route decision with lane", () => {
   assert.equal(formatted.summary, "Routing to tooling.");
 });
 
-test("formats decision rejection with code and message", () => {
+contractTest("runtime.hermetic", "formats decision rejection with code and message", () => {
   const formatted = formatActivityPresentation(
     line(
       "decision_rejected",
@@ -58,7 +59,7 @@ test("formats decision rejection with code and message", () => {
   );
 });
 
-test("context shortens run id and includes step index", () => {
+contractTest("runtime.hermetic", "context shortens run id and includes step index", () => {
   const formatted = formatActivityPresentation(
     line(
       "step_started",
@@ -75,7 +76,7 @@ test("context shortens run id and includes step index", () => {
   assert.equal(formatted.context, "run 12345678 · step 3");
 });
 
-test("formats queue dequeue events with wait time", () => {
+contractTest("runtime.hermetic", "formats queue dequeue events with wait time", () => {
   const formatted = formatActivityPresentation(
     line("tool_queue_dequeued", {
       tool: "free.weather.current",
@@ -86,7 +87,7 @@ test("formats queue dequeue events with wait time", () => {
   assert.equal(formatted.summary, "Tool 'free.weather.current' left queue after 87ms.");
 });
 
-test("formats progress tool updates with queue metadata", () => {
+contractTest("runtime.hermetic", "formats progress tool updates with queue metadata", () => {
   const formatted = formatActivityPresentation(
     line("progress_tool", {
       tool: { name: "free.weather.current", status: "DONE", latencyMs: 230 },

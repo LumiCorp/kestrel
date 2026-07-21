@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { codeExecuteTool } from "../../tools/code/execute.js";
@@ -9,8 +8,10 @@ import {
   type CodeModeProfileConfig,
   type CodeExecutionServicePort,
 } from "../../src/code/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("code.execute forwards parsed request to execution service", async () => {
+
+contractTest("runtime.hermetic", "code.execute forwards parsed request to execution service", async () => {
   let capturedConfig: CodeModeProfileConfig | undefined;
   let capturedRequest: CodeExecutionRequest | undefined;
 
@@ -67,7 +68,7 @@ test("code.execute forwards parsed request to execution service", async () => {
   assert.deepEqual(capturedRequest?.args, ["--flag"]);
 });
 
-test("code.execute rejects invalid inputs", async () => {
+contractTest("runtime.hermetic", "code.execute rejects invalid inputs", async () => {
   const handler = codeExecuteTool.createHandler({
     codeExecutionService: {
       async execute(_config, _request) {

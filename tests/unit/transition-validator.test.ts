@@ -1,11 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Transition } from "../../src/kestrel/contracts/execution.js";
 
 import { validateTransition } from "../../src/engine/TransitionValidator.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("WAITING requires waitFor", () => {
+
+contractTest("runtime.hermetic", "WAITING requires waitFor", () => {
   assert.throws(
     () => {
       validateTransition({
@@ -23,7 +24,7 @@ test("WAITING requires waitFor", () => {
   );
 });
 
-test("RUNNING requires nextStepAgent", () => {
+contractTest("runtime.hermetic", "RUNNING requires nextStepAgent", () => {
   assert.throws(() => {
     validateTransition({
       status: "RUNNING",
@@ -31,7 +32,7 @@ test("RUNNING requires nextStepAgent", () => {
   });
 });
 
-test("accepts valid transition", () => {
+contractTest("runtime.hermetic", "accepts valid transition", () => {
   assert.doesNotThrow(() => {
     validateTransition({
       status: "RUNNING",
@@ -47,7 +48,7 @@ test("accepts valid transition", () => {
   });
 });
 
-test("rejects invalid region ops payloads", () => {
+contractTest("runtime.hermetic", "rejects invalid region ops payloads", () => {
   assert.throws(() => {
     validateTransition({
       status: "RUNNING",
@@ -59,7 +60,7 @@ test("rejects invalid region ops payloads", () => {
   });
 });
 
-test("rejects malformed transition boundary fields without trim TypeErrors", () => {
+contractTest("runtime.hermetic", "rejects malformed transition boundary fields without trim TypeErrors", () => {
   const cases: Array<{ transition: unknown; contractPath: string }> = [
     {
       transition: {
@@ -134,7 +135,7 @@ test("rejects malformed transition boundary fields without trim TypeErrors", () 
   }
 });
 
-test("accepts valid region ops", () => {
+contractTest("runtime.hermetic", "accepts valid region ops", () => {
   assert.doesNotThrow(() => {
     validateTransition({
       status: "RUNNING",

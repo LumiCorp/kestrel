@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   assertSweVerifiedJobInputContract,
@@ -18,6 +17,8 @@ import {
   sanitizeSweVerifiedInstance,
   shouldIncludeSweVerifiedRunnerSourceFile,
 } from "../../scripts/swe-verified-bench.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const TEST_SOURCE_BASE_COMMIT = "d16bfe05a744909de4b27f5875fe0d4ed41ce607";
 const TEST_PREPARED_BASELINE_COMMIT = "b".repeat(40);
@@ -36,7 +37,7 @@ function isSweBaselineCaptureCall(command: string, args: readonly string[]): boo
   return command === "docker" && args[0] === "run" && modeIndex >= 0 && args[modeIndex + 1] === "capture";
 }
 
-test("swe verified bench defaults to one verified instance at a time", () => {
+contractTest("runtime.hermetic", "swe verified bench defaults to one verified instance at a time", () => {
   const options = parseSweVerifiedBenchArgs(["--instance-id", "astropy__astropy-12907"]);
 
   assert.deepEqual(options, {
@@ -55,7 +56,7 @@ test("swe verified bench defaults to one verified instance at a time", () => {
   });
 });
 
-test("swe verified bench accepts an explicit Python interpreter", () => {
+contractTest("runtime.hermetic", "swe verified bench accepts an explicit Python interpreter", () => {
   const options = parseSweVerifiedBenchArgs([
     "--instance-id",
     "astropy__astropy-12907",
@@ -66,7 +67,7 @@ test("swe verified bench accepts an explicit Python interpreter", () => {
   assert.equal(options.pythonBin, ".venv/bin/python");
 });
 
-test("swe verified bench resolves runtime model overrides without label drift", () => {
+contractTest("runtime.hermetic", "swe verified bench resolves runtime model overrides without label drift", () => {
   assert.deepEqual(resolveSweVerifiedModelSelection({ OPENROUTER_API_KEY: "sk-test" }), {
     modelName: "z-ai/glm-5.2",
     runtimeModelName: "z-ai/glm-5.2",
@@ -88,14 +89,14 @@ test("swe verified bench resolves runtime model overrides without label drift", 
   );
 });
 
-test("swe verified bench formats UTC-safe attempt ids", () => {
+contractTest("runtime.hermetic", "swe verified bench formats UTC-safe attempt ids", () => {
   assert.equal(
     formatSweVerifiedAttemptId(new Date(Date.UTC(2026, 5, 2, 12, 34, 56, 789))),
     "20260602T123456789Z",
   );
 });
 
-test("swe verified bench builds attempt-local paths under a stable instance root", () => {
+contractTest("runtime.hermetic", "swe verified bench builds attempt-local paths under a stable instance root", () => {
   assert.deepEqual(
     buildSweVerifiedAttemptPaths({
       cwd: "/tmp/workspace",
@@ -112,7 +113,7 @@ test("swe verified bench builds attempt-local paths under a stable instance root
   );
 });
 
-test("swe verified bench exposes a package script", () => {
+contractTest("runtime.hermetic", "swe verified bench exposes a package script", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -121,7 +122,7 @@ test("swe verified bench exposes a package script", () => {
   assert.equal(packageJson.scripts?.swe, "bash scripts/swe.sh");
 });
 
-test("swe verified bench exposes a passing regression script", () => {
+contractTest("runtime.hermetic", "swe verified bench exposes a passing regression script", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -132,7 +133,7 @@ test("swe verified bench exposes a passing regression script", () => {
   assert.match(wrapper, /pnpm run swe "\$\{instance_id\}" "\$@"/u);
 });
 
-test("swe verified bench exposes a convenience helper that loads env and defaults the venv", () => {
+contractTest("runtime.hermetic", "swe verified bench exposes a convenience helper that loads env and defaults the venv", () => {
   const wrapper = readFileSync(path.join(process.cwd(), "scripts", "swe.sh"), "utf8");
 
   assert.match(wrapper, /bash scripts\/bench-swe\.sh run --instance-id "\$\{instance_id\}"/u);
@@ -142,7 +143,7 @@ test("swe verified bench exposes a convenience helper that loads env and default
   assert.doesNotMatch(wrapper, /KESTREL_SWE_MODEL_NAME/u);
 });
 
-test("swe verified bench shared wrapper loads env and defaults the venv", () => {
+contractTest("runtime.hermetic", "swe verified bench shared wrapper loads env and defaults the venv", () => {
   const wrapper = readFileSync(path.join(process.cwd(), "scripts", "bench-swe.sh"), "utf8");
 
   assert.match(wrapper, /\. "\$\{REPO_ROOT\}\/\.env"/u);
@@ -160,12 +161,12 @@ test("swe verified bench shared wrapper loads env and defaults the venv", () => 
   assert.match(wrapper, /node --import tsx scripts\/swe-verified-bench\.ts "\$@"/u);
 });
 
-test("swe verified bench requires an instance id for run and evaluate modes", () => {
+contractTest("runtime.hermetic", "swe verified bench requires an instance id for run and evaluate modes", () => {
   assert.throws(() => parseSweVerifiedBenchArgs([]), /--instance-id is required/u);
   assert.throws(() => parseSweVerifiedBenchArgs(["evaluate"]), /--instance-id is required/u);
 });
 
-test("swe verified bench strips oracle fields before building the Kestrel prompt", () => {
+contractTest("runtime.hermetic", "swe verified bench strips oracle fields before building the Kestrel prompt", () => {
   const sanitized = sanitizeSweVerifiedInstance({
     instance_id: "astropy__astropy-12907",
     repo: "astropy/astropy",
@@ -259,7 +260,7 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
   assert.doesNotMatch(serialized, /FAIL_TO_PASS/u);
 });
 
-test("swe verified bench configures explicit runtime model for reference-react agent loop", () => {
+contractTest("runtime.hermetic", "swe verified bench configures explicit runtime model for reference-react agent loop", () => {
   const jobInput = buildSweVerifiedJobInput({
     instance: {
       instance_id: "astropy__astropy-12907",
@@ -284,7 +285,7 @@ test("swe verified bench configures explicit runtime model for reference-react a
   assertSweVerifiedJobInputContract(jobInput);
 });
 
-test("swe verified issue text removes HTML comments system details and long pytest traces", () => {
+contractTest("runtime.hermetic", "swe verified issue text removes HTML comments system details and long pytest traces", () => {
   const trace = [
     "```",
     "Traceback (most recent call last):",
@@ -320,7 +321,7 @@ test("swe verified issue text removes HTML comments system details and long pyte
   assert.doesNotMatch(sanitized, /_pytest/u);
 });
 
-test("swe verified issue text keeps repro code and useful hints", () => {
+contractTest("runtime.hermetic", "swe verified issue text keeps repro code and useful hints", () => {
   const sanitized = sanitizeSweVerifiedIssueText(
     [
       "### Reproducer",
@@ -339,7 +340,7 @@ test("swe verified issue text keeps repro code and useful hints", () => {
   assert.match(sanitized, /Hint: check the parser path/u);
 });
 
-test("swe verified bench rejects non-build turn mode", () => {
+contractTest("runtime.hermetic", "swe verified bench rejects non-build turn mode", () => {
   const jobInput = buildSweVerifiedJobInput({
     instance: {
       instance_id: "astropy__astropy-12907",
@@ -363,7 +364,7 @@ test("swe verified bench rejects non-build turn mode", () => {
   );
 });
 
-test("swe verified bench rejects shell allowlists without enabled dev shell", () => {
+contractTest("runtime.hermetic", "swe verified bench rejects shell allowlists without enabled dev shell", () => {
   const jobInput = buildSweVerifiedJobInput({
     instance: {
       instance_id: "astropy__astropy-12907",
@@ -389,7 +390,7 @@ test("swe verified bench rejects shell allowlists without enabled dev shell", ()
   );
 });
 
-test("swe verified bench rejects model labels that do not configure the agent loop", () => {
+contractTest("runtime.hermetic", "swe verified bench rejects model labels that do not configure the agent loop", () => {
   const jobInput = buildSweVerifiedJobInput({
     instance: {
       instance_id: "astropy__astropy-12907",
@@ -430,7 +431,7 @@ test("swe verified bench rejects model labels that do not configure the agent lo
   );
 });
 
-test("swe verified bench builds official single-instance evaluation args", () => {
+contractTest("runtime.hermetic", "swe verified bench builds official single-instance evaluation args", () => {
   const args = buildSweVerifiedEvaluationArgs({
     dataset: "princeton-nlp/SWE-bench_Verified",
     split: "test",
@@ -460,7 +461,7 @@ test("swe verified bench builds official single-instance evaluation args", () =>
   ]);
 });
 
-test("swe verified bench dry-runs one local instance without exposing oracle fields", async () => {
+contractTest("runtime.hermetic", "swe verified bench dry-runs one local instance without exposing oracle fields", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -547,7 +548,7 @@ test("swe verified bench dry-runs one local instance without exposing oracle fie
   }
 });
 
-test("swe verified bench fails before cloning when deprecated SWE model env is present", async () => {
+contractTest("runtime.hermetic", "swe verified bench fails before cloning when deprecated SWE model env is present", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-model-conflict-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -592,7 +593,7 @@ test("swe verified bench fails before cloning when deprecated SWE model env is p
   }
 });
 
-test("swe verified bench dry-run can load an instance through the configured Python environment", async () => {
+contractTest("runtime.hermetic", "swe verified bench dry-run can load an instance through the configured Python environment", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-dry-dataset-"));
   try {
     const code = await runSweVerifiedBench(
@@ -625,7 +626,7 @@ test("swe verified bench dry-run can load an instance through the configured Pyt
   }
 });
 
-test("swe verified bench preflight uses the configured Python environment", async () => {
+contractTest("runtime.hermetic", "swe verified bench preflight uses the configured Python environment", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const code = await runSweVerifiedBench(["preflight"], {
     spawn: ((command: string, args: readonly string[]) => {
@@ -648,7 +649,7 @@ test("swe verified bench preflight uses the configured Python environment", asyn
   assert.deepEqual(calls[4]?.args, ["-c", "import docker; docker.from_env().ping()"]);
 });
 
-test("swe verified bench creates attempt-local artifacts and writes one prediction", async () => {
+contractTest("runtime.hermetic", "swe verified bench creates attempt-local artifacts and writes one prediction", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-run-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -850,7 +851,7 @@ test("swe verified bench creates attempt-local artifacts and writes one predicti
   }
 });
 
-test("swe verified bench creates a fresh attempt directory for each run by default", async () => {
+contractTest("runtime.hermetic", "swe verified bench creates a fresh attempt directory for each run by default", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-rerun-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -922,7 +923,7 @@ test("swe verified bench creates a fresh attempt directory for each run by defau
   }
 });
 
-test("swe verified bench fails before runner build when prepared instance image is missing", async () => {
+contractTest("runtime.hermetic", "swe verified bench fails before runner build when prepared instance image is missing", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-missing-image-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -977,7 +978,7 @@ test("swe verified bench fails before runner build when prepared instance image 
   }
 });
 
-test("swe verified bench source snapshot skips deleted tracked files", async () => {
+contractTest("runtime.hermetic", "swe verified bench source snapshot skips deleted tracked files", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-deleted-source-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1048,7 +1049,7 @@ test("swe verified bench source snapshot skips deleted tracked files", async () 
   }
 });
 
-test("swe verified bench source snapshot excludes prior run artifacts", () => {
+contractTest("runtime.hermetic", "swe verified bench source snapshot excludes prior run artifacts", () => {
   assert.equal(shouldIncludeSweVerifiedRunnerSourceFile("src/runtime/modelTranscript.ts", []), true);
   assert.equal(shouldIncludeSweVerifiedRunnerSourceFile("kestrel.20260615.json", []), false);
   assert.equal(shouldIncludeSweVerifiedRunnerSourceFile("openai__gpt-5.4.20260618T204015608Z.json", []), false);
@@ -1062,7 +1063,7 @@ test("swe verified bench source snapshot excludes prior run artifacts", () => {
   assert.equal(shouldIncludeSweVerifiedRunnerSourceFile("src/kestrel.runtime.json", []), true);
 });
 
-test("swe verified bench fails fast on explicit run-id collisions", async () => {
+contractTest("runtime.hermetic", "swe verified bench fails fast on explicit run-id collisions", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-collision-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1115,7 +1116,7 @@ test("swe verified bench fails fast on explicit run-id collisions", async () => 
   }
 });
 
-test("swe verified bench rejects empty patches before evaluation", async () => {
+contractTest("runtime.hermetic", "swe verified bench rejects empty patches before evaluation", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-empty-patch-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1177,7 +1178,7 @@ test("swe verified bench rejects empty patches before evaluation", async () => {
   }
 });
 
-test("swe verified bench reports patch harvesting failures without evaluation", async () => {
+contractTest("runtime.hermetic", "swe verified bench reports patch harvesting failures without evaluation", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-harvest-failure-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1245,7 +1246,7 @@ test("swe verified bench reports patch harvesting failures without evaluation", 
   }
 });
 
-test("swe verified bench evaluates non-empty patches from non-terminal Kestrel jobs", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluates non-empty patches from non-terminal Kestrel jobs", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-non-terminal-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1343,7 +1344,7 @@ test("swe verified bench evaluates non-empty patches from non-terminal Kestrel j
   }
 });
 
-test("swe verified bench evaluates a validated patch when Kestrel exits nonzero", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluates a validated patch when Kestrel exits nonzero", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-container-fail-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1422,7 +1423,7 @@ test("swe verified bench evaluates a validated patch when Kestrel exits nonzero"
   }
 });
 
-test("swe verified bench reports missing local instance rows without crashing", async () => {
+contractTest("runtime.hermetic", "swe verified bench reports missing local instance rows without crashing", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-missing-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -1447,7 +1448,7 @@ test("swe verified bench reports missing local instance rows without crashing", 
   }
 });
 
-test("swe verified bench evaluate mode requires predictions path", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluate mode requires predictions path", async () => {
   let stderr = "";
   const code = await runSweVerifiedBench(["evaluate", "--instance-id", "astropy__astropy-12907"], {
     spawn: (() => failedSpawn("should not spawn")) as never,
@@ -1461,7 +1462,7 @@ test("swe verified bench evaluate mode requires predictions path", async () => {
   assert.match(stderr, /--predictions-path is required/u);
 });
 
-test("swe verified bench evaluate mode rejects missing files", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluate mode rejects missing files", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-eval-missing-"));
   try {
     let stderr = "";
@@ -1489,7 +1490,7 @@ test("swe verified bench evaluate mode rejects missing files", async () => {
   }
 });
 
-test("swe verified bench evaluate mode rejects empty patches", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluate mode rejects empty patches", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-eval-empty-"));
   try {
     const predictionsPath = path.join(tmp, "predictions.jsonl");
@@ -1528,7 +1529,7 @@ test("swe verified bench evaluate mode rejects empty patches", async () => {
   }
 });
 
-test("swe verified bench evaluate mode writes resolved evaluator report", async () => {
+contractTest("runtime.hermetic", "swe verified bench evaluate mode writes resolved evaluator report", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-eval-report-"));
   try {
     const predictionsPath = path.join(tmp, "predictions.jsonl");
@@ -1585,7 +1586,7 @@ test("swe verified bench evaluate mode writes resolved evaluator report", async 
   }
 });
 
-test("swe verified bench lists attempts and marks the latest one", async () => {
+contractTest("runtime.hermetic", "swe verified bench lists attempts and marks the latest one", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-list-"));
   try {
     const instanceRoot = path.join(

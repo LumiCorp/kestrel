@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   FlyMachinesClient,
   flyEnvironmentAppName,
   flyEnvironmentNetworkName,
 } from "./fly-machines";
+import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
-test("Fly resource names are deterministic and provider-safe", () => {
+
+contractTest("web.hermetic", "Fly resource names are deterministic and provider-safe", () => {
   const id = "123e4567-e89b-12d3-a456-426614174000";
   assert.equal(flyEnvironmentAppName(id), "kestrel-env-123e4567e89b12d3a456");
   assert.equal(
@@ -15,7 +16,7 @@ test("Fly resource names are deterministic and provider-safe", () => {
   );
 });
 
-test("Fly waits split long deadlines into accepted request windows", async () => {
+contractTest("web.hermetic", "Fly waits split long deadlines into accepted request windows", async () => {
   const requests: string[] = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -37,7 +38,7 @@ test("Fly waits split long deadlines into accepted request windows", async () =>
   assert.match(requests[0] ?? "", /[?&]timeout=60(?:&|$)/u);
 });
 
-test("Fly stopped waits bind the current Machine instance", async () => {
+contractTest("web.hermetic", "Fly stopped waits bind the current Machine instance", async () => {
   const requests: string[] = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -66,7 +67,7 @@ test("Fly stopped waits bind the current Machine instance", async () => {
   assert.match(requests[1] ?? "", /[?&]instance_id=instance-1(?:&|$)/u);
 });
 
-test("Fly start is idempotent when another request already started the Machine", async () => {
+contractTest("web.hermetic", "Fly start is idempotent when another request already started the Machine", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -92,7 +93,7 @@ test("Fly start is idempotent when another request already started the Machine",
   );
 });
 
-test("Fly start waits out an in-progress stop before issuing the start", async () => {
+contractTest("web.hermetic", "Fly start waits out an in-progress stop before issuing the start", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -124,7 +125,7 @@ test("Fly start waits out an in-progress stop before issuing the start", async (
   assert.match(requests[3]?.url ?? "", /[?&]state=stopped(?:&|$)/u);
 });
 
-test("Fly start retries a transient stopped-state rejection once per interval", async () => {
+contractTest("web.hermetic", "Fly start retries a transient stopped-state rejection once per interval", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const sleeps: number[] = [];
   const client = new FlyMachinesClient({
@@ -163,7 +164,7 @@ test("Fly start retries a transient stopped-state rejection once per interval", 
   assert.deepEqual(sleeps, [1000]);
 });
 
-test("Fly start fails closed after ten stopped-state retries", async () => {
+contractTest("web.hermetic", "Fly start fails closed after ten stopped-state retries", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const sleeps: number[] = [];
   const client = new FlyMachinesClient({
@@ -209,7 +210,7 @@ test("Fly start fails closed after ten stopped-state retries", async () => {
   );
 });
 
-test("Fly start fails closed when the authoritative state cannot be retried", async () => {
+contractTest("web.hermetic", "Fly start fails closed when the authoritative state cannot be retried", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
@@ -235,7 +236,7 @@ test("Fly start fails closed when the authoritative state cannot be retried", as
   );
 });
 
-test("Fly readiness waits for the exact named Machine check to pass", async () => {
+contractTest("web.hermetic", "Fly readiness waits for the exact named Machine check to pass", async () => {
   const responses = [
     {
       id: "machine-1",
@@ -270,7 +271,7 @@ test("Fly readiness waits for the exact named Machine check to pass", async () =
   assert.equal(responses.length, 0);
 });
 
-test("Fly readiness fails closed when the named Machine check never passes", async () => {
+contractTest("web.hermetic", "Fly readiness fails closed when the named Machine check never passes", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
@@ -295,7 +296,7 @@ test("Fly readiness fails closed when the named Machine check never passes", asy
   );
 });
 
-test("Environment App creation always supplies the custom network", async () => {
+contractTest("web.hermetic", "Environment App creation always supplies the custom network", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -320,7 +321,7 @@ test("Environment App creation always supplies the custom network", async () => 
   });
 });
 
-test("Environment App ownership resolves configured organization aliases", async () => {
+contractTest("web.hermetic", "Environment App ownership resolves configured organization aliases", async () => {
   const requests: string[] = [];
   const app = {
     id: "fly-app-id",
@@ -347,7 +348,7 @@ test("Environment App ownership resolves configured organization aliases", async
   assert.match(requests[1] ?? "", /[?&]org_slug=personal(?:&|$)/u);
 });
 
-test("Workspace provisioning requests encrypted storage and a private runtime Machine", async () => {
+contractTest("web.hermetic", "Workspace provisioning requests encrypted storage and a private runtime Machine", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -443,7 +444,7 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   assert.equal(machineBody.config.services, undefined);
 });
 
-test("Environment gateway owns public ingress while Workspace Machines remain private", async () => {
+contractTest("web.hermetic", "Environment gateway owns public ingress while Workspace Machines remain private", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -506,7 +507,7 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
   );
 });
 
-test("Environment gateway rejects an existing Machine with stale immutable configuration", async () => {
+contractTest("web.hermetic", "Environment gateway rejects an existing Machine with stale immutable configuration", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
@@ -550,7 +551,7 @@ test("Environment gateway rejects an existing Machine with stale immutable confi
   );
 });
 
-test("Fly rejection discards provider response bodies", async () => {
+contractTest("web.hermetic", "Fly rejection discards provider response bodies", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
@@ -570,7 +571,7 @@ test("Fly rejection discards provider response bodies", async () => {
   );
 });
 
-test("Fly on-demand snapshots use the Workspace volume endpoint", async () => {
+contractTest("web.hermetic", "Fly on-demand snapshots use the Workspace volume endpoint", async () => {
   let requestedUrl = "";
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -595,7 +596,7 @@ test("Fly on-demand snapshots use the Workspace volume endpoint", async () => {
   assert.match(requestedUrl, /\/apps\/app-1\/volumes\/vol-1\/snapshots$/u);
 });
 
-test("Fly image updates are idempotent across tag aliases of the same digest", async () => {
+contractTest("web.hermetic", "Fly image updates are idempotent across tag aliases of the same digest", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const digest = `sha256:${"a".repeat(64)}`;
   const client = new FlyMachinesClient({
@@ -625,7 +626,7 @@ test("Fly image updates are idempotent across tag aliases of the same digest", a
   );
 });
 
-test("Fly deletion operations are idempotent on missing resources", async () => {
+contractTest("web.hermetic", "Fly deletion operations are idempotent on missing resources", async () => {
   const requests: Array<{ url: string; method: string | undefined }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -651,7 +652,7 @@ test("Fly deletion operations are idempotent on missing resources", async () => 
   );
 });
 
-test("replacement resources are idempotently namespaced away from the active Workspace", async () => {
+contractTest("web.hermetic", "replacement resources are idempotently namespaced away from the active Workspace", async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -715,7 +716,7 @@ test("replacement resources are idempotently namespaced away from the active Wor
   assert.equal(machineBody.config.mounts[0].volume, "replacement-volume-id");
 });
 
-test("Fly inventory preserves exact Workspace ownership metadata", async () => {
+contractTest("web.hermetic", "Fly inventory preserves exact Workspace ownership metadata", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
@@ -775,7 +776,7 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
   );
 });
 
-test("Fly Machine lookup preserves exact Workspace mount evidence", async () => {
+contractTest("web.hermetic", "Fly Machine lookup preserves exact Workspace mount evidence", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   describeDesktopRunnerActivity,
@@ -7,8 +6,10 @@ import {
   projectDesktopRunStream,
 } from "../renderer/src/runStream.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("Desktop projects assistant progress and tool activity into the conversation stream", () => {
+
+contractTest("desktop.hermetic", "Desktop projects assistant progress and tool activity into the conversation stream", () => {
   const progress = event("run.agent_progress", {
     update: baseUpdate({ message: "I am starting the development server.", stepIndex: 1, stepAgent: "agent.loop" }),
   });
@@ -26,7 +27,7 @@ test("Desktop projects assistant progress and tool activity into the conversatio
   ]);
 });
 
-test("Desktop accumulates live reasoning deltas in one visible stream item", () => {
+contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in one visible stream item", () => {
   const started = event("run.model.reasoning.started", {
     update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
   });
@@ -43,7 +44,7 @@ test("Desktop accumulates live reasoning deltas in one visible stream item", () 
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 
-test("Desktop starts a new reasoning block after assistant and tool activity", () => {
+contractTest("desktop.hermetic", "Desktop starts a new reasoning block after assistant and tool activity", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
@@ -71,7 +72,7 @@ test("Desktop starts a new reasoning block after assistant and tool activity", (
   ]);
 });
 
-test("Desktop completes an earlier reasoning block without moving it past later activity", () => {
+contractTest("desktop.hermetic", "Desktop completes an earlier reasoning block without moving it past later activity", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
@@ -94,7 +95,7 @@ test("Desktop completes an earlier reasoning block without moving it past later 
   ]);
 });
 
-test("Desktop preserves a live item's first-seen timestamp when later phases update it", () => {
+contractTest("desktop.hermetic", "Desktop preserves a live item's first-seen timestamp when later phases update it", () => {
   const started = event("run.tool.started", {
     update: { ...baseUpdate({ toolCallId: "tool-1", toolName: "exec_command", phase: "started" }), ts: "2026-07-20T12:00:01.000Z" },
   });
@@ -107,7 +108,7 @@ test("Desktop preserves a live item's first-seen timestamp when later phases upd
   assert.equal(projected[0]?.status, "completed");
 });
 
-test("Desktop starts each accepted run with an empty transient stream", () => {
+contractTest("desktop.hermetic", "Desktop starts each accepted run with an empty transient stream", () => {
   const current = projectDesktopRunStream([], event("run.agent_progress", {
     update: baseUpdate({ message: "Old progress", stepIndex: 1, stepAgent: "agent.loop" }),
   }));
@@ -117,7 +118,7 @@ test("Desktop starts each accepted run with an empty transient stream", () => {
   })), []);
 });
 
-test("Desktop keeps runtime progress updates out of the conversation stream", () => {
+contractTest("desktop.hermetic", "Desktop keeps runtime progress updates out of the conversation stream", () => {
   const projected = projectDesktopRunStream([], event("run.progress", {
     update: baseUpdate({
       kind: "stage",
@@ -131,7 +132,7 @@ test("Desktop keeps runtime progress updates out of the conversation stream", ()
   assert.deepEqual(projected, []);
 });
 
-test("Desktop surfaces the current runtime progress message in the live activity line", () => {
+contractTest("desktop.hermetic", "Desktop surfaces the current runtime progress message in the live activity line", () => {
   const progress = event("run.progress", {
     update: baseUpdate({
       kind: "stage",
@@ -145,7 +146,7 @@ test("Desktop surfaces the current runtime progress message in the live activity
   assert.equal(describeDesktopRunnerActivity(progress), "Calling decision model…");
 });
 
-test("Desktop interleaves live run items before the terminal assistant response", () => {
+contractTest("desktop.hermetic", "Desktop interleaves live run items before the terminal assistant response", () => {
   const transcript = [
     { role: "user" as const, text: "Open the report.", timestamp: "2026-07-20T12:00:00.000Z" },
     { role: "assistant" as const, text: "The report is open.", timestamp: "2026-07-20T12:00:03.000Z" },
@@ -178,7 +179,7 @@ test("Desktop interleaves live run items before the terminal assistant response"
   ]);
 });
 
-test("Desktop resolves equal event timestamps as user, live run, then terminal response", () => {
+contractTest("desktop.hermetic", "Desktop resolves equal event timestamps as user, live run, then terminal response", () => {
   const timestamp = "2026-07-20T12:00:00.000Z";
   const timeline = projectDesktopConversationTimeline(
     [
@@ -202,7 +203,7 @@ test("Desktop resolves equal event timestamps as user, live run, then terminal r
   ]);
 });
 
-test("Desktop preserves durable transcript order when transcript timestamps are equal", () => {
+contractTest("desktop.hermetic", "Desktop preserves durable transcript order when transcript timestamps are equal", () => {
   const timestamp = "2026-07-20T12:00:00.000Z";
   const timeline = projectDesktopConversationTimeline(
     [

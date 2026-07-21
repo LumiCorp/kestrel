@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,8 +5,10 @@ import {
   shouldThemedTextInputIgnoreKey,
 } from "../../cli/ink/components/ThemedTextInput.js";
 import { buildVisibleEditableTextInputRows } from "../../cli/ink/components/textInputLayout.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveThemedTextInputEdit advances cursor against the inserted value", () => {
+
+contractTest("runtime.hermetic", "resolveThemedTextInputEdit advances cursor against the inserted value", () => {
   const first = resolveThemedTextInputEdit({
     value: "",
     cursorOffset: 0,
@@ -35,7 +36,7 @@ test("resolveThemedTextInputEdit advances cursor against the inserted value", ()
   });
 });
 
-test("resolveThemedTextInputEdit clamps movement to the edited value bounds", () => {
+contractTest("runtime.hermetic", "resolveThemedTextInputEdit clamps movement to the edited value bounds", () => {
   assert.deepEqual(
     resolveThemedTextInputEdit({
       value: "a",
@@ -67,7 +68,7 @@ test("resolveThemedTextInputEdit clamps movement to the edited value bounds", ()
   );
 });
 
-test("text input ignores app-level controls so global chords do not pollute drafts", () => {
+contractTest("runtime.hermetic", "text input ignores app-level controls so global chords do not pollute drafts", () => {
   assert.equal(shouldThemedTextInputIgnoreKey({ ctrl: true }), true);
   assert.equal(shouldThemedTextInputIgnoreKey({ meta: true }), true);
   assert.equal(shouldThemedTextInputIgnoreKey({ escape: true }), true);
@@ -84,7 +85,7 @@ test("text input ignores app-level controls so global chords do not pollute draf
   assert.equal(shouldThemedTextInputIgnoreKey({ delete: true }), false);
 });
 
-test("wrapped text input viewport follows the next row at hard-wrap cursor boundaries", () => {
+contractTest("runtime.hermetic", "wrapped text input viewport follows the next row at hard-wrap cursor boundaries", () => {
   assert.deepEqual(
     buildVisibleEditableTextInputRows({
       text: "abcdefghij",

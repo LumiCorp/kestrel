@@ -724,7 +724,6 @@ async function handleStreamingCommand(
       // Best-effort cancellation on client disconnect.
     });
   };
-  request.once("close", onClose);
   request.once("aborted", onClose);
   response.once("close", onClose);
 
@@ -740,7 +739,6 @@ async function handleStreamingCommand(
     response.end();
     unsubscribeCommand();
   } finally {
-    request.off("close", onClose);
     request.off("aborted", onClose);
     response.off("close", onClose);
   }

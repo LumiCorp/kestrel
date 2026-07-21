@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MessageContent } from "../renderer/src/MessageContent.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("assistant messages render Markdown through Streamdown", () => {
+
+contractTest("desktop.hermetic", "assistant messages render Markdown through Streamdown", () => {
   const html = renderToStaticMarkup(React.createElement(MessageContent, {
     messageRole: "assistant",
     text: "**Important**\n\n- first\n- second\n\n`inline code`",
@@ -18,7 +19,7 @@ test("assistant messages render Markdown through Streamdown", () => {
   assert.match(html, /data-streamdown="inline-code"/u);
 });
 
-test("user messages remain literal text", () => {
+contractTest("desktop.hermetic", "user messages remain literal text", () => {
   const html = renderToStaticMarkup(React.createElement(MessageContent, {
     messageRole: "user",
     text: "**literal user text**",

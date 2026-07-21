@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { buildToolsOverview } from "./overview";
 import type { ResolvedToolProvider } from "./types";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function makeProvider(
   overrides: Partial<ResolvedToolProvider>
@@ -32,7 +33,7 @@ function makeProvider(
   };
 }
 
-test("tool overview builds provider and capability scan summaries", () => {
+contractTest("web.hermetic", "tool overview builds provider and capability scan summaries", () => {
   const overview = buildToolsOverview([
     makeProvider({
       key: "built_in.weather",
@@ -143,7 +144,7 @@ test("tool overview builds provider and capability scan summaries", () => {
   assert.equal(overview.capabilityRows[1]?.status, "setup_required");
 });
 
-test("connection-only providers can still show as available", () => {
+contractTest("web.hermetic", "connection-only providers can still show as available", () => {
   const overview = buildToolsOverview([
     makeProvider({
       key: "discord",

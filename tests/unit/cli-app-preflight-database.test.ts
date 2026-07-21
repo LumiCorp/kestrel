@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { DEFAULT_KESTREL_DB_PORT } from "../../src/config/localDev.js";
@@ -8,8 +7,10 @@ import {
   resolveDockerCommandForSelfHealForTests,
   shouldLaunchDockerDesktopForSelfHealForTests,
 } from "../../cli/app/App.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveDatabasePreflightTargetForTests parses local kestrel database URL", () => {
+
+contractTest("runtime.hermetic", "resolveDatabasePreflightTargetForTests parses local kestrel database URL", () => {
   const target = resolveDatabasePreflightTargetForTests(
     `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
   );
@@ -22,7 +23,7 @@ test("resolveDatabasePreflightTargetForTests parses local kestrel database URL",
   });
 });
 
-test("resolveDatabasePreflightTargetForTests rejects non-postgres protocols", () => {
+contractTest("runtime.hermetic", "resolveDatabasePreflightTargetForTests rejects non-postgres protocols", () => {
   assert.throws(
     () => {
       resolveDatabasePreflightTargetForTests("mysql://root@localhost:3306/demo");
@@ -31,7 +32,7 @@ test("resolveDatabasePreflightTargetForTests rejects non-postgres protocols", ()
   );
 });
 
-test("resolveDatabaseSelfHealPolicyForTests skips self-heal by default", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests skips self-heal by default", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
     failureCode: "ECONNREFUSED",
@@ -43,7 +44,7 @@ test("resolveDatabaseSelfHealPolicyForTests skips self-heal by default", () => {
   });
 });
 
-test("resolveDatabaseSelfHealPolicyForTests can default-enable local self-heal", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests can default-enable local self-heal", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
     failureCode: "ECONNREFUSED",
@@ -56,7 +57,7 @@ test("resolveDatabaseSelfHealPolicyForTests can default-enable local self-heal",
   });
 });
 
-test("resolveDatabaseSelfHealPolicyForTests enables local self-heal when explicitly opted in", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests enables local self-heal when explicitly opted in", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
     failureCode: "ECONNREFUSED",
@@ -69,7 +70,7 @@ test("resolveDatabaseSelfHealPolicyForTests enables local self-heal when explici
   });
 });
 
-test("resolveDatabaseSelfHealPolicyForTests respects explicit self-heal disable flag", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests respects explicit self-heal disable flag", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
     failureCode: "ECONNREFUSED",
@@ -82,7 +83,7 @@ test("resolveDatabaseSelfHealPolicyForTests respects explicit self-heal disable 
   });
 });
 
-test("resolveDatabaseSelfHealPolicyForTests skips non-local targets", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests skips non-local targets", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: "postgres://kestrel:kestrel@db.internal:5432/kestrel",
     failureCode: "ECONNREFUSED",
@@ -95,7 +96,7 @@ test("resolveDatabaseSelfHealPolicyForTests skips non-local targets", () => {
   });
 });
 
-test("resolveDatabaseSelfHealPolicyForTests only retries supported failure codes", () => {
+contractTest("runtime.hermetic", "resolveDatabaseSelfHealPolicyForTests only retries supported failure codes", () => {
   const policy = resolveDatabaseSelfHealPolicyForTests({
     databaseUrl: `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
     failureCode: "ETIMEDOUT",
@@ -108,7 +109,7 @@ test("resolveDatabaseSelfHealPolicyForTests only retries supported failure codes
   });
 });
 
-test("resolveDockerCommandForSelfHealForTests falls back to Docker Desktop on macOS", () => {
+contractTest("runtime.hermetic", "resolveDockerCommandForSelfHealForTests falls back to Docker Desktop on macOS", () => {
   const docker = resolveDockerCommandForSelfHealForTests({
     env: {},
     platform: "darwin",
@@ -117,7 +118,7 @@ test("resolveDockerCommandForSelfHealForTests falls back to Docker Desktop on ma
   assert.equal(docker, "/Applications/Docker.app/Contents/Resources/bin/docker");
 });
 
-test("resolveDockerCommandForSelfHealForTests respects KCHAT_DOCKER_BIN override", () => {
+contractTest("runtime.hermetic", "resolveDockerCommandForSelfHealForTests respects KCHAT_DOCKER_BIN override", () => {
   const docker = resolveDockerCommandForSelfHealForTests({
     env: { KCHAT_DOCKER_BIN: " /custom/docker " },
     platform: "darwin",
@@ -126,7 +127,7 @@ test("resolveDockerCommandForSelfHealForTests respects KCHAT_DOCKER_BIN override
   assert.equal(docker, "/custom/docker");
 });
 
-test("shouldLaunchDockerDesktopForSelfHealForTests only launches Docker.app on macOS", () => {
+contractTest("runtime.hermetic", "shouldLaunchDockerDesktopForSelfHealForTests only launches Docker.app on macOS", () => {
   const shouldLaunch = shouldLaunchDockerDesktopForSelfHealForTests({
     command: "/Applications/Docker.app/Contents/Resources/bin/docker",
     platform: "darwin",
@@ -137,7 +138,7 @@ test("shouldLaunchDockerDesktopForSelfHealForTests only launches Docker.app on m
   assert.equal(shouldLaunch, true);
 });
 
-test("shouldLaunchDockerDesktopForSelfHealForTests skips custom docker commands", () => {
+contractTest("runtime.hermetic", "shouldLaunchDockerDesktopForSelfHealForTests skips custom docker commands", () => {
   const shouldLaunch = shouldLaunchDockerDesktopForSelfHealForTests({
     command: "/custom/docker",
     platform: "darwin",

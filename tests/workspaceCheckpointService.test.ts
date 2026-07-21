@@ -3,16 +3,17 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import { promisify } from "node:util";
 
 import { InMemorySessionStore } from "../src/store/InMemorySessionStore.js";
 import { WorkspaceCheckpointService } from "../src/workspaceCheckpoints/service.js";
 import { readWorkspaceCheckpointState } from "../src/workspaceCheckpoints/state.js";
+import { contractTest } from "./helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 
-test("WorkspaceCheckpointService captures diffs and restores workspace state with recovery anchors", async (t) => {
+contractTest("runtime.process", "WorkspaceCheckpointService captures diffs and restores workspace state with recovery anchors", async (t) => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-checkpoints-"));
   t.after(async () => {
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -114,7 +115,7 @@ test("WorkspaceCheckpointService captures diffs and restores workspace state wit
   assert.equal(checkpointState.restores[0]?.recoveryCheckpointId, restore.recoveryCheckpointId);
 });
 
-test("WorkspaceCheckpointService cleanup retains explicit labels and latest lineage while pruning unprotected checkpoints", async (t) => {
+contractTest("runtime.process", "WorkspaceCheckpointService cleanup retains explicit labels and latest lineage while pruning unprotected checkpoints", async (t) => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-checkpoints-cleanup-"));
   t.after(async () => {
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -185,7 +186,7 @@ test("WorkspaceCheckpointService cleanup retains explicit labels and latest line
   await assert.rejects(execFileAsync("git", ["rev-parse", "--verify", `${unnamedOlder.checkpoint.gitRef}^{commit}`], { cwd: workspaceRoot }));
 });
 
-test("WorkspaceCheckpointService rejects invalid cleanup policy overrides", async () => {
+contractTest("runtime.process", "WorkspaceCheckpointService rejects invalid cleanup policy overrides", async () => {
   const sessionStore = new InMemorySessionStore();
   const service = new WorkspaceCheckpointService(sessionStore);
   await sessionStore.ensureSession("session-invalid-cleanup");
@@ -204,7 +205,7 @@ test("WorkspaceCheckpointService rejects invalid cleanup policy overrides", asyn
   );
 });
 
-test("WorkspaceCheckpointService fails closed without a usable Git repository", async (t) => {
+contractTest("runtime.process", "WorkspaceCheckpointService fails closed without a usable Git repository", async (t) => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-checkpoints-no-git-"));
   t.after(async () => {
     await rm(workspaceRoot, { recursive: true, force: true });

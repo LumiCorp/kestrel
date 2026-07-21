@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { TuiProfile } from "../../../cli/contracts.js";
@@ -197,11 +197,8 @@ export function createSdkE2eRuntimeFactory(
   });
 }
 
-export function packPackage(packageDir: string, packDir: string): string {
-  execFileSync("pnpm", ["run", "build"], {
-    cwd: packageDir,
-    stdio: "pipe",
-  });
+function packBuiltPackage(packageDir: string, packDir: string): string {
+  assert.ok(existsSync(path.join(packageDir, "dist")), `Build ${packageDir} before running process integration.`);
   const before = new Set(readdirSync(packDir));
   execFileSync("pnpm", ["pack", "--pack-destination", packDir], {
     cwd: packageDir,
@@ -211,6 +208,53 @@ export function packPackage(packageDir: string, packDir: string): string {
     .find((entry) => entry.endsWith(".tgz") && before.has(entry) === false);
   assert.ok(tarball, `Missing tarball for ${packageDir}.`);
   return path.join(packDir, tarball);
+}
+
+export function preparePackedConsumerFixture(): string {
+  const fixtureDir = process.env.KESTREL_PACKED_CONSUMER_DIR
+    ?? path.join(process.cwd(), "test-results", "validation", "packed-consumer");
+  const readyFile = path.join(fixtureDir, ".ready");
+  if (existsSync(readyFile)) return fixtureDir;
+
+  const packDir = path.join(fixtureDir, "packages");
+  mkdirSync(packDir, { recursive: true });
+  const protocolTarball = packBuiltPackage(path.join(process.cwd(), "packages/protocol"), packDir);
+  const sdkTarball = packBuiltPackage(path.join(process.cwd(), "packages/sdk"), packDir);
+  const observabilityTarball = packBuiltPackage(path.join(process.cwd(), "packages/observability"), packDir);
+  const nextTarball = packBuiltPackage(path.join(process.cwd(), "packages/next"), packDir);
+
+  writeFileSync(path.join(fixtureDir, "package.json"), `${JSON.stringify({
+    name: "kestrel-packed-consumer",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@9.12.2",
+    dependencies: {
+      next: "15.5.3",
+      react: "19.2.4",
+      "react-dom": "19.2.4",
+      "@kestrel-agents/protocol": protocolTarball,
+      "@kestrel-agents/sdk": sdkTarball,
+      "@kestrel-agents/observability": observabilityTarball,
+      "@kestrel-agents/next": nextTarball,
+    },
+    scripts: {
+      build: "next build",
+      start: "next start",
+    },
+  }, null, 2)}\n`);
+  writePnpmWorkspaceOverrides(fixtureDir, {
+    "@kestrel-agents/protocol": protocolTarball,
+    "@kestrel-agents/sdk": sdkTarball,
+  }, {
+    allowBuilds: { sharp: true },
+  });
+  execFileSync("pnpm", ["install", "--prefer-offline"], {
+    cwd: fixtureDir,
+    env: process.env,
+    stdio: "pipe",
+  });
+  writeFileSync(readyFile, "ready\n");
+  return fixtureDir;
 }
 
 export function writePnpmWorkspaceOverrides(

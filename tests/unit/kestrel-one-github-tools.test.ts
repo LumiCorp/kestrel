@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   kestrelOneGitHubIssueCreateTool,
   kestrelOneGitHubRepositoryReadTool,
 } from "../../tools/kestrelOne/githubActions.js";
 import { kestrelOneGitHubPushAgentBranchTool } from "../../tools/kestrelOne/githubPushAgentBranch.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("GitHub mutation tools require external confirmation while reads and agent-branch pushes remain automatic", () => {
+
+contractTest("runtime.hermetic", "GitHub mutation tools require external confirmation while reads and agent-branch pushes remain automatic", () => {
   assert.deepEqual(
     kestrelOneGitHubRepositoryReadTool.definition.capability
       .approvalCapabilities,
@@ -24,7 +25,7 @@ test("GitHub mutation tools require external confirmation while reads and agent-
   );
 });
 
-test("GitHub action tools send the signed execution ticket and exact approval ID only for mutations", async () => {
+contractTest("runtime.hermetic", "GitHub action tools send the signed execution ticket and exact approval ID only for mutations", async () => {
   const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
   const fetchImpl: typeof fetch = async (_input, init) => {
     requests.push({

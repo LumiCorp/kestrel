@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   TavilyConnectionError,
   validateTavilyConnection,
 } from "./tavily-connection";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("validates Tavily credentials without exposing them in the result", async () => {
+
+contractTest("web.hermetic", "validates Tavily credentials without exposing them in the result", async () => {
   let authorization = "";
   const result = await validateTavilyConnection({
     apiKey: "tvly-secret",
@@ -27,7 +28,7 @@ test("validates Tavily credentials without exposing them in the result", async (
   assert.equal(JSON.stringify(result).includes("tvly-secret"), false);
 });
 
-test("rejects credentials Tavily does not authorize", async () => {
+contractTest("web.hermetic", "rejects credentials Tavily does not authorize", async () => {
   await assert.rejects(
     validateTavilyConnection({
       apiKey: "wrong",

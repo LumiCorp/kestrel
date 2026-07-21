@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   alignExecutionPolicyWithMode,
@@ -8,8 +7,10 @@ import {
   normalizeInteractionMode,
   resolveAllowedToolClasses,
 } from "../../src/mode/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("normalizeInteractionMode preserves explicit build submodes", () => {
+
+contractTest("runtime.hermetic", "normalizeInteractionMode preserves explicit build submodes", () => {
   assert.deepEqual(
     normalizeInteractionMode({
       interactionMode: "build",
@@ -45,7 +46,7 @@ test("normalizeInteractionMode preserves explicit build submodes", () => {
   );
 });
 
-test("alignExecutionPolicyWithMode leaves approval policy to the runtime", () => {
+contractTest("runtime.hermetic", "alignExecutionPolicyWithMode leaves approval policy to the runtime", () => {
   assert.deepEqual(
     alignExecutionPolicyWithMode({
       interactionMode: "build",
@@ -80,7 +81,7 @@ test("alignExecutionPolicyWithMode leaves approval policy to the runtime", () =>
   );
 });
 
-test("alignExecutionPolicyWithMode preserves explicit overrides", () => {
+contractTest("runtime.hermetic", "alignExecutionPolicyWithMode preserves explicit overrides", () => {
   assert.deepEqual(
     alignExecutionPolicyWithMode({
       interactionMode: "build",
@@ -107,7 +108,7 @@ test("alignExecutionPolicyWithMode preserves explicit overrides", () => {
   );
 });
 
-test("resolveAllowedToolClasses respects execution-policy overrides", () => {
+contractTest("runtime.hermetic", "resolveAllowedToolClasses respects execution-policy overrides", () => {
   assert.deepEqual(
     resolveAllowedToolClasses(
       {
@@ -139,7 +140,7 @@ test("resolveAllowedToolClasses respects execution-policy overrides", () => {
   );
 });
 
-test("plan mode allows read-only tools and session plan document writes by default", () => {
+contractTest("runtime.hermetic", "plan mode allows read-only tools and session plan document writes by default", () => {
   assert.equal(
     isToolClassAllowed({
       interactionMode: "plan",
@@ -150,7 +151,7 @@ test("plan mode allows read-only tools and session plan document writes by defau
   assert.deepEqual(resolveAllowedToolClasses({ interactionMode: "plan" }), ["read_only", "planning_write"]);
 });
 
-test("Build exposes sandboxed workspace mutations while Chat and Plan do not", () => {
+contractTest("runtime.hermetic", "Build exposes sandboxed workspace mutations while Chat and Plan do not", () => {
   assert.equal(
     isToolEligibleForInteractionMode({
       interactionMode: "build",
@@ -174,7 +175,7 @@ test("Build exposes sandboxed workspace mutations while Chat and Plan do not", (
   );
 });
 
-test("Chat allows read-only tools and only explicitly Chat-enabled app mutations", () => {
+contractTest("runtime.hermetic", "Chat allows read-only tools and only explicitly Chat-enabled app mutations", () => {
   assert.equal(
     isToolEligibleForInteractionMode({
       interactionMode: "chat",

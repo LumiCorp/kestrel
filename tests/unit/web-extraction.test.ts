@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { updateWebExtractionRetrySummary } from "../../src/runtime/webExtraction.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("web extraction retry summary shares consecutive low-yield counts across get_url and scrape", () => {
+
+contractTest("runtime.hermetic", "web extraction retry summary shares consecutive low-yield counts across get_url and scrape", () => {
   const first = updateWebExtractionRetrySummary({
     prior: undefined,
     objective: "Compare our poem to poems about evil trees on the web",
@@ -35,7 +36,7 @@ test("web extraction retry summary shares consecutive low-yield counts across ge
   assert.equal(second?.clusters[0]?.lastToolName, "internet.extract");
 });
 
-test("unrelated internet.search does not consume the fallback for a low-yield source cluster", () => {
+contractTest("runtime.hermetic", "unrelated internet.search does not consume the fallback for a low-yield source cluster", () => {
   const prior = {
     objectiveKey: "compare our poem to poems about evil trees on the web",
     searchFallbackUsed: false,
@@ -68,7 +69,7 @@ test("unrelated internet.search does not consume the fallback for a low-yield so
   assert.equal(summary?.clusters[0]?.searchFallbackUsed, false);
 });
 
-test("forced fallback search marks only the targeted cluster as having used the final search", () => {
+contractTest("runtime.hermetic", "forced fallback search marks only the targeted cluster as having used the final search", () => {
   const prior = {
     objectiveKey: "compare our poem to poems about evil trees on the web",
     searchFallbackUsed: false,
@@ -130,7 +131,7 @@ test("forced fallback search marks only the targeted cluster as having used the 
   );
 });
 
-test("high-yield extraction resets the retry window and clears fallback usage for the cluster", () => {
+contractTest("runtime.hermetic", "high-yield extraction resets the retry window and clears fallback usage for the cluster", () => {
   const prior = {
     objectiveKey: "compare our poem to poems about evil trees on the web",
     searchFallbackUsed: true,
@@ -170,7 +171,7 @@ test("high-yield extraction resets the retry window and clears fallback usage fo
   assert.equal(summary?.clusters[0]?.lastQuality, "high");
 });
 
-test("a new low-yield streak becomes eligible for one final search after a successful reset", () => {
+contractTest("runtime.hermetic", "a new low-yield streak becomes eligible for one final search after a successful reset", () => {
   const reset = updateWebExtractionRetrySummary({
     prior: {
       objectiveKey: "compare our poem to poems about evil trees on the web",

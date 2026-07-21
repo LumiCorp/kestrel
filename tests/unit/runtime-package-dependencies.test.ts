@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { resolveRuntimePackageDependencies } from "../../scripts/runtime-package-dependencies.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("runtime package manifests replace workspace protocol links with the matching release version", async (t) => {
+
+contractTest("runtime.hermetic", "runtime package manifests replace workspace protocol links with the matching release version", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-"));
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   const protocolDir = path.join(repoRoot, "packages", "protocol");
@@ -35,7 +36,7 @@ test("runtime package manifests replace workspace protocol links with the matchi
   );
 });
 
-test("runtime package manifests reject protocol and runtime version drift", async (t) => {
+contractTest("runtime.hermetic", "runtime package manifests reject protocol and runtime version drift", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"));
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   const protocolDir = path.join(repoRoot, "packages", "protocol");

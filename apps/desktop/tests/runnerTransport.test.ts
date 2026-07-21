@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import test from "node:test";
 import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import {
@@ -8,14 +7,16 @@ import {
   resolveDesktopRunnerCommand,
   resolveDesktopRunnerEnvironment,
 } from "../src/runnerTransport.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("resolveDesktopRunnerCommand targets the runner entrypoint", () => {
+
+contractTest("desktop.process", "resolveDesktopRunnerCommand targets the runner entrypoint", () => {
   const command = resolveDesktopRunnerCommand("/repo");
   assert.equal(command.command, process.execPath);
   assert.deepEqual(command.args, ["--import", "tsx", "/repo/cli/runner/main.ts"]);
 });
 
-test("resolveDesktopRunnerEnvironment enables node mode under Electron", () => {
+contractTest("desktop.process", "resolveDesktopRunnerEnvironment enables node mode under Electron", () => {
   const env = resolveDesktopRunnerEnvironment(
     { PATH: "/usr/bin" },
     {
@@ -29,7 +30,7 @@ test("resolveDesktopRunnerEnvironment enables node mode under Electron", () => {
   assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
 });
 
-test("resolveDesktopRunnerEnvironment does not force node mode outside Electron", () => {
+contractTest("desktop.process", "resolveDesktopRunnerEnvironment does not force node mode outside Electron", () => {
   const env = resolveDesktopRunnerEnvironment({ PATH: "/usr/bin" }, process.versions);
 
   assert.equal(env.PATH, "/usr/bin");
@@ -37,7 +38,7 @@ test("resolveDesktopRunnerEnvironment does not force node mode outside Electron"
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
 });
 
-test("ManagedRunnerTransport applies updated environment on restart", async () => {
+contractTest("desktop.process", "ManagedRunnerTransport applies updated environment on restart", async () => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const stdin = new PassThrough();
@@ -91,7 +92,7 @@ test("ManagedRunnerTransport applies updated environment on restart", async () =
   assert.deepEqual(seenKeys, ["", "test-key"]);
 });
 
-test("ManagedRunnerTransport starts, forwards lines, and restarts cleanly", async () => {
+contractTest("desktop.process", "ManagedRunnerTransport starts, forwards lines, and restarts cleanly", async () => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const stdin = new PassThrough();
@@ -195,7 +196,7 @@ test("ManagedRunnerTransport starts, forwards lines, and restarts cleanly", asyn
   releaseObserver();
 });
 
-test("ManagedRunnerTransport treats broken stdin pipes as not-started", async () => {
+contractTest("desktop.process", "ManagedRunnerTransport treats broken stdin pipes as not-started", async () => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const stdin = new PassThrough();

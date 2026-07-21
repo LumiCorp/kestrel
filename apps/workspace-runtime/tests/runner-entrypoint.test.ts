@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { resolveRunnerServiceEntrypoint } from "../src/runner-entrypoint.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("workspace runtime resolves the runner from the root build output", () => {
+
+contractTest("services.hermetic", "workspace runtime resolves the runner from the root build output", () => {
   const runtimeModuleUrl = pathToFileURL(
     "/app/apps/workspace-runtime/dist/runner-entrypoint.js"
   ).href;

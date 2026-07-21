@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ProductProjectAction, ProductProjectSnapshot } from "../../src/project/contracts.js";
 import type { ProductTaskGraph } from "../../src/taskGraph/contracts.js";
@@ -13,8 +12,10 @@ import { applyProjectSnapshotAction } from "../../src/project/state.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import type { RuntimeTurnResult } from "../../src/runtime/RuntimeTurn.js";
 import { projectTaskProposeTool } from "../../tools/project/taskPropose.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("createProductProjectActionToolAdapter applies project action with current task graph", async () => {
+
+contractTest("runtime.hermetic", "createProductProjectActionToolAdapter applies project action with current task graph", async () => {
   const graph: ProductTaskGraph = {
     version: 1,
     rootTaskIds: ["task-main"],
@@ -66,7 +67,7 @@ test("createProductProjectActionToolAdapter applies project action with current 
   });
 });
 
-test("task.propose handler creates proposed Mission Control tasks through the project action adapter", async () => {
+contractTest("runtime.hermetic", "task.propose handler creates proposed Mission Control tasks through the project action adapter", async () => {
   const sessionStore = new InMemorySessionStore();
   const projectStore = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -112,7 +113,7 @@ test("task.propose handler creates proposed Mission Control tasks through the pr
   assert.equal(task?.evidence.at(-1)?.summary, "Proposed from the current conversation.");
 });
 
-test("ProductProjectRuntimeService applies manual board moves before aborting assigned runs", async () => {
+contractTest("runtime.hermetic", "ProductProjectRuntimeService applies manual board moves before aborting assigned runs", async () => {
   const graph: ProductTaskGraph = {
     version: 1,
     rootTaskIds: ["task-main"],

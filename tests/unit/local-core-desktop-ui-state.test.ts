@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { DesktopUiStateStore } from "../../src/localCore/desktopUiState.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Desktop UI state serializes concurrent snapshots without trailing bytes", async () => {
+contractTest("runtime.hermetic", "Desktop UI state serializes concurrent snapshots without trailing bytes", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-ui-state-"));
   const storeA = new DesktopUiStateStore(home);
   const storeB = new DesktopUiStateStore(home);

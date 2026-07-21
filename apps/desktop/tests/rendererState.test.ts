@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   acceptRendererPrompt,
@@ -19,12 +18,14 @@ import {
   toDesktopRunHistory,
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("new Desktop conversations default to the local checkout", () => {
+
+contractTest("desktop.hermetic", "new Desktop conversations default to the local checkout", () => {
   assert.equal(createRendererThread().workspaceMode, "local");
 });
 
-test("Vite renderer preserves an explicitly managed persisted conversation", () => {
+contractTest("desktop.hermetic", "Vite renderer preserves an explicitly managed persisted conversation", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "desktop-renderer-vite",
@@ -53,7 +54,7 @@ test("Vite renderer preserves an explicitly managed persisted conversation", () 
   assert.equal(state.threads[0]?.workspaceMode, "managed");
 });
 
-test("Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
+contractTest("desktop.hermetic", "Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "legacy-local-storage",
@@ -141,7 +142,7 @@ test("Vite renderer hydrates legacy threads and preserves unknown persisted fiel
   assert.equal((store.states["thread-1"]?.transcript as unknown[]).length, 2);
 });
 
-test("Vite renderer persists and resumes the pending wait contract", () => {
+contractTest("desktop.hermetic", "Vite renderer persists and resumes the pending wait contract", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "desktop-renderer-vite",
@@ -233,7 +234,7 @@ test("Vite renderer persists and resumes the pending wait contract", () => {
   assert.equal(hydrated.threads[0]?.pendingWaitEventType, "user.approval");
 });
 
-test("Vite renderer persists a project binding on project conversations", () => {
+contractTest("desktop.hermetic", "Vite renderer persists a project binding on project conversations", () => {
   const initial = readDesktopRendererState(null);
   const scoped = addRendererThread(initial, {
     projectPath: "/workspace/project-a",
@@ -252,7 +253,7 @@ test("Vite renderer persists a project binding on project conversations", () => 
   assert.equal(hydrated.threads[1]?.projectPath, undefined);
 });
 
-test("Vite renderer binds an unscoped conversation turn to the active registered project", () => {
+contractTest("desktop.hermetic", "Vite renderer binds an unscoped conversation turn to the active registered project", () => {
   const state = readDesktopRendererState(null);
   const projectPath = resolveRendererThreadProjectPath({
     thread: state.threads[0]!,
@@ -266,7 +267,7 @@ test("Vite renderer binds an unscoped conversation turn to the active registered
   assert.equal(projectPath, "/workspace/project-b");
 });
 
-test("Vite renderer preserves a conversation project binding over the currently viewed project", () => {
+contractTest("desktop.hermetic", "Vite renderer preserves a conversation project binding over the currently viewed project", () => {
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
     activeProjectPath: "/workspace/project-b",
@@ -279,7 +280,7 @@ test("Vite renderer preserves a conversation project binding over the currently 
   assert.equal(projectPath, "/workspace/project-a");
 });
 
-test("Vite renderer prefers the authoritative thread workspace over renderer selection", () => {
+contractTest("desktop.hermetic", "Vite renderer prefers the authoritative thread workspace over renderer selection", () => {
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
     authoritativeProjectPath: "/workspace/project-b",
@@ -294,7 +295,7 @@ test("Vite renderer prefers the authoritative thread workspace over renderer sel
   assert.equal(projectPath, "/workspace/project-b");
 });
 
-test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {
+contractTest("desktop.hermetic", "Vite renderer submits only tagged runtime waiting prompts as system history", () => {
   const state = readDesktopRendererState(null);
   const attachment = {
     attachmentId: "attachment-1",
@@ -360,7 +361,7 @@ test("Vite renderer submits only tagged runtime waiting prompts as system histor
   ]);
 });
 
-test("Vite renderer bounds persisted transcript history below the UI-state cap", () => {
+contractTest("desktop.hermetic", "Vite renderer bounds persisted transcript history below the UI-state cap", () => {
   let state = readDesktopRendererState(null);
   const threadId = state.activeThreadId;
   for (let index = 0; index < 700; index += 1) {
@@ -386,7 +387,7 @@ test("Vite renderer bounds persisted transcript history below the UI-state cap",
   assert.match(persisted.at(-1)?.text ?? "", /^699:/u);
 });
 
-test("Vite renderer persists independent drafts, attachment references, and bounded prompt history", () => {
+contractTest("desktop.hermetic", "Vite renderer persists independent drafts, attachment references, and bounded prompt history", () => {
   let state = readDesktopRendererState(null);
   const firstId = state.activeThreadId;
   state = updateRendererDraft(state, firstId, "unfinished first");
@@ -415,7 +416,7 @@ test("Vite renderer persists independent drafts, attachment references, and boun
   assert.equal(second.draft, "unfinished second");
 });
 
-test("Vite renderer migrates legacy per-thread composer drafts and prompt history", () => {
+contractTest("desktop.hermetic", "Vite renderer migrates legacy per-thread composer drafts and prompt history", () => {
   const initial = readDesktopRendererState(null);
   const thread = initial.threads[0]!;
   const entries = serializeDesktopRendererState(initial);

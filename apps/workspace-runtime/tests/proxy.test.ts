@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { buildWorkspaceProxyHeaders } from "../src/proxy.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("application proxy strips the Environment ticket instead of forwarding an undefined header", () => {
+
+contractTest("services.hermetic", "application proxy strips the Environment ticket instead of forwarding an undefined header", () => {
 	const headers = buildWorkspaceProxyHeaders({
 		incoming: {
 			authorization: "Bearer environment-ticket",
@@ -17,7 +18,7 @@ test("application proxy strips the Environment ticket instead of forwarding an u
 	});
 });
 
-test("runner proxy replaces the Environment ticket with its internal token", () => {
+contractTest("services.hermetic", "runner proxy replaces the Environment ticket with its internal token", () => {
 	const headers = buildWorkspaceProxyHeaders({
 		incoming: {
 			authorization: "Bearer environment-ticket",

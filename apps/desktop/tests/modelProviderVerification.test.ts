@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   DesktopModelProviderVerificationError,
@@ -7,8 +6,10 @@ import {
   verifyDesktopModelProviderCredential,
 } from "../src/modelProviderVerification.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("model credential verification uses provider-specific endpoints and headers", async () => {
+
+contractTest("desktop.hermetic", "model credential verification uses provider-specific endpoints and headers", async () => {
   const requests: Array<{ url: string; headers: Headers }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     requests.push({
@@ -40,7 +41,7 @@ test("model credential verification uses provider-specific endpoints and headers
   assert.equal(requests[2]?.headers.get("anthropic-version"), "2025-01-01");
 });
 
-test("local model verification confirms endpoint inventory", async () => {
+contractTest("desktop.hermetic", "local model verification confirms endpoint inventory", async () => {
   const settings = {
     ...createDefaultDesktopSettings(),
     ollamaBaseUrl: "http://localhost:11434",
@@ -58,7 +59,7 @@ test("local model verification confirms endpoint inventory", async () => {
   assert.equal(requestedUrl, "http://localhost:11434/api/tags");
 });
 
-test("local model verification rejects unavailable configured model", async () => {
+contractTest("desktop.hermetic", "local model verification rejects unavailable configured model", async () => {
   await assert.rejects(
     verifyDesktopModelCapability({
       provider: "lmstudio",
@@ -76,7 +77,7 @@ test("local model verification rejects unavailable configured model", async () =
   );
 });
 
-test("failed model credential verification reports no credential value", async () => {
+contractTest("desktop.hermetic", "failed model credential verification reports no credential value", async () => {
   const secret = "secret-value-that-must-not-leak";
   await assert.rejects(
     verifyDesktopModelProviderCredential({

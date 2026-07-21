@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/index.js";
@@ -8,6 +7,8 @@ import {
   formatOperatorAffordance,
 } from "../../cli/runtime/operatorAffordances.js";
 import type { TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const baseProfile: TuiProfile = {
   id: "reference",
@@ -49,7 +50,7 @@ function createOutput(waitFor?: NormalizedOutput["waitFor"]): NormalizedOutput {
   };
 }
 
-test("buildRuntimeOperatorAffordance surfaces blocked wait reasons and compacted context", () => {
+contractTest("runtime.hermetic", "buildRuntimeOperatorAffordance surfaces blocked wait reasons and compacted context", () => {
   const affordance = buildRuntimeOperatorAffordance({
     reactState: {
       interactionMode: "plan",
@@ -100,7 +101,7 @@ test("buildRuntimeOperatorAffordance surfaces blocked wait reasons and compacted
   );
 });
 
-test("buildRuntimeOperatorAffordance treats acter-blocked waits as mode switches", () => {
+contractTest("runtime.hermetic", "buildRuntimeOperatorAffordance treats acter-blocked waits as mode switches", () => {
   const affordance = buildRuntimeOperatorAffordance({
     reactState: {
       interactionMode: "build",
@@ -127,7 +128,7 @@ test("buildRuntimeOperatorAffordance treats acter-blocked waits as mode switches
   assert.match(String(affordance.recommendedAction?.summary), /Reply naturally to approve the switch/u);
 });
 
-test("decorateOperatorAffordance enriches provider, skill pack, and manual compaction state", () => {
+contractTest("runtime.hermetic", "decorateOperatorAffordance enriches provider, skill pack, and manual compaction state", () => {
   const decorated = decorateOperatorAffordance({
     base: {
       interactionMode: "build",
@@ -162,7 +163,7 @@ test("decorateOperatorAffordance enriches provider, skill pack, and manual compa
   assert.doesNotMatch(formatOperatorAffordance(decorated).join("\n"), /MCP profile/u);
 });
 
-test("decorateOperatorAffordance preserves runtime tool classes when runtime state is authoritative", () => {
+contractTest("runtime.hermetic", "decorateOperatorAffordance preserves runtime tool classes when runtime state is authoritative", () => {
   const decorated = decorateOperatorAffordance({
     base: {
       interactionMode: "build",
@@ -217,7 +218,7 @@ test("decorateOperatorAffordance preserves runtime tool classes when runtime sta
   assert.match(rendered, /Reasoning: Confirming the next safe action before using tools\./u);
 });
 
-test("formatOperatorAffordance includes focused thread, blocker, and next action parity fields", () => {
+contractTest("runtime.hermetic", "formatOperatorAffordance includes focused thread, blocker, and next action parity fields", () => {
   const rendered = formatOperatorAffordance({
     interactionMode: "build",
     actSubmode: "safe",
@@ -353,7 +354,7 @@ test("formatOperatorAffordance includes focused thread, blocker, and next action
   assert.match(rendered, /Checkpoint route: agent\.exec\.dispatch -> agent\.exec\.wait_approval \(wait_approval\)/u);
 });
 
-test("decorateOperatorAffordance recomputes tool classes for session-only fallback state", () => {
+contractTest("runtime.hermetic", "decorateOperatorAffordance recomputes tool classes for session-only fallback state", () => {
   const decorated = decorateOperatorAffordance({
     base: {
       interactionMode: "build",

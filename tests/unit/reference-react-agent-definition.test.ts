@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
@@ -10,6 +9,8 @@ import {
   createReferenceReactAgentDefinition,
   registerAgentInstance,
 } from "../../agents/reference-react/src/agentDefinition.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const EXPECTED_STEP_IDS = [
   AGENT_STEP_IDS.loop,
@@ -28,7 +29,7 @@ function createDefinitionForTest() {
   });
 }
 
-test("reference-react agent definition is inspectable without constructing a runtime", () => {
+contractTest("runtime.hermetic", "reference-react agent definition is inspectable without constructing a runtime", () => {
   const definition = createDefinitionForTest();
 
   assert.equal(definition.id, "reference-react");
@@ -37,7 +38,7 @@ test("reference-react agent definition is inspectable without constructing a run
   assert.equal(definition.steps.every((step) => typeof step.createStep === "function"), true);
 });
 
-test("reference-react agent instance adapts canonical definition into Kestrel step and contract registries", () => {
+contractTest("runtime.hermetic", "reference-react agent instance adapts canonical definition into Kestrel step and contract registries", () => {
   const definition = createDefinitionForTest();
   const instance = createAgentInstance(definition);
   const kestrel = new Kestrel({
@@ -60,7 +61,7 @@ test("reference-react agent instance adapts canonical definition into Kestrel st
   assert.deepEqual([...internals.stepContractRegistry.validators.keys()], EXPECTED_STEP_IDS);
 });
 
-test("agent.loop FAILED contract accepts structured runtime failures", () => {
+contractTest("runtime.hermetic", "agent.loop FAILED contract accepts structured runtime failures", () => {
   const definition = createDefinitionForTest();
   const loopContract = definition.steps.find((step) => step.id === AGENT_STEP_IDS.loop)?.contract;
   assert.equal(typeof loopContract, "function");
@@ -101,7 +102,7 @@ test("agent.loop FAILED contract accepts structured runtime failures", () => {
   );
 });
 
-test("agent.loop FAILED contract rejects unstructured failures", () => {
+contractTest("runtime.hermetic", "agent.loop FAILED contract rejects unstructured failures", () => {
   const definition = createDefinitionForTest();
   const loopContract = definition.steps.find((step) => step.id === AGENT_STEP_IDS.loop)?.contract;
 

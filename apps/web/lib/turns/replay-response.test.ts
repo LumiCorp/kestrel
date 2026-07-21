@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { isDurableTurnReplayComplete } from "./replay-status";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("a waiting durable turn closes its current replay stream", () => {
+
+contractTest("web.hermetic", "a waiting durable turn closes its current replay stream", () => {
   assert.equal(isDurableTurnReplayComplete("waiting_for_input"), true);
   assert.equal(isDurableTurnReplayComplete("completed"), true);
   assert.equal(isDurableTurnReplayComplete("failed"), true);

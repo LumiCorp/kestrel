@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
@@ -7,8 +6,10 @@ import {
   buildOpenRouterHttpRequest,
   mapOpenRouterResponse,
 } from "../../models/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("OpenRouter chat mapper returns normalized ModelResponse with native tool_calls", () => {
+
+contractTest("runtime.hermetic", "OpenRouter chat mapper returns normalized ModelResponse with native tool_calls", () => {
   const mapped = mapOpenRouterResponse<{ plan: string }>(
     {
       id: "chatcmpl-1",
@@ -53,7 +54,7 @@ test("OpenRouter chat mapper returns normalized ModelResponse with native tool_c
   assert.equal(mapped.usage?.totalTokens, 19);
 });
 
-test("OpenRouter responses mapper returns normalized ModelResponse", () => {
+contractTest("runtime.hermetic", "OpenRouter responses mapper returns normalized ModelResponse", () => {
   const mapped = mapOpenRouterResponse<{ done: boolean }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -89,7 +90,7 @@ test("OpenRouter responses mapper returns normalized ModelResponse", () => {
   assert.equal(mapped.usage?.totalTokens, 12);
 });
 
-test("OpenRouter mapper ignores JSON toolIntents when native calls are absent", () => {
+contractTest("runtime.hermetic", "OpenRouter mapper ignores JSON toolIntents when native calls are absent", () => {
   const mapped = mapOpenRouterResponse<{
     toolIntents: Array<{ name: string; input: Record<string, unknown> }>;
   }>(
@@ -119,7 +120,7 @@ test("OpenRouter mapper ignores JSON toolIntents when native calls are absent", 
   assert.equal(mapped.toolIntents.length, 0);
 });
 
-test("OpenRouter mapper parses JSON payload wrapped in markdown fences", () => {
+contractTest("runtime.hermetic", "OpenRouter mapper parses JSON payload wrapped in markdown fences", () => {
   const mapped = mapOpenRouterResponse<{ nextAction: { kind: string } }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -141,7 +142,7 @@ test("OpenRouter mapper parses JSON payload wrapped in markdown fences", () => {
   assert.equal(mapped.output?.nextAction.kind, "finalize");
 });
 
-test("OpenRouter chat mapper parses JSON when content is structured array blocks", () => {
+contractTest("runtime.hermetic", "OpenRouter chat mapper parses JSON when content is structured array blocks", () => {
   const mapped = mapOpenRouterResponse<{ nextAction: { kind: string } }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -167,7 +168,7 @@ test("OpenRouter chat mapper parses JSON when content is structured array blocks
   assert.equal(mapped.output?.nextAction.kind, "finalize");
 });
 
-test("OpenRouter chat mapper parses content blocks with nested text.value", () => {
+contractTest("runtime.hermetic", "OpenRouter chat mapper parses content blocks with nested text.value", () => {
   const mapped = mapOpenRouterResponse<{ nextAction: { kind: string } }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -195,7 +196,7 @@ test("OpenRouter chat mapper parses content blocks with nested text.value", () =
   assert.equal(mapped.output?.nextAction.kind, "finalize");
 });
 
-test("OpenRouter chat mapper falls back to output_text when choices are missing", () => {
+contractTest("runtime.hermetic", "OpenRouter chat mapper falls back to output_text when choices are missing", () => {
   const mapped = mapOpenRouterResponse<{ nextAction: { kind: string } }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -211,7 +212,7 @@ test("OpenRouter chat mapper falls back to output_text when choices are missing"
   assert.equal(mapped.output?.nextAction.kind, "finalize");
 });
 
-test("OpenRouter chat mapper uses structured parsed output when text is absent", () => {
+contractTest("runtime.hermetic", "OpenRouter chat mapper uses structured parsed output when text is absent", () => {
   const mapped = mapOpenRouterResponse<{ message: string }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -235,7 +236,7 @@ test("OpenRouter chat mapper uses structured parsed output when text is absent",
   assert.equal(mapped.output?.message, "I should fetch one more source before finalizing.");
 });
 
-test("OpenRouter request builder supports chat default and responses override", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder supports chat default and responses override", () => {
   const chatRequest: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "hello",
@@ -270,7 +271,7 @@ test("OpenRouter request builder supports chat default and responses override", 
   assert.equal(mappedResponses.path, "/api/v1/responses");
 });
 
-test("OpenRouter request builder preserves required tool choice for chat", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder preserves required tool choice for chat", () => {
   const request: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "hello",
@@ -306,7 +307,7 @@ test("OpenRouter request builder preserves required tool choice for chat", () =>
   assert.equal(body.parallel_tool_calls, true);
 });
 
-test("OpenRouter request builder preserves required tool choice for responses", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder preserves required tool choice for responses", () => {
   const request: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "hello",
@@ -343,7 +344,7 @@ test("OpenRouter request builder preserves required tool choice for responses", 
   assert.equal(body.parallel_tool_calls, true);
 });
 
-test("OpenRouter request builder preserves documented tool choices", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder preserves documented tool choices", () => {
   for (const toolChoice of ["auto", "none"] as const) {
     const request: ModelRequest = {
       model: "openai/gpt-5.2-chat",
@@ -365,7 +366,7 @@ test("OpenRouter request builder preserves documented tool choices", () => {
   }
 });
 
-test("OpenRouter responses request builder preserves native tool call history", () => {
+contractTest("runtime.hermetic", "OpenRouter responses request builder preserves native tool call history", () => {
   const request: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "ignored",
@@ -420,7 +421,7 @@ test("OpenRouter responses request builder preserves native tool call history", 
   });
 });
 
-test("OpenRouter request builder uses json_object when responseFormat=json without schema", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder uses json_object when responseFormat=json without schema", () => {
   const request: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "hello",
@@ -448,7 +449,7 @@ test("OpenRouter request builder uses json_object when responseFormat=json witho
   });
 });
 
-test("OpenRouter request builder uses constrained json_schema when responseFormat=json with schema", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder uses constrained json_schema when responseFormat=json with schema", () => {
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -484,7 +485,7 @@ test("OpenRouter request builder uses constrained json_schema when responseForma
   assert.deepEqual(required.sort(), ["rationale", "version"]);
 });
 
-test("OpenRouter request builder fails fast on unsupported schema keywords", () => {
+contractTest("runtime.hermetic", "OpenRouter request builder fails fast on unsupported schema keywords", () => {
   const request: ModelRequest = {
     model: "openai/gpt-5.2-chat",
     input: "hello",
@@ -514,7 +515,7 @@ test("OpenRouter request builder fails fast on unsupported schema keywords", () 
   );
 });
 
-test("OpenRouter preserves typed reasoning details outside assistant answer text", () => {
+contractTest("runtime.hermetic", "OpenRouter preserves typed reasoning details outside assistant answer text", () => {
   const details = [
     { type: "reasoning.summary", summary: "Checked the evidence." },
     { type: "reasoning.encrypted", data: "opaque" },

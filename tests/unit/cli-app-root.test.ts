@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
@@ -11,6 +10,8 @@ import {
   type InkAppController,
 } from "../../cli/ink/AppRoot.js";
 import { buildInitialUiRuntimeState } from "../../cli/ink/store/UiStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function buildController(state: ReturnType<typeof buildInitialUiRuntimeState>): InkAppController {
   const noop = () => {};
@@ -59,7 +60,7 @@ function buildController(state: ReturnType<typeof buildInitialUiRuntimeState>): 
   };
 }
 
-test("AppRoot keeps chat visible behind the blocking error modal", () => {
+contractTest("runtime.hermetic", "AppRoot keeps chat visible behind the blocking error modal", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -103,7 +104,7 @@ test("AppRoot keeps chat visible behind the blocking error modal", () => {
   assert.match(text, /Runtime Error \(LOOP_GUARD_TRIGGERED\)/);
 });
 
-test("AppRoot renders compact operator header and waiting composer state", () => {
+contractTest("runtime.hermetic", "AppRoot renders compact operator header and waiting composer state", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -155,7 +156,7 @@ test("AppRoot renders compact operator header and waiting composer state", () =>
   assert.match(text, /Waiting · Confirm the next batch before continuing/);
 });
 
-test("AppRoot labels delegation and recovery views explicitly", () => {
+contractTest("runtime.hermetic", "AppRoot labels delegation and recovery views explicitly", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -188,7 +189,7 @@ test("AppRoot labels delegation and recovery views explicitly", () => {
   assert.match(text, /ops-thread · RECOVERY/);
 });
 
-test("AppRoot surfaces live reasoning updates while a run is active", () => {
+contractTest("runtime.hermetic", "AppRoot surfaces live reasoning updates while a run is active", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -233,7 +234,7 @@ test("AppRoot surfaces live reasoning updates while a run is active", () => {
   assert.doesNotMatch(text, /Thinking: I am narrowing the next tool call to keep evidence quality high\./);
 });
 
-test("AppRoot omits adaptation and evidence summary from the compact header", () => {
+contractTest("runtime.hermetic", "AppRoot omits adaptation and evidence summary from the compact header", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -282,7 +283,7 @@ test("AppRoot omits adaptation and evidence summary from the compact header", ()
   assert.doesNotMatch(text, /adapt=auto_applied action=compact evidence=4\/2 quality=mixed/u);
 });
 
-test("AppRoot omits multi-child supervision summary from the compact header", () => {
+contractTest("runtime.hermetic", "AppRoot omits multi-child supervision summary from the compact header", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
@@ -338,14 +339,14 @@ test("AppRoot omits multi-child supervision summary from the compact header", ()
   assert.doesNotMatch(text, /children=1\/2 superseded=1 fanIn=pending next=switch_thread/u);
 });
 
-test("composer soft line break is only shift+return (not raw CR/LF)", () => {
+contractTest("runtime.hermetic", "composer soft line break is only shift+return (not raw CR/LF)", () => {
   assert.equal(isComposerSoftLineBreakKeypress("", { return: true, shift: true }), true);
   assert.equal(isComposerSoftLineBreakKeypress("\r", { return: true, shift: true }), false);
   assert.equal(isComposerSoftLineBreakKeypress("\n", { return: true, shift: true }), false);
   assert.equal(isComposerSoftLineBreakKeypress("", { return: true, shift: false }), false);
 });
 
-test("resolveSplashInputAction dismisses on space and quits on escape or ctrl-c", () => {
+contractTest("runtime.hermetic", "resolveSplashInputAction dismisses on space and quits on escape or ctrl-c", () => {
   assert.equal(resolveSplashInputAction(" ", {}), "dismiss");
   assert.equal(resolveSplashInputAction("", { escape: true }), "quit");
   assert.equal(resolveSplashInputAction("c", { ctrl: true }), "quit");

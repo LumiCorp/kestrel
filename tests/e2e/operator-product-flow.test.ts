@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -23,6 +22,8 @@ import {
   buildOperatorWorkspaceJourney,
 } from "../../src/operatorShell.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 async function createHarness(): Promise<{
   app: App;
@@ -85,7 +86,7 @@ async function createHarness(): Promise<{
   return { app, cwd };
 }
 
-test("operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch", async () => {
+contractTest("runtime.process", "operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch", async () => {
   const { app, cwd } = await createHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -271,7 +272,7 @@ test("operator shell deterministic journey e2e covers start, inspect, delegation
   assert.equal(finalState.activeSession.name, "Run deterministic shell journey");
 });
 
-test("operator shell workspace journey e2e keeps binding and mismatch state explicit", async () => {
+contractTest("runtime.process", "operator shell workspace journey e2e keeps binding and mismatch state explicit", async () => {
   const { app, cwd } = await createHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -340,7 +341,7 @@ test("operator shell workspace journey e2e keeps binding and mismatch state expl
   assert.equal(buildOperatorBackActionLabel(undefined), "Back to Chat");
 });
 
-test("operator shell derives deterministic bootstrap and next actions across journeys", async () => {
+contractTest("runtime.process", "operator shell derives deterministic bootstrap and next actions across journeys", async () => {
   const firstRunBootstrap = buildOperatorBootstrapSnapshot({
     hasWorkspace: false,
     profileLabel: "Default",

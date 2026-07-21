@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   RuntimeThreadedTurnExecutor,
@@ -9,8 +8,10 @@ import {
   type RuntimeTurnInput,
   type SessionRecord,
 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context", async () => {
+
+contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded turns with runtime context", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -134,7 +135,7 @@ test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context",
   assert.equal(result.assistantText, "done");
 });
 
-test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {
+contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -192,7 +193,7 @@ test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before c
   });
 });
 
-test("RuntimeThreadedTurnExecutor preserves canonical runtime turns while patching thread-owned metadata", async () => {
+contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor preserves canonical runtime turns while patching thread-owned metadata", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -283,7 +284,7 @@ test("RuntimeThreadedTurnExecutor preserves canonical runtime turns while patchi
   });
 });
 
-test("resolveRuntimeThreadedStepAgent preserves current resume routing behavior", () => {
+contractTest("runtime.hermetic", "resolveRuntimeThreadedStepAgent preserves current resume routing behavior", () => {
   const waitingSession = sessionRecord("session-waiting", undefined, {
     waitingFor: {
       resumeStepAgent: "agent.exec.collect",

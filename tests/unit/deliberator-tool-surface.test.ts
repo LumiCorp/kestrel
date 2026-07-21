@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { filterDeliberatorToolsForContext } from "../../agents/reference-react/src/deliberatorToolSurface.js";
 import type { ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function tool(name: string): ModelToolSpec {
   return {
@@ -16,7 +17,7 @@ function tool(name: string): ModelToolSpec {
   };
 }
 
-test("deliberator tool surface hides live-process controls during normal coding turns", () => {
+contractTest("runtime.hermetic", "deliberator tool surface hides live-process controls during normal coding turns", () => {
   const filtered = filterDeliberatorToolsForContext([
     tool("exec_command"),
     tool("dev.shell.run"),
@@ -47,7 +48,7 @@ test("deliberator tool surface hides live-process controls during normal coding 
   );
 });
 
-test("deliberator tool surface keeps internal process controls hidden for an active live process", () => {
+contractTest("runtime.hermetic", "deliberator tool surface keeps internal process controls hidden for an active live process", () => {
   const filtered = filterDeliberatorToolsForContext(
     [
       tool("dev.shell.run"),
@@ -69,7 +70,7 @@ test("deliberator tool surface keeps internal process controls hidden for an act
   assert.deepEqual(filtered.availability.allowedToolNames, []);
 });
 
-test("deliberator tool surface keeps managed-entrypoint process start internal", () => {
+contractTest("runtime.hermetic", "deliberator tool surface keeps managed-entrypoint process start internal", () => {
   const filtered = filterDeliberatorToolsForContext(
     [tool("dev.shell.run"), tool("dev.process.start")],
     {

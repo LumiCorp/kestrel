@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
@@ -14,7 +15,7 @@ const journal = fs.readFileSync(
   "utf8"
 );
 
-test("durable turns persist a validated interaction mode", () => {
+contractTest("web.hermetic", "durable turns persist a validated interaction mode", () => {
   assert.match(migration, /ADD COLUMN "requested_interaction_mode" text/u);
   assert.match(migration, /DEFAULT 'chat' NOT NULL/u);
   assert.match(

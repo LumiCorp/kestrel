@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
 import { restrictKestrelOneProfileTools } from "./kestrel-tool-profile";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const profile = {
   id: "kestrel-one",
@@ -16,7 +17,7 @@ const profile = {
   ],
 } as RunnerProfile;
 
-test("calendar tools are exposed only for effective Project capabilities", () => {
+contractTest("web.hermetic", "calendar tools are exposed only for effective Project capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile,
     effectiveCapabilities: [
@@ -37,7 +38,7 @@ test("calendar tools are exposed only for effective Project capabilities", () =>
   });
 });
 
-test("calendar tools are removed when the user has no effective capability", () => {
+contractTest("web.hermetic", "calendar tools are removed when the user has no effective capability", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile,
     effectiveCapabilities: [],
@@ -45,7 +46,7 @@ test("calendar tools are removed when the user has no effective capability", () 
   assert.deepEqual(restricted.toolAllowlist, []);
 });
 
-test("GitHub tools are exposed only for effective Project capabilities", () => {
+contractTest("web.hermetic", "GitHub tools are exposed only for effective Project capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {
       ...profile,
@@ -70,7 +71,7 @@ test("GitHub tools are exposed only for effective Project capabilities", () => {
   });
 });
 
-test("Tavily tools and approval modes come only from effective Project Apps", () => {
+contractTest("web.hermetic", "Tavily tools and approval modes come only from effective Project Apps", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {
       ...profile,
@@ -99,7 +100,7 @@ test("Tavily tools and approval modes come only from effective Project Apps", ()
   });
 });
 
-test("built-in agent tools are governed by their effective App capabilities", () => {
+contractTest("web.hermetic", "built-in agent tools are governed by their effective App capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {
       ...profile,

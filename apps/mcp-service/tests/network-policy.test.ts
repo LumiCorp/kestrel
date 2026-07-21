@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   assertPublicResolvedAddresses,
   createPinnedMcpFetch,
 } from "../src/network-policy.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("remote MCP DNS policy accepts only entirely public resolutions", () => {
+
+contractTest("services.hermetic", "remote MCP DNS policy accepts only entirely public resolutions", () => {
   assert.doesNotThrow(() =>
     assertPublicResolvedAddresses([
       { address: "8.8.8.8", family: 4 },
@@ -41,7 +42,7 @@ test("remote MCP DNS policy accepts only entirely public resolutions", () => {
   }
 });
 
-test("remote MCP DNS policy rejects mixed public and private answers", () => {
+contractTest("services.hermetic", "remote MCP DNS policy rejects mixed public and private answers", () => {
   assert.throws(
     () =>
       assertPublicResolvedAddresses([
@@ -53,7 +54,7 @@ test("remote MCP DNS policy rejects mixed public and private answers", () => {
   assert.throws(() => assertPublicResolvedAddresses([]), /did not resolve/u);
 });
 
-test("remote MCP pinning resolves public IPv6 literals without URL brackets", async () => {
+contractTest("services.hermetic", "remote MCP pinning resolves public IPv6 literals without URL brackets", async () => {
   let resolvedHostname: string | undefined;
   const pinned = await createPinnedMcpFetch({
     endpoint: new URL("https://[2606:4700:4700::1111]/mcp"),

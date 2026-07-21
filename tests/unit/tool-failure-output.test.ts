@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   buildPostToolVerification,
@@ -13,8 +12,10 @@ import {
 } from "../../src/runtime/modelTranscript.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("failed dev.shell.run output keeps command output and execution context visible", () => {
+
+contractTest("runtime.hermetic", "failed dev.shell.run output keeps command output and execution context visible", () => {
   const output = buildRecoverableToolFailureOutput({
     toolName: "dev.shell.run",
     toolInput: {
@@ -53,7 +54,7 @@ test("failed dev.shell.run output keeps command output and execution context vis
   assert.equal(output.strictModeReason, "multi_line_fail_fast");
 });
 
-test("model transcript renders failed dev.shell.run compactly with failure details visible", () => {
+contractTest("runtime.hermetic", "model transcript renders failed dev.shell.run compactly with failure details visible", () => {
   const toolInput = {
     command: "python -m pytest sympy/printing/tests/test_conventions.py -q",
     cwd: "/testbed",
@@ -120,7 +121,7 @@ test("model transcript renders failed dev.shell.run compactly with failure detai
   assert.doesNotMatch(rendered, /- text:/u);
 });
 
-test("interactive dev.shell.run timeout suggests process APIs in model transcript", () => {
+contractTest("runtime.hermetic", "interactive dev.shell.run timeout suggests process APIs in model transcript", () => {
   const toolInput = {
     command: "python3 maze_game.py",
     cwd: "/app",
@@ -175,7 +176,7 @@ test("interactive dev.shell.run timeout suggests process APIs in model transcrip
   assert.match(rendered, /- nextSuggestedAction: This command is interactive\. Restart it with dev\.process\.start, then use dev\.process\.write\/dev\.process\.read\./u);
 });
 
-test("model transcript renders running exec_command with session continuation", () => {
+contractTest("runtime.hermetic", "model transcript renders running exec_command with session continuation", () => {
   const toolInput = {
     command: "./maze_game.sh",
     cwd: "/app",
@@ -222,7 +223,7 @@ test("model transcript renders running exec_command with session continuation", 
   assert.doesNotMatch(rendered, /dev\.process/u);
 });
 
-test("post-tool verification normalizes running exec_command process identity", () => {
+contractTest("runtime.hermetic", "post-tool verification normalizes running exec_command process identity", () => {
   const verification = buildPostToolVerification({
     reactState: {},
     nextCapabilities: {},
@@ -255,7 +256,7 @@ test("post-tool verification normalizes running exec_command process identity", 
   assert.equal((devShell.processes as Record<string, Record<string, unknown>>)["tb-proc-1"]?.status, "RUNNING");
 });
 
-test("noninteractive dev.shell.run timeout does not suggest process APIs", () => {
+contractTest("runtime.hermetic", "noninteractive dev.shell.run timeout does not suggest process APIs", () => {
   const output = buildRecoverableToolFailureOutput({
     toolName: "dev.shell.run",
     toolInput: {
@@ -276,7 +277,7 @@ test("noninteractive dev.shell.run timeout does not suggest process APIs", () =>
   assert.equal(output.nextSuggestedAction, undefined);
 });
 
-test("failed durable tool effects keep nested failure output model-visible", () => {
+contractTest("runtime.hermetic", "failed durable tool effects keep nested failure output model-visible", () => {
   const output = normalizeEffectResultForTool({
     toolName: "dev.shell.run",
     toolInput: {
@@ -311,7 +312,7 @@ test("failed durable tool effects keep nested failure output model-visible", () 
   assert.match(String(output.stdout), /split_super_sub/u);
 });
 
-test("raw failed shell output renders pytest evidence instead of object-string error", () => {
+contractTest("runtime.hermetic", "raw failed shell output renders pytest evidence instead of object-string error", () => {
   const toolInput = {
     command: "python -m pytest -q tests/test_build_gettext.py::test_catalog_iter_dedupes_normalized_locations -vv",
     cwd: "/testbed",
@@ -374,7 +375,7 @@ test("raw failed shell output renders pytest evidence instead of object-string e
   assert.doesNotMatch(rendered, /\[object Object\]/u);
 });
 
-test("failed file tool output keeps path and validation details visible", () => {
+contractTest("runtime.hermetic", "failed file tool output keeps path and validation details visible", () => {
   const output = buildRecoverableToolFailureOutput({
     toolName: "fs.replace_text",
     toolInput: {
@@ -413,7 +414,7 @@ test("failed file tool output keeps path and validation details visible", () => 
   ]);
 });
 
-test("model transcript renders failed tool output details instead of a generic failure", () => {
+contractTest("runtime.hermetic", "model transcript renders failed tool output details instead of a generic failure", () => {
   const toolOutput = buildRecoverableToolFailureOutput({
     toolName: "dev.process.read",
     toolInput: {

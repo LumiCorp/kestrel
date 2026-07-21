@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
 import { createWebDemoProfile, createWebRunnerAdapter } from "../../src/web/index.js";
 import type { ProtocolTransport } from "../../cli/client/ProtocolClient.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function createTerminalResult(input: {
   sessionId: string;
@@ -432,7 +433,7 @@ class MockTransport implements ProtocolTransport {
   }
 }
 
-test("web adapter accepts a trusted per-turn inline profile and provenance metadata", async () => {
+contractTest("runtime.hermetic", "web adapter accepts a trusted per-turn inline profile and provenance metadata", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     profile: { ...createWebDemoProfile(), id: "base" },
@@ -617,7 +618,7 @@ class SlowRunTransport implements ProtocolTransport {
   }
 }
 
-test("web adapter normalizes history and emits only correlated run events", async () => {
+contractTest("runtime.hermetic", "web adapter normalizes history and emits only correlated run events", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -729,7 +730,7 @@ test("web adapter normalizes history and emits only correlated run events", asyn
   await adapter.close();
 });
 
-test("web adapter sends only registered profile identity while preserving actor and client durability", async () => {
+contractTest("runtime.hermetic", "web adapter sends only registered profile identity while preserving actor and client durability", async () => {
   const transport = new MockTransport();
   const resolvedProfile = {
     ...createWebDemoProfile("desktop"),
@@ -799,7 +800,7 @@ test("web adapter sends only registered profile identity while preserving actor 
   await adapter.close();
 });
 
-test("web adapter uses registered profile identity for MCP commands without inline metadata", async () => {
+contractTest("runtime.hermetic", "web adapter uses registered profile identity for MCP commands without inline metadata", async () => {
   const transport = new MockTransport();
   const protocolClientOptions = {
     defaultMetadata: {
@@ -854,7 +855,7 @@ test("web adapter uses registered profile identity for MCP commands without inli
   await adapter.close();
 });
 
-test("web adapter durable start keeps continue-on-disconnect for registered profiles", async () => {
+contractTest("runtime.hermetic", "web adapter durable start keeps continue-on-disconnect for registered profiles", async () => {
   const transport = new SlowRunTransport();
   const adapter = createWebRunnerAdapter({
     profileId: "desktop-registered",
@@ -892,7 +893,7 @@ test("web adapter durable start keeps continue-on-disconnect for registered prof
   await adapter.close();
 });
 
-test("web adapter rejects invalid registered profile configurations", () => {
+contractTest("runtime.hermetic", "web adapter rejects invalid registered profile configurations", () => {
   const profile = {
     ...createWebDemoProfile("desktop"),
     id: "desktop-registered",
@@ -922,7 +923,7 @@ test("web adapter rejects invalid registered profile configurations", () => {
   );
 });
 
-test("web adapter durable start and subscribe do not cancel on subscriber abort", async () => {
+contractTest("runtime.hermetic", "web adapter durable start and subscribe do not cancel on subscriber abort", async () => {
   const transport = new SlowRunTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -982,7 +983,7 @@ test("web adapter durable start and subscribe do not cancel on subscriber abort"
   await adapter.close();
 });
 
-test("web adapter durable runs adopt the canonical runtime thread id from events", async () => {
+contractTest("runtime.hermetic", "web adapter durable runs adopt the canonical runtime thread id from events", async () => {
   const sessionId = "8ffbb0bc-9810-45b4-a220-29a15fb9593a";
   const canonicalThreadId = `thread-main:${sessionId}`;
   const transport = new SlowRunTransport(canonicalThreadId);
@@ -1026,7 +1027,7 @@ test("web adapter durable runs adopt the canonical runtime thread id from events
   await adapter.close();
 });
 
-test("web adapter can cancel a durable run after subscriber disconnect", async () => {
+contractTest("runtime.hermetic", "web adapter can cancel a durable run after subscriber disconnect", async () => {
   const transport = new SlowRunTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1083,7 +1084,7 @@ test("web adapter can cancel a durable run after subscriber disconnect", async (
   await adapter.close();
 });
 
-test("web adapter durable start reuses the active run for duplicate thread starts", async () => {
+contractTest("runtime.hermetic", "web adapter durable start reuses the active run for duplicate thread starts", async () => {
   const transport = new SlowRunTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1115,7 +1116,7 @@ test("web adapter durable start reuses the active run for duplicate thread start
   await adapter.close();
 });
 
-test("web adapter omits stepAgent for resume-from-wait turns", async () => {
+contractTest("runtime.hermetic", "web adapter omits stepAgent for resume-from-wait turns", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1149,7 +1150,7 @@ test("web adapter omits stepAgent for resume-from-wait turns", async () => {
   await adapter.close();
 });
 
-test("web adapter forwards explicit blocked-run resumes", async () => {
+contractTest("runtime.hermetic", "web adapter forwards explicit blocked-run resumes", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1187,7 +1188,7 @@ test("web adapter forwards explicit blocked-run resumes", async () => {
   await adapter.close();
 });
 
-test("web adapter does not infer explicit tool directive flags from prompt text", async () => {
+contractTest("runtime.hermetic", "web adapter does not infer explicit tool directive flags from prompt text", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1219,7 +1220,7 @@ test("web adapter does not infer explicit tool directive flags from prompt text"
   await adapter.close();
 });
 
-test("web adapter normalizes legacy work mode to build", async () => {
+contractTest("runtime.hermetic", "web adapter normalizes legacy work mode to build", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1251,7 +1252,7 @@ test("web adapter normalizes legacy work mode to build", async () => {
   await adapter.close();
 });
 
-test("web adapter forwards control commands", async () => {
+contractTest("runtime.hermetic", "web adapter forwards control commands", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,
@@ -1415,7 +1416,7 @@ test("web adapter forwards control commands", async () => {
   await adapter.close();
 });
 
-test("web adapter forwards runner command metadata from request context", async () => {
+contractTest("runtime.hermetic", "web adapter forwards runner command metadata from request context", async () => {
   const transport = new MockTransport();
   const adapter = createWebRunnerAdapter({
     transportFactory: () => transport,

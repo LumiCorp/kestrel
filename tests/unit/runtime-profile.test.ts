@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   expandCapabilityPacks,
   resolveRuntimeProfileSelection,
 } from "../../src/profile/runtimeProfile.js";
 import { DEFAULT_BALANCED_TOOL_ALLOWLIST, FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("CLI defaults resolve to the local developer preset", () => {
+
+contractTest("runtime.hermetic", "CLI defaults resolve to the local developer preset", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "cli",
   });
@@ -27,7 +28,7 @@ test("CLI defaults resolve to the local developer preset", () => {
   assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
 });
 
-test("desktop defaults add the host-open capability without exposing it to CLI", () => {
+contractTest("runtime.hermetic", "desktop defaults add the host-open capability without exposing it to CLI", () => {
   const cli = resolveRuntimeProfileSelection({ shellKind: "cli" });
   const desktop = resolveRuntimeProfileSelection({ shellKind: "desktop" });
 
@@ -37,7 +38,7 @@ test("desktop defaults add the host-open capability without exposing it to CLI",
   assert.equal(cli.toolAllowlist.includes("desktop.host.open"), false);
 });
 
-test("web defaults stay narrow and do not expose local mutation tools", () => {
+contractTest("runtime.hermetic", "web defaults stay narrow and do not expose local mutation tools", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "web",
   });
@@ -52,7 +53,7 @@ test("web defaults stay narrow and do not expose local mutation tools", () => {
   assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
 });
 
-test("runtime shape stays preset-first even when legacy codeMode input is present", () => {
+contractTest("runtime.hermetic", "runtime shape stays preset-first even when legacy codeMode input is present", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "web",
     codeMode: {
@@ -82,14 +83,14 @@ test("runtime shape stays preset-first even when legacy codeMode input is presen
   assert.equal(resolved.codeMode.enabled, false);
 });
 
-test("explicit capability packs expand deterministically", () => {
+contractTest("runtime.hermetic", "explicit capability packs expand deterministically", () => {
   assert.deepEqual(
     expandCapabilityPacks(["balanced", "filesystem", "dev_shell", "sandbox_code"]).includes("code.execute"),
     true,
   );
 });
 
-test("explicit capability packs restore required tool families even when starting from a narrow allowlist", () => {
+contractTest("runtime.hermetic", "explicit capability packs restore required tool families even when starting from a narrow allowlist", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "desktop",
     presetId: "desktop_dev_local",
@@ -111,7 +112,7 @@ test("explicit capability packs restore required tool families even when startin
   assert.equal(resolved.toolAllowlist.includes("code.execute"), true);
 });
 
-test("explicit capability packs restore balanced planning tools from stale allowlists", () => {
+contractTest("runtime.hermetic", "explicit capability packs restore balanced planning tools from stale allowlists", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "cli",
     presetId: "cli_dev_local",

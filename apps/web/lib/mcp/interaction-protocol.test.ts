@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   buildElicitationResponse,
   parseUrlElicitation,
 } from "./interaction-protocol";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("accepts URL elicitation without form content", () => {
+
+contractTest("web.hermetic", "accepts URL elicitation without form content", () => {
   const requestEnvelope = {
     mode: "url",
     message: "Authorize access",
@@ -19,7 +20,7 @@ test("accepts URL elicitation without form content", () => {
   );
 });
 
-test("rejects non-HTTPS URL elicitation", () => {
+contractTest("web.hermetic", "rejects non-HTTPS URL elicitation", () => {
   assert.throws(
     () =>
       parseUrlElicitation({
@@ -32,7 +33,7 @@ test("rejects non-HTTPS URL elicitation", () => {
   );
 });
 
-test("validates form elicitation primitives", () => {
+contractTest("web.hermetic", "validates form elicitation primitives", () => {
   assert.deepEqual(
     buildElicitationResponse({
       requestEnvelope: { message: "Choose", requestedSchema: {} },

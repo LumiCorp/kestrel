@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import test from "node:test";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import { authorizeMcpRequest, isAllowedOrigin } from "../src/authorization.js";
 import type { AuthorizedMcpGrant, McpGrantStore } from "../src/contracts.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const privateKeyPem = privateKey
@@ -30,7 +31,7 @@ const grant: AuthorizedMcpGrant = {
   servers: [],
 };
 
-test("MCP request authorization binds the grant to the signed run identity", async () => {
+contractTest("services.hermetic", "MCP request authorization binds the grant to the signed run identity", async () => {
   const seen: Parameters<McpGrantStore["activateGrant"]>[0][] = [];
   const grantStore: McpGrantStore = {
     async activateGrant(input) {
@@ -58,7 +59,7 @@ test("MCP request authorization binds the grant to the signed run identity", asy
   });
 });
 
-test("MCP request authorization rejects missing, invalid, and unknown grants", async () => {
+contractTest("services.hermetic", "MCP request authorization rejects missing, invalid, and unknown grants", async () => {
   const grantStore: McpGrantStore = {
     async activateGrant() {
       return null;
@@ -87,7 +88,7 @@ test("MCP request authorization rejects missing, invalid, and unknown grants", a
   );
 });
 
-test("Origin validation is default-deny when browsers send an Origin", () => {
+contractTest("services.hermetic", "Origin validation is default-deny when browsers send an Origin", () => {
   assert.equal(
     isAllowedOrigin({ origin: undefined, allowedOrigins: new Set() }),
     true
