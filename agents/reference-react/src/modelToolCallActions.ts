@@ -106,7 +106,8 @@ export function normalizeModelToolCallsToAgentTurn(input: {
     const progress = asString(intent.input.assistantProgress)?.trim();
     const requiresAssistantProgress = entry.canonicalName !== "kestrel.finalize" &&
       entry.canonicalName !== "kestrel.cannot_satisfy" &&
-      entry.canonicalName !== "kestrel.ask_user";
+      entry.canonicalName !== "kestrel.ask_user" &&
+      entry.canonicalName !== "kestrel.switch_mode";
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
     if (
       assistantProgress === undefined &&
@@ -300,6 +301,21 @@ function normalizeControlToolCall(input: {
       message,
       continuation,
       ...(data !== undefined ? { data } : {}),
+    };
+  }
+  if (input.canonicalName === "kestrel.switch_mode") {
+    const mode = asString(input.input.mode);
+    const message = asString(input.input.message);
+    if (mode !== "chat" && mode !== "plan" && mode !== "build") {
+      throw invalidControlInput(input, "kestrel.switch_mode mode is invalid.", "mode");
+    }
+    if (message === undefined || message.trim().length === 0) {
+      throw invalidControlInput(input, "kestrel.switch_mode requires a non-empty message.", "message");
+    }
+    return {
+      kind: "switch_mode",
+      mode,
+      message,
     };
   }
   throw new ModelToolCallActionError(`Unsupported control tool '${input.canonicalName}'.`, {

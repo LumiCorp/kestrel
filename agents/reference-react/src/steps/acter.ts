@@ -91,6 +91,7 @@ import { handleAskUserAction } from "./acter/askUserHandler.js";
 import {
   handleCannotSatisfyAction,
   handleFinalizeAction,
+  handleSwitchModeAction,
 } from "./acter/finalizeHandler.js";
 import { handlePendingEffect } from "./acter/pendingEffectHandler.js";
 import {
@@ -899,6 +900,16 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           recoverable: false,
         },
       );
+    }
+    if (action.kind === "switch_mode") {
+      return handleSwitchModeAction({
+        action,
+        config,
+        reactState,
+        activeRegion,
+        stepIndex: ctx.stepIndex,
+        io,
+      });
     }
 
     return handleFinalizeAction({

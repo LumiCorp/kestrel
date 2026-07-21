@@ -93,7 +93,7 @@ export function createExecDispatchStep(config: ExecStepConfig): StepAgent {
     const actionKind = checkpointedValidation.ok
       ? checkpointedValidation.kind
       : readCompiledActionKind(checkpointedReactState.nextAction);
-    if (actionKind === "finalize" || actionKind === "cannot_satisfy" || actionKind === "handoff_to_build") {
+    if (actionKind === "finalize" || actionKind === "cannot_satisfy" || actionKind === "handoff_to_build" || actionKind === "switch_mode") {
       return toExecutionStateTransition({
         transition: mergeCommandCheckpointEvents({
           ...createReferenceReactExecutionCheckpoint({
@@ -302,7 +302,7 @@ export function createExecFinalizeStep(config: ExecStepConfig): StepAgent {
   return async (ctx, io) => {
     const reactState = getAgentStateFromRuntimeState(ctx.session.state);
     const actionKind = readActionKind(reactState.nextAction);
-    if (actionKind !== "finalize" && actionKind !== "cannot_satisfy" && actionKind !== "handoff_to_build") {
+    if (actionKind !== "finalize" && actionKind !== "cannot_satisfy" && actionKind !== "handoff_to_build" && actionKind !== "switch_mode") {
       return toExecutionStateTransition({
         transition: createReferenceReactExecutionCheckpoint({
           snapshot: {

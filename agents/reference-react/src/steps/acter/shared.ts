@@ -82,6 +82,7 @@ export type AskUserAction = Extract<ReactAction, { kind: "ask_user" }>;
 export type CannotSatisfyAction = Extract<ReactAction, { kind: "cannot_satisfy" }>;
 export type FinalizeAction = Extract<ReactAction, { kind: "finalize" }>;
 export type HandoffToBuildAction = Extract<ReactAction, { kind: "handoff_to_build" }>;
+export type SwitchModeAction = Extract<ReactAction, { kind: "switch_mode" }>;
 export type ToolBatchAction = Extract<ReactAction, { kind: "tool_batch" }>;
 
 export function appendAgentObservation(

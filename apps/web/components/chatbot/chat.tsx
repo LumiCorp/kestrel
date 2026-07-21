@@ -252,6 +252,7 @@ function useChatCallbacks(input: {
   mutate: ReturnType<typeof useSWRConfig>["mutate"];
   refreshConversationState?: () => Promise<void>;
   setDataStream: Dispatch<SetStateAction<unknown[]>>;
+  setInteractionMode: (mode: KestrelOneInteractionMode) => void;
   setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
 }) {
   return {
@@ -298,6 +299,11 @@ function useChatCallbacks(input: {
               "Some advanced stream details were skipped, but the response continued.",
           });
         }
+        return;
+      }
+
+      if (dataPart.type === "data-interaction-mode") {
+        input.setInteractionMode(dataPart.data.mode);
         return;
       }
 
@@ -779,6 +785,7 @@ export function Chat({
     mutate,
     refreshConversationState,
     setDataStream: shared.setDataStream as Dispatch<SetStateAction<unknown[]>>,
+    setInteractionMode: shared.setInteractionMode,
     setShowCreditCardAlert: shared.setShowCreditCardAlert,
   });
 

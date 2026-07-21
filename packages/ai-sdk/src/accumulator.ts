@@ -72,6 +72,7 @@ export function createKestrelPresentationAccumulator(input: {
   let runId: string | undefined;
   let errorMessage: string | null = null;
   let interaction: KestrelInteractionPresentation | null = null;
+  let finalizedPayload: unknown | undefined;
 
   const appendPart = (part: KestrelPresentationPart): KestrelPresentationPart[] => {
     const id = "id" in part && typeof part.id === "string" ? part.id : undefined;
@@ -147,6 +148,7 @@ export function createKestrelPresentationAccumulator(input: {
         terminalStatus === "cancelled" ||
         terminalStatus === "contract_failure",
       interaction,
+      ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
     };
   };
 
@@ -267,6 +269,7 @@ export function createKestrelPresentationAccumulator(input: {
           errorMessage = "The run was cancelled before it finished.";
         } else {
           const result = event.payload.result;
+          finalizedPayload = result.finalizedPayload;
           runId = result.output.runId;
           if (result.output.status === "COMPLETED") {
             assistantText = requireNonEmptyString(

@@ -1536,6 +1536,54 @@ test("exec.finalize converts handoff_to_build into a user reply wait", async () 
   });
 });
 
+test("exec.finalize commits switch_mode as a terminal mode-switch payload", async () => {
+  const step = createExecFinalizeStep(buildExecConfig());
+  let finalizedInput: unknown;
+  const transition = await step(
+    buildContext({
+      session: {
+        sessionId: "session-mode-switch",
+        version: 1,
+        state: {
+          agent: {
+            interactionMode: "chat",
+            nextAction: {
+              kind: "switch_mode",
+              mode: "build",
+              message: "Switched to Build mode.",
+            },
+          },
+        },
+        currentStepAgent: "agent.exec.finalize",
+        updatedAt: new Date().toISOString(),
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async (name, input) => {
+        assert.equal(name, "FinalizeAnswer");
+        finalizedInput = input;
+        return { finalized: true, payload: input };
+      },
+    },
+  );
+
+  const react = transition.statePatch?.agent as Record<string, unknown>;
+  const finalOutput = react.finalOutput as Record<string, unknown>;
+  assert.equal(transition.status, "COMPLETED");
+  assert.deepEqual(finalizedInput, {
+    message: "Switched to Build mode.",
+    data: { modeSwitch: { mode: "build" } },
+  });
+  assert.deepEqual(finalOutput, {
+    finalized: true,
+    payload: finalizedInput,
+  });
+  assert.equal(react.assistantText, "Switched to Build mode.");
+});
+
 test("exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {
   const step = createExecWaitUserStep(buildExecConfig());
   let toolCalled = false;

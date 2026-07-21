@@ -682,6 +682,24 @@ export function buildReferenceReactCommandBatchFromAction(input: {
       planningSummary: input.planningSummary ?? "handoff_to_build",
     };
   }
+  if (action.kind === "switch_mode") {
+    return {
+      batchId,
+      commands: [
+        {
+          commandId: `${batchId}-0`,
+          kind: "finalize",
+          commandClass: "finalize",
+          name: "switch_mode",
+          input: {
+            mode: action.mode,
+            message: action.message,
+          },
+        },
+      ],
+      planningSummary: input.planningSummary ?? "switch_mode",
+    };
+  }
   return {
     batchId,
     commands: [

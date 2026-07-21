@@ -131,11 +131,13 @@ const EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.ask_user",
   "kestrel.cannot_satisfy",
+  "kestrel.switch_mode",
   "kestrel.todo_update",
 ] as const;
 const NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.cannot_satisfy",
+  "kestrel.switch_mode",
   "kestrel.todo_update",
 ] as const;
 const PLAN_MODE_CONTROL_TOOL_NAMES = [
