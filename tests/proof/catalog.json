@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3503,
+  "testCount": 3506,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -41026,9 +41026,54 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract cleanup tears down the matching compose project",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 56,
+      "ancestors": [],
+      "title": "product contract cleanup tears down the matching compose project",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract cleanup tears down the matching compose project",
+      "dimension": "product contract cleanup tears down the matching compose project",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract launcher always cleans up its isolated compose project",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 19,
+      "ancestors": [],
+      "title": "product contract launcher always cleans up its isolated compose project",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract launcher always cleans up its isolated compose project",
+      "dimension": "product contract launcher always cleans up its isolated compose project",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/product-contract-ports.test.ts :: product contract launcher cleans up when the suite fails",
+      "file": "tests/unit/product-contract-ports.test.ts",
+      "line": 40,
+      "ancestors": [],
+      "title": "product contract launcher cleans up when the suite fails",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: product contract launcher cleans up when the suite fails",
+      "dimension": "product contract launcher cleans up when the suite fails",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/product-contract-ports.test.ts :: product contract ports are unique and outside the default Linux ephemeral range",
       "file": "tests/unit/product-contract-ports.test.ts",
-      "line": 5,
+      "line": 9,
       "ancestors": [],
       "title": "product contract ports are unique and outside the default Linux ephemeral range",
       "contractId": "runtime.behavior",
