@@ -29,7 +29,7 @@
       "id": "local-core-authority-lock-theft",
       "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",
-      "sourceSha256": "05a55747c91bfc02eb7171aaa289786cd994e0af65dd15471ce7df7a8af0eb98",
+      "sourceSha256": "f3f5093e419749005d9dac5b7f00ab0cd5748dd450959c4df53401f6afd3d723",
       "testFiles": [
         "tests/unit/local-core-api.test.ts"
       ],
