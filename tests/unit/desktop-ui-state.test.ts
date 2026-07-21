@@ -64,10 +64,15 @@ test("Desktop UI state rejects unknown storage keys and non-string values", () =
 
 test("Desktop run requests admit only tagged runtime system prompts", () => {
   const timestamp = "2026-07-09T12:00:00.000Z";
+  const executionSelection = {
+    modelConfiguration: { id: "desktop-default", revision: 1 },
+    apps: [],
+  };
   const request = parseDesktopRunTurnRequest({
     sessionId: "session-1",
     message: "Continue",
     eventType: "user.reply",
+    executionSelection,
     history: [
       { role: "user", text: "Start", timestamp },
       {
@@ -94,6 +99,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       projectPath: "  /workspace/project-a  ",
+      executionSelection,
     }).projectPath,
     "/workspace/project-a",
   );
@@ -103,6 +109,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       message: "Continue",
       eventType: "user.reply",
       projectPath: 42,
+      executionSelection,
     }),
     /projectPath.*must be a non-empty string/u,
   );
@@ -111,6 +118,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
       sessionId: "session-1",
       message: "Continue",
       eventType: "user.reply",
+      executionSelection,
       history: [{ role: "system", text: "Local status", timestamp }],
     }),
     /must be tagged as runtime\.waiting_prompt/u,
