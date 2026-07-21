@@ -48,6 +48,22 @@ contractTest("packages.hermetic", "completed output becomes canonical assistant 
   });
 });
 
+contractTest("packages.hermetic", "completed output exposes the finalized payload to adapters", () => {
+  const accumulator = createKestrelPresentationAccumulator({
+    assistantMessageId: "assistant-mode-switch",
+  });
+  const finalizedPayload = {
+    finalized: true,
+    payload: { data: { modeSwitch: { mode: "plan" } } },
+  };
+
+  const snapshot = accumulator.finish(
+    completedEvent("Switched to Plan mode.", finalizedPayload)
+  );
+
+  assert.deepEqual(snapshot.finalizedPayload, finalizedPayload);
+});
+
 contractTest("packages.hermetic", "waiting output persists one assistant prompt and its exact durable interaction", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-wait",
@@ -146,7 +162,10 @@ contractTest("packages.hermetic", "AI SDK stream and persisted message are emitt
   );
 });
 
-function completedEvent(assistantText: string | null): RunnerRunTerminalEvent {
+function completedEvent(
+  assistantText: string | null,
+  finalizedPayload?: unknown
+): RunnerRunTerminalEvent {
   return {
     id: "event-completed",
     type: "run.completed",
@@ -156,6 +175,7 @@ function completedEvent(assistantText: string | null): RunnerRunTerminalEvent {
     payload: {
       result: {
         assistantText,
+        ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
         output: {
           status: "COMPLETED",
           sessionId: "session-1",

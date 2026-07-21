@@ -128,6 +128,7 @@ export type WebControlCommand =
         | "cancel_follow_up"
         | "resume_follow_up_queue";
       threadId: string;
+      completionMode?: "terminal" | "accepted" | undefined;
       followUpId?: string | undefined;
       requestId?: string | undefined;
       proposalId?: string | undefined;

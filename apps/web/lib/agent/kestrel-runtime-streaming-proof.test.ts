@@ -142,6 +142,7 @@ async function runPrimarySmoke(
       correlationId: "corr_runtime_smoke",
     },
     threadId: "chat_runtime_smoke",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",

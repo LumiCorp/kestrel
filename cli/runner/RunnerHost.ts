@@ -241,6 +241,24 @@ export interface RunnerRuntime {
         result?: RunTurnResult | undefined;
       }>)
     | undefined;
+  performAcceptedOperatorAction?:
+    | ((input: OperatorControlCommandPayload & {
+        action: "approve" | "reject" | "reply";
+        issuedBy?: string | undefined;
+        signal?: AbortSignal | undefined;
+      }) => Promise<{
+        accepted: {
+          sessionId?: string | undefined;
+          threadId: string;
+          disposition: "accepted" | "completed";
+          runId?: string | undefined;
+          inbox?: import("../../src/orchestration/contracts.js").OperatorInboxSnapshot | undefined;
+          view?: import("../../src/orchestration/contracts.js").OperatorThreadView | undefined;
+          result?: RunTurnResult | undefined;
+        };
+        completion: Promise<RunTurnResult>;
+      }>)
+    | undefined;
   getTaskGraph?:
     | ((input: TaskGraphGetCommandPayload) => Promise<{
         sessionId: string;
@@ -467,7 +485,7 @@ export class RunnerHost {
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
     string,
-    "run.start" | "job.run"
+    "run.start" | "job.run" | "operator.control"
   >();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
@@ -1424,13 +1442,136 @@ export class RunnerHost {
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
+      if (payload.completionMode === "accepted") {
+        if (
+          (payload.action !== "approve" && payload.action !== "reject" && payload.action !== "reply")
+          || typeof runtime.performAcceptedOperatorAction !== "function"
+        ) {
+          this.writer.emit("runner.error", {
+            code: "RUNNER_RUNTIME_ERROR",
+            message: "Accepted operator control is available only for approval and reply actions.",
+          }, { commandId, threadId: payload.threadId });
+          return;
+        }
+        const issuedBy = resolveIssuedBy(metadata);
+        const abortController = new AbortController();
+        const execution = await runtime.performAcceptedOperatorAction({
+          ...payload,
+          action: payload.action,
+          ...(issuedBy !== undefined ? { issuedBy } : {}),
+          signal: abortController.signal,
+        });
+        const sessionId = execution.accepted.sessionId;
+        if (sessionId !== undefined) {
+          this.commandBySession.set(sessionId, commandId);
+          this.commandTypeBySession.set(sessionId, "operator.control");
+          this.threadIdBySession.set(sessionId, payload.threadId);
+          this.activeRuns.set(sessionId, {
+            commandId,
+            profileId: metadata?.profile?.id ?? "operator-control",
+            abortController,
+            ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+          });
+        }
+        this.writer.emit("operator.controlled", execution.accepted, {
+          commandId,
+          ...(sessionId !== undefined ? { sessionId } : {}),
+          ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+          threadId: payload.threadId,
+        });
+        if (execution.accepted.disposition === "accepted" && sessionId !== undefined) {
+          this.writer.emit("run.started", {
+            sessionId,
+            eventType: "user.reply",
+            ...(payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
+            ...(payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
+          }, {
+            commandId,
+            sessionId,
+            ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+            threadId: payload.threadId,
+          });
+        }
+        const completion = execution.completion
+          .then((result) => {
+            const completedSessionId = sessionId ?? result.output.sessionId;
+            const runId = result.output.runId;
+            const active = this.activeRuns.get(completedSessionId);
+            if (active?.commandId === commandId && active.cancelRequested === true) {
+              this.writer.emit("run.cancelled", {
+                sessionId: completedSessionId,
+                runId,
+                result: buildNonResponsiveTerminalResult({
+                  status: "CANCELLED",
+                  sessionId: completedSessionId,
+                  runId,
+                }),
+              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+              return;
+            }
+            if (result.output.status === "FAILED") {
+              this.writer.emit("run.failed", {
+                result,
+                error: {
+                  code: result.output.errors[0]?.code ?? "RUN_FAILED",
+                  message: result.output.errors[0]?.message ?? "Run failed",
+                },
+              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+            } else {
+              this.writer.emit("run.completed", { result }, {
+                commandId,
+                sessionId: completedSessionId,
+                runId,
+                threadId: payload.threadId,
+              });
+            }
+          })
+          .catch((error: unknown) => {
+            const failure = this.normalizeTerminalError(error);
+            const completedSessionId = sessionId ?? execution.accepted.sessionId;
+            const active = completedSessionId !== undefined ? this.activeRuns.get(completedSessionId) : undefined;
+            if (completedSessionId !== undefined && active?.commandId === commandId && active.cancelRequested === true) {
+              const runId = active.runId ?? execution.accepted.runId ?? commandId;
+              this.writer.emit("run.cancelled", {
+                sessionId: completedSessionId,
+                runId,
+                result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: completedSessionId, runId }),
+              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+              return;
+            }
+            this.writer.emit("run.failed", {
+              result: buildNonResponsiveTerminalResult({
+                status: "FAILED",
+                sessionId: completedSessionId ?? payload.threadId,
+                runId: execution.accepted.runId ?? commandId,
+                error: failure,
+              }),
+              error: failure,
+            }, {
+              commandId,
+              ...(completedSessionId !== undefined ? { sessionId: completedSessionId } : {}),
+              ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+              threadId: payload.threadId,
+            });
+          })
+          .finally(() => {
+            if (sessionId !== undefined && this.commandBySession.get(sessionId) === commandId) {
+              this.commandBySession.delete(sessionId);
+              this.commandTypeBySession.delete(sessionId);
+              this.threadIdBySession.delete(sessionId);
+              this.activeRuns.delete(sessionId);
+            }
+          });
+        void this.trackExecution(completion);
+        return;
+      }
       if (typeof runtime.performOperatorAction === "function") {
         const issuedBy = resolveIssuedBy(metadata);
         const result = await runtime.performOperatorAction({
           ...payload,
           ...(issuedBy !== undefined ? { issuedBy } : {}),
         });
-        this.writer.emit("operator.controlled", result, {
+        this.writer.emit("operator.controlled", { ...result, disposition: "completed" }, {
           commandId,
           ...(result.sessionId !== undefined
             ? { sessionId: result.sessionId }

@@ -156,4 +156,5 @@ export interface KestrelPresentationSnapshot {
   errorMessage: string | null;
   failureVisible: boolean;
   interaction: KestrelInteractionPresentation | null;
+  finalizedPayload?: unknown | undefined;
 }

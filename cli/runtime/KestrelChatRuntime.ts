@@ -1453,6 +1453,7 @@ export class KestrelChatRuntime {
     allowToolClasses?: ToolExecutionClass[] | undefined;
     allowCapabilities?: string[] | undefined;
     issuedBy?: string | undefined;
+    completionMode?: "terminal" | "accepted" | undefined;
   }): Promise<{
     sessionId?: string | undefined;
     threadId: string;
@@ -1480,6 +1481,8 @@ export class KestrelChatRuntime {
         message: input.message ?? (input.action === "reject" ? "Rejected." : "Approved."),
         issuedBy: operatorIssuedBy,
         approve: input.action !== "reject",
+        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
         ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
         ...(input.allowToolClasses !== undefined ? { allowedToolClasses: input.allowToolClasses } : {}),
         ...(input.allowCapabilities !== undefined ? { allowedCapabilities: input.allowCapabilities } : {}),
@@ -1662,6 +1665,101 @@ export class KestrelChatRuntime {
           }
         : {}),
     };
+  }
+
+  async performAcceptedOperatorAction(input: {
+    action: "approve" | "reject" | "reply";
+    threadId: string;
+    requestId?: string | undefined;
+    message?: string | undefined;
+    attachments?: RunTurnAttachment[] | undefined;
+    interactionMode?: "chat" | "plan" | "build" | undefined;
+    actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+    allowToolClasses?: ToolExecutionClass[] | undefined;
+    allowCapabilities?: string[] | undefined;
+    issuedBy?: string | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<{
+    accepted: {
+      sessionId?: string | undefined;
+      threadId: string;
+      disposition: "accepted" | "completed";
+      runId?: string | undefined;
+      inbox?: import("../../src/orchestration/index.js").OperatorInboxSnapshot | undefined;
+      view?: import("../../src/orchestration/index.js").OperatorThreadView | undefined;
+      result?: RunTurnResult | undefined;
+    };
+    completion: Promise<RunTurnResult>;
+  }> {
+    const threadRuntime = this.threadRuntime;
+    if (threadRuntime === undefined) {
+      throw createRuntimeFailure("OPERATOR_CONTROL_UNAVAILABLE", "Thread runtime is not configured.");
+    }
+    const status = await threadRuntime.getThreadStatus(input.threadId);
+    const requestId = input.requestId ?? status?.openRequests[0]?.requestId;
+    const request = status?.openRequests.find((candidate) => candidate.requestId === requestId);
+    if (requestId === undefined || request === undefined || status === null) {
+      throw createRuntimeFailure("OPERATOR_REQUEST_NOT_FOUND", `No pending request found for thread '${input.threadId}'.`, {
+        threadId: input.threadId,
+        action: input.action,
+      });
+    }
+    const message = input.message ?? (input.action === "reject" ? "Rejected." : "Approved.");
+    const runId = randomUUID();
+
+    let resolveSubmitted!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      resolveSubmitted = resolve;
+    });
+    const subscription = threadRuntime.subscribe({ threadId: input.threadId }, (event) => {
+      if (event.type === "thread.turn_submitted") {
+        resolveSubmitted();
+      }
+    });
+    const completion = threadRuntime.replyToRequest({
+      threadId: input.threadId,
+      requestId,
+      message,
+      issuedBy: input.issuedBy ?? "operator",
+      approve: input.action !== "reject",
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+      ...(input.allowToolClasses !== undefined ? { allowedToolClasses: input.allowToolClasses } : {}),
+      ...(input.allowCapabilities !== undefined ? { allowedCapabilities: input.allowCapabilities } : {}),
+      runtimeTurn: {
+        sessionId: status.thread.sessionId,
+        runId,
+        message,
+        eventType: request.eventType,
+      },
+    });
+
+    try {
+      const outcome = await Promise.race([
+        submitted.then(() => ({ disposition: "accepted" as const })),
+        completion.then((result) => ({ disposition: "completed" as const, result })),
+      ]);
+      const view = await threadRuntime.getOperatorThreadView(input.threadId);
+      const sessionId = view?.thread.sessionId;
+      return {
+        accepted: {
+          ...(sessionId !== undefined ? { sessionId } : {}),
+          threadId: input.threadId,
+          disposition: outcome.disposition,
+          runId: outcome.disposition === "completed" ? outcome.result.output.runId : runId,
+          ...(outcome.disposition === "completed" ? { result: outcome.result } : {}),
+          ...(view !== null ? { view } : {}),
+          ...(sessionId !== undefined
+            ? { inbox: await threadRuntime.listOperatorInbox({ sessionId }) }
+            : {}),
+        },
+        completion,
+      };
+    } finally {
+      subscription.unsubscribe();
+    }
   }
 
   async refreshToolRuntime(): Promise<ToolRuntimeStatus> {

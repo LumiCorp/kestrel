@@ -78,7 +78,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
       correlationId: "req_123",
     },
     threadId: "chat_123",
-    interactionMode: "plan",
+    interactionMode: "build",
     messages: [
       {
         id: "msg_user",
@@ -97,7 +97,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
 
   assert.equal(capturedInput?.sessionId, "chat_123");
   assert.equal(capturedInput?.message, "What changed?");
-  assert.equal(capturedInput?.interactionMode, "plan");
+  assert.equal(capturedInput?.interactionMode, "build");
   assert.deepEqual(capturedInput?.clientCapabilities, {
     kestrelOne: {
       requestId: "req_123",
@@ -152,6 +152,52 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
   assert.equal((persistedMeta as { runId?: unknown })?.runId, "run_123");
 });
 
+contractTest("web.hermetic", "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn", async () => {
+  let capturedInput: KestrelOneAgentTurnInput | undefined;
+  const agent = fakeAgent({
+    terminal: completedTerminal("Implementation resumed", {
+      message: "Structured answer data",
+    }),
+    onStream(input) {
+      capturedInput = input;
+    },
+  });
+
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/threads/thread_resume", {
+      method: "POST",
+    }),
+    agent,
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: {
+      requestId: "req_resume",
+      correlationId: "req_resume",
+    },
+    threadId: "thread_resume",
+    interactionMode: "build",
+    interactionResponse: {
+      requestId: "request-build-mode",
+      eventType: "user.reply",
+      message: "Continue in Build mode",
+    },
+    messages: [
+      {
+        id: "msg_user",
+        role: "user",
+        parts: [{ type: "text", text: "Continue in Build mode" }],
+      },
+    ],
+  });
+
+  await response.text();
+
+  assert.equal(capturedInput?.interactionMode, "build");
+  assert.equal(capturedInput?.resumeRequestId, "request-build-mode");
+  assert.equal(capturedInput?.eventType, "user.reply");
+});
+
 contractTest("web.hermetic", "createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
   let persistedText = "";
   let persistedTerminalStatus = "";
@@ -199,6 +245,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse persists a completed
       correlationId: "req_waiting",
     },
     threadId: "thread_waiting",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -246,6 +293,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse isolates transient t
         correlationId: "req_123",
       },
       threadId: "chat_123",
+      interactionMode: "chat",
       messages: [
         {
           id: "msg_user",
@@ -303,6 +351,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse preserves typed prog
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -351,6 +400,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse binds Project contex
     organizationId: "org_123",
     correlation: { requestId: "req_123", correlationId: "req_123" },
     threadId: "thread_project",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -435,6 +485,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces failed runn
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -470,6 +521,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces cancelled r
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -522,6 +574,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse shows runner error f
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",

@@ -18,7 +18,84 @@ import type {
   ActerStepConfig,
   CannotSatisfyAction,
   FinalizeAction,
+  SwitchModeAction,
 } from "./shared.js";
+
+export async function handleSwitchModeAction(input: {
+  action: SwitchModeAction;
+  config: ActerStepConfig;
+  reactState: Record<string, unknown>;
+  activeRegion: string | undefined;
+  stepIndex: number;
+  io: StepIO;
+}): Promise<Transition> {
+  const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, {
+    message: input.action.message,
+    data: {
+      modeSwitch: {
+        mode: input.action.mode,
+      },
+    },
+  });
+  const finalOutput = unwrapAgentToolOutput(finalToolResult);
+  const assistantText = input.action.message.trim();
+  const modelTranscript = appendModelTranscriptItems(
+    appendToolResultToTranscript({
+      transcript: input.reactState.modelTranscript,
+      toolName: "kestrel.switch_mode",
+      toolInput: {
+        mode: input.action.mode,
+        message: input.action.message,
+      },
+      toolOutput: finalToolResult,
+      stepIndex: input.stepIndex,
+    }),
+    [
+      makeModelTranscriptItem("assistant_text", {
+        content: assistantText,
+        stepIndex: input.stepIndex,
+      }),
+    ],
+  );
+  return createReferenceReactFinalizeCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.config.acterStepId,
+    stepIndex: input.stepIndex,
+    emitEvents: [
+      {
+        type: "agent.completed",
+        payload: {
+          finalizedBy: input.config.finalizeToolName,
+          output: finalOutput,
+        },
+      },
+    ],
+    activeRegion: input.activeRegion,
+    phase: "ACT",
+    reactPatch: {
+      ...createReferenceReactNextActionPatch(undefined),
+      modelTranscript,
+      finalized: true,
+      ...createReferenceReactAssistantTextPatch(assistantText),
+      ...createReferenceReactFinalOutputPatch(finalOutput),
+      activeTurnIntent: undefined,
+      decisionTrace: [
+        {
+          eventType: "decision.executed",
+          phase: "acter",
+          decisionCode: "switch_mode",
+          metadata: { mode: input.action.mode },
+        },
+      ],
+    },
+    execPatch: { pendingBatch: undefined },
+    regionReactPatch: {
+      finalized: true,
+      ...createReferenceReactAssistantTextPatch(assistantText),
+    },
+    regionExecPatch: { pendingBatch: undefined },
+  });
+}
 
 export async function handleCannotSatisfyAction(input: {
   action: CannotSatisfyAction;

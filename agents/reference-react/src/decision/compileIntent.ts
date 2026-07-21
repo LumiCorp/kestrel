@@ -301,6 +301,8 @@ function buildRuntimeOwnedActionPlan(
           ? "Report the concrete blocker for the current request."
           : action.kind === "handoff_to_build"
             ? "Hand off the approved plan to build mode."
+            : action.kind === "switch_mode"
+              ? `Switch the conversation to ${action.mode} mode.`
             : `Run ${action.kind}.`;
   return {
     intent,

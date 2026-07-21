@@ -522,7 +522,7 @@ async function handleRunnerServiceRequest(
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = isRunnerStreamingCommandType(command.type);
+  const isStreamable = isStreamingRunnerCommand(command);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -650,7 +650,7 @@ async function executeRunnerServiceRequest(
   }
 
   const expectsStream = path === "/commands/stream";
-  const isStreamable = isRunnerStreamingCommandType(command.type);
+  const isStreamable = isStreamingRunnerCommand(command);
   if (expectsStream !== isStreamable) {
     const message = expectsStream
       ? `Command '${command.type}' must use /commands.`
@@ -702,7 +702,7 @@ async function handleStreamingCommand(
   let cancelRequested = false;
   const unsubscribeCommand = eventBus.subscribe(command.id, (event) => {
     response.write(encodeSseChunk(event));
-    if (TERMINAL_EVENT_TYPES.has(event.type)) {
+    if (isTerminalEventForCommand(command, event)) {
       terminalSent = true;
       unsubscribeCommand();
       response.end();
@@ -961,7 +961,7 @@ async function streamCommandToHandler(
         return;
       }
       onEvent(event);
-      if (TERMINAL_EVENT_TYPES.has(event.type)) {
+      if (isTerminalEventForCommand(command, event)) {
         finish();
       }
     });
@@ -1310,6 +1310,21 @@ function isCancellableStreamingRun(
 
 function isDurableStreamingCommand(command: RunnerCommand): boolean {
   return command.metadata?.durability === "continue_on_disconnect";
+}
+
+function isStreamingRunnerCommand(command: RunnerCommand): boolean {
+  return isRunnerStreamingCommandType(command.type)
+    || (command.type === "operator.control" && command.payload.completionMode === "accepted");
+}
+
+function isTerminalEventForCommand(command: RunnerCommand, event: RunnerEvent): boolean {
+  if (command.type === "operator.control" && command.payload.completionMode === "accepted") {
+    return event.type === "run.completed"
+      || event.type === "run.failed"
+      || event.type === "run.cancelled"
+      || event.type === "runner.error";
+  }
+  return TERMINAL_EVENT_TYPES.has(event.type);
 }
 
 function makeRunnerErrorEvent(

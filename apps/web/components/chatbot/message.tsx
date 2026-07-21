@@ -1,7 +1,8 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import { ActivityIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ThreadTurnView } from "@/lib/turns/client-contract";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -62,14 +63,33 @@ const isKestrelPresentationPart = (part: ChatMessage["parts"][number]) =>
   part.type.startsWith("data-kestrel-");
 
 function turnActivityLabel(status: ThreadTurnView["status"] | undefined) {
-  if (status === "queued") return "Agent activity · Queued";
-  if (status === "running") return "Agent activity · Working";
-  if (status === "waiting_for_input") return "Agent activity · Needs response";
-  if (status === "completed") return "Agent activity · Completed";
-  if (status === "failed") return "Agent activity · Failed";
-  if (status === "cancelled") return "Agent activity · Interrupted";
-  return "Agent activity";
+  if (status === "queued") return "Activity details · Queued";
+  if (status === "running") return "Activity details · Working";
+  if (status === "waiting_for_input")
+    return "Activity details · Needs response";
+  if (status === "completed") return "Activity details · Completed";
+  if (status === "failed") return "Activity details · Failed";
+  if (status === "cancelled") return "Activity details · Interrupted";
+  return "Activity details";
 }
+
+const shouldRenderActivityDetail = (part: ChatMessage["parts"][number]) => {
+  if (!isKestrelPresentationPart(part)) return false;
+  if (
+    part.type === "data-kestrel-agent-progress" ||
+    part.type === "data-kestrel-citation" ||
+    part.type === "data-kestrel-artifact"
+  ) {
+    return false;
+  }
+  if (part.type !== "data-kestrel-provider-reasoning") return true;
+  return (
+    part.data.event === "unavailable" ||
+    (part.data.event === "delta" &&
+      part.data.contentState === "live" &&
+      Boolean(part.data.delta))
+  );
+};
 
 export function KestrelActivityTimeline({
   parts,
@@ -80,150 +100,149 @@ export function KestrelActivityTimeline({
   isLoading: boolean;
   turnStatus?: ThreadTurnView["status"];
 }) {
-  const failure = [...parts]
-    .reverse()
-    .find(
-      (part) =>
-        part.type === "data-kestrel-status" &&
-        ["failed", "cancelled", "contract_failure"].includes(part.data.status)
-    );
-  const [isOpen, setIsOpen] = useState(isLoading || Boolean(failure));
-  useEffect(() => {
-    if (
-      isLoading ||
-      failure ||
-      turnStatus === "waiting_for_input" ||
-      turnStatus === "failed"
-    ) {
-      setIsOpen(true);
-    } else if (turnStatus === "completed") {
-      setIsOpen(false);
-    }
-  }, [failure, isLoading, turnStatus]);
-  if (parts.length === 0) return null;
+  const agentProgressParts = parts.filter(
+    (part) => part.type === "data-kestrel-agent-progress",
+  );
+  const detailParts = parts.filter(shouldRenderActivityDetail);
+  if (agentProgressParts.length === 0 && detailParts.length === 0) return null;
   return (
-    <details
-      className="rounded-lg border bg-muted/20"
-      data-testid="kestrel-activity-timeline"
-      onToggle={(event) => setIsOpen(event.currentTarget.open)}
-      open={isOpen}
-    >
-      <summary className="cursor-pointer px-3 py-2 font-medium text-sm">
-        {turnActivityLabel(turnStatus)}
-      </summary>
-      <ol className="space-y-2 border-t px-3 py-3 text-xs">
-        {parts.map((part, index) => {
-          const key = `timeline-${index}`;
-          if (part.type === "data-kestrel-progress") {
-            return (
-              <li key={key}>
-                <span className="font-medium">{part.data.phase}</span>
-                <span className="ml-2 text-muted-foreground">
-                  {part.data.text}
-                </span>
+    <div className="space-y-2" data-testid="kestrel-activity-timeline">
+      {agentProgressParts.length > 0 ? (
+        <section className="not-prose" data-testid="kestrel-agent-progress">
+          <div className="flex items-center gap-1 px-2 py-1 text-muted-foreground text-xs">
+            <ActivityIcon className="size-3.5" />
+            <span>Agent progress</span>
+            {isLoading ? (
+              <span
+                aria-label="Agent is working"
+                className="ml-1 size-1.5 animate-pulse rounded-full bg-primary"
+              />
+            ) : null}
+          </div>
+          <ol className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-2.5 text-muted-foreground text-xs leading-relaxed">
+            {agentProgressParts.map((part) => (
+              <li className="whitespace-pre-wrap" key={part.data.id}>
+                {part.data.text}
               </li>
-            );
-          }
-          if (part.type === "data-kestrel-agent-progress") {
-            return (
-              <li key={key}>
-                <span className="font-medium">{part.data.label}</span>
-                <span className="ml-2 text-muted-foreground">
-                  {part.data.text}
-                </span>
-              </li>
-            );
-          }
-          if (part.type === "data-kestrel-provider-reasoning") {
-            if (part.data.event === "unavailable") {
-              return (
-                <li key={key}>
-                  <span className="font-medium">Provider reasoning</span>
-                  <span className="ml-2 text-muted-foreground">
-                    Unavailable for this model
-                  </span>
-                </li>
-              );
-            }
-            if (
-              part.data.event !== "delta" ||
-              part.data.contentState !== "live" ||
-              !part.data.delta
-            ) {
-              return null;
-            }
-            return (
-              <li className="whitespace-pre-wrap" key={key}>
-                <span className="font-medium">{part.data.label}</span>
-                <span className="ml-2 text-muted-foreground">
-                  {part.data.delta}
-                </span>
-              </li>
-            );
-          }
-          if (part.type === "data-kestrel-tool") {
-            return (
-              <li key={key}>
-                <span className="font-medium">
-                  {part.data.displayName ?? part.data.toolName}
-                </span>
-                <span className="ml-2 text-muted-foreground">
-                  {part.data.phase === "started"
-                    ? "Started"
-                    : part.data.phase === "completed"
-                      ? "Completed"
-                      : (part.data.error?.message ?? "Failed")}
-                </span>
-              </li>
-            );
-          }
-          if (part.type === "data-kestrel-citation") {
-            return null;
-          }
-          if (part.type === "data-kestrel-artifact") {
-            return null;
-          }
-          if (part.type === "data-kestrel-interaction") {
-            return (
-              <li key={key}>
-                <span className="font-medium">Response requested</span>
-                <span className="ml-2 text-muted-foreground">
-                  {part.data.status === "pending"
-                    ? "Waiting for you"
-                    : part.data.status === "resolved"
-                      ? "Response received"
-                      : "Cancelled"}
-                </span>
-              </li>
-            );
-          }
-          if (part.type === "data-kestrel-status") {
-            const failed = ["failed", "cancelled", "contract_failure"].includes(
-              part.data.status
-            );
-            return (
-              <li
-                className={
-                  failed ? "text-destructive" : "text-muted-foreground"
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {detailParts.length > 0 ? (
+        <details className="rounded-lg border bg-muted/20">
+          <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground text-xs">
+            {turnActivityLabel(turnStatus)}
+          </summary>
+          <ol className="space-y-2 border-t px-3 py-3 text-xs">
+            {detailParts.map((part, index) => {
+              const key = `timeline-${index}`;
+              if (part.type === "data-kestrel-progress") {
+                return (
+                  <li key={key}>
+                    <span className="font-medium">{part.data.phase}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {part.data.text}
+                    </span>
+                  </li>
+                );
+              }
+              if (part.type === "data-kestrel-provider-reasoning") {
+                if (part.data.event === "unavailable") {
+                  return (
+                    <li key={key}>
+                      <span className="font-medium">Provider reasoning</span>
+                      <span className="ml-2 text-muted-foreground">
+                        Unavailable for this model
+                      </span>
+                    </li>
+                  );
                 }
-                key={key}
-                role={failed ? "alert" : undefined}
-              >
-                {part.data.status === "contract_failure"
-                  ? "Response contract failed"
-                  : part.data.status === "waiting"
-                    ? "Paused for your response"
-                    : part.data.status === "completed"
-                      ? "Run segment completed"
-                      : part.data.status.replaceAll("_", " ")}
-                {part.data.errorMessage ? `: ${part.data.errorMessage}` : ""}
-              </li>
-            );
-          }
-          return null;
-        })}
-      </ol>
-    </details>
+                if (
+                  part.data.event !== "delta" ||
+                  part.data.contentState !== "live" ||
+                  !part.data.delta
+                ) {
+                  return null;
+                }
+                return (
+                  <li className="whitespace-pre-wrap" key={key}>
+                    <span className="font-medium">{part.data.label}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {part.data.delta}
+                    </span>
+                  </li>
+                );
+              }
+              if (part.type === "data-kestrel-tool") {
+                return (
+                  <li key={key}>
+                    <span className="font-medium">
+                      {part.data.displayName ?? part.data.toolName}
+                    </span>
+                    <span className="ml-2 text-muted-foreground">
+                      {part.data.phase === "started"
+                        ? "Started"
+                        : part.data.phase === "completed"
+                          ? "Completed"
+                          : (part.data.error?.message ?? "Failed")}
+                    </span>
+                  </li>
+                );
+              }
+              if (part.type === "data-kestrel-citation") {
+                return null;
+              }
+              if (part.type === "data-kestrel-artifact") {
+                return null;
+              }
+              if (part.type === "data-kestrel-interaction") {
+                return (
+                  <li key={key}>
+                    <span className="font-medium">Response requested</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {part.data.status === "pending"
+                        ? "Waiting for you"
+                        : part.data.status === "resolved"
+                          ? "Response received"
+                          : "Cancelled"}
+                    </span>
+                  </li>
+                );
+              }
+              if (part.type === "data-kestrel-status") {
+                const failed = [
+                  "failed",
+                  "cancelled",
+                  "contract_failure",
+                ].includes(part.data.status);
+                return (
+                  <li
+                    className={
+                      failed ? "text-destructive" : "text-muted-foreground"
+                    }
+                    key={key}
+                    role={failed ? "alert" : undefined}
+                  >
+                    {part.data.status === "contract_failure"
+                      ? "Response contract failed"
+                      : part.data.status === "waiting"
+                        ? "Paused for your response"
+                        : part.data.status === "completed"
+                          ? "Run segment completed"
+                          : part.data.status.replaceAll("_", " ")}
+                    {part.data.errorMessage
+                      ? `: ${part.data.errorMessage}`
+                      : ""}
+                  </li>
+                );
+              }
+              return null;
+            })}
+          </ol>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

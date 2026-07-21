@@ -9,6 +9,7 @@ export const COMPILED_ACTION_KINDS = [
   "ask_user",
   "cannot_satisfy",
   "handoff_to_build",
+  "switch_mode",
   "finalize",
 ] as const;
 
@@ -45,6 +46,7 @@ const EXECUTABLE_ACTION_KINDS = new Set<CompiledActionKind>([
   "ask_user",
   "cannot_satisfy",
   "handoff_to_build",
+  "switch_mode",
   "finalize",
 ]);
 
@@ -147,6 +149,13 @@ function validateCompiledActionShape(
   if (kind === "handoff_to_build") {
     return requireNonEmptyString(action.message, "state.agent.nextAction.message") ??
       requireRecord(action.continuation, "state.agent.nextAction.continuation");
+  }
+  if (kind === "switch_mode") {
+    const mode = asString(action.mode);
+    if (mode !== "chat" && mode !== "plan" && mode !== "build") {
+      return parseFailure("state.agent.nextAction.mode", "invalid_compiled_next_action", "switch_mode action requires mode chat, plan, or build.");
+    }
+    return requireNonEmptyString(action.message, "state.agent.nextAction.message");
   }
   return requireRecord(action.input, "state.agent.nextAction.input") ??
     requireNonEmptyString(asRecord(action.input)?.message, "state.agent.nextAction.input.message");

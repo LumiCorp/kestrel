@@ -3862,7 +3862,7 @@ contractTest("runtime.hermetic", "agent loop rejects plan-mode external side-eff
   const failure = retryContext.failure as Record<string, unknown>;
   const failureDetails = failure.details as Record<string, unknown>;
   const lastActionResult = agent.lastActionResult as Record<string, unknown>;
-  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_todo_update"]);
+  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_switch_mode", "kestrel_todo_update"]);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(agent.nextAction, undefined);
@@ -4091,7 +4091,7 @@ contractTest("runtime.hermetic", "agent loop hides tools missing capability mani
   const retryContext = agent.retryContext as Record<string, unknown>;
   const failure = retryContext.failure as Record<string, unknown>;
   const failureDetails = failure.details as Record<string, unknown>;
-  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_todo_update"]);
+  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_switch_mode", "kestrel_todo_update"]);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(failure.code, "DECISION_SCHEMA_FAILED");
@@ -4134,6 +4134,7 @@ contractTest("runtime.hermetic", "agent loop omits plan-only handoff control too
     "kestrel_finalize",
     "kestrel_ask_user",
     "kestrel_cannot_satisfy",
+    "kestrel_switch_mode",
     "kestrel_todo_update",
   ]);
   assert.equal(requestToolNames.includes("kestrel_handoff_to_build"), false);
@@ -4714,7 +4715,7 @@ contractTest("runtime.hermetic", "agent loop rejects hidden sandboxed tool dispa
   const retryContext = agent.retryContext as Record<string, unknown>;
   const failure = retryContext.failure as Record<string, unknown>;
   const failureDetails = failure.details as Record<string, unknown>;
-  assert.deepEqual(requestToolNames, ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_todo_update"]);
+  assert.deepEqual(requestToolNames, ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_switch_mode", "kestrel_todo_update"]);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(agent.nextAction, undefined);

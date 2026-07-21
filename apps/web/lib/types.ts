@@ -115,6 +115,7 @@ export type CustomUIDataTypes = {
   "resume-warning": { message: string };
   "stream-resumed": null;
   "stream-warning": { droppedChunkCount: number };
+  "interaction-mode": { mode: KestrelOneInteractionMode };
 } & KestrelPresentationDataParts;
 
 export type ChatMessage = UIMessage<

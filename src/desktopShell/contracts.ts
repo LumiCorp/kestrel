@@ -251,6 +251,7 @@ export interface DesktopFollowUpQueueEntry {
 export interface DesktopOperatorControlRequest {
   action: "approve" | "reject" | "reply" | "steer" | "retry" | "continue_waiting" | "focus_thread" | "resolve_context_checkpoint" | "approve_assembly_change" | "reject_assembly_change" | "supersede_child_thread" | "resolve_fan_in_checkpoint" | "enqueue_follow_up" | "edit_follow_up" | "cancel_follow_up" | "resume_follow_up_queue";
   threadId: string;
+  completionMode?: "terminal" | "accepted" | undefined;
   followUpId?: string | undefined;
   requestId?: string | undefined;
   proposalId?: string | undefined;
@@ -279,6 +280,10 @@ export function parseDesktopOperatorControlRequest(value: unknown): DesktopOpera
     action,
     threadId: parseRequiredDesktopString(input.threadId, "threadId"),
   };
+  if (input.completionMode !== undefined) {
+    if (input.completionMode !== "terminal" && input.completionMode !== "accepted") throw new Error("Desktop operator control completionMode is invalid.");
+    result.completionMode = input.completionMode;
+  }
   for (const field of ["followUpId", "requestId", "proposalId", "checkpointId", "delegationId", "message"] as const) {
     if (input[field] !== undefined) result[field] = parseRequiredDesktopString(input[field], field);
   }

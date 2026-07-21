@@ -162,6 +162,19 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
     },
   },
   {
+    name: "kestrel.switch_mode",
+    description: "Switch the conversation to the mode explicitly requested by the user. Use this only when the user directly asks to switch to Chat, Plan, or Build mode; do not infer a mode change from the kind of work they requested. The selected mode applies to the next turn.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        mode: { type: "string", enum: ["chat", "plan", "build"] },
+        message: { type: "string", minLength: 1 },
+      },
+      required: ["mode", "message"],
+    },
+  },
+  {
     name: "kestrel.todo_update",
     description: "Update the visible live checklist for multi-step work. Items track concrete task work, checks, results, and blockers; do not add finalization or reporting itself as a todo item. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. Use a standalone update only when waiting or blocked with no executable or terminal action.",
     inputSchema: VISIBLE_TODOS_SCHEMA,
@@ -214,7 +227,8 @@ function withAgentProgressContract(
   if (
     entry.canonicalName === "kestrel.finalize" ||
     entry.canonicalName === "kestrel.ask_user" ||
-    entry.canonicalName === "kestrel.cannot_satisfy"
+    entry.canonicalName === "kestrel.cannot_satisfy" ||
+    entry.canonicalName === "kestrel.switch_mode"
   ) {
     return entry;
   }

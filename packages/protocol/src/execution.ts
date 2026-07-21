@@ -747,6 +747,7 @@ export type RunnerOperatorControlActionValue =
 export interface OperatorControlCommandPayload {
   action: RunnerOperatorControlAction;
   threadId: string;
+  completionMode?: "terminal" | "accepted" | undefined;
   requestId?: string | undefined;
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
@@ -1327,6 +1328,8 @@ export interface OperatorRunReasoningEventPayload {
 export interface OperatorControlledEventPayload {
   sessionId?: string | undefined;
   threadId: string;
+  disposition?: "accepted" | "completed" | undefined;
+  runId?: string | undefined;
   inbox?: RunnerOperatorInboxSnapshot | undefined;
   view?: RunnerOperatorThreadView | undefined;
   result?: RunnerResultV2<RunnerRunOutput> | undefined;
@@ -1946,6 +1949,7 @@ function parseRunnerCommandPayloadV2(
         "resolve_fan_in_checkpoint",
       ]);
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      validateOptionalEnum(payload.completionMode, `${label}.completionMode`, ["terminal", "accepted"]);
       for (const field of [
         "requestId",
         "proposalId",
@@ -2361,6 +2365,8 @@ function parseRunnerEventPayloadV2(
     case "operator.controlled":
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
       validateOptionalNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      validateOptionalEnum(payload.disposition, `${label}.disposition`, ["accepted", "completed"]);
+      validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
       validateOptionalRecord(payload.inbox, `${label}.inbox`);
       validateOptionalRecord(payload.view, `${label}.view`);
       validateOptionalRecord(payload.result, `${label}.result`);
