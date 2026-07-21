@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3604,
+  "testCount": 3613,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -4551,7 +4551,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts :: external bot replies submit the gateway-managed inline profile",
       "file": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts",
-      "line": 143,
+      "line": 145,
       "ancestors": [],
       "title": "external bot replies submit the gateway-managed inline profile",
       "contractId": "web.unit-contract",
@@ -4566,7 +4566,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts :: external replies surface canonical runner failures",
       "file": "apps/web/lib/agent/kestrel-external-runtime-core.test.ts",
-      "line": 93,
+      "line": 95,
       "ancestors": [],
       "title": "external replies surface canonical runner failures",
       "contractId": "web.unit-contract",
@@ -4679,6 +4679,36 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: knowledge tool audit metadata reads tenant and correlation headers",
       "dimension": "knowledge tool audit metadata reads tenant and correlation headers",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/agent/kestrel-mode-switch.test.ts :: reads a requested interaction mode from a finalized agent payload",
+      "file": "apps/web/lib/agent/kestrel-mode-switch.test.ts",
+      "line": 6,
+      "ancestors": [],
+      "title": "reads a requested interaction mode from a finalized agent payload",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: reads a requested interaction mode from a finalized agent payload",
+      "dimension": "reads a requested interaction mode from a finalized agent payload",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/agent/kestrel-mode-switch.test.ts :: rejects unsupported or unstructured mode switch payloads",
+      "file": "apps/web/lib/agent/kestrel-mode-switch.test.ts",
+      "line": 20,
+      "ancestors": [],
+      "title": "rejects unsupported or unstructured mode switch payloads",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: rejects unsupported or unstructured mode switch payloads",
+      "dimension": "rejects unsupported or unstructured mode switch payloads",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -4911,7 +4941,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 335,
+      "line": 384,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field",
       "contractId": "web.unit-contract",
@@ -4926,7 +4956,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 222,
+      "line": 269,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse isolates transient title failures from the agent stream",
       "contractId": "web.unit-contract",
@@ -4941,7 +4971,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 154,
+      "line": 200,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text",
       "contractId": "web.unit-contract",
@@ -4954,9 +4984,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
+      "line": 154,
+      "ancestors": [],
+      "title": "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "dimension": "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 277,
+      "line": 325,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse preserves typed progress with final assistant text",
       "contractId": "web.unit-contract",
@@ -4971,7 +5016,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 494,
+      "line": 546,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives",
       "contractId": "web.unit-contract",
@@ -5001,7 +5046,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces cancelled runner output once",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 457,
+      "line": 508,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces cancelled runner output once",
       "contractId": "web.unit-contract",
@@ -5016,7 +5061,7 @@
     {
       "identity": "apps/web/lib/agent/kestrel-runtime.test.ts :: createKestrelOneAgentResponse surfaces failed runner output",
       "file": "apps/web/lib/agent/kestrel-runtime.test.ts",
-      "line": 395,
+      "line": 445,
       "ancestors": [],
       "title": "createKestrelOneAgentResponse surfaces failed runner output",
       "contractId": "web.unit-contract",
@@ -7551,7 +7596,7 @@
     {
       "identity": "apps/web/lib/db/durable-thread-turns-migration.test.ts :: durable replay binds the cutoff through the timestamp column encoder",
       "file": "apps/web/lib/db/durable-thread-turns-migration.test.ts",
-      "line": 140,
+      "line": 153,
       "ancestors": [],
       "title": "durable replay binds the cutoff through the timestamp column encoder",
       "contractId": "web.unit-contract",
@@ -7634,6 +7679,21 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: the durable turn worker runs the web package as ESM",
       "dimension": "the durable turn worker runs the web package as ESM",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/lib/db/durable-thread-turns-migration.test.ts :: the durable worker records requested and effective interaction modes at runtime start",
+      "file": "apps/web/lib/db/durable-thread-turns-migration.test.ts",
+      "line": 140,
+      "ancestors": [],
+      "title": "the durable worker records requested and effective interaction modes at runtime start",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: the durable worker records requested and effective interaction modes at runtime start",
+      "dimension": "the durable worker records requested and effective interaction modes at runtime start",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -13368,7 +13428,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: AI SDK stream and persisted message are emitted from the same accumulator",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 87,
+      "line": 103,
       "ancestors": [],
       "title": "AI SDK stream and persisted message are emitted from the same accumulator",
       "contractId": "package.public-contract",
@@ -13396,9 +13456,24 @@
       "environment": "linux"
     },
     {
+      "identity": "packages/ai-sdk/tests/accumulator.test.ts :: completed output exposes the finalized payload to adapters",
+      "file": "packages/ai-sdk/tests/accumulator.test.ts",
+      "line": 50,
+      "ancestors": [],
+      "title": "completed output exposes the finalized payload to adapters",
+      "contractId": "package.public-contract",
+      "owner": "ecosystem",
+      "risk": "medium",
+      "counterexample": "A public package export, transport, import, or compatibility contract changes for consumers. Executable counterexample: completed output exposes the finalized payload to adapters",
+      "dimension": "completed output exposes the finalized payload to adapters",
+      "role": "variant",
+      "lane": "packages",
+      "environment": "linux"
+    },
+    {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: empty completed output becomes a visible contract failure",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 67,
+      "line": 83,
       "ancestors": [],
       "title": "empty completed output becomes a visible contract failure",
       "contractId": "package.public-contract",
@@ -13428,7 +13503,7 @@
     {
       "identity": "packages/ai-sdk/tests/accumulator.test.ts :: waiting output persists one assistant prompt and its exact durable interaction",
       "file": "packages/ai-sdk/tests/accumulator.test.ts",
-      "line": 50,
+      "line": 66,
       "ancestors": [],
       "title": "waiting output persists one assistant prompt and its exact durable interaction",
       "contractId": "package.public-contract",
@@ -14028,7 +14103,7 @@
     {
       "identity": "packages/sdk/tests/agent.test.ts :: agent session memory reads and writes through task graph state",
       "file": "packages/sdk/tests/agent.test.ts",
-      "line": 124,
+      "line": 129,
       "ancestors": [],
       "title": "agent session memory reads and writes through task graph state",
       "contractId": "package.public-contract",
@@ -14973,7 +15048,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 466,
+      "line": 474,
       "ancestors": [],
       "title": "KestrelChatRuntime accepts explicit v2 interaction mode through direct runtime turns",
       "contractId": "runtime.integration",
@@ -14988,7 +15063,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1630,
+      "line": 1638,
       "ancestors": [],
       "title": "KestrelChatRuntime acknowledges an accepted reply before its resumed turn completes",
       "contractId": "runtime.integration",
@@ -15003,7 +15078,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime annotates forced legacy-mode migration for the reference harness",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 749,
+      "line": 757,
       "ancestors": [],
       "title": "KestrelChatRuntime annotates forced legacy-mode migration for the reference harness",
       "contractId": "runtime.integration",
@@ -15018,7 +15093,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 543,
+      "line": 551,
       "ancestors": [],
       "title": "KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and returns resumed output",
       "contractId": "runtime.integration",
@@ -15033,7 +15108,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime captures finalized payload via onFinalize callback",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 821,
+      "line": 829,
       "ancestors": [],
       "title": "KestrelChatRuntime captures finalized payload via onFinalize callback",
       "contractId": "runtime.integration",
@@ -15048,7 +15123,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime consumes execution authorization without requiring an MCP grant",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 191,
+      "line": 193,
       "ancestors": [],
       "title": "KestrelChatRuntime consumes execution authorization without requiring an MCP grant",
       "contractId": "runtime.integration",
@@ -15078,7 +15153,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 385,
+      "line": 393,
       "ancestors": [],
       "title": "KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance",
       "contractId": "runtime.integration",
@@ -15093,7 +15168,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime delegates tool runtime status APIs to Kestrel core",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 949,
+      "line": 957,
       "ancestors": [],
       "title": "KestrelChatRuntime delegates tool runtime status APIs to Kestrel core",
       "contractId": "runtime.integration",
@@ -15108,7 +15183,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1406,
+      "line": 1414,
       "ancestors": [],
       "title": "KestrelChatRuntime describeSession keeps focused thread and blocker parity from operator control model",
       "contractId": "runtime.integration",
@@ -15123,7 +15198,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 886,
+      "line": 894,
       "ancestors": [],
       "title": "KestrelChatRuntime falls back to persisted finalized payload when no callback payload was emitted",
       "contractId": "runtime.integration",
@@ -15138,7 +15213,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1826,
+      "line": 1834,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards abort signals through ThreadRuntime",
       "contractId": "runtime.integration",
@@ -15153,7 +15228,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards attachments when replying to a typed operator request",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1589,
+      "line": 1597,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards attachments when replying to a typed operator request",
       "contractId": "runtime.integration",
@@ -15168,7 +15243,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime forwards manual compaction into operator affordance context",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 663,
+      "line": 671,
       "ancestors": [],
       "title": "KestrelChatRuntime forwards manual compaction into operator affordance context",
       "contractId": "runtime.integration",
@@ -15183,7 +15258,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime maps operator child-thread tool policy into runtime policy",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1510,
+      "line": 1518,
       "ancestors": [],
       "title": "KestrelChatRuntime maps operator child-thread tool policy into runtime policy",
       "contractId": "runtime.integration",
@@ -15213,7 +15288,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime releases execution authorization when runtime preparation fails",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 237,
+      "line": 244,
       "ancestors": [],
       "title": "KestrelChatRuntime releases execution authorization when runtime preparation fails",
       "contractId": "runtime.integration",
@@ -15228,7 +15303,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1697,
+      "line": 1705,
       "ancestors": [],
       "title": "KestrelChatRuntime resolves session turns through the canonical orchestration thread",
       "contractId": "runtime.integration",
@@ -15243,7 +15318,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1017,
+      "line": 1025,
       "ancestors": [],
       "title": "KestrelChatRuntime routes main sessions through ThreadRuntime and exposes assembly metadata",
       "contractId": "runtime.integration",
@@ -15258,7 +15333,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: project autopilot tick runs planned card through implementation and testing full-auto threads",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 265,
+      "line": 273,
       "ancestors": [],
       "title": "project autopilot tick runs planned card through implementation and testing full-auto threads",
       "contractId": "runtime.integration",
@@ -15273,7 +15348,7 @@
     {
       "identity": "tests/integration/cli-chat-runtime.test.ts :: resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs",
       "file": "tests/integration/cli-chat-runtime.test.ts",
-      "line": 1338,
+      "line": 1346,
       "ancestors": [],
       "title": "resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs",
       "contractId": "runtime.integration",
@@ -18483,7 +18558,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch continues durable pending batch without a new nextAction",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3441,
+      "line": 3489,
       "ancestors": [],
       "title": "exec.dispatch continues durable pending batch without a new nextAction",
       "contractId": "runtime.behavior",
@@ -18498,7 +18573,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch derives broadened search from prior low-signal cached research",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4200,
+      "line": 4248,
       "ancestors": [],
       "title": "exec.dispatch derives broadened search from prior low-signal cached research",
       "contractId": "runtime.behavior",
@@ -18513,7 +18588,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not derive broadened search after prior high-yield research",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4304,
+      "line": 4352,
       "ancestors": [],
       "title": "exec.dispatch does not derive broadened search after prior high-yield research",
       "contractId": "runtime.behavior",
@@ -18528,7 +18603,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not infer dev.process.read processId from active process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1996,
+      "line": 2044,
       "ancestors": [],
       "title": "exec.dispatch does not infer dev.process.read processId from active process state",
       "contractId": "runtime.behavior",
@@ -18543,7 +18618,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not infer dev.process.write processId from active process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2057,
+      "line": 2105,
       "ancestors": [],
       "title": "exec.dispatch does not infer dev.process.write processId from active process state",
       "contractId": "runtime.behavior",
@@ -18558,7 +18633,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for code.execute in the default build path",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3207,
+      "line": 3255,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for code.execute in the default build path",
       "contractId": "runtime.behavior",
@@ -18573,7 +18648,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for dev process auto-provision tools",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3020,
+      "line": 3068,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for dev process auto-provision tools",
       "contractId": "runtime.behavior",
@@ -18588,7 +18663,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not request managed worktree approval for dev shell auto-provision tools",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2908,
+      "line": 2956,
       "ancestors": [],
       "title": "exec.dispatch does not request managed worktree approval for dev shell auto-provision tools",
       "contractId": "runtime.behavior",
@@ -18603,7 +18678,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse cached external side-effect outcomes",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4102,
+      "line": 4150,
       "ancestors": [],
       "title": "exec.dispatch does not reuse cached external side-effect outcomes",
       "contractId": "runtime.behavior",
@@ -18618,7 +18693,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse cached filesystem outcomes",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4010,
+      "line": 4058,
       "ancestors": [],
       "title": "exec.dispatch does not reuse cached filesystem outcomes",
       "contractId": "runtime.behavior",
@@ -18633,7 +18708,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch does not reuse lastActionResult when input hash is missing",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4408,
+      "line": 4456,
       "ancestors": [],
       "title": "exec.dispatch does not reuse lastActionResult when input hash is missing",
       "contractId": "runtime.behavior",
@@ -18663,7 +18738,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch emits blocked acter waits with prompt metadata",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1755,
+      "line": 1803,
       "ancestors": [],
       "title": "exec.dispatch emits blocked acter waits with prompt metadata",
       "contractId": "runtime.behavior",
@@ -18693,7 +18768,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch fails fast on repeated deduped tool reuse with no progress",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4561,
+      "line": 4609,
       "ancestors": [],
       "title": "exec.dispatch fails fast on repeated deduped tool reuse with no progress",
       "contractId": "runtime.behavior",
@@ -18708,7 +18783,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch ignores caller-supplied managedWorktree when no session binding exists",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3134,
+      "line": 3182,
       "ancestors": [],
       "title": "exec.dispatch ignores caller-supplied managedWorktree when no session binding exists",
       "contractId": "runtime.behavior",
@@ -18723,7 +18798,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2831,
+      "line": 2879,
       "ancestors": [],
       "title": "exec.dispatch leaves filesystem mutation batches to runtime managed worktree auto-provisioning",
       "contractId": "runtime.behavior",
@@ -18738,7 +18813,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2758,
+      "line": 2806,
       "ancestors": [],
       "title": "exec.dispatch leaves first filesystem mutation to runtime managed worktree auto-provisioning",
       "contractId": "runtime.behavior",
@@ -18753,7 +18828,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch marks duplicate_executed_result for repeated fresh web output",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4477,
+      "line": 4525,
       "ancestors": [],
       "title": "exec.dispatch marks duplicate_executed_result for repeated fresh web output",
       "contractId": "runtime.behavior",
@@ -18768,7 +18843,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch queues filesystem writes with continue failure policy",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2700,
+      "line": 2748,
       "ancestors": [],
       "title": "exec.dispatch queues filesystem writes with continue failure policy",
       "contractId": "runtime.behavior",
@@ -18798,7 +18873,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch records recoverable read-only batch filesystem failures as failed evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3678,
+      "line": 3726,
       "ancestors": [],
       "title": "exec.dispatch records recoverable read-only batch filesystem failures as failed evidence",
       "contractId": "runtime.behavior",
@@ -18813,7 +18888,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch reports capability-blocked tools with explicit policy metadata",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1826,
+      "line": 1874,
       "ancestors": [],
       "title": "exec.dispatch reports capability-blocked tools with explicit policy metadata",
       "contractId": "runtime.behavior",
@@ -18858,7 +18933,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch reuses cached tool outcomes instead of repeating the same call",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1903,
+      "line": 1951,
       "ancestors": [],
       "title": "exec.dispatch reuses cached tool outcomes instead of repeating the same call",
       "contractId": "runtime.behavior",
@@ -18873,7 +18948,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch routes durable tool batches through processor-owned effect dispatch",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3374,
+      "line": 3422,
       "ancestors": [],
       "title": "exec.dispatch routes durable tool batches through processor-owned effect dispatch",
       "contractId": "runtime.behavior",
@@ -18888,7 +18963,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch skips managed worktree approval for ephemeral workspace mutations",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3075,
+      "line": 3123,
       "ancestors": [],
       "title": "exec.dispatch skips managed worktree approval for ephemeral workspace mutations",
       "contractId": "runtime.behavior",
@@ -18903,7 +18978,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch still throws non-recoverable read-only batch tool failures",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3781,
+      "line": 3829,
       "ancestors": [],
       "title": "exec.dispatch still throws non-recoverable read-only batch tool failures",
       "contractId": "runtime.behavior",
@@ -18918,7 +18993,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch strips unadvertised internet.search domain filters before tool execution",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 4644,
+      "line": 4692,
       "ancestors": [],
       "title": "exec.dispatch strips unadvertised internet.search domain filters before tool execution",
       "contractId": "runtime.behavior",
@@ -18933,7 +19008,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch treats exec_command as the auto-provisioned dev shell alias",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2963,
+      "line": 3011,
       "ancestors": [],
       "title": "exec.dispatch treats exec_command as the auto-provisioned dev shell alias",
       "contractId": "runtime.behavior",
@@ -18948,7 +19023,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2628,
+      "line": 2676,
       "ancestors": [],
       "title": "exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
       "contractId": "runtime.behavior",
@@ -18956,6 +19031,21 @@
       "risk": "medium",
       "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
       "dimension": "exec.dispatch treats inline missing artifact reads as recoverable verify_artifact evidence",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/acter-autonomy.test.ts :: exec.finalize commits switch_mode as a terminal mode-switch payload",
+      "file": "tests/unit/acter-autonomy.test.ts",
+      "line": 1539,
+      "ancestors": [],
+      "title": "exec.finalize commits switch_mode as a terminal mode-switch payload",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: exec.finalize commits switch_mode as a terminal mode-switch payload",
+      "dimension": "exec.finalize commits switch_mode as a terminal mode-switch payload",
       "role": "variant",
       "lane": "runtime",
       "environment": "linux"
@@ -18978,7 +19068,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3270,
+      "line": 3318,
       "ancestors": [],
       "title": "exec.wait_approval denial for explicit managed worktree opt-in returns to deliberation",
       "contractId": "runtime.behavior",
@@ -19053,7 +19143,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3926,
+      "line": 3974,
       "ancestors": [],
       "title": "exec.wait_effect leaves stale helper diagnostics non-authoritative after successful helper exec",
       "contractId": "runtime.behavior",
@@ -19068,7 +19158,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect preserves live process state when a helper exec completes without processId",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2361,
+      "line": 2409,
       "ancestors": [],
       "title": "exec.wait_effect preserves live process state when a helper exec completes without processId",
       "contractId": "runtime.behavior",
@@ -19083,7 +19173,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records dev.process.write input and keeps process live",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2199,
+      "line": 2247,
       "ancestors": [],
       "title": "exec.wait_effect records dev.process.write input and keeps process live",
       "contractId": "runtime.behavior",
@@ -19098,7 +19188,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records durable batch filesystem failures as failed evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3579,
+      "line": 3627,
       "ancestors": [],
       "title": "exec.wait_effect records durable batch filesystem failures as failed evidence",
       "contractId": "runtime.behavior",
@@ -19113,7 +19203,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records failed artifact reads instead of terminating verification",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3498,
+      "line": 3546,
       "ancestors": [],
       "title": "exec.wait_effect records failed artifact reads instead of terminating verification",
       "contractId": "runtime.behavior",
@@ -19128,7 +19218,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records helper outcome after empty helper read without entering repair",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 3824,
+      "line": 3872,
       "ancestors": [],
       "title": "exec.wait_effect records helper outcome after empty helper read without entering repair",
       "contractId": "runtime.behavior",
@@ -19143,7 +19233,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records helper tactic failure as ledger evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2438,
+      "line": 2486,
       "ancestors": [],
       "title": "exec.wait_effect records helper tactic failure as ledger evidence",
       "contractId": "runtime.behavior",
@@ -19188,7 +19278,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records running dev.shell process state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2121,
+      "line": 2169,
       "ancestors": [],
       "title": "exec.wait_effect records running dev.shell process state",
       "contractId": "runtime.behavior",
@@ -19203,7 +19293,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect records settled dev.shell process completion",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2280,
+      "line": 2328,
       "ancestors": [],
       "title": "exec.wait_effect records settled dev.shell process completion",
       "contractId": "runtime.behavior",
@@ -19248,7 +19338,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_effect treats failed artifact check commands as process evidence",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 2531,
+      "line": 2579,
       "ancestors": [],
       "title": "exec.wait_effect treats failed artifact check commands as process evidence",
       "contractId": "runtime.behavior",
@@ -19263,7 +19353,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_user clears stale waitingFor when action is no longer ask_user",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1539,
+      "line": 1587,
       "ancestors": [],
       "title": "exec.wait_user clears stale waitingFor when action is no longer ask_user",
       "contractId": "runtime.behavior",
@@ -19278,7 +19368,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: exec.wait_user consumes plan handoff user reply without carrying stale wait state",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1599,
+      "line": 1647,
       "ancestors": [],
       "title": "exec.wait_user consumes plan handoff user reply without carrying stale wait state",
       "contractId": "runtime.behavior",
@@ -19323,7 +19413,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: reference react execution checkpoint clears stale exec user waits",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1663,
+      "line": 1711,
       "ancestors": [],
       "title": "reference react execution checkpoint clears stale exec user waits",
       "contractId": "runtime.behavior",
@@ -19338,7 +19428,7 @@
     {
       "identity": "tests/unit/acter-autonomy.test.ts :: reference react non-wait command batches clear stale ask-user wait actions",
       "file": "tests/unit/acter-autonomy.test.ts",
-      "line": 1699,
+      "line": 1747,
       "ancestors": [],
       "title": "reference react non-wait command batches clear stale ask-user wait actions",
       "contractId": "runtime.behavior",
@@ -19518,7 +19608,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop accepts build-mode file mutation without a runtime visible-todo redirect",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5374,
+      "line": 5375,
       "ancestors": [],
       "title": "agent loop accepts build-mode file mutation without a runtime visible-todo redirect",
       "contractId": "runtime.behavior",
@@ -19593,7 +19683,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop accepts model-authored visible todos",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5249,
+      "line": 5250,
       "ancestors": [],
       "title": "agent loop accepts model-authored visible todos",
       "contractId": "runtime.behavior",
@@ -19623,7 +19713,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop accepts same-response visible todo update and build-mode file mutation",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5479,
+      "line": 5480,
       "ancestors": [],
       "title": "agent loop accepts same-response visible todo update and build-mode file mutation",
       "contractId": "runtime.behavior",
@@ -19653,7 +19743,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop accepts standalone visible todo updates as progress",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5319,
+      "line": 5320,
       "ancestors": [],
       "title": "agent loop accepts standalone visible todo updates as progress",
       "contractId": "runtime.behavior",
@@ -19698,7 +19788,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop allows build finalization without a planning document update",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4409,
+      "line": 4410,
       "ancestors": [],
       "title": "agent loop allows build finalization without a planning document update",
       "contractId": "runtime.behavior",
@@ -19713,7 +19803,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop allows build-mode file mutation after visible todos exist",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5419,
+      "line": 5420,
       "ancestors": [],
       "title": "agent loop allows build-mode file mutation after visible todos exist",
       "contractId": "runtime.behavior",
@@ -19728,7 +19818,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop allows clarifying questions while in plan mode before writing a plan",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4775,
+      "line": 4776,
       "ancestors": [],
       "title": "agent loop allows clarifying questions while in plan mode before writing a plan",
       "contractId": "runtime.behavior",
@@ -19743,7 +19833,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop allows direct conversational finalization while in plan mode",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4726,
+      "line": 4727,
       "ancestors": [],
       "title": "agent loop allows direct conversational finalization while in plan mode",
       "contractId": "runtime.behavior",
@@ -19758,7 +19848,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop allows file creation after empty-root evidence when visible todos exist",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 6039,
+      "line": 6040,
       "ancestors": [],
       "title": "agent loop allows file creation after empty-root evidence when visible todos exist",
       "contractId": "runtime.behavior",
@@ -19878,7 +19968,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop dispatches goal_satisfied when artifact verification is inconclusive",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4499,
+      "line": 4500,
       "ancestors": [],
       "title": "agent loop dispatches goal_satisfied when artifact verification is inconclusive",
       "contractId": "runtime.behavior",
@@ -19908,7 +19998,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop dispatches selected tool work without hidden progress gates",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4459,
+      "line": 4460,
       "ancestors": [],
       "title": "agent loop dispatches selected tool work without hidden progress gates",
       "contractId": "runtime.behavior",
@@ -19923,7 +20013,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop does not import legacy session notes into hidden progress state",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4938,
+      "line": 4939,
       "ancestors": [],
       "title": "agent loop does not import legacy session notes into hidden progress state",
       "contractId": "runtime.behavior",
@@ -19938,7 +20028,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop does not import session-scoped runtime notes into deliberation facts",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4879,
+      "line": 4880,
       "ancestors": [],
       "title": "agent loop does not import session-scoped runtime notes into deliberation facts",
       "contractId": "runtime.behavior",
@@ -19998,7 +20088,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop feeds internal ask_user narration back as retry context instead of hard failing",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5059,
+      "line": 5060,
       "ancestors": [],
       "title": "agent loop feeds internal ask_user narration back as retry context instead of hard failing",
       "contractId": "runtime.behavior",
@@ -20013,7 +20103,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop feeds internal cannot_satisfy narration back as retry context instead of hard failing",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5090,
+      "line": 5091,
       "ancestors": [],
       "title": "agent loop feeds internal cannot_satisfy narration back as retry context instead of hard failing",
       "contractId": "runtime.behavior",
@@ -20028,7 +20118,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop feeds internal finalize narration back as retry context instead of hard failing",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5029,
+      "line": 5030,
       "ancestors": [],
       "title": "agent loop feeds internal finalize narration back as retry context instead of hard failing",
       "contractId": "runtime.behavior",
@@ -20043,7 +20133,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop feeds invalid tool names back as retry context instead of hard failing",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4989,
+      "line": 4990,
       "ancestors": [],
       "title": "agent loop feeds invalid tool names back as retry context instead of hard failing",
       "contractId": "runtime.behavior",
@@ -20073,7 +20163,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop hard fails after validation retry exhaustion",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 6275,
+      "line": 6276,
       "ancestors": [],
       "title": "agent loop hard fails after validation retry exhaustion",
       "contractId": "runtime.behavior",
@@ -20088,7 +20178,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop hides synthetic build blockers when executable tools are available",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5201,
+      "line": 5202,
       "ancestors": [],
       "title": "agent loop hides synthetic build blockers when executable tools are available",
       "contractId": "runtime.behavior",
@@ -20193,7 +20283,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop persists detached action snapshots",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4818,
+      "line": 4819,
       "ancestors": [],
       "title": "agent loop persists detached action snapshots",
       "contractId": "runtime.behavior",
@@ -20208,7 +20298,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop preserves canonical handoff facts when accepting a plan handoff",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4310,
+      "line": 4311,
       "ancestors": [],
       "title": "agent loop preserves canonical handoff facts when accepting a plan handoff",
       "contractId": "runtime.behavior",
@@ -20283,7 +20373,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop rejects build-mode insufficient_horizon cannot_satisfy at the tool boundary",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5118,
+      "line": 5119,
       "ancestors": [],
       "title": "agent loop rejects build-mode insufficient_horizon cannot_satisfy at the tool boundary",
       "contractId": "runtime.behavior",
@@ -20298,7 +20388,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop rejects capability-blocked tools with explicit policy feedback",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4143,
+      "line": 4144,
       "ancestors": [],
       "title": "agent loop rejects capability-blocked tools with explicit policy feedback",
       "contractId": "runtime.behavior",
@@ -20358,7 +20448,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4674,
+      "line": 4675,
       "ancestors": [],
       "title": "agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode",
       "contractId": "runtime.behavior",
@@ -20388,7 +20478,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop rejects policy_blocked finalize after a cannot_satisfy retry",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5154,
+      "line": 5155,
       "ancestors": [],
       "title": "agent loop rejects policy_blocked finalize after a cannot_satisfy retry",
       "contractId": "runtime.behavior",
@@ -20448,7 +20538,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop resumes a mode-blocked continuation offer after structural mode-switch reply",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4573,
+      "line": 4574,
       "ancestors": [],
       "title": "agent loop resumes a mode-blocked continuation offer after structural mode-switch reply",
       "contractId": "runtime.behavior",
@@ -20463,7 +20553,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: agent loop resumes an accepted implementation offer when the current Build mode already allows it",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 4212,
+      "line": 4213,
       "ancestors": [],
       "title": "agent loop resumes an accepted implementation offer when the current Build mode already allows it",
       "contractId": "runtime.behavior",
@@ -20643,7 +20733,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent accepts handoff_to_build",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5575,
+      "line": 5576,
       "ancestors": [],
       "title": "compileIntent accepts handoff_to_build",
       "contractId": "runtime.behavior",
@@ -20673,7 +20763,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent allows finalization when malformed optional browser evidence is dropped",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 6231,
+      "line": 6232,
       "ancestors": [],
       "title": "compileIntent allows finalization when malformed optional browser evidence is dropped",
       "contractId": "runtime.behavior",
@@ -20703,7 +20793,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent allows handoff_to_build to declare future build capabilities without observed evidence",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5623,
+      "line": 5624,
       "ancestors": [],
       "title": "compileIntent allows handoff_to_build to declare future build capabilities without observed evidence",
       "contractId": "runtime.behavior",
@@ -20718,7 +20808,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent allows root create-next-app scaffold under scaffold intent",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5992,
+      "line": 5993,
       "ancestors": [],
       "title": "compileIntent allows root create-next-app scaffold under scaffold intent",
       "contractId": "runtime.behavior",
@@ -20733,7 +20823,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent compiles simplified goal_satisfied finalization to internal action shape",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5542,
+      "line": 5543,
       "ancestors": [],
       "title": "compileIntent compiles simplified goal_satisfied finalization to internal action shape",
       "contractId": "runtime.behavior",
@@ -20748,7 +20838,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent hydrates compact handoff_to_build continuation payloads",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5672,
+      "line": 5673,
       "ancestors": [],
       "title": "compileIntent hydrates compact handoff_to_build continuation payloads",
       "contractId": "runtime.behavior",
@@ -20763,7 +20853,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects cannot_satisfy when extracted candidate tools are available",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5823,
+      "line": 5824,
       "ancestors": [],
       "title": "compileIntent rejects cannot_satisfy when extracted candidate tools are available",
       "contractId": "runtime.behavior",
@@ -20778,7 +20868,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects fs.mkdir on the already-provisioned workspace root",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 6176,
+      "line": 6177,
       "ancestors": [],
       "title": "compileIntent rejects fs.mkdir on the already-provisioned workspace root",
       "contractId": "runtime.behavior",
@@ -20793,7 +20883,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects handoff_to_build outside plan mode",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5748,
+      "line": 5749,
       "ancestors": [],
       "title": "compileIntent rejects handoff_to_build outside plan mode",
       "contractId": "runtime.behavior",
@@ -20808,7 +20898,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects internal ask_user narration for user-visible prompts",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5909,
+      "line": 5910,
       "ancestors": [],
       "title": "compileIntent rejects internal ask_user narration for user-visible prompts",
       "contractId": "runtime.behavior",
@@ -20823,7 +20913,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects internal cannot_satisfy narration for user-visible blockers",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5952,
+      "line": 5953,
       "ancestors": [],
       "title": "compileIntent rejects internal cannot_satisfy narration for user-visible blockers",
       "contractId": "runtime.behavior",
@@ -20838,7 +20928,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rejects internal finalize narration for user-visible closeouts",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5868,
+      "line": 5869,
       "ancestors": [],
       "title": "compileIntent rejects internal finalize narration for user-visible closeouts",
       "contractId": "runtime.behavior",
@@ -20868,7 +20958,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rewrites model-supplied handoff lineage to the active run",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5710,
+      "line": 5711,
       "ancestors": [],
       "title": "compileIntent rewrites model-supplied handoff lineage to the active run",
       "contractId": "runtime.behavior",
@@ -20883,7 +20973,7 @@
     {
       "identity": "tests/unit/agent-loop-step.test.ts :: compileIntent rewrites model-supplied handoff mode to build",
       "file": "tests/unit/agent-loop-step.test.ts",
-      "line": 5782,
+      "line": 5783,
       "ancestors": [],
       "title": "compileIntent rewrites model-supplied handoff mode to build",
       "contractId": "runtime.behavior",
@@ -38266,9 +38356,24 @@
       "environment": "linux"
     },
     {
-      "identity": "tests/unit/mode-contracts.test.ts :: Chat allows read-only tools and only explicitly Chat-enabled app mutations",
+      "identity": "tests/unit/mode-contracts.test.ts :: Build exposes sandboxed workspace mutations while Chat and Plan do not",
       "file": "tests/unit/mode-contracts.test.ts",
       "line": 153,
+      "ancestors": [],
+      "title": "Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "dimension": "Build exposes sandboxed workspace mutations while Chat and Plan do not",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
+      "identity": "tests/unit/mode-contracts.test.ts :: Chat allows read-only tools and only explicitly Chat-enabled app mutations",
+      "file": "tests/unit/mode-contracts.test.ts",
+      "line": 177,
       "ancestors": [],
       "title": "Chat allows read-only tools and only explicitly Chat-enabled app mutations",
       "contractId": "runtime.behavior",
@@ -38763,7 +38868,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: finalize control tool rejects model-facing policy_blocked status",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 347,
+      "line": 374,
       "ancestors": [],
       "title": "finalize control tool rejects model-facing policy_blocked status",
       "contractId": "runtime.behavior",
@@ -38808,7 +38913,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: multiple workspace tool calls become an ordered canonical tool batch",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 282,
+      "line": 309,
       "ancestors": [],
       "title": "multiple workspace tool calls become an ordered canonical tool batch",
       "contractId": "runtime.behavior",
@@ -38836,9 +38941,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/model-tool-call-actions.test.ts :: switch_mode preserves the explicit requested mode without assistant progress",
+      "file": "tests/unit/model-tool-call-actions.test.ts",
+      "line": 254,
+      "ancestors": [],
+      "title": "switch_mode preserves the explicit requested mode without assistant progress",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: switch_mode preserves the explicit requested mode without assistant progress",
+      "dimension": "switch_mode preserves the explicit requested mode without assistant progress",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: terminal control tools are exclusive",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 331,
+      "line": 358,
       "ancestors": [],
       "title": "terminal control tools are exclusive",
       "contractId": "runtime.behavior",
@@ -38853,7 +38973,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: todo update can be combined with workspace work",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 303,
+      "line": 330,
       "ancestors": [],
       "title": "todo update can be combined with workspace work",
       "contractId": "runtime.behavior",
@@ -38868,7 +38988,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: todo update description explains code-change notes without benchmark policy",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 254,
+      "line": 281,
       "ancestors": [],
       "title": "todo update description explains code-change notes without benchmark policy",
       "contractId": "runtime.behavior",
@@ -38883,7 +39003,7 @@
     {
       "identity": "tests/unit/model-tool-call-actions.test.ts :: unknown provider aliases fail before dispatch",
       "file": "tests/unit/model-tool-call-actions.test.ts",
-      "line": 362,
+      "line": 389,
       "ancestors": [],
       "title": "unknown provider aliases fail before dispatch",
       "contractId": "runtime.behavior",
@@ -40758,7 +40878,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime allows child spawn at maxDepth and records normalized depth policy",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1779,
+      "line": 1829,
       "ancestors": [],
       "title": "ThreadRuntime allows child spawn at maxDepth and records normalized depth policy",
       "contractId": "runtime.behavior",
@@ -40773,7 +40893,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime appends completed assistant output to durable thread history",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 748,
+      "line": 798,
       "ancestors": [],
       "title": "ThreadRuntime appends completed assistant output to durable thread history",
       "contractId": "runtime.behavior",
@@ -40788,7 +40908,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3328,
+      "line": 3378,
       "ancestors": [],
       "title": "ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text",
       "contractId": "runtime.behavior",
@@ -40803,7 +40923,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3255,
+      "line": 3305,
       "ancestors": [],
       "title": "ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe",
       "contractId": "runtime.behavior",
@@ -40818,7 +40938,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 974,
+      "line": 1024,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted",
       "contractId": "runtime.behavior",
@@ -40833,7 +40953,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2072,
+      "line": 2122,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution",
       "contractId": "runtime.behavior",
@@ -40848,7 +40968,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2212,
+      "line": 2262,
       "ancestors": [],
       "title": "ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution",
       "contractId": "runtime.behavior",
@@ -40878,7 +40998,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime blocks auto compact when a continuation brief cannot be grounded",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2155,
+      "line": 2205,
       "ancestors": [],
       "title": "ThreadRuntime blocks auto compact when a continuation brief cannot be grounded",
       "contractId": "runtime.behavior",
@@ -40893,7 +41013,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime blocks submit when a non-auto context checkpoint is pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2262,
+      "line": 2312,
       "ancestors": [],
       "title": "ThreadRuntime blocks submit when a non-auto context checkpoint is pending",
       "contractId": "runtime.behavior",
@@ -40908,7 +41028,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime can surface failed child delegations as the dominant blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3500,
+      "line": 3550,
       "ancestors": [],
       "title": "ThreadRuntime can surface failed child delegations as the dominant blocker",
       "contractId": "runtime.behavior",
@@ -40923,7 +41043,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime child spawn preserves managed worktree fan-in context",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1854,
+      "line": 1904,
       "ancestors": [],
       "title": "ThreadRuntime child spawn preserves managed worktree fan-in context",
       "contractId": "runtime.behavior",
@@ -40938,7 +41058,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime clears stale waits when a later turn completes without waiting",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 683,
+      "line": 733,
       "ancestors": [],
       "title": "ThreadRuntime clears stale waits when a later turn completes without waiting",
       "contractId": "runtime.behavior",
@@ -40953,7 +41073,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime composes and injects a thread-scoped runtime assembly",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4004,
+      "line": 4054,
       "ancestors": [],
       "title": "ThreadRuntime composes and injects a thread-scoped runtime assembly",
       "contractId": "runtime.behavior",
@@ -40983,7 +41103,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime delegation service preserves agent spawn lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1381,
+      "line": 1431,
       "ancestors": [],
       "title": "ThreadRuntime delegation service preserves agent spawn lineage",
       "contractId": "runtime.behavior",
@@ -40998,7 +41118,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime derives operator session summaries only from the returned run window",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 295,
+      "line": 345,
       "ancestors": [],
       "title": "ThreadRuntime derives operator session summaries only from the returned run window",
       "contractId": "runtime.behavior",
@@ -41013,7 +41133,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2645,
+      "line": 2695,
       "ancestors": [],
       "title": "ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting",
       "contractId": "runtime.behavior",
@@ -41028,7 +41148,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime exposes bounded operator run inspection from persisted replay evidence",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 202,
+      "line": 252,
       "ancestors": [],
       "title": "ThreadRuntime exposes bounded operator run inspection from persisted replay evidence",
       "contractId": "runtime.behavior",
@@ -41043,7 +41163,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime exposes checkpoint disposition in operator thread view after resolution",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3955,
+      "line": 4005,
       "ancestors": [],
       "title": "ThreadRuntime exposes checkpoint disposition in operator thread view after resolution",
       "contractId": "runtime.behavior",
@@ -41073,7 +41193,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 528,
+      "line": 578,
       "ancestors": [],
       "title": "ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread",
       "contractId": "runtime.behavior",
@@ -41088,7 +41208,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime focusThread updates operator inbox focus deterministically",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3691,
+      "line": 3741,
       "ancestors": [],
       "title": "ThreadRuntime focusThread updates operator inbox focus deterministically",
       "contractId": "runtime.behavior",
@@ -41101,9 +41221,24 @@
       "environment": "linux"
     },
     {
+      "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "file": "tests/unit/orchestration-thread-runtime.test.ts",
+      "line": 202,
+      "ancestors": [],
+      "title": "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "contractId": "runtime.behavior",
+      "owner": "runtime-core",
+      "risk": "medium",
+      "counterexample": "A deterministic runtime state transition, tool contract, policy boundary, or recovery path changes unexpectedly. Executable counterexample: ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "dimension": "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata",
+      "role": "variant",
+      "lane": "runtime",
+      "environment": "linux"
+    },
+    {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime merges short continuation history with durable thread history",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1053,
+      "line": 1103,
       "ancestors": [],
       "title": "ThreadRuntime merges short continuation history with durable thread history",
       "contractId": "runtime.behavior",
@@ -41118,7 +41253,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4070,
+      "line": 4120,
       "ancestors": [],
       "title": "ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals",
       "contractId": "runtime.behavior",
@@ -41133,7 +41268,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime operator child spawn preserves policy supervision intent",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1908,
+      "line": 1958,
       "ancestors": [],
       "title": "ThreadRuntime operator child spawn preserves policy supervision intent",
       "contractId": "runtime.behavior",
@@ -41148,7 +41283,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists delegation lifecycle events under the parent session id",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3905,
+      "line": 3955,
       "ancestors": [],
       "title": "ThreadRuntime persists delegation lifecycle events under the parent session id",
       "contractId": "runtime.behavior",
@@ -41163,7 +41298,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists focused thread across runtime recreation with shared store",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3762,
+      "line": 3812,
       "ancestors": [],
       "title": "ThreadRuntime persists focused thread across runtime recreation with shared store",
       "contractId": "runtime.behavior",
@@ -41178,7 +41313,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime persists operator-facing user input requests from waits",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 564,
+      "line": 614,
       "ancestors": [],
       "title": "ThreadRuntime persists operator-facing user input requests from waits",
       "contractId": "runtime.behavior",
@@ -41193,7 +41328,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves identical waiting prompts from separate runs",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 909,
+      "line": 959,
       "ancestors": [],
       "title": "ThreadRuntime preserves identical waiting prompts from separate runs",
       "contractId": "runtime.behavior",
@@ -41208,7 +41343,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves pre-start kernel failures whose run row was never created",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 379,
+      "line": 429,
       "ancestors": [],
       "title": "ThreadRuntime preserves pre-start kernel failures whose run row was never created",
       "contractId": "runtime.behavior",
@@ -41223,7 +41358,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime preserves submitted history and appends the waiting assistant prompt",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 822,
+      "line": 872,
       "ancestors": [],
       "title": "ThreadRuntime preserves submitted history and appends the waiting assistant prompt",
       "contractId": "runtime.behavior",
@@ -41238,7 +41373,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime queues steering during a running turn and drains it after the boundary",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2574,
+      "line": 2624,
       "ancestors": [],
       "title": "ThreadRuntime queues steering during a running turn and drains it after the boundary",
       "contractId": "runtime.behavior",
@@ -41253,7 +41388,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime records replay-aware compaction artifacts when compaction is applied",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1970,
+      "line": 2020,
       "ancestors": [],
       "title": "ThreadRuntime records replay-aware compaction artifacts when compaction is applied",
       "contractId": "runtime.behavior",
@@ -41268,7 +41403,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1481,
+      "line": 1531,
       "ancestors": [],
       "title": "ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth",
       "contractId": "runtime.behavior",
@@ -41283,7 +41418,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3188,
+      "line": 3238,
       "ancestors": [],
       "title": "ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending",
       "contractId": "runtime.behavior",
@@ -41298,7 +41433,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime rejects resolving a non-pending checkpoint twice",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3633,
+      "line": 3683,
       "ancestors": [],
       "title": "ThreadRuntime rejects resolving a non-pending checkpoint twice",
       "contractId": "runtime.behavior",
@@ -41313,7 +41448,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime requires approval for model-originated provider changes",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4147,
+      "line": 4197,
       "ancestors": [],
       "title": "ThreadRuntime requires approval for model-originated provider changes",
       "contractId": "runtime.behavior",
@@ -41328,7 +41463,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves approval requests and expires turn-scoped grants after resume",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1130,
+      "line": 1180,
       "ancestors": [],
       "title": "ThreadRuntime resolves approval requests and expires turn-scoped grants after resume",
       "contractId": "runtime.behavior",
@@ -41343,7 +41478,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2312,
+      "line": 2362,
       "ancestors": [],
       "title": "ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint",
       "contractId": "runtime.behavior",
@@ -41358,7 +41493,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves context checkpoints and persists compaction lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2772,
+      "line": 2822,
       "ancestors": [],
       "title": "ThreadRuntime resolves context checkpoints and persists compaction lineage",
       "contractId": "runtime.behavior",
@@ -41373,7 +41508,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2909,
+      "line": 2959,
       "ancestors": [],
       "title": "ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references",
       "contractId": "runtime.behavior",
@@ -41388,7 +41523,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2840,
+      "line": 2890,
       "ancestors": [],
       "title": "ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage",
       "contractId": "runtime.behavior",
@@ -41403,7 +41538,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resolves superseded child blockers out of actionable attention state",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3423,
+      "line": 3473,
       "ancestors": [],
       "title": "ThreadRuntime resolves superseded child blockers out of actionable attention state",
       "contractId": "runtime.behavior",
@@ -41418,7 +41553,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime resumes the active blocked request and derives approval grants",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1224,
+      "line": 1274,
       "ancestors": [],
       "title": "ThreadRuntime resumes the active blocked request and derives approval grants",
       "contractId": "runtime.behavior",
@@ -41433,7 +41568,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime retryThread allows retry for failed threads and blocks idle threads",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2717,
+      "line": 2767,
       "ancestors": [],
       "title": "ThreadRuntime retryThread allows retry for failed threads and blocks idle threads",
       "contractId": "runtime.behavior",
@@ -41448,7 +41583,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime skips side-band reply events when the active run row is stale",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 431,
+      "line": 481,
       "ancestors": [],
       "title": "ThreadRuntime skips side-band reply events when the active run row is stale",
       "contractId": "runtime.behavior",
@@ -41463,7 +41598,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime spawns delegated child threads with reconstructable lineage",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1310,
+      "line": 1360,
       "ancestors": [],
       "title": "ThreadRuntime spawns delegated child threads with reconstructable lineage",
       "contractId": "runtime.behavior",
@@ -41478,7 +41613,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime steerThread persists operator steering events",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2482,
+      "line": 2532,
       "ancestors": [],
       "title": "ThreadRuntime steerThread persists operator steering events",
       "contractId": "runtime.behavior",
@@ -41493,7 +41628,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime steerThread starts a fresh steering turn when user input is pending",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2520,
+      "line": 2570,
       "ancestors": [],
       "title": "ThreadRuntime steerThread starts a fresh steering turn when user input is pending",
       "contractId": "runtime.behavior",
@@ -41508,7 +41643,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores blocked child result envelope when child waits",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1643,
+      "line": 1693,
       "ancestors": [],
       "title": "ThreadRuntime stores blocked child result envelope when child waits",
       "contractId": "runtime.behavior",
@@ -41523,7 +41658,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores completed child result envelope from finalize payload",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1534,
+      "line": 1584,
       "ancestors": [],
       "title": "ThreadRuntime stores completed child result envelope from finalize payload",
       "contractId": "runtime.behavior",
@@ -41538,7 +41673,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores failed child result envelope from returned failed output",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1735,
+      "line": 1785,
       "ancestors": [],
       "title": "ThreadRuntime stores failed child result envelope from returned failed output",
       "contractId": "runtime.behavior",
@@ -41553,7 +41688,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime stores failed child result envelope from runtime failure",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1694,
+      "line": 1744,
       "ancestors": [],
       "title": "ThreadRuntime stores failed child result envelope from runtime failure",
       "contractId": "runtime.behavior",
@@ -41568,7 +41703,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2390,
+      "line": 2440,
       "ancestors": [],
       "title": "ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints",
       "contractId": "runtime.behavior",
@@ -41583,7 +41718,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime supersedes stale waits when a new continuation wait replaces them",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 609,
+      "line": 659,
       "ancestors": [],
       "title": "ThreadRuntime supersedes stale waits when a new continuation wait replaces them",
       "contractId": "runtime.behavior",
@@ -41598,7 +41733,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2995,
+      "line": 3045,
       "ancestors": [],
       "title": "ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker",
       "contractId": "runtime.behavior",
@@ -41613,7 +41748,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3124,
+      "line": 3174,
       "ancestors": [],
       "title": "ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability",
       "contractId": "runtime.behavior",
@@ -41628,7 +41763,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces compatibility downgrades as operator inbox alerts",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 4179,
+      "line": 4229,
       "ancestors": [],
       "title": "ThreadRuntime surfaces compatibility downgrades as operator inbox alerts",
       "contractId": "runtime.behavior",
@@ -41643,7 +41778,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces dominant descendant child blocker for parent thread views",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3830,
+      "line": 3880,
       "ancestors": [],
       "title": "ThreadRuntime surfaces dominant descendant child blocker for parent thread views",
       "contractId": "runtime.behavior",
@@ -41658,7 +41793,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces missing run rows for non-pre-start failures",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 496,
+      "line": 546,
       "ancestors": [],
       "title": "ThreadRuntime surfaces missing run rows for non-pre-start failures",
       "contractId": "runtime.behavior",
@@ -41673,7 +41808,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 2433,
+      "line": 2483,
       "ancestors": [],
       "title": "ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints",
       "contractId": "runtime.behavior",
@@ -41688,7 +41823,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime surfaces split-created waiting children in supervision blocker truth",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3552,
+      "line": 3602,
       "ancestors": [],
       "title": "ThreadRuntime surfaces split-created waiting children in supervision blocker truth",
       "contractId": "runtime.behavior",
@@ -41703,7 +41838,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 3066,
+      "line": 3116,
       "ancestors": [],
       "title": "ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker",
       "contractId": "runtime.behavior",
@@ -41718,7 +41853,7 @@
     {
       "identity": "tests/unit/orchestration-thread-runtime.test.ts :: ThreadRuntime treats explicit failed child result envelope as failed outcome",
       "file": "tests/unit/orchestration-thread-runtime.test.ts",
-      "line": 1589,
+      "line": 1639,
       "ancestors": [],
       "title": "ThreadRuntime treats explicit failed child result envelope as failed outcome",
       "contractId": "runtime.behavior",
@@ -51483,7 +51618,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: agent.spawn accepts only a task string",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2199,
+      "line": 2200,
       "ancestors": [],
       "title": "agent.spawn accepts only a task string",
       "contractId": "runtime.behavior",
@@ -51498,7 +51633,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: agent.spawn delegates using the active runtime context",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2242,
+      "line": 2243,
       "ancestors": [],
       "title": "agent.spawn delegates using the active runtime context",
       "contractId": "runtime.behavior",
@@ -51513,7 +51648,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry accepts valid built-in internet URLs",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1100,
+      "line": 1101,
       "ancestors": [],
       "title": "UnifiedToolRegistry accepts valid built-in internet URLs",
       "contractId": "runtime.behavior",
@@ -51528,7 +51663,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry applies only advertised schemas to MCP tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1133,
+      "line": 1134,
       "ancestors": [],
       "title": "UnifiedToolRegistry applies only advertised schemas to MCP tools",
       "contractId": "runtime.behavior",
@@ -51543,7 +51678,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2108,
+      "line": 2109,
       "ancestors": [],
       "title": "UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted",
       "contractId": "runtime.behavior",
@@ -51573,7 +51708,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry carries source-write authority and write roots for default source workspaces",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1679,
+      "line": 1680,
       "ancestors": [],
       "title": "UnifiedToolRegistry carries source-write authority and write roots for default source workspaces",
       "contractId": "runtime.behavior",
@@ -51603,7 +51738,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1621,
+      "line": 1622,
       "ancestors": [],
       "title": "UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding",
       "contractId": "runtime.behavior",
@@ -51618,7 +51753,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1380,
+      "line": 1381,
       "ancestors": [],
       "title": "UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding",
       "contractId": "runtime.behavior",
@@ -51633,7 +51768,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2074,
+      "line": 2075,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool",
       "contractId": "runtime.behavior",
@@ -51648,7 +51783,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1794,
+      "line": 1795,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy",
       "contractId": "runtime.behavior",
@@ -51663,7 +51798,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1838,
+      "line": 1839,
       "ancestors": [],
       "title": "UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection",
       "contractId": "runtime.behavior",
@@ -51708,7 +51843,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry gates dev.shell tools by devShell profile config",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1330,
+      "line": 1331,
       "ancestors": [],
       "title": "UnifiedToolRegistry gates dev.shell tools by devShell profile config",
       "contractId": "runtime.behavior",
@@ -51723,7 +51858,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry hides code.execute when profile code-mode is disabled",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1288,
+      "line": 1289,
       "ancestors": [],
       "title": "UnifiedToolRegistry hides code.execute when profile code-mode is disabled",
       "contractId": "runtime.behavior",
@@ -51753,7 +51888,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1739,
+      "line": 1740,
       "ancestors": [],
       "title": "UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract",
       "contractId": "runtime.behavior",
@@ -51783,7 +51918,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry passes valid internet.search_advanced domains to provider",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 951,
+      "line": 952,
       "ancestors": [],
       "title": "UnifiedToolRegistry passes valid internet.search_advanced domains to provider",
       "contractId": "runtime.behavior",
@@ -51798,7 +51933,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1240,
+      "line": 1241,
       "ancestors": [],
       "title": "UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers",
       "contractId": "runtime.behavior",
@@ -51813,7 +51948,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1185,
+      "line": 1186,
       "ancestors": [],
       "title": "UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
       "contractId": "runtime.behavior",
@@ -51828,7 +51963,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2038,
+      "line": 2039,
       "ancestors": [],
       "title": "UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools",
       "contractId": "runtime.behavior",
@@ -51843,7 +51978,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 854,
+      "line": 855,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls",
       "contractId": "runtime.behavior",
@@ -51858,7 +51993,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 824,
+      "line": 825,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls",
       "contractId": "runtime.behavior",
@@ -51873,7 +52008,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 982,
+      "line": 983,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls",
       "contractId": "runtime.behavior",
@@ -51888,7 +52023,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 704,
+      "line": 705,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls",
       "contractId": "runtime.behavior",
@@ -51903,7 +52038,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 675,
+      "line": 676,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls",
       "contractId": "runtime.behavior",
@@ -51918,7 +52053,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 795,
+      "line": 796,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls",
       "contractId": "runtime.behavior",
@@ -51933,7 +52068,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects local built-in internet URLs before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1019,
+      "line": 1020,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects local built-in internet URLs before provider calls",
       "contractId": "runtime.behavior",
@@ -51948,7 +52083,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1539,
+      "line": 1540,
       "ancestors": [],
       "title": "UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace",
       "contractId": "runtime.behavior",
@@ -51963,7 +52098,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1071,
+      "line": 1072,
       "ancestors": [],
       "title": "UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors",
       "contractId": "runtime.behavior",
@@ -51993,7 +52128,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes allowlists per run context",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1984,
+      "line": 1985,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes allowlists per run context",
       "contractId": "runtime.behavior",
@@ -52008,7 +52143,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes filesystem root per workspace payload",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 2328,
+      "line": 2329,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes filesystem root per workspace payload",
       "contractId": "runtime.behavior",
@@ -52023,7 +52158,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev-shell calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1468,
+      "line": 1469,
       "ancestors": [],
       "title": "UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev-shell calls",
       "contractId": "runtime.behavior",
@@ -52038,7 +52173,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 915,
+      "line": 916,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites",
       "contractId": "runtime.behavior",
@@ -52053,7 +52188,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips internet.search_advanced country outside general topic",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 734,
+      "line": 735,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips internet.search_advanced country outside general topic",
       "contractId": "runtime.behavior",
@@ -52068,7 +52203,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 764,
+      "line": 765,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present",
       "contractId": "runtime.behavior",
@@ -52083,7 +52218,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 884,
+      "line": 885,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites",
       "contractId": "runtime.behavior",
@@ -52098,7 +52233,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 620,
+      "line": 621,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls",
       "contractId": "runtime.behavior",
@@ -52113,7 +52248,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unadvertised internet.search domain filters before provider calls",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 648,
+      "line": 649,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unadvertised internet.search domain filters before provider calls",
       "contractId": "runtime.behavior",
@@ -52128,7 +52263,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry strips unsupported fields for strict schemas before validation",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1907,
+      "line": 1908,
       "ancestors": [],
       "title": "UnifiedToolRegistry strips unsupported fields for strict schemas before validation",
       "contractId": "runtime.behavior",
@@ -52158,7 +52293,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry validates evidence.extract after canonicalizing content aliases",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1957,
+      "line": 1958,
       "ancestors": [],
       "title": "UnifiedToolRegistry validates evidence.extract after canonicalizing content aliases",
       "contractId": "runtime.behavior",
@@ -52173,7 +52308,7 @@
     {
       "identity": "tests/unit/unified-tool-registry.test.ts :: UnifiedToolRegistry validates internet.research after canonicalizing topic aliases",
       "file": "tests/unit/unified-tool-registry.test.ts",
-      "line": 1930,
+      "line": 1931,
       "ancestors": [],
       "title": "UnifiedToolRegistry validates internet.research after canonicalizing topic aliases",
       "contractId": "runtime.behavior",
