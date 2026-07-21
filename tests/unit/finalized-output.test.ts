@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { summarizeRunTurnResult } from "../../cli/runner/finalizedOutput.js";
 import type { RunTurnResult } from "../../cli/runtime/KestrelChatRuntime.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const output = {
   status: "COMPLETED" as const,
@@ -23,7 +24,7 @@ const output = {
   },
 };
 
-test("summarizeRunTurnResult preserves an explicit null finalized payload", () => {
+contractTest("runtime.hermetic", "summarizeRunTurnResult preserves an explicit null finalized payload", () => {
   const result: RunTurnResult = {
     assistantText: "done",
     output,
@@ -36,7 +37,7 @@ test("summarizeRunTurnResult preserves an explicit null finalized payload", () =
   });
 });
 
-test("summarizeRunTurnResult falls back to output when finalized payload is absent", () => {
+contractTest("runtime.hermetic", "summarizeRunTurnResult falls back to output when finalized payload is absent", () => {
   const result: RunTurnResult = {
     assistantText: null,
     output,

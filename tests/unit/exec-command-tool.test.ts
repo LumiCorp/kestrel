@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type {
   DevProcessReadInput,
@@ -19,8 +18,10 @@ import type {
 import { execCommandTool } from "../../tools/devshell/execCommand.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { artifactReadTool } from "../../tools/runtime/artifactRead.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("exec_command maps one-shot process completion to completed output", async () => {
+
+contractTest("runtime.hermetic", "exec_command maps one-shot process completion to completed output", async () => {
   const service = new CapturingExecCommandService({
     startResult: {
       status: "COMPLETED",
@@ -60,12 +61,12 @@ test("exec_command maps one-shot process completion to completed output", async 
   });
 });
 
-test("exec_command directs Desktop launches to the typed host-open capability", () => {
+contractTest("runtime.hermetic", "exec_command directs Desktop launches to the typed host-open capability", () => {
   assert.match(execCommandTool.definition.description, /Use desktop\.host\.open/u);
   assert.match(execCommandTool.definition.description, /Build-mode/u);
 });
 
-test("exec_command resolves direct, read-only, capture, and managed-worktree authority coherently", async () => {
+contractTest("runtime.hermetic", "exec_command resolves direct, read-only, capture, and managed-worktree authority coherently", async () => {
   const directService = new CapturingExecCommandService();
   await runExecCommandForTest({
     fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
@@ -129,7 +130,7 @@ test("exec_command resolves direct, read-only, capture, and managed-worktree aut
   });
 });
 
-test("exec_command capture mode returns an applicable immutable patch artifact", async () => {
+contractTest("runtime.hermetic", "exec_command capture mode returns an applicable immutable patch artifact", async () => {
   const patch = "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
   const service = new CapturingExecCommandService({
     startResult: {
@@ -165,7 +166,7 @@ test("exec_command capture mode returns an applicable immutable patch artifact",
   assert.equal((artifact as { content?: string }).content, patch);
 });
 
-test("exec_command command shape returns a reusable session when the process is still running", async () => {
+contractTest("runtime.hermetic", "exec_command command shape returns a reusable session when the process is still running", async () => {
   const service = new CapturingExecCommandService({
     startResult: {
       processId: "proc-live",
@@ -189,7 +190,7 @@ test("exec_command command shape returns a reusable session when the process is 
   assert.equal(service.startInputs.length, 1);
 });
 
-test("exec_command respects an explicit zero initial observation window", async () => {
+contractTest("runtime.hermetic", "exec_command respects an explicit zero initial observation window", async () => {
   const service = new CapturingExecCommandService();
 
   await runExecCommandForTest({
@@ -205,7 +206,7 @@ test("exec_command respects an explicit zero initial observation window", async 
   assert.equal(service.startInputs[0]?.yieldTimeMs, 0);
 });
 
-test("exec_command sends stdin through the existing process and reads the response", async () => {
+contractTest("runtime.hermetic", "exec_command sends stdin through the existing process and reads the response", async () => {
   const service = new CapturingExecCommandService({
     writeAndReadResult: {
       processId: "proc-1",
@@ -242,7 +243,7 @@ test("exec_command sends stdin through the existing process and reads the respon
   assert.equal(service.startInputs.length, 0);
 });
 
-test("exec_command applies default observation wait for continuation stdin", async () => {
+contractTest("runtime.hermetic", "exec_command applies default observation wait for continuation stdin", async () => {
   const service = new CapturingExecCommandService({
     writeAndReadResult: {
       processId: "proc-1",
@@ -273,7 +274,7 @@ test("exec_command applies default observation wait for continuation stdin", asy
   ]);
 });
 
-test("exec_command respects explicit zero observation wait for continuation stdin", async () => {
+contractTest("runtime.hermetic", "exec_command respects explicit zero observation wait for continuation stdin", async () => {
   const service = new CapturingExecCommandService();
 
   await runExecCommandForTest({
@@ -294,7 +295,7 @@ test("exec_command respects explicit zero observation wait for continuation stdi
   ]);
 });
 
-test("exec_command continuation output is visible in model context", () => {
+contractTest("runtime.hermetic", "exec_command continuation output is visible in model context", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "exec_command",
     input: {
@@ -316,7 +317,7 @@ test("exec_command continuation output is visible in model context", () => {
   assert.match(result.modelContext.text, /- text:\n {2}hit wall\n {2}> /u);
 });
 
-test("exec_command stops an existing session", async () => {
+contractTest("runtime.hermetic", "exec_command stops an existing session", async () => {
   const service = new CapturingExecCommandService({
     stopResult: {
       status: "STOPPED",
@@ -340,7 +341,7 @@ test("exec_command stops an existing session", async () => {
   assert.deepEqual(service.stopInputs, [{ processId: "proc-1" }]);
 });
 
-test("exec_command rejects ambiguous lifecycle input", async () => {
+contractTest("runtime.hermetic", "exec_command rejects ambiguous lifecycle input", async () => {
   const handler = execCommandTool.createHandler({
     devShell: { enabled: true },
     devShellService: new CapturingExecCommandService(),
@@ -352,7 +353,7 @@ test("exec_command rejects ambiguous lifecycle input", async () => {
   await assert.rejects(() => handler({ sessionId: "proc-1", stdin: "x\n", stop: true }), /cannot be combined/u);
 });
 
-test("exec_command accepts only workspace-relative cwd and keeps the workspace root authoritative", async () => {
+contractTest("runtime.hermetic", "exec_command accepts only workspace-relative cwd and keeps the workspace root authoritative", async () => {
   const service = new CapturingExecCommandService();
   const handler = execCommandTool.createHandler({
     fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
@@ -375,7 +376,7 @@ test("exec_command accepts only workspace-relative cwd and keeps the workspace r
   assert.equal(service.startInputs.length, 1);
 });
 
-test("exec_command model schema does not expose host workspaceRoot input", () => {
+contractTest("runtime.hermetic", "exec_command model schema does not expose host workspaceRoot input", () => {
   assert.doesNotMatch(JSON.stringify(execCommandTool.definition.inputSchema), /workspaceRoot/u);
   assert.match(JSON.stringify(execCommandTool.definition.inputSchema), /Workspace-relative working directory/u);
 });

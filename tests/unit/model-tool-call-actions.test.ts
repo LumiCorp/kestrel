@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,6 +6,8 @@ import {
   providerToolAliasForCanonicalName,
 } from "../../agents/reference-react/src/modelToolCallActions.js";
 import type { ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const workspaceTools: ModelToolSpec[] = [
   {
@@ -59,7 +60,7 @@ function normalizeModelToolCallsToAgentTurn(
   });
 }
 
-test("provider aliases are transport-only and canonical tool names stay dotted", () => {
+contractTest("runtime.hermetic", "provider aliases are transport-only and canonical tool names stay dotted", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   assert.equal(providerToolAliasForCanonicalName("exec_command"), "exec_command");
@@ -95,7 +96,7 @@ test("provider aliases are transport-only and canonical tool names stay dotted",
   });
 });
 
-test("missing assistant progress does not reject an otherwise valid action", () => {
+contractTest("runtime.hermetic", "missing assistant progress does not reject an otherwise valid action", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const normalized = normalizeModelToolCallsToAgentTurnRaw({
     aliasRegistry: registry,
@@ -116,7 +117,7 @@ test("missing assistant progress does not reject an otherwise valid action", () 
   assert.equal(normalized.assistantProgress, "I’m continuing the requested work.");
 });
 
-test("finalize control tool description stays prose closeout guidance", () => {
+contractTest("runtime.hermetic", "finalize control tool description stays prose closeout guidance", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const finalizeTool = registry.requestTools.find((tool) => tool.name === "kestrel_finalize");
   const inputSchema = finalizeTool?.inputSchema as Record<string, unknown> | undefined;
@@ -157,7 +158,7 @@ test("finalize control tool description stays prose closeout guidance", () => {
   assert.equal(normalized.assistantProgress, undefined);
 });
 
-test("cannot_satisfy description rejects unfinished build progress as a blocker", () => {
+contractTest("runtime.hermetic", "cannot_satisfy description rejects unfinished build progress as a blocker", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const cannotSatisfyTool = registry.requestTools.find((tool) => tool.name === "kestrel_cannot_satisfy");
 
@@ -169,7 +170,7 @@ test("cannot_satisfy description rejects unfinished build progress as a blocker"
   assert.doesNotMatch(cannotSatisfyTool?.description ?? "", /Terminal-Bench|overfull|LaTeX|benchmark|evidenceIds|artifactVerification/i);
 });
 
-test("cannot_satisfy parser honors advertised narrowed reason enum", () => {
+contractTest("runtime.hermetic", "cannot_satisfy parser honors advertised narrowed reason enum", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools, {
     controlToolNames: ["kestrel.cannot_satisfy"],
     cannotSatisfyReasonCodes: ["missing_required_capability", "requested_tool_unavailable"],
@@ -219,7 +220,7 @@ test("cannot_satisfy parser honors advertised narrowed reason enum", () => {
   });
 });
 
-test("handoff_to_build preserves optional handoff data", () => {
+contractTest("runtime.hermetic", "handoff_to_build preserves optional handoff data", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools, {
     controlToolNames: ["kestrel.handoff_to_build"],
   });
@@ -251,7 +252,7 @@ test("handoff_to_build preserves optional handoff data", () => {
   });
 });
 
-test("switch_mode preserves the explicit requested mode without assistant progress", () => {
+contractTest("runtime.hermetic", "switch_mode preserves the explicit requested mode without assistant progress", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools, {
     controlToolNames: ["kestrel.switch_mode"],
   });
@@ -278,7 +279,7 @@ test("switch_mode preserves the explicit requested mode without assistant progre
   assert.equal(normalized.assistantProgress, undefined);
 });
 
-test("todo update description explains code-change notes without benchmark policy", () => {
+contractTest("runtime.hermetic", "todo update description explains code-change notes without benchmark policy", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const todoTool = registry.requestTools.find((tool) => tool.name === "kestrel_todo_update");
 
@@ -306,7 +307,7 @@ test("todo update description explains code-change notes without benchmark polic
   assert.doesNotMatch(todoTool?.description ?? "", /swe-verified|sweValidation|benchmark|runtime policy|behavior surface|evidenceIds|artifactVerification/i);
 });
 
-test("multiple workspace tool calls become an ordered canonical tool batch", () => {
+contractTest("runtime.hermetic", "multiple workspace tool calls become an ordered canonical tool batch", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   const normalized = normalizeModelToolCallsToAgentTurn({
@@ -327,7 +328,7 @@ test("multiple workspace tool calls become an ordered canonical tool batch", () 
   });
 });
 
-test("todo update can be combined with workspace work", () => {
+contractTest("runtime.hermetic", "todo update can be combined with workspace work", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   const normalized = normalizeModelToolCallsToAgentTurn({
@@ -355,7 +356,7 @@ test("todo update can be combined with workspace work", () => {
   });
 });
 
-test("terminal control tools are exclusive", () => {
+contractTest("runtime.hermetic", "terminal control tools are exclusive", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   assert.throws(
@@ -371,7 +372,7 @@ test("terminal control tools are exclusive", () => {
   );
 });
 
-test("finalize control tool rejects model-facing policy_blocked status", () => {
+contractTest("runtime.hermetic", "finalize control tool rejects model-facing policy_blocked status", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   assert.throws(
@@ -386,7 +387,7 @@ test("finalize control tool rejects model-facing policy_blocked status", () => {
   );
 });
 
-test("unknown provider aliases fail before dispatch", () => {
+contractTest("runtime.hermetic", "unknown provider aliases fail before dispatch", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
 
   assert.throws(

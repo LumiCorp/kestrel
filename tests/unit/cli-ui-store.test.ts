@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -14,14 +13,16 @@ import {
   pageCursor,
 } from "../../cli/ink/store/UiStore.js";
 import { LIGHT_THEME_PRESET_ID, resolveThemeConfig } from "../../cli/ink/theme/tokens.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("deriveLayoutProfile maps viewport width to narrow/standard/wide", () => {
+
+contractTest("runtime.hermetic", "deriveLayoutProfile maps viewport width to narrow/standard/wide", () => {
   assert.equal(deriveLayoutProfile(80), "narrow");
   assert.equal(deriveLayoutProfile(120), "standard");
   assert.equal(deriveLayoutProfile(160), "wide");
 });
 
-test("moveCursor clamps cursor and keeps it visible inside window", () => {
+contractTest("runtime.hermetic", "moveCursor clamps cursor and keeps it visible inside window", () => {
   const start = { offset: 0, cursor: 0, tailLocked: false };
   const moved = moveCursor(start, 20, 8, 5);
   assert.deepEqual(moved, {
@@ -38,7 +39,7 @@ test("moveCursor clamps cursor and keeps it visible inside window", () => {
   });
 });
 
-test("pageCursor jumps by window fraction and respects bounds", () => {
+contractTest("runtime.hermetic", "pageCursor jumps by window fraction and respects bounds", () => {
   const start = { offset: 0, cursor: 0, tailLocked: false };
   const pagedDown = pageCursor(start, 50, 10, "down");
   assert.equal(pagedDown.cursor, 8);
@@ -49,7 +50,7 @@ test("pageCursor jumps by window fraction and respects bounds", () => {
   assert.equal(pagedUp.offset, 0);
 });
 
-test("buildWindow returns a bounded item slice around visible cursor", () => {
+contractTest("runtime.hermetic", "buildWindow returns a bounded item slice around visible cursor", () => {
   const items = Array.from({ length: 12 }, (_, idx) => `item-${idx}`);
   const scroll = ensureCursorVisible(
     {
@@ -69,7 +70,7 @@ test("buildWindow returns a bounded item slice around visible cursor", () => {
   assert.equal(end.cursor, 11);
 });
 
-test("isAtTail and computeUnreadIncrement drive chat unread behavior", () => {
+contractTest("runtime.hermetic", "isAtTail and computeUnreadIncrement drive chat unread behavior", () => {
   assert.equal(isAtTail({ offset: 0, cursor: 3, tailLocked: true }, 4), true);
   assert.equal(isAtTail({ offset: 0, cursor: 1, tailLocked: false }, 4), false);
 
@@ -83,7 +84,7 @@ test("isAtTail and computeUnreadIncrement drive chat unread behavior", () => {
   );
 });
 
-test("buildInitialUiRuntimeState migrates legacy inspector persisted state to detail drawer", () => {
+contractTest("runtime.hermetic", "buildInitialUiRuntimeState migrates legacy inspector persisted state to detail drawer", () => {
   const now = new Date().toISOString();
   const persistedLegacy = {
     activeView: "logs",
@@ -118,7 +119,7 @@ test("buildInitialUiRuntimeState migrates legacy inspector persisted state to de
   assert.equal(runtime.layoutMode, "minimal");
 });
 
-test("buildInitialUiRuntimeState always forces minimal layout mode", () => {
+contractTest("runtime.hermetic", "buildInitialUiRuntimeState always forces minimal layout mode", () => {
   const now = new Date().toISOString();
   const runtime = buildInitialUiRuntimeState({
     profile: {
@@ -146,7 +147,7 @@ test("buildInitialUiRuntimeState always forces minimal layout mode", () => {
   assert.equal(runtime.layoutMode, "minimal");
 });
 
-test("buildInitialUiRuntimeState normalizes persisted chat details focus back to composer", () => {
+contractTest("runtime.hermetic", "buildInitialUiRuntimeState normalizes persisted chat details focus back to composer", () => {
   const now = new Date().toISOString();
   const runtime = buildInitialUiRuntimeState({
     profile: {
@@ -175,7 +176,7 @@ test("buildInitialUiRuntimeState normalizes persisted chat details focus back to
   assert.equal(runtime.focusRegion, "composer");
 });
 
-test("buildInitialUiRuntimeState normalizes stale command-bar focus back to composer", () => {
+contractTest("runtime.hermetic", "buildInitialUiRuntimeState normalizes stale command-bar focus back to composer", () => {
   const now = new Date().toISOString();
   const runtime = buildInitialUiRuntimeState({
     profile: {
@@ -204,7 +205,7 @@ test("buildInitialUiRuntimeState normalizes stale command-bar focus back to comp
   assert.equal(runtime.focusRegion, "composer");
 });
 
-test("buildInitialUiRuntimeState resolves active profile theme overrides", () => {
+contractTest("runtime.hermetic", "buildInitialUiRuntimeState resolves active profile theme overrides", () => {
   const now = new Date().toISOString();
   const runtime = buildInitialUiRuntimeState({
     profile: {
@@ -239,7 +240,7 @@ test("buildInitialUiRuntimeState resolves active profile theme overrides", () =>
   assert.equal(runtime.splashVisible, true);
 });
 
-test("derivePaneRowCounts uses single-screen rows in minimal mode", () => {
+contractTest("runtime.hermetic", "derivePaneRowCounts uses single-screen rows in minimal mode", () => {
   const rowCounts = derivePaneRowCounts({
     viewport: {
       columns: 120,

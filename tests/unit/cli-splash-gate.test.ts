@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
@@ -6,6 +5,8 @@ import { renderToString } from "ink";
 
 import { SplashGate } from "../../cli/ink/splash/SplashGate.js";
 import type { SplashPreflightState } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function createPreflightState(
   overrides: Partial<SplashPreflightState> = {},
@@ -22,7 +23,7 @@ function createPreflightState(
   };
 }
 
-test("SplashGate renders the ascii mark and dismiss prompt when visible", () => {
+contractTest("runtime.hermetic", "SplashGate renders the ascii mark and dismiss prompt when visible", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: true,
@@ -36,7 +37,7 @@ test("SplashGate renders the ascii mark and dismiss prompt when visible", () => 
   assert.match(text, /WARN/);
 });
 
-test("SplashGate falls back to a readable KESTREL wordmark at narrow widths", () => {
+contractTest("runtime.hermetic", "SplashGate falls back to a readable KESTREL wordmark at narrow widths", () => {
   const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", {
     configurable: true,
@@ -67,7 +68,7 @@ test("SplashGate falls back to a readable KESTREL wordmark at narrow widths", ()
   }
 });
 
-test("SplashGate shows failure summary and keeps the prompt hidden until pre-flight succeeds", () => {
+contractTest("runtime.hermetic", "SplashGate shows failure summary and keeps the prompt hidden until pre-flight succeeds", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: true,
@@ -85,7 +86,7 @@ test("SplashGate shows failure summary and keeps the prompt hidden until pre-fli
   assert.doesNotMatch(text, /Press Space to continue/);
 });
 
-test("SplashGate wraps long failure details instead of truncating them", () => {
+contractTest("runtime.hermetic", "SplashGate wraps long failure details instead of truncating them", () => {
   const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", {
     configurable: true,
@@ -122,7 +123,7 @@ test("SplashGate wraps long failure details instead of truncating them", () => {
   }
 });
 
-test("SplashGate returns null when hidden", () => {
+contractTest("runtime.hermetic", "SplashGate returns null when hidden", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: false,

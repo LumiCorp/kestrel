@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { convertToUIMessages } from "@/lib/utils";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("stored durable turn identity survives UI message conversion", () => {
+
+contractTest("web.hermetic", "stored durable turn identity survives UI message conversion", () => {
   const [message] = convertToUIMessages([
     {
       id: "assistant-1",

@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { syncDesktopThreadWorkspace } from "../../src/localCore/desktopThreadWorkspace.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Desktop workspace registration bootstraps restored conversations into Local Core authority", async () => {
+contractTest("runtime.hermetic", "Desktop workspace registration bootstraps restored conversations into Local Core authority", async () => {
   const store = new InMemorySessionStore();
   const sessionId = "desktop-restored-session";
   const threadId = `thread-main:${sessionId}`;

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   intersectAppApprovalModes,
   isProjectApprovalWithinEnvironment,
 } from "./policy";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Project approval can only match or narrow the Environment ceiling", () => {
+
+contractTest("web.hermetic", "Project approval can only match or narrow the Environment ceiling", () => {
   assert.equal(
     isProjectApprovalWithinEnvironment({ environment: "ask", project: "ask" }),
     true
@@ -20,7 +21,7 @@ test("Project approval can only match or narrow the Environment ceiling", () => 
   );
 });
 
-test("effective approval always chooses the most restrictive policy", () => {
+contractTest("web.hermetic", "effective approval always chooses the most restrictive policy", () => {
   assert.equal(intersectAppApprovalModes("auto", "ask"), "ask");
   assert.equal(intersectAppApprovalModes("ask", "deny"), "deny");
   assert.equal(intersectAppApprovalModes("deny", "auto"), "deny");

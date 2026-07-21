@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { ProtocolClient } from "../../cli/client/ProtocolClient.js";
 import { RemoteRunnerTransport } from "../../cli/client/RemoteRunnerTransport.js";
 import type { RunnerCommand } from "../../cli/protocol/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference",
@@ -13,7 +14,7 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
-test("RemoteRunnerTransport sends unary commands over HTTP with auth", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport sends unary commands over HTTP with auth", async () => {
   const requests: Array<{ url: string; init: RequestInit | undefined; command: RunnerCommand }> = [];
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
@@ -63,7 +64,7 @@ test("RemoteRunnerTransport sends unary commands over HTTP with auth", async () 
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects unary responses with a mismatched command id", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport rejects unary responses with a mismatched command id", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => Response.json({
@@ -83,7 +84,7 @@ test("RemoteRunnerTransport rejects unary responses with a mismatched command id
   await client.close();
 });
 
-test("RemoteRunnerTransport preserves streamed runner events over SSE", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport preserves streamed runner events over SSE", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -167,7 +168,7 @@ test("RemoteRunnerTransport preserves streamed runner events over SSE", async ()
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects nonterminal SSE events for another command", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport rejects nonterminal SSE events for another command", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async () => new Response(
@@ -200,7 +201,7 @@ test("RemoteRunnerTransport rejects nonterminal SSE events for another command",
   await client.close();
 });
 
-test("RemoteRunnerTransport routes job.run through the canonical streaming endpoint", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport routes job.run through the canonical streaming endpoint", async () => {
   const requests: Array<{ url: string; accept: string | undefined; command: RunnerCommand }> = [];
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal/",
@@ -286,7 +287,7 @@ test("RemoteRunnerTransport routes job.run through the canonical streaming endpo
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects unreadable unary responses with a synthetic runner error", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport rejects unreadable unary responses with a synthetic runner error", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async () =>
@@ -319,7 +320,7 @@ test("RemoteRunnerTransport rejects unreadable unary responses with a synthetic 
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects schema-invalid runner events", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport rejects schema-invalid runner events", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -353,7 +354,7 @@ test("RemoteRunnerTransport rejects schema-invalid runner events", async () => {
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects invalid SSE payloads with a synthetic runner error", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport rejects invalid SSE payloads with a synthetic runner error", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async () =>
@@ -394,7 +395,7 @@ test("RemoteRunnerTransport rejects invalid SSE payloads with a synthetic runner
   await client.close();
 });
 
-test("RemoteRunnerTransport surfaces runner.error events even on non-200 responses", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport surfaces runner.error events even on non-200 responses", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -441,7 +442,7 @@ test("RemoteRunnerTransport surfaces runner.error events even on non-200 respons
   await client.close();
 });
 
-test("RemoteRunnerTransport stop aborts inflight requests and releases handlers", async () => {
+contractTest("runtime.hermetic", "RemoteRunnerTransport stop aborts inflight requests and releases handlers", async () => {
   let aborted = false;
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",

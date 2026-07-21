@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
@@ -13,8 +12,10 @@ import type { HeapDiagnosticsReporter, HeapPressureSample, HeapSampleInput } fro
 import { RuntimeHeapDiagnostics } from "../../src/runtime/heapDiagnostics.js";
 import { appendModelTranscriptItems, appendToolResultToTranscript, appendUserTurnToTranscript, makeModelTranscriptItem } from "../../src/runtime/modelTranscript.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("RuntimeHeapDiagnostics writes summary samples and near-limit reports without payload content", async () => {
+
+contractTest("runtime.hermetic", "RuntimeHeapDiagnostics writes summary samples and near-limit reports without payload content", async () => {
   const outputDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-heap-diagnostics-"));
   const reporter = new RuntimeHeapDiagnostics({
     mode: "summary",
@@ -54,7 +55,7 @@ test("RuntimeHeapDiagnostics writes summary samples and near-limit reports witho
   assert.equal("prompt" in sample, false);
 });
 
-test("heap guard stop mode blocks model admission before gateway call", async () => {
+contractTest("runtime.hermetic", "heap guard stop mode blocks model admission before gateway call", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   const kestrel = new Kestrel({
@@ -81,7 +82,7 @@ test("heap guard stop mode blocks model admission before gateway call", async ()
   assert.equal(modelCalls, 0);
 });
 
-test("heap guard compact mode compacts transcript and continues when pressure drops", async () => {
+contractTest("runtime.hermetic", "heap guard compact mode compacts transcript and continues when pressure drops", async () => {
   const store = new InMemorySessionStore();
   const session = await store.ensureSession("heap-compact-session", "agent.loop");
   await seedLargeTranscript(store, session.sessionId, session.version);
@@ -121,7 +122,7 @@ test("heap guard compact mode compacts transcript and continues when pressure dr
   assert.equal(rendered.includes("app/file-0.tsx"), false);
 });
 
-test("heap guard compact mode rebases stale outgoing transcript patch", async () => {
+contractTest("runtime.hermetic", "heap guard compact mode rebases stale outgoing transcript patch", async () => {
   const store = new InMemorySessionStore();
   const session = await store.ensureSession("heap-rebase-session", "agent.loop");
   await seedLargeTranscript(store, session.sessionId, session.version);
@@ -165,7 +166,7 @@ test("heap guard compact mode rebases stale outgoing transcript patch", async ()
   assert.equal(rendered.includes("app/file-0.tsx"), false);
 });
 
-test("heap guard compact mode exposes compacted state to tool validation and execution", async () => {
+contractTest("runtime.hermetic", "heap guard compact mode exposes compacted state to tool validation and execution", async () => {
   const store = new InMemorySessionStore();
   const session = await store.ensureSession("heap-tool-state-session", "agent.loop");
   await seedLargeTranscript(store, session.sessionId, session.version);

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { formatDoctorInspection, formatReplayInspection } from "../../cli/runtime/inspectionFormatting.js";
 import type { ReplayDoctorReport, ReplayResult } from "../../src/replay/RunReplayService.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("formatReplayInspection renders approvals, delegations, compaction, and grouped transitions", () => {
+
+contractTest("runtime.hermetic", "formatReplayInspection renders approvals, delegations, compaction, and grouped transitions", () => {
   const replay = {
     summary: {
       runId: "run-parent",
@@ -230,7 +231,7 @@ test("formatReplayInspection renders approvals, delegations, compaction, and gro
   assert.ok(lines.some((line) => line.includes("[approval] interaction requested")));
 });
 
-test("formatDoctorInspection renders blocking, dominant failure, and child blocker details", () => {
+contractTest("runtime.hermetic", "formatDoctorInspection renders blocking, dominant failure, and child blocker details", () => {
   const report = {
     focus: {
       threadId: "thread-child",

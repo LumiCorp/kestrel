@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 
@@ -14,8 +13,10 @@ import {
   readRuntimeTaskGraphProjectionContext,
   type RuntimeTaskGraphProjectionRuntime,
 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("buildRuntimeTaskGraphProjection reads thread context and renders graph through the store", async () => {
+
+contractTest("runtime.hermetic", "buildRuntimeTaskGraphProjection reads thread context and renders graph through the store", async () => {
   const thread = buildThread("thread-main", "session-main");
   const status = buildThreadStatus(thread);
   const inbox = buildInbox(thread.threadId);
@@ -73,7 +74,7 @@ test("buildRuntimeTaskGraphProjection reads thread context and renders graph thr
   assert.equal(graphInput?.operatorInbox, inbox);
 });
 
-test("buildRuntimeTaskGraphProjection returns empty graph without a task graph store", async () => {
+contractTest("runtime.hermetic", "buildRuntimeTaskGraphProjection returns empty graph without a task graph store", async () => {
   const projection = await buildRuntimeTaskGraphProjection({
     sessionId: "session-minimal",
     session: null,
@@ -90,7 +91,7 @@ test("buildRuntimeTaskGraphProjection returns empty graph without a task graph s
   });
 });
 
-test("readRuntimeTaskGraphProjectionContext reuses an existing operator view for the same thread", async () => {
+contractTest("runtime.hermetic", "readRuntimeTaskGraphProjectionContext reuses an existing operator view for the same thread", async () => {
   const thread = buildThread("thread-main", "session-main");
   const operatorView: OperatorThreadView = {
     thread,

@@ -8,9 +8,11 @@
     "build:self": "tsc -p tsconfig.json",
     "canary:local": "tsx scripts/local-canary.ts",
     "start": "node dist/server.js",
-    "test": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm run test:self",
-    "test:self": "node --import tsx --test tests/**/*.test.ts",
-    "typecheck": "pnpm --filter @kestrel-agents/sdk build && tsc -p tsconfig.json --noEmit"
+    "test": "pnpm run test:unit",
+    "test:unit": "node ../../scripts/validate.mjs --leaf hermetic apps/workspace-runtime",
+    "test:integration": "node ../../scripts/validate.mjs --leaf process apps/workspace-runtime",
+    "typecheck": "pnpm run typecheck:self",
+    "typecheck:self": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@kestrel-agents/sdk": "workspace:*",

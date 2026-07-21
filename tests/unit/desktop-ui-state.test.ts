@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   DESKTOP_BRIDGE_CAPABILITIES,
@@ -11,8 +10,10 @@ import {
   parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Desktop bridge v6 exposes workspace, attachment, and operator-control contracts", () => {
+
+contractTest("runtime.hermetic", "Desktop bridge v6 exposes workspace, attachment, and operator-control contracts", () => {
   assert.equal(DESKTOP_BRIDGE_VERSION, "6");
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
@@ -38,7 +39,7 @@ test("Desktop bridge v6 exposes workspace, attachment, and operator-control cont
   assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
 });
 
-test("Desktop UI state accepts only the versioned legacy storage contract", () => {
+contractTest("runtime.hermetic", "Desktop UI state accepts only the versioned legacy storage contract", () => {
   const state = parseDesktopUiStateV1({
     version: DESKTOP_UI_STATE_VERSION,
     source: DESKTOP_UI_STATE_SOURCE,
@@ -57,7 +58,7 @@ test("Desktop UI state accepts only the versioned legacy storage contract", () =
   assert.equal(state.sourceAppVersion, "0.5.1");
 });
 
-test("Desktop UI state rejects unknown storage keys and non-string values", () => {
+contractTest("runtime.hermetic", "Desktop UI state rejects unknown storage keys and non-string values", () => {
   assert.throws(
     () => parseDesktopLegacyUiStateEntries({ "provider-api-key": "secret" }),
     /unsupported key/u,
@@ -68,7 +69,7 @@ test("Desktop UI state rejects unknown storage keys and non-string values", () =
   );
 });
 
-test("Desktop run requests admit only tagged runtime system prompts", () => {
+contractTest("runtime.hermetic", "Desktop run requests admit only tagged runtime system prompts", () => {
   const timestamp = "2026-07-09T12:00:00.000Z";
   const executionSelection = {
     modelConfiguration: { id: "desktop-default", revision: 1 },

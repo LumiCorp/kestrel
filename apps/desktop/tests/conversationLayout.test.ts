@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
 const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 
-test("thread messages and composer share the conversation width", async () => {
+contractTest("desktop.hermetic", "thread messages and composer share the conversation width", async () => {
   const source = await readFile(stylesPath, "utf8");
 
   assert.match(source, /--conversation-content-width:\s*880px;/u);
@@ -22,7 +22,7 @@ test("thread messages and composer share the conversation width", async () => {
   assert.match(source, /\.composer\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
 });
 
-test("composer controls are grouped by context and action", async () => {
+contractTest("desktop.hermetic", "composer controls are grouped by context and action", async () => {
   const [styles, app] = await Promise.all([
     readFile(stylesPath, "utf8"),
     readFile(appPath, "utf8"),
@@ -34,7 +34,7 @@ test("composer controls are grouped by context and action", async () => {
   assert.match(app, /className="composer-actions-left"[\s\S]*className="composer-actions-right"/u);
 });
 
-test("active runs suppress stale stalled-attention cards", async () => {
+contractTest("desktop.hermetic", "active runs suppress stale stalled-attention cards", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /item\.kind !== "stalled_thread_attention" \|\| activeRun === undefined/u);

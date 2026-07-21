@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import path from "node:path";
 import { resolveDesktopPackagerConfig } from "../src/packageConfig.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("resolveDesktopPackagerConfig defaults to the host platform and desktop staging paths", () => {
+
+contractTest("desktop.hermetic", "resolveDesktopPackagerConfig defaults to the host platform and desktop staging paths", () => {
   const repoRoot = "/tmp/kestrel-repo";
   const config = resolveDesktopPackagerConfig({ repoRoot });
 
@@ -29,7 +30,7 @@ test("resolveDesktopPackagerConfig defaults to the host platform and desktop sta
   assert.equal(config.outDir, path.join(repoRoot, "apps", "desktop", "out"));
 });
 
-test("resolveDesktopPackagerConfig honors explicit platform and arch overrides", () => {
+contractTest("desktop.hermetic", "resolveDesktopPackagerConfig honors explicit platform and arch overrides", () => {
   const config = resolveDesktopPackagerConfig({
     repoRoot: "/tmp/kestrel-repo",
     platform: "darwin",
@@ -44,7 +45,7 @@ test("resolveDesktopPackagerConfig honors explicit platform and arch overrides",
   );
 });
 
-test("resolveDesktopPackagerConfig selects native Windows and Linux icon formats", () => {
+contractTest("desktop.hermetic", "resolveDesktopPackagerConfig selects native Windows and Linux icon formats", () => {
   const repoRoot = "/tmp/kestrel-repo";
 
   assert.equal(

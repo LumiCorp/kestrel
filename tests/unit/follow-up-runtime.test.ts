@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
@@ -10,6 +9,8 @@ import {
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 class FollowUpExecutor implements TurnExecutor {
   readonly inputs: TurnExecutionInput[] = [];
@@ -28,7 +29,7 @@ class FollowUpExecutor implements TurnExecutor {
   }
 }
 
-test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [completed("run-follow-up-1"), completed("run-follow-up-2")]);
   const runtime = new ThreadRuntime({ sessionStore: store, executor });
@@ -51,7 +52,7 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
   assert.deepEqual(executor.inputs.map((input) => input.metadata?.followUpId), ["follow-up-1", "follow-up-2"]);
 });
 
-test("ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [waiting("run-follow-up-wait")]);
   const runtime = new ThreadRuntime({ sessionStore: store, executor });
@@ -73,7 +74,7 @@ test("ThreadRuntime pauses remaining follow-ups when an entry waits for operator
   await assert.rejects(runtime.resumeFollowUpQueue({ threadId: started.threadId }), /Resolve the thread's waiting action/u);
 });
 
-test("ThreadRuntime preserves an explicit cancellation pause for queued follow-ups", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime preserves an explicit cancellation pause for queued follow-ups", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({ sessionStore: store, executor: new FollowUpExecutor(store, []) });
   const started = await runtime.startThread({ threadId: "thread-cancel", sessionId: "session-cancel", title: "Cancel" });

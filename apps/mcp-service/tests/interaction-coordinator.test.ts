@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { Pool } from "pg";
 
 import type { AuthorizedMcpGrant } from "../src/contracts.js";
 import { PostgresMcpInteractionCoordinator } from "../src/interaction-coordinator.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const grant: AuthorizedMcpGrant = {
   id: "grant-1",
@@ -68,7 +69,7 @@ function createPool(input?: {
   return { pool, queries };
 }
 
-test("interaction coordinator propagates failed sampling without relabeling it as a denial", async () => {
+contractTest("services.hermetic", "interaction coordinator propagates failed sampling without relabeling it as a denial", async () => {
   const { pool, queries } = createPool({
     checkpoint: {
       status: "failed",
@@ -99,7 +100,7 @@ test("interaction coordinator propagates failed sampling without relabeling it a
   );
 });
 
-test("interaction coordinator follows claimed sampling through grant expiry", async () => {
+contractTest("services.hermetic", "interaction coordinator follows claimed sampling through grant expiry", async () => {
   const { pool, queries } = createPool({
     checkpoints: [
       {
@@ -132,7 +133,7 @@ test("interaction coordinator follows claimed sampling through grant expiry", as
   );
 });
 
-test("interaction coordinator terminalizes an expired processing claim", async () => {
+contractTest("services.hermetic", "interaction coordinator terminalizes an expired processing claim", async () => {
   const { pool, queries } = createPool({
     checkpoints: [
       {
@@ -169,7 +170,7 @@ test("interaction coordinator terminalizes an expired processing claim", async (
   );
 });
 
-test("interaction cancellation cannot overwrite a processing checkpoint", async () => {
+contractTest("services.hermetic", "interaction cancellation cannot overwrite a processing checkpoint", async () => {
   const { pool, queries } = createPool();
   const coordinator = new PostgresMcpInteractionCoordinator(pool, 0);
   const controller = new AbortController();

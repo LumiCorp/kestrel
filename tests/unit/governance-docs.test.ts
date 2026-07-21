@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { findDocDrift, requiresFreshness } from "../../src/governance/docs.js";
 import type { DocIndexEntry } from "../../src/governance/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function entry(status: DocIndexEntry["status"], lastVerifiedAt = "2026-01-01"): DocIndexEntry {
   return {
@@ -14,14 +15,14 @@ function entry(status: DocIndexEntry["status"], lastVerifiedAt = "2026-01-01"): 
   };
 }
 
-test("document freshness is required only for active and draft docs", () => {
+contractTest("runtime.hermetic", "document freshness is required only for active and draft docs", () => {
   assert.equal(requiresFreshness(entry("active")), true);
   assert.equal(requiresFreshness(entry("draft")), true);
   assert.equal(requiresFreshness(entry("deprecated")), false);
   assert.equal(requiresFreshness(entry("historical")), false);
 });
 
-test("historical and deprecated docs do not fail stale freshness checks", () => {
+contractTest("runtime.hermetic", "historical and deprecated docs do not fail stale freshness checks", () => {
   for (const status of ["deprecated", "historical"] as const) {
     const findings = findDocDrift({
       docPath: `docs/${status}.md`,
@@ -35,7 +36,7 @@ test("historical and deprecated docs do not fail stale freshness checks", () => 
   }
 });
 
-test("active docs still fail stale freshness checks", () => {
+contractTest("runtime.hermetic", "active docs still fail stale freshness checks", () => {
   const findings = findDocDrift({
     docPath: "docs/active.md",
     entry: entry("active"),

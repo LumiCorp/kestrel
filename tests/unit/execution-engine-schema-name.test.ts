@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { readModelRequestSchemaName } from "../../src/engine/ExecutionEngine.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("readModelRequestSchemaName returns the OpenRouter schema name when present", () => {
+
+contractTest("runtime.hermetic", "readModelRequestSchemaName returns the OpenRouter schema name when present", () => {
   assert.equal(
     readModelRequestSchemaName({
       input: "hello",
@@ -17,7 +18,7 @@ test("readModelRequestSchemaName returns the OpenRouter schema name when present
   );
 });
 
-test("readModelRequestSchemaName returns the OpenAI schema name when present", () => {
+contractTest("runtime.hermetic", "readModelRequestSchemaName returns the OpenAI schema name when present", () => {
   assert.equal(
     readModelRequestSchemaName({
       input: "hello",

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   parseDesktopPathTargetInput,
@@ -11,8 +10,10 @@ import {
   resolveDesktopPathTarget,
   resolveVerifiedDesktopPathTarget,
 } from "../src/fileAccess.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("desktop path targets resolve paths within the selected root", () => {
+
+contractTest("desktop.hermetic", "desktop path targets resolve paths within the selected root", () => {
   const rootPath = path.join(path.sep, "tmp", "project-a");
   const targetPath = path.join(rootPath, "src", "index.ts");
 
@@ -32,7 +33,7 @@ test("desktop path targets resolve paths within the selected root", () => {
   });
 });
 
-test("desktop path targets preserve a valid runtime thread scope", () => {
+contractTest("desktop.hermetic", "desktop path targets preserve a valid runtime thread scope", () => {
   const parsed = parseDesktopPathTargetInput(
     {
       rootPath: "/tmp/project-a",
@@ -49,7 +50,7 @@ test("desktop path targets preserve a valid runtime thread scope", () => {
   assert.equal(parsed.threadId, "thread-1");
 });
 
-test("desktop path targets reject malformed runtime thread scopes", () => {
+contractTest("desktop.hermetic", "desktop path targets reject malformed runtime thread scopes", () => {
   assert.throws(
     () => parseDesktopPathTargetInput(
       {
@@ -70,7 +71,7 @@ test("desktop path targets reject malformed runtime thread scopes", () => {
   );
 });
 
-test("desktop path targets reject paths outside the selected root", () => {
+contractTest("desktop.hermetic", "desktop path targets reject paths outside the selected root", () => {
   const rootPath = path.join(path.sep, "tmp", "project-a");
   const targetPath = path.join(path.sep, "tmp", "project-b", "secret.txt");
 
@@ -83,7 +84,7 @@ test("desktop path targets reject paths outside the selected root", () => {
   );
 });
 
-test("desktop path targets reject malformed bridge inputs before use", () => {
+contractTest("desktop.hermetic", "desktop path targets reject malformed bridge inputs before use", () => {
   assert.throws(
     () =>
       parseDesktopPathTargetInput(
@@ -101,7 +102,7 @@ test("desktop path targets reject malformed bridge inputs before use", () => {
   );
 });
 
-test("desktop path targets reject unregistered project roots", () => {
+contractTest("desktop.hermetic", "desktop path targets reject unregistered project roots", () => {
   const rootPath = path.join(path.sep, "tmp", "project-a");
   const forgedRootPath = path.join(path.sep, "tmp");
 
@@ -114,7 +115,7 @@ test("desktop path targets reject unregistered project roots", () => {
   );
 });
 
-test("desktop path targets accept registered roots via realpath equivalence", async () => {
+contractTest("desktop.hermetic", "desktop path targets accept registered roots via realpath equivalence", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-access-"));
   try {
     const projectRoot = path.join(tempRoot, "project-a");
@@ -129,7 +130,7 @@ test("desktop path targets accept registered roots via realpath equivalence", as
   }
 });
 
-test("desktop watcher cleanup accepts a now-unregistered active watcher root", async () => {
+contractTest("desktop.hermetic", "desktop watcher cleanup accepts a now-unregistered active watcher root", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-access-"));
   try {
     const projectRoot = path.join(tempRoot, "project-a");
@@ -147,7 +148,7 @@ test("desktop watcher cleanup accepts a now-unregistered active watcher root", a
   }
 });
 
-test("desktop watcher cleanup accepts a removed root as idempotent teardown", () => {
+contractTest("desktop.hermetic", "desktop watcher cleanup accepts a removed root as idempotent teardown", () => {
   const removedRootPath = path.join(path.sep, "tmp", "kestrel-removed-project");
 
   const resolved = resolveDesktopProjectRootForWatcherCleanup(
@@ -159,7 +160,7 @@ test("desktop watcher cleanup accepts a removed root as idempotent teardown", ()
   assert.equal(resolved, removedRootPath);
 });
 
-test("desktop watcher cleanup still rejects existing unknown roots", async () => {
+contractTest("desktop.hermetic", "desktop watcher cleanup still rejects existing unknown roots", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-access-"));
   try {
     const rootPath = path.join(tempRoot, "project-a");
@@ -179,7 +180,7 @@ test("desktop watcher cleanup still rejects existing unknown roots", async () =>
   }
 });
 
-test("desktop path targets verify real paths against symlink escapes", async () => {
+contractTest("desktop.hermetic", "desktop path targets verify real paths against symlink escapes", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-access-"));
   try {
     const projectRoot = path.join(tempRoot, "project-a");
@@ -206,7 +207,7 @@ test("desktop path targets verify real paths against symlink escapes", async () 
   }
 });
 
-test("desktop path targets verify registered roots for normal files", async () => {
+contractTest("desktop.hermetic", "desktop path targets verify registered roots for normal files", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "kestrel-desktop-access-"));
   try {
     const projectRoot = path.join(tempRoot, "project-a");

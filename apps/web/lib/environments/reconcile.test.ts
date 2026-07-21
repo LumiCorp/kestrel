@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("daily backup selection skips recently protected Workspaces without starving the next due Workspace", () => {
+
+contractTest("web.hermetic", "daily backup selection skips recently protected Workspaces without starving the next due Workspace", () => {
   const candidates = [
     { id: "oldest-recent", organizationId: "org-1" },
     { id: "next-due", organizationId: "org-2" },
@@ -15,7 +16,7 @@ test("daily backup selection skips recently protected Workspaces without starvin
   );
 });
 
-test("daily backup selection returns no candidate when every ready Workspace is protected", () => {
+contractTest("web.hermetic", "daily backup selection returns no candidate when every ready Workspace is protected", () => {
   assert.equal(
     selectDueDailyBackupCandidate(
       [{ id: "workspace-1" }, { id: "workspace-2" }],

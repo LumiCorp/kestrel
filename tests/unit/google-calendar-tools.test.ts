@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   kestrelOneGoogleCalendarCheckAvailabilityTool,
   kestrelOneGoogleCalendarCreateEventTool,
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarListEventsTool,
 } from "../../tools/kestrelOne/google-calendar.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Google Calendar writes require external confirmation", () => {
+
+contractTest("runtime.hermetic", "Google Calendar writes require external confirmation", () => {
   assert.equal(
     kestrelOneGoogleCalendarCreateEventTool.definition.capability
       .executionClass,
@@ -20,7 +21,7 @@ test("Google Calendar writes require external confirmation", () => {
   );
 });
 
-test("Google Calendar reads remain read-only and availability is privacy explicit", () => {
+contractTest("runtime.hermetic", "Google Calendar reads remain read-only and availability is privacy explicit", () => {
   assert.equal(
     kestrelOneGoogleCalendarListEventsTool.definition.capability.executionClass,
     "read_only"
@@ -39,7 +40,7 @@ test("Google Calendar reads remain read-only and availability is privacy explici
   );
 });
 
-test("Calendar tool handler uses the execution ticket and omits notifications unless requested", async () => {
+contractTest("runtime.hermetic", "Calendar tool handler uses the execution ticket and omits notifications unless requested", async () => {
   let capturedHeaders: unknown;
   let capturedBody = "";
   const handler = kestrelOneGoogleCalendarCreateEventTool.createHandler({

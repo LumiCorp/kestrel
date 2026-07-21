@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { mapWithConcurrencyLimit } from "./concurrency";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("mapWithConcurrencyLimit preserves order and bounds concurrency", async () => {
+
+contractTest("web.hermetic", "mapWithConcurrencyLimit preserves order and bounds concurrency", async () => {
   let active = 0;
   let maxActive = 0;
 

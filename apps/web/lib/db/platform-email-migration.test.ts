@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const migration = fs.readFileSync(
   path.join(
@@ -12,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-test("platform email migration is singleton, platform scoped, and credential safe", () => {
+contractTest("web.hermetic", "platform email migration is singleton, platform scoped, and credential safe", () => {
   assert.match(migration, /CREATE TABLE "platform_email_config"/);
   assert.match(migration, /platform_email_config_singleton_idx/);
   assert.match(migration, /"encrypted_api_key" text/);

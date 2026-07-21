@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
@@ -7,6 +6,8 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
   const record = output !== null && typeof output === "object" && !Array.isArray(output)
@@ -57,7 +58,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
   return [];
 }
 
-test("reference thinker avoids ungrounded fetch actions when follow-up grounding is insufficient", async () => {
+contractTest("runtime.process", "reference thinker avoids ungrounded fetch actions when follow-up grounding is insufficient", async () => {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];

@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   withEnvironmentOperationLock,
   withEnvironmentReconcileLock,
 } from "./reconcile-lock";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-test(
-  "Postgres Environment reconciliation lock excludes overlapping workers and releases",
+contractTest(
+  "web.postgres", "Postgres Environment reconciliation lock excludes overlapping workers and releases",
   async () => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
@@ -45,8 +46,8 @@ test(
   }
 );
 
-test(
-  "Postgres Environment operation locks exclude only the same operation",
+contractTest(
+  "web.postgres", "Postgres Environment operation locks exclude only the same operation",
   async () => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
@@ -8,8 +7,10 @@ import {
   RuntimeComposer,
 } from "../../src/orchestration/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
+
+contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -38,7 +39,7 @@ test("AssemblyCatalog persists default bundle, specialist, and context policy de
   assert.equal(persistedBundle?.metadata?.compatibilityProfile, "router.chat");
 });
 
-test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
+contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
   const evaluator = new AssemblyPolicyEvaluator();
   const thread = buildThread("thread-policy");
 
@@ -133,7 +134,7 @@ test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for 
   assert.equal(providerChangeDecision.result, "APPROVAL_REQUIRED");
 });
 
-test("RuntimeComposer composes inherited child bundles and applies approved proposals", async () => {
+contractTest("runtime.hermetic", "RuntimeComposer composes inherited child bundles and applies approved proposals", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -194,7 +195,7 @@ test("RuntimeComposer composes inherited child bundles and applies approved prop
   assert.deepEqual(active?.bundle?.toolAllowlist, ["fs.read_text", "web.search"]);
 });
 
-test("RuntimeComposer selects provider-specific prompt variants and proposal metadata", async () => {
+contractTest("runtime.hermetic", "RuntimeComposer selects provider-specific prompt variants and proposal metadata", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -238,7 +239,7 @@ test("RuntimeComposer selects provider-specific prompt variants and proposal met
   assert.equal(proposal.bundle?.metadata?.compatibilityProfile, "openai.responses");
 });
 
-test("RuntimeComposer rejects incompatible prompt variants for provider selection", async () => {
+contractTest("runtime.hermetic", "RuntimeComposer rejects incompatible prompt variants for provider selection", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -278,7 +279,7 @@ test("RuntimeComposer rejects incompatible prompt variants for provider selectio
   assert.match(proposal.decision.reason, /not compatible with provider 'anthropic'/u);
 });
 
-test("RuntimeComposer narrows active bundles on capability loss", async () => {
+contractTest("runtime.hermetic", "RuntimeComposer narrows active bundles on capability loss", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -321,7 +322,7 @@ test("RuntimeComposer narrows active bundles on capability loss", async () => {
   );
 });
 
-test("RuntimeComposer keeps runtime-internal tools when capability loss narrows external tools", async () => {
+contractTest("runtime.hermetic", "RuntimeComposer keeps runtime-internal tools when capability loss narrows external tools", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,

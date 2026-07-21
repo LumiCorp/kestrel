@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { tool } from "ai";
 import { z } from "zod";
 import { resolveWeatherToolSettings } from "@/lib/ai/tools/get-weather";
 import { applyToolRuntimeConfigurations } from "./runtime-config";
 import { resolveSearchKnowledgeDocumentsToolSettings } from "./settings";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("runtime configuration enables approval for ask tools and omits unknown tools", () => {
+
+contractTest("web.hermetic", "runtime configuration enables approval for ask tools and omits unknown tools", () => {
   const configured = applyToolRuntimeConfigurations(
     {
       getWeather: tool({
@@ -38,7 +39,7 @@ test("runtime configuration enables approval for ask tools and omits unknown too
   assert.equal(configured.getWeather.needsApproval, true);
 });
 
-test("weather settings resolver clamps and normalizes persisted values", () => {
+contractTest("web.hermetic", "weather settings resolver clamps and normalizes persisted values", () => {
   assert.deepEqual(
     resolveWeatherToolSettings({
       units: "celsius",
@@ -53,7 +54,7 @@ test("weather settings resolver clamps and normalizes persisted values", () => {
   );
 });
 
-test("knowledge search settings resolver clamps default result limits", () => {
+contractTest("web.hermetic", "knowledge search settings resolver clamps default result limits", () => {
   assert.deepEqual(
     resolveSearchKnowledgeDocumentsToolSettings({ defaultLimit: 99 }),
     { defaultLimit: 12 }

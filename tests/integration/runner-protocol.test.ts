@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import readline from "node:readline";
 import { PassThrough } from "node:stream";
-import test from "node:test";
 import type { TuiProfile } from "../../cli/contracts.js";
 import { CommandRouter } from "../../cli/runner/CommandRouter.js";
 import { EventWriter } from "../../cli/runner/EventWriter.js";
@@ -16,6 +15,8 @@ import type {
   RunEvent,
   RunLogEntry,
 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const profile: TuiProfile = {
   id: "reference",
@@ -24,7 +25,7 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
-test("CommandRouter emits runner.error for invalid command JSON", async () => {
+contractTest("runtime.process", "CommandRouter emits runner.error for invalid command JSON", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -51,7 +52,7 @@ test("CommandRouter emits runner.error for invalid command JSON", async () => {
   await host.close();
 });
 
-test("EventWriter rejects unknown event discriminants before serialization", () => {
+contractTest("runtime.process", "EventWriter rejects unknown event discriminants before serialization", () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
 
@@ -65,7 +66,7 @@ test("EventWriter rejects unknown event discriminants before serialization", () 
   assert.equal(output.read(), null);
 });
 
-test("CommandRouter emits runner.error for unsupported command type", async () => {
+contractTest("runtime.process", "CommandRouter emits runner.error for unsupported command type", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -101,7 +102,7 @@ test("CommandRouter emits runner.error for unsupported command type", async () =
   await host.close();
 });
 
-test("CommandRouter rejects malformed command envelopes before dispatch", async () => {
+contractTest("runtime.process", "CommandRouter rejects malformed command envelopes before dispatch", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -137,7 +138,7 @@ test("CommandRouter rejects malformed command envelopes before dispatch", async 
   await host.close();
 });
 
-test("run.start rejects a mismatched gateway-managed model reference", async () => {
+contractTest("runtime.process", "run.start rejects a mismatched gateway-managed model reference", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -196,7 +197,7 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
   await host.close();
 });
 
-test("run.start rejects a stale gateway-managed agent loop model", async () => {
+contractTest("runtime.process", "run.start rejects a stale gateway-managed agent loop model", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -258,7 +259,7 @@ test("run.start rejects a stale gateway-managed agent loop model", async () => {
   await host.close();
 });
 
-test("run.start binds a gateway-managed credential to command tenant context", async () => {
+contractTest("security.cross-tenant-authorization", "run.start binds a gateway-managed credential to command tenant context", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => {
@@ -311,7 +312,7 @@ test("run.start binds a gateway-managed credential to command tenant context", a
   await host.close();
 });
 
-test("run.start emits started/log/completed protocol events", async () => {
+contractTest("runtime.process", "run.start emits started/log/completed protocol events", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const managedProfile: TuiProfile = {
@@ -505,7 +506,7 @@ test("run.start emits started/log/completed protocol events", async () => {
   await host.close();
 });
 
-test("run.start accepts build interactionMode and forwards it in run.started", async () => {
+contractTest("runtime.process", "run.start accepts build interactionMode and forwards it in run.started", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -579,7 +580,7 @@ test("run.start accepts build interactionMode and forwards it in run.started", a
   await host.close();
 });
 
-test("run.start forwards only normalized hosted MCP grant context", async () => {
+contractTest("runtime.process", "run.start forwards only normalized hosted MCP grant context", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let receivedMcpContext: Record<string, unknown> | undefined;
@@ -684,7 +685,7 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
   await host.close();
 });
 
-test("run.start forwards execution authorization without requiring an MCP grant", async () => {
+contractTest("runtime.process", "run.start forwards execution authorization without requiring an MCP grant", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let receivedAuthorization: Record<string, unknown> | undefined;
@@ -763,7 +764,7 @@ test("run.start forwards execution authorization without requiring an MCP grant"
   await host.close();
 });
 
-test("run.start fails closed when runtime returns a different runId than requested", async () => {
+contractTest("runtime.process", "run.start fails closed when runtime returns a different runId than requested", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -827,7 +828,7 @@ test("run.start fails closed when runtime returns a different runId than request
   await host.close();
 });
 
-test("run.start treats finalized assistant payload as completed under the accepted runId", async () => {
+contractTest("runtime.process", "run.start treats finalized assistant payload as completed under the accepted runId", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(
@@ -951,7 +952,7 @@ test("run.start treats finalized assistant payload as completed under the accept
   await host.close();
 });
 
-test("run.start forwards actor metadata into runtime turn input", async () => {
+contractTest("runtime.process", "run.start forwards actor metadata into runtime turn input", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let capturedActor: unknown;
@@ -1018,7 +1019,7 @@ test("run.start forwards actor metadata into runtime turn input", async () => {
   await host.close();
 });
 
-test("run.start validates and forwards Project context into runtime turn input", async () => {
+contractTest("runtime.process", "run.start validates and forwards Project context into runtime turn input", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let capturedProjectContext: unknown;
@@ -1079,7 +1080,7 @@ test("run.start validates and forwards Project context into runtime turn input",
   await host.close();
 });
 
-test("job.run emits started/progress/completed events with replay pointers", async () => {
+contractTest("runtime.process", "job.run emits started/progress/completed events with replay pointers", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
 
@@ -1220,7 +1221,7 @@ test("job.run emits started/progress/completed events with replay pointers", asy
   await host.close();
 });
 
-test("job.run runtime_progress events preserve resolved thread identity", async () => {
+contractTest("runtime.process", "job.run runtime_progress events preserve resolved thread identity", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
 
@@ -1319,7 +1320,7 @@ test("job.run runtime_progress events preserve resolved thread identity", async 
   await host.close();
 });
 
-test("job.run failure preserves resolved thread identity in progress and replay payloads", async () => {
+contractTest("runtime.process", "job.run failure preserves resolved thread identity in progress and replay payloads", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
 
@@ -1429,7 +1430,7 @@ test("job.run failure preserves resolved thread identity in progress and replay 
   await host.close();
 });
 
-test("CommandRouter emits runner.error for invalid job.run payload", async () => {
+contractTest("runtime.process", "CommandRouter emits runner.error for invalid job.run payload", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -1482,7 +1483,7 @@ test("CommandRouter emits runner.error for invalid job.run payload", async () =>
   await host.close();
 });
 
-test("workspace checkpoint commands dispatch through CommandRouter", async () => {
+contractTest("runtime.process", "workspace checkpoint commands dispatch through CommandRouter", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let captureCalls = 0;
@@ -1791,7 +1792,7 @@ test("workspace checkpoint commands dispatch through CommandRouter", async () =>
   await host.close();
 });
 
-test("user terminal commands preserve raw input and emit typed responses", async () => {
+contractTest("runtime.process", "user terminal commands preserve raw input and emit typed responses", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const now = new Date().toISOString();
@@ -1846,7 +1847,7 @@ test("user terminal commands preserve raw input and emit typed responses", async
   await host.close();
 });
 
-test("workspace change commands emit authoritative typed snapshots and mutation evidence", async () => {
+contractTest("runtime.process", "workspace change commands emit authoritative typed snapshots and mutation evidence", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const snapshot = {
@@ -1875,7 +1876,7 @@ test("workspace change commands emit authoritative typed snapshots and mutation 
   await host.close();
 });
 
-test("workspace review commands emit typed Local Core review snapshots", async () => {
+contractTest("runtime.process", "workspace review commands emit typed Local Core review snapshots", async () => {
   const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
   const snapshot = { sessionId: "session-main", threadId: "thread-main", candidateFingerprint, reviews: [] };
   const host = new RunnerHost(writer, () => ({
@@ -1895,7 +1896,7 @@ test("workspace review commands emit typed Local Core review snapshots", async (
   output.destroy(); await host.close();
 });
 
-test("workspace validation commands emit candidate-bound Local Core snapshots", async () => {
+contractTest("runtime.process", "workspace validation commands emit candidate-bound Local Core snapshots", async () => {
   const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
   const snapshot = { sessionId: "session-main", threadId: "thread-main", workspaceRoot: "/workspace", candidateFingerprint, actions: [], suites: [], results: [], readiness: { state: "not_run" as const, required: 0, passed: 0, failed: 0, stale: 0, message: "Not run" }, generatedAt: new Date().toISOString() };
   const host = new RunnerHost(writer, () => ({
@@ -1915,7 +1916,7 @@ test("workspace validation commands emit candidate-bound Local Core snapshots", 
   output.destroy(); await host.close();
 });
 
-test("workspace Git commands emit authoritative delivery snapshots", async () => {
+contractTest("runtime.process", "workspace Git commands emit authoritative delivery snapshots", async () => {
   const output = new PassThrough(); const writer = new EventWriter(output); const candidateFingerprint = `sha256:${"a".repeat(64)}`;
   const snapshot = { sessionId: "session-main", threadId: "thread-main", workspaceRoot: "/workspace", repoRoot: "/workspace", candidateFingerprint, validationReadiness: "ready" as const, deliveryReady: true, deliveryReadinessMessage: "Ready", branch: "main", headSha: "abc", relation: "untracked" as const, pushState: "not_pushed" as const, ahead: 0, behind: 0, files: [], branches: ["main"], remotes: [], recentCommits: [], github: { available: false, authenticated: false }, audits: [], notifications: [], generatedAt: new Date().toISOString() };
   const actions: unknown[] = [];
@@ -1932,7 +1933,7 @@ test("workspace Git commands emit authoritative delivery snapshots", async () =>
   output.destroy(); await host.close();
 });
 
-test("run.cancel aborts only the matching run command", async () => {
+contractTest("runtime.process", "run.cancel aborts only the matching run command", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let aborted = false;
@@ -1998,7 +1999,7 @@ test("run.cancel aborts only the matching run command", async () => {
   await host.close();
 });
 
-test("run.cancel with wrong runId reports an error without aborting the active run", async () => {
+contractTest("runtime.process", "run.cancel with wrong runId reports an error without aborting the active run", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let aborted = false;
@@ -2065,7 +2066,7 @@ test("run.cancel with wrong runId reports an error without aborting the active r
   await host.close();
 });
 
-test("run.cancel with runId aborts before RunnerHost has recorded the runtime runId", async () => {
+contractTest("runtime.process", "run.cancel with runId aborts before RunnerHost has recorded the runtime runId", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let aborted = false;
@@ -2107,7 +2108,7 @@ test("run.cancel with runId aborts before RunnerHost has recorded the runtime ru
   await host.close();
 });
 
-test("run.cancel clears a persisted active run when no in-process run is active", async () => {
+contractTest("runtime.process", "run.cancel clears a persisted active run when no in-process run is active", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let cancelledSessionId: string | undefined;
@@ -2174,7 +2175,7 @@ test("run.cancel clears a persisted active run when no in-process run is active"
   await host.close();
 });
 
-test("operator.control forwards actor display name into issuedBy", async () => {
+contractTest("runtime.process", "operator.control forwards actor display name into issuedBy", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let capturedIssuedBy: string | undefined;
@@ -2226,7 +2227,7 @@ test("operator.control forwards actor display name into issuedBy", async () => {
   await host.close();
 });
 
-test("mcp.status emits mcp status response event", async () => {
+contractTest("runtime.process", "mcp.status emits mcp status response event", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -2275,7 +2276,7 @@ test("mcp.status emits mcp status response event", async () => {
   await host.close();
 });
 
-test("mcp.refresh emits refreshed event from tool runtime refresh hook", async () => {
+contractTest("runtime.process", "mcp.refresh emits refreshed event from tool runtime refresh hook", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let refreshCalls = 0;
@@ -2325,7 +2326,7 @@ test("mcp.refresh emits refreshed event from tool runtime refresh hook", async (
   await host.close();
 });
 
-test("profile replacement waits for in-flight commands and shutdown drains retired runtime close", async () => {
+contractTest("runtime.process", "profile replacement waits for in-flight commands and shutdown drains retired runtime close", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let releaseFirstStatus: (() => void) | undefined;
@@ -2407,7 +2408,7 @@ test("profile replacement waits for in-flight commands and shutdown drains retir
   assert.equal(closeSettled, true);
 });
 
-test("retired profile runtime closes while an unrelated profile run remains active", async () => {
+contractTest("runtime.process", "retired profile runtime closes while an unrelated profile run remains active", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const longProfile: TuiProfile = {
@@ -2534,7 +2535,7 @@ test("retired profile runtime closes while an unrelated profile run remains acti
   await host.close();
 });
 
-test("runtime leases share object identity across profile aliases and close singletons once", async () => {
+contractTest("runtime.process", "runtime leases share object identity across profile aliases and close singletons once", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let singletonCloseCalls = 0;
@@ -2595,7 +2596,7 @@ test("runtime leases share object identity across profile aliases and close sing
   assert.equal(replacementCloseCalls, 1);
 });
 
-test("a leased retired runtime can be reused by another profile before close begins", async () => {
+contractTest("runtime.process", "a leased retired runtime can be reused by another profile before close begins", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   let statusCalls = 0;
@@ -2682,7 +2683,7 @@ test("a leased retired runtime can be reused by another profile before close beg
   assert.equal(replacementCloseCalls, 1);
 });
 
-test("operator commands emit inbox, thread, run, and controlled responses", async () => {
+contractTest("runtime.process", "operator commands emit inbox, thread, run, and controlled responses", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const performedActions: Array<Record<string, unknown>> = [];
@@ -2970,7 +2971,7 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
   await host.close();
 });
 
-test("task graph commands emit graph snapshots through the runner protocol", async () => {
+contractTest("runtime.process", "task graph commands emit graph snapshots through the runner protocol", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const graphCalls: Array<Record<string, unknown>> = [];
@@ -3130,7 +3131,7 @@ test("task graph commands emit graph snapshots through the runner protocol", asy
   await host.close();
 });
 
-test("CommandRouter enforces bounded operator.runs filters", async () => {
+contractTest("runtime.process", "CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({
@@ -3202,7 +3203,7 @@ test("CommandRouter enforces bounded operator.runs filters", async () => {
   await host.close();
 });
 
-test("CommandRouter emits runner.error for invalid operator.control payload", async () => {
+contractTest("runtime.process", "CommandRouter emits runner.error for invalid operator.control payload", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const host = new RunnerHost(writer, () => ({

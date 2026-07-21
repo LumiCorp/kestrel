@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,6 +9,8 @@ import type { TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import type { OperatorControlledEventPayload } from "../../cli/protocol/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function createOperatorHarness(input: {
   running?: boolean | undefined;
@@ -129,7 +130,7 @@ function createOperatorHarness(input: {
   };
 }
 
-test("OperatorController stop cancels an active run before sending default steering", async () => {
+contractTest("runtime.hermetic", "OperatorController stop cancels an active run before sending default steering", async () => {
   const harness = createOperatorHarness({ running: true, focusedThreadId: "thread-1" });
 
   await harness.controller.handleOperatorControlCommand("stop", []);
@@ -145,7 +146,7 @@ test("OperatorController stop cancels an active run before sending default steer
   assert.equal(harness.applied[0]?.action, "stop");
 });
 
-test("OperatorController stop attempts cancellation before steering even when UI is not running", async () => {
+contractTest("runtime.hermetic", "OperatorController stop attempts cancellation before steering even when UI is not running", async () => {
   const harness = createOperatorHarness({ running: false, focusedThreadId: "thread-1" });
 
   await harness.controller.handleOperatorControlCommand("stop", []);
@@ -159,7 +160,7 @@ test("OperatorController stop attempts cancellation before steering even when UI
   });
 });
 
-test("OperatorController assembly approve resolves missing proposal id from inbox", async () => {
+contractTest("runtime.hermetic", "OperatorController assembly approve resolves missing proposal id from inbox", async () => {
   const harness = createOperatorHarness({ focusedThreadId: "thread-1" });
 
   await harness.controller.handleAssemblyCommand(["approve", "", "ship", "it"]);
@@ -177,7 +178,7 @@ test("OperatorController assembly approve resolves missing proposal id from inbo
   assert.equal(harness.applied[0]?.action, "assembly_approve");
 });
 
-test("OperatorController validates reply and steer usage copy", async () => {
+contractTest("runtime.hermetic", "OperatorController validates reply and steer usage copy", async () => {
   const harness = createOperatorHarness();
 
   await harness.controller.handleOperatorControlCommand("reply", []);

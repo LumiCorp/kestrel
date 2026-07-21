@@ -3,15 +3,16 @@ import { execFile } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import { promisify } from "node:util";
 
 import { WorkspaceGitService } from "../../src/git/WorkspaceGitService.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 const candidateFingerprint = `sha256:${"a".repeat(64)}`;
 
-test("WorkspaceGitService reports status, branches, remotes, commits, and delivery readiness", async () => {
+contractTest("runtime.process", "WorkspaceGitService reports status, branches, remotes, commits, and delivery readiness", async () => {
   const { root, service } = await repository();
   await writeFile(path.join(root, "tracked.txt"), "changed\n", "utf8");
   await writeFile(path.join(root, "new.txt"), "new\n", "utf8");
@@ -36,7 +37,7 @@ test("WorkspaceGitService reports status, branches, remotes, commits, and delive
   assert.equal(snapshot.recentCommits[0]?.summary, "initial");
 });
 
-test("WorkspaceGitService commits exactly the selected staged paths", async () => {
+contractTest("runtime.process", "WorkspaceGitService commits exactly the selected staged paths", async () => {
   const { root, service, metadataPath } = await repository();
   await writeFile(path.join(root, "first.txt"), "first\n", "utf8");
   await writeFile(path.join(root, "second.txt"), "second\n", "utf8");
@@ -72,7 +73,7 @@ test("WorkspaceGitService commits exactly the selected staged paths", async () =
   );
 });
 
-test("WorkspaceGitService enforces HEAD preconditions and explicit push destinations", async () => {
+contractTest("runtime.process", "WorkspaceGitService enforces HEAD preconditions and explicit push destinations", async () => {
   const { root, service } = await repository();
   const remote = await mkdtemp(path.join(os.tmpdir(), "kestrel-git-remote-"));
   await git(remote, "init", "--bare");
@@ -150,7 +151,7 @@ test("WorkspaceGitService enforces HEAD preconditions and explicit push destinat
   assert.equal(rejected.pushState, "rejected");
 });
 
-test("WorkspaceGitService inspects GitHub PR state, comments explicitly, and records check transitions", async () => {
+contractTest("runtime.process", "WorkspaceGitService inspects GitHub PR state, comments explicitly, and records check transitions", async () => {
   const { root, service } = await repository();
   const bin = await mkdtemp(path.join(os.tmpdir(), "kestrel-fake-gh-"));
   const statePath = path.join(bin, "state.json");

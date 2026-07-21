@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { renderLaunchAgentPlist, renderSystemdUserUnit } from "../../cli/kcron/service.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("renderLaunchAgentPlist includes command and KESTREL_HOME", () => {
+
+contractTest("runtime.hermetic", "renderLaunchAgentPlist includes command and KESTREL_HOME", () => {
   const rendered = renderLaunchAgentPlist({
     command: "/usr/local/bin/kcron",
     homeDir: "/tmp/kestrel-home",
@@ -15,7 +16,7 @@ test("renderLaunchAgentPlist includes command and KESTREL_HOME", () => {
   assert.match(rendered, /\/tmp\/kestrel-home/u);
 });
 
-test("renderLaunchAgentPlist includes KESTREL_CORE_HOME when provided", () => {
+contractTest("runtime.hermetic", "renderLaunchAgentPlist includes KESTREL_CORE_HOME when provided", () => {
   const rendered = renderLaunchAgentPlist({
     command: "/usr/local/bin/kcron",
     homeDir: "/tmp/kestrel-core",
@@ -26,7 +27,7 @@ test("renderLaunchAgentPlist includes KESTREL_CORE_HOME when provided", () => {
   assert.match(rendered, /\/tmp\/kestrel-core/u);
 });
 
-test("renderSystemdUserUnit includes command and environment", () => {
+contractTest("runtime.hermetic", "renderSystemdUserUnit includes command and environment", () => {
   const rendered = renderSystemdUserUnit({
     command: "/usr/local/bin/kcron",
     homeDir: "/tmp/kestrel-home",
@@ -37,7 +38,7 @@ test("renderSystemdUserUnit includes command and environment", () => {
   assert.match(rendered, /WantedBy=default\.target/u);
 });
 
-test("renderSystemdUserUnit includes KESTREL_CORE_HOME when provided", () => {
+contractTest("runtime.hermetic", "renderSystemdUserUnit includes KESTREL_CORE_HOME when provided", () => {
   const rendered = renderSystemdUserUnit({
     command: "/usr/local/bin/kcron",
     homeDir: "/tmp/kestrel-core",

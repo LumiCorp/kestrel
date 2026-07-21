@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-
 import { readRequestedInteractionMode } from "./kestrel-runtime-core";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("reads a requested interaction mode from a finalized agent payload", () => {
+contractTest("web.hermetic", "reads a requested interaction mode from a finalized agent payload", () => {
   assert.equal(
     readRequestedInteractionMode({
       finalized: true,
@@ -17,7 +16,7 @@ test("reads a requested interaction mode from a finalized agent payload", () => 
   );
 });
 
-test("rejects unsupported or unstructured mode switch payloads", () => {
+contractTest("web.hermetic", "rejects unsupported or unstructured mode switch payloads", () => {
   assert.equal(
     readRequestedInteractionMode({
       payload: { data: { modeSwitch: { mode: "autonomous" } } },

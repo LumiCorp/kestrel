@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const ROOT = process.cwd();
 
@@ -25,7 +26,7 @@ const FORBIDDEN_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: "retired_capability.web.triage", pattern: /\bweb\.triage\b/ },
 ];
 
-test("active internet migration paths do not reference retired wiki/source surfaces", async () => {
+contractTest("runtime.hermetic", "active internet migration paths do not reference retired wiki/source surfaces", async () => {
   const files = new Set<string>(ACTIVE_PATHS.map((target) => path.join(ROOT, target)));
   for (const directory of ACTIVE_DIRECTORIES) {
     const nested = await collectTypeScriptFiles(path.join(ROOT, directory));

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { AuthorizedMcpServer } from "../src/contracts.js";
 import { buildOciDockerRunCommand } from "../src/oci-runtime.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const digest = `sha256:${"a".repeat(64)}`;
 const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
@@ -18,7 +19,7 @@ const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   credential: undefined,
 };
 
-test("OCI MCP command is per-run, read-only, resource-limited, and default-deny", () => {
+contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resource-limited, and default-deny", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server,
@@ -47,7 +48,7 @@ test("OCI MCP command is per-run, read-only, resource-limited, and default-deny"
   assert.equal(command.args.at(-1), "--stdio");
 });
 
-test("OCI MCP requires a broker lease for egress and rejects mutable images", () => {
+contractTest("services.hermetic", "OCI MCP requires a broker lease for egress and rejects mutable images", () => {
   assert.throws(
     () =>
       buildOciDockerRunCommand({
@@ -71,7 +72,7 @@ test("OCI MCP requires a broker lease for egress and rejects mutable images", ()
   );
 });
 
-test("OCI MCP with egress can reach only its broker on an internal network", () => {
+contractTest("services.hermetic", "OCI MCP with egress can reach only its broker on an internal network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server: { ...server, egressAllowlist: ["https://api.example.com"] },

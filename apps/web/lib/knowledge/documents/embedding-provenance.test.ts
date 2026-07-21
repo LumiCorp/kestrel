@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   getKnowledgeDocumentRetrievalMode,
   getKnowledgeEmbeddingProvenance,
   type SemanticEmbeddingProvenance,
 } from "./embedding-provenance";
+import { contractTest } from "../../../../../tests/helpers/contract-test.js";
+
 
 const activeProvenance: SemanticEmbeddingProvenance = {
   mode: "semantic",
@@ -13,7 +14,7 @@ const activeProvenance: SemanticEmbeddingProvenance = {
   dimensions: 1536,
 };
 
-test("matching validated provenance marks a document semantic", () => {
+contractTest("web.hermetic", "matching validated provenance marks a document semantic", () => {
   const metadata = {
     warnings: [],
     embedding: activeProvenance,
@@ -26,7 +27,7 @@ test("matching validated provenance marks a document semantic", () => {
   );
 });
 
-test("legacy, malformed, and model-mismatched metadata remain lexical", () => {
+contractTest("web.hermetic", "legacy, malformed, and model-mismatched metadata remain lexical", () => {
   assert.equal(
     getKnowledgeDocumentRetrievalMode(null, activeProvenance),
     "lexical"

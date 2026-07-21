@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -17,10 +16,12 @@ import {
   WorkspaceContextResolver,
 } from "../../src/workspace/RuntimeWorkspaceServices.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 
-test("ManagedWorktreePromotionService promotes verified managed changes with source checkpoints", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService promotes verified managed changes with source checkpoints", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-verified-"));
   try {
     const repo = path.join(root, "repo");
@@ -78,7 +79,7 @@ test("ManagedWorktreePromotionService promotes verified managed changes with sou
   }
 });
 
-test("ManagedWorktreePromotionService records unverified dirty work as pending review and keeps a promotion lock", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService records unverified dirty work as pending review and keeps a promotion lock", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-pending-"));
   try {
     const repo = path.join(root, "repo");
@@ -127,7 +128,7 @@ test("ManagedWorktreePromotionService records unverified dirty work as pending r
   }
 });
 
-test("ManagedWorktreePromotionService blocks failed dirty runs and keeps the worktree locked", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService blocks failed dirty runs and keeps the worktree locked", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-failed-dirty-"));
   try {
     const repo = path.join(root, "repo");
@@ -174,7 +175,7 @@ test("ManagedWorktreePromotionService blocks failed dirty runs and keeps the wor
   }
 });
 
-test("ManagedWorktreePromotionService restores the source checkpoint when apply fails after mutation", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService restores the source checkpoint when apply fails after mutation", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-rollback-"));
   try {
     const repo = path.join(root, "repo");
@@ -253,7 +254,7 @@ test("ManagedWorktreePromotionService restores the source checkpoint when apply 
   }
 });
 
-test("ManagedWorktreePromotionService marks promotion failed when rollback restore fails", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService marks promotion failed when rollback restore fails", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-rollback-failed-"));
   try {
     const repo = path.join(root, "repo");
@@ -336,7 +337,7 @@ test("ManagedWorktreePromotionService marks promotion failed when rollback resto
   }
 });
 
-test("ManagedWorktreePromotionService reuses the locked promotion transaction for manual apply", async () => {
+contractTest("runtime.process", "ManagedWorktreePromotionService reuses the locked promotion transaction for manual apply", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-manual-transaction-"));
   try {
     const repo = path.join(root, "repo");
@@ -395,7 +396,7 @@ test("ManagedWorktreePromotionService reuses the locked promotion transaction fo
   }
 });
 
-test("Runtime Workspace promotion contract previews an isolated candidate and applies only its exact fingerprint", async () => {
+contractTest("runtime.process", "Runtime Workspace promotion contract previews an isolated candidate and applies only its exact fingerprint", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-runtime-contract-"));
   try {
     const repo = path.join(root, "repo");
@@ -473,7 +474,7 @@ test("Runtime Workspace promotion contract previews an isolated candidate and ap
   }
 });
 
-test("WorkspaceCheckpointService cleanup can remove promotion checkpoints after undo", async () => {
+contractTest("runtime.process", "WorkspaceCheckpointService cleanup can remove promotion checkpoints after undo", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-promotion-cleanup-after-undo-"));
   try {
     const repo = path.join(root, "repo");

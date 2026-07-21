@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TranscriptLine } from "../../cli/contracts.js";
@@ -14,6 +13,8 @@ import {
   wrapTextToWidth,
 } from "../../cli/ink/views/chatRows.js";
 import { resolveChatLayoutBudget } from "../../cli/ink/views/chatLayout.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function line(input: {
   role: TranscriptLine["role"];
@@ -29,22 +30,22 @@ function line(input: {
   };
 }
 
-test("deriveChatContentWidth enforces minimum width", () => {
+contractTest("runtime.hermetic", "deriveChatContentWidth enforces minimum width", () => {
   assert.equal(deriveChatContentWidth(20), 24);
   assert.equal(deriveChatContentWidth(80), 70);
 });
 
-test("wrapTextToWidth wraps by whitespace when practical", () => {
+contractTest("runtime.hermetic", "wrapTextToWidth wraps by whitespace when practical", () => {
   const wrapped = wrapTextToWidth("alpha beta gamma delta", 10);
   assert.deepEqual(wrapped, ["alpha", "beta gamma", "delta"]);
 });
 
-test("wrapTextToWidth hard-wraps long tokens and preserves explicit newlines", () => {
+contractTest("runtime.hermetic", "wrapTextToWidth hard-wraps long tokens and preserves explicit newlines", () => {
   const wrapped = wrapTextToWidth("supercalifragilistic\nok", 6);
   assert.deepEqual(wrapped, ["superc", "alifra", "gilist", "ic", "ok"]);
 });
 
-test("buildChatVisualRows emits continuation rows with transcript mapping", () => {
+contractTest("runtime.hermetic", "buildChatVisualRows emits continuation rows with transcript mapping", () => {
   const transcript = [
     line({ role: "assistant", text: "hello world from kestrel with a much longer sentence" }),
     line({ role: "user", text: "short" }),
@@ -61,7 +62,7 @@ test("buildChatVisualRows emits continuation rows with transcript mapping", () =
   assert.equal(rows[rows.length - 1]?.isFirstLine, true);
 });
 
-test("buildChatVisualRows marks user-reply waits for attention styling", () => {
+contractTest("runtime.hermetic", "buildChatVisualRows marks user-reply waits for attention styling", () => {
   const rows = buildChatVisualRows(
     [
       line({
@@ -80,7 +81,7 @@ test("buildChatVisualRows marks user-reply waits for attention styling", () => {
   assert.equal(rows.every((row) => row.attention), true);
 });
 
-test("countRenderedChatRows includes per-message header and spacer rows", () => {
+contractTest("runtime.hermetic", "countRenderedChatRows includes per-message header and spacer rows", () => {
   const rows = buildChatVisualRows(
     [
       line({ role: "assistant", text: "alpha beta gamma delta epsilon" }),
@@ -92,7 +93,7 @@ test("countRenderedChatRows includes per-message header and spacer rows", () => 
   assert.equal(countRenderedChatRows(rows), rows.length + 5);
 });
 
-test("anchor helpers restore nearest visual row after rewrap", () => {
+contractTest("runtime.hermetic", "anchor helpers restore nearest visual row after rewrap", () => {
   const transcript = [
     line({ role: "assistant", text: "one two three four five six seven" }),
   ];
@@ -107,7 +108,7 @@ test("anchor helpers restore nearest visual row after rewrap", () => {
   assert.equal(cursor >= 0 && cursor < narrow.length, true);
 });
 
-test("buildAnchoredAppendScroll pins the prior tail row to the top of the viewport", () => {
+contractTest("runtime.hermetic", "buildAnchoredAppendScroll pins the prior tail row to the top of the viewport", () => {
   const scroll = buildAnchoredAppendScroll({
     previousVisualCount: 9,
     droppedVisualCount: 0,
@@ -122,7 +123,7 @@ test("buildAnchoredAppendScroll pins the prior tail row to the top of the viewpo
   });
 });
 
-test("buildAnchoredAppendScroll accounts for trimmed history before anchoring", () => {
+contractTest("runtime.hermetic", "buildAnchoredAppendScroll accounts for trimmed history before anchoring", () => {
   const scroll = buildAnchoredAppendScroll({
     previousVisualCount: 12,
     droppedVisualCount: 5,
@@ -137,7 +138,7 @@ test("buildAnchoredAppendScroll accounts for trimmed history before anchoring", 
   });
 });
 
-test("ensureChatCursorVisible advances offset when bubble headers would clip the tail", () => {
+contractTest("runtime.hermetic", "ensureChatCursorVisible advances offset when bubble headers would clip the tail", () => {
   const rows = buildChatVisualRows(
     [
       line({ role: "user", text: "short opener" }),
@@ -163,7 +164,7 @@ test("ensureChatCursorVisible advances offset when bubble headers would clip the
   assert.equal(next.offset > 0, true);
 });
 
-test("buildChatWindow fits the selected slice into the available rendered rows", () => {
+contractTest("runtime.hermetic", "buildChatWindow fits the selected slice into the available rendered rows", () => {
   const rows = buildChatVisualRows(
     [
       line({ role: "user", text: "short opener" }),
@@ -191,7 +192,7 @@ test("buildChatWindow fits the selected slice into the available rendered rows",
   assert.equal(windowed.items.every((row) => row.transcriptIndex === 1), true);
 });
 
-test("shared wrapped width keeps long assistant tails fully visible in constrained viewport", () => {
+contractTest("runtime.hermetic", "shared wrapped width keeps long assistant tails fully visible in constrained viewport", () => {
   const transcript = [
     line({ role: "user", text: "please summarize this with strong detail and no omissions" }),
     line({

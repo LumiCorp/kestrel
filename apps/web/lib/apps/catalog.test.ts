@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { getCoreAppDefinition, listCoreAppDefinitions } from "./catalog";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Apps catalog exposes only implemented providers", () => {
+
+contractTest("web.hermetic", "Apps catalog exposes only implemented providers", () => {
   const keys = listCoreAppDefinitions().map((app) => app.key);
   assert.ok(keys.includes("google_workspace"));
   assert.ok(keys.includes("tavily"));
@@ -19,7 +20,7 @@ test("Apps catalog exposes only implemented providers", () => {
   assert.ok(!keys.includes("notion"));
 });
 
-test("Tavily recommended defaults require approval for expansive work", () => {
+contractTest("web.hermetic", "Tavily recommended defaults require approval for expansive work", () => {
   const tavily = getCoreAppDefinition("tavily");
   assert.ok(tavily);
   const byKey = new Map(
@@ -34,7 +35,7 @@ test("Tavily recommended defaults require approval for expansive work", () => {
   assert.equal(byKey.get("usage")?.defaultApprovalMode, "deny");
 });
 
-test("Google Workspace is personal while built-ins are inherited", () => {
+contractTest("web.hermetic", "Google Workspace is personal while built-ins are inherited", () => {
   const google = getCoreAppDefinition("google_workspace");
   const weather = getCoreAppDefinition("built_in.weather");
   assert.equal(google?.connectionModel, "personal");

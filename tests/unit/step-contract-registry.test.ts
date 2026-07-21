@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InMemoryStepContractRegistry } from "../../src/engine/StepContractRegistry.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("step contract registry validates registered step", () => {
+
+contractTest("runtime.hermetic", "step contract registry validates registered step", () => {
   const registry = new InMemoryStepContractRegistry();
 
   registry.register("step.a", ({ transition }) => {

@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InMemoryStepRegistry } from "../../src/steps/StepRegistry.js";
 import type { StepAgent } from "../../src/kestrel/contracts/execution.js";
 
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("step registry allows replacing an existing step registration", async () => {
+
+contractTest("runtime.hermetic", "step registry allows replacing an existing step registration", async () => {
   const registry = new InMemoryStepRegistry();
   const first: StepAgent = async () => ({ status: "FAILED" });
   const second: StepAgent = async () => ({ status: "COMPLETED" });
@@ -20,7 +21,7 @@ test("step registry allows replacing an existing step registration", async () =>
   assert.equal(transition.status, "COMPLETED");
 });
 
-test("step registry rejects empty step names with a normalized failure", () => {
+contractTest("runtime.hermetic", "step registry rejects empty step names with a normalized failure", () => {
   const registry = new InMemoryStepRegistry();
 
   assert.throws(
@@ -32,7 +33,7 @@ test("step registry rejects empty step names with a normalized failure", () => {
   );
 });
 
-test("step registry rejects missing step lookups with a normalized failure", () => {
+contractTest("runtime.hermetic", "step registry rejects missing step lookups with a normalized failure", () => {
   const registry = new InMemoryStepRegistry();
 
   assert.throws(

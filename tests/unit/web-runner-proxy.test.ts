@@ -3,11 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import test, { type TestContext } from "node:test";
+import type { TestContext } from "node:test";
 
 import { createWebRunnerProxyServer } from "../../cli/webRunnerProxy.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("web runner proxy maps paths and translates only the public auth token", async (t) => {
+
+contractTest("runtime.process", "web runner proxy maps paths and translates only the public auth token", async (t) => {
   const upstream = await startUnixUpstream(t, (request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
@@ -52,7 +54,7 @@ test("web runner proxy maps paths and translates only the public auth token", as
   });
 });
 
-test("web runner proxy streams SSE response chunks without buffering", async (t) => {
+contractTest("runtime.process", "web runner proxy streams SSE response chunks without buffering", async (t) => {
   let releaseCompletion: (() => void) | undefined;
   const upstream = await startUnixUpstream(t, (_request, response) => {
     response.writeHead(200, {

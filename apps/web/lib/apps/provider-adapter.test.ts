@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { getAppProviderAdapter, listAppProviderAdapters } from "./provider-adapter";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("provider adapter registry exposes Weather and Tavily through the shared contract", () => {
+
+contractTest("web.hermetic", "provider adapter registry exposes Weather and Tavily through the shared contract", () => {
   assert.deepEqual(
     listAppProviderAdapters().map((adapter) => adapter.appKey),
     ["built_in.weather", "tavily"]
@@ -24,7 +25,7 @@ test("provider adapter registry exposes Weather and Tavily through the shared co
   ]);
 });
 
-test("Weather adapter stores only Visual Crossing credential fields", () => {
+contractTest("web.hermetic", "Weather adapter stores only Visual Crossing credential fields", () => {
   const adapter = getAppProviderAdapter("built_in.weather");
   assert.deepEqual(adapter?.authMethods, ["api_key"]);
   const credential = adapter?.createEnvironmentCredential?.({
@@ -84,7 +85,7 @@ test("Weather adapter stores only Visual Crossing credential fields", () => {
   );
 });
 
-test("Tavily adapter constructs only an allowlisted credentialed request", () => {
+contractTest("web.hermetic", "Tavily adapter constructs only an allowlisted credentialed request", () => {
   const runtime = getAppProviderAdapter("tavily")?.runtime;
   assert.ok(runtime);
   runtime.assertTarget({

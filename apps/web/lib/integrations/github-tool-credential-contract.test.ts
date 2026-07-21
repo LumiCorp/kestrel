@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
   type EnvironmentToolCredentialTicket,
@@ -10,6 +9,8 @@ import {
   githubToolCredentialMatchesRequest,
   githubToolCredentialRequestSchema,
 } from "./github-tool-credential-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const resourceId = "11111111-1111-4111-8111-111111111111";
 
@@ -38,7 +39,7 @@ function ticket(
   };
 }
 
-test("GitHub read credentials bind upload-pack to one repository resource", () => {
+contractTest("web.hermetic", "GitHub read credentials bind upload-pack to one repository resource", () => {
   const request = githubToolCredentialRequestSchema.parse({
     operation: "git.upload_pack",
     resourceId,
@@ -61,7 +62,7 @@ test("GitHub read credentials bind upload-pack to one repository resource", () =
   );
 });
 
-test("GitHub push credentials bind the exact candidate fingerprint", () => {
+contractTest("web.hermetic", "GitHub push credentials bind the exact candidate fingerprint", () => {
   const request = githubToolCredentialRequestSchema.parse({
     operation: "repository.push_agent_branch",
     resourceId,

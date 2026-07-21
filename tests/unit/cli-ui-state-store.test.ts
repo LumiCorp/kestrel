@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("UiStateStore migrates v2 payload to v5 and forces minimal layout", async () => {
+
+contractTest("runtime.hermetic", "UiStateStore migrates v2 payload to v5 and forces minimal layout", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-ui-state-"));
   const filePath = path.join(tempDir, "ui-state.json");
 
@@ -61,7 +62,7 @@ test("UiStateStore migrates v2 payload to v5 and forces minimal layout", async (
   assert.equal(loaded?.themeMode, "system");
 });
 
-test("UiStateStore migrates legacy theme preset to theme mode", async () => {
+contractTest("runtime.hermetic", "UiStateStore migrates legacy theme preset to theme mode", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-ui-state-theme-"));
   const filePath = path.join(tempDir, "ui-state.json");
 
@@ -113,7 +114,7 @@ test("UiStateStore migrates legacy theme preset to theme mode", async () => {
   assert.equal(loaded?.themeMode, "dark");
 });
 
-test("UiStateStore migrates stale command-bar focus to composer", async () => {
+contractTest("runtime.hermetic", "UiStateStore migrates stale command-bar focus to composer", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-ui-state-command-bar-"));
   const filePath = path.join(tempDir, "ui-state.json");
 
@@ -164,7 +165,7 @@ test("UiStateStore migrates stale command-bar focus to composer", async () => {
   assert.equal(loaded?.activeRegion, "composer");
 });
 
-test("UiStateStore save writes v5 envelope", async () => {
+contractTest("runtime.hermetic", "UiStateStore save writes v5 envelope", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-ui-state-save-"));
   const store = new UiStateStore(tempDir);
 

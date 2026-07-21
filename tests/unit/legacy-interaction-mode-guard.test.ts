@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const ACTIVE_SOURCE_ROOTS = [
   "src",
@@ -43,7 +44,7 @@ const LEGACY_INPUT_NORMALIZER_ALLOWLIST = new Set([
   "src/runtime/waitForPrompt.ts",
 ]);
 
-test("active source does not emit or advertise legacy act interaction mode", async () => {
+contractTest("runtime.hermetic", "active source does not emit or advertise legacy act interaction mode", async () => {
   const failures: string[] = [];
   for (const source of await readActiveSources()) {
     for (const { label, pattern } of FORBIDDEN_EMITTER_PATTERNS) {
@@ -56,7 +57,7 @@ test("active source does not emit or advertise legacy act interaction mode", asy
   assert.deepEqual(failures, []);
 });
 
-test("legacy act mode mentions are limited to documented input normalizers", async () => {
+contractTest("runtime.hermetic", "legacy act mode mentions are limited to documented input normalizers", async () => {
   const failures: string[] = [];
   for (const source of await readActiveSources()) {
     if (LEGACY_INPUT_NORMALIZER_PATTERN.test(source.content) === false) {

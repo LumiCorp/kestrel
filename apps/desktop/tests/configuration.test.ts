@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   appendDesktopModelConfigurationRevision,
@@ -10,8 +9,10 @@ import {
   parseDesktopModelConfigurations,
   resolveDesktopModelConfiguration,
 } from "../../../src/desktopShell/configuration.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("desktop model configurations retain immutable revisions", () => {
+
+contractTest("desktop.hermetic", "desktop model configurations retain immutable revisions", () => {
   const initial = createDesktopModelConfiguration({
     version: 1,
     provider: "openrouter",
@@ -40,7 +41,7 @@ test("desktop model configurations retain immutable revisions", () => {
   assert.deepEqual(parseDesktopModelConfigurations([next]), [next]);
 });
 
-test("desktop execution selections reject duplicate apps and preserve explicit contracts", () => {
+contractTest("desktop.hermetic", "desktop execution selections reject duplicate apps and preserve explicit contracts", () => {
   assert.throws(() => parseDesktopExecutionSelection({
     modelConfiguration: { id: "primary", revision: 1 },
     apps: [{ id: "weather", contractVersion: 1 }, { id: "weather", contractVersion: 1 }],
@@ -60,7 +61,7 @@ test("desktop execution selections reject duplicate apps and preserve explicit c
   assert.equal(getDesktopAppDefinition("weather", 2), undefined);
 });
 
-test("desktop model configuration updates preserve pinned revision history", () => {
+contractTest("desktop.hermetic", "desktop model configuration updates preserve pinned revision history", () => {
   const initial = createDesktopModelConfiguration({
     version: 1,
     provider: "openrouter",

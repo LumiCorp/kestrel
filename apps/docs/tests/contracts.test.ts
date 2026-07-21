@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 
 import {
   parseRunnerCommandV2,
@@ -14,8 +13,10 @@ import { pageRegistry } from "@/lib/content-registry";
 import { DOCS_RELEASE } from "@/lib/release";
 import { resolveRepoRoot } from "@/lib/site";
 import { buildCliContractMatrixV1 } from "../../../cli/contractMatrix.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("terminal-result examples stay backed by the exported parser", async () => {
+
+contractTest("docs.hermetic", "terminal-result examples stay backed by the exported parser", async () => {
   const terminalPage = await getRenderedPageBySlug(["reference", "terminal-results"]);
   assert.ok(terminalPage);
   assert.match(terminalPage.rawContent, /assistantText:\s*string\s*\|\s*null/u);
@@ -34,7 +35,7 @@ test("terminal-result examples stay backed by the exported parser", async () => 
   assert.throws(() => parseRunnerResultV2({ output: {} }), /assistantText is required/u);
 });
 
-test("event reference lists every exported public stream event", async () => {
+contractTest("docs.hermetic", "event reference lists every exported public stream event", async () => {
   const eventsPage = await getRenderedPageBySlug(["reference", "events"]);
   assert.ok(eventsPage);
   for (const eventType of RUNNER_RUN_STREAM_EVENT_TYPES) {
@@ -44,7 +45,7 @@ test("event reference lists every exported public stream event", async () => {
   assert.match(eventsPage.rawContent, /waiting/iu);
 });
 
-test("release metadata names only real public packages with reference coverage", async () => {
+contractTest("docs.hermetic", "release metadata names only real public packages with reference coverage", async () => {
   const root = resolveRepoRoot();
   const packagesRoot = path.join(root, "packages");
   const packageFiles = ["package.json"];
@@ -73,7 +74,7 @@ test("release metadata names only real public packages with reference coverage",
   }
 });
 
-test("every registered source reference exists", async () => {
+contractTest("docs.hermetic", "every registered source reference exists", async () => {
   const root = resolveRepoRoot();
   for (const spec of pageRegistry) {
     for (const sourceRef of spec.sourceRefs ?? []) {
@@ -85,7 +86,7 @@ test("every registered source reference exists", async () => {
   }
 });
 
-test("CLI reference covers every command-mode family", async () => {
+contractTest("docs.hermetic", "CLI reference covers every command-mode family", async () => {
   const commandPage = await getRenderedPageBySlug(["cli", "command-suite"]);
   assert.ok(commandPage);
   const matrix = buildCliContractMatrixV1("2026-07-20T00:00:00.000Z");
@@ -94,7 +95,7 @@ test("CLI reference covers every command-mode family", async () => {
   }
 });
 
-test("runner ping documentation uses a valid canonical command envelope", async () => {
+contractTest("docs.hermetic", "runner ping documentation uses a valid canonical command envelope", async () => {
   const command = {
     id: "cmd-health-check",
     type: "runner.ping",
@@ -117,7 +118,7 @@ test("runner ping documentation uses a valid canonical command envelope", async 
   assert.doesNotMatch(page.rawContent, /curl -I/u);
 });
 
-test("resume documentation names the current SDK input", async () => {
+contractTest("docs.hermetic", "resume documentation names the current SDK input", async () => {
   const page = await getRenderedPageBySlug(["build", "waiting-resume-and-cancellation"]);
   assert.ok(page);
   assert.match(page.rawContent, /sessionId:\s*"reference-session-001"/u);

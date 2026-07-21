@@ -1,8 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import type { AgentRunLogLine, TuiSessionMeta } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function makeLog(eventName: string, runId?: string): AgentRunLogLine {
   return {
@@ -25,7 +26,7 @@ function makeSession(name: string): TuiSessionMeta {
   };
 }
 
-test("selectors memoize filtered logs and invalidate on filter change", () => {
+contractTest("runtime.hermetic", "selectors memoize filtered logs and invalidate on filter change", () => {
   const selectors = createUiDerivedSelectors();
   const logs = [makeLog("run_started", "r1"), makeLog("step_committed", "r2")];
 
@@ -49,7 +50,7 @@ test("selectors memoize filtered logs and invalidate on filter change", () => {
   assert.equal(third.length, 1);
 });
 
-test("selectors memoize sessions and invalidate on query change", () => {
+contractTest("runtime.hermetic", "selectors memoize sessions and invalidate on query change", () => {
   const selectors = createUiDerivedSelectors();
   const sessions = [makeSession("alpha"), makeSession("beta")];
 
@@ -63,7 +64,7 @@ test("selectors memoize sessions and invalidate on query change", () => {
   assert.equal(third[0]?.name, "beta");
 });
 
-test("palette filtering is clamped and case-insensitive", () => {
+contractTest("runtime.hermetic", "palette filtering is clamped and case-insensitive", () => {
   const selectors = createUiDerivedSelectors();
   const actions = [
     { id: "1", label: "Go to Chat", detail: "switch view", command: "/switch chat" },
@@ -82,7 +83,7 @@ test("palette filtering is clamped and case-insensitive", () => {
   assert.equal(expanded.length, 2);
 });
 
-test("palette filtering matches slash command text", () => {
+contractTest("runtime.hermetic", "palette filtering matches slash command text", () => {
   const selectors = createUiDerivedSelectors();
   const actions = [
     { id: "1", label: "Show runtime status", detail: "inspect status", command: "/status" },

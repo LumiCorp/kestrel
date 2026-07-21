@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   isDevShellLifecycleTool,
   normalizeDevShellLifecycle,
 } from "../../src/runtime/devshellLifecycle.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("normalizeDevShellLifecycle maps legacy process tools", () => {
+
+contractTest("runtime.hermetic", "normalizeDevShellLifecycle maps legacy process tools", () => {
   assert.equal(isDevShellLifecycleTool("dev.process.read"), true);
   assert.deepEqual(
     normalizeDevShellLifecycle(
@@ -42,7 +43,7 @@ test("normalizeDevShellLifecycle maps legacy process tools", () => {
   );
 });
 
-test("normalizeDevShellLifecycle maps exec_command shapes and aliases sessionId", () => {
+contractTest("runtime.hermetic", "normalizeDevShellLifecycle maps exec_command shapes and aliases sessionId", () => {
   assert.deepEqual(
     normalizeDevShellLifecycle(
       "exec_command",

@@ -1,6 +1,6 @@
 ---
 title: Quality gates
-summary: Run the contract proofs selected for a Kestrel change.
+summary: Run the same complete validation contract locally and in GitHub Actions.
 section: operate
 audience: integrators
 status: stable
@@ -12,25 +12,25 @@ updatedAt: 2026-03-20
 These checks protect the contracts used to plan, execute, stream, and record Kestrel work.
 </GuideNote>
 
-Every retained automated test belongs to a named contract and a required CI lane.
+Every retained automated test belongs to a named contract and declared execution
+environment. Pull-request validation always runs the complete portable suite.
 
 ## Core gates
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
-pnpm run ci:local -- --base origin/main
+pnpm validate
 ```
+
+GitHub Actions runs this exact command. Focused checks are useful during
+iteration, but they do not establish pull-request readiness.
 
 ## What each gate protects
 
 | Gate | Protects |
 | --- | --- |
-| `governance:check` | architecture, ownership, and proof-registry validity |
-| selected CI lanes | executable contract counterexamples in their declared environments |
+| `validate` | type safety, governance, executable contract counterexamples, builds, PostgreSQL, and Chromium product behavior |
 | `test-proofs:mutations` | current killed mutations for high- and critical-risk contracts |
-| `ruhroh:validate` | Ruhroh configuration validity, not evaluation execution |
+| `validate:release:macos` | CLI and Desktop macOS package readiness during release preparation |
 
 ## When a check fails
 

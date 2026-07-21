@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   decryptMcpCredential,
   encryptMcpCredential,
@@ -9,6 +8,8 @@ import {
   McpCredentialEncryptionError,
   mcpCredentialPayloadSchema,
 } from "./credential-crypto";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const env = {
   NODE_ENV: "test" as const,
@@ -24,7 +25,7 @@ const identity = {
   credentialId: "credential-1",
 };
 
-test("MCP OAuth credentials round-trip through an authenticated envelope", () => {
+contractTest("web.hermetic", "MCP OAuth credentials round-trip through an authenticated envelope", () => {
   const encrypted = encryptMcpCredential({
     ...identity,
     payload: {
@@ -53,7 +54,7 @@ test("MCP OAuth credentials round-trip through an authenticated envelope", () =>
   });
 });
 
-test("MCP credential envelopes are bound to Organization, Environment, and credential", () => {
+contractTest("web.hermetic", "MCP credential envelopes are bound to Organization, Environment, and credential", () => {
   const encrypted = encryptMcpCredential({
     ...identity,
     payload: {
@@ -76,7 +77,7 @@ test("MCP credential envelopes are bound to Organization, Environment, and crede
   );
 });
 
-test("MCP credential reads reject plaintext without reflecting it", () => {
+contractTest("web.hermetic", "MCP credential reads reject plaintext without reflecting it", () => {
   const plaintext = "raw-upstream-secret";
   assert.throws(
     () => decryptMcpCredential({ ...identity, encrypted: plaintext, env }),
@@ -87,7 +88,7 @@ test("MCP credential reads reject plaintext without reflecting it", () => {
   );
 });
 
-test("secret headers cannot override transport-owned headers", () => {
+contractTest("web.hermetic", "secret headers cannot override transport-owned headers", () => {
   for (const name of [
     "Host",
     "Origin",

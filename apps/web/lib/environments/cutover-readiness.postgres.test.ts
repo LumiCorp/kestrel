@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { inspectHostedEnvironmentSchemaReadiness } from "./cutover-readiness";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Postgres schema readiness executes the required-relation lookup", async () => {
+
+contractTest("web.postgres", "Postgres schema readiness executes the required-relation lookup", async () => {
   const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   const readiness = await inspectHostedEnvironmentSchemaReadiness({ databaseUrl });

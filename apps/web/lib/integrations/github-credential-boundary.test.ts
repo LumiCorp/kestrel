@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const webRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -25,14 +26,14 @@ function listTypeScriptFiles(root: string): string[] {
   return files.sort();
 }
 
-test("Better Auth encrypts linked GitHub OAuth tokens at rest", () => {
+contractTest("web.hermetic", "Better Auth encrypts linked GitHub OAuth tokens at rest", () => {
   const authSource = fs.readFileSync(path.join(webRoot, "lib/auth.ts"), "utf8");
   assert.match(authSource, /account:\s*\{[\s\S]*encryptOAuthTokens:\s*true/u);
   assert.match(authSource, /disableImplicitLinking:\s*true/u);
   assert.match(authSource, /github:[\s\S]*disableImplicitSignUp:\s*true/u);
 });
 
-test("broad GitHub OAuth tokens remain inside Kestrel One broker routes", () => {
+contractTest("web.hermetic", "broad GitHub OAuth tokens remain inside Kestrel One broker routes", () => {
   const accessTokenConsumers = listTypeScriptFiles(webRoot)
     .filter((file) => !file.endsWith(".test.ts"))
     .filter((file) =>
@@ -55,7 +56,7 @@ test("broad GitHub OAuth tokens remain inside Kestrel One broker routes", () => 
   assert.doesNotMatch(workspaceRuntimeSource, /KESTREL_GITHUB_TOKEN/u);
 });
 
-test("Workspace Git traffic exchanges the broad execution ticket before use", () => {
+contractTest("web.hermetic", "Workspace Git traffic exchanges the broad execution ticket before use", () => {
   const source = fs.readFileSync(
     path.join(workspaceRuntimeRoot, "src/server.ts"),
     "utf8"

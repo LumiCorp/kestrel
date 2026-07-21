@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
@@ -9,6 +8,8 @@ import {
   type EnvironmentProvisioningRepository,
   type ProvisioningOperation,
 } from "./provisioner";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function fixture(
   type: string,
@@ -225,7 +226,7 @@ function createProvisioner(
   });
 }
 
-test("Environment provisioning durably follows requested through ready", async () => {
+contractTest("web.hermetic", "Environment provisioning durably follows requested through ready", async () => {
   const { repository, provider, calls } = fixture("environment.provision");
   const provisioner = createProvisioner(repository, provider);
   assert.equal(await provisioner.process("operation-id"), "processed");
@@ -244,7 +245,7 @@ test("Environment provisioning durably follows requested through ready", async (
   assert.equal(await provisioner.process("operation-id"), "not_claimed");
 });
 
-test("Environment updates preserve Workspaces, update ingress, and verify runtimes", async () => {
+contractTest("web.hermetic", "Environment updates preserve Workspaces, update ingress, and verify runtimes", async () => {
   const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
   const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
@@ -289,7 +290,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   ]);
 });
 
-test("Workspace provisioning persists provider resources only after readiness", async () => {
+contractTest("web.hermetic", "Workspace provisioning persists provider resources only after readiness", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
     "workspace-id"
@@ -310,7 +311,7 @@ test("Workspace provisioning persists provider resources only after readiness", 
   ]);
 });
 
-test("Provider failures are reflected on the resource and operation", async () => {
+contractTest("web.hermetic", "Provider failures are reflected on the resource and operation", async () => {
   const { repository, provider, calls } = fixture("environment.provision");
   provider.ensureEnvironmentApp = async () => {
     throw Object.assign(new Error("Fly rejected the request."), {
@@ -327,7 +328,7 @@ test("Provider failures are reflected on the resource and operation", async () =
   ]);
 });
 
-test("transient Fly failures return the durable operation to its retry queue", async () => {
+contractTest("web.hermetic", "transient Fly failures return the durable operation to its retry queue", async () => {
   const { repository, provider, calls } = fixture("environment.provision");
   provider.ensureEnvironmentApp = async () => {
     throw new EnvironmentProviderError(
@@ -344,7 +345,7 @@ test("transient Fly failures return the durable operation to its retry queue", a
   ]);
 });
 
-test("Workspace provisioning defers without poisoning state until its Environment is ready", async () => {
+contractTest("web.hermetic", "Workspace provisioning defers without poisoning state until its Environment is ready", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
     "workspace-id"
@@ -367,7 +368,7 @@ test("Workspace provisioning defers without poisoning state until its Environmen
   ]);
 });
 
-test("Workspace start wakes the existing Machine without reprovisioning storage", async () => {
+contractTest("web.hermetic", "Workspace start wakes the existing Machine without reprovisioning storage", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.start",
     "workspace-id"
@@ -401,7 +402,7 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
   ]);
 });
 
-test("Workspace stop retains its Machine and persistent volume", async () => {
+contractTest("web.hermetic", "Workspace stop retains its Machine and persistent volume", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.stop",
     "workspace-id"
@@ -432,7 +433,7 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
   ]);
 });
 
-test("Workspace idle stop continues from the control-plane stopping state", async () => {
+contractTest("web.hermetic", "Workspace idle stop continues from the control-plane stopping state", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.stop",
     "workspace-id"
@@ -462,7 +463,7 @@ test("Workspace idle stop continues from the control-plane stopping state", asyn
   ]);
 });
 
-test("Workspace deletion removes the Machine before its volume", async () => {
+contractTest("web.hermetic", "Workspace deletion removes the Machine before its volume", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.delete",
     "workspace-id"
@@ -495,7 +496,7 @@ test("Workspace deletion removes the Machine before its volume", async () => {
   ]);
 });
 
-test("Environment deletion removes the owning Fly App idempotently", async () => {
+contractTest("web.hermetic", "Environment deletion removes the owning Fly App idempotently", async () => {
   const { repository, provider, calls } = fixture("environment.delete");
   provider.deleteEnvironmentApp = async () => {
     calls.push("provider:delete-app");
@@ -523,7 +524,7 @@ const assertBlockedEnvironmentDeletion = async (
   assert.deepEqual(calls, [`operation:failed:${code}`]);
 };
 
-test("Environment deletion stops before provider teardown for ENVIRONMENT_IS_DEFAULT", () =>
+contractTest("web.hermetic", "Environment deletion stops before provider teardown for ENVIRONMENT_IS_DEFAULT", () =>
   assertBlockedEnvironmentDeletion("ENVIRONMENT_IS_DEFAULT"));
-test("Environment deletion stops before provider teardown for ENVIRONMENT_HAS_PROJECTS", () =>
+contractTest("web.hermetic", "Environment deletion stops before provider teardown for ENVIRONMENT_HAS_PROJECTS", () =>
   assertBlockedEnvironmentDeletion("ENVIRONMENT_HAS_PROJECTS"));

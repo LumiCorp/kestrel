@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,8 +9,10 @@ import {
   validateVisibleTodoState,
 } from "../../src/runtime/visibleTodos.js";
 import { validateRuntimeSessionState } from "../../src/runtime/state.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("visible todo state validates the minimal model-owned checklist", () => {
+
+contractTest("runtime.hermetic", "visible todo state validates the minimal model-owned checklist", () => {
   const result = validateVisibleTodoState({
     objective: "Build the newsletter page",
     items: [
@@ -33,7 +34,7 @@ test("visible todo state validates the minimal model-owned checklist", () => {
   assert.deepEqual(result.ok ? result.value.items.map((item) => item.status) : [], ["done", "in_progress"]);
 });
 
-test("visible todo state rejects ledger-like runtime bookkeeping fields", () => {
+contractTest("runtime.hermetic", "visible todo state rejects ledger-like runtime bookkeeping fields", () => {
   const result = validateVisibleTodoState({
     objective: "Build the app",
     items: [
@@ -50,7 +51,7 @@ test("visible todo state rejects ledger-like runtime bookkeeping fields", () => 
   assert.equal(result.ok ? undefined : result.error.path, "items.0.evidenceRefs");
 });
 
-test("visible todos render plain current work", () => {
+contractTest("runtime.hermetic", "visible todos render plain current work", () => {
   const rendered = renderVisibleTodosForModel({
     objective: "Build the planner",
     items: [
@@ -69,7 +70,7 @@ test("visible todos render plain current work", () => {
   assert.doesNotMatch(rendered ?? "", /evidenceRefs|attempts/u);
 });
 
-test("visible todo completion analysis is checklist-only", () => {
+contractTest("runtime.hermetic", "visible todo completion analysis is checklist-only", () => {
   const todos = normalizeVisibleTodoState({
     objective: "Build the app",
     items: [
@@ -84,7 +85,7 @@ test("visible todo completion analysis is checklist-only", () => {
   assert.equal(analysis.blockedItems[0]?.id, "build");
 });
 
-test("visible todo finalize readiness treats documented blocked gaps as residual", () => {
+contractTest("runtime.hermetic", "visible todo finalize readiness treats documented blocked gaps as residual", () => {
   const todos = normalizeVisibleTodoState({
     objective: "Build the app",
     items: [
@@ -108,7 +109,7 @@ test("visible todo finalize readiness treats documented blocked gaps as residual
   assert.equal(todos?.items[1]?.note, "Browser E2E was not directly exercised.");
 });
 
-test("visible todo finalize readiness keeps actionable work blocking", () => {
+contractTest("runtime.hermetic", "visible todo finalize readiness keeps actionable work blocking", () => {
   const todos = normalizeVisibleTodoState({
     objective: "Build the app",
     items: [
@@ -129,7 +130,7 @@ test("visible todo finalize readiness keeps actionable work blocking", () => {
   assert.equal(analysis.blockingOpenItems[0]?.id, "build");
 });
 
-test("runtime state validation accepts visible todos", () => {
+contractTest("runtime.hermetic", "runtime state validation accepts visible todos", () => {
   const error = validateRuntimeSessionState({
     runtime: { schemaVersion: 2 },
     agent: {

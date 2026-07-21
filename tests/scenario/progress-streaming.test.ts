@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -9,8 +8,10 @@ import {
   type ProgressUpdateV1,
 } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Kestrel emits structured progress updates and skips heartbeat persistence", async () => {
+
+contractTest("runtime.hermetic", "Kestrel emits structured progress updates and skips heartbeat persistence", async () => {
   const store = new InMemorySessionStore();
   const updates: ProgressUpdateV1[] = [];
 

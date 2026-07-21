@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   LOCAL_CORE_CREDENTIAL_IDS,
@@ -13,8 +12,10 @@ import {
   readLocalCoreCredentialStoreStatus,
   type LocalCoreCredentialId,
 } from "../../src/localCore/credentialStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core credential IDs are stable and parsed exactly", () => {
+
+contractTest("runtime.hermetic", "Local Core credential IDs are stable and parsed exactly", () => {
   assert.deepEqual(LOCAL_CORE_CREDENTIAL_IDS, [
     "provider.openrouter.default",
     "provider.openai.default",
@@ -42,7 +43,7 @@ test("Local Core credential IDs are stable and parsed exactly", () => {
   }
 });
 
-test("Local Core credential values are preserved but reject unsafe boundary input", () => {
+contractTest("runtime.hermetic", "Local Core credential values are preserved but reject unsafe boundary input", () => {
   assert.equal(parseLocalCoreCredentialSecret("sk-provider_123-ABC"), "sk-provider_123-ABC");
   for (const invalid of ["", " ", " secret", "secret ", "secret\n", "secret\r", "sec\u0000ret", "sec\tret", null]) {
     assert.throws(
@@ -52,7 +53,7 @@ test("Local Core credential values are preserved but reject unsafe boundary inpu
   }
 });
 
-test("Memory credential store provides async CRUD without serializing raw values", async () => {
+contractTest("runtime.hermetic", "Memory credential store provides async CRUD without serializing raw values", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   const id = "provider.openrouter.default";
   const secret = "sk-memory-not-for-serialization";
@@ -84,7 +85,7 @@ test("Memory credential store provides async CRUD without serializing raw values
   assert.equal(await store.get(id), undefined);
 });
 
-test("Credential status parser accepts only the exact redacted contract", () => {
+contractTest("runtime.hermetic", "Credential status parser accepts only the exact redacted contract", () => {
   const parsed = parseLocalCoreCredentialStoreStatus({
     backend: "macos_keychain",
     available: true,
@@ -132,7 +133,7 @@ test("Credential status parser accepts only the exact redacted contract", () => 
   );
 });
 
-test("Unavailable credential backend reports redacted status and fails closed", async () => {
+contractTest("runtime.hermetic", "Unavailable credential backend reports redacted status and fails closed", async () => {
   const store = new UnavailableLocalCoreCredentialStore();
   const id = "provider.openai.default";
 
@@ -154,7 +155,7 @@ test("Unavailable credential backend reports redacted status and fails closed", 
   }
 });
 
-test("Store implementations still parse runtime IDs at their boundary", async () => {
+contractTest("runtime.hermetic", "Store implementations still parse runtime IDs at their boundary", async () => {
   const invalid = "provider.unknown.default" as LocalCoreCredentialId;
   const memory = new MemoryLocalCoreCredentialStore();
   const unavailable = new UnavailableLocalCoreCredentialStore();

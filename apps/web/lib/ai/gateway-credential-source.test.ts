@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   GatewayCredentialSourceError,
   normalizeGatewayStoredCredential,
@@ -8,8 +7,10 @@ import {
   selectGatewayCredentialEnvVarForUpdate,
   shouldClearStoredGatewayCredentialForUpdate,
 } from "./gateway-credential-source";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("stored gateway credentials do not retain an implicit environment fallback", () => {
+
+contractTest("web.hermetic", "stored gateway credentials do not retain an implicit environment fallback", () => {
   assert.equal(
     selectGatewayCredentialEnvVarForCreate({
       apiKey: "stored-secret",
@@ -27,7 +28,7 @@ test("stored gateway credentials do not retain an implicit environment fallback"
   );
 });
 
-test("environment-backed gateway credentials require an explicit stored env-var name", () => {
+contractTest("web.hermetic", "environment-backed gateway credentials require an explicit stored env-var name", () => {
   const env: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
     OPENAI_API_KEY: "app-owned-secret",
@@ -45,7 +46,7 @@ test("environment-backed gateway credentials require an explicit stored env-var 
   );
 });
 
-test("gateways created without a stored key retain their app-owned env source", () => {
+contractTest("web.hermetic", "gateways created without a stored key retain their app-owned env source", () => {
   assert.equal(
     selectGatewayCredentialEnvVarForCreate({
       apiKey: null,
@@ -56,7 +57,7 @@ test("gateways created without a stored key retain their app-owned env source", 
   );
 });
 
-test("gateway credential writes reject simultaneous stored and environment sources", () => {
+contractTest("web.hermetic", "gateway credential writes reject simultaneous stored and environment sources", () => {
   assert.throws(
     () =>
       selectGatewayCredentialEnvVarForCreate({
@@ -76,7 +77,7 @@ test("gateway credential writes reject simultaneous stored and environment sourc
   );
 });
 
-test("switching to an environment credential clears any stored credential", () => {
+contractTest("web.hermetic", "switching to an environment credential clears any stored credential", () => {
   assert.equal(
     shouldClearStoredGatewayCredentialForUpdate({
       apiKey: undefined,
@@ -93,7 +94,7 @@ test("switching to an environment credential clears any stored credential", () =
   );
 });
 
-test("stored gateway credential input is trimmed and rejects whitespace", () => {
+contractTest("web.hermetic", "stored gateway credential input is trimmed and rejects whitespace", () => {
   assert.equal(
     normalizeGatewayStoredCredential("  provider-secret  "),
     "provider-secret"

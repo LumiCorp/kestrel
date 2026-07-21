@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import {
   executeWeatherFailover,
   type WeatherFailoverPolicy,
 } from "../../tools/free/weatherFailover.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const testPolicy: WeatherFailoverPolicy = {
   totalBudgetMs: 100,
@@ -25,7 +26,7 @@ const testPolicy: WeatherFailoverPolicy = {
   },
 };
 
-test("Weather failover records an eligible primary failure and fallback success", async () => {
+contractTest("runtime.hermetic", "Weather failover records an eligible primary failure and fallback success", async () => {
   const result = await executeWeatherFailover({
     policy: testPolicy,
     primary: async () => {
@@ -41,7 +42,7 @@ test("Weather failover records an eligible primary failure and fallback success"
   assert.equal(result.attempts[1]?.outcome, "succeeded");
 });
 
-test("Weather failover reports an explicit unavailable configured fallback", async () => {
+contractTest("runtime.hermetic", "Weather failover reports an explicit unavailable configured fallback", async () => {
   await assert.rejects(
     () =>
       executeWeatherFailover({
@@ -62,7 +63,7 @@ test("Weather failover reports an explicit unavailable configured fallback", asy
   );
 });
 
-test("Weather failover honors an explicit primary timeout and total deadline", async () => {
+contractTest("runtime.hermetic", "Weather failover honors an explicit primary timeout and total deadline", async () => {
   const result = await executeWeatherFailover({
     policy: {
       ...testPolicy,
@@ -78,7 +79,7 @@ test("Weather failover honors an explicit primary timeout and total deadline", a
   assert.equal(result.attempts[0]?.failureCode, "WEATHER_PROVIDER_TIMEOUT");
 });
 
-test("Weather failover bounds two unresponsive providers by the total deadline", async () => {
+contractTest("runtime.hermetic", "Weather failover bounds two unresponsive providers by the total deadline", async () => {
   const startedAt = Date.now();
   await assert.rejects(
     () =>
@@ -106,7 +107,7 @@ test("Weather failover bounds two unresponsive providers by the total deadline",
   assert.ok(Date.now() - startedAt < 150);
 });
 
-test("Weather failover has no implicit policy defaults", async () => {
+contractTest("runtime.hermetic", "Weather failover has no implicit policy defaults", async () => {
   await assert.rejects(
     () =>
       executeWeatherFailover({
