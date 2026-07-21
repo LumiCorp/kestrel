@@ -28,8 +28,8 @@ import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultD
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { contractTest } from "../helpers/contract-test.js";
-
 
 function buildExecConfig() {
   return {
@@ -1535,6 +1535,58 @@ contractTest("runtime.hermetic", "exec.finalize converts handoff_to_build into a
       kind: "approval",
     },
   });
+});
+
+contractTest("runtime.hermetic", "exec.finalize commits switch_mode as a terminal mode-switch payload", async () => {
+  const step = createExecFinalizeStep(buildExecConfig());
+  let finalizedInput: unknown;
+  const transition = await step(
+    buildContext({
+      session: {
+        sessionId: "session-mode-switch",
+        version: 1,
+        state: {
+          agent: {
+            interactionMode: "chat",
+            nextAction: {
+              kind: "switch_mode",
+              mode: "build",
+              message: "Switched to Build mode.",
+            },
+          },
+        },
+        currentStepAgent: "agent.exec.finalize",
+        updatedAt: new Date().toISOString(),
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async (name, input) => {
+        assert.equal(name, "FinalizeAnswer");
+        finalizedInput = input;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { finalized: true, payload: input },
+        });
+      },
+    },
+  );
+
+  const react = transition.statePatch?.agent as Record<string, unknown>;
+  const finalOutput = react.finalOutput as Record<string, unknown>;
+  assert.equal(transition.status, "COMPLETED");
+  assert.deepEqual(finalizedInput, {
+    message: "Switched to Build mode.",
+    data: { modeSwitch: { mode: "build" } },
+  });
+  assert.deepEqual(finalOutput, {
+    finalized: true,
+    payload: finalizedInput,
+  });
+  assert.equal(react.assistantText, "Switched to Build mode.");
 });
 
 contractTest("runtime.hermetic", "exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {

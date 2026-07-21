@@ -273,6 +273,12 @@ export interface HandoffToBuildAction {
   data?: Record<string, unknown> | undefined;
 }
 
+export interface SwitchModeAction {
+  kind: "switch_mode";
+  mode: "chat" | "plan" | "build";
+  message: string;
+}
+
 export type CommandExecutionRole =
   | "source_inspection"
   | "source_authoring"
@@ -337,12 +343,13 @@ export type ReactAction = ReactActionCommon & (
       details?: Record<string, unknown>;
     }
   | HandoffToBuildAction
+  | SwitchModeAction
   | RuntimeFinalizeAction
 );
 
 export type AgentAction = Extract<
   ReactAction,
-  { kind: "tool" | "tool_batch" | "ask_user" | "finalize" | "cannot_satisfy" | "handoff_to_build" }
+  { kind: "tool" | "tool_batch" | "ask_user" | "finalize" | "cannot_satisfy" | "handoff_to_build" | "switch_mode" }
 >;
 
 export interface ArtifactExpectation {

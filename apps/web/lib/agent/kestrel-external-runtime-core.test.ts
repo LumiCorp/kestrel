@@ -57,6 +57,7 @@ contractTest("web.hermetic", "external replies use the hosted chat id and canoni
 
   const result = await generateKestrelOneExternalReplyFromAgent({
     agent,
+    runId: "run_123",
     sessionId: "chat_123",
     prompt: "Summarize the thread",
     context,
@@ -69,6 +70,7 @@ contractTest("web.hermetic", "external replies use the hosted chat id and canoni
   });
 
   assert.deepEqual(capturedTurn, {
+    runId: "run_123",
     sessionId: "chat_123",
     message: "Summarize the thread",
     clientCapabilities: {

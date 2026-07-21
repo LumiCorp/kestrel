@@ -46,6 +46,7 @@ export function createProfileBoundExternalReplyAgent(input: {
 
 export async function generateKestrelOneExternalReplyFromAgent(input: {
   agent: Pick<KestrelAgent, "run">;
+  runId?: string | undefined;
   sessionId: string;
   prompt: string;
   context: KestrelRequestContext;
@@ -61,6 +62,7 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
 
   const terminal = await input.agent.run(
     {
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
       sessionId: input.sessionId,
       message: input.prompt,
       clientCapabilities: input.clientCapabilities,

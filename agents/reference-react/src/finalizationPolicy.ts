@@ -6,13 +6,15 @@ import { findUserVisibleTextViolation } from "./userVisibleTextPolicy.js";
 export function validateFinalizationDecision(input: {
   action: ReactAction;
 }): void {
-  if (input.action.kind !== "finalize" && input.action.kind !== "handoff_to_build") {
+  if (input.action.kind !== "finalize" && input.action.kind !== "handoff_to_build" && input.action.kind !== "switch_mode") {
     return;
   }
 
   const actionInput = input.action.kind === "finalize" ? asRecord(input.action.input) : undefined;
   const message = asString(
-    input.action.kind === "handoff_to_build" ? input.action.message : actionInput?.message,
+    input.action.kind === "handoff_to_build" || input.action.kind === "switch_mode"
+      ? input.action.message
+      : actionInput?.message,
   )?.trim();
   if (message === undefined || message.length === 0) {
     throw new DecisionCompileError(

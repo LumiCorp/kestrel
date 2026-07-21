@@ -321,6 +321,17 @@ export function createKestrelOneAgentResponseFromAgent(
         });
       }
 
+      const requestedInteractionMode = readRequestedInteractionMode(
+        streamResult.finalizedPayload
+      );
+      if (requestedInteractionMode) {
+        mirroredWriter.write({
+          type: "data-interaction-mode",
+          data: { mode: requestedInteractionMode },
+          transient: true,
+        });
+      }
+
       mirroredWriter.write({ type: "finish", finishReason: "stop" });
 
       await input.onFinishPersist?.([streamResult.message], {
@@ -347,6 +358,29 @@ export function createKestrelOneAgentResponseFromAgent(
   });
 
   return createUIMessageStreamResponse({ stream });
+}
+
+export function readRequestedInteractionMode(
+  finalizedPayload: unknown
+): KestrelOneInteractionMode | null {
+  if (!finalizedPayload || typeof finalizedPayload !== "object") {
+    return null;
+  }
+  const finalized = finalizedPayload as Record<string, unknown>;
+  const payload =
+    finalized.payload && typeof finalized.payload === "object"
+      ? (finalized.payload as Record<string, unknown>)
+      : finalized;
+  const data =
+    payload.data && typeof payload.data === "object"
+      ? (payload.data as Record<string, unknown>)
+      : null;
+  const modeSwitch =
+    data?.modeSwitch && typeof data.modeSwitch === "object"
+      ? (data.modeSwitch as Record<string, unknown>)
+      : null;
+  const mode = modeSwitch?.mode;
+  return mode === "chat" || mode === "plan" || mode === "build" ? mode : null;
 }
 
 function getLatestUserText(messages: UIMessage[]): string {

@@ -252,6 +252,33 @@ contractTest("runtime.hermetic", "handoff_to_build preserves optional handoff da
   });
 });
 
+contractTest("runtime.hermetic", "switch_mode preserves the explicit requested mode without assistant progress", () => {
+  const registry = buildModelToolAliasRegistry(workspaceTools, {
+    controlToolNames: ["kestrel.switch_mode"],
+  });
+
+  const normalized = normalizeModelToolCallsToAgentTurn({
+    aliasRegistry: registry,
+    sourceRunId: "run_1",
+    toolIntents: [
+      {
+        name: "kestrel_switch_mode",
+        input: {
+          mode: "plan",
+          message: "Switched to Plan mode.",
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(normalized.action, {
+    kind: "switch_mode",
+    mode: "plan",
+    message: "Switched to Plan mode.",
+  });
+  assert.equal(normalized.assistantProgress, undefined);
+});
+
 contractTest("runtime.hermetic", "todo update description explains code-change notes without benchmark policy", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const todoTool = registry.requestTools.find((tool) => tool.name === "kestrel_todo_update");
