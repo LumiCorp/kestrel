@@ -52,7 +52,7 @@
     "canary:github:approval": "tsx scripts/github-approval-canary.ts",
     "preflight:environment:hosted": "tsx scripts/hosted-environment-preflight.ts",
     "preflight:vercel:production": "tsx scripts/vercel-production-preflight.ts",
-    "test:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test",
+    "test:e2e": "node --import tsx scripts/run-e2e.ts",
     "test:unit": "pnpm run check:kestrel-boundary && node ../../scripts/ci/run-web-unit.mjs",
     "test": "pnpm run test:unit"
   },

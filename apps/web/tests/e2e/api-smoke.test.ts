@@ -1,10 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-const baseUrl = process.env.UNIFIED_BASE_URL || "http://127.0.0.1:43103";
-
 test.describe("API smoke checks", () => {
   test("health endpoint is reachable", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/health`);
+    const response = await request.get("/api/health");
     await expect.soft(response).toBeOK();
     const payload = await response.json();
     expect(payload.status).toBeDefined();
@@ -12,34 +10,31 @@ test.describe("API smoke checks", () => {
   });
 
   test("sources endpoint requires auth", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/sources`);
+    const response = await request.get("/api/sources");
     expect(response.status()).toBe(401);
   });
 
   test("stats/me requires auth", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/stats/me`);
+    const response = await request.get("/api/stats/me");
     expect(response.status()).toBe(401);
   });
 
   test("Apps endpoint requires auth", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/apps`);
+    const response = await request.get("/api/apps");
     expect(response.status()).toBe(401);
   });
 
   test("legacy admin tools endpoint is removed", async ({ request }) => {
-    const response = await request.get(`${baseUrl}/api/admin/tools`);
+    const response = await request.get("/api/admin/tools");
     expect(response.status()).toBe(404);
   });
 
   test("webhook platform route rejects invalid platforms", async ({
     request,
   }) => {
-    const response = await request.post(
-      `${baseUrl}/api/webhooks/not-a-platform`,
-      {
-        data: {},
-      }
-    );
+    const response = await request.post("/api/webhooks/not-a-platform", {
+      data: {},
+    });
     expect(response.status()).toBe(400);
   });
 });

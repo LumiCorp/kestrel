@@ -1032,7 +1032,7 @@ test("DevShellSupervisor delivers a terminal result once and rejects reuse of th
   try {
     const started = await supervisor.startProcess({
       workspaceRoot,
-      command: "printf 'first\\n'; IFS= read -r _; printf 'second\\n'; sleep 0.2",
+      command: "printf 'first\\n'; IFS= read -r line; printf 'second\\n'; IFS= read -r line",
       yieldTimeMs: 75,
       maxOutputBytes: 4096,
     });
@@ -1050,16 +1050,28 @@ test("DevShellSupervisor delivers a terminal result once and rejects reuse of th
     assert.equal(first.status, "RUNNING");
     assert.equal(first.text, "first\n");
 
-    await supervisor.writeProcess({ processId, data: "continue\n" });
-    const terminal = await readProcessUntilTerminal({
+    const continued = await supervisor.writeProcess({ processId, data: "continue\n" });
+    assert.equal(continued.status, "ACCEPTED");
+    const second = await readProcessUntilText({
       supervisor,
       processId,
       cursor: first.nextCursor,
+      expectedText: "second\n",
+      timeoutMs: 5000,
+    });
+    assert.equal(second.status, "RUNNING");
+    assert.equal(second.text, "second\n");
+
+    const finished = await supervisor.writeProcess({ processId, data: "done\n" });
+    assert.equal(finished.status, "ACCEPTED");
+    const terminal = await readProcessUntilTerminal({
+      supervisor,
+      processId,
+      cursor: second.nextCursor,
       timeoutMs: 5000,
       pollWaitMs: 200,
     });
     assert.equal(terminal.status, "COMPLETED");
-    assert.equal(terminal.text, "second\n");
 
     await assert.rejects(
       () => supervisor.readProcess({ processId, waitMs: 0, maxBytes: 4096 }),

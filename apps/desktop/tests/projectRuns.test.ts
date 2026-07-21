@@ -317,7 +317,8 @@ test("DesktopProjectRunRegistry records emitted HTTP preview URLs deterministica
   );
 });
 
-test("DesktopProjectRunRegistry batches noisy output notifications and flushes on exit", async () => {
+test("DesktopProjectRunRegistry batches noisy output notifications and flushes on exit", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -377,19 +378,20 @@ test("DesktopProjectRunRegistry batches noisy output notifications and flushes o
   spawned[0]?.stdout.write("one\n");
   spawned[0]?.stdout.write("two\n");
   spawned[0]?.stdout.write("three\n");
-  await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(registry.listRuns().find((entry) => entry.runId === run.runId)?.stdoutTail.length, 3);
   assert.deepEqual(runSnapshots, [["running:0"]]);
   assert.deepEqual(ledgerWrites, [["running:0"]]);
 
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  context.mock.timers.tick(25);
+  await Promise.resolve();
   assert.deepEqual(runSnapshots.at(-1), ["running:3"]);
   assert.deepEqual(ledgerWrites.at(-1), ["running:3"]);
 
   spawned[0]?.stdout.write("four\n");
   spawned[0]?.emitExit(0);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+  await Promise.resolve();
 
   assert.deepEqual(runSnapshots.at(-1), ["completed:4"]);
   assert.deepEqual(ledgerWrites.at(-1), ["completed:4"]);

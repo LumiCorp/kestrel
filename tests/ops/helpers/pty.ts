@@ -25,7 +25,6 @@ export interface TuiScenarioStep {
 export interface TuiScenarioAction {
   typeText?: string | undefined;
   key?: "enter" | "esc" | "up" | "down" | "left" | "right" | "tab" | "shift-tab" | "ctrl-p" | "ctrl-2" | undefined;
-  settleMs?: number | undefined;
 }
 
 export interface TuiAbortPattern {
@@ -39,7 +38,6 @@ export function toDriverActions(actions: TuiScenarioAction[] | undefined): Array
   return (actions ?? []).map((action) => ({
     ...(action.typeText !== undefined ? { typeText: action.typeText } : {}),
     ...(action.key !== undefined ? { key: action.key } : {}),
-    ...(action.settleMs !== undefined ? { settleMs: action.settleMs } : {}),
   }));
 }
 
@@ -59,6 +57,7 @@ export async function runTuiScenario(input: {
   databaseUrl: string;
   steps: TuiScenarioStep[];
   timeoutSeconds?: number | undefined;
+  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<string> {
@@ -72,6 +71,7 @@ export async function runTuiScenarioWithSession(input: {
   databaseUrl: string;
   steps: TuiScenarioStep[];
   timeoutSeconds?: number | undefined;
+  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
@@ -113,13 +113,16 @@ export async function runTuiScenarioWithSession(input: {
       FORCE_COLOR: "0",
       TERM: "xterm-256color",
     },
-    steps: input.steps.map((step) => ({
+    steps: input.steps.map((step, index) => ({
       pattern: typeof step.waitFor === "string" ? step.waitFor : step.waitFor.source,
       regex: typeof step.waitFor !== "string",
       fromCursor: step.fromCursor ?? false,
       send: step.send ?? null,
       actions: toDriverActions(step.actions),
       abortPatterns: toDriverAbortPatterns(step.abortPatterns),
+      ...(index === 0
+        ? { timeoutSeconds: input.startupTimeoutSeconds ?? 30 }
+        : {}),
     })),
     abortPatterns: toDriverAbortPatterns(input.abortPatterns),
     timeoutSeconds: input.timeoutSeconds ?? 5,

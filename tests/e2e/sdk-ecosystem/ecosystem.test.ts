@@ -434,7 +434,6 @@ test("next route helpers e2e preserve correlation and propagate abort cancellati
 
   assert.match(body, /event: run\.started/);
   assert.match(body, /event: run\.cancelled/);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 });
 
 test("packed tarball consumer fixture installs and executes real SDK behavior against the live runner service", async (t) => {
