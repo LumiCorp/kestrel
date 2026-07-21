@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3589,
+  "testCount": 3592,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -4349,6 +4349,36 @@
       "risk": "medium",
       "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: knowledge explorer helpers normalize mixed source and document rows for the table",
       "dimension": "knowledge explorer helpers normalize mixed source and document rows for the table",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/components/threads/thread-list-model.test.ts :: filters thread titles without changing the source collection",
+      "file": "apps/web/components/threads/thread-list-model.test.ts",
+      "line": 20,
+      "ancestors": [],
+      "title": "filters thread titles without changing the source collection",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: filters thread titles without changing the source collection",
+      "dimension": "filters thread titles without changing the source collection",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
+      "identity": "apps/web/components/threads/thread-list-model.test.ts :: sorts threads by explicit recent, oldest, title, and unread modes",
+      "file": "apps/web/components/threads/thread-list-model.test.ts",
+      "line": 27,
+      "ancestors": [],
+      "title": "sorts threads by explicit recent, oldest, title, and unread modes",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: sorts threads by explicit recent, oldest, title, and unread modes",
+      "dimension": "sorts threads by explicit recent, oldest, title, and unread modes",
       "role": "variant",
       "lane": "web",
       "environment": "linux"
@@ -12006,7 +12036,7 @@
     {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: durable interactions preserve exact request identity through runtime resume",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 65,
+      "line": 84,
       "ancestors": [],
       "title": "durable interactions preserve exact request identity through runtime resume",
       "contractId": "web.unit-contract",
@@ -12021,7 +12051,7 @@
     {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: durable turn creation never rebinds an existing message ID",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 77,
+      "line": 96,
       "ancestors": [],
       "title": "durable turn creation never rebinds an existing message ID",
       "contractId": "web.unit-contract",
@@ -12036,7 +12066,7 @@
     {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: mobile Thread responses pin Project context and Environment before durable dispatch",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 52,
+      "line": 71,
       "ancestors": [],
       "title": "mobile Thread responses pin Project context and Environment before durable dispatch",
       "contractId": "web.unit-contract",
@@ -12051,7 +12081,7 @@
     {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: Project collaborators use canonical Thread access for message actions",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 41,
+      "line": 60,
       "ancestors": [],
       "title": "Project collaborators use canonical Thread access for message actions",
       "contractId": "web.unit-contract",
@@ -12066,7 +12096,7 @@
     {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: Project deletion commits metadata before best-effort blob cleanup",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 26,
+      "line": 45,
       "ancestors": [],
       "title": "Project deletion commits metadata before best-effort blob cleanup",
       "contractId": "web.unit-contract",
@@ -12079,9 +12109,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/web/lib/projects/review-regressions.test.ts :: Project tabs stay owned by the URL across same-page navigation",
+      "file": "apps/web/lib/projects/review-regressions.test.ts",
+      "line": 20,
+      "ancestors": [],
+      "title": "Project tabs stay owned by the URL across same-page navigation",
+      "contractId": "web.unit-contract",
+      "owner": "kestrel-one",
+      "risk": "medium",
+      "counterexample": "A hosted API, projection, policy, or UI contract changes before it reaches a browser or database boundary. Executable counterexample: Project tabs stay owned by the URL across same-page navigation",
+      "dimension": "Project tabs stay owned by the URL across same-page navigation",
+      "role": "variant",
+      "lane": "web",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/web/lib/projects/review-regressions.test.ts :: Project uploads compensate new documents when context attachment fails",
       "file": "apps/web/lib/projects/review-regressions.test.ts",
-      "line": 16,
+      "line": 35,
       "ancestors": [],
       "title": "Project uploads compensate new documents when context attachment fails",
       "contractId": "web.unit-contract",
