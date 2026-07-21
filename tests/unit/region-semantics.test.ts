@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("region work item claiming is deterministic with round-robin cursor", async () => {
+
+contractTest("runtime.hermetic", "region work item claiming is deterministic with round-robin cursor", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("region-round-robin");
   await store.spawnRegionWorkItems("region-round-robin", [
@@ -27,7 +28,7 @@ test("region work item claiming is deterministic with round-robin cursor", async
   assert.equal(third?.region, "gamma");
 });
 
-test("engine emits merge conflict checkpoint when sync patch violates namespaced merge contract", async () => {
+contractTest("runtime.hermetic", "engine emits merge conflict checkpoint when sync patch violates namespaced merge contract", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -80,7 +81,7 @@ test("engine emits merge conflict checkpoint when sync patch violates namespaced
   assert.equal(events.includes("policy.checkpoint"), true);
 });
 
-test("engine emits region.synced when sync node completes without pending region work", async () => {
+contractTest("runtime.hermetic", "engine emits region.synced when sync node completes without pending region work", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,

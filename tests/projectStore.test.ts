@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { InMemorySessionStore } from "../src/store/InMemorySessionStore.js";
 import { ProductProjectStateStore } from "../src/project/store.js";
 import { createEmptyProjectSnapshot, normalizeProjectSnapshot } from "../src/project/state.js";
 import type { ProductProjectBoardAction } from "../src/project/contracts.js";
 import type { ProductTaskGraph } from "../src/taskGraph/contracts.js";
+import { contractTest } from "./helpers/contract-test.js";
+
 
 const graph: ProductTaskGraph = {
   version: 1,
@@ -56,7 +57,7 @@ function boardAction(
   } as ProductProjectBoardAction;
 }
 
-test("project store persists setup and policy state", async () => {
+contractTest("runtime.hermetic", "project store persists setup and policy state", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -105,7 +106,7 @@ test("project store persists setup and policy state", async () => {
   assert.equal(snapshot.activity[0]?.title, "Main task");
 });
 
-test("project review reads setup from product state", async () => {
+contractTest("runtime.hermetic", "project review reads setup from product state", async () => {
   const sessionStore = new InMemorySessionStore();
   let reviewDetailRepoRoot: string | undefined;
   let reviewActionRepoRoot: string | undefined;
@@ -162,7 +163,7 @@ test("project review reads setup from product state", async () => {
   assert.equal(reviewActionRepoRoot, "/tmp/product-state-review");
 });
 
-test("project store uses product-state methods without patchSessionState", async () => {
+contractTest("runtime.hermetic", "project store uses product-state methods without patchSessionState", async () => {
   type ProductOnlyState = {
     sessionId: string;
     version: number;
@@ -250,7 +251,7 @@ test("project store uses product-state methods without patchSessionState", async
   assert.equal(updatedProductState?.projectSnapshot.board.cards["K-1"]?.title, "Product only");
 });
 
-test("project store records policy decisions for project actions", async () => {
+contractTest("runtime.hermetic", "project store records policy decisions for project actions", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -291,7 +292,7 @@ test("project store records policy decisions for project actions", async () => {
   assert.equal(snapshot.policy.recentDecisions[0]?.summary, "branch.create feature/main-task");
 });
 
-test("normalizeProjectSnapshot drops invalid review summary entries", () => {
+contractTest("runtime.hermetic", "normalizeProjectSnapshot drops invalid review summary entries", () => {
   const snapshot = normalizeProjectSnapshot({
     review: {
       branches: [
@@ -330,7 +331,7 @@ test("normalizeProjectSnapshot drops invalid review summary entries", () => {
   assert.deepEqual(snapshot.review.recentCommits, [{ sha: "abcdef1", summary: "Valid commit" }]);
 });
 
-test("project board actions create update and move backlog cards", async () => {
+contractTest("runtime.hermetic", "project board actions create update and move backlog cards", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -388,7 +389,7 @@ test("project board actions create update and move backlog cards", async () => {
   assert.equal(planned.board.cards["K-1"]?.lane, "planned");
 });
 
-test("project board enforces version conflicts and tool movement scope", async () => {
+contractTest("runtime.hermetic", "project board enforces version conflicts and tool movement scope", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -447,7 +448,7 @@ test("project board enforces version conflicts and tool movement scope", async (
   );
 });
 
-test("project board rejects done lane moves and invalid start lanes", async () => {
+contractTest("runtime.hermetic", "project board rejects done lane moves and invalid start lanes", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -510,7 +511,7 @@ test("project board rejects done lane moves and invalid start lanes", async () =
   assert.equal(snapshot.board.cards["K-1"]?.lane, "planned");
 });
 
-test("project board requires explicit confirmation when enabling autopilot", async () => {
+contractTest("runtime.hermetic", "project board requires explicit confirmation when enabling autopilot", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -547,7 +548,7 @@ test("project board requires explicit confirmation when enabling autopilot", asy
   assert.equal(snapshot.board.settings.autopilotEnabled, true);
 });
 
-test("project board manual done records override evidence and stops active claims", async () => {
+contractTest("runtime.hermetic", "project board manual done records override evidence and stops active claims", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -595,7 +596,7 @@ test("project board manual done records override evidence and stops active claim
   assert.equal(card?.evidence.some((entry) => entry.outcome === "thread_stopped"), true);
 });
 
-test("project board product state does not invalidate active runtime commits", async () => {
+contractTest("runtime.hermetic", "project board product state does not invalidate active runtime commits", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -644,7 +645,7 @@ test("project board product state does not invalidate active runtime commits", a
   assert.equal(committed.session.version, 1);
 });
 
-test("project snapshot product state seeds sibling product fields from legacy session state", async () => {
+contractTest("runtime.hermetic", "project snapshot product state seeds sibling product fields from legacy session state", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -694,7 +695,7 @@ test("project snapshot product state seeds sibling product fields from legacy se
   assert.equal(productState?.projectSnapshot.setup.repoLabel, "seeded");
 });
 
-test("project board autopilot respects wip limit and prioritizes testing", async () => {
+contractTest("runtime.hermetic", "project board autopilot respects wip limit and prioritizes testing", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -759,7 +760,7 @@ test("project board autopilot respects wip limit and prioritizes testing", async
   assert.equal(snapshot.board.cards["K-1"]?.activeClaim?.kind, "implementation");
 });
 
-test("project board implementation and testing outcomes move cards through lanes", async () => {
+contractTest("runtime.hermetic", "project board implementation and testing outcomes move cards through lanes", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -806,7 +807,7 @@ test("project board implementation and testing outcomes move cards through lanes
   assert.equal(snapshot.board.cards["K-1"]?.evidence.at(-1)?.outcome, "verdict_fail");
 });
 
-test("project board actions use deterministic action metadata for timestamps", async () => {
+contractTest("runtime.hermetic", "project board actions use deterministic action metadata for timestamps", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {
@@ -831,7 +832,7 @@ test("project board actions use deterministic action metadata for timestamps", a
   assert.equal(snapshot.board.cards["K-1"]?.evidence[0]?.timestamp, action.actionTs);
 });
 
-test("project board autopilot tick carries the real session id into active claims", async () => {
+contractTest("runtime.hermetic", "project board autopilot tick carries the real session id into active claims", async () => {
   const sessionStore = new InMemorySessionStore();
   const store = new ProductProjectStateStore(sessionStore, {
     async inspectReviewState() {

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { defaultToolCatalog } from "../../tools/catalog.js";
@@ -8,8 +7,10 @@ import {
 } from "../../tools/runtime/builtInToolInputContracts.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { sanitizeToolInputForSchema } from "../../tools/runtime/normalizeToolInput.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("strict built-in tool schemas strip unexpected top-level keys in the audit pass", () => {
+
+contractTest("runtime.hermetic", "strict built-in tool schemas strip unexpected top-level keys in the audit pass", () => {
   const strictTools = defaultToolCatalog.list().filter((tool) =>
     tool.inputSchema.type === "object" && tool.inputSchema.additionalProperties === false,
   );
@@ -26,14 +27,14 @@ test("strict built-in tool schemas strip unexpected top-level keys in the audit 
   }
 });
 
-test("every built-in tool has an explicit input contract entry", () => {
+contractTest("runtime.hermetic", "every built-in tool has an explicit input contract entry", () => {
   const toolNames = defaultToolCatalog.list().map((tool) => tool.name).sort();
   const contractNames = Object.keys(BUILT_IN_TOOL_INPUT_CONTRACTS).sort();
 
   assert.deepEqual(contractNames, toolNames);
 });
 
-test("internet catalog exposes canonical Tavily tools and removes old semantic names", () => {
+contractTest("runtime.hermetic", "internet catalog exposes canonical Tavily tools and removes old semantic names", () => {
   const toolNames = new Set(defaultToolCatalog.list().map((tool) => tool.name));
 
   for (const name of [
@@ -61,7 +62,7 @@ test("internet catalog exposes canonical Tavily tools and removes old semantic n
   }
 });
 
-test("internet.search_advanced contract still validates dates when country is ignored for non-general topics", () => {
+contractTest("runtime.hermetic", "internet.search_advanced contract still validates dates when country is ignored for non-general topics", () => {
   assert.throws(
     () => validateBuiltInToolInputContract("internet.search_advanced", {
       query: "TCS latest revenue and headcount",
@@ -102,9 +103,9 @@ const assertWorkspaceRootMutationRejected = (
   );
 };
 
-test("fs.mkdir rejects the dot workspace-root mutation target", () =>
+contractTest("runtime.hermetic", "fs.mkdir rejects the dot workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[0]));
-test("fs.mkdir rejects the dot-slash workspace-root mutation target", () =>
+contractTest("runtime.hermetic", "fs.mkdir rejects the dot-slash workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[1]));
-test("fs.delete rejects the dot workspace-root mutation target", () =>
+contractTest("runtime.hermetic", "fs.delete rejects the dot workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[2]));

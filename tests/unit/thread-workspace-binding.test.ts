@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   createDesktopProjectThreadWorkspaceBinding,
@@ -8,8 +7,10 @@ import {
   deriveThreadWorkspaceSummaryProjection,
   resolveThreadWorkspaceRuntimeContext,
 } from "../../src/workspace/threadWorkspaceBinding.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("desktop project bindings synthesize a minimal runtime workspace context", () => {
+
+contractTest("runtime.hermetic", "desktop project bindings synthesize a minimal runtime workspace context", () => {
   const binding = createDesktopProjectThreadWorkspaceBinding({
     path: "/tmp/project-a",
     label: "project-a",
@@ -29,7 +30,7 @@ test("desktop project bindings synthesize a minimal runtime workspace context", 
   });
 });
 
-test("resolved workspace bindings preserve the full runtime context", () => {
+contractTest("runtime.hermetic", "resolved workspace bindings preserve the full runtime context", () => {
   const binding = createResolvedWorkspaceThreadWorkspaceBinding({
     workspaceId: "ws-1",
     workspaceRoot: "/tmp/project-a",
@@ -42,7 +43,7 @@ test("resolved workspace bindings preserve the full runtime context", () => {
   assert.equal(resolveThreadWorkspaceRuntimeContext(binding)?.label, "Project A");
 });
 
-test("thread workspace authority projects the submitted local workspace", () => {
+contractTest("runtime.hermetic", "thread workspace authority projects the submitted local workspace", () => {
   assert.deepEqual(deriveThreadWorkspaceAuthorityProjection({
     threadMetadata: {
       workspace: {
@@ -60,7 +61,7 @@ test("thread workspace authority projects the submitted local workspace", () => 
   });
 });
 
-test("thread workspace authority prefers the bound managed worktree from session state", () => {
+contractTest("runtime.hermetic", "thread workspace authority prefers the bound managed worktree from session state", () => {
   assert.deepEqual(deriveThreadWorkspaceAuthorityProjection({
     threadMetadata: {
       workspace: {

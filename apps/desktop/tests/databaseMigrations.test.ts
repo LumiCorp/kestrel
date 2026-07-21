@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import test from "node:test";
 import type { ChildProcess } from "node:child_process";
 
 import {
   resolveDesktopMigrationEnvironment,
   runDesktopDatabaseMigrations,
 } from "../src/databaseMigrations.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("runDesktopDatabaseMigrations runs root migration script with desktop database url", async () => {
+
+contractTest("desktop.process", "runDesktopDatabaseMigrations runs root migration script with desktop database url", async () => {
   const spawned: Array<{ command: string; args: string[]; cwd: string; databaseUrl: string | undefined }> = [];
   const spawnImpl = ((command: string, args: string[], options: Record<string, unknown>) => {
     const env = options.env as NodeJS.ProcessEnv;
@@ -39,7 +40,7 @@ test("runDesktopDatabaseMigrations runs root migration script with desktop datab
   ]);
 });
 
-test("runDesktopDatabaseMigrations surfaces migration failures", async () => {
+contractTest("desktop.process", "runDesktopDatabaseMigrations surfaces migration failures", async () => {
   const spawnImpl = (() =>
     createChildProcess(1, {
       stderr: "relation already exists",
@@ -60,7 +61,7 @@ test("runDesktopDatabaseMigrations surfaces migration failures", async () => {
   );
 });
 
-test("resolveDesktopMigrationEnvironment enables node mode under Electron", () => {
+contractTest("desktop.process", "resolveDesktopMigrationEnvironment enables node mode under Electron", () => {
   const env = resolveDesktopMigrationEnvironment(
     { PATH: "/usr/bin" },
     "postgres://kestrel:kestrel@127.0.0.1:61234/kestrel",

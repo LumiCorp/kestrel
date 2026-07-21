@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { UIMessage } from "ai";
 import { findNewToolApprovalResponse } from "./tool-approval-response";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("approval response must correspond to a persisted pending request", () => {
+
+contractTest("web.hermetic", "approval response must correspond to a persisted pending request", () => {
   const persisted = message("approval-requested", { id: "approval-1" }, [
     { type: "text", text: "Trusted persisted content" },
   ]);

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,22 +10,24 @@ import {
   sanitizePlanDocumentSessionSegment,
 } from "../../src/runtime/planDocument.js";
 import { planningWriteDocumentTool } from "../../tools/runtime/planningWriteDocument.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("buildPlanDocumentRelativePath returns a session-scoped PLAN.md path", () => {
+
+contractTest("runtime.hermetic", "buildPlanDocumentRelativePath returns a session-scoped PLAN.md path", () => {
   assert.equal(
     buildPlanDocumentRelativePath("session-1"),
     "~/.kestrel/sessions/session-1/PLAN.md",
   );
 });
 
-test("buildPlanDocumentRelativePath sanitizes unsafe session path characters", () => {
+contractTest("runtime.hermetic", "buildPlanDocumentRelativePath sanitizes unsafe session path characters", () => {
   assert.equal(
     buildPlanDocumentRelativePath("../bad/session"),
     "~/.kestrel/sessions/bad_session/PLAN.md",
   );
 });
 
-test("resolvePlanDocumentAbsolutePath maps the model-facing path into Kestrel home", () => {
+contractTest("runtime.hermetic", "resolvePlanDocumentAbsolutePath maps the model-facing path into Kestrel home", () => {
   assert.equal(
     resolvePlanDocumentAbsolutePath("~/.kestrel/sessions/session-1/PLAN.md", "/tmp/kestrel-home"),
     "/tmp/kestrel-home/sessions/session-1/PLAN.md",
@@ -34,12 +35,12 @@ test("resolvePlanDocumentAbsolutePath maps the model-facing path into Kestrel ho
   assert.equal(isPlanDocumentPath(".kestrel/sessions/session-1/PLAN.md"), false);
 });
 
-test("sanitizePlanDocumentSessionSegment rejects empty or unsafe-only session ids", () => {
+contractTest("runtime.hermetic", "sanitizePlanDocumentSessionSegment rejects empty or unsafe-only session ids", () => {
   assert.equal(sanitizePlanDocumentSessionSegment(".."), undefined);
   assert.equal(sanitizePlanDocumentSessionSegment("///"), undefined);
 });
 
-test("planning.write_document writes only session-scoped PLAN.md files", async () => {
+contractTest("runtime.hermetic", "planning.write_document writes only session-scoped PLAN.md files", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "kestrel-plan-"));
   const previous = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = home;

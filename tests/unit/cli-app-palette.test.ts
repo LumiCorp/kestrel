@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildPaletteActions } from "../../cli/app/PaletteController.js";
@@ -9,6 +8,8 @@ import {
   TUI_SLASH_COMMANDS,
 } from "../../cli/app/TuiCommandInventory.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const activeProfile = {
   id: "reference",
@@ -42,7 +43,7 @@ function makeSession(input: {
   };
 }
 
-test("buildPaletteActions adds recent session switch actions sorted by updatedAt", () => {
+contractTest("runtime.hermetic", "buildPaletteActions adds recent session switch actions sorted by updatedAt", () => {
   const state = {
     activeView: "chat" as const,
     paletteSource: "manual" as const,
@@ -98,7 +99,7 @@ test("buildPaletteActions adds recent session switch actions sorted by updatedAt
   assert.equal(actions.some((action) => action.command === "/mcp remove docker-gw"), true);
 });
 
-test("slash palette keeps the full slash command catalog", () => {
+contractTest("runtime.hermetic", "slash palette keeps the full slash command catalog", () => {
   const state = {
     activeView: "chat" as const,
     paletteSource: "slash" as const,
@@ -151,7 +152,7 @@ test("slash palette keeps the full slash command catalog", () => {
   assert.equal(actions.some((action) => action.draft === "/child spawn "), true);
 });
 
-test("buildPaletteActions caps switch actions and adds resume action when waiting", () => {
+contractTest("runtime.hermetic", "buildPaletteActions caps switch actions and adds resume action when waiting", () => {
   const sessions = Array.from({ length: 20 }, (_, index) =>
     makeSession({
       name: `session-${index}`,
@@ -196,7 +197,7 @@ test("buildPaletteActions caps switch actions and adds resume action when waitin
   assert.equal(actions.some((action) => action.draft === "/mcp add sse "), false);
 });
 
-test("buildPaletteActions keeps parser command roots discoverable via commands or drafts", () => {
+contractTest("runtime.hermetic", "buildPaletteActions keeps parser command roots discoverable via commands or drafts", () => {
   assert.doesNotThrow(() => {
     assertTuiCommandDescriptorCoverage();
   });
@@ -247,7 +248,7 @@ test("buildPaletteActions keeps parser command roots discoverable via commands o
   }
 });
 
-test("buildTuiCommandHelp keeps parser command roots visible", () => {
+contractTest("runtime.hermetic", "buildTuiCommandHelp keeps parser command roots visible", () => {
   const help = buildTuiCommandHelp();
   const discoveredRoots = new Set<string>();
 

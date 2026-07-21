@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "./kestrel-runtime-model";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("approved native gateway models become runner model selections", () => {
+
+contractTest("web.hermetic", "approved native gateway models become runner model selections", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "preferred-model",
@@ -26,7 +27,7 @@ test("approved native gateway models become runner model selections", () => {
   );
 });
 
-test("runtime model selection preserves the base profile contract", () => {
+contractTest("web.hermetic", "runtime model selection preserves the base profile contract", () => {
   const profile = applyKestrelOneModelToProfile(
     {
       id: "kestrel-one",
@@ -77,7 +78,7 @@ test("runtime model selection preserves the base profile contract", () => {
   assert.deepEqual(profile.guardrails, { maxStepVisits: 80 });
 });
 
-test("Lumi models select the configured native runner protocol", () => {
+contractTest("web.hermetic", "Lumi models select the configured native runner protocol", () => {
   assert.equal(
     toKestrelOneRuntimeModelSelection({
       id: "lumi-model",
@@ -92,7 +93,7 @@ test("Lumi models select the configured native runner protocol", () => {
   );
 });
 
-test("RunPod models use the OpenAI runner protocol with a gateway credential reference", () => {
+contractTest("web.hermetic", "RunPod models use the OpenAI runner protocol with a gateway credential reference", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "runpod-model",

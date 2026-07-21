@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   validateVisualCrossingConnection,
   WeatherConnectionError,
 } from "./weather-connection";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Visual Crossing connection verification uses a bounded credentialed request", async () => {
+
+contractTest("web.hermetic", "Visual Crossing connection verification uses a bounded credentialed request", async () => {
   let requestedUrl = "";
   const result = await validateVisualCrossingConnection({
     apiKey: "visual-secret",
@@ -24,7 +25,7 @@ test("Visual Crossing connection verification uses a bounded credentialed reques
   assert.equal(result.status, "connected");
 });
 
-test("Visual Crossing connection verification classifies rejected credentials", async () => {
+contractTest("web.hermetic", "Visual Crossing connection verification classifies rejected credentials", async () => {
   await assert.rejects(
     () =>
       validateVisualCrossingConnection({

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { StepContext, StepIO } from "../../src/kestrel/contracts/execution.js";
@@ -8,6 +7,8 @@ import {
   createExecFinalizeStep,
 } from "../../agents/reference-react/src/steps/execStates.js";
 import { appendToolObservations } from "../../agents/reference-react/src/steps/acter/resultShaping.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const BASE_CONTEXT: StepContext = {
   runId: "run-1",
@@ -48,7 +49,7 @@ const BASE_CONTEXT: StepContext = {
   },
 };
 
-test("tool observations keep compact filesystem input and output facts", () => {
+contractTest("runtime.hermetic", "tool observations keep compact filesystem input and output facts", () => {
   const observations = appendToolObservations({}, [
     {
       toolName: "fs.replace_text",
@@ -193,7 +194,7 @@ test("tool observations keep compact filesystem input and output facts", () => {
   assert.equal(Object.hasOwn(writeOutput, "content"), false);
 });
 
-test("exec.dispatch preserves replace operands in compact last action input", async () => {
+contractTest("runtime.hermetic", "exec.dispatch preserves replace operands in compact last action input", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const context: StepContext = {
     ...BASE_CONTEXT,
@@ -311,7 +312,7 @@ async function runFinalizeWithReactState(reactState: Record<string, unknown>) {
   };
 }
 
-test("exec.dispatch emits code execution artifacts when code.execute returns retained outputs", async () => {
+contractTest("runtime.hermetic", "exec.dispatch emits code execution artifacts when code.execute returns retained outputs", async () => {
   const step = createExecDispatchStep(buildExecConfig());
 
   const io: StepIO = {
@@ -356,7 +357,7 @@ test("exec.dispatch emits code execution artifacts when code.execute returns ret
   assert.equal(transition.artifacts?.[1]?.type, "code.execution.file");
 });
 
-test("exec.finalize merges explicit artifacts and manifest-promoted code artifacts", async () => {
+contractTest("runtime.hermetic", "exec.finalize merges explicit artifacts and manifest-promoted code artifacts", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -427,7 +428,7 @@ test("exec.finalize merges explicit artifacts and manifest-promoted code artifac
   assert.equal(artifacts[2]?.kind, "console");
 });
 
-test("exec.finalize uses the latest valid manifest line when a trailing manifest line is malformed", async () => {
+contractTest("runtime.hermetic", "exec.finalize uses the latest valid manifest line when a trailing manifest line is malformed", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -485,7 +486,7 @@ test("exec.finalize uses the latest valid manifest line when a trailing manifest
   assert.equal(artifacts[0]?.kind, "console");
 });
 
-test("exec.finalize does not require manifest for code.execute runs without retained artifacts", async () => {
+contractTest("runtime.hermetic", "exec.finalize does not require manifest for code.execute runs without retained artifacts", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -540,7 +541,7 @@ test("exec.finalize does not require manifest for code.execute runs without reta
   assert.equal(ui?.artifacts, undefined);
 });
 
-test("exec.finalize skips unresolved manifest html filePath artifacts instead of failing", async () => {
+contractTest("runtime.hermetic", "exec.finalize skips unresolved manifest html filePath artifacts instead of failing", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -606,7 +607,7 @@ test("exec.finalize skips unresolved manifest html filePath artifacts instead of
   assert.equal(artifacts[0]?.kind, "console");
 });
 
-test("exec.finalize does not require a code.execute artifact manifest", async () => {
+contractTest("runtime.hermetic", "exec.finalize does not require a code.execute artifact manifest", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -670,7 +671,7 @@ test("exec.finalize does not require a code.execute artifact manifest", async ()
   assert.equal(artifacts.length, 0);
 });
 
-test("exec.finalize promotes settled dev.process.read output into console artifacts", async () => {
+contractTest("runtime.hermetic", "exec.finalize promotes settled dev.process.read output into console artifacts", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -732,7 +733,7 @@ test("exec.finalize promotes settled dev.process.read output into console artifa
   assert.doesNotMatch(String(artifacts[0]?.stdout ?? ""), /__KESTREL_CMD_DONE__/u);
 });
 
-test("exec.finalize promotes settled dev.shell.run text into console artifacts", async () => {
+contractTest("runtime.hermetic", "exec.finalize promotes settled dev.shell.run text into console artifacts", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -799,7 +800,7 @@ test("exec.finalize promotes settled dev.shell.run text into console artifacts",
   assert.deepEqual((artifacts[0]?.toolContext as Record<string, unknown>)?.cwd, "/workspace");
 });
 
-test("exec.finalize promotes settled exec_command output into console artifacts", async () => {
+contractTest("runtime.hermetic", "exec.finalize promotes settled exec_command output into console artifacts", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -865,7 +866,7 @@ test("exec.finalize promotes settled exec_command output into console artifacts"
   assert.equal((artifacts[0]?.toolContext as Record<string, unknown>)?.sessionId, "exec-1");
 });
 
-test("exec.finalize fills explicit empty dev-shell console artifacts with promoted output", async () => {
+contractTest("runtime.hermetic", "exec.finalize fills explicit empty dev-shell console artifacts with promoted output", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -942,7 +943,7 @@ test("exec.finalize fills explicit empty dev-shell console artifacts with promot
   assert.equal((artifacts[0]?.toolContext as Record<string, unknown>)?.command, "pnpm test");
 });
 
-test("exec.finalize skips dev.shell console artifact promotion while a command is still active", async () => {
+contractTest("runtime.hermetic", "exec.finalize skips dev.shell console artifact promotion while a command is still active", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -995,7 +996,7 @@ test("exec.finalize skips dev.shell console artifact promotion while a command i
   assert.equal(ui?.artifacts, undefined);
 });
 
-test("exec.finalize synthesizes only a capped link_list from raw internet.search results", async () => {
+contractTest("runtime.hermetic", "exec.finalize synthesizes only a capped link_list from raw internet.search results", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1034,7 +1035,7 @@ test("exec.finalize synthesizes only a capped link_list from raw internet.search
   assert.equal(blocks.some((block) => block.kind === "web_preview"), false);
 });
 
-test("exec.finalize emits warning status block for degraded url-list tool output", async () => {
+contractTest("runtime.hermetic", "exec.finalize emits warning status block for degraded url-list tool output", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1068,7 +1069,7 @@ test("exec.finalize emits warning status block for degraded url-list tool output
   assert.equal(blocks[0]?.tone, "warn");
 });
 
-test("exec.finalize persists resumable follow-up contract for non-success finalization", async () => {
+contractTest("runtime.hermetic", "exec.finalize persists resumable follow-up contract for non-success finalization", async () => {
   const { transition } = await runFinalizeWithReactState({
     goal: "can you give me the news for the US this morning?",
     observations: [
@@ -1128,7 +1129,7 @@ test("exec.finalize persists resumable follow-up contract for non-success finali
   assert.equal(workingPlan.status, "finalizing");
 });
 
-test("exec.finalize does not persist plan handoff follow-up for plain plan-mode completion", async () => {
+contractTest("runtime.hermetic", "exec.finalize does not persist plan handoff follow-up for plain plan-mode completion", async () => {
   const originalObjective = "Build a polished landing page for the local demo app.";
   const planText = [
     "Plan:",
@@ -1157,7 +1158,7 @@ test("exec.finalize does not persist plan handoff follow-up for plain plan-mode 
   assert.equal(react.resumableFollowUp, undefined);
 });
 
-test("exec.cannot_satisfy persists resumable follow-up contract", async () => {
+contractTest("runtime.hermetic", "exec.cannot_satisfy persists resumable follow-up contract", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
   const context: StepContext = {
     ...BASE_CONTEXT,
@@ -1208,7 +1209,7 @@ test("exec.cannot_satisfy persists resumable follow-up contract", async () => {
   assert.equal(workingPlan.status, "finalizing");
 });
 
-test("exec.finalize synthesizes fetch status, capped summary excerpt, and preview for internet.extract", async () => {
+contractTest("runtime.hermetic", "exec.finalize synthesizes fetch status, capped summary excerpt, and preview for internet.extract", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1245,7 +1246,7 @@ test("exec.finalize synthesizes fetch status, capped summary excerpt, and previe
   assert.equal(blocks[2]?.url, "https://example.com/story");
 });
 
-test("exec.finalize synthesizes evidence summary and strength-bound metrics", async () => {
+contractTest("runtime.hermetic", "exec.finalize synthesizes evidence summary and strength-bound metrics", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1289,7 +1290,7 @@ test("exec.finalize synthesizes evidence summary and strength-bound metrics", as
   );
 });
 
-test("exec.finalize synthesizes fs.search_text metrics and capped formatted code preview", async () => {
+contractTest("runtime.hermetic", "exec.finalize synthesizes fs.search_text metrics and capped formatted code preview", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1337,7 +1338,7 @@ test("exec.finalize synthesizes fs.search_text metrics and capped formatted code
   assert.equal(codeLines[11], "src/app.ts:12:1 | needle 12");
 });
 
-test("exec.finalize appends runtime-synthesized blocks after model blocks and preserves tool_batch order", async () => {
+contractTest("runtime.hermetic", "exec.finalize appends runtime-synthesized blocks after model blocks and preserves tool_batch order", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: WEB_GENERATIVE_UI_CAPABILITIES,
@@ -1418,7 +1419,7 @@ test("exec.finalize appends runtime-synthesized blocks after model blocks and pr
   assert.equal(blocks[0]?.title, "Model block");
 });
 
-test("exec.finalize drops synthesized blocks when generative UI is disabled", async () => {
+contractTest("runtime.hermetic", "exec.finalize drops synthesized blocks when generative UI is disabled", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: {
@@ -1454,7 +1455,7 @@ test("exec.finalize drops synthesized blocks when generative UI is disabled", as
   assert.equal(asRecordOrUndefined(data?.ui), undefined);
 });
 
-test("exec.finalize filters synthesized blocks by supported block kinds", async () => {
+contractTest("runtime.hermetic", "exec.finalize filters synthesized blocks by supported block kinds", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     contextCache: {
       clientCapabilities: {
@@ -1509,7 +1510,7 @@ function readFinalizeUiBlocks(
     .filter((item): item is Record<string, unknown> => item !== undefined);
 }
 
-test("exec.finalize preserves model-provided phrasing without post-processing rewrites", async () => {
+contractTest("runtime.hermetic", "exec.finalize preserves model-provided phrasing without post-processing rewrites", async () => {
   const step = createExecFinalizeStep({
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -1568,7 +1569,7 @@ test("exec.finalize preserves model-provided phrasing without post-processing re
   assert.equal(metadata.messageGuardRewritten, undefined);
 });
 
-test("exec.finalize forwards coding finalize data fields for operator/API handoff", async () => {
+contractTest("runtime.hermetic", "exec.finalize forwards coding finalize data fields for operator/API handoff", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -1628,7 +1629,7 @@ test("exec.finalize forwards coding finalize data fields for operator/API handof
   assert.equal(finalizeInputData.checksFailed, undefined);
 });
 
-test("exec.finalize dispatches implemented_and_verified without runtime proof-token gates", async () => {
+contractTest("runtime.hermetic", "exec.finalize dispatches implemented_and_verified without runtime proof-token gates", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     decisionVerification: {
       verificationSteps: ["verify:newsletter-report.json::stories", "check:pnpm build"],
@@ -1655,7 +1656,7 @@ test("exec.finalize dispatches implemented_and_verified without runtime proof-to
   assert.equal(data.completionState, "implemented_and_verified");
 });
 
-test("exec.finalize reports available evidence without requiring every claimed process token", async () => {
+contractTest("runtime.hermetic", "exec.finalize reports available evidence without requiring every claimed process token", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     decisionVerification: {
       verificationSteps: ["verify:newsletter-report.json::stories", "check:pnpm build"],
@@ -1718,7 +1719,7 @@ test("exec.finalize reports available evidence without requiring every claimed p
   });
 });
 
-test("exec.finalize accepts runtime artifact verification evidence and forwards it in the payload", async () => {
+contractTest("runtime.hermetic", "exec.finalize accepts runtime artifact verification evidence and forwards it in the payload", async () => {
   const { transition, finalizedPayload } = await runFinalizeWithReactState({
     decisionVerification: {
       verificationSteps: ["verify:newsletter-report.json::stories", "check:pnpm build"],
@@ -1851,7 +1852,7 @@ test("exec.finalize accepts runtime artifact verification evidence and forwards 
   });
 });
 
-test("exec.finalize persists plainText alongside rich ui blocks", async () => {
+contractTest("runtime.hermetic", "exec.finalize persists plainText alongside rich ui blocks", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;
@@ -1903,7 +1904,7 @@ test("exec.finalize persists plainText alongside rich ui blocks", async () => {
   assert.equal(data.plainText, ["Plan", "- Inspect the workspace", "- Build the page"].join("\n"));
 });
 
-test("exec.finalize does not synthesize session-note text from structured progress", async () => {
+contractTest("runtime.hermetic", "exec.finalize does not synthesize session-note text from structured progress", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
 
   let finalizedPayload: Record<string, unknown> | undefined;

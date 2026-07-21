@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
@@ -11,8 +10,10 @@ import {
   BROAD_RESUME_MAX_INVENTORY_ACTIONS,
 } from "../../src/runtime/filesystemResumeBudget.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("ExecutionEngine no longer auto-resumes on filesystem loop guard in act.full_auto", async () => {
+
+contractTest("runtime.hermetic", "ExecutionEngine no longer auto-resumes on filesystem loop guard in act.full_auto", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -88,7 +89,7 @@ test("ExecutionEngine no longer auto-resumes on filesystem loop guard in act.ful
   assert.equal(output.waitFor, undefined);
 });
 
-test("ExecutionEngine does not prompt for broad filesystem clarification in safe mode", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine does not prompt for broad filesystem clarification in safe mode", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -169,7 +170,7 @@ test("ExecutionEngine does not prompt for broad filesystem clarification in safe
   assert.equal(output.waitFor, undefined);
 });
 
-test("ExecutionEngine exits before filesystem clarification when loop guard metadata omits retrievalFamily", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine exits before filesystem clarification when loop guard metadata omits retrievalFamily", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -239,7 +240,7 @@ test("ExecutionEngine exits before filesystem clarification when loop guard meta
   assert.equal(output.waitFor, undefined);
 });
 
-test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to wait for continue", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine no longer blocks on filesystem loop-guard clarification to wait for continue", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -310,7 +311,7 @@ test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to
   assert.equal(store.getRunEvents().findIndex((event) => event.type === "run.continuation_requested"), -1);
 });
 
-test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to wait for a file name", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine no longer blocks on filesystem loop-guard clarification to wait for a file name", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -380,7 +381,7 @@ test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to
   assert.equal(clarificationOutput.waitFor, undefined);
 });
 
-test("ExecutionEngine continues unattended concrete repair instead of user clarification", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine continues unattended concrete repair instead of user clarification", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -517,7 +518,7 @@ test("ExecutionEngine continues unattended concrete repair instead of user clari
   assert.equal(continuationEvent?.metadata?.targetPath, "/app/maze_controller.py");
 });
 
-test("ExecutionEngine finalizes best-effort after repeated redundant retrieval pivots", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine finalizes best-effort after repeated redundant retrieval pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -691,7 +692,7 @@ test("ExecutionEngine finalizes best-effort after repeated redundant retrieval p
   );
 });
 
-test("ExecutionEngine resumes coding work after verified redundant retrieval instead of synthesizing completion", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine resumes coding work after verified redundant retrieval instead of synthesizing completion", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   let dispatchCalls = 0;
@@ -894,7 +895,7 @@ test("ExecutionEngine resumes coding work after verified redundant retrieval ins
   assert.equal((continuationEvent?.metadata as Record<string, unknown> | undefined)?.guardToolName !== undefined, true);
 });
 
-test("ExecutionEngine resumes build-mode workspace work after verified redundant retrieval even without a work plan", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine resumes build-mode workspace work after verified redundant retrieval even without a work plan", async () => {
   const store = new InMemorySessionStore();
   let loopCalls = 0;
   let dispatchCalls = 0;
@@ -1090,7 +1091,7 @@ test("ExecutionEngine resumes build-mode workspace work after verified redundant
   assert.doesNotMatch(String(finalOutput.message ?? ""), /prematurely complete/u);
 });
 
-test("ExecutionEngine reports redundant retrieval accurately after high-quality news evidence", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine reports redundant retrieval accurately after high-quality news evidence", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1302,7 +1303,7 @@ test("ExecutionEngine reports redundant retrieval accurately after high-quality 
   );
 });
 
-test("ExecutionEngine rehydrates compacted tool artifacts for verified retrieval synthesis", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine rehydrates compacted tool artifacts for verified retrieval synthesis", async () => {
   const store = new InMemorySessionStore();
   let capturedEvidence: Record<string, unknown> | undefined;
   let capturedSystemPrompt = "";
@@ -1480,7 +1481,7 @@ test("ExecutionEngine rehydrates compacted tool artifacts for verified retrieval
   assert.match(String(finalOutput.message ?? ""), /FOX19/u);
 });
 
-test("ExecutionEngine reports missing compacted tool artifacts without synthesizing", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine reports missing compacted tool artifacts without synthesizing", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   const kestrel = new Kestrel({
@@ -1624,7 +1625,7 @@ test("ExecutionEngine reports missing compacted tool artifacts without synthesiz
   assert.equal(terminal.reasonCode, "artifact_evidence_unavailable");
 });
 
-test("ExecutionEngine loop-guards repeated filesystem retrieval pivots", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated filesystem retrieval pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1731,7 +1732,7 @@ test("ExecutionEngine loop-guards repeated filesystem retrieval pivots", async (
   assert.equal(store.getRunEvents().some((event) => event.type === "loop.guard_triggered"), true);
 });
 
-test("ExecutionEngine allows fs.list inventory to progress into a grounded fs.read_text", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine allows fs.list inventory to progress into a grounded fs.read_text", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1887,7 +1888,7 @@ test("ExecutionEngine allows fs.list inventory to progress into a grounded fs.re
   assert.equal(terminal.reasonCode, "completed");
 });
 
-test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1997,7 +1998,7 @@ test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
   assert.ok(Number(session?.state.reads ?? 0) >= 1);
 });
 
-test("ExecutionEngine loop-guards coding filesystem repeats without clarification wait", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine loop-guards coding filesystem repeats without clarification wait", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,

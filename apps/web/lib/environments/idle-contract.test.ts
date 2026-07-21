@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   authorizeWorkspaceIdleNotification,
   WORKSPACE_IDLE_NOTIFICATION_VERSION,
   WorkspaceIdleNotificationError,
   workspaceIdleNotificationSchema,
 } from "./idle-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Workspace idle notifications require the dedicated runtime bearer", () => {
+
+contractTest("web.hermetic", "Workspace idle notifications require the dedicated runtime bearer", () => {
   assert.doesNotThrow(() =>
     authorizeWorkspaceIdleNotification({
       authorization: "Bearer runtime-secret",
@@ -29,7 +30,7 @@ test("Workspace idle notifications require the dedicated runtime bearer", () => 
   }
 });
 
-test("Workspace idle notifications bind the exact organization and Machine", () => {
+contractTest("web.hermetic", "Workspace idle notifications bind the exact organization and Machine", () => {
   const parsed = workspaceIdleNotificationSchema.parse({
     version: WORKSPACE_IDLE_NOTIFICATION_VERSION,
     organizationId: "organization-id",

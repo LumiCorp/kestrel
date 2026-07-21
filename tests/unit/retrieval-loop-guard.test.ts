@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   classifyRetrievalRedundancy,
@@ -7,8 +6,10 @@ import {
   normalizeRetrievalGuardOutput,
   readRetrievalToolFamily,
 } from "../../src/engine/retrievalLoopGuard.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("normalizeRetrievalGuardInput canonicalizes string query fields", () => {
+
+contractTest("runtime.hermetic", "normalizeRetrievalGuardInput canonicalizes string query fields", () => {
   const normalized = normalizeRetrievalGuardInput("internet.search", {
     query: " FC Cincinnati next 3 games today ",
     region: "US",
@@ -24,7 +25,7 @@ test("normalizeRetrievalGuardInput canonicalizes string query fields", () => {
   });
 });
 
-test("normalizeRetrievalGuardOutput keeps top url and domain evidence for search-like tools", () => {
+contractTest("runtime.hermetic", "normalizeRetrievalGuardOutput keeps top url and domain evidence for search-like tools", () => {
   const normalized = normalizeRetrievalGuardOutput("internet.search", {
     results: [
       {
@@ -45,7 +46,7 @@ test("normalizeRetrievalGuardOutput keeps top url and domain evidence for search
   assert.deepEqual(normalized.topDomains, ["mlssoccer.com", "espn.com"]);
 });
 
-test("normalizeRetrievalGuardOutput keeps top signal evidence for filesystem reads", () => {
+contractTest("runtime.hermetic", "normalizeRetrievalGuardOutput keeps top signal evidence for filesystem reads", () => {
   const normalized = normalizeRetrievalGuardOutput("fs.read_text", {
     path: "notes/fc-cincinnati.md",
     summary: "Workspace note",
@@ -57,7 +58,7 @@ test("normalizeRetrievalGuardOutput keeps top signal evidence for filesystem rea
   ]);
 });
 
-test("classifyRetrievalRedundancy requires both input and output similarity", () => {
+contractTest("runtime.hermetic", "classifyRetrievalRedundancy requires both input and output similarity", () => {
   const redundant = classifyRetrievalRedundancy({
     prior: {
       toolName: "internet.search",
@@ -92,7 +93,7 @@ test("classifyRetrievalRedundancy requires both input and output similarity", ()
   assert.equal(redundant.redundant, true);
 });
 
-test("classifyRetrievalRedundancy covers filesystem read-only retrieval families", () => {
+contractTest("runtime.hermetic", "classifyRetrievalRedundancy covers filesystem read-only retrieval families", () => {
   const redundant = classifyRetrievalRedundancy({
     prior: {
       toolName: "fs.read_text",
@@ -119,7 +120,7 @@ test("classifyRetrievalRedundancy covers filesystem read-only retrieval families
   assert.equal(redundant.redundant, true);
 });
 
-test("filesystem tools stay outside generic read-like retrieval families", () => {
+contractTest("runtime.hermetic", "filesystem tools stay outside generic read-like retrieval families", () => {
   assert.equal(readRetrievalToolFamily("fs.read_text"), "fs.read_text");
   assert.equal(readRetrievalToolFamily("fs.list"), "fs.list");
   assert.equal(readRetrievalToolFamily("fs.search_text"), "fs.search_text");
@@ -152,7 +153,7 @@ test("filesystem tools stay outside generic read-like retrieval families", () =>
   assert.equal(redundant.redundant, false);
 });
 
-test("classifyRetrievalRedundancy does not flag similar inputs without shared evidence", () => {
+contractTest("runtime.hermetic", "classifyRetrievalRedundancy does not flag similar inputs without shared evidence", () => {
   const redundant = classifyRetrievalRedundancy({
     prior: {
       toolName: "internet.search",

@@ -1,10 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { evaluateArchitecture } from "../../src/governance/architecture.js";
 import type { ArchitectureRuleSet } from "../../src/governance/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("evaluateArchitecture reports disallowed layer dependency", () => {
+
+contractTest("runtime.hermetic", "evaluateArchitecture reports disallowed layer dependency", () => {
   const rules: ArchitectureRuleSet[] = [
     {
       layer: "engine",

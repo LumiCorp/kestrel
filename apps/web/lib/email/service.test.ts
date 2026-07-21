@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { ResolvedEmailConfig } from "./config";
 import { deliverTransactionalEmail, EmailDeliveryError } from "./service";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function config(
   overrides: Partial<ResolvedEmailConfig> = {}
@@ -35,7 +36,7 @@ const message = {
   idempotencyKey: "password-reset-token",
 };
 
-test("transactional email uses the dynamically resolved provider", async () => {
+contractTest("web.hermetic", "transactional email uses the dynamically resolved provider", async () => {
   let receivedKey = "";
   const result = await deliverTransactionalEmail(message, {
     resolveConfig: async () => config(),
@@ -49,7 +50,7 @@ test("transactional email uses the dynamically resolved provider", async () => {
   assert.equal(receivedKey, "re_test");
 });
 
-test("production failure never logs sensitive delivery content", async () => {
+contractTest("web.hermetic", "production failure never logs sensitive delivery content", async () => {
   const logged: string[] = [];
   await assert.rejects(
     deliverTransactionalEmail(message, {
@@ -62,7 +63,7 @@ test("production failure never logs sensitive delivery content", async () => {
   assert.deepEqual(logged, []);
 });
 
-test("production normalizes configuration resolution failures", async () => {
+contractTest("web.hermetic", "production normalizes configuration resolution failures", async () => {
   await assert.rejects(
     deliverTransactionalEmail(message, {
       resolveConfig: async () => {
@@ -79,7 +80,7 @@ test("production normalizes configuration resolution failures", async () => {
   );
 });
 
-test("development emits actionable console delivery when provider is unavailable", async () => {
+contractTest("web.hermetic", "development emits actionable console delivery when provider is unavailable", async () => {
   const logged: string[] = [];
   const result = await deliverTransactionalEmail(message, {
     resolveConfig: async () => config({ enabled: false, apiKey: null }),
@@ -91,7 +92,7 @@ test("development emits actionable console delivery when provider is unavailable
   assert.match(logged[0] ?? "", /https:\/\/secret\.example\/reset/);
 });
 
-test("development falls back when configuration resolution fails", async () => {
+contractTest("web.hermetic", "development falls back when configuration resolution fails", async () => {
   const logged: string[] = [];
   const result = await deliverTransactionalEmail(message, {
     resolveConfig: async () => {
@@ -106,7 +107,7 @@ test("development falls back when configuration resolution fails", async () => {
   assert.match(logged[0] ?? "", /https:\/\/secret\.example\/reset/);
 });
 
-test("persisted delivery fails closed when the configuration is not ready", async () => {
+contractTest("web.hermetic", "persisted delivery fails closed when the configuration is not ready", async () => {
   let providerCalled = false;
   await assert.rejects(
     deliverTransactionalEmail(message, {
@@ -122,7 +123,7 @@ test("persisted delivery fails closed when the configuration is not ready", asyn
   assert.equal(providerCalled, false);
 });
 
-test("unpersisted environment configuration preserves legacy delivery", async () => {
+contractTest("web.hermetic", "unpersisted environment configuration preserves legacy delivery", async () => {
   const result = await deliverTransactionalEmail(message, {
     resolveConfig: async () =>
       config({

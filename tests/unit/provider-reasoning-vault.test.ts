@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 
 import {
   createProviderReasoningVaultFromEnv,
@@ -12,6 +11,8 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { ProviderReasoningEncryptedRecord, RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function memoryReasoningStore() {
   const records: ProviderReasoningEncryptedRecord[] = [];
@@ -63,7 +64,7 @@ function memoryReasoningStore() {
   return { store, records, audits };
 }
 
-test("ProviderReasoningVault encrypts continuation and opt-in visible content with separate keys", async () => {
+contractTest("runtime.hermetic", "ProviderReasoningVault encrypts continuation and opt-in visible content with separate keys", async () => {
   const memory = memoryReasoningStore();
   const vault = new ProviderReasoningVault(
     memory.store,
@@ -112,7 +113,7 @@ test("ProviderReasoningVault encrypts continuation and opt-in visible content wi
   assert.equal(memory.audits[0]?.action, "read");
 });
 
-test("admin reads and deletions are session-scoped and audited even when no records exist", async () => {
+contractTest("runtime.hermetic", "admin reads and deletions are session-scoped and audited even when no records exist", async () => {
   const memory = memoryReasoningStore();
   const vault = new ProviderReasoningVault(
     memory.store,
@@ -135,7 +136,7 @@ test("admin reads and deletions are session-scoped and audited even when no reco
   assert.deepEqual(memory.audits.map((audit) => audit.sessionId), ["session-a", "session-a"]);
 });
 
-test("live-only policy never stores provider-visible text", async () => {
+contractTest("runtime.hermetic", "live-only policy never stores provider-visible text", async () => {
   const memory = memoryReasoningStore();
   const vault = new ProviderReasoningVault(
     memory.store,
@@ -158,7 +159,7 @@ test("live-only policy never stores provider-visible text", async () => {
   assert.deepEqual(memory.records, []);
 });
 
-test("retention policy activation deletes disabled content and clamps shortened expirations by scope", async () => {
+contractTest("runtime.hermetic", "retention policy activation deletes disabled content and clamps shortened expirations by scope", async () => {
   const memory = memoryReasoningStore();
   const vault = new ProviderReasoningVault(
     memory.store,
@@ -190,7 +191,7 @@ test("retention policy activation deletes disabled content and clamps shortened 
   assert.deepEqual(memory.records.map((record) => record.retentionScope), ["profile-b"]);
 });
 
-test("hosted reasoning fails closed without a configured master key", () => {
+contractTest("runtime.hermetic", "hosted reasoning fails closed without a configured master key", () => {
   const memory = memoryReasoningStore();
   assert.throws(
     () => createProviderReasoningVaultFromEnv(memory.store, { KESTREL_HOSTED: "true" }),
@@ -205,7 +206,7 @@ test("hosted reasoning fails closed without a configured master key", () => {
   );
 });
 
-test("local reasoning creates a private key file and advertises local readiness", () => {
+contractTest("runtime.hermetic", "local reasoning creates a private key file and advertises local readiness", () => {
   const memory = memoryReasoningStore();
   const directory = mkdtempSync(join(tmpdir(), "kestrel-reasoning-key-"));
   const keyPath = join(directory, "nested", "reasoning.key");
@@ -220,7 +221,7 @@ test("local reasoning creates a private key file and advertises local readiness"
   assert.equal(statSync(keyPath).mode & 0o777, 0o600);
 });
 
-test("the engine purges exact provider continuation state when the active turn ends", async () => {
+contractTest("runtime.hermetic", "the engine purges exact provider continuation state when the active turn ends", async () => {
   const memory = memoryReasoningStore();
   const runtimeStore = Object.assign(new InMemorySessionStore(), memory.store);
   const vault = new ProviderReasoningVault(
@@ -267,7 +268,7 @@ test("the engine purges exact provider continuation state when the active turn e
   assert.equal(memory.records.filter((item) => item.kind === "retained_visible").length, 1);
 });
 
-test("local reasoning keeps its generated key inside an explicit KESTREL_HOME", () => {
+contractTest("runtime.hermetic", "local reasoning keeps its generated key inside an explicit KESTREL_HOME", () => {
   const memory = memoryReasoningStore();
   const kestrelHome = mkdtempSync(join(tmpdir(), "kestrel-reasoning-home-"));
   createProviderReasoningVaultFromEnv(memory.store, { KESTREL_HOME: kestrelHome });

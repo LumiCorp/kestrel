@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
-import test from "node:test";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -15,10 +14,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const GRANT_ID = "018f1f73-4ce2-7b0f-8e14-3b977e1577a5";
 
-test("hosted MCP tools are scoped to a run grant and use only gateway authorization", async () => {
+contractTest("runtime.process", "hosted MCP tools are scoped to a run grant and use only gateway authorization", async () => {
   const seenHeaders: IncomingMessage["headers"][] = [];
   const sessions = new Map<string, StreamableHTTPServerTransport>();
   const httpServer = createServer(async (request, response) => {

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type {
   DelegationRecord,
@@ -12,8 +11,10 @@ import {
   buildOperatorSessionProjection,
   type OperatorSessionProjectionRuntime,
 } from "../../src/orchestration/OperatorSessionProjection.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("buildOperatorSessionProjection reads canonical user waits from session state", async () => {
+
+contractTest("runtime.hermetic", "buildOperatorSessionProjection reads canonical user waits from session state", async () => {
   const runtime = new FakeProjectionRuntime({
     mainThread: buildThread("thread-main", { sessionId: "session-wait" }),
     statuses: [
@@ -55,7 +56,7 @@ test("buildOperatorSessionProjection reads canonical user waits from session sta
   assert.equal(projection.focusedThreadId, "thread-main");
 });
 
-test("buildOperatorSessionProjection falls back to the focused thread wait", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection falls back to the focused thread wait", async () => {
   const thread = buildThread("thread-focused", {
     sessionId: "session-thread-wait",
     waitFor: {
@@ -89,7 +90,7 @@ test("buildOperatorSessionProjection falls back to the focused thread wait", asy
   });
 });
 
-test("buildOperatorSessionProjection synthesizes child blocker waits from operator view", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection synthesizes child blocker waits from operator view", async () => {
   const thread = buildThread("thread-parent", { sessionId: "session-child-blocked" });
   const runtime = new FakeProjectionRuntime({
     mainThread: thread,
@@ -134,7 +135,7 @@ test("buildOperatorSessionProjection synthesizes child blocker waits from operat
   });
 });
 
-test("buildOperatorSessionProjection returns a minimal projection without a thread runtime", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection returns a minimal projection without a thread runtime", async () => {
   const projection = await buildOperatorSessionProjection({
     sessionId: "session-legacy",
     session: {
@@ -153,7 +154,7 @@ test("buildOperatorSessionProjection returns a minimal projection without a thre
   });
 });
 
-test("buildOperatorSessionProjection omits a blank optional updatedAt", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection omits a blank optional updatedAt", async () => {
   for (const updatedAt of ["", "   "]) {
     const projection = await buildOperatorSessionProjection({
       sessionId: "session-legacy-blank-timestamp",
@@ -171,7 +172,7 @@ test("buildOperatorSessionProjection omits a blank optional updatedAt", async ()
   }
 });
 
-test("buildOperatorSessionProjection exposes normalized visible todos", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection exposes normalized visible todos", async () => {
   const projection = await buildOperatorSessionProjection({
     sessionId: "session-visible-todos",
     session: {
@@ -217,7 +218,7 @@ test("buildOperatorSessionProjection exposes normalized visible todos", async ()
   });
 });
 
-test("buildOperatorSessionProjection preserves legacy import metadata in fallback main-thread creation", async () => {
+contractTest("runtime.hermetic", "buildOperatorSessionProjection preserves legacy import metadata in fallback main-thread creation", async () => {
   let startedWith: Record<string, unknown> | undefined;
   const thread = buildThread("session-imported");
   const runtime: OperatorSessionProjectionRuntime = {

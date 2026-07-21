@@ -15,15 +15,16 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   captureSweVerifiedWorkspaceBaseline,
   exportSweVerifiedWorkspacePatch,
   type ExportSweWorkspacePatchInput,
 } from "../../scripts/swe-verified-workspace-patch.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("prepared workspace capture prevents image-preexisting files from entering the final patch", () => {
+
+contractTest("runtime.process", "prepared workspace capture prevents image-preexisting files from entering the final patch", () => {
   const fixture = createFixture();
   try {
     const initialWorkspace = path.join(fixture.root, "prepared-image");
@@ -62,7 +63,7 @@ test("prepared workspace capture prevents image-preexisting files from entering 
   }
 });
 
-test("workspace patch exporter reconstructs the final filesystem without workspace Git metadata", () => {
+contractTest("runtime.process", "workspace patch exporter reconstructs the final filesystem without workspace Git metadata", () => {
   const fixture = createFixture();
   try {
     const workspace = path.join(fixture.root, "workspace");
@@ -121,7 +122,7 @@ test("workspace patch exporter reconstructs the final filesystem without workspa
   }
 });
 
-test("workspace patch exporter is deterministic across commits, branches, staging, and missing Git metadata", () => {
+contractTest("runtime.process", "workspace patch exporter is deterministic across commits, branches, staging, and missing Git metadata", () => {
   const fixture = createFixture();
   try {
     const committedWorkspace = path.join(fixture.root, "committed");
@@ -180,7 +181,7 @@ test("workspace patch exporter is deterministic across commits, branches, stagin
   }
 });
 
-test("workspace patch exporter distinguishes empty workspaces from infrastructure failures", () => {
+contractTest("runtime.process", "workspace patch exporter distinguishes empty workspaces from infrastructure failures", () => {
   const fixture = createFixture();
   try {
     const workspace = path.join(fixture.root, "workspace");
@@ -209,7 +210,7 @@ test("workspace patch exporter distinguishes empty workspaces from infrastructur
   }
 });
 
-test("workspace patch exporter fails closed when patch validation fails", () => {
+contractTest("runtime.process", "workspace patch exporter fails closed when patch validation fails", () => {
   const fixture = createFixture();
   try {
     const workspace = path.join(fixture.root, "workspace");

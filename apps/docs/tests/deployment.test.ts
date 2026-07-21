@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import robots from "@/app/robots";
 import sitemap from "@/app/sitemap";
@@ -9,14 +8,16 @@ import { siteMetadata } from "@/lib/metadata";
 import { resolveDocsAppRootFrom, SITE_ORIGIN, SITE_URL } from "@/lib/site";
 
 import nextConfig from "../next.config";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("production metadata uses the canonical docs origin", () => {
+
+contractTest("docs.hermetic", "production metadata uses the canonical docs origin", () => {
   assert.equal(siteMetadata.metadataBase?.toString(), `${SITE_ORIGIN}/`);
   assert.equal(siteMetadata.metadataBase?.toString(), SITE_URL.toString());
   assert.deepEqual(siteMetadata.alternates, { canonical: "/" });
 });
 
-test("content root resolution supports repository and app-root build environments", () => {
+contractTest("docs.hermetic", "content root resolution supports repository and app-root build environments", () => {
   assert.equal(
     resolveDocsAppRootFrom("/workspace", (candidate) => candidate === "/workspace/apps/docs"),
     "/workspace/apps/docs",
@@ -27,7 +28,7 @@ test("content root resolution supports repository and app-root build environment
   );
 });
 
-test("public builds do not require internal or archived source files", async () => {
+contractTest("docs.hermetic", "public builds do not require internal or archived source files", async () => {
   const publicPages = await getPublicPages();
   const publicUrls = new Set(publicPages.map(({ meta }) => meta.url));
   for (const spec of pageRegistry.filter((candidate) => candidate.internal || candidate.archive)) {
@@ -36,7 +37,7 @@ test("public builds do not require internal or archived source files", async () 
   }
 });
 
-test("sitemap contains every eligible public page and no excluded routes", async () => {
+contractTest("docs.hermetic", "sitemap contains every eligible public page and no excluded routes", async () => {
   const [entries, pages] = await Promise.all([sitemap(), getPublicPages()]);
   assert.deepEqual(
     entries.map((entry) => new URL(entry.url).pathname).sort(),
@@ -46,7 +47,7 @@ test("sitemap contains every eligible public page and no excluded routes", async
   assert.doesNotMatch(corpus, /\/studio|\/archive|\/internal/iu);
 });
 
-test("robots advertises the canonical sitemap and excludes non-content routes", () => {
+contractTest("docs.hermetic", "robots advertises the canonical sitemap and excludes non-content routes", () => {
   const value = robots();
   assert.equal(value.sitemap, `${SITE_ORIGIN}/sitemap.xml`);
   assert.equal(value.host, SITE_ORIGIN);
@@ -57,7 +58,7 @@ test("robots advertises the canonical sitemap and excludes non-content routes", 
   });
 });
 
-test("deployment responses receive baseline security and search-cache headers", async () => {
+contractTest("docs.hermetic", "deployment responses receive baseline security and search-cache headers", async () => {
   assert.equal(typeof nextConfig.headers, "function");
   const rules = await nextConfig.headers!();
   const allHeaders = rules.flatMap((rule) => rule.headers);

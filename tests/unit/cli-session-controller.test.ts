@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,6 +5,8 @@ import {
   type SessionControllerContext,
 } from "../../cli/app/SessionController.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
   return {
@@ -41,7 +42,7 @@ function createControllerForState(state: {
   };
 }
 
-test("SessionController lists sessions with active, mode, wait, and run status markers", async () => {
+contractTest("runtime.hermetic", "SessionController lists sessions with active, mode, wait, and run status markers", async () => {
   const activeSession = makeSession({
     name: "main",
     sessionId: "s-main",
@@ -72,7 +73,7 @@ test("SessionController lists sessions with active, mode, wait, and run status m
   );
 });
 
-test("SessionController keeps switch and resume usage copy stable", async () => {
+contractTest("runtime.hermetic", "SessionController keeps switch and resume usage copy stable", async () => {
   const activeSession = makeSession({ name: "main", sessionId: "s-main" });
   const { controller, history } = createControllerForState({
     activeSession,

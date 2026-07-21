@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { createServer, type Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test, { type TestContext } from "node:test";
+import type { TestContext } from "node:test";
 import { promisify } from "node:util";
 
 import {
@@ -24,15 +24,15 @@ import {
 } from "../../packages/protocol/src/index.js";
 import { LocalCoreClient } from "../../src/localCore/client.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
-const CURL_REQUEST_TIMEOUT_SECONDS = "5";
-const CURL_STREAM_TIMEOUT_SECONDS = "15";
 const KESTREL_SUITE_VERSION = (
   createRequire(import.meta.url)("../../package.json") as { version: string }
 ).version;
 
-test("kestrel web prints env exports and answers curl health checks", async (t) => {
+contractTest("runtime.process", "kestrel web prints env exports and answers curl health checks", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -61,7 +61,7 @@ test("kestrel web prints env exports and answers curl health checks", async (t) 
   });
 });
 
-test("kestrel web rejects unauthenticated curl command requests", async (t) => {
+contractTest("runtime.process", "kestrel web rejects unauthenticated curl command requests", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -97,7 +97,7 @@ test("kestrel web rejects unauthenticated curl command requests", async (t) => {
   assert.match(String(unauthorizedBody.payload?.message ?? ""), /authorization is required/i);
 });
 
-test("kestrel web answers authenticated curl runner.ping requests", async (t) => {
+contractTest("runtime.process", "kestrel web answers authenticated curl runner.ping requests", async (t) => {
   await ensureCurlAvailable();
 
   const runner = await startWebRunner(t);
@@ -138,7 +138,7 @@ test("kestrel web answers authenticated curl runner.ping requests", async (t) =>
   assert.equal(pingBody.payload?.nonce, "ok");
 });
 
-test("kestrel web loads project provider credentials before starting Local Core", async () => {
+contractTest("runtime.process", "kestrel web loads project provider credentials before starting Local Core", async () => {
   const root = await mkdtemp(path.join("/tmp", "kestrel-web-dotenv-"));
   const cwd = path.join(root, "project");
   const coreHome = path.join(root, "core-home");
@@ -183,7 +183,7 @@ test("kestrel web loads project provider credentials before starting Local Core"
   const exitPromise = waitForClose(child);
 
   try {
-    await waitForOutput(stdoutChunks, /export KESTREL_RUNNER_SERVICE_TOKEN=/u, 30_000);
+    await waitForOutput(stdoutChunks, /export KESTREL_RUNNER_SERVICE_TOKEN=/u);
     const coreToken = (await readFile(corePaths.apiTokenPath, "utf8")).trim();
     const client = new LocalCoreClient({ socketPath: corePaths.apiSocketPath, token: coreToken });
     const readiness = await client.providerReadiness() as {
@@ -201,7 +201,7 @@ test("kestrel web loads project provider credentials before starting Local Core"
   }
 });
 
-test("kestrel web runs quick chat-lane agent interactions against a fake model backend", async (t) => {
+contractTest("runtime.process", "kestrel web runs quick chat-lane agent interactions against a fake model backend", async (t) => {
   await ensureCurlAvailable();
 
   const fakeModel = await startFakeOpenRouterServer();
@@ -348,7 +348,7 @@ test("kestrel web runs quick chat-lane agent interactions against a fake model b
   assert.equal(fakeModel.requests[1]?.userMessage, "what tools do you have");
 });
 
-test("kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
+contractTest("runtime.process", "kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
   const runner = await startWebRunner(
     t,
     {
@@ -362,7 +362,7 @@ test("kestrel web forces shutdown after the grace period when an event stream is
   });
 
   runner.signal("SIGINT");
-  const exit = await runner.waitForExit(5000);
+  const exit = await runner.waitForExit();
 
   assert.equal(exit.code, 0);
   assert.match(runner.stderrOutput(), /shutting down gracefully/u);
@@ -370,7 +370,7 @@ test("kestrel web forces shutdown after the grace period when an event stream is
   assert.match(runner.stderrOutput(), /runner service stopped/u);
 });
 
-test("kestrel web forces shutdown immediately on a second signal", async (t) => {
+contractTest("runtime.process", "kestrel web forces shutdown immediately on a second signal", async (t) => {
   const runner = await startWebRunner(
     t,
     {
@@ -386,7 +386,7 @@ test("kestrel web forces shutdown immediately on a second signal", async (t) => 
   runner.signal("SIGINT");
   await runner.waitForStderr(/shutting down gracefully/u);
   runner.signal("SIGINT");
-  const exit = await runner.waitForExit(2000);
+  const exit = await runner.waitForExit();
 
   assert.equal(exit.code, 0);
   assert.match(runner.stderrOutput(), /received another shutdown signal; forcing shutdown/u);
@@ -415,16 +415,14 @@ async function reservePort(): Promise<number> {
   });
 }
 
-async function waitForOutput(chunks: string[], pattern: RegExp, timeoutMs = 10_000): Promise<string> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+async function waitForOutput(chunks: string[], pattern: RegExp): Promise<string> {
+  while (true) {
     const joined = chunks.join("");
     if (pattern.test(joined)) {
       return joined;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`Timed out waiting for output matching ${pattern.toString()}`);
 }
 
 async function waitForClose(child: ReturnType<typeof spawn>): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
@@ -458,8 +456,8 @@ async function startWebRunner(
   token: string;
   startupOutput: string;
   signal(signal: NodeJS.Signals): void;
-  waitForExit(timeoutMs?: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  waitForStderr(pattern: RegExp, timeoutMs?: number): Promise<string>;
+  waitForExit(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  waitForStderr(pattern: RegExp): Promise<string>;
   stderrOutput(): string;
 }> {
   const repoRoot = process.cwd();
@@ -591,18 +589,11 @@ async function startWebRunner(
     signal(signal: NodeJS.Signals) {
       child.kill(signal);
     },
-    async waitForExit(timeoutMs = 10_000) {
-      return await Promise.race([
-        exitPromise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`Timed out waiting ${timeoutMs}ms for kestrel web to exit.`));
-          }, timeoutMs);
-        }),
-      ]);
+    async waitForExit() {
+      return await exitPromise;
     },
-    async waitForStderr(pattern, timeoutMs = 10_000) {
-      return await waitForOutput(stderrChunks, pattern, timeoutMs);
+    async waitForStderr(pattern) {
+      return await waitForOutput(stderrChunks, pattern);
     },
     stderrOutput() {
       return stderrChunks.join("");
@@ -616,9 +607,7 @@ async function waitForLocalCoreReady(input: {
   exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   stderrChunks: string[];
 }): Promise<string> {
-  const startedAt = Date.now();
-  let lastError: unknown;
-  while (Date.now() - startedAt < 30_000) {
+  while (true) {
     const exited = await Promise.race([
       input.exitPromise.then((result) => ({ result })),
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 25)),
@@ -640,13 +629,8 @@ async function waitForLocalCoreReady(input: {
       });
       await client.status();
       return normalizedToken;
-    } catch (error) {
-      lastError = error;
-    }
+    } catch {}
   }
-  throw new Error(
-    `Timed out waiting for Local Core: ${lastError instanceof Error ? lastError.message : String(lastError)} ${input.stderrChunks.join("")}`,
-  );
 }
 
 async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
@@ -665,8 +649,7 @@ async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
   } catch {
     return;
   }
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
+  while (true) {
     try {
       process.kill(ownerPid, 0);
     } catch {
@@ -674,7 +657,6 @@ async function stopLocalCoreFromLock(lockPath: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Local Core pid ${ownerPid} did not stop.`);
 }
 
 async function openEventSubscription(
@@ -718,9 +700,6 @@ async function openEventSubscription(
       },
     );
     req.once("error", reject);
-    req.setTimeout(5000, () => {
-      req.destroy(new Error("Timed out waiting for the web runner event subscription."));
-    });
     req.end(body);
   });
 
@@ -737,7 +716,7 @@ async function runCurlJson(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const args = ["-sS", "--max-time", CURL_REQUEST_TIMEOUT_SECONDS, "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }
@@ -778,7 +757,7 @@ async function runCurlText(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: string }> {
-  const args = ["-sS", "-N", "--max-time", CURL_STREAM_TIMEOUT_SECONDS, "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "-N", "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }

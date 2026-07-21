@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { projectRoleAllows } from "./access";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Project role ordering preserves collaboration and administration boundaries", () => {
+
+contractTest("web.hermetic", "Project role ordering preserves collaboration and administration boundaries", () => {
   assert.equal(projectRoleAllows("member", "member"), true);
   assert.equal(projectRoleAllows("member", "editor"), false);
   assert.equal(projectRoleAllows("editor", "member"), true);

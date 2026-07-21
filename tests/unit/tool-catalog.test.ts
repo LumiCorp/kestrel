@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createToolCatalog, defaultToolCatalog, DEFAULT_BALANCED_TOOL_ALLOWLIST } from "../../tools/index.js";
@@ -6,8 +5,10 @@ import type { SharedToolModule } from "../../tools/contracts.js";
 import { finalizeAnswerTool } from "../../tools/runtime/finalizeAnswer.js";
 import { isAgentToolResult } from "../../tools/toolResult.js";
 import { validateToolActionSchemas } from "../../agents/reference-react/src/decision/compileIntent.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("tool catalog resolves model tool definitions by allowlist", () => {
+
+contractTest("runtime.hermetic", "tool catalog resolves model tool definitions by allowlist", () => {
   const tools = defaultToolCatalog.toModelTools(["free.time.current", "free.hn.top"]);
 
   assert.equal(tools.length, 2);
@@ -15,7 +16,7 @@ test("tool catalog resolves model tool definitions by allowlist", () => {
   assert.equal(tools[1]?.name, "free.hn.top");
 });
 
-test("tool catalog wraps raw handlers in AgentToolResult envelopes", async () => {
+contractTest("runtime.hermetic", "tool catalog wraps raw handlers in AgentToolResult envelopes", async () => {
   const module: SharedToolModule = {
     definition: {
       name: "demo.raw_tool",
@@ -53,7 +54,7 @@ test("tool catalog wraps raw handlers in AgentToolResult envelopes", async () =>
   assert.match(result?.modelContext.text ?? "", /Raw output ref: tool-output:[a-f0-9]{16}/u);
 });
 
-test("dev shell tool descriptions distinguish unified exec lifecycle from internal compatibility tools", () => {
+contractTest("runtime.hermetic", "dev shell tool descriptions distinguish unified exec lifecycle from internal compatibility tools", () => {
   const tools = defaultToolCatalog.toModelTools(["exec_command", "dev.shell.run", "dev.process.write"]);
   const unifiedTool = tools.find((tool) => tool.name === "exec_command");
   const execTool = tools.find((tool) => tool.name === "dev.shell.run");
@@ -76,7 +77,7 @@ test("dev shell tool descriptions distinguish unified exec lifecycle from intern
   assert.match(writeTool?.description ?? "", /existing managed live process/i);
 });
 
-test("exec_command schema exposes exclusive lifecycle branches", () => {
+contractTest("runtime.hermetic", "exec_command schema exposes exclusive lifecycle branches", () => {
   const [execTool] = defaultToolCatalog.toModelTools(["exec_command"]);
   assert.ok(execTool);
   assert.equal(Array.isArray(execTool.inputSchema.oneOf), true);
@@ -139,7 +140,7 @@ test("exec_command schema exposes exclusive lifecycle branches", () => {
   );
 });
 
-test("finalize tool description stays a caller-facing payload contract", () => {
+contractTest("runtime.hermetic", "finalize tool description stays a caller-facing payload contract", () => {
   const tools = defaultToolCatalog.toModelTools(["FinalizeAnswer"]);
   const finalizeTool = tools.find((tool) => tool.name === "FinalizeAnswer");
 
@@ -150,7 +151,7 @@ test("finalize tool description stays a caller-facing payload contract", () => {
   assert.doesNotMatch(finalizeTool?.description ?? "", /swe-verified|sweValidation|benchmark|validation proof|edited tests/i);
 });
 
-test("tool catalog throws on unknown allowlisted tool", () => {
+contractTest("runtime.hermetic", "tool catalog throws on unknown allowlisted tool", () => {
   assert.throws(
     () => defaultToolCatalog.toModelTools(["not.real.tool"]),
     (error: unknown) =>
@@ -167,7 +168,7 @@ test("tool catalog throws on unknown allowlisted tool", () => {
   );
 });
 
-test("tool catalog rejects duplicate tool definition names", () => {
+contractTest("runtime.hermetic", "tool catalog rejects duplicate tool definition names", () => {
   assert.throws(
     () => createToolCatalog([finalizeAnswerTool, finalizeAnswerTool]),
     (error: unknown) =>
@@ -177,7 +178,7 @@ test("tool catalog rejects duplicate tool definition names", () => {
   );
 });
 
-test("tool catalog exposes capability manifest for allowlisted tools", () => {
+contractTest("runtime.hermetic", "tool catalog exposes capability manifest for allowlisted tools", () => {
   const manifest = defaultToolCatalog.toCapabilityManifest([
     "free.time.current",
     "internet.search",
@@ -197,7 +198,7 @@ test("tool catalog exposes capability manifest for allowlisted tools", () => {
   assert.equal(manifest[1]?.toolFamily, "internet");
 });
 
-test("internet retrieval tool descriptions distinguish broad gathering from targeted follow-up", () => {
+contractTest("runtime.hermetic", "internet retrieval tool descriptions distinguish broad gathering from targeted follow-up", () => {
   const tools = defaultToolCatalog.toModelTools([
     "internet.news",
     "internet.search",
@@ -216,7 +217,7 @@ test("internet retrieval tool descriptions distinguish broad gathering from targ
   assert.match(advancedTool?.description ?? "", /stop using it once the retained evidence set is large enough to synthesize/i);
 });
 
-test("tool catalog exposes code.execute capability metadata", () => {
+contractTest("runtime.hermetic", "tool catalog exposes code.execute capability metadata", () => {
   const manifest = defaultToolCatalog.toCapabilityManifest(["code.execute"]);
 
   assert.equal(manifest[0]?.name, "code.execute");
@@ -226,7 +227,7 @@ test("tool catalog exposes code.execute capability metadata", () => {
   assert.deepEqual(manifest[0]?.approvalCapabilities, ["code.execute"]);
 });
 
-test("tool catalog exposes filesystem tool capability metadata", () => {
+contractTest("runtime.hermetic", "tool catalog exposes filesystem tool capability metadata", () => {
   const writeTool = defaultToolCatalog.toModelTools(["fs.write_text"])[0];
   const replaceTool = defaultToolCatalog.toModelTools(["fs.replace_text"])[0];
   const repoTraceTool = defaultToolCatalog.toModelTools(["repo.trace"])[0];
@@ -277,7 +278,7 @@ test("tool catalog exposes filesystem tool capability metadata", () => {
   assert.match(replaceTool?.description ?? "", /preserve existing assertions unless the requested behavior requires changing them/i);
 });
 
-test("default balanced allowlist exposes retained runtime tools only", async () => {
+contractTest("runtime.hermetic", "default balanced allowlist exposes retained runtime tools only", async () => {
   assert.equal(DEFAULT_BALANCED_TOOL_ALLOWLIST.includes("FinalizeAnswer"), true);
   assert.equal(DEFAULT_BALANCED_TOOL_ALLOWLIST.includes("planning.write_document"), true);
   assert.equal(DEFAULT_BALANCED_TOOL_ALLOWLIST.includes("task.propose"), true);
@@ -286,7 +287,7 @@ test("default balanced allowlist exposes retained runtime tools only", async () 
   assert.equal(DEFAULT_BALANCED_TOOL_ALLOWLIST.includes("project.card.update"), false);
 });
 
-test("planning write document is model-visible planning write tool", () => {
+contractTest("runtime.hermetic", "planning write document is model-visible planning write tool", () => {
   const [tool] = defaultToolCatalog.toModelTools(["planning.write_document"]);
   const [manifest] = defaultToolCatalog.toCapabilityManifest(["planning.write_document"]);
 
@@ -297,13 +298,13 @@ test("planning write document is model-visible planning write tool", () => {
   assert.deepEqual(manifest?.capabilityClasses, ["workspace.write.planning"]);
 });
 
-test("project board tools are no longer model-visible side-effect tools", async () => {
+contractTest("runtime.hermetic", "project board tools are no longer model-visible side-effect tools", async () => {
   assert.throws(() => defaultToolCatalog.toModelTools(["project.card.create"]), /Unknown tool/u);
   assert.throws(() => defaultToolCatalog.toCapabilityManifest(["project.card.move"]), /Unknown tool/u);
   assert.throws(() => defaultToolCatalog.createHandlers(["project.card.update"], {}), /Unknown tool/u);
 });
 
-test("mission control task proposal tool is the model-visible project follow-up tool", async () => {
+contractTest("runtime.hermetic", "mission control task proposal tool is the model-visible project follow-up tool", async () => {
   const [tool] = defaultToolCatalog.toModelTools(["task.propose"]);
   const [manifest] = defaultToolCatalog.toCapabilityManifest(["task.propose"]);
 
@@ -316,7 +317,7 @@ test("mission control task proposal tool is the model-visible project follow-up 
   assert.deepEqual(manifest?.allowedInteractionModes, ["chat", "build"]);
 });
 
-test("authorized app mutations opt into Chat while agent branch push remains Build-only", () => {
+contractTest("runtime.hermetic", "authorized app mutations opt into Chat while agent branch push remains Build-only", () => {
   const manifest = defaultToolCatalog.toCapabilityManifest([
     "kestrel_one.google_calendar_create_event",
     "kestrel_one.github_issue_create",
@@ -328,7 +329,7 @@ test("authorized app mutations opt into Chat while agent branch push remains Bui
   assert.equal(manifest[2]?.executionClass, "external_side_effect");
 });
 
-test("fs.mkdir tool description makes the acknowledgment contract explicit", () => {
+contractTest("runtime.hermetic", "fs.mkdir tool description makes the acknowledgment contract explicit", () => {
   const [mkdirTool] = defaultToolCatalog.toModelTools(["fs.mkdir"]);
 
   assert.equal(mkdirTool?.name, "fs.mkdir");
@@ -336,7 +337,7 @@ test("fs.mkdir tool description makes the acknowledgment contract explicit", () 
   assert.match(mkdirTool?.description ?? "", /visible artifact/i);
 });
 
-test("dev shell tool descriptions distinguish exec from stdin writes", () => {
+contractTest("runtime.hermetic", "dev shell tool descriptions distinguish exec from stdin writes", () => {
   const [execTool, writeTool] = defaultToolCatalog.toModelTools(["dev.shell.run", "dev.process.write"]);
 
   assert.equal(execTool?.name, "dev.shell.run");
@@ -356,7 +357,7 @@ test("dev shell tool descriptions distinguish exec from stdin writes", () => {
   assert.doesNotMatch(writeTool?.description ?? "", /not an OS PID, path, or \/proc target/i);
 });
 
-test("dev shell model tools expose canonical output contracts", () => {
+contractTest("runtime.hermetic", "dev shell model tools expose canonical output contracts", () => {
   const tools = defaultToolCatalog.toModelTools([
     "exec_command",
     "dev.shell.run",
@@ -382,7 +383,7 @@ test("dev shell model tools expose canonical output contracts", () => {
   assert.ok(byName.get("dev.process.read")?.outputContract?.fields.sourceWriteGuard);
 });
 
-test("managed worktree prepare is not a model-visible catalog tool", () => {
+contractTest("runtime.hermetic", "managed worktree prepare is not a model-visible catalog tool", () => {
   assert.equal(DEFAULT_BALANCED_TOOL_ALLOWLIST.includes("runtime.managed_worktree.prepare"), false);
   assert.throws(
     () => defaultToolCatalog.toModelTools(["runtime.managed_worktree.prepare"]),
@@ -393,7 +394,7 @@ test("managed worktree prepare is not a model-visible catalog tool", () => {
   );
 });
 
-test("tool catalog fails fast when required metadata is missing", () => {
+contractTest("runtime.hermetic", "tool catalog fails fast when required metadata is missing", () => {
   const invalidModule = {
     definition: {
       name: "broken.tool",

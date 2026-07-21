@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
@@ -17,6 +16,8 @@ import {
 } from "../../src/orchestration/index.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 class StaticTurnExecutor implements TurnExecutor {
   private readonly result: TurnExecutionResult;
@@ -54,7 +55,7 @@ class ThrowingTurnExecutor implements TurnExecutor {
   }
 }
 
-test("InteractionManager emits normalized not-found and state failures", async () => {
+contractTest("runtime.hermetic", "InteractionManager emits normalized not-found and state failures", async () => {
   const store = new InMemorySessionStore();
   const manager = new InteractionManager(store);
 
@@ -108,7 +109,7 @@ test("InteractionManager emits normalized not-found and state failures", async (
   );
 });
 
-test("ThreadRuntime emits normalized thread and supervisor failures", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime emits normalized thread and supervisor failures", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -142,7 +143,7 @@ test("ThreadRuntime emits normalized thread and supervisor failures", async () =
   );
 });
 
-test("ThreadRuntime keeps prior active run when failed output run is not persisted", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime keeps prior active run when failed output run is not persisted", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -191,7 +192,7 @@ test("ThreadRuntime keeps prior active run when failed output run is not persist
   assert.equal(persistedThread?.activeRunId, "run-persisted");
 });
 
-test("DelegationSupervisor emits normalized limit and compatibility failures", async () => {
+contractTest("runtime.hermetic", "DelegationSupervisor emits normalized limit and compatibility failures", async () => {
   const store = new InMemorySessionStore();
   const supervisor = new DelegationSupervisor({
     profile: {
@@ -294,7 +295,7 @@ test("DelegationSupervisor emits normalized limit and compatibility failures", a
   );
 });
 
-test("DelegationSupervisor emits normalized not-persisted failure when orchestration store loses the record", async () => {
+contractTest("runtime.hermetic", "DelegationSupervisor emits normalized not-persisted failure when orchestration store loses the record", async () => {
   const store = new InMemorySessionStore();
   const orchestrationStore = Object.assign(Object.create(store), {
     async getDelegation(_delegationId: string) {
@@ -359,7 +360,7 @@ test("DelegationSupervisor emits normalized not-persisted failure when orchestra
   );
 });
 
-test("Delegation failure persistence retains normalized message and event code", async () => {
+contractTest("runtime.hermetic", "Delegation failure persistence retains normalized message and event code", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,

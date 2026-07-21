@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("runtime package publishes only the public executable boundary", async () => {
+
+contractTest("runtime.hermetic", "runtime package publishes only the public executable boundary", async () => {
   const pkg = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as {
     main?: string;
     types?: string;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { createDesktopBeforeQuitHandler } from "../src/lifecycle.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 function createDeferred(): {
   promise: Promise<void>;
@@ -14,7 +15,7 @@ function createDeferred(): {
   return { promise, resolve };
 }
 
-test("createDesktopBeforeQuitHandler prevents quit once, drains managed runs first, and ignores reentry", async () => {
+contractTest("desktop.hermetic", "createDesktopBeforeQuitHandler prevents quit once, drains managed runs first, and ignores reentry", async () => {
   const order: string[] = [];
   const stopRuns = createDeferred();
   let prevented = 0;
@@ -74,7 +75,7 @@ test("createDesktopBeforeQuitHandler prevents quit once, drains managed runs fir
   ]);
 });
 
-test("createDesktopBeforeQuitHandler still quits when cleanup throws", async () => {
+contractTest("desktop.hermetic", "createDesktopBeforeQuitHandler still quits when cleanup throws", async () => {
   let prevented = 0;
   let quitCalls = 0;
 

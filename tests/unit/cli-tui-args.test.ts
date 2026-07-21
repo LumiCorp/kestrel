@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { formatKestrelHelp, isHelpArgs, isVersionArgs, parseArgs } from "../../cli/tui.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseArgs accepts --scripted alongside existing flags", () => {
+
+contractTest("runtime.hermetic", "parseArgs accepts --scripted alongside existing flags", () => {
   const parsed = parseArgs([
     "--scripted",
     "--new-session",
@@ -17,28 +18,28 @@ test("parseArgs accepts --scripted alongside existing flags", () => {
   assert.equal(parsed.profileId, "reference");
 });
 
-test("parseArgs rejects the removed embedded-runner escape hatch", () => {
+contractTest("runtime.hermetic", "parseArgs rejects the removed embedded-runner escape hatch", () => {
   assert.throws(
     () => parseArgs(["--inprocess-runner"]),
     /Unknown argument '--inprocess-runner'/u,
   );
 });
 
-test("parseArgs defaults scripted mode to false when omitted", () => {
+contractTest("runtime.hermetic", "parseArgs defaults scripted mode to false when omitted", () => {
   const parsed = parseArgs(["--session", "default"]);
 
   assert.equal(parsed.scripted, undefined);
   assert.equal(parsed.sessionName, "default");
 });
 
-test("parseArgs accepts explicit fresh-session startup", () => {
+contractTest("runtime.hermetic", "parseArgs accepts explicit fresh-session startup", () => {
   const parsed = parseArgs(["--new-session", "fresh-session"]);
 
   assert.equal(parsed.freshSessionName, "fresh-session");
   assert.equal(parsed.sessionName, undefined);
 });
 
-test("top-level version and help args are recognized before interactive parsing", () => {
+contractTest("runtime.hermetic", "top-level version and help args are recognized before interactive parsing", () => {
   assert.equal(isVersionArgs(["--version"]), true);
   assert.equal(isVersionArgs(["version"]), true);
   assert.equal(isHelpArgs(["--help"]), true);

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { repoTraceTool } from "../../tools/repo/trace.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 interface RepoTraceMatch {
   seed: string;
@@ -30,7 +31,7 @@ interface RepoTraceResult {
   groups: RepoTraceGroup[];
 }
 
-test("repo.trace finds exact references across source, tests, templates, docs, and config", async () => {
+contractTest("runtime.hermetic", "repo.trace finds exact references across source, tests, templates, docs, and config", async () => {
   const workspace = await createTraceWorkspace();
   await writeFile(path.join(workspace, "src", "format.py"), "def format_error():\n    return 'STACK_LIMIT'\n", "utf8");
   await writeFile(path.join(workspace, "tests", "test_format.py"), "def test_error():\n    assert value == 'STACK_LIMIT'\n", "utf8");
@@ -60,7 +61,7 @@ test("repo.trace finds exact references across source, tests, templates, docs, a
   assert.deepEqual(sourceMatch?.contextBefore, ["def format_error():"]);
 });
 
-test("repo.trace honors path, includeGlobs, excludeGlobs, maxResults, and contextLines", async () => {
+contractTest("runtime.hermetic", "repo.trace honors path, includeGlobs, excludeGlobs, maxResults, and contextLines", async () => {
   const workspace = await createTraceWorkspace();
   await writeFile(path.join(workspace, "src", "a.py"), "before\nTOKEN one\nTOKEN two\nafter\n", "utf8");
   await writeFile(path.join(workspace, "src", "skip.py"), "TOKEN skipped\n", "utf8");
@@ -83,7 +84,7 @@ test("repo.trace honors path, includeGlobs, excludeGlobs, maxResults, and contex
   assert.deepEqual(result.groups[0]?.matches[0]?.contextAfter, ["TOKEN two"]);
 });
 
-test("repo.trace excludes heavy generated directories by default", async () => {
+contractTest("runtime.hermetic", "repo.trace excludes heavy generated directories by default", async () => {
   const workspace = await createTraceWorkspace();
   await writeFile(path.join(workspace, "src", "main.ts"), "const marker = 'VISIBLE_TOKEN';\n", "utf8");
   await mkdir(path.join(workspace, "node_modules", "pkg"), { recursive: true });
@@ -99,7 +100,7 @@ test("repo.trace excludes heavy generated directories by default", async () => {
   assert.deepEqual(result.groups.map((group) => group.path), ["src/main.ts"]);
 });
 
-test("repo.trace handles multiple seeds and reports truncation when capped", async () => {
+contractTest("runtime.hermetic", "repo.trace handles multiple seeds and reports truncation when capped", async () => {
   const workspace = await createTraceWorkspace();
   await writeFile(path.join(workspace, "src", "main.ts"), "ALPHA BETA\nALPHA\nBETA\n", "utf8");
 

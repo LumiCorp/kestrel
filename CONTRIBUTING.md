@@ -73,18 +73,30 @@ heuristic runtime behavior require escalation before implementation or release.
 Run the narrowest useful test while iterating, then widen according to the
 surface and risk.
 
-Repository baseline:
+Pull-request readiness:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
+pnpm validate
 ```
 
-Use `pnpm run ci:local -- --base origin/main` to execute the lanes selected by
-the same ownership planner as pull-request CI. Evaluation configuration changes
-also require `pnpm run ruhroh:validate`; high- or critical-risk changes require
-fresh `pnpm run test-proofs:mutations` evidence.
+GitHub Actions runs this exact command. The runner uses the same fixed DAG,
+initialization, environment, cleanup, execution, and structured reporting
+locally and remotely. It checks the public repository boundary, builds shared
+and root artifacts, typechecks workspaces, and runs hermetic groups sequentially
+with Node test concurrency capped at four. It records durations without using
+elapsed time as a blocking correctness gate; GitHub's 15-minute job timeout
+remains the operational hang watchdog.
+
+Process, PostgreSQL, Chromium, mutation, documentation, Desktop, and release
+validation remain explicit commands for their owning surfaces:
+
+```bash
+pnpm run validate:process
+pnpm run validate:postgres
+pnpm run validate:chromium
+pnpm run validate:audit
+pnpm run validate:release:macos
+```
 
 Docs work:
 
@@ -99,19 +111,27 @@ Desktop work:
 
 ```bash
 pnpm --filter @kestrel/desktop test
+pnpm --filter @kestrel/desktop test:integration
 pnpm --filter @kestrel/desktop build
 ```
 
 Kestrel One work:
 
 ```bash
-pnpm run web:typecheck
-pnpm run web:test
-pnpm run web:build
+pnpm --filter @kestrel/kestrel-one test:unit
+pnpm --filter @kestrel/kestrel-one typecheck:self
+pnpm --filter @kestrel/kestrel-one build:self
 ```
 
 Public package work should run the owning package tests and release check. See
 [Reliability](RELIABILITY.md) for the complete verification ladder.
+
+macOS CLI and Desktop package validation is release preparation rather than a
+pull-request gate:
+
+```bash
+pnpm run validate:release:macos
+```
 
 If governance fails at `check:desktop-resources` after a source change that is
 mirrored into Desktop, refresh the resources and rerun governance:

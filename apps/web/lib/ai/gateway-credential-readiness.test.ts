@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { encryptGatewayCredential } from "./gateway-credential-crypto";
 import {
   getGatewayCredentialAuthorityHealth,
   getGatewayCredentialStorageHealth,
 } from "./gateway-credential-readiness";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("gateway credential authority readiness requires broker and encryption configuration", () => {
+
+contractTest("web.hermetic", "gateway credential authority readiness requires broker and encryption configuration", () => {
   assert.deepEqual(getGatewayCredentialAuthorityHealth({ NODE_ENV: "test" }), {
     ok: false,
     code: "GATEWAY_CREDENTIAL_BROKER_NOT_CONFIGURED",
@@ -24,7 +25,7 @@ test("gateway credential authority readiness requires broker and encryption conf
   );
 });
 
-test("gateway credential storage readiness proves the encrypted-only cutover", () => {
+contractTest("web.hermetic", "gateway credential storage readiness proves the encrypted-only cutover", () => {
   const env: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
     KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "primary",

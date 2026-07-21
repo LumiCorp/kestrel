@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { buildDesktopSupportBundle } from "../src/supportBundle.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("buildDesktopSupportBundle includes native runtime, database, settings, and project run summaries", () => {
+
+contractTest("desktop.hermetic", "buildDesktopSupportBundle includes native runtime, database, settings, and project run summaries", () => {
   const bundle = buildDesktopSupportBundle({
     generatedAt: "2026-04-29T12:00:00.000Z",
     appInfo: { name: "Kestrel", version: "0.1.0", isPackaged: false },

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -8,8 +7,10 @@ import {
 } from "../../src/store/PostgresSessionStore.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("getSession normalizes database Date timestamps before protocol projection", async () => {
+
+contractTest("runtime.process", "getSession normalizes database Date timestamps before protocol projection", async () => {
   const updatedAt = new Date("2026-07-14T23:27:08.000Z");
   const sql = new ScriptedSqlExecutor([
     {
@@ -36,7 +37,7 @@ test("getSession normalizes database Date timestamps before protocol projection"
   sql.assertExhausted();
 });
 
-test("listRunSummaries projects bounded event aggregates in one query", async () => {
+contractTest("runtime.process", "listRunSummaries projects bounded event aggregates in one query", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /WITH selected_runs AS[\s\S]*SELECT COUNT\(\*\)::integer[\s\S]*metadata_json ->> 'threadId'/,
@@ -83,7 +84,7 @@ test("listRunSummaries projects bounded event aggregates in one query", async ()
   sql.assertExhausted();
 });
 
-test("commitStep wraps writes in transaction and commits", async () => {
+contractTest("runtime.process", "commitStep wraps writes in transaction and commits", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -151,7 +152,7 @@ test("commitStep wraps writes in transaction and commits", async () => {
   sql.assertExhausted();
 });
 
-test("updateSessionProjectSnapshot writes product state without updating runtime session version", async () => {
+contractTest("runtime.process", "updateSessionProjectSnapshot writes product state without updating runtime session version", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -223,7 +224,7 @@ test("updateSessionProjectSnapshot writes product state without updating runtime
   sql.assertExhausted();
 });
 
-test("getSessionProductState preserves stored project graph version", async () => {
+contractTest("runtime.process", "getSessionProductState preserves stored project graph version", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^SELECT session_id, version, project_snapshot_json, task_graph_json, workspace_checkpoint_state_json, created_at, updated_at\s+FROM session_product_state\s+WHERE session_id = \$1/,
@@ -257,7 +258,7 @@ test("getSessionProductState preserves stored project graph version", async () =
   sql.assertExhausted();
 });
 
-test("commitStep rolls back on optimistic concurrency conflict", async () => {
+contractTest("runtime.process", "commitStep rolls back on optimistic concurrency conflict", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -303,7 +304,7 @@ test("commitStep rolls back on optimistic concurrency conflict", async () => {
   sql.assertExhausted();
 });
 
-test("commitStep uses SqlExecutor transaction wrapper when available", async () => {
+contractTest("runtime.process", "commitStep uses SqlExecutor transaction wrapper when available", async () => {
   const queries: string[] = [];
   let transactionUsed = false;
 
@@ -369,7 +370,7 @@ test("commitStep uses SqlExecutor transaction wrapper when available", async () 
   assert.equal(queries.some((query) => query.startsWith("BEGIN")), false);
 });
 
-test("startRun reconciles a stale terminal lease before creating a new run", async () => {
+contractTest("runtime.process", "startRun reconciles a stale terminal lease before creating a new run", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -438,7 +439,7 @@ test("startRun reconciles a stale terminal lease before creating a new run", asy
   sql.assertExhausted();
 });
 
-test("startRun releases a missing active run row before creating a new run", async () => {
+contractTest("runtime.process", "startRun releases a missing active run row before creating a new run", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -497,7 +498,7 @@ test("startRun releases a missing active run row before creating a new run", asy
   sql.assertExhausted();
 });
 
-test("cancelActiveRun fails the persisted active run and releases the session lease", async () => {
+contractTest("runtime.process", "cancelActiveRun fails the persisted active run and releases the session lease", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     {
@@ -564,7 +565,7 @@ test("cancelActiveRun fails the persisted active run and releases the session le
   sql.assertExhausted();
 });
 
-test("commitStep sanitizes malformed unicode before JSONB-bound writes", async () => {
+contractTest("runtime.process", "commitStep sanitizes malformed unicode before JSONB-bound writes", async () => {
   const captured: Array<{ text: string; values: unknown[] | undefined }> = [];
   const executor: SqlExecutor = {
     async query<Row extends Record<string, unknown> = Record<string, unknown>>(
@@ -691,7 +692,7 @@ test("commitStep sanitizes malformed unicode before JSONB-bound writes", async (
   );
 });
 
-test("commitStep batches step-frame writes and persistence inserts", async () => {
+contractTest("runtime.process", "commitStep batches step-frame writes and persistence inserts", async () => {
   const queryCounts: Record<string, number> = {};
   const count = (key: string): void => {
     queryCounts[key] = (queryCounts[key] ?? 0) + 1;
@@ -885,7 +886,7 @@ test("commitStep batches step-frame writes and persistence inserts", async () =>
   assert.equal(result.persistedClaims.length, 2);
 });
 
-test("getArtifact reads a session-scoped artifact by id", async () => {
+contractTest("runtime.process", "getArtifact reads a session-scoped artifact by id", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /SELECT artifact_id, run_id, session_id, step_index, artifact_type, payload_json, created_at[\s\S]+WHERE artifact_id = \$1 AND session_id = \$2/,
@@ -922,7 +923,7 @@ test("getArtifact reads a session-scoped artifact by id", async () => {
   sql.assertExhausted();
 });
 
-test("listArtifacts applies session, run, step, and type filters", async () => {
+contractTest("runtime.process", "listArtifacts applies session, run, step, and type filters", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /SELECT artifact_id, run_id, session_id, step_index, artifact_type, payload_json, created_at[\s\S]+WHERE session_id = \$1 AND run_id = \$2 AND step_index = \$3 AND artifact_type = \$4[\s\S]+ORDER BY created_at DESC, artifact_id ASC[\s\S]+LIMIT \$5/,
@@ -965,7 +966,7 @@ test("listArtifacts applies session, run, step, and type filters", async () => {
   sql.assertExhausted();
 });
 
-test("claimNextRegionWorkItem claims deterministically with cursor wrap", async () => {
+contractTest("runtime.process", "claimNextRegionWorkItem claims deterministically with cursor wrap", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },
     { match: /SELECT id[\s\S]+region > \$2/, rows: [], rowCount: 0 },
@@ -999,7 +1000,7 @@ test("claimNextRegionWorkItem claims deterministically with cursor wrap", async 
   assert.equal(claimed?.stepAgent, "worker");
 });
 
-test("appendLegacyArchive persists snapshot row", async () => {
+contractTest("runtime.process", "appendLegacyArchive persists snapshot row", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^INSERT INTO legacy_session_archives/, rowCount: 1 },
   ]);
@@ -1017,7 +1018,7 @@ test("appendLegacyArchive persists snapshot row", async () => {
   assert.equal(insert !== undefined, true);
 });
 
-test("getReplayStream can reconstruct delegation lineage from kernel orchestration records", async () => {
+contractTest("runtime.process", "getReplayStream can reconstruct delegation lineage from kernel orchestration records", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^SELECT delegation_id, parent_thread_id, child_thread_id/,
@@ -1112,7 +1113,7 @@ test("getReplayStream can reconstruct delegation lineage from kernel orchestrati
   assert.equal(query?.text.includes("metadata_json ->> 'supervisionGroupId'"), true);
 });
 
-test("getReplayStream normalizes legacy GMT offset filter timestamps", async () => {
+contractTest("runtime.process", "getReplayStream normalizes legacy GMT offset filter timestamps", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^SELECT run_id, session_id, step_index, event_type, level, metadata_json, occurred_at\s+FROM run_events/,
@@ -1132,7 +1133,7 @@ test("getReplayStream normalizes legacy GMT offset filter timestamps", async () 
   assert.equal(query?.values?.includes("2026-03-16T21:32:10.000Z"), true);
 });
 
-test("upsertThread persists orchestration thread records through SessionStore", async () => {
+contractTest("runtime.process", "upsertThread persists orchestration thread records through SessionStore", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^INSERT INTO orchestration_threads/,
@@ -1155,7 +1156,7 @@ test("upsertThread persists orchestration thread records through SessionStore", 
   assert.equal(sql.queries[0]?.values?.[11], "2026-03-16T21:32:10.000Z");
 });
 
-test("upsertThread guards active run ids behind an existing same-session run", async () => {
+contractTest("runtime.process", "upsertThread guards active run ids behind an existing same-session run", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^INSERT INTO orchestration_threads/,
@@ -1185,7 +1186,7 @@ test("upsertThread guards active run ids behind an existing same-session run", a
   assert.equal(query?.values?.[5], "run-maybe-stale");
 });
 
-test("assembly change proposals persist provider/model/prompt requests as explicit columns", async () => {
+contractTest("runtime.process", "assembly change proposals persist provider/model/prompt requests as explicit columns", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^INSERT INTO orchestration_assembly_change_proposals/,
@@ -1218,7 +1219,7 @@ test("assembly change proposals persist provider/model/prompt requests as explic
   sql.assertExhausted();
 });
 
-test("assembly change proposals read explicit compatibility request columns with metadata fallback", async () => {
+contractTest("runtime.process", "assembly change proposals read explicit compatibility request columns with metadata fallback", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match:
@@ -1289,7 +1290,7 @@ test("assembly change proposals read explicit compatibility request columns with
   sql.assertExhausted();
 });
 
-test("enforced schema check requires orchestration kernel tables", async () => {
+contractTest("runtime.process", "enforced schema check requires orchestration kernel tables", async () => {
   const sql = new ScriptedSqlExecutor([
     {
       match: /^SELECT[\s\S]+has_orchestration_threads[\s\S]+has_orchestration_thread_compaction_events/,

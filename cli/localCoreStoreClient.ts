@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { LocalCoreClient } from "../src/localCore/client.js";
+import { hasLocalCoreDaemonStoreOwnership } from "./localCoreStoreOwnership.js";
 
 export interface LocalCoreStoreClientResolution {
   client: LocalCoreClient;
@@ -12,7 +13,11 @@ export function resolveLocalCoreStoreClient(
   baseDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): LocalCoreStoreClientResolution | undefined {
-  if (env.KESTREL_LOCAL_CORE_DAEMON === "1" || env.KESTREL_LOCAL_CORE_DIRECT === "1") {
+  if (
+    hasLocalCoreDaemonStoreOwnership()
+    || env.KESTREL_LOCAL_CORE_DAEMON === "1"
+    || env.KESTREL_LOCAL_CORE_DIRECT === "1"
+  ) {
     return ;
   }
   const socketPath = normalizeString(env.KESTREL_LOCAL_CORE_API_SOCKET);

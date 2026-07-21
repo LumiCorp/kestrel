@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { LocalCoreRunnerTransport } from "../../src/localCore/index.js";
 import { RemoteRunnerTransport } from "../../cli/client/RemoteRunnerTransport.js";
 import { createConfiguredRunnerTransport } from "../../cli/client/configuredTransport.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("configured CLI transport selects Local Core only with a complete local target", () => {
+
+contractTest("runtime.hermetic", "configured CLI transport selects Local Core only with a complete local target", () => {
   const transport = createConfiguredRunnerTransport({
     KESTREL_LOCAL_CORE_API_SOCKET: " /tmp/kestrel-core.sock ",
     KESTREL_LOCAL_CORE_API_TOKEN: " local-token ",
@@ -13,7 +14,7 @@ test("configured CLI transport selects Local Core only with a complete local tar
   assert.equal(transport instanceof LocalCoreRunnerTransport, true);
 });
 
-test("configured CLI transport preserves an explicitly configured remote target", () => {
+contractTest("runtime.hermetic", "configured CLI transport preserves an explicitly configured remote target", () => {
   const transport = createConfiguredRunnerTransport({
     KESTREL_RUNNER_SERVICE_URL: " https://runner.example.test/v2 ",
     KESTREL_RUNNER_SERVICE_TOKEN: " remote-token ",
@@ -24,7 +25,7 @@ test("configured CLI transport preserves an explicitly configured remote target"
   assert.equal(transport instanceof LocalCoreRunnerTransport, false);
 });
 
-test("configured CLI transport has no child or in-process runtime fallback", () => {
+contractTest("runtime.hermetic", "configured CLI transport has no child or in-process runtime fallback", () => {
   assert.throws(
     () => createConfiguredRunnerTransport({}),
     /Local Core execution transport is unavailable/u,

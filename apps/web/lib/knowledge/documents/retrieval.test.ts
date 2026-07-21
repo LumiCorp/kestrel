@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { PgDialect } from "drizzle-orm/pg-core";
 import {
   buildKnowledgeVectorSearchQuery,
   searchKnowledgeDocumentsWithDependencies,
 } from "./retrieval";
 import { groupKnowledgeRetrievalRows } from "./retrieval-grouping";
+import { contractTest } from "../../../../../tests/helpers/contract-test.js";
+
 
 const EMPLOYEE_HANDBOOK_PATTERN = /Employee Handbook/;
 
-test("groupKnowledgeRetrievalRows groups excerpts per document and filters low scores", () => {
+contractTest("web.hermetic", "groupKnowledgeRetrievalRows groups excerpts per document and filters low scores", () => {
   const results = groupKnowledgeRetrievalRows(
     [
       {
@@ -64,7 +65,7 @@ test("groupKnowledgeRetrievalRows groups excerpts per document and filters low s
   );
 });
 
-test("groupKnowledgeRetrievalRows applies document limits after ranking documents", () => {
+contractTest("web.hermetic", "groupKnowledgeRetrievalRows applies document limits after ranking documents", () => {
   const results = groupKnowledgeRetrievalRows(
     [
       {
@@ -101,7 +102,7 @@ test("groupKnowledgeRetrievalRows applies document limits after ranking document
   assert.equal(results[0]?.maxScore, 0.94);
 });
 
-test("vector search requires exact semantic embedding provenance", () => {
+contractTest("web.hermetic", "vector search requires exact semantic embedding provenance", () => {
   const dialect = new PgDialect();
   const query = dialect.sqlToQuery(
     buildKnowledgeVectorSearchQuery({
@@ -172,7 +173,7 @@ const lexicalFallbackResult = [
   },
 ];
 
-test("semantic retrieval returns paraphrased vector evidence before lexical fallback", async () => {
+contractTest("web.hermetic", "semantic retrieval returns paraphrased vector evidence before lexical fallback", async () => {
   let lexicalCalls = 0;
   const results = await searchKnowledgeDocumentsWithDependencies(
     {
@@ -208,7 +209,7 @@ test("semantic retrieval returns paraphrased vector evidence before lexical fall
   assert.match(results[0]?.excerpts[0]?.text ?? "", /severity assessment/);
 });
 
-test("query embedding failures fall back to lexical retrieval", async () => {
+contractTest("web.hermetic", "query embedding failures fall back to lexical retrieval", async () => {
   let capturedError: unknown;
   const results = await searchKnowledgeDocumentsWithDependencies(
     {
@@ -234,7 +235,7 @@ test("query embedding failures fall back to lexical retrieval", async () => {
   assert.equal(results[0]?.documentId, "legacy-doc");
 });
 
-test("no semantic results fall back to the full lexical corpus", async () => {
+contractTest("web.hermetic", "no semantic results fall back to the full lexical corpus", async () => {
   const results = await searchKnowledgeDocumentsWithDependencies(
     {
       organizationId: "org-1",

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST,
   PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES,
 } from "../route-ownership.manifest";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const testRoot = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(testRoot, "..");
@@ -43,7 +44,7 @@ function readRouteGuardSource(file: string) {
   return sharedRoute ? `${source}\n${readAppFile(`${sharedRoute}.ts`)}` : source;
 }
 
-test("Kestrel-One route ownership manifest classifies every page and API route", () => {
+contractTest("web.hermetic", "Kestrel-One route ownership manifest classifies every page and API route", () => {
   const actualFiles = listRouteFiles(appRoot);
   const manifestFiles = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
     (entry) => entry.file
@@ -53,7 +54,7 @@ test("Kestrel-One route ownership manifest classifies every page and API route",
   assert.equal(new Set(manifestFiles).size, manifestFiles.length);
 });
 
-test("Kestrel-One route ownership manifest assigns one owner per route", () => {
+contractTest("web.hermetic", "Kestrel-One route ownership manifest assigns one owner per route", () => {
   const routeOwners = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
     (entry) => `${entry.kind}:${entry.route}`
   );
@@ -61,7 +62,7 @@ test("Kestrel-One route ownership manifest assigns one owner per route", () => {
   assert.equal(new Set(routeOwners).size, routeOwners.length);
 });
 
-test("Kestrel-One primary navigation routes require an authenticated shell", () => {
+contractTest("web.hermetic", "Kestrel-One primary navigation routes require an authenticated shell", () => {
   assert.deepEqual(
     PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
     ["/", "/admin", "/apps", "/dashboard", "/knowledge"]
@@ -73,7 +74,7 @@ test("Kestrel-One primary navigation routes require an authenticated shell", () 
   }
 });
 
-test("Kestrel-One manifest keeps all required route classes visible", () => {
+contractTest("web.hermetic", "Kestrel-One manifest keeps all required route classes visible", () => {
   const classes = new Set(
     KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map((entry) => entry.access)
   );
@@ -89,7 +90,7 @@ test("Kestrel-One manifest keeps all required route classes visible", () => {
   ]);
 });
 
-test("Kestrel-One API route classes have matching app-boundary guards", () => {
+contractTest("web.hermetic", "Kestrel-One API route classes have matching app-boundary guards", () => {
   for (const entry of KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST) {
     if (entry.kind !== "api") {
       continue;
@@ -158,7 +159,7 @@ test("Kestrel-One API route classes have matching app-boundary guards", () => {
   }
 });
 
-test("Kestrel-One protected page classes are covered by guarded layouts", () => {
+contractTest("web.hermetic", "Kestrel-One protected page classes are covered by guarded layouts", () => {
   const workspaceLayout = readAppFile("app/(workspace)/layout.tsx");
   const dashboardLayout = readAppFile("app/dashboard/layout.tsx");
   const knowledgeLayout = readAppFile("app/knowledge/layout.tsx");

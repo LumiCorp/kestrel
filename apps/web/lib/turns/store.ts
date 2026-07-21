@@ -557,7 +557,7 @@ async function createDurableThreadTurnInTransaction(
 export async function createMobileThreadWithFirstTurn(
   input: DurableThreadTurnInput & { projectId: string | null }
 ) {
-  return knowledgeDb.transaction(async (tx) => {
+  return runMobileThreadTransaction(async (tx) => {
     const existing = await tx.query.threads.findFirst({
       where: eq(schema.threads.id, input.threadId),
     });
@@ -608,6 +608,12 @@ export async function createMobileThreadWithFirstTurn(
     }
     return createDurableThreadTurnInTransaction(tx, input);
   });
+}
+
+async function runMobileThreadTransaction<T>(
+  callback: (tx: TurnTransaction) => Promise<T>
+): Promise<T> {
+  return knowledgeDb.transaction(callback);
 }
 
 function branchMessageParts(value: unknown) {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   deriveActiveExecCommandSessions,
   deriveWorkspaceFreshness,
 } from "../../src/runtime/workspaceFreshness.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function entry(input: {
   id: string;
@@ -30,11 +31,11 @@ function entry(input: {
   };
 }
 
-test("workspace freshness is not applicable without an observed mutation", () => {
+contractTest("runtime.hermetic", "workspace freshness is not applicable without an observed mutation", () => {
   assert.deepEqual(deriveWorkspaceFreshness([]), { status: "not_applicable" });
 });
 
-test("workspace freshness stays stale for same-step evidence", () => {
+contractTest("runtime.hermetic", "workspace freshness stays stale for same-step evidence", () => {
   const ledger = [
     entry({
       id: "mutation",
@@ -56,7 +57,7 @@ test("workspace freshness stays stale for same-step evidence", () => {
   assert.equal(deriveWorkspaceFreshness(ledger).status, "stale");
 });
 
-test("later successful process evidence makes the workspace fresh", () => {
+contractTest("runtime.hermetic", "later successful process evidence makes the workspace fresh", () => {
   const ledger = [
     entry({
       id: "mutation",
@@ -78,7 +79,7 @@ test("later successful process evidence makes the workspace fresh", () => {
   assert.equal(deriveWorkspaceFreshness(ledger).status, "fresh");
 });
 
-test("the mutating process cannot validate its own resulting state", () => {
+contractTest("runtime.hermetic", "the mutating process cannot validate its own resulting state", () => {
   const ledger = [
     entry({
       id: "running-mutation",
@@ -104,7 +105,7 @@ test("the mutating process cannot validate its own resulting state", () => {
   assert.equal(deriveWorkspaceFreshness(ledger).status, "stale");
 });
 
-test("failed validation is unresolved until a later successful rerun supersedes it", () => {
+contractTest("runtime.hermetic", "failed validation is unresolved until a later successful rerun supersedes it", () => {
   const mutation = entry({
     id: "mutation",
     stepIndex: 1,
@@ -133,7 +134,7 @@ test("failed validation is unresolved until a later successful rerun supersedes 
   assert.equal(deriveWorkspaceFreshness([mutation, failed, passed]).status, "fresh");
 });
 
-test("a later mutation makes previously fresh evidence stale again", () => {
+contractTest("runtime.hermetic", "a later mutation makes previously fresh evidence stale again", () => {
   const ledger = [
     entry({
       id: "mutation-1",
@@ -163,7 +164,7 @@ test("a later mutation makes previously fresh evidence stale again", () => {
   assert.equal(deriveWorkspaceFreshness(ledger).status, "stale");
 });
 
-test("legacy mutation evidence without step identity cannot prove freshness", () => {
+contractTest("runtime.hermetic", "legacy mutation evidence without step identity cannot prove freshness", () => {
   const ledger = [
     entry({
       id: "legacy-mutation",
@@ -184,7 +185,7 @@ test("legacy mutation evidence without step identity cannot prove freshness", ()
   assert.equal(deriveWorkspaceFreshness(ledger).status, "stale");
 });
 
-test("active exec_command sessions use the latest process evidence", () => {
+contractTest("runtime.hermetic", "active exec_command sessions use the latest process evidence", () => {
   const running = entry({
     id: "running",
     stepIndex: 1,
@@ -219,7 +220,7 @@ test("active exec_command sessions use the latest process evidence", () => {
   assert.deepEqual(deriveActiveExecCommandSessions([running, stopped]), []);
 });
 
-test("active exec_command sessions resolve relative cwd from the evidence workspace root", () => {
+contractTest("runtime.hermetic", "active exec_command sessions resolve relative cwd from the evidence workspace root", () => {
   const running = entry({
     id: "running-relative-cwd",
     stepIndex: 1,

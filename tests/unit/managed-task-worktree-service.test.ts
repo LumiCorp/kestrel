@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -11,10 +10,12 @@ import {
   WorkspaceLifecycleService,
   isAutoProvisionedDevWorkspaceTool,
 } from "../../src/workspace/WorkspaceLifecycleService.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const execFileAsync = promisify(execFile);
 
-test("ManagedTaskWorktreeService creates a detached worktree from HEAD without importing dirty checkout state", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService creates a detached worktree from HEAD without importing dirty checkout state", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -53,7 +54,7 @@ test("ManagedTaskWorktreeService creates a detached worktree from HEAD without i
   assert.equal(reused.binding.worktreeRoot, provisioned.binding.worktreeRoot);
 });
 
-test("ManagedTaskWorktreeService provisions from an explicitly selected base branch", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService provisions from an explicitly selected base branch", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-base-ref-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -79,7 +80,7 @@ test("ManagedTaskWorktreeService provisions from an explicitly selected base bra
   assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "release\n");
 });
 
-test("ManagedTaskWorktreeService rejects a base ref that does not resolve to a commit", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService rejects a base ref that does not resolve to a commit", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-invalid-base-ref-"));
   const repo = path.join(root, "repo");
   await initRepo(repo);
@@ -100,7 +101,7 @@ test("ManagedTaskWorktreeService rejects a base ref that does not resolve to a c
   );
 });
 
-test("ManagedTaskWorktreeService copies only explicitly approved ignored files and runs typed setup steps", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService copies only explicitly approved ignored files and runs typed setup steps", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-setup-"));
   const repo = path.join(root, "repo");
   await initRepo(repo);
@@ -136,7 +137,7 @@ test("ManagedTaskWorktreeService copies only explicitly approved ignored files a
   assert.deepEqual(inspection.setup.completedStepIds, ["prepare"]);
 });
 
-test("ManagedTaskWorktreeService retries failed setup in place without rerunning completed steps or discarding work", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService retries failed setup in place without rerunning completed steps or discarding work", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-setup-retry-"));
   const repo = path.join(root, "repo");
   await initRepo(repo);
@@ -191,7 +192,7 @@ test("ManagedTaskWorktreeService retries failed setup in place without rerunning
   assert.deepEqual(inspection.setup.completedStepIds, ["first", "second"]);
 });
 
-test("ManagedTaskWorktreeService expands ~/ KESTREL_HOME for default worktree roots", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService expands ~/ KESTREL_HOME for default worktree roots", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-tilde-home-"));
   const repo = path.join(root, "repo");
   const fakeHome = path.join(root, "home");
@@ -229,7 +230,7 @@ test("ManagedTaskWorktreeService expands ~/ KESTREL_HOME for default worktree ro
   }
 });
 
-test("ManagedTaskWorktreeService provisions from the approved proposal instead of a later HEAD", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService provisions from the approved proposal instead of a later HEAD", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-approved-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -263,7 +264,7 @@ test("ManagedTaskWorktreeService provisions from the approved proposal instead o
   assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "clean\n");
 });
 
-test("ManagedTaskWorktreeService validates session fallback scope from sidecar metadata", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService validates session fallback scope from sidecar metadata", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-session-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -286,7 +287,7 @@ test("ManagedTaskWorktreeService validates session fallback scope from sidecar m
   assert.deepEqual(provisioned.binding.scope, { kind: "sessionId", value: "session-1" });
 });
 
-test("ManagedTaskWorktreeService reuses task-scoped worktrees across sessions", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService reuses task-scoped worktrees across sessions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-task-scope-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -318,7 +319,7 @@ test("ManagedTaskWorktreeService reuses task-scoped worktrees across sessions", 
   assert.equal(await readFile(path.join(second.binding.worktreeRoot, "asset.txt"), "utf8"), "created by first session\n");
 });
 
-test("ManagedTaskWorktreeService uses session scope when isolation is session", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService uses session scope when isolation is session", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-session-isolation-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -351,7 +352,7 @@ test("ManagedTaskWorktreeService uses session scope when isolation is session", 
   assert.equal(second.binding.isolation, "session");
 });
 
-test("ManagedTaskWorktreeService refuses to release active process-held worktree leases", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService refuses to release active process-held worktree leases", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-active-process-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -387,7 +388,7 @@ test("ManagedTaskWorktreeService refuses to release active process-held worktree
   assert.equal((metadata.currentLease as Record<string, unknown>).kind, "process");
 });
 
-test("ManagedTaskWorktreeService releases stale process-held worktree leases", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService releases stale process-held worktree leases", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-stale-process-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -423,7 +424,7 @@ test("ManagedTaskWorktreeService releases stale process-held worktree leases", a
   assert.deepEqual(metadata.activeProcesses, []);
 });
 
-test("ManagedTaskWorktreeService releases abandoned processless run leases when explicitly requested", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService releases abandoned processless run leases when explicitly requested", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-stale-run-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -452,7 +453,7 @@ test("ManagedTaskWorktreeService releases abandoned processless run leases when 
   assert.deepEqual(metadata.activeProcesses, []);
 });
 
-test("ManagedTaskWorktreeService refuses stale run release when a process lease is active", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService refuses stale run release when a process lease is active", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-stale-run-process-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -481,7 +482,7 @@ test("ManagedTaskWorktreeService refuses stale run release when a process lease 
   assert.equal((metadata.currentLease as Record<string, unknown>).kind, "process");
 });
 
-test("ManagedTaskWorktreeService reuses thread-scoped worktrees across sessions when no task scope exists", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService reuses thread-scoped worktrees across sessions when no task scope exists", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-thread-scope-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -510,7 +511,7 @@ test("ManagedTaskWorktreeService reuses thread-scoped worktrees across sessions 
   assert.deepEqual(second.binding.scope, { kind: "threadId", value: "thread-main" });
 });
 
-test("ManagedTaskWorktreeService keeps different task scopes in one thread isolated", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService keeps different task scopes in one thread isolated", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-task-isolation-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -539,7 +540,7 @@ test("ManagedTaskWorktreeService keeps different task scopes in one thread isola
   assert.deepEqual(second.binding.scope, { kind: "taskKey", value: "task-b" });
 });
 
-test("ManagedTaskWorktreeService blocks concurrent leases for the same scoped worktree", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService blocks concurrent leases for the same scoped worktree", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-lease-block-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -571,7 +572,7 @@ test("ManagedTaskWorktreeService blocks concurrent leases for the same scoped wo
   );
 });
 
-test("ManagedTaskWorktreeService keeps process leases until the process is released", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService keeps process leases until the process is released", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-process-lease-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -623,7 +624,7 @@ test("ManagedTaskWorktreeService keeps process leases until the process is relea
   assert.equal(reused.binding.worktreeRoot, provisioned.binding.worktreeRoot);
 });
 
-test("ManagedTaskWorktreeService reports a ready fan-in candidate from scoped worktree changes", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService reports a ready fan-in candidate from scoped worktree changes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-candidate-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -650,7 +651,7 @@ test("ManagedTaskWorktreeService reports a ready fan-in candidate from scoped wo
   assert.equal(candidate.applyBlockedReason, undefined);
 });
 
-test("ManagedTaskWorktreeService applies ready fan-in candidates to the source workspace", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService applies ready fan-in candidates to the source workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-apply-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -687,7 +688,7 @@ test("ManagedTaskWorktreeService applies ready fan-in candidates to the source w
   await assert.rejects(readFile(path.join(repo, "remove.txt"), "utf8"), /ENOENT/u);
 });
 
-test("ManagedTaskWorktreeService rejects fan-in apply when the candidate changed", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService rejects fan-in apply when the candidate changed", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-fingerprint-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -722,7 +723,7 @@ test("ManagedTaskWorktreeService rejects fan-in apply when the candidate changed
   assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "clean\n");
 });
 
-test("ManagedTaskWorktreeService rejects fan-in apply while the worktree is leased", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService rejects fan-in apply while the worktree is leased", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-active-lease-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -753,7 +754,7 @@ test("ManagedTaskWorktreeService rejects fan-in apply while the worktree is leas
   );
 });
 
-test("ManagedTaskWorktreeService replaces source symlink leaves without following them", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService replaces source symlink leaves without following them", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-source-symlink-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -788,7 +789,7 @@ test("ManagedTaskWorktreeService replaces source symlink leaves without followin
   assert.equal((await lstat(path.join(repo, "linked.txt"))).isSymbolicLink(), false);
 });
 
-test("ManagedTaskWorktreeService preserves changed paths with leading spaces", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService preserves changed paths with leading spaces", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-spaced-path-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -810,7 +811,7 @@ test("ManagedTaskWorktreeService preserves changed paths with leading spaces", a
   assert.equal(candidate.applyBlockedReason, undefined);
 });
 
-test("ManagedTaskWorktreeService rejects fan-in apply when a changed source path diverged", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService rejects fan-in apply when a changed source path diverged", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-head-moved-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -846,7 +847,7 @@ test("ManagedTaskWorktreeService rejects fan-in apply when a changed source path
   assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "changed in source\n");
 });
 
-test("ManagedTaskWorktreeService allows fan-in when only unrelated source paths are dirty", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService allows fan-in when only unrelated source paths are dirty", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-fanin-unrelated-dirty-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -877,7 +878,7 @@ test("ManagedTaskWorktreeService allows fan-in when only unrelated source paths 
   assert.equal(await readFile(path.join(repo, "source.txt"), "utf8"), "unrelated dirty source file\n");
 });
 
-test("ManagedTaskWorktreeService blocks invalid deterministic target paths", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService blocks invalid deterministic target paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-collision-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -909,7 +910,7 @@ test("ManagedTaskWorktreeService blocks invalid deterministic target paths", asy
   );
 });
 
-test("ManagedTaskWorktreeService reclaims orphaned scoped worktrees when git admin state is missing", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService reclaims orphaned scoped worktrees when git admin state is missing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-orphan-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -943,7 +944,7 @@ test("ManagedTaskWorktreeService reclaims orphaned scoped worktrees when git adm
   assert.equal((metadata.currentLease as Record<string, unknown>).sessionId, "session-2");
 });
 
-test("ManagedTaskWorktreeService blocks orphan reclaim while the previous run lease owner is still active", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService blocks orphan reclaim while the previous run lease owner is still active", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-orphan-active-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -982,7 +983,7 @@ test("ManagedTaskWorktreeService blocks orphan reclaim while the previous run le
   );
 });
 
-test("ManagedTaskWorktreeService initializes missing Git repositories before preparing a worktree", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService initializes missing Git repositories before preparing a worktree", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-nongit-"));
   await writeFile(path.join(root, "app.txt"), "new workspace\n", "utf8");
   const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
@@ -999,7 +1000,7 @@ test("ManagedTaskWorktreeService initializes missing Git repositories before pre
   assert.equal(await git(provisioned.binding.worktreeRoot, ["rev-parse", "HEAD"]), provisioned.binding.baseHead);
 });
 
-test("ManagedTaskWorktreeService creates a baseline commit for initialized repositories without HEAD", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService creates a baseline commit for initialized repositories without HEAD", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-unborn-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1029,7 +1030,7 @@ test("ManagedTaskWorktreeService creates a baseline commit for initialized repos
   assert.equal(await git(provisioned.binding.worktreeRoot, ["rev-parse", "HEAD"]), proposal.baseHead);
 });
 
-test("ManagedTaskWorktreeService reports live lifecycle state and storage", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService reports live lifecycle state and storage", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-inspect-"));
   const repo = path.join(root, "repo");
   const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
@@ -1069,7 +1070,7 @@ test("ManagedTaskWorktreeService reports live lifecycle state and storage", asyn
   assert.deepEqual(disposable.retention.reasons, ["clean_and_no_commits"]);
 });
 
-test("ManagedTaskWorktreeService requires released leases and a snapshot before cleanup", async () => {
+contractTest("runtime.process", "ManagedTaskWorktreeService requires released leases and a snapshot before cleanup", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-cleanup-"));
   const repo = path.join(root, "repo");
   const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
@@ -1110,7 +1111,7 @@ test("ManagedTaskWorktreeService requires released leases and a snapshot before 
   assert.equal((await git(repo, ["worktree", "list", "--porcelain"])).includes(provisioned.binding.worktreeRoot), false);
 });
 
-test("WorkspaceLifecycleService ignores non-auto-provisioned tools", async () => {
+contractTest("runtime.process", "WorkspaceLifecycleService ignores non-auto-provisioned tools", async () => {
   const service = new WorkspaceLifecycleService(new ManagedTaskWorktreeService({ homeDir: "/tmp/kestrel-unused" }));
 
   const result = await service.provisionAutoDevTool({
@@ -1123,13 +1124,13 @@ test("WorkspaceLifecycleService ignores non-auto-provisioned tools", async () =>
   assert.equal(result, undefined);
 });
 
-test("WorkspaceLifecycleService classifies the exec_command shell alias for auto-provisioning", () => {
+contractTest("runtime.process", "WorkspaceLifecycleService classifies the exec_command shell alias for auto-provisioning", () => {
   assert.equal(isAutoProvisionedDevWorkspaceTool("exec_command"), true);
   assert.equal(isAutoProvisionedDevWorkspaceTool("dev.shell.run"), true);
   assert.equal(isAutoProvisionedDevWorkspaceTool("dev.process.start"), true);
 });
 
-test("WorkspaceLifecycleService returns normalized auto dev-tool binding context", async () => {
+contractTest("runtime.process", "WorkspaceLifecycleService returns normalized auto dev-tool binding context", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-workspace-lifecycle-auto-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1152,7 +1153,7 @@ test("WorkspaceLifecycleService returns normalized auto dev-tool binding context
   assert.equal(result?.sessionAgentPatch.exec.pendingApproval, undefined);
 });
 
-test("WorkspaceLifecycleService returns normalized approved binding context", async () => {
+contractTest("runtime.process", "WorkspaceLifecycleService returns normalized approved binding context", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-workspace-lifecycle-approved-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { Guardrails } from "../../src/engine/Guardrails.js";
 import { RuntimeIO } from "../../src/engine/RuntimeIO.js";
@@ -8,6 +7,8 @@ import type { RunEventType } from "../../src/kestrel/contracts/base.js";
 import type { ProgressUpdateV1 } from "../../src/kestrel/contracts/events.js";
 import type { ModelRequest, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -22,7 +23,7 @@ const guardrailConfig = {
   toolCallRetryCount: 0,
 };
 
-test("RuntimeIO.model does not emit model request events when already aborted", async () => {
+contractTest("runtime.hermetic", "RuntimeIO.model does not emit model request events when already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
   const emitted: string[] = [];
@@ -45,7 +46,7 @@ test("RuntimeIO.model does not emit model request events when already aborted", 
   assert.deepEqual(emitted, []);
 });
 
-test("RuntimeIO.model does not emit completion when aborted after provider return", async () => {
+contractTest("runtime.hermetic", "RuntimeIO.model does not emit completion when aborted after provider return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
   const io = createRuntimeIO({
@@ -68,7 +69,7 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
 });
 
-test("RuntimeIO.tool does not emit tool request events when already aborted", async () => {
+contractTest("runtime.hermetic", "RuntimeIO.tool does not emit tool request events when already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
   const emitted: string[] = [];
@@ -91,7 +92,7 @@ test("RuntimeIO.tool does not emit tool request events when already aborted", as
   assert.deepEqual(emitted, []);
 });
 
-test("RuntimeIO.tool does not emit completion when aborted after tool return", async () => {
+contractTest("runtime.hermetic", "RuntimeIO.tool does not emit completion when aborted after tool return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
   const io = createRuntimeIO({
@@ -113,7 +114,7 @@ test("RuntimeIO.tool does not emit completion when aborted after tool return", a
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
 });
 
-test("RuntimeIO never retries exec_command after dispatch", async () => {
+contractTest("runtime.hermetic", "RuntimeIO never retries exec_command after dispatch", async () => {
   const emitted: string[] = [];
   let calls = 0;
   const io = createRuntimeIO({

@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   applyFollowUpSourceGrounding,
   collectPriorSources,
 } from "../../agents/reference-react/src/followUpSourceGrounding.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("collectPriorSources extracts latest-first deduped prior internet sources", () => {
+
+contractTest("runtime.hermetic", "collectPriorSources extracts latest-first deduped prior internet sources", () => {
   const priorSources = collectPriorSources({
     reactState: {
       lastActionResult: {
@@ -54,7 +55,7 @@ test("collectPriorSources extracts latest-first deduped prior internet sources",
   assert.equal(priorSources[1]?.url, "https://example.com/transit");
 });
 
-test("collectPriorSources keeps candidate ids stable when descriptive fields change", () => {
+contractTest("runtime.hermetic", "collectPriorSources keeps candidate ids stable when descriptive fields change", () => {
   const first = collectPriorSources({
     reactState: {
       postToolVerification: {
@@ -103,7 +104,7 @@ test("collectPriorSources keeps candidate ids stable when descriptive fields cha
   assert.equal(second[0]?.summary, "Updated retained summary.");
 });
 
-test("applyFollowUpSourceGrounding applies explicit prior-source selection by candidate id", () => {
+contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit prior-source selection by candidate id", () => {
   const priorSourceId = "source-crosby";
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about the Corsby deal falling through",
@@ -166,7 +167,7 @@ test("applyFollowUpSourceGrounding applies explicit prior-source selection by ca
   assert.equal(result.executionIntent?.inputHints?.urlSource, "prior_result_grounding");
 });
 
-test("applyFollowUpSourceGrounding applies explicit search pivot", () => {
+contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit search pivot", () => {
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about that one",
     toolIntent: {
@@ -236,7 +237,7 @@ test("applyFollowUpSourceGrounding applies explicit search pivot", () => {
   assert.equal(result.executionIntent?.inputHints?.query, "Cincinnati budget debate intensifies");
 });
 
-test("applyFollowUpSourceGrounding fails closed when a fetch follow-up omits explicit selection", () => {
+contractTest("runtime.hermetic", "applyFollowUpSourceGrounding fails closed when a fetch follow-up omits explicit selection", () => {
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about that article",
     toolIntent: {
@@ -282,7 +283,7 @@ test("applyFollowUpSourceGrounding fails closed when a fetch follow-up omits exp
   assert.equal(result.executionIntent?.inputHints?.url, undefined);
 });
 
-test("collectPriorSources keeps retained source memory unbounded and latest-first", () => {
+contractTest("runtime.hermetic", "collectPriorSources keeps retained source memory unbounded and latest-first", () => {
   const priorSources = collectPriorSources({
     reactState: {
       goal: "Research the top current U.S. business and technology stories.",

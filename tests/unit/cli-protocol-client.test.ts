@@ -1,7 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ProtocolClient, type ProtocolTransport } from "../../cli/client/ProtocolClient.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 interface ProtocolClientRunnerErrorForTest extends Error {
   code?: string | undefined;
@@ -302,7 +303,7 @@ class RejectingCaptureTransport implements ProtocolTransport {
   async stop(): Promise<void> {}
 }
 
-test("ProtocolClient resolves runner.ping command", async () => {
+contractTest("runtime.hermetic", "ProtocolClient resolves runner.ping command", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
 
@@ -315,7 +316,7 @@ test("ProtocolClient resolves runner.ping command", async () => {
   await client.close();
 });
 
-test("ProtocolClient resolves run.start command with completed response", async () => {
+contractTest("runtime.hermetic", "ProtocolClient resolves run.start command with completed response", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
   const seenEventTypes: string[] = [];
@@ -348,7 +349,7 @@ test("ProtocolClient resolves run.start command with completed response", async 
   await client.close();
 });
 
-test("ProtocolClient merges caller metadata over defaults without dropping other defaults", async () => {
+contractTest("runtime.hermetic", "ProtocolClient merges caller metadata over defaults without dropping other defaults", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport, {
     defaultMetadata: {
@@ -417,7 +418,7 @@ test("ProtocolClient merges caller metadata over defaults without dropping other
   await client.close();
 });
 
-test("ProtocolClient applies default execution durability to job.run", async () => {
+contractTest("runtime.hermetic", "ProtocolClient applies default execution durability to job.run", async () => {
   const transport = new RejectingCaptureTransport();
   const client = new ProtocolClient(transport, {
     defaultMetadata: {
@@ -465,7 +466,7 @@ test("ProtocolClient applies default execution durability to job.run", async () 
   await client.close();
 });
 
-test("ProtocolClient canonicalizes v2 terminal results before resolving or publishing them", async () => {
+contractTest("runtime.hermetic", "ProtocolClient canonicalizes v2 terminal results before resolving or publishing them", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
   const seenAssistantText: Array<string | null> = [];
@@ -519,7 +520,7 @@ test("ProtocolClient canonicalizes v2 terminal results before resolving or publi
   await client.close();
 });
 
-test("ProtocolClient rejects malformed v2 terminal results as protocol errors", async () => {
+contractTest("runtime.hermetic", "ProtocolClient rejects malformed v2 terminal results as protocol errors", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
   const seenEventTypes: string[] = [];
@@ -567,7 +568,7 @@ test("ProtocolClient rejects malformed v2 terminal results as protocol errors", 
   await client.close();
 });
 
-test("ProtocolClient rejects unknown v2 events instead of publishing them", async () => {
+contractTest("runtime.hermetic", "ProtocolClient rejects unknown v2 events instead of publishing them", async () => {
   const transport = new ControlledExitTransport();
   transport.respondToPing = false;
   const client = new ProtocolClient(transport);
@@ -602,7 +603,7 @@ test("ProtocolClient rejects unknown v2 events instead of publishing them", asyn
   await client.close();
 });
 
-test("ProtocolClient rejects malformed nonterminal v2 event payloads", async () => {
+contractTest("runtime.hermetic", "ProtocolClient rejects malformed nonterminal v2 event payloads", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -643,7 +644,7 @@ test("ProtocolClient rejects malformed nonterminal v2 event payloads", async () 
   await client.close();
 });
 
-test("ProtocolClient rejects a terminal event for the wrong command contract", async () => {
+contractTest("runtime.hermetic", "ProtocolClient rejects a terminal event for the wrong command contract", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
   const pending = client.sendCommandWithId(
@@ -672,7 +673,7 @@ test("ProtocolClient rejects a terminal event for the wrong command contract", a
   await client.close();
 });
 
-test("ProtocolClient resolves mcp.status command", async () => {
+contractTest("runtime.hermetic", "ProtocolClient resolves mcp.status command", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
 
@@ -693,7 +694,7 @@ test("ProtocolClient resolves mcp.status command", async () => {
   await client.close();
 });
 
-test("ProtocolClient resolves session.describe command", async () => {
+contractTest("runtime.hermetic", "ProtocolClient resolves session.describe command", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
 
@@ -708,7 +709,7 @@ test("ProtocolClient resolves session.describe command", async () => {
   await client.close();
 });
 
-test("ProtocolClient resolves operator command terminal events", async () => {
+contractTest("runtime.hermetic", "ProtocolClient resolves operator command terminal events", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);
 
@@ -741,7 +742,7 @@ test("ProtocolClient resolves operator command terminal events", async () => {
   await client.close();
 });
 
-test("ProtocolClient restarts transport after runner exit", async () => {
+contractTest("runtime.hermetic", "ProtocolClient restarts transport after runner exit", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -762,7 +763,7 @@ test("ProtocolClient restarts transport after runner exit", async () => {
   await client.close();
 });
 
-test("ProtocolClient includes recent stderr detail in runner exit failures", async () => {
+contractTest("runtime.hermetic", "ProtocolClient includes recent stderr detail in runner exit failures", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -778,7 +779,7 @@ test("ProtocolClient includes recent stderr detail in runner exit failures", asy
   );
 });
 
-test("ProtocolClient preserves full runner stderr diagnostics on exit errors", async () => {
+contractTest("runtime.hermetic", "ProtocolClient preserves full runner stderr diagnostics on exit errors", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -800,7 +801,7 @@ test("ProtocolClient preserves full runner stderr diagnostics on exit errors", a
   });
 });
 
-test("ProtocolClient keeps the root module-resolution line from longer Node stacks", async () => {
+contractTest("runtime.hermetic", "ProtocolClient keeps the root module-resolution line from longer Node stacks", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -832,7 +833,7 @@ test("ProtocolClient keeps the root module-resolution line from longer Node stac
   });
 });
 
-test("ProtocolClient prefers top-level runner.error detail when the runner exits", async () => {
+contractTest("runtime.hermetic", "ProtocolClient prefers top-level runner.error detail when the runner exits", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
 
@@ -849,7 +850,7 @@ test("ProtocolClient prefers top-level runner.error detail when the runner exits
   );
 });
 
-test("ProtocolClient preserves runner.error details on terminal command failures", async () => {
+contractTest("runtime.hermetic", "ProtocolClient preserves runner.error details on terminal command failures", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
   transport.respondToPing = false;
@@ -879,7 +880,7 @@ test("ProtocolClient preserves runner.error details on terminal command failures
   await client.close();
 });
 
-test("ProtocolClient close releases event listeners", async () => {
+contractTest("runtime.hermetic", "ProtocolClient close releases event listeners", async () => {
   const transport = new ControlledExitTransport();
   const client = new ProtocolClient(transport);
   const seen: string[] = [];

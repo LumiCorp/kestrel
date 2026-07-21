@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { generateKeyPairSync } from "node:crypto";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
@@ -11,6 +10,8 @@ import {
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
 } from "../src/index.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const keys = generateKeyPairSync("ed25519");
 const privateKey = keys.privateKey
@@ -37,7 +38,7 @@ const ticket: EnvironmentExecutionTicket = {
   nonce: "nonce-1",
 };
 
-test("execution tickets bind the complete routing identity", () => {
+contractTest("packages.hermetic", "execution tickets bind the complete routing identity", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });
   assert.deepEqual(
     verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
@@ -45,7 +46,7 @@ test("execution tickets bind the complete routing identity", () => {
   );
 });
 
-test("execution tickets reject tampering, expiration, and excessive lifetime", () => {
+contractTest("packages.hermetic", "execution tickets reject tampering, expiration, and excessive lifetime", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });
   assert.throws(() =>
     verifyEnvironmentExecutionTicket({
@@ -85,7 +86,7 @@ const toolCredential: EnvironmentToolCredentialTicket = {
   nonce: "tool-nonce-1",
 };
 
-test("tool credentials bind one provider resource capability and operation", () => {
+contractTest("packages.hermetic", "tool credentials bind one provider resource capability and operation", () => {
   const token = signEnvironmentToolCredential({
     ticket: toolCredential,
     privateKey,
@@ -99,7 +100,7 @@ test("tool credentials bind one provider resource capability and operation", () 
   );
 });
 
-test("tool credentials reject tampering expiration and lifetimes over one minute", () => {
+contractTest("packages.hermetic", "tool credentials reject tampering expiration and lifetimes over one minute", () => {
   const token = signEnvironmentToolCredential({
     ticket: toolCredential,
     privateKey,

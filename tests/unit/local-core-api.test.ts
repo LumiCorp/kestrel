@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
+import { describe } from "node:test";
 import { existsSync } from "node:fs";
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   LOCAL_CORE_DESKTOP_PROFILE_ID,
@@ -42,8 +42,11 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   RUNNER_COMMAND_CONTRACT_VERSION,
 } from "../../packages/protocol/src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Local Core API serves health/status with bearer token auth", async () => {
+describe("Local Core API process contracts", { concurrency: 2 }, () => {
+
+contractTest("runtime.process", "Local Core API serves health/status with bearer token auth", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -190,7 +193,7 @@ test("Local Core API serves health/status with bearer token auth", async () => {
   }
 });
 
-test("Local Core API makes existing state and Core authority roots private before serving", async () => {
+contractTest("runtime.process", "Local Core API makes existing state and Core authority roots private before serving", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-private-"));
   const paths = resolveLocalCorePaths(home);
   await chmod(home, 0o755);
@@ -214,7 +217,7 @@ test("Local Core API makes existing state and Core authority roots private befor
   }
 });
 
-test("Local Core API refuses a second execution authority without unlinking its socket", async () => {
+contractTest("local-core.authority-lock", "Local Core API refuses a second execution authority without unlinking its socket", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcauth-"));
   const first = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -243,7 +246,7 @@ test("Local Core API refuses a second execution authority without unlinking its 
   }
 });
 
-test("Local Core API canonicalizes symlink aliases before reserving execution authority", async () => {
+contractTest("runtime.process", "Local Core API canonicalizes symlink aliases before reserving execution authority", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcauth-real-"));
   const alias = `${home}-alias`;
   await symlink(home, alias, "dir");
@@ -275,7 +278,7 @@ test("Local Core API canonicalizes symlink aliases before reserving execution au
   }
 });
 
-test("Local Core API does not adopt another authority instance in the same process", async () => {
+contractTest("runtime.process", "Local Core API does not adopt another authority instance in the same process", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcinstance-"));
   const paths = resolveLocalCorePaths(home);
   try {
@@ -310,7 +313,7 @@ test("Local Core API does not adopt another authority instance in the same proce
   }
 });
 
-test("Local Core API does not steal or unlink another process authority", async () => {
+contractTest("local-core.authority-lock", "Local Core API does not steal or unlink another process authority", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcforeign-"));
   const paths = resolveLocalCorePaths(home);
   const foreignPid = process.pid + 100_000;
@@ -325,23 +328,32 @@ test("Local Core API does not steal or unlink another process authority", async 
     });
     await writeFile(paths.apiSocketPath, "foreign-authority-sentinel\n", "utf8");
 
-    await assert.rejects(
-      () => startLocalCoreApiServer({
+    let unexpectedServer: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
+    let rejection: unknown;
+    try {
+      unexpectedServer = await startLocalCoreApiServer({
         env: { KESTREL_CORE_HOME: home },
         platform: "darwin",
         coreVersion: "0.6.0",
         isPidAlive: () => true,
         idleTimeoutMs: 0,
-      }),
-      /could not acquire sole execution authority/u,
-    );
-    assert.equal(await readFile(paths.apiSocketPath, "utf8"), "foreign-authority-sentinel\n");
+      });
+    } catch (error) {
+      rejection = error;
+    }
+    try {
+      assert.equal(unexpectedServer, undefined);
+      assert.match(String(rejection), /could not acquire sole execution authority/u);
+      assert.equal(await readFile(paths.apiSocketPath, "utf8"), "foreign-authority-sentinel\n");
+    } finally {
+      await unexpectedServer?.close();
+    }
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test("Local Core keeps control authority reachable and resets a broken startup store", async () => {
+contractTest("runtime.process", "Local Core keeps control authority reachable and resets a broken startup store", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcfail-"));
   const paths = resolveLocalCorePaths(home);
   let server: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
@@ -428,7 +440,7 @@ test("Local Core keeps control authority reachable and resets a broken startup s
   }
 });
 
-test("Local Core repairs malformed runtime configuration while execution is blocked", async () => {
+contractTest("runtime.process", "Local Core repairs malformed runtime configuration while execution is blocked", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcbadcfg-"));
   const paths = resolveLocalCorePaths(home);
   const configurationPath = path.join(
@@ -530,7 +542,7 @@ test("Local Core repairs malformed runtime configuration while execution is bloc
   }
 });
 
-test("Local Core runtime-store reset requires explicit confirmation and exposes typed errors", async () => {
+contractTest("runtime.process", "Local Core runtime-store reset requires explicit confirmation and exposes typed errors", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-contract-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -567,7 +579,7 @@ test("Local Core runtime-store reset requires explicit confirmation and exposes 
   }
 });
 
-test("Local Core runtime-store reset refuses external database authority without mutation", async () => {
+contractTest("runtime.process", "Local Core runtime-store reset refuses external database authority without mutation", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-external-"));
   const paths = resolveLocalCorePaths(home);
   const server = await startLocalCoreApiServer({
@@ -599,7 +611,7 @@ test("Local Core runtime-store reset refuses external database authority without
   }
 });
 
-test("Local Core runtime-store reset rejects an active execution before archiving", async () => {
+contractTest("runtime.process", "Local Core runtime-store reset rejects an active execution before archiving", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-active-"));
   const paths = resolveLocalCorePaths(home);
   let releaseRun: (() => void) | undefined;
@@ -686,7 +698,7 @@ test("Local Core runtime-store reset rejects an active execution before archivin
   }
 });
 
-test("Local Core restart and reset reject an in-flight runtime-store read", async () => {
+contractTest("runtime.process", "Local Core restart and reset reject an in-flight runtime-store read", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-read-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -742,7 +754,7 @@ test("Local Core restart and reset reject an in-flight runtime-store read", asyn
   }
 });
 
-test("Local Core maintenance rejects runtime admission and configuration mutation races", async () => {
+contractTest("runtime.process", "Local Core maintenance rejects runtime admission and configuration mutation races", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-admission-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -834,7 +846,7 @@ test("Local Core maintenance rejects runtime admission and configuration mutatio
   }
 });
 
-test("Local Core serializes reset against every other maintenance request", async () => {
+contractTest("runtime.process", "Local Core serializes reset against every other maintenance request", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcreset-maintenance-"));
   let releaseRuntimeClose: (() => void) | undefined;
   let markRuntimeCloseEntered: (() => void) | undefined;
@@ -925,7 +937,7 @@ test("Local Core serializes reset against every other maintenance request", asyn
   }
 });
 
-test("Local Core captures injected credentials once per execution bundle", async () => {
+contractTest("runtime.process", "Local Core captures injected credentials once per execution bundle", async () => {
   const home = await mkdtemp(path.join("/tmp", "kccreds-"));
   const memory = new MemoryLocalCoreCredentialStore();
   const reads: LocalCoreCredentialId[] = [];
@@ -971,7 +983,7 @@ test("Local Core captures injected credentials once per execution bundle", async
   }
 });
 
-test("Local Core provider readiness follows the authoritative credential store", async () => {
+contractTest("runtime.process", "Local Core provider readiness follows the authoritative credential store", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcready-"));
   const credentialStore = new MemoryLocalCoreCredentialStore();
   await credentialStore.set("provider.openrouter.default", "stored-openrouter-key");
@@ -1029,7 +1041,7 @@ test("Local Core provider readiness follows the authoritative credential store",
   }
 });
 
-test("Local Core credential mutations are write-only and return sanitized status", async () => {
+contractTest("runtime.process", "Local Core credential mutations are write-only and return sanitized status", async () => {
   const home = await mkdtemp(path.join("/tmp", "kccrud-"));
   const credentialStore = new MemoryLocalCoreCredentialStore();
   const server = await startLocalCoreApiServer({
@@ -1071,7 +1083,7 @@ test("Local Core credential mutations are write-only and return sanitized status
   }
 });
 
-test("Local Core migrates a legacy plaintext external database URL into credential storage", async () => {
+contractTest("runtime.process", "Local Core migrates a legacy plaintext external database URL into credential storage", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "klc-db-migrate-"));
   const settingsDirectory = resolveLocalCorePaths(home).settingsPath;
   await mkdir(settingsDirectory, { recursive: true });
@@ -1095,7 +1107,7 @@ test("Local Core migrates a legacy plaintext external database URL into credenti
   }
 });
 
-test("Local Core rejects an ambiguous credential store and custom runtime factory", async () => {
+contractTest("runtime.process", "Local Core rejects an ambiguous credential store and custom runtime factory", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcambiguous-"));
   try {
     await assert.rejects(
@@ -1116,7 +1128,7 @@ test("Local Core rejects an ambiguous credential store and custom runtime factor
   }
 });
 
-test("Local Core API reports execution unavailable after a failed store restart", async () => {
+contractTest("runtime.process", "Local Core API reports execution unavailable after a failed store restart", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcrestart-fail-"));
   const paths = resolveLocalCorePaths(home);
   const server = await startLocalCoreApiServer({
@@ -1154,7 +1166,7 @@ test("Local Core API reports execution unavailable after a failed store restart"
   }
 });
 
-test("Local Core maintenance ends subscriptions owned by each retired execution handler", async () => {
+contractTest("runtime.process", "Local Core maintenance ends subscriptions owned by each retired execution handler", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcrst-stream-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1230,7 +1242,7 @@ test("Local Core maintenance ends subscriptions owned by each retired execution 
   }
 });
 
-test("Local Core replays durable execution events to the SDK after restart", async () => {
+contractTest("runtime.process", "Local Core replays durable execution events to the SDK after restart", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-execution-"));
   const start = async () => await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1342,7 +1354,7 @@ test("Local Core replays durable execution events to the SDK after restart", asy
   }
 });
 
-test("CLI disconnect leaves a durable Core run available to another client", async () => {
+contractTest("runtime.process", "CLI disconnect leaves a durable Core run available to another client", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-cli-disconnect-"));
   let releaseRun: (() => void) | undefined;
   const runCanFinish = new Promise<void>((resolve) => {
@@ -1464,7 +1476,7 @@ test("CLI disconnect leaves a durable Core run available to another client", asy
   }
 });
 
-test("Local Core API exposes shared workspace and legacy-state endpoints", async () => {
+contractTest("runtime.process", "Local Core API exposes shared workspace and legacy-state endpoints", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-workspaces-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-workspace-"));
   const server = await startLocalCoreApiServer({
@@ -1501,7 +1513,7 @@ test("Local Core API exposes shared workspace and legacy-state endpoints", async
   }
 });
 
-test("Local Core API owns default shell stores through client-backed adapters", async () => {
+contractTest("runtime.process", "Local Core API owns default shell stores through client-backed adapters", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-stores-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1619,7 +1631,7 @@ test("Local Core API owns default shell stores through client-backed adapters", 
   }
 });
 
-test("Local Core API owns kcron duplicate lease decisions", async () => {
+contractTest("runtime.process", "Local Core API owns kcron duplicate lease decisions", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-kcron-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1650,7 +1662,7 @@ test("Local Core API owns kcron duplicate lease decisions", async () => {
   }
 });
 
-test("Local Core API owns Desktop settings and model policy", async () => {
+contractTest("runtime.process", "Local Core API owns Desktop settings and model policy", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcad-settings-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1690,7 +1702,7 @@ test("Local Core API owns Desktop settings and model policy", async () => {
   }
 });
 
-test("Local Core registers a Core-owned Desktop execution profile resolved from model policy", async () => {
+contractTest("runtime.process", "Local Core registers a Core-owned Desktop execution profile resolved from model policy", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcdp-"));
   const runtimeProfiles: Array<{
     id: string;
@@ -1894,7 +1906,7 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
   }
 });
 
-test("Local Core API mirrors Desktop UI state without overwriting TUI state", async () => {
+contractTest("runtime.process", "Local Core API mirrors Desktop UI state without overwriting TUI state", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-desktop-ui-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -1950,7 +1962,7 @@ test("Local Core API mirrors Desktop UI state without overwriting TUI state", as
   }
 });
 
-test("Local Core API restart swaps execution ownership across blocked and healthy stores", async () => {
+contractTest("runtime.process", "Local Core API restart swaps execution ownership across blocked and healthy stores", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcad-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },
@@ -2001,7 +2013,7 @@ test("Local Core API restart swaps execution ownership across blocked and health
   }
 });
 
-test("Local Core API owns Desktop project runs and streams changes", async () => {
+contractTest("runtime.process", "Local Core API owns Desktop project runs and streams changes", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-desktop-runs-"));
   const project = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-project-"));
   await writeFile(path.join(project, "package.json"), JSON.stringify({
@@ -2056,6 +2068,8 @@ test("Local Core API owns Desktop project runs and streams changes", async () =>
     await rm(project, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
   }
+});
+
 });
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {

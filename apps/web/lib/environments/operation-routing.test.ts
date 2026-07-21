@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { environmentOperationTypeSchema } from "./contracts";
 import {
   isProvisionerOperationType,
   PROVISIONER_OPERATION_TYPES,
 } from "./operation-routing";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("provisioner recovery owns only lifecycle operations", () => {
+
+contractTest("web.hermetic", "provisioner recovery owns only lifecycle operations", () => {
   const owned = environmentOperationTypeSchema.options.filter(
     isProvisionerOperationType
   );

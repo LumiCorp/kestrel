@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   buildTerminalBenchCodexCommand,
@@ -11,8 +10,10 @@ import {
   readRecentHarborRunFailure,
   runTerminalBenchCodex,
 } from "../../scripts/terminal-bench-codex.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("terminal bench exposes a tb2-codex shortcut", () => {
+
+contractTest("runtime.hermetic", "terminal bench exposes a tb2-codex shortcut", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -24,7 +25,7 @@ test("terminal bench exposes a tb2-codex shortcut", () => {
   assert.match(wrapper, /pnpm run bench:terminal:codex -- "\$@"/u);
 });
 
-test("terminal bench codex builds Harbor custom agent command", () => {
+contractTest("runtime.hermetic", "terminal bench codex builds Harbor custom agent command", () => {
   const command = buildTerminalBenchCodexCommand(
     parseTerminalBenchCodexArgs(["overfull-hbox", "--artifact", "/app/input.tex"]),
   );
@@ -42,7 +43,7 @@ test("terminal bench codex builds Harbor custom agent command", () => {
   ]);
 });
 
-test("terminal bench codex supports full dataset dry-run", () => {
+contractTest("runtime.hermetic", "terminal bench codex supports full dataset dry-run", () => {
   const options = parseTerminalBenchCodexArgs(["--full", "--dry-run"]);
   const command = buildTerminalBenchCodexCommand(options);
 
@@ -57,7 +58,7 @@ test("terminal bench codex supports full dataset dry-run", () => {
   ]);
 });
 
-test("terminal bench codex dry-run does not require harbor binary", async () => {
+contractTest("runtime.hermetic", "terminal bench codex dry-run does not require harbor binary", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
   let spawnCalls = 0;
@@ -80,7 +81,7 @@ test("terminal bench codex dry-run does not require harbor binary", async () => 
   assert.equal(stderr.join(""), "");
 });
 
-test("terminal bench codex detects recent failed adapter artifacts", () => {
+contractTest("runtime.hermetic", "terminal bench codex detects recent failed adapter artifacts", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-codex-failures-"));
   try {
     const jobArtifactDir = path.join(tmp, "jobs", "2026-06-17__09-49-30", "overfull-hbox__abc123", "agent");
@@ -109,7 +110,7 @@ test("terminal bench codex detects recent failed adapter artifacts", () => {
   }
 });
 
-test("terminal bench codex detects Harbor trial exceptions", () => {
+contractTest("runtime.hermetic", "terminal bench codex detects Harbor trial exceptions", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-codex-exception-"));
   try {
     const jobDir = path.join(tmp, "jobs", "2026-06-17__10-58-17");
@@ -132,7 +133,7 @@ test("terminal bench codex detects Harbor trial exceptions", () => {
   }
 });
 
-test("terminal bench codex detects single-task zero reward", () => {
+contractTest("runtime.hermetic", "terminal bench codex detects single-task zero reward", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-codex-zero-reward-"));
   try {
     const jobDir = path.join(tmp, "jobs", "2026-06-17__11-00-09");

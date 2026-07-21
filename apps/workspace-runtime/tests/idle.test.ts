@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   notifyWorkspaceIdle,
   WORKSPACE_IDLE_NOTIFICATION_VERSION,
 } from "../src/idle.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const identity = {
   controlPlaneUrl: "https://kestrel-one.example",
@@ -15,7 +16,7 @@ const identity = {
   lastActivityAt: new Date("2026-07-13T12:00:00.000Z"),
 };
 
-test("Workspace idle notification binds the runtime identity and activity time", async () => {
+contractTest("services.hermetic", "Workspace idle notification binds the runtime identity and activity time", async () => {
   let request: Request | null = null;
   const accepted = await notifyWorkspaceIdle({
     ...identity,
@@ -40,7 +41,7 @@ test("Workspace idle notification binds the runtime identity and activity time",
   });
 });
 
-test("Workspace keeps serving when the control plane does not accept idle", async () => {
+contractTest("services.hermetic", "Workspace keeps serving when the control plane does not accept idle", async () => {
   assert.equal(
     await notifyWorkspaceIdle({
       ...identity,

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -9,8 +8,10 @@ import {
   buildRemoteWorkspaceRoot,
   createMcpHostClient,
 } from "../src/host-capabilities.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("MCP host exposes only the current run workspace root", async () => {
+
+contractTest("services.hermetic", "MCP host exposes only the current run workspace root", async () => {
   const root = buildRemoteWorkspaceRoot({
     organizationId: "org-1",
     projectId: "project-1",
@@ -42,7 +43,7 @@ test("MCP host exposes only the current run workspace root", async () => {
   await client.close();
 });
 
-test("MCP host routes sampling and elicitation through the durable coordinator", async () => {
+contractTest("services.hermetic", "MCP host routes sampling and elicitation through the durable coordinator", async () => {
   const kinds: string[] = [];
   const grant = {
     id: "grant-1",
@@ -130,7 +131,7 @@ test("MCP host routes sampling and elicitation through the durable coordinator",
   await client.close();
 });
 
-test("MCP host does not advertise ungranted host capabilities", async () => {
+contractTest("services.hermetic", "MCP host does not advertise ungranted host capabilities", async () => {
   const client = createMcpHostClient({
     name: "ungranted-test",
     roots: [{ uri: "file:///workspace", name: "Workspace" }],

@@ -5,12 +5,13 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import test from "node:test";
 
 import {
   DesktopProjectRunRegistry,
   readProjectLauncherDescriptor,
 } from "../src/projectRuns.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 async function createProjectFixture(input: {
   packageJson?: string | undefined;
@@ -23,13 +24,13 @@ async function createProjectFixture(input: {
   return projectPath;
 }
 
-test("readProjectLauncherDescriptor returns undefined when package.json is missing", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor returns undefined when package.json is missing", async () => {
   const projectPath = await createProjectFixture();
   const descriptor = await readProjectLauncherDescriptor({ projectPath });
   assert.equal(descriptor, undefined);
 });
 
-test("readProjectLauncherDescriptor returns undefined when package.json has no scripts", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor returns undefined when package.json has no scripts", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({ name: "fixture" }),
   });
@@ -37,7 +38,7 @@ test("readProjectLauncherDescriptor returns undefined when package.json has no s
   assert.equal(descriptor, undefined);
 });
 
-test("readProjectLauncherDescriptor rejects invalid package.json", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor rejects invalid package.json", async () => {
   const projectPath = await createProjectFixture({
     packageJson: "{invalid json",
   });
@@ -47,7 +48,7 @@ test("readProjectLauncherDescriptor rejects invalid package.json", async () => {
   );
 });
 
-test("readProjectLauncherDescriptor reads scripts and supported packageManager", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor reads scripts and supported packageManager", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -66,7 +67,7 @@ test("readProjectLauncherDescriptor reads scripts and supported packageManager",
   assert.deepEqual(descriptor?.scripts.map((entry) => entry.name), ["dev", "test"]);
 });
 
-test("readProjectLauncherDescriptor requires selection when packageManager is missing", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor requires selection when packageManager is missing", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -81,7 +82,7 @@ test("readProjectLauncherDescriptor requires selection when packageManager is mi
   assert.equal(descriptor?.packageManagerSelectionRequired, true);
 });
 
-test("readProjectLauncherDescriptor accepts a packageManager override when packageManager is missing", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor accepts a packageManager override when packageManager is missing", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -99,7 +100,7 @@ test("readProjectLauncherDescriptor accepts a packageManager override when packa
   assert.equal(descriptor?.packageManagerSelectionRequired, false);
 });
 
-test("readProjectLauncherDescriptor preserves unsupported packageManager values", async () => {
+contractTest("desktop.process", "readProjectLauncherDescriptor preserves unsupported packageManager values", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -115,7 +116,7 @@ test("readProjectLauncherDescriptor preserves unsupported packageManager values"
   assert.equal(descriptor?.unsupportedPackageManager, "yarn@1.22.22");
 });
 
-test("DesktopProjectRunRegistry starts, tracks, restarts, and stops managed runs", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry starts, tracks, restarts, and stops managed runs", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -231,7 +232,7 @@ test("DesktopProjectRunRegistry starts, tracks, restarts, and stops managed runs
   assert.ok(runsChanged.some((snapshot) => snapshot.includes("lint:stopped:none")));
 });
 
-test("DesktopProjectRunRegistry records emitted HTTP preview URLs deterministically", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry records emitted HTTP preview URLs deterministically", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -317,7 +318,7 @@ test("DesktopProjectRunRegistry records emitted HTTP preview URLs deterministica
   );
 });
 
-test("DesktopProjectRunRegistry batches noisy output notifications and flushes on exit", async (context) => {
+contractTest("desktop.process", "DesktopProjectRunRegistry batches noisy output notifications and flushes on exit", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
@@ -397,7 +398,7 @@ test("DesktopProjectRunRegistry batches noisy output notifications and flushes o
   assert.deepEqual(ledgerWrites.at(-1), ["completed:4"]);
 });
 
-test("DesktopProjectRunRegistry stopAll waits for the terminal ledger flush", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry stopAll waits for the terminal ledger flush", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -468,7 +469,7 @@ test("DesktopProjectRunRegistry stopAll waits for the terminal ledger flush", as
   assert.equal(stopAllResolved, true);
 });
 
-test("DesktopProjectRunRegistry resolves previews only for recorded credential-free HTTP URLs", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry resolves previews only for recorded credential-free HTTP URLs", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -521,7 +522,7 @@ test("DesktopProjectRunRegistry resolves previews only for recorded credential-f
   );
 });
 
-test("DesktopProjectRunRegistry restarts the current live attempt when restart is invoked from history", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry restarts the current live attempt when restart is invoked from history", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -600,7 +601,7 @@ test("DesktopProjectRunRegistry restarts the current live attempt when restart i
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
-test("DesktopProjectRunRegistry fails runs when spawn emits an error and stop resolves without the force-kill delay", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry fails runs when spawn emits an error and stop resolves without the force-kill delay", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",
@@ -659,7 +660,7 @@ test("DesktopProjectRunRegistry fails runs when spawn emits an error and stop re
   assert.equal(killSignals.at(-1), "SIGTERM");
 });
 
-test("DesktopProjectRunRegistry signals the owned process group on POSIX stops", async () => {
+contractTest("desktop.process", "DesktopProjectRunRegistry signals the owned process group on POSIX stops", async () => {
   const projectPath = await createProjectFixture({
     packageJson: JSON.stringify({
       name: "fixture",

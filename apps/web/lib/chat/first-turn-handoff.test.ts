@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, beforeEach } from "node:test";
 import type { ChatFirstTurnHandoff } from "@/lib/types";
 import {
   clearChatFirstTurnHandoff,
   readChatFirstTurnHandoff,
   writeChatFirstTurnHandoff,
 } from "./first-turn-handoff";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 class MemorySessionStorage {
   private store = new Map<string, string>();
@@ -55,7 +57,7 @@ function buildRecord(): ChatFirstTurnHandoff {
   };
 }
 
-test.beforeEach(() => {
+beforeEach(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {},
@@ -68,7 +70,7 @@ test.beforeEach(() => {
   Date.now = () => 1_700_000_000_000;
 });
 
-test.afterEach(() => {
+afterEach(() => {
   if (originalWindow === undefined) {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -96,7 +98,7 @@ test.afterEach(() => {
   Date.now = originalDateNow;
 });
 
-test("first-turn handoff round-trips exact message parts", () => {
+contractTest("web.hermetic", "first-turn handoff round-trips exact message parts", () => {
   const record = buildRecord();
 
   writeChatFirstTurnHandoff(record);
@@ -104,7 +106,7 @@ test("first-turn handoff round-trips exact message parts", () => {
   assert.deepEqual(readChatFirstTurnHandoff(record.threadId), record);
 });
 
-test("first-turn handoff expires after the ttl", () => {
+contractTest("web.hermetic", "first-turn handoff expires after the ttl", () => {
   const record = buildRecord();
 
   writeChatFirstTurnHandoff(record);
@@ -113,7 +115,7 @@ test("first-turn handoff expires after the ttl", () => {
   assert.equal(readChatFirstTurnHandoff(record.threadId), null);
 });
 
-test("first-turn handoff rejects invalid payloads", () => {
+contractTest("web.hermetic", "first-turn handoff rejects invalid payloads", () => {
   sessionStorageMock.setItem(
     "chat:first-turn:chat-1",
     JSON.stringify({
@@ -129,7 +131,7 @@ test("first-turn handoff rejects invalid payloads", () => {
   assert.equal(readChatFirstTurnHandoff("chat-1"), null);
 });
 
-test("first-turn handoff clears by chat id", () => {
+contractTest("web.hermetic", "first-turn handoff clears by chat id", () => {
   const record = buildRecord();
 
   writeChatFirstTurnHandoff(record);

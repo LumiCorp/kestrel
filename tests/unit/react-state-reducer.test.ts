@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,8 +9,10 @@ import {
   readLatestActiveArtifactVerificationFacts,
 } from "../../agents/reference-react/src/artifactVerificationFacts.js";
 import { applyReactStateEvent } from "../../agents/reference-react/src/reactStateReducer.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("tool results append evidence without committing workItem state", () => {
+
+contractTest("runtime.hermetic", "tool results append evidence without committing workItem state", () => {
   const result = applyReactStateEvent({
     reactState: {
       workItem: { phase: "derive_artifact", objective: "legacy state" },
@@ -39,7 +40,7 @@ test("tool results append evidence without committing workItem state", () => {
   assert.deepEqual(result.transition.consumedEvidenceIds, []);
 });
 
-test("filesystem search evidence preserves zero-match constraint facts", () => {
+contractTest("runtime.hermetic", "filesystem search evidence preserves zero-match constraint facts", () => {
   const result = applyReactStateEvent({
     reactState: {},
     event: {
@@ -73,7 +74,7 @@ test("filesystem search evidence preserves zero-match constraint facts", () => {
   assert.deepEqual(facts.matches, []);
 });
 
-test("filesystem search evidence preserves capped match previews", () => {
+contractTest("runtime.hermetic", "filesystem search evidence preserves capped match previews", () => {
   const result = applyReactStateEvent({
     reactState: {},
     event: {
@@ -114,7 +115,7 @@ test("filesystem search evidence preserves capped match previews", () => {
   assert.equal(facts.matchesTruncated, true);
 });
 
-test("filesystem mutation evidence preserves compact edit facts", () => {
+contractTest("runtime.hermetic", "filesystem mutation evidence preserves compact edit facts", () => {
   const afterReplace = applyReactStateEvent({
     reactState: {},
     event: {
@@ -221,7 +222,7 @@ test("filesystem mutation evidence preserves compact edit facts", () => {
   assert.equal(writeFacts.bytesWritten, 5);
 });
 
-test("dev shell changed files are preserved as file mutation evidence", () => {
+contractTest("runtime.hermetic", "dev shell changed files are preserved as file mutation evidence", () => {
   const result = applyReactStateEvent({
     reactState: {},
     event: {
@@ -253,7 +254,7 @@ test("dev shell changed files are preserved as file mutation evidence", () => {
   assert.ok(completion.supportedTokens.includes("file:input.tex"));
 });
 
-test("policy corrections are recorded in the canonical ledger", () => {
+contractTest("runtime.hermetic", "policy corrections are recorded in the canonical ledger", () => {
   const result = applyReactStateEvent({
     reactState: {
       workItem: { phase: "gather_evidence", objective: "legacy state" },
@@ -277,7 +278,7 @@ test("policy corrections are recorded in the canonical ledger", () => {
   assert.deepEqual(result.transition.blockedEvidenceIds, [ledger.at(-1)?.id]);
 });
 
-test("completion evidence summary derives tool, check, file, and verify support tokens", () => {
+contractTest("runtime.hermetic", "completion evidence summary derives tool, check, file, and verify support tokens", () => {
   const afterShell = applyReactStateEvent({
     reactState: {},
     event: {
@@ -337,7 +338,7 @@ test("completion evidence summary derives tool, check, file, and verify support 
   assert.deepEqual(context.successBlockers, []);
 });
 
-test("later compact fs.verify_json pass clears an earlier artifact verification blocker", () => {
+contractTest("runtime.hermetic", "later compact fs.verify_json pass clears an earlier artifact verification blocker", () => {
   const afterFailedVerify = applyReactStateEvent({
     reactState: {},
     event: {
@@ -401,7 +402,7 @@ test("later compact fs.verify_json pass clears an earlier artifact verification 
   assert.equal(context.successSupport.some((entry) => entry.kind === "artifact_verification"), true);
 });
 
-test("later passed shell check clears an earlier artifact verification blocker", () => {
+contractTest("runtime.hermetic", "later passed shell check clears an earlier artifact verification blocker", () => {
   const ledger = [
     {
       id: "ev_empty_workspace",
@@ -451,7 +452,7 @@ test("later passed shell check clears an earlier artifact verification blocker",
   assert.deepEqual(context.successBlockers, []);
 });
 
-test("later passed file read clears an earlier artifact verification blocker", () => {
+contractTest("runtime.hermetic", "later passed file read clears an earlier artifact verification blocker", () => {
   const ledger = [
     {
       id: "ev_empty_workspace",
@@ -502,7 +503,7 @@ test("later passed file read clears an earlier artifact verification blocker", (
   assert.deepEqual(context.successBlockers, []);
 });
 
-test("successful tool result records evidence and transcript without progress attempts", () => {
+contractTest("runtime.hermetic", "successful tool result records evidence and transcript without progress attempts", () => {
   const result = applyReactStateEvent({
     reactState: {
       visibleTodos: {
@@ -542,7 +543,7 @@ test("successful tool result records evidence and transcript without progress at
   assert.equal(Array.isArray(modelTranscript.items), true);
 });
 
-test("tool result scrubs legacy progress fields instead of updating them", () => {
+contractTest("runtime.hermetic", "tool result scrubs legacy progress fields instead of updating them", () => {
   const result = applyReactStateEvent({
     reactState: {
       executionLedger: [{ id: "legacy" }],

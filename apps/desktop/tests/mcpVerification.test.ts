@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { parseDesktopMcpServerMutationInput } from "../../../src/desktopShell/contracts.js";
 import {
   completeDesktopMcpVerification,
   prepareDesktopMcpVerification,
 } from "../src/mcpVerification.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("MCP mutation parser rejects unknown fields and malformed endpoints", () => {
+
+contractTest("desktop.hermetic", "MCP mutation parser rejects unknown fields and malformed endpoints", () => {
   assert.throws(
     () => parseDesktopMcpServerMutationInput({ id: "example", name: "Example", transport: "http", url: "file:///tmp/server", enabled: true }),
     /HTTP or HTTPS/u,
@@ -18,7 +19,7 @@ test("MCP mutation parser rejects unknown fields and malformed endpoints", () =>
   );
 });
 
-test("MCP verification preparation carries only credential references into the live request", () => {
+contractTest("desktop.hermetic", "MCP verification preparation carries only credential references into the live request", () => {
   const input = parseDesktopMcpServerMutationInput({
     id: "example",
     name: "Example",

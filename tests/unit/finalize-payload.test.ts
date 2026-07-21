@@ -1,10 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildFinalizePayload } from "../../agents/reference-react/src/steps/acter/finalizePayload.js";
 import { appendUserTurnToTranscript } from "../../src/runtime/modelTranscript.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("buildFinalizePayload forwards inconclusive artifact verification as report data", () => {
+
+contractTest("runtime.hermetic", "buildFinalizePayload forwards inconclusive artifact verification as report data", () => {
   const payload = buildFinalizePayload(
     {
       goal: "Build newsletter page",
@@ -48,7 +49,7 @@ test("buildFinalizePayload forwards inconclusive artifact verification as report
   });
 });
 
-test("buildFinalizePayload drops model-supplied passed artifact verification without ledger evidence", () => {
+contractTest("runtime.hermetic", "buildFinalizePayload drops model-supplied passed artifact verification without ledger evidence", () => {
   const payload = buildFinalizePayload(
     {
       goal: "Build newsletter page",
@@ -91,7 +92,7 @@ test("buildFinalizePayload drops model-supplied passed artifact verification wit
   assert.equal((payload.payload.data as Record<string, unknown>).artifactVerification, undefined);
 });
 
-test("buildFinalizePayload omits recovered validation feedback from final report data", () => {
+contractTest("runtime.hermetic", "buildFinalizePayload omits recovered validation feedback from final report data", () => {
   const payload = buildFinalizePayload(
     {
       goal: "Build itinerary page",
@@ -144,7 +145,7 @@ test("buildFinalizePayload omits recovered validation feedback from final report
   });
 });
 
-test("buildFinalizePayload uses transcript task before stale agent goal", () => {
+contractTest("runtime.hermetic", "buildFinalizePayload uses transcript task before stale agent goal", () => {
   const payload = buildFinalizePayload(
     {
       goal: "Keep going.",
@@ -162,7 +163,7 @@ test("buildFinalizePayload uses transcript task before stale agent goal", () => 
   assert.equal(payload.payload.data.goal, "Build Chirp, a text-only microblogging app.");
 });
 
-test("buildFinalizePayload does not use stale agent goal when transcript lacks a task", () => {
+contractTest("runtime.hermetic", "buildFinalizePayload does not use stale agent goal when transcript lacks a task", () => {
   const payload = buildFinalizePayload(
     {
       goal: "Keep going.",
@@ -187,7 +188,7 @@ test("buildFinalizePayload does not use stale agent goal when transcript lacks a
   assert.equal(payload.payload.data.goal, undefined);
 });
 
-test("buildFinalizePayload preserves intentional live session ids for downstream clients", () => {
+contractTest("runtime.hermetic", "buildFinalizePayload preserves intentional live session ids for downstream clients", () => {
   const payload = buildFinalizePayload(
     {},
     {

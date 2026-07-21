@@ -321,13 +321,16 @@ Not part of the final core product:
 ## Testing
 
 ```bash
-pnpm run web:typecheck
-pnpm run web:test
+pnpm --filter @kestrel/kestrel-one typecheck:self
+pnpm --filter @kestrel/kestrel-one test:unit
 pnpm --filter @kestrel/kestrel-one test:knowledge-rag:unit
 pnpm --filter @kestrel/kestrel-one smoke:local
 ```
 
-The Playwright suite covers authenticated Threads and Projects, admin, knowledge, sharing, API-key flows, and the checked-in knowledge RAG fixture corpus.
+The portable Chromium contract retains two full journeys: completed persisted
+turn reload and waiting-prompt reload/resume. Database behavior is proved at
+the PostgreSQL boundary, and API policy is proved by fast route tests. Run
+`pnpm validate` at the repository root for pull-request readiness.
 
 ## Docs
 

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   githubRepositoryUpstreamUrl,
   isGitUploadPackRequest,
 } from "./github-git-proxy-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Git proxy exposes upload-pack reads and never receive-pack writes", () => {
+
+contractTest("web.hermetic", "Git proxy exposes upload-pack reads and never receive-pack writes", () => {
   assert.equal(
     isGitUploadPackRequest({
       method: "GET",
@@ -32,7 +33,7 @@ test("Git proxy exposes upload-pack reads and never receive-pack writes", () => 
   );
 });
 
-test("Git proxy derives the GitHub URL from the authorized resource", () => {
+contractTest("web.hermetic", "Git proxy derives the GitHub URL from the authorized resource", () => {
   assert.equal(
     githubRepositoryUpstreamUrl({
       repository: "acme/private repo",

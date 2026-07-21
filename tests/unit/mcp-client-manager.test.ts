@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { McpClientManager } from "../../src/mcp/McpClientManager.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("McpClientManager throws a normalized failure when a tool is unavailable", async () => {
+
+contractTest("runtime.hermetic", "McpClientManager throws a normalized failure when a tool is unavailable", async () => {
   const manager = new McpClientManager({ servers: [] });
 
   await assert.rejects(
@@ -17,7 +18,7 @@ test("McpClientManager throws a normalized failure when a tool is unavailable", 
   );
 });
 
-test("McpClientManager assertHealthy throws a normalized failure with unhealthy server details", async () => {
+contractTest("runtime.hermetic", "McpClientManager assertHealthy throws a normalized failure with unhealthy server details", async () => {
   const manager = new McpClientManager({ servers: [] });
   (manager as unknown as Record<string, unknown>).snapshot = {
     healthy: false,

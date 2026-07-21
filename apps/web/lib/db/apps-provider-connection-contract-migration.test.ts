@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
@@ -10,7 +11,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-test("provider connection migration adds hybrid and optional connection contracts", () => {
+contractTest("web.hermetic", "provider connection migration adds hybrid and optional connection contracts", () => {
   assert.match(migration, /ADD COLUMN "connection_requirement"/u);
   assert.match(
     migration,

@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
 import { renderToString } from "ink";
 
 import { ChatView } from "../../cli/ink/views/ChatView.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("ChatView renders transcript and compose shell", () => {
+
+contractTest("runtime.hermetic", "ChatView renders transcript and compose shell", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -70,7 +71,7 @@ test("ChatView renders transcript and compose shell", () => {
   assert.doesNotMatch(text, /context=/);
 });
 
-test("ChatView renders assistant reasoning transcript rows as muted agent messages", () => {
+contractTest("runtime.hermetic", "ChatView renders assistant reasoning transcript rows as muted agent messages", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -115,7 +116,7 @@ test("ChatView renders assistant reasoning transcript rows as muted agent messag
   assert.match(text, /\.\. Inspecting context pressure before continuing\./);
 });
 
-test("ChatView keeps the composer interactive while waiting for user input", () => {
+contractTest("runtime.hermetic", "ChatView keeps the composer interactive while waiting for user input", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -165,7 +166,7 @@ test("ChatView keeps the composer interactive while waiting for user input", () 
   assert.doesNotMatch(text, /Run in progress/);
 });
 
-test("ChatView keeps the composer interactive for operator steer drafts during a running turn", () => {
+contractTest("runtime.hermetic", "ChatView keeps the composer interactive for operator steer drafts during a running turn", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -206,7 +207,7 @@ test("ChatView keeps the composer interactive for operator steer drafts during a
   assert.match(text, /Run in progress/);
 });
 
-test("ChatView keeps the composer interactive for plain queued drafts during a running turn", () => {
+contractTest("runtime.hermetic", "ChatView keeps the composer interactive for plain queued drafts during a running turn", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -241,7 +242,7 @@ test("ChatView keeps the composer interactive for plain queued drafts during a r
   assert.match(text, /Run in progress/);
 });
 
-test("ChatView wraps long composer drafts without the old fixed row cap", () => {
+contractTest("runtime.hermetic", "ChatView wraps long composer drafts without the old fixed row cap", () => {
   const now = new Date().toISOString();
   const transcript = Array.from({ length: 12 }, (_, index) => ({
     role: index % 2 === 0 ? "assistant" as const : "user" as const,

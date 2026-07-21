@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("live failure visibility cannot waive canonical durable failure text", () => {
+
+contractTest("web.hermetic", "live failure visibility cannot waive canonical durable failure text", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -26,7 +27,7 @@ test("live failure visibility cannot waive canonical durable failure text", () =
   ]);
 });
 
-test("prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback when failure is not visible", () => {
+contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback when failure is not visible", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -58,7 +59,7 @@ test("prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback 
   );
 });
 
-test("prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
+contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {

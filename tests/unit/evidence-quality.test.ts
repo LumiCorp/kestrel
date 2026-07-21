@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   normalizeEvidenceRecoverySummary,
   updateEvidenceRecoverySummary,
 } from "../../src/runtime/evidenceQuality.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("updateEvidenceRecoverySummary marks repeated low-signal headlines payloads", () => {
+
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary marks repeated low-signal headlines payloads", () => {
   const first = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Build a nightly news opening monologue",
@@ -65,7 +66,7 @@ test("updateEvidenceRecoverySummary marks repeated low-signal headlines payloads
   assert.equal(second?.consecutiveLowSignal, 2);
 });
 
-test("high-yield article fetch batch resets evidence recovery state", () => {
+contractTest("runtime.hermetic", "high-yield article fetch batch resets evidence recovery state", () => {
   const prior = normalizeEvidenceRecoverySummary({
     objectiveKey: "build a nightly news opening monologue",
     family: "news_research",
@@ -119,7 +120,7 @@ test("high-yield article fetch batch resets evidence recovery state", () => {
   assert.equal(updated?.targetedFetchUsed, false);
 });
 
-test("low signal mix stays until cleaned article fetch restores throughput", () => {
+contractTest("runtime.hermetic", "low signal mix stays until cleaned article fetch restores throughput", () => {
   const first = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Explain today's US news summary",
@@ -182,7 +183,7 @@ test("low signal mix stays until cleaned article fetch restores throughput", () 
   assert.equal(recovered?.consecutiveLowSignal, 0);
 });
 
-test("runtime-owned recoveryStage marks broadened search after prior low-signal attempts", () => {
+contractTest("runtime.hermetic", "runtime-owned recoveryStage marks broadened search after prior low-signal attempts", () => {
   const prior = normalizeEvidenceRecoverySummary({
     objectiveKey: "cults and high-control religious groups in cincinnati",
     family: "news_research",
@@ -226,7 +227,7 @@ test("runtime-owned recoveryStage marks broadened search after prior low-signal 
   assert.equal(updated?.targetedFetchUsed, false);
 });
 
-test("evidence recovery treats low-value URL patterns as low signal", () => {
+contractTest("runtime.hermetic", "evidence recovery treats low-value URL patterns as low signal", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Create a U.S. business headlines brief",
@@ -259,7 +260,7 @@ test("evidence recovery treats low-value URL patterns as low signal", () => {
   ]);
 });
 
-test("explicit source constraints relax low-domain-diversity penalties for news search", () => {
+contractTest("runtime.hermetic", "explicit source constraints relax low-domain-diversity penalties for news search", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Create a Reuters-first U.S. business headlines brief",
@@ -299,7 +300,7 @@ test("explicit source constraints relax low-domain-diversity penalties for news 
   assert.equal(updated?.latest?.issues.includes("insufficient_results"), true);
 });
 
-test("same-domain news search without explicit source constraint still flags low-domain-diversity", () => {
+contractTest("runtime.hermetic", "same-domain news search without explicit source constraint still flags low-domain-diversity", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Create a U.S. business headlines brief",
@@ -329,7 +330,7 @@ test("same-domain news search without explicit source constraint still flags low
   assert.equal(updated?.latest?.issues.includes("low_domain_diversity"), true);
 });
 
-test("duplicate executed search results increment duplicate counters in evidence recovery", () => {
+contractTest("runtime.hermetic", "duplicate executed search results increment duplicate counters in evidence recovery", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Track supplier onboarding controls coverage",
@@ -361,7 +362,7 @@ test("duplicate executed search results increment duplicate counters in evidence
   assert.equal(updated?.latest?.issues.includes("repeated_payload"), true);
 });
 
-test("duplicate page fetch marks low-signal recovery and preserves duplicate verdict", () => {
+contractTest("runtime.hermetic", "duplicate page fetch marks low-signal recovery and preserves duplicate verdict", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Track supplier onboarding controls coverage",
@@ -389,7 +390,7 @@ test("duplicate page fetch marks low-signal recovery and preserves duplicate ver
   assert.equal(updated?.latestDuplicate?.duplicateCount, 3);
 });
 
-test("normalizeEvidenceRecoverySummary maps legacy news_research to canonical web_research", () => {
+contractTest("runtime.hermetic", "normalizeEvidenceRecoverySummary maps legacy news_research to canonical web_research", () => {
   const normalized = normalizeEvidenceRecoverySummary({
     objectiveKey: "legacy recovery summary",
     family: "news_research",
@@ -404,7 +405,7 @@ test("normalizeEvidenceRecoverySummary maps legacy news_research to canonical we
   assert.equal(normalized?.family, "web_research");
 });
 
-test("updateEvidenceRecoverySummary writes canonical filesystem retrieval family and inspection counters", () => {
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary writes canonical filesystem retrieval family and inspection counters", () => {
   const listed = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Keep working on the website",
@@ -441,7 +442,7 @@ test("updateEvidenceRecoverySummary writes canonical filesystem retrieval family
   assert.equal(read?.filesystemInspection?.budgetExhausted, false);
 });
 
-test("updateEvidenceRecoverySummary counts explicit fs.read_text paths without prior inventory", () => {
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary counts explicit fs.read_text paths without prior inventory", () => {
   const read = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Keep working on the website",
@@ -464,7 +465,7 @@ test("updateEvidenceRecoverySummary counts explicit fs.read_text paths without p
   assert.equal(read?.filesystemInspection?.budgetExhausted, false);
 });
 
-test("updateEvidenceRecoverySummary resets filesystem inspection budget after explicit fs mutation", () => {
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary resets filesystem inspection budget after explicit fs mutation", () => {
   const exhausted = updateEvidenceRecoverySummary({
     prior: {
       objectiveKey: "keep working on the website",
@@ -515,7 +516,7 @@ test("updateEvidenceRecoverySummary resets filesystem inspection budget after ex
   assert.equal(relisted?.filesystemInspection?.budgetExhausted, false);
 });
 
-test("updateEvidenceRecoverySummary writes canonical web_research family for internet recovery", () => {
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary writes canonical web_research family for internet recovery", () => {
   const updated = updateEvidenceRecoverySummary({
     prior: undefined,
     objective: "Build a nightly news opening monologue",
@@ -556,7 +557,7 @@ test("updateEvidenceRecoverySummary writes canonical web_research family for int
   assert.equal(updated?.latest?.family, "web_research");
 });
 
-test("updateEvidenceRecoverySummary accumulates retained sources and records latest-turn novelty without contract parsing", () => {
+contractTest("runtime.hermetic", "updateEvidenceRecoverySummary accumulates retained sources and records latest-turn novelty without contract parsing", () => {
   const objective = "Research the top current U.S. business and technology stories for a newsletter report.";
 
   const first = updateEvidenceRecoverySummary({

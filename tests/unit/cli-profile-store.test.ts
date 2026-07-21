@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,8 +6,10 @@ import path from "node:path";
 import { applyProfileDefaults, parseProfilesFile, ProfileStore } from "../../cli/config/ProfileStore.js";
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("ProfileStore bootstraps default profile when file is missing", async () => {
+
+contractTest("runtime.hermetic", "ProfileStore bootstraps default profile when file is missing", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-"));
   const store = new ProfileStore(tempDir);
 
@@ -50,7 +51,7 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(persisted.profiles[0]?.environmentPresetId, undefined);
 });
 
-test("ProfileStore applies shared model policy when profiles.json is missing", async () => {
+contractTest("runtime.hermetic", "ProfileStore applies shared model policy when profiles.json is missing", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-policy-bootstrap-"));
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
   await writeFile(
@@ -82,7 +83,7 @@ test("ProfileStore applies shared model policy when profiles.json is missing", a
   assert.equal(profiles[0]?.modelCapabilities?.visionInputEnabled, true);
 });
 
-test("ProfileStore allowlists Kestrel-One knowledge only on the Kestrel-One profile", async () => {
+contractTest("runtime.hermetic", "ProfileStore allowlists Kestrel-One knowledge only on the Kestrel-One profile", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-"));
   const store = new ProfileStore(tempDir);
 
@@ -94,7 +95,7 @@ test("ProfileStore allowlists Kestrel-One knowledge only on the Kestrel-One prof
   assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), true);
 });
 
-test("ProfileStore resolves legacy provider-specific profile ids to the canonical reference profile", async () => {
+contractTest("runtime.hermetic", "ProfileStore resolves legacy provider-specific profile ids to the canonical reference profile", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-legacy-alias-"));
   const store = new ProfileStore(tempDir);
 
@@ -104,7 +105,7 @@ test("ProfileStore resolves legacy provider-specific profile ids to the canonica
   assert.equal(store.findById(profiles, "reference-anthropic")?.id, "reference");
 });
 
-test("ProfileStore adds Kestrel-One profile to existing profile files", async () => {
+contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to existing profile files", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-kestrel-one-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -139,7 +140,7 @@ test("ProfileStore adds Kestrel-One profile to existing profile files", async ()
   assert.equal(saved.profiles.some((profile) => profile.id === "kestrel-one"), true);
 });
 
-test("ProfileStore never persists transient gateway credential references", async () => {
+contractTest("runtime.hermetic", "ProfileStore never persists transient gateway credential references", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profile-store-managed-credential-")
   );
@@ -188,13 +189,13 @@ test("ProfileStore never persists transient gateway credential references", asyn
   assert.equal(reference?.modelProvider, undefined);
 });
 
-test("parseProfilesFile validates profile shape", () => {
+contractTest("runtime.hermetic", "parseProfilesFile validates profile shape", () => {
   assert.throws(() => {
     parseProfilesFile(JSON.stringify({ version: 2, profiles: [{ id: "x" }] }));
   }, /Profile field/);
 });
 
-test("ProfileStore rejects unsupported agent", async () => {
+contractTest("runtime.hermetic", "ProfileStore rejects unsupported agent", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-invalid-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -218,7 +219,7 @@ test("ProfileStore rejects unsupported agent", async () => {
   await assert.rejects(() => store.load(), /Unsupported profile agent/);
 });
 
-test("ProfileStore backfills guardrail defaults for existing profiles", async () => {
+contractTest("runtime.hermetic", "ProfileStore backfills guardrail defaults for existing profiles", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-backfill-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -270,7 +271,7 @@ test("ProfileStore backfills guardrail defaults for existing profiles", async ()
   assert.equal(profiles[0]?.toolAllowlist?.includes("fs.replace_text"), false);
 });
 
-test("ProfileStore restores balanced planning tools for stale canonical profiles", async () => {
+contractTest("runtime.hermetic", "ProfileStore restores balanced planning tools for stale canonical profiles", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-canonical-backfill-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -304,7 +305,7 @@ test("ProfileStore restores balanced planning tools for stale canonical profiles
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), true);
 });
 
-test("ProfileStore migrates reference profiles onto mode-system v2", async () => {
+contractTest("runtime.hermetic", "ProfileStore migrates reference profiles onto mode-system v2", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-mode-v2-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -334,7 +335,7 @@ test("ProfileStore migrates reference profiles onto mode-system v2", async () =>
   ]);
 });
 
-test("ProfileStore loads valid theme overrides", async () => {
+contractTest("runtime.hermetic", "ProfileStore loads valid theme overrides", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-theme-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -365,7 +366,7 @@ test("ProfileStore loads valid theme overrides", async () => {
   assert.equal(profiles[0]?.theme?.warn, "#ABCDEF");
 });
 
-test("ProfileStore ignores invalid theme entries with load notices", async () => {
+contractTest("runtime.hermetic", "ProfileStore ignores invalid theme entries with load notices", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-theme-notices-"));
   const filePath = path.join(tempDir, "profiles.json");
 
@@ -400,7 +401,7 @@ test("ProfileStore ignores invalid theme entries with load notices", async () =>
   assert.equal(notices.some((notice) => notice.includes("orange")), true);
 });
 
-test("ProfileStore resets to defaults when legacy version file is present", async () => {
+contractTest("runtime.hermetic", "ProfileStore resets to defaults when legacy version file is present", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-legacy-"));
   const filePath = path.join(tempDir, "profiles.json");
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
@@ -435,7 +436,7 @@ test("ProfileStore resets to defaults when legacy version file is present", asyn
   assert.equal(profiles[0]?.model, "claude-3-5-haiku-latest");
 });
 
-test("parseProfilesFile migrates version 2 payload to v3 profile shape", () => {
+contractTest("runtime.hermetic", "parseProfilesFile migrates version 2 payload to v3 profile shape", () => {
   const parsed = parseProfilesFile(
     JSON.stringify({
       version: 2,
@@ -454,7 +455,7 @@ test("parseProfilesFile migrates version 2 payload to v3 profile shape", () => {
   assert.equal(Array.isArray(parsed.profiles[0]?.mcpServers), true);
 });
 
-test("parseProfilesFile validates mcpServers schema in version 3", () => {
+contractTest("runtime.hermetic", "parseProfilesFile validates mcpServers schema in version 3", () => {
   assert.throws(() => {
     parseProfilesFile(
       JSON.stringify({
@@ -482,7 +483,7 @@ test("parseProfilesFile validates mcpServers schema in version 3", () => {
   }, /header 'Authorization'/);
 });
 
-test("parseProfilesFile preserves MCP tool approval and interaction-mode metadata", () => {
+contractTest("runtime.hermetic", "parseProfilesFile preserves MCP tool approval and interaction-mode metadata", () => {
   const parsed = parseProfilesFile(JSON.stringify({
     version: 3,
     profiles: [{
@@ -515,7 +516,7 @@ test("parseProfilesFile preserves MCP tool approval and interaction-mode metadat
   assert.deepEqual(metadata?.allowedInteractionModes, ["chat", "build"]);
 });
 
-test("parseProfilesFile validates toolQueue schema in version 3", () => {
+contractTest("runtime.hermetic", "parseProfilesFile validates toolQueue schema in version 3", () => {
   assert.throws(() => {
     parseProfilesFile(
       JSON.stringify({
@@ -534,7 +535,7 @@ test("parseProfilesFile validates toolQueue schema in version 3", () => {
   }, /field 'toolQueue' must be an object/);
 });
 
-test("parseProfilesFile validates codeMode schema in version 3", () => {
+contractTest("runtime.hermetic", "parseProfilesFile validates codeMode schema in version 3", () => {
   assert.throws(() => {
     parseProfilesFile(
       JSON.stringify({
@@ -556,7 +557,7 @@ test("parseProfilesFile validates codeMode schema in version 3", () => {
   }, /approvalMode/);
 });
 
-test("version 3 profiles migrate to live-only provider reasoning defaults", () => {
+contractTest("runtime.hermetic", "version 3 profiles migrate to live-only provider reasoning defaults", () => {
   const parsed = parseProfilesFile(JSON.stringify({
     version: 3,
     profiles: [{
@@ -573,7 +574,7 @@ test("version 3 profiles migrate to live-only provider reasoning defaults", () =
   });
 });
 
-test("version 4 profiles accept explicit retention and enforce the 1 to 30 day range", () => {
+contractTest("runtime.hermetic", "version 4 profiles accept explicit retention and enforce the 1 to 30 day range", () => {
   const valid = parseProfilesFile(JSON.stringify({
     version: 4,
     profiles: [{
