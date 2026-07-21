@@ -1,4 +1,4 @@
-import { Archive } from "lucide-react";
+import { Archive, Plus } from "lucide-react";
 import Link from "next/link";
 import { AppPage } from "@/components/app-page";
 import { ProjectsIndexClient } from "@/components/projects/projects-index-client";
@@ -19,6 +19,9 @@ export default async function ProjectsPage({
   const params = await searchParams;
   const showArchived = params.archived === "true";
   const mobileReturnTo = resolveMobileProjectReturn(params);
+  const createHref = mobileReturnTo
+    ? `/projects/new?source=mobile&returnTo=${encodeURIComponent(mobileReturnTo)}`
+    : "/projects/new";
   const { organizationId, session } = await requireActiveOrganization();
   const rows = await listProjectsForUser({
     organizationId,
@@ -29,7 +32,7 @@ export default async function ProjectsPage({
     ? rows.filter(({ project }) => Boolean(project.archivedAt))
     : rows;
   return (
-    <AppPage className="mx-auto w-full max-w-6xl p-6">
+    <AppPage>
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-semibold text-3xl">Projects</h1>
@@ -38,16 +41,23 @@ export default async function ProjectsPage({
             collaborative Threads.
           </p>
         </div>
-        <Button asChild variant="outline">
-          <Link href={showArchived ? "/projects" : "/projects?archived=true"}>
-            <Archive className="size-4" />
-            {showArchived ? "Active" : "Archived"}
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href={showArchived ? "/projects" : "/projects?archived=true"}>
+              <Archive className="size-4" />
+              {showArchived ? "Active" : "Archived"}
+            </Link>
+          </Button>
+          {showArchived ? null : (
+            <Button asChild>
+              <Link href={createHref}>
+                <Plus className="size-4" /> New Project
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
       <ProjectsIndexClient
-        allowCreate={!showArchived}
-        mobileReturnTo={mobileReturnTo}
         projects={visibleRows.map(({ project, role }) => ({
           id: project.id,
           name: project.name,

@@ -3,7 +3,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   CalendarDays,
-  ChevronRight,
   Loader2,
   ShieldCheck,
   X,
@@ -14,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { AppIcon } from "@/components/apps/app-icon";
+import { AppGallery } from "@/components/apps/app-gallery";
 import { ProjectSharedAppSheet } from "@/components/projects/project-shared-app-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -265,16 +265,10 @@ export function ProjectApps({
       : "Not connected";
 
   return (
-    <div className="max-w-[32.5rem] py-5">
-      <div className="mb-7">
-        <h2 className="font-semibold text-2xl tracking-tight">Apps</h2>
-        <p className="mt-1 text-muted-foreground">
-          Add capabilities and choose the connections this Project can use.
-        </p>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border bg-background">
-        {projectApps?.apps.map((configuration, index) => {
+    <div className="w-full py-5">
+      {projectApps?.apps.length ? (
+        <AppGallery
+          items={projectApps.apps.map((configuration) => {
           const isGoogle = configuration.app.key === "google_workspace";
           const needsConnection =
             configuration.app.connectionRequirement === "required";
@@ -287,76 +281,47 @@ export function ProjectApps({
               (connection) =>
                 connection.isDefault && connection.scope === "shared"
             );
-          return (
-            <button
-              className={cn(
-                "flex min-h-20 w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                index > 0 && "border-t",
-                isGoogle && googleOpen && "bg-[#eaf1ef] dark:bg-[#202928]"
-              )}
-              key={configuration.app.key}
-              onClick={() => chooseApp(configuration)}
-              type="button"
-            >
-              <AppIcon
-                appKey={configuration.app.key}
-                className="size-10"
-                icon={configuration.app.icon}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold text-base">
-                  {configuration.app.displayName}
-                </span>
-                <span className="block truncate text-muted-foreground text-sm">
-                  {configuration.app.description}
-                </span>
-              </span>
-              {isGoogle && (
-                <span
-                  className={cn(
-                    "rounded-md bg-muted px-2 py-1 text-muted-foreground text-xs",
-                    data?.projectConnected &&
-                      !data.needsReconnect &&
-                      "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-                    data?.needsReconnect &&
-                      "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                  )}
-                >
-                  {isLoading ? "Checking…" : googleLabel}
-                </span>
-              )}
-              {!isGoogle && (
-                <span
-                  className={cn(
-                    "rounded-md bg-muted px-2 py-1 text-muted-foreground text-xs",
-                    configuration.enabled &&
-                      projectDefault &&
-                      "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                  )}
-                >
-                  {configuration.enabled && !needsConnection
-                    ? "Enabled"
-                    : configuration.enabled && projectDefault
-                      ? `Using ${projectDefault.name}`
-                      : configuration.availableConnections.length
-                        ? "Available"
-                        : "Setup required"}
-                </span>
-              )}
-              <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
-            </button>
-          );
+          const status = isGoogle
+            ? isLoading
+              ? "Checking…"
+              : googleLabel
+            : configuration.enabled && !needsConnection
+              ? "Enabled"
+              : configuration.enabled && projectDefault
+                ? `Using ${projectDefault.name}`
+                : configuration.availableConnections.length
+                  ? "Available"
+                  : "Setup required";
+          return {
+            key: configuration.app.key,
+            name: configuration.app.displayName,
+            description: configuration.app.description,
+            icon: configuration.app.icon,
+            status,
+            statusTone:
+              status === "Enabled" || status === "Connected" || status.startsWith("Using ")
+                ? "ready"
+                : status === "Setup required" || status === "Reconnect"
+                  ? "warning"
+                  : "neutral",
+          };
         })}
-        {projectApps && projectApps.apps.length === 0 ? (
-          <div className="px-4 py-6">
-            <p className="font-medium text-sm">No Apps available</p>
-            <p className="mt-1 text-muted-foreground text-sm">
-              An organization admin must install an App before it can be added
-              to this Project.
-            </p>
-          </div>
-        ) : null}
-      </div>
+          onSelect={(item) => {
+            const configuration = projectApps.apps.find(
+              (candidate) => candidate.app.key === item.key
+            );
+            if (configuration) chooseApp(configuration);
+          }}
+        />
+      ) : projectApps ? (
+        <div className="border-y py-6">
+          <p className="font-medium text-sm">No Apps available</p>
+          <p className="mt-1 text-muted-foreground text-sm">
+            An organization admin must install an App before it can be added to
+            this Project.
+          </p>
+        </div>
+      ) : null}
 
       <Dialog.Root onOpenChange={setGoogleDialogOpen} open={googleOpen}>
         <Dialog.Portal>

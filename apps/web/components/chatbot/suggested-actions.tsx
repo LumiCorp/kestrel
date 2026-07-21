@@ -50,7 +50,7 @@ function PureSuggestedActions({
           transition={{ delay: 0.05 * index }}
         >
           <Suggestion
-            className="h-auto w-full whitespace-normal p-3 text-left"
+            className="h-auto min-h-9 w-full justify-start whitespace-normal px-3 py-2 text-left font-normal text-muted-foreground text-xs leading-4 hover:text-foreground"
             onClick={() => onSuggestionSelect(suggestedAction)}
             suggestion={suggestedAction.label}
           >

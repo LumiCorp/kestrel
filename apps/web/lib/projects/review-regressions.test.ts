@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  projectTabHref,
+  resolveProjectTab,
+} from "./project-tabs";
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -12,6 +16,21 @@ const appRoot = path.resolve(
 function readAppSource(relativePath: string) {
   return fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 }
+
+test("Project tabs stay owned by the URL across same-page navigation", () => {
+  assert.equal(resolveProjectTab({ tab: "apps", hasGoogle: false }), "apps");
+  assert.equal(
+    resolveProjectTab({ tab: "context", hasGoogle: false }),
+    "context"
+  );
+  assert.equal(resolveProjectTab({ tab: "unknown", hasGoogle: false }), "overview");
+  assert.equal(resolveProjectTab({ tab: null, hasGoogle: true }), "apps");
+  assert.equal(projectTabHref("project-1", "overview"), "/projects/project-1");
+  assert.equal(
+    projectTabHref("project-1", "activity"),
+    "/projects/project-1?tab=activity"
+  );
+});
 
 test("Project uploads compensate new documents when context attachment fails", () => {
   const source = readAppSource("app/api/projects/[id]/files/route.ts");

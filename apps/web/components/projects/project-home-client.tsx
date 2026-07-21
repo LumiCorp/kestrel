@@ -15,6 +15,11 @@ import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { ProjectApps } from "@/components/projects/project-apps";
 import {
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+} from "@/components/settings/settings-section";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -25,7 +30,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,9 +42,13 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  projectTabHref,
+  resolveProjectTab,
+  type ProjectTab,
+} from "@/lib/projects/project-tabs";
 
 type Role = "owner" | "editor" | "member";
-type ProjectTab = "overview" | "context" | "members" | "apps" | "activity";
 type DocumentItem = {
   id: string;
   filename: string;
@@ -114,16 +122,10 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const requestedTab = searchParams.get("tab");
-  const initialTab: ProjectTab = searchParams.has("google")
-    ? "apps"
-    : requestedTab === "context" ||
-        requestedTab === "members" ||
-        requestedTab === "apps" ||
-        requestedTab === "activity"
-      ? requestedTab
-      : "overview";
-  const [activeTab, setActiveTab] = useState<ProjectTab>(initialTab);
+  const activeTab = resolveProjectTab({
+    tab: searchParams.get("tab"),
+    hasGoogle: searchParams.has("google"),
+  });
   const availableDocuments = useMemo(() => {
     const byId = new Map<string, DocumentItem>();
     for (const document of [
@@ -313,11 +315,18 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   return (
     <>
       <Tabs
-        onValueChange={(value) => setActiveTab(value as ProjectTab)}
+        onValueChange={(value) =>
+          router.push(
+            projectTabHref(
+              initial.project.id,
+              resolveProjectTab({ tab: value, hasGoogle: false })
+            )
+          )
+        }
         value={activeTab}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <TabsList>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+          <TabsList className="h-9 bg-transparent p-0 md:hidden">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
@@ -359,67 +368,71 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           </div>
         </div>
 
-        <TabsContent className="space-y-4" value="overview">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <TabsContent value="overview">
+          <SettingsSection
+            description="Open, review, or continue the conversations attached to this Project."
+            title="Project threads"
+          >
+            <div className="divide-y border-y">
             {initial.threads.map((thread) => (
-              <Link href={`/threads/${thread.id}`} key={thread.id}>
-                <Card className="h-full hover:bg-muted/40">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <MessageSquare className="size-4" />
-                      {thread.title || "New thread"}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-muted-foreground text-sm">
+              <Link
+                className="group flex items-center gap-3 py-3 text-sm transition-colors hover:text-primary"
+                href={`/threads/${thread.id}`}
+                key={thread.id}
+              >
+                <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {thread.title || "New thread"}
+                </span>
+                <span className="shrink-0 text-muted-foreground text-xs">
                     {thread.archivedAt ? "Archived" : "Updated"}{" "}
                     {new Date(
                       thread.archivedAt || thread.updatedAt
                     ).toLocaleString()}
-                  </CardContent>
-                </Card>
+                </span>
               </Link>
             ))}
             {!initial.threads.length && (
-              <Card className="md:col-span-2">
-                <CardContent className="py-12 text-center text-muted-foreground">
-                  No Project Threads yet.
-                </CardContent>
-              </Card>
+              <p className="py-10 text-center text-muted-foreground text-sm">
+                No Project Threads yet.
+              </p>
             )}
-          </div>
+            </div>
+          </SettingsSection>
         </TabsContent>
 
-        <TabsContent
-          className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]"
-          value="context"
-        >
-          <Card>
-            <CardHeader>
-              <CardTitle>Instructions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="project-name">Name</Label>
+        <TabsContent value="context">
+          <SettingsSection
+            description="The durable identity shown throughout Kestrel One."
+            title="Project details"
+          >
+            <SettingsRows>
+              <SettingsRow label="Name">
                 <Input
                   disabled={!canEdit}
                   id="project-name"
                   onChange={(event) => setName(event.target.value)}
                   value={name}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="project-description">Description</Label>
+              </SettingsRow>
+              <SettingsRow label="Description">
                 <Input
                   disabled={!canEdit}
                   id="project-description"
                   onChange={(event) => setDescription(event.target.value)}
                   value={description}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="project-instructions">
-                  Project instructions
-                </Label>
+              </SettingsRow>
+            </SettingsRows>
+          </SettingsSection>
+          <SettingsSection
+            description={`Live instructions for future turns. Saving creates context revision ${revision + 1}.`}
+            title="Agent context"
+          >
+            <div className="space-y-3">
+              <Label className="sr-only" htmlFor="project-instructions">
+                Project instructions
+              </Label>
                 <Textarea
                   disabled={!canEdit}
                   id="project-instructions"
@@ -427,7 +440,6 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   rows={12}
                   value={instructions}
                 />
-              </div>
               {canEdit && (
                 <Button
                   disabled={saving || !name.trim()}
@@ -436,16 +448,16 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   {saving ? "Saving…" : `Save revision ${revision + 1}`}
                 </Button>
               )}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Knowledge and files</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+            </div>
+          </SettingsSection>
+          <SettingsSection
+            description="Select organization Knowledge or private files made available to this Project."
+            title="Knowledge and files"
+          >
+            <div className="divide-y border-y">
               {availableDocuments.map((document) => (
                 <div
-                  className="flex items-start gap-3 text-sm"
+                  className="flex items-start gap-3 py-3 text-sm"
                   key={document.id}
                 >
                   <Checkbox
@@ -474,12 +486,13 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                 </div>
               ))}
               {!availableDocuments.length && (
-                <p className="text-muted-foreground text-sm">
+                <p className="py-6 text-center text-muted-foreground text-sm">
                   No files or organization Knowledge selected.
                 </p>
               )}
+            </div>
               {canEdit && (
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed p-4 text-sm hover:bg-muted">
+                <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed p-3 text-sm hover:bg-muted">
                   <Upload className="size-4" />
                   {uploading ? "Uploading…" : "Upload private Project file"}
                   <input
@@ -493,19 +506,18 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   />
                 </label>
               )}
-            </CardContent>
-          </Card>
+          </SettingsSection>
         </TabsContent>
 
         <TabsContent value="members">
-          <Card>
-            <CardHeader>
-              <CardTitle>Project members</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <SettingsSection
+            description="Project roles control context, membership, and publishing access."
+            title="Project members"
+          >
+            <div className="divide-y border-y">
               {members.map((member) => (
                 <div
-                  className="flex flex-wrap items-center justify-between gap-3 border-b pb-3 last:border-0"
+                  className="flex flex-wrap items-center justify-between gap-3 py-3"
                   key={member.organizationMemberId}
                 >
                   <div>
@@ -549,8 +561,9 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   )}
                 </div>
               ))}
+            </div>
               {initial.role === "owner" && candidates.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex flex-wrap gap-2 pt-4">
                   <Select onValueChange={setCandidateId} value={candidateId}>
                     <SelectTrigger className="min-w-64">
                       <SelectValue placeholder="Choose organization member" />
@@ -587,8 +600,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   </Button>
                 </div>
               )}
-            </CardContent>
-          </Card>
+          </SettingsSection>
         </TabsContent>
 
         <TabsContent value="apps">
@@ -596,19 +608,19 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         </TabsContent>
 
         <TabsContent value="activity">
-          <Card>
-            <CardHeader>
-              <CardTitle>Project audit activity</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
+          <SettingsSection
+            description="A chronological record of meaningful Project configuration changes."
+            title="Audit activity"
+          >
+            <div className="divide-y border-y">
               {initial.auditEvents.length === 0 ? (
-                <p className="text-muted-foreground text-sm">
+                <p className="py-6 text-center text-muted-foreground text-sm">
                   No Project activity has been recorded.
                 </p>
               ) : (
                 initial.auditEvents.map((event) => (
                   <div
-                    className="grid gap-1 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                    className="grid gap-1 py-3 text-sm sm:grid-cols-[1fr_auto]"
                     key={event.id}
                   >
                     <span>{event.action}</span>
@@ -622,8 +634,8 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                   </div>
                 ))
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </SettingsSection>
         </TabsContent>
       </Tabs>
       <AlertDialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>

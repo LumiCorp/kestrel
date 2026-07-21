@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import { memo } from "react";
 import { SidebarToggle } from "@/components/chatbot/sidebar-toggle";
 import { Button } from "@/components/chatbot/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/chatbot/ui/tooltip";
 import { PlusIcon } from "./icons";
 import { VisibilitySelector, type VisibilityType } from "./visibility-selector";
 
@@ -31,10 +36,17 @@ function PureChatHeader({
           {threadTitle || "New Thread"}
         </h1>
         {project ? (
-          <div className="hidden shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-muted-foreground text-xs sm:flex">
-            <Users className="size-3.5" />
-            Shared Project
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                aria-label={`Shared Project: ${project.name}`}
+                className="hidden size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground sm:flex"
+              >
+                <Users className="size-4" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Shared Project: {project.name}</TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
 
