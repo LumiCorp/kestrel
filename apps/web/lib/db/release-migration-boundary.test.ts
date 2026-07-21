@@ -17,18 +17,29 @@ contractTest("web.hermetic", "Vercel compilation never mutates the database", ()
   const packageJson = JSON.parse(read("package.json")) as {
     scripts: Record<string, string>;
   };
-  assert.equal(
-    packageJson.scripts.build,
-    "pnpm run clean && next build --webpack"
+  const buildCommands = new Map<string, string>();
+  const visitBuildScript = (name: string) => {
+    assert.ok(!buildCommands.has(name), `build script cycle at ${name}`);
+    const command = packageJson.scripts[name];
+    assert.ok(command, `missing ${name} script`);
+    buildCommands.set(name, command);
+    for (const match of command.matchAll(/\bpnpm run ([\w:-]+)/gu)) {
+      visitBuildScript(match[1]);
+    }
+  };
+
+  visitBuildScript("build");
+  assert.ok(
+    [...buildCommands.values()].some((command) => /(?:^|&&\s*)next build(?:\s|$)/u.test(command)),
+    "build must resolve to a Next.js production compilation"
   );
-  assert.equal(
-    packageJson.scripts["db:migrate:deploy"],
-    "tsx lib/db/migrate.ts"
-  );
-  assert.equal(
-    packageJson.scripts["db:migrate:contract"],
-    "tsx lib/db/contract-migrate.ts"
-  );
+
+  const buildChain = [...buildCommands.values()].join("\n");
+  for (const [name, command] of Object.entries(packageJson.scripts)) {
+    if (!name.startsWith("db:migrate")) continue;
+    assert.doesNotMatch(buildChain, new RegExp(`\\bpnpm run ${name}\\b`, "u"));
+    assert.ok(!buildChain.includes(command), `build must not execute ${name}`);
+  }
 });
 
 contractTest("web.hermetic", "production migrations serialize and repair known skipped schema", () => {
