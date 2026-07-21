@@ -93,6 +93,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
       sessionId: "session-agent-1",
       message: "continue",
       requestId: "request-sdk-1",
+      interactionMode: "build",
     },
     context,
   );
@@ -117,6 +118,10 @@ test("createAgent runs and resumes with the configured profile", async () => {
   assert.equal(
     ((requests[1]?.payload as { turn?: { resumeRequestId?: string } })?.turn?.resumeRequestId),
     "request-sdk-1",
+  );
+  assert.equal(
+    ((requests[1]?.payload as { turn?: { interactionMode?: string } })?.turn?.interactionMode),
+    "build",
   );
   await agent.close();
 });

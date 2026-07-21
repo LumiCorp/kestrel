@@ -48,6 +48,7 @@ export type KestrelOneRequestContext = KestrelRequestContext;
 export type KestrelOneHistoryEntry = RunnerHistoryEntry;
 
 export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
+  interactionMode: KestrelOneInteractionMode;
   signal?: AbortSignal;
   resumeRequestId?: string | undefined;
 };
@@ -142,7 +143,7 @@ export type KestrelOneAgentResponseInput = {
       }
     | undefined;
   modelId?: string;
-  interactionMode?: KestrelOneInteractionMode;
+  interactionMode: KestrelOneInteractionMode;
   runtimeModel?: KestrelOneRuntimeModelSelection;
   projectContext?: {
     projectId: string;

@@ -77,7 +77,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
       correlationId: "req_123",
     },
     threadId: "chat_123",
-    interactionMode: "plan",
+    interactionMode: "build",
     messages: [
       {
         id: "msg_user",
@@ -96,7 +96,7 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
 
   assert.equal(capturedInput?.sessionId, "chat_123");
   assert.equal(capturedInput?.message, "What changed?");
-  assert.equal(capturedInput?.interactionMode, "plan");
+  assert.equal(capturedInput?.interactionMode, "build");
   assert.deepEqual(capturedInput?.clientCapabilities, {
     kestrelOne: {
       requestId: "req_123",
@@ -151,6 +151,52 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   assert.equal((persistedMeta as { runId?: unknown })?.runId, "run_123");
 });
 
+test("createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn", async () => {
+  let capturedInput: KestrelOneAgentTurnInput | undefined;
+  const agent = fakeAgent({
+    terminal: completedTerminal("Implementation resumed", {
+      message: "Structured answer data",
+    }),
+    onStream(input) {
+      capturedInput = input;
+    },
+  });
+
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/threads/thread_resume", {
+      method: "POST",
+    }),
+    agent,
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: {
+      requestId: "req_resume",
+      correlationId: "req_resume",
+    },
+    threadId: "thread_resume",
+    interactionMode: "build",
+    interactionResponse: {
+      requestId: "request-build-mode",
+      eventType: "user.reply",
+      message: "Continue in Build mode",
+    },
+    messages: [
+      {
+        id: "msg_user",
+        role: "user",
+        parts: [{ type: "text", text: "Continue in Build mode" }],
+      },
+    ],
+  });
+
+  await response.text();
+
+  assert.equal(capturedInput?.interactionMode, "build");
+  assert.equal(capturedInput?.resumeRequestId, "request-build-mode");
+  assert.equal(capturedInput?.eventType, "user.reply");
+});
+
 test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
   let persistedText = "";
   let persistedTerminalStatus = "";
@@ -198,6 +244,7 @@ test("createKestrelOneAgentResponse persists a completed WAITING prompt as assis
       correlationId: "req_waiting",
     },
     threadId: "thread_waiting",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -245,6 +292,7 @@ test("createKestrelOneAgentResponse isolates transient title failures from the a
         correlationId: "req_123",
       },
       threadId: "chat_123",
+      interactionMode: "chat",
       messages: [
         {
           id: "msg_user",
@@ -302,6 +350,7 @@ test("createKestrelOneAgentResponse preserves typed progress with final assistan
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -350,6 +399,7 @@ test("createKestrelOneAgentResponse binds Project context to runner capabilities
     organizationId: "org_123",
     correlation: { requestId: "req_123", correlationId: "req_123" },
     threadId: "thread_project",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -434,6 +484,7 @@ test("createKestrelOneAgentResponse surfaces failed runner output", async () => 
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -469,6 +520,7 @@ test("createKestrelOneAgentResponse surfaces cancelled runner output once", asyn
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
@@ -521,6 +573,7 @@ test("createKestrelOneAgentResponse shows runner error fallback when no terminal
       correlationId: "req_123",
     },
     threadId: "chat_123",
+    interactionMode: "chat",
     messages: [
       {
         id: "msg_user",
