@@ -172,6 +172,16 @@ function testTasksForBoundary(boundary) {
   }
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)).flatMap((group) => {
     const files = group.files.sort();
+    if (boundary === "hermetic" && group.label === "runtime") {
+      const shards = partitionRoundRobin(files, 2);
+      return shards.map((shard, index) => nodeTests(
+        `runtime hermetic ${index + 1}/${shards.length}`,
+        group.cwd,
+        shard,
+        3,
+        group.prefix,
+      ));
+    }
     if (boundary !== "process" || group.label !== "runtime") {
       return [nodeTests(`${group.label} ${boundary}`, group.cwd, files, 4, group.prefix)];
     }
@@ -222,6 +232,7 @@ function postgresTasks(context) {
     }),
     task("PostgreSQL contracts", process.execPath, ["--import", "tsx", "scripts/validation/run-postgres.ts"], {
       env: context.environment,
+      coverage: true,
     }),
   ];
 }
@@ -232,6 +243,7 @@ async function chromiumTasks(context) {
   return [task("Chromium product contracts", PNPM, ["exec", "playwright", "test", "--config", "playwright.product.config.ts"], {
     cwd: path.join(ROOT, "apps/web"),
     env: { ...context.environment, ...productEnvironment },
+    coverage: true,
   })];
 }
 
@@ -313,14 +325,20 @@ function runTask(phaseName, item, timeoutMs) {
 }
 
 function task(label, command, args, options = {}) {
-  return { label, command, args, ...options };
+  return { label, command, args, coverage: false, ...options };
 }
 
 function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
   if (files.length === 0) throw new Error(`${label} discovered no tests`);
   return task(label, process.execPath, [
     ...prefix, "--import", "tsx", "--test", `--test-concurrency=${concurrency}`, "--test-reporter=spec", ...files,
-  ], { cwd, ...options });
+  ], { cwd, coverage: true, ...options });
+}
+
+function partitionRoundRobin(items, count) {
+  const partitions = Array.from({ length: count }, () => []);
+  for (const [index, item] of items.entries()) partitions[index % count].push(item);
+  return partitions.filter((partition) => partition.length > 0);
 }
 
 function trackedTests(prefixes) {
@@ -528,28 +546,10 @@ async function runLeaf(boundary, workspace) {
     );
     return;
   }
-  const files = trackedTests(["tests/", "agents/", "tools/", "packages/", "apps/"]).filter((file) => {
-    if (file.startsWith("tests/macos/") || file.includes("/tests/product/") || file.endsWith(".postgres.test.ts")) return false;
-    const execution = executionRoot(file);
-    const ownsFile = workspace === "." ? execution.cwd === ROOT : execution.cwd === path.join(ROOT, workspace);
-    return ownsFile && testBoundary(file, readFileSync(path.join(ROOT, file), "utf8")) === boundary;
-  });
-  if (files.length === 0) throw new Error(`${workspace} has no ${boundary} tests`);
-  const execution = executionRoot(files[0]);
-  const relativeFiles = files.map((file) => executionRoot(file).relativeFile).sort();
-  const result = spawnSync(process.execPath, [
-    ...execution.prefix,
-    "--import", "tsx", "--test", "--test-concurrency=4", "--test-reporter=spec", ...relativeFiles,
-  ], {
-    cwd: execution.cwd,
-    env: {
-      ...process.env,
-      CI: "true",
-      KESTREL_PACKED_CONSUMER_DIR: PACKED_CONSUMER_DIR,
-      KESTREL_VALIDATION_TEMP_ROOT: TEMP_DIR,
-    },
-    stdio: "inherit",
-  });
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
+  const expectedCwd = workspace === "." ? ROOT : path.join(ROOT, workspace);
+  const tasks = testTasksForBoundary(boundary).filter(
+    (item) => (item.cwd ?? ROOT) === expectedCwd,
+  );
+  if (tasks.length === 0) throw new Error(`${workspace} has no ${boundary} tests`);
+  await phase(boundary, budgets[boundary], tasks);
 }
