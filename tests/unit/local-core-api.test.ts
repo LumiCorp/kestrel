@@ -328,17 +328,26 @@ contractTest("local-core.authority-lock", "Local Core API does not steal or unli
     });
     await writeFile(paths.apiSocketPath, "foreign-authority-sentinel\n", "utf8");
 
-    await assert.rejects(
-      () => startLocalCoreApiServer({
+    let unexpectedServer: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
+    let rejection: unknown;
+    try {
+      unexpectedServer = await startLocalCoreApiServer({
         env: { KESTREL_CORE_HOME: home },
         platform: "darwin",
         coreVersion: "0.6.0",
         isPidAlive: () => true,
         idleTimeoutMs: 0,
-      }),
-      /could not acquire sole execution authority/u,
-    );
-    assert.equal(await readFile(paths.apiSocketPath, "utf8"), "foreign-authority-sentinel\n");
+      });
+    } catch (error) {
+      rejection = error;
+    }
+    try {
+      assert.equal(unexpectedServer, undefined);
+      assert.match(String(rejection), /could not acquire sole execution authority/u);
+      assert.equal(await readFile(paths.apiSocketPath, "utf8"), "foreign-authority-sentinel\n");
+    } finally {
+      await unexpectedServer?.close();
+    }
   } finally {
     await rm(home, { recursive: true, force: true });
   }
