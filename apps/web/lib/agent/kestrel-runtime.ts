@@ -40,6 +40,7 @@ import {
 } from "@/lib/environments/execution-route";
 import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
 import type { ChatMessage } from "@/lib/types";
+import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -195,6 +196,7 @@ export type KestrelOneAgentResponseInput = {
       }
     | undefined;
   modelId?: string;
+  interactionMode?: KestrelOneInteractionMode;
   projectContext?: {
     projectId: string;
     contextRevisionId: string;
@@ -607,6 +609,7 @@ export async function createKestrelOneAgentResponse(
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
     modelId: resolvedModel.model.id,
+    interactionMode: input.interactionMode,
     runtimeModel,
     projectContext: input.projectContext,
     transientTitle: input.transientTitle,

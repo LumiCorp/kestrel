@@ -22,6 +22,7 @@ import {
   updateThreadTitleForUser,
 } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
+import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
 import {
   createDurableThreadTurn,
@@ -35,6 +36,7 @@ const paramsSchema = z.object({ id: routeIdSchema });
 const turnBodySchema = z
   .object({
     model: z.string().min(1).max(200).optional(),
+    interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).default("chat"),
     projectId: routeIdSchema.nullable().optional(),
     messages: z
       .array(uiMessageSchema as z.ZodType<UIMessage>)
@@ -290,6 +292,7 @@ export async function POST(
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
+        requestedInteractionMode: body.interactionMode,
         source: "web",
       });
     } else {
@@ -309,6 +312,7 @@ export async function POST(
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
+        requestedInteractionMode: body.interactionMode,
         source: "web",
       });
     }

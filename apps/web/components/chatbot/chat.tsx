@@ -44,6 +44,10 @@ import {
   type ThreadConversationState,
   threadConversationStateSchema,
 } from "@/lib/turns/client-contract";
+import {
+  DEFAULT_KESTREL_ONE_INTERACTION_MODE,
+  type KestrelOneInteractionMode,
+} from "@/lib/turns/interaction-mode";
 import type {
   Attachment,
   ChatFirstTurnHandoff,
@@ -78,6 +82,7 @@ type ChatController = {
 
 function createChatTransport(
   currentModelIdRef: { current: string },
+  interactionModeRef: { current: KestrelOneInteractionMode },
   resumeTurnIdRef: { current: string | null },
   onSuccessfulResponse?: (response: Response) => void
 ) {
@@ -93,6 +98,7 @@ function createChatTransport(
         api: `/api/threads/${request.id}`,
         body: {
           model: currentModelIdRef.current,
+          interactionMode: interactionModeRef.current,
           messages: request.messages,
           ...request.body,
         },
@@ -198,6 +204,10 @@ function useSharedChatState(initialChatModel: string, threadId: string) {
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
+  const [interactionMode, setInteractionMode] = useState<KestrelOneInteractionMode>(
+    DEFAULT_KESTREL_ONE_INTERACTION_MODE
+  );
+  const interactionModeRef = useRef(interactionMode);
   const [feedbackOverrides, setFeedbackOverrides] = useState<
     Record<string, "positive" | "negative" | null>
   >({});
@@ -206,17 +216,28 @@ function useSharedChatState(initialChatModel: string, threadId: string) {
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
 
+  useEffect(() => {
+    interactionModeRef.current = interactionMode;
+  }, [interactionMode]);
+
+  useEffect(() => {
+    setInteractionMode(DEFAULT_KESTREL_ONE_INTERACTION_MODE);
+  }, [threadId]);
+
   return {
     attachments,
     currentModelId,
     currentModelIdRef,
     feedbackOverrides,
     input,
+    interactionMode,
+    interactionModeRef,
     setAttachments,
     setCurrentModelId,
     setDataStream,
     setFeedbackOverrides,
     setInput,
+    setInteractionMode,
     setShowCreditCardAlert,
     showCreditCardAlert,
   };
@@ -323,10 +344,12 @@ function ChatShell({
   feedbackByMessageId,
   headerReadonly,
   input,
+  interactionMode,
   isReadonly,
   messages,
   onFeedbackChange,
   onModelChange,
+  onInteractionModeChange,
   regenerate,
   selectedVisibilityType,
   sendMessage,
@@ -354,6 +377,7 @@ function ChatShell({
   feedbackByMessageId: Record<string, MessageFeedback | undefined>;
   headerReadonly: boolean;
   input: string;
+  interactionMode: KestrelOneInteractionMode;
   isReadonly: boolean;
   messages: ChatMessage[];
   onFeedbackChange: (
@@ -361,10 +385,14 @@ function ChatShell({
     feedback: "positive" | "negative" | null
   ) => void;
   onModelChange: (modelId: string) => void;
+  onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
   regenerate: ChatController["regenerate"];
   selectedVisibilityType: VisibilityType;
   sendMessage: ChatController["sendMessage"];
-  queueMessage?: (message: ChatMessage) => void;
+  queueMessage?: (
+    message: ChatMessage,
+    interactionMode: KestrelOneInteractionMode
+  ) => void;
   conversationState: ThreadConversationState;
   onInterrupt?: () => Promise<void>;
   onRefreshConversationState: () => Promise<void>;
@@ -433,10 +461,12 @@ function ChatShell({
               clearError={clearError}
               conversationState={conversationState}
               input={input}
+              interactionMode={interactionMode}
               messages={messages}
               modelScopeQuery={modelScopeQuery}
               onInterrupt={onInterrupt}
               onModelChange={onModelChange}
+              onInteractionModeChange={onInteractionModeChange}
               onRuntimeInteractionResponse={onRuntimeInteractionResponse}
               queueMessage={queueMessage}
               selectedModelId={currentModelId}
@@ -562,6 +592,7 @@ export function BootstrapChat({
       messageId,
       messageParts: userMessage.parts,
       modelId: shared.currentModelIdRef.current,
+      interactionMode: shared.interactionModeRef.current,
       createdAt: Date.now(),
       pendingAssistant: true,
     });
@@ -594,6 +625,7 @@ export function BootstrapChat({
         feedbackByMessageId={{}}
         headerReadonly={true}
         input={shared.input}
+        interactionMode={shared.interactionMode}
         isReadonly={false}
         messages={[]}
         modelScopeQuery={
@@ -601,6 +633,7 @@ export function BootstrapChat({
         }
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
+        onInteractionModeChange={shared.setInteractionMode}
         onRefreshConversationState={async () => {}}
         onRuntimeInteractionResponse={async () => {}}
         project={
@@ -708,7 +741,15 @@ export function Chat({
     if (handoff?.modelId) {
       shared.setCurrentModelId(handoff.modelId);
     }
-  }, [handoff?.modelId, shared.setCurrentModelId]);
+    if (handoff?.interactionMode) {
+      shared.setInteractionMode(handoff.interactionMode);
+    }
+  }, [
+    handoff?.interactionMode,
+    handoff?.modelId,
+    shared.setCurrentModelId,
+    shared.setInteractionMode,
+  ]);
 
   const refreshConversationState = useCallback(async () => {
     if (!chatExists) return;
@@ -745,6 +786,7 @@ export function Chat({
     () =>
       createChatTransport(
         shared.currentModelIdRef,
+        shared.interactionModeRef,
         resumeTurnIdRef,
         (response) => {
           setChatExists(true);
@@ -752,7 +794,7 @@ export function Chat({
           if (turnId) streamedTurnIdRef.current = turnId;
         }
       ),
-    [shared.currentModelIdRef]
+    [shared.currentModelIdRef, shared.interactionModeRef]
   );
 
   const controller = useChat<ChatMessage>({
@@ -834,7 +876,10 @@ export function Chat({
   }, [conversationState.queue.activeTurnId, id, refreshConversationState]);
 
   const queueMessage = useCallback(
-    (message: ChatMessage) => {
+    (
+      message: ChatMessage,
+      interactionMode: KestrelOneInteractionMode
+    ) => {
       const queuedMessage: ChatMessage = {
         ...message,
         metadata: { ...message.metadata, deliveryState: "sending" },
@@ -853,6 +898,7 @@ export function Chat({
         body: JSON.stringify({
           message: { id: message.id, parts: message.parts },
           model: shared.currentModelIdRef.current,
+          interactionMode,
         }),
       })
         .then(async (response) => {
@@ -1019,7 +1065,10 @@ export function Chat({
 
     hasStartedHandoffRequestRef.current = true;
     void controller.sendMessage(handoffMessage, {
-      body: handoff.projectId ? { projectId: handoff.projectId } : undefined,
+      body: {
+        ...(handoff.projectId ? { projectId: handoff.projectId } : {}),
+        interactionMode: handoff.interactionMode,
+      },
     });
   }, [
     controller.messages,
@@ -1089,6 +1138,7 @@ export function Chat({
         feedbackByMessageId={feedbackByMessageId}
         headerReadonly={isReadonly || !canPublish}
         input={shared.input}
+        interactionMode={shared.interactionMode}
         isReadonly={isReadonly}
         messages={displayMessages}
         modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
@@ -1099,6 +1149,7 @@ export function Chat({
           }));
         }}
         onInterrupt={interruptActiveTurn}
+        onInteractionModeChange={shared.setInteractionMode}
         onModelChange={shared.setCurrentModelId}
         onRefreshConversationState={refreshConversationState}
         onRuntimeInteractionResponse={respondToRuntimeInteraction}
