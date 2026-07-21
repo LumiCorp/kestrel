@@ -26,6 +26,7 @@ import type {
   DesktopProjectAction,
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
+  DesktopProviderModelCatalog,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
@@ -103,6 +104,9 @@ export type {
   DesktopProjectAction,
   DesktopProjectRegistration,
   DesktopProjectSnapshotResponse,
+  DesktopProviderModelCatalog,
+  DesktopProviderReadiness,
+  DesktopAppearanceTheme,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopReadinessView,
@@ -134,7 +138,14 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
-export type { DesktopExecutionSelection } from "../../../src/desktopShell/configuration.js";
+export type {
+  DesktopAppDefinition,
+  DesktopAppRef,
+  DesktopExecutionSelection,
+  DesktopModelConfiguration,
+  DesktopModelConfigurationRef,
+  DesktopModelConfigurationRevision,
+} from "../../../src/desktopShell/configuration.js";
 
 export interface DesktopAppInfo {
   name: string;
@@ -191,6 +202,7 @@ export interface DesktopBridge {
   cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
+  getModelCatalog(provider: DesktopRendererSettings["selectedProvider"]): Promise<DesktopProviderModelCatalog>;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   pickWorkspace(): Promise<string | undefined>;

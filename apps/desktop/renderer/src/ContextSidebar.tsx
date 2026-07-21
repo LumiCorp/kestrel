@@ -1,27 +1,41 @@
-import { Folder, Plus, RefreshCw, Settings } from "lucide-react";
+import { Folder, Plus, RefreshCw } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import type {
   DesktopBridgeInfo,
-  DesktopCapabilityId,
+  DesktopCapabilityView,
   DesktopRendererSettings,
   DesktopRuntimeHealth,
 } from "../../src/contracts";
-import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
+import type { RendererThread } from "./state";
 
 export function ContextSidebar(props: {
   surface: string;
+  thread: RendererThread;
   settings: DesktopRendererSettings;
-  modelPolicy?: ModelPolicyV1 | undefined;
   runtimeHealth?: DesktopRuntimeHealth | undefined;
   bridgeInfo?: DesktopBridgeInfo | undefined;
+  capabilities?: DesktopCapabilityView | undefined;
+  locked: boolean;
   activeProjectPath?: string | undefined;
+  onModelConfigurationChange: (id: string, revision: number) => void;
+  onAppToggle: (id: string, enabled: boolean) => void;
   onProjectChange: (path: string) => void;
   onAddProject: () => void;
   onRestartRuntime: () => void;
-  onOpenCapability: (id?: DesktopCapabilityId) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
+  const activeConfiguration = props.settings.modelConfigurations.find(
+    (configuration) => configuration.id === props.thread.modelConfigurationId,
+  );
+  const activeRevision = activeConfiguration?.revisions.find(
+    (revision) => revision.revision === props.thread.modelConfigurationRevision,
+  );
+  const providerReadiness = props.settings.providerReadiness.find(
+    (entry) => entry.provider === activeRevision?.policy.provider,
+  );
+  const enabledApps = new Set(props.thread.enabledAppIds);
+  const weatherCapability = props.capabilities?.capabilities.find((entry) => entry.id === "tools.weather");
   const healthState = props.runtimeHealth?.state ?? "degraded";
 
   return (
@@ -31,40 +45,74 @@ export function ContextSidebar(props: {
         {props.surface === "chat" ? (
           <>
             <section className="inspector-section compact-section">
-              <div className="section-heading">
-                <span>Provider</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Configure provider and model"
-                  aria-label="Configure provider and model"
-                  onClick={() => props.onOpenCapability(`model.${props.settings.selectedProvider}`)}
-                >
-                  <Settings size={15} aria-hidden="true" />
-                </button>
-              </div>
-              <p className="provider-model" title={props.modelPolicy?.model}>
-                {props.modelPolicy?.model ?? props.settings.selectedProvider}
-              </p>
-              <p className="provider-status">
-                <span aria-hidden="true" />
-                {props.settings.selectedProvider}
-              </p>
+              <div className="section-heading"><span>Model</span></div>
+              <select
+                aria-label="Model configuration"
+                disabled={props.locked}
+                value={`${props.thread.modelConfigurationId}@${props.thread.modelConfigurationRevision}`}
+                onChange={(event) => {
+                  const separator = event.target.value.lastIndexOf("@");
+                  const id = event.target.value.slice(0, separator);
+                  const revisionValue = event.target.value.slice(separator + 1);
+                  const configuration = props.settings.modelConfigurations.find(
+                    (entry) => entry.id === id,
+                  );
+                  const revision = Number(revisionValue);
+                  if (configuration !== undefined && Number.isSafeInteger(revision)) {
+                    props.onModelConfigurationChange(configuration.id, revision);
+                  }
+                }}
+              >
+                {activeConfiguration !== undefined
+                  && (activeConfiguration.archivedAt !== undefined
+                    || activeConfiguration.currentRevision !== props.thread.modelConfigurationRevision) ? (
+                    <option value={`${activeConfiguration.id}@${props.thread.modelConfigurationRevision}`}>
+                      {activeConfiguration.name} · revision {props.thread.modelConfigurationRevision}
+                    </option>
+                  ) : null}
+                {props.settings.modelConfigurations
+                  .filter((configuration) => configuration.archivedAt === undefined)
+                  .map((configuration) => (
+                    <option key={configuration.id} value={`${configuration.id}@${configuration.currentRevision}`}>
+                      {configuration.name}
+                    </option>
+                  ))}
+              </select>
+              {activeRevision !== undefined ? (
+                <p className="provider-model" title={activeRevision.policy.model}>
+                  {activeRevision.policy.model}
+                </p>
+              ) : null}
+              {providerReadiness !== undefined ? (
+                <p className={`provider-status ${providerReadiness.configured ? "" : "needs-credential"}`}>
+                  <span aria-hidden="true" />
+                  {providerReadiness.configured ? "Provider ready" : "Credential required"}
+                </p>
+              ) : null}
+              {props.locked ? <p className="compact-note">Locked while this conversation is active.</p> : null}
             </section>
 
             <section className="inspector-section compact-section">
               <div className="section-heading"><span>Apps</span></div>
-              <button
-                className="app-readiness-row"
-                type="button"
-                onClick={() => props.onOpenCapability("tools.weather")}
-              >
-                <span className="app-readiness-copy">
-                  <strong>Weather</strong>
-                  <small>Open-Meteo + Visual Crossing fallback</small>
-                </span>
-                <span className="provider-status"><span aria-hidden="true" />View readiness</span>
-              </button>
+              <div className="compact-check-list">
+                {props.settings.apps.map((app) => (
+                  <label key={app.id}>
+                    <span><strong>{app.label}</strong><small>{app.description}</small></span>
+                    <input
+                      type="checkbox"
+                      checked={enabledApps.has(app.id)}
+                      disabled={props.locked}
+                      onChange={(event) => props.onAppToggle(app.id, event.target.checked)}
+                    />
+                  </label>
+                ))}
+              </div>
+              {enabledApps.has("weather") ? (
+                <p className={`provider-status ${weatherCapability?.readiness === "ready" ? "" : "needs-credential"}`}>
+                  <span aria-hidden="true" />
+                  {weatherCapability?.readiness === "ready" ? "Weather fallback ready" : "Weather free provider"}
+                </p>
+              ) : null}
             </section>
           </>
         ) : (
@@ -122,6 +170,6 @@ function surfaceDescription(surface: string): string {
   if (surface === "mission-control") return "Run and task context for the active conversation.";
   if (surface === "projects") return "Files and actions for the selected project.";
   if (surface === "mcp") return "Configured local integrations.";
-  if (surface === "settings") return "Application-wide capability configuration.";
+  if (surface === "settings") return "Application-wide configuration.";
   return "Runtime health and support information.";
 }

@@ -3,7 +3,6 @@ import {
   Folder,
   ListChecks,
   MessageSquare,
-  Moon,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
@@ -12,13 +11,12 @@ import {
   Send,
   Settings,
   Square,
-  Sun,
   Wrench,
   X,
 } from "lucide-react";
 import {
-  type CSSProperties,
   type FormEvent,
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -28,6 +26,7 @@ import {
 import type {
   DesktopBridgeInfo,
   DesktopCapabilityId,
+  DesktopCapabilityView,
   DesktopReadinessItemId,
   DesktopAttachmentMetadata,
   DesktopFollowUpQueueEntry,
@@ -38,9 +37,7 @@ import type {
   DesktopRuntimeHealth,
   DesktopRuntimeThreadInspection,
 } from "../../src/contracts";
-import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
-import { ContextSidebar } from "./ContextSidebar";
 import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
@@ -53,6 +50,7 @@ import {
   projectDesktopRunStream,
   type DesktopRunStreamItem,
 } from "./runStream";
+import { ContextSidebar } from "./ContextSidebar";
 import {
   addRendererThread,
   appendRendererTranscript,
@@ -64,7 +62,7 @@ import {
   resolveRendererThreadProjectPath,
   selectRendererThread,
   serializeDesktopRendererState,
-  setRendererTheme,
+  toDesktopExecutionSelection,
   toDesktopRunHistory,
   updateRendererThread,
   updateRendererDraft,
@@ -93,7 +91,7 @@ export function DesktopApp() {
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
-  const [modelPolicy, setModelPolicy] = useState<ModelPolicyV1>();
+  const [capabilities, setCapabilities] = useState<DesktopCapabilityView>();
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRun>>({});
   const [threadViews, setThreadViews] = useState<Record<string, DesktopRuntimeThreadInspection>>({});
   const [runStreams, setRunStreams] = useState<Record<string, DesktopRunStreamItem[]>>({});
@@ -147,12 +145,20 @@ export function DesktopApp() {
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
       window.kestrelDesktop.getBridgeInfo(),
-      window.kestrelDesktop.getModelPolicy(),
-    ]).then(([uiState, nextSettings, health, info, nextModelPolicy]) => {
+      window.kestrelDesktop.getCapabilities(),
+    ]).then(([uiState, nextSettings, health, info, nextCapabilities]) => {
       if (disposed) {
         return;
       }
-      const rendererState = readDesktopRendererState(uiState);
+      const defaultConfiguration = nextSettings.modelConfigurations.find(
+        (configuration) => configuration.id === nextSettings.defaultModelConfigurationId,
+      );
+      const rendererState = readDesktopRendererState(uiState, {
+        modelConfigurationId: defaultConfiguration?.id,
+        modelConfigurationRevision: defaultConfiguration?.currentRevision,
+        enabledAppIds: nextSettings.defaultEnabledAppIds,
+        theme: nextSettings.appearanceTheme,
+      });
       setState(rendererState);
       void Promise.all(rendererState.threads.map(async (thread) => await refreshThreadAuthority(thread)))
         .catch(() => {});
@@ -160,7 +166,7 @@ export function DesktopApp() {
       setActiveProjectPath((current) => current ?? nextSettings.projects[0]?.path);
       setRuntimeHealth(health);
       setBridgeInfo(info);
-      setModelPolicy(nextModelPolicy);
+      setCapabilities(nextCapabilities);
     }).catch((cause) => {
       if (disposed === false) {
         setError(errorMessage(cause));
@@ -240,14 +246,31 @@ export function DesktopApp() {
     if (state === undefined) {
       return;
     }
-    document.documentElement.dataset.theme = state.theme;
-    document.documentElement.style.colorScheme = state.theme;
+    const resolvedTheme = state.theme === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      : state.theme;
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
     void window.kestrelDesktop
       .saveUiState(serializeDesktopRendererState(state))
       .catch((cause) => {
         setError(`Desktop state could not be saved: ${errorMessage(cause)}`);
       });
   }, [state]);
+
+  useEffect(() => {
+    if (state?.theme !== "system") {
+      return;
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applySystemTheme = () => {
+      const theme = media.matches ? "dark" : "light";
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    };
+    media.addEventListener("change", applySystemTheme);
+    return () => media.removeEventListener("change", applySystemTheme);
+  }, [state?.theme]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
@@ -289,6 +312,7 @@ export function DesktopApp() {
       state === undefined
       || activeThread === undefined
       || message.trim().length === 0
+      || settings === undefined
     ) {
       return;
     }
@@ -404,6 +428,7 @@ export function DesktopApp() {
           ? { projectPath }
           : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
+        executionSelection: toDesktopExecutionSelection(activeThread, settings.apps),
       });
       const assistantText = extractTerminalMessage(terminal);
       const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
@@ -606,9 +631,17 @@ export function DesktopApp() {
   }
 
   function startProjectConversation(projectPath: string): void {
+    const defaultConfiguration = settings?.modelConfigurations.find(
+      (configuration) => configuration.id === settings.defaultModelConfigurationId,
+    );
     setState((current) => current === undefined
       ? current
-      : addRendererThread(current, { projectPath }));
+      : addRendererThread(current, {
+          projectPath,
+          modelConfigurationId: defaultConfiguration?.id,
+          modelConfigurationRevision: defaultConfiguration?.currentRevision,
+          enabledAppIds: settings?.defaultEnabledAppIds,
+        }));
     setSurface("chat");
   }
 
@@ -623,7 +656,6 @@ export function DesktopApp() {
     else if (itemId === "projects") openCapabilitySettings("data.workspace");
     else openCapabilitySettings();
   }
-
   if (state === undefined || activeThread === undefined) {
     return (
       <main className="loading-shell">
@@ -637,7 +669,7 @@ export function DesktopApp() {
   const activeProject = settings?.projects.find(
     (project) => project.path === activeProjectPath
   ) ?? settings?.projects[0];
-  const showInspector = inspectorOpen;
+  const showInspector = inspectorOpen && settings !== undefined;
   return (
     <div className="desktop-app">
       <header className="titlebar">
@@ -649,30 +681,16 @@ export function DesktopApp() {
           {surfaceTitle(surface, activeThread.title, activeProject?.label)}
         </div>
         <div className="titlebar-actions">
-          <span className={`health-indicator health-${healthState}`}>
-            <span aria-hidden="true" />
-            {healthState}
-          </span>
           <button
-            className="icon-button"
-            type="button"
-            title={state.theme === "dark" ? "Use light theme" : "Use dark theme"}
-            aria-label={state.theme === "dark" ? "Use light theme" : "Use dark theme"}
-            onClick={() => setState((current) => current === undefined
-              ? current
-              : setRendererTheme(current, current.theme === "dark" ? "light" : "dark"))}
-          >
-            {state.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
-            aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
-            onClick={() => setInspectorOpen((open) => !open)}
-          >
-            {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
-          </button>
+              className="icon-button"
+              type="button"
+              title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+              aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+              onClick={() => setInspectorOpen((open) => !open)}
+            >
+              <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
+              {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+            </button>
         </div>
       </header>
 
@@ -700,6 +718,9 @@ export function DesktopApp() {
             <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setSurface("diagnostics")}>
               <Wrench size={17} />
             </button>
+            <button className={`settings-tab ${surface === "settings" ? "active" : ""}`} type="button" title="Settings" aria-label="Settings" onClick={() => setSurface("settings")}>
+              <Settings size={17} />
+            </button>
           </nav>
 
           {surface === "chat" ? (
@@ -717,6 +738,11 @@ export function DesktopApp() {
                         ...(activeProject?.path !== undefined
                           ? { projectPath: activeProject.path }
                           : {}),
+                        modelConfigurationId: settings?.defaultModelConfigurationId,
+                        modelConfigurationRevision: settings?.modelConfigurations.find(
+                          (configuration) => configuration.id === settings.defaultModelConfigurationId,
+                        )?.currentRevision,
+                        enabledAppIds: settings?.defaultEnabledAppIds,
                       }))}
                 >
                   <Plus size={17} />
@@ -952,7 +978,15 @@ export function DesktopApp() {
               <McpWorkspace onError={setError} />
             ) : surface === "settings" ? (
               <SettingsWorkspace
+                settings={settings!}
                 initialCapabilityId={settingsTarget}
+                onSettings={async (update) => {
+                  const saved = await window.kestrelDesktop.saveSettings(update);
+                  setSettings(saved);
+                  setState((current) => current === undefined ? current : { ...current, theme: saved.appearanceTheme });
+                  return saved;
+                }}
+                onCapabilitiesChange={setCapabilities}
                 onOpenMcp={() => setSurface("mcp")}
                 onAddProject={async () => { await addProject(); }}
                 onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
@@ -972,11 +1006,28 @@ export function DesktopApp() {
         {showInspector && settings !== undefined ? (
           <ContextSidebar
             surface={surface}
+            thread={activeThread}
             settings={settings}
-            modelPolicy={modelPolicy}
             runtimeHealth={runtimeHealth}
             bridgeInfo={bridgeInfo}
+            capabilities={capabilities}
+            locked={activeRun !== undefined || activeThread.pendingWaitEventType !== undefined}
             activeProjectPath={activeProject?.path}
+            onModelConfigurationChange={(id, revision) => setState((current) => current === undefined
+              ? current
+              : updateRendererThread(current, activeThread.id, (thread) => ({
+                  ...thread,
+                  modelConfigurationId: id,
+                  modelConfigurationRevision: revision,
+                })))}
+            onAppToggle={(id, enabled) => setState((current) => current === undefined
+              ? current
+              : updateRendererThread(current, activeThread.id, (thread) => ({
+                  ...thread,
+                  enabledAppIds: enabled
+                    ? [...new Set([...thread.enabledAppIds, id])]
+                    : thread.enabledAppIds.filter((entry) => entry !== id),
+                })))}
             onProjectChange={(path) => {
               setActiveProjectPath(path);
               setState((current) => current === undefined
@@ -985,7 +1036,6 @@ export function DesktopApp() {
             }}
             onAddProject={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
             onRestartRuntime={() => void restartRuntime()}
-            onOpenCapability={openCapabilitySettings}
             onResizeStart={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId);
               const startX = event.clientX;

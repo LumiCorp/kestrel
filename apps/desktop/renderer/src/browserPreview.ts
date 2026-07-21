@@ -20,6 +20,7 @@ import type {
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
 import { resolveDesktopCapabilityView } from "../../../../src/desktopShell/capabilityRegistry";
 import { LOCAL_CORE_CREDENTIAL_IDS } from "../../../../src/localCore/credentialStore";
+import { createDesktopModelConfiguration, listDesktopAppDefinitions } from "../../../../src/desktopShell/configuration";
 
 type PreviewSnapshot = DesktopProjectSnapshotResponse["snapshot"];
 type PreviewTaskAction = Extract<DesktopProjectAction, { type: `task.${string}` }>;
@@ -33,6 +34,13 @@ export function ensureBrowserPreviewBridge(): void {
     return;
   }
 
+  const previewModelConfiguration = createDesktopModelConfiguration({
+    version: 1,
+    provider: "openrouter",
+    model: "openai/gpt-5.2",
+    modelByStage: {},
+    modelCapabilities: { visionInputEnabled: false },
+  });
   let settings: DesktopRendererSettings = {
     selectedProvider: "openrouter",
     databaseMode: "default",
@@ -44,6 +52,18 @@ export function ensureBrowserPreviewBridge(): void {
     ],
     advancedWorkspaceEnabled: false,
     setupCompletedAt: new Date().toISOString(),
+    modelConfigurations: [previewModelConfiguration],
+    defaultModelConfigurationId: previewModelConfiguration.id,
+    defaultEnabledAppIds: ["weather"],
+    appearanceTheme: "system",
+    apps: listDesktopAppDefinitions(),
+    providerReadiness: [
+      { provider: "openrouter", configured: true, requiresCredential: true },
+      { provider: "openai", configured: false, requiresCredential: true },
+      { provider: "anthropic", configured: false, requiresCredential: true },
+      { provider: "ollama", configured: true, requiresCredential: false },
+      { provider: "lmstudio", configured: true, requiresCredential: false },
+    ],
   };
   let entries: DesktopLegacyUiStateEntries = {};
   const modelPolicy: ModelPolicyV1 = {
@@ -145,6 +165,8 @@ export function ensureBrowserPreviewBridge(): void {
           "runtime_control",
           "mission_control",
           "runtime_inspection",
+          "model_configurations",
+          "app_selection",
         ],
       };
     },
@@ -183,6 +205,10 @@ export function ensureBrowserPreviewBridge(): void {
           providerSelectionCompletedAt: settings.providerSelectionCompletedAt,
           setupCompletedAt: settings.setupCompletedAt,
           advancedWorkspaceEnabled: settings.advancedWorkspaceEnabled,
+          modelConfigurations: settings.modelConfigurations,
+          defaultModelConfigurationId: settings.defaultModelConfigurationId,
+          defaultEnabledAppIds: settings.defaultEnabledAppIds,
+          appearanceTheme: settings.appearanceTheme,
         },
         credentials: {
           backend: "macos_keychain",
@@ -234,11 +260,22 @@ export function ensureBrowserPreviewBridge(): void {
       settings = {
         ...settings,
         ...(update.projects !== undefined ? { projects: update.projects } : {}),
+        ...(update.modelConfigurations !== undefined ? { modelConfigurations: update.modelConfigurations } : {}),
+        ...(update.defaultModelConfigurationId !== undefined ? { defaultModelConfigurationId: update.defaultModelConfigurationId } : {}),
+        ...(update.defaultEnabledAppIds !== undefined ? { defaultEnabledAppIds: update.defaultEnabledAppIds } : {}),
+        ...(update.appearanceTheme !== undefined ? { appearanceTheme: update.appearanceTheme } : {}),
       };
       return settings;
     },
     async getModelPolicy() {
       return modelPolicy;
+    },
+    async getModelCatalog(provider: DesktopRendererSettings["selectedProvider"]) {
+      return {
+        provider,
+        models: provider === "openrouter" ? ["openai/gpt-5.2", "anthropic/claude-sonnet-4.5"] : [modelPolicy.model],
+        source: "fallback" as const,
+      };
     },
     async getRuntimeHealth() {
       return {

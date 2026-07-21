@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "tracked static test declarations",
-  "testCount": 3501,
+  "testCount": 3502,
   "tests": [
     {
       "identity": "apps/desktop/tests/bootHtml.test.ts :: boot screen exposes Reset Runtime Store only for sqlite init failures",
@@ -2211,7 +2211,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 438,
+      "line": 455,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys",
       "contractId": "desktop.contract",
@@ -2226,7 +2226,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment exposes only the selected provider key",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 229,
+      "line": 246,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment exposes only the selected provider key",
       "contractId": "desktop.contract",
@@ -2241,7 +2241,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 582,
+      "line": 599,
       "ancestors": [],
       "title": "buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority",
       "contractId": "desktop.contract",
@@ -2256,7 +2256,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 479,
+      "line": 496,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs",
       "contractId": "desktop.contract",
@@ -2271,7 +2271,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 551,
+      "line": 568,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL",
       "contractId": "desktop.contract",
@@ -2286,7 +2286,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 516,
+      "line": 533,
       "ancestors": [],
       "title": "buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres",
       "contractId": "desktop.contract",
@@ -2301,7 +2301,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerProfile applies the selected model policy to run.start",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 618,
+      "line": 635,
       "ancestors": [],
       "title": "buildDesktopRunnerProfile applies the selected model policy to run.start",
       "contractId": "desktop.contract",
@@ -2316,7 +2316,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: buildDesktopRunnerProfile applies verified managed MCP servers and tools",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 637,
+      "line": 654,
       "ancestors": [],
       "title": "buildDesktopRunnerProfile applies verified managed MCP servers and tools",
       "contractId": "desktop.contract",
@@ -2331,7 +2331,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: describeDesktopProviderCredentialRequirement explains the missing selected provider key",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 706,
+      "line": 723,
       "ancestors": [],
       "title": "describeDesktopProviderCredentialRequirement explains the missing selected provider key",
       "contractId": "desktop.contract",
@@ -2346,7 +2346,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: hasConfiguredDesktopProviderCredential follows the selected provider",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 655,
+      "line": 672,
       "ancestors": [],
       "title": "hasConfiguredDesktopProviderCredential follows the selected provider",
       "contractId": "desktop.contract",
@@ -2359,9 +2359,24 @@
       "environment": "linux"
     },
     {
+      "identity": "apps/desktop/tests/settingsStore.test.ts :: legacy desktop settings seed the Default model configuration from Local Core policy",
+      "file": "apps/desktop/tests/settingsStore.test.ts",
+      "line": 20,
+      "ancestors": [],
+      "title": "legacy desktop settings seed the Default model configuration from Local Core policy",
+      "contractId": "desktop.contract",
+      "owner": "desktop",
+      "risk": "medium",
+      "counterexample": "Desktop IPC, rendering, packaging inputs, or Local Core integration no longer matches its declared contract. Executable counterexample: legacy desktop settings seed the Default model configuration from Local Core policy",
+      "dimension": "legacy desktop settings seed the Default model configuration from Local Core policy",
+      "role": "variant",
+      "lane": "desktop",
+      "environment": "linux"
+    },
+    {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings backfills provider selection for intentional legacy provider states",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 68,
+      "line": 85,
       "ancestors": [],
       "title": "readDesktopSettings backfills provider selection for intentional legacy provider states",
       "contractId": "desktop.contract",
@@ -2376,7 +2391,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 48,
+      "line": 65,
       "ancestors": [],
       "title": "readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
       "contractId": "desktop.contract",
@@ -2391,7 +2406,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings normalizes legacy OpenRouter-only settings",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 27,
+      "line": 44,
       "ancestors": [],
       "title": "readDesktopSettings normalizes legacy OpenRouter-only settings",
       "contractId": "desktop.contract",
@@ -2406,7 +2421,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: readDesktopSettings returns default settings when the file is missing",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 19,
+      "line": 36,
       "ancestors": [],
       "title": "readDesktopSettings returns default settings when the file is missing",
       "contractId": "desktop.contract",
@@ -2421,7 +2436,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings persists external database mode without serializing its credential",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 176,
+      "line": 193,
       "ancestors": [],
       "title": "writeDesktopSettings persists external database mode without serializing its credential",
       "contractId": "desktop.contract",
@@ -2436,7 +2451,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings persists provider options without serializing credentials",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 90,
+      "line": 107,
       "ancestors": [],
       "title": "writeDesktopSettings persists provider options without serializing credentials",
       "contractId": "desktop.contract",
@@ -2451,7 +2466,7 @@
     {
       "identity": "apps/desktop/tests/settingsStore.test.ts :: writeDesktopSettings round-trips local-provider settings",
       "file": "apps/desktop/tests/settingsStore.test.ts",
-      "line": 203,
+      "line": 220,
       "ancestors": [],
       "title": "writeDesktopSettings round-trips local-provider settings",
       "contractId": "desktop.contract",

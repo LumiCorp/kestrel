@@ -1,12 +1,19 @@
 import { CheckCircle2, Circle, CircleAlert, RefreshCw, Settings2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type {
   DesktopCapability,
   DesktopCapabilityCategory,
   DesktopCapabilityView,
   DesktopCapabilityId,
+  DesktopModelProvider,
+  DesktopRendererSettings,
+  DesktopRendererSettingsUpdate,
 } from "../../src/contracts";
+import {
+  appendDesktopModelConfigurationRevision,
+  createDesktopModelConfiguration,
+} from "../../../../src/desktopShell/configuration";
 import { keepFocusInsideDialog } from "./dialogFocus";
 
 const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
@@ -28,7 +35,10 @@ const CATEGORY_LABELS: Record<DesktopCapabilityCategory, string> = {
 };
 
 interface SettingsWorkspaceProps {
+  settings: DesktopRendererSettings;
   initialCapabilityId?: DesktopCapabilityId | undefined;
+  onSettings: (update: DesktopRendererSettingsUpdate) => Promise<DesktopRendererSettings>;
+  onCapabilitiesChange?: ((view: DesktopCapabilityView) => void) | undefined;
   onOpenMcp: () => void;
   onAddProject: () => Promise<void>;
   onRequestMicrophone: () => Promise<void>;
@@ -36,7 +46,10 @@ interface SettingsWorkspaceProps {
 }
 
 export function SettingsWorkspace({
+  settings,
   initialCapabilityId,
+  onSettings,
+  onCapabilitiesChange,
   onOpenMcp,
   onAddProject,
   onRequestMicrophone,
@@ -52,6 +65,15 @@ export function SettingsWorkspace({
   const [notice, setNotice] = useState<string>();
   const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] = useState(false);
   const [openedTarget, setOpenedTarget] = useState<DesktopCapabilityId>();
+  const [selectedId, setSelectedId] = useState(settings.defaultModelConfigurationId);
+  const [name, setName] = useState("");
+  const [provider, setProvider] = useState<DesktopModelProvider>("openrouter");
+  const [model, setModel] = useState("");
+  const [timeout, setTimeoutValue] = useState("");
+  const [vision, setVision] = useState(false);
+  const [stageOverrides, setStageOverrides] = useState("{}");
+  const [apiKey, setApiKey] = useState("");
+  const [catalog, setCatalog] = useState<string[]>([]);
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
   const grouped = useMemo(() => new Map(CATEGORY_ORDER.map((category) => [
@@ -59,10 +81,34 @@ export function SettingsWorkspace({
     view?.capabilities.filter((capability) => capability.category === category) ?? [],
   ])), [view]);
   const readinessSummary = useMemo(() => summarizeReadiness(view?.capabilities ?? []), [view]);
+  const selected = useMemo(
+    () => settings.modelConfigurations.find((entry) => entry.id === selectedId),
+    [settings.modelConfigurations, selectedId],
+  );
 
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    const revision = selected?.revisions.find((entry) => entry.revision === selected.currentRevision);
+    setName(selected?.name ?? "");
+    setProvider(revision?.policy.provider ?? "openrouter");
+    setModel(revision?.policy.model ?? "");
+    setTimeoutValue(revision?.policy.modelTimeoutMs?.toString() ?? "");
+    setVision(revision?.policy.modelCapabilities.visionInputEnabled ?? false);
+    setStageOverrides(JSON.stringify(revision?.policy.modelByStage ?? {}, null, 2));
+  }, [selected]);
+
+  useEffect(() => {
+    let disposed = false;
+    void window.kestrelDesktop.getModelCatalog(provider).then((result) => {
+      if (!disposed) setCatalog(result.models);
+    }).catch(() => {
+      if (!disposed) setCatalog([]);
+    });
+    return () => { disposed = true; };
+  }, [provider]);
 
   useEffect(() => {
     if (initialCapabilityId === undefined || initialCapabilityId === openedTarget || view === undefined) return;
@@ -94,7 +140,9 @@ export function SettingsWorkspace({
     setLoading(true);
     onError(undefined);
     try {
-      setView(await window.kestrelDesktop.getCapabilities());
+      const nextView = await window.kestrelDesktop.getCapabilities();
+      setView(nextView);
+      onCapabilitiesChange?.(nextView);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -163,6 +211,7 @@ export function SettingsWorkspace({
         ...(credential.trim().length > 0 ? { credential: credential.trim() } : {}),
       });
       setView(result.view);
+      onCapabilitiesChange?.(result.view);
       setNotice(`${editing.name} was verified and applied${result.runtimeRestarted ? "; the runtime restarted with the new configuration" : ""}.`);
       closeEditor();
     } catch (error) {
@@ -183,10 +232,73 @@ export function SettingsWorkspace({
         credential: null,
       });
       setView(result.view);
+      onCapabilitiesChange?.(result.view);
       setNotice(`${capabilityName} credential removed.`);
       closeEditor();
     } catch (error) {
       setEditorError(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveModel(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (name.trim().length === 0 || model.trim().length === 0) {
+      onError("A name and model ID are required.");
+      return;
+    }
+    setSaving(true);
+    onError(undefined);
+    try {
+      const parsedStageOverrides = JSON.parse(stageOverrides) as unknown;
+      if (typeof parsedStageOverrides !== "object" || parsedStageOverrides === null || Array.isArray(parsedStageOverrides)) {
+        throw new Error("Stage overrides must be a JSON object.");
+      }
+      if (apiKey.trim().length > 0) {
+        const result = await window.kestrelDesktop.configureCapability({
+          capabilityId: `model.${provider}`,
+          enabled: true,
+          settings: { model: model.trim() },
+          credential: apiKey.trim(),
+        });
+        setView(result.view);
+        onCapabilitiesChange?.(result.view);
+        setApiKey("");
+      }
+      const base = selected ?? createDesktopModelConfiguration({
+        version: 1,
+        provider,
+        model: model.trim(),
+        modelByStage: {},
+        modelCapabilities: { visionInputEnabled: vision },
+      }, {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        createdAt: new Date().toISOString(),
+      });
+      const current = base.revisions.find((entry) => entry.revision === base.currentRevision)!.policy;
+      const { modelTimeoutMs: _currentTimeout, ...currentWithoutTimeout } = current;
+      const nextPolicy = {
+        ...currentWithoutTimeout,
+        provider,
+        model: model.trim(),
+        modelByStage: parsedStageOverrides as Record<string, string>,
+        ...(timeout.trim().length > 0 ? { modelTimeoutMs: Number(timeout) } : {}),
+        modelCapabilities: { visionInputEnabled: vision },
+      };
+      const next = selected === undefined
+        ? { ...base, name: name.trim(), revisions: [{ ...base.revisions[0]!, policy: nextPolicy }] }
+        : { ...appendDesktopModelConfigurationRevision(base, nextPolicy), name: name.trim() };
+      await onSettings({
+        modelConfigurations: selected === undefined
+          ? [...settings.modelConfigurations, next]
+          : settings.modelConfigurations.map((entry) => entry.id === next.id ? next : entry),
+      });
+      setSelectedId(next.id);
+      setNotice(`${next.name} configuration saved.`);
+    } catch (cause) {
+      onError(errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -281,6 +393,66 @@ export function SettingsWorkspace({
           );
         })}
       </div>
+
+      <section className="settings-section" aria-labelledby="model-configurations-title">
+        <div className="settings-section-heading">
+          <div>
+            <h2 id="model-configurations-title">Conversation model configurations</h2>
+            <p>Named, revisioned model choices used by the contextual sidebar.</p>
+          </div>
+        </div>
+        <div className="settings-content model-settings-grid">
+          <div className="settings-list">
+            {settings.modelConfigurations.map((configuration) => (
+              <button key={configuration.id} type="button" className={selectedId === configuration.id ? "active" : ""} onClick={() => setSelectedId(configuration.id)}>
+                <strong>{configuration.name}</strong>
+                <small>{configuration.revisions.find((entry) => entry.revision === configuration.currentRevision)?.policy.model}</small>
+                {configuration.id === settings.defaultModelConfigurationId ? <span>Default</span> : null}
+              </button>
+            ))}
+            <button type="button" className={selected === undefined ? "active" : ""} onClick={() => {
+              setSelectedId("");
+              setName("New model");
+              setProvider("openrouter");
+              setModel("");
+              setTimeoutValue("");
+              setVision(false);
+              setStageOverrides("{}");
+            }}>+ Add model</button>
+          </div>
+          <form className="settings-form" onSubmit={(event) => void saveModel(event)}>
+            <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+            <label>Provider<select value={provider} onChange={(event) => setProvider(event.target.value as DesktopModelProvider)}>
+              <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="ollama">Ollama</option><option value="lmstudio">LM Studio</option>
+            </select></label>
+            <label>Model ID<input list="model-catalog" value={model} onChange={(event) => setModel(event.target.value)} /></label>
+            <datalist id="model-catalog">{catalog.map((entry) => <option key={entry} value={entry} />)}</datalist>
+            {provider === "openrouter" || provider === "openai" || provider === "anthropic" ? (
+              <label>Provider API key<input type="password" autoComplete="off" value={apiKey} placeholder="Leave blank to keep the stored key" onChange={(event) => setApiKey(event.target.value)} /></label>
+            ) : null}
+            <details><summary>Advanced policy</summary>
+              <label>Timeout (ms)<input inputMode="numeric" value={timeout} onChange={(event) => setTimeoutValue(event.target.value.replace(/\D/g, ""))} /></label>
+              <label className="settings-check"><input type="checkbox" checked={vision} onChange={(event) => setVision(event.target.checked)} />Enable vision input</label>
+              <label>Stage overrides (JSON)<textarea rows={5} value={stageOverrides} onChange={(event) => setStageOverrides(event.target.value)} /></label>
+            </details>
+            <div className="settings-form-actions">
+              {selected !== undefined && selected.id !== settings.defaultModelConfigurationId ? <button type="button" onClick={() => void onSettings({ defaultModelConfigurationId: selected.id })}>Make default</button> : null}
+              {selected !== undefined && selected.id !== settings.defaultModelConfigurationId ? <button type="button" onClick={() => void onSettings({ modelConfigurations: settings.modelConfigurations.map((entry) => entry.id === selected.id ? { ...entry, archivedAt: new Date().toISOString() } : entry) })}>Archive</button> : null}
+              <button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save model"}</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="desktop-preferences-title">
+        <div className="settings-section-heading"><h2 id="desktop-preferences-title">Desktop preferences</h2></div>
+        <div className="settings-content settings-card">
+          <label className="settings-check"><input type="checkbox" checked={settings.defaultEnabledAppIds.includes("weather")} onChange={(event) => void onSettings({ defaultEnabledAppIds: event.target.checked ? ["weather"] : [] })} />Enable Weather by default for new conversations</label>
+          <div className="appearance-options">
+            {(["system", "light", "dark"] as const).map((theme) => <label key={theme}><input type="radio" name="theme" checked={settings.appearanceTheme === theme} onChange={() => void onSettings({ appearanceTheme: theme })} />{theme[0]!.toUpperCase() + theme.slice(1)}</label>)}
+          </div>
+        </div>
+      </section>
 
       {editing !== undefined ? (
         <div className="dialog-backdrop" onMouseDown={(event) => {
