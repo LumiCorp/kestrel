@@ -2,11 +2,14 @@
 
 import {
   Activity,
+  Archive,
+  ArrowDownUp,
   BookOpenText,
   ChevronDown,
   FolderOpen,
   House,
   MessageSquare,
+  MoreHorizontal,
   Plus,
   Search,
   Users,
@@ -14,7 +17,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +32,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  filterAndSortThreads,
+  type ThreadSort,
+} from "@/components/threads/thread-list-model";
 import { cn, fetcher } from "@/lib/utils";
 
 type ProjectsResponse = {
@@ -42,6 +51,7 @@ type ThreadsResponse = {
     title: string;
     projectId: string | null;
     updatedAt: string;
+    unreadCount: number;
   }>;
 };
 
@@ -69,11 +79,18 @@ function isWorkPath(pathname: string) {
 
 export function WorkspaceRail({ organizationId }: { organizationId: string }) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const routeProjectId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  const [threadQuery, setThreadQuery] = useState("");
+  const [threadSort, setThreadSort] = useState<ThreadSort>("recent");
+  const projectRouteSegment = pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  const routeProjectId =
+    projectRouteSegment && projectRouteSegment !== "new"
+      ? projectRouteSegment
+      : undefined;
   const routeThreadId = pathname.match(/^\/threads\/([^/]+)/)?.[1];
   const { data: projects } = useSWR<ProjectsResponse>("/api/projects", fetcher);
-  const { data: threads } = useSWR<ThreadsResponse>(
+  const { data: threads, mutate: mutateThreads } = useSWR<ThreadsResponse>(
     "/api/threads?limit=100",
     fetcher
   );
@@ -91,12 +108,22 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
   const activeProject = projects?.projects.find(
     ({ project }) => project.id === activeProjectId
   )?.project;
-  const visibleThreads = activeProjectId
-    ? threads?.threads.filter((thread) => thread.projectId === activeProjectId)
-    : [];
+  const projectThreads = useMemo(
+    () =>
+      activeProjectId
+        ? (threads?.threads.filter(
+            (thread) => thread.projectId === activeProjectId
+          ) ?? [])
+        : (threads?.threads.filter((thread) => thread.projectId === null) ?? []),
+    [activeProjectId, threads?.threads]
+  );
+  const visibleThreads = useMemo(
+    () => filterAndSortThreads(projectThreads, threadQuery, threadSort),
+    [projectThreads, threadQuery, threadSort]
+  );
   const newThreadHref = activeProjectId
     ? `/projects/${activeProjectId}/threads/new`
-    : "/projects";
+    : "/threads/new";
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -118,6 +145,36 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       : `/projects/${projectId}/threads/new`;
   };
 
+  async function archiveThread(threadId: string) {
+    const response = await fetch(`/api/threads/${threadId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    if (!response.ok) {
+      toast.error("Thread could not be archived");
+      return;
+    }
+    await mutateThreads(
+      (current) =>
+        current
+          ? {
+              ...current,
+              threads: current.threads.filter(
+                (thread) => thread.id !== threadId
+              ),
+            }
+          : current,
+      { revalidate: false }
+    );
+    toast.success("Thread archived");
+    if (pathname === `/threads/${threadId}`) {
+      router.replace(
+        activeProjectId ? `/projects/${activeProjectId}` : "/threads"
+      );
+    }
+  }
+
   const projectSwitcher = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -127,7 +184,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
         >
           <FolderOpen className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">
-            {activeProject?.name ?? "Choose a Project"}
+            {activeProject?.name ?? "Standalone Threads"}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </Button>
@@ -168,7 +225,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       </div>
       <aside className="hidden h-dvh w-72 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="border-b p-3">{projectSwitcher}</div>
-        <div className="space-y-3 border-b p-3">
+        <div className="space-y-2 border-b p-3">
           <Button asChild className="w-full justify-start">
             <Link href={newThreadHref}>
               <Plus className="size-4" /> New Thread
@@ -177,22 +234,30 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
           <div className="relative">
             <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground" />
             <Input
-              aria-label="Search this Project"
+              aria-label="Filter recent threads"
               className="pl-8"
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                const query = event.currentTarget.value.trim();
-                if (!query) return;
-                const projectScope = activeProjectId
-                  ? `&projectId=${encodeURIComponent(activeProjectId)}`
-                  : "";
-                window.location.assign(
-                  `/search?q=${encodeURIComponent(query)}${projectScope}`
-                );
-              }}
-              placeholder="Search threads"
+              onChange={(event) => setThreadQuery(event.target.value)}
+              placeholder="Filter threads"
+              value={threadQuery}
             />
           </div>
+          <label className="flex items-center gap-2 text-muted-foreground text-xs">
+            <ArrowDownUp className="size-3.5" />
+            <span className="sr-only">Sort threads</span>
+            <select
+              aria-label="Sort threads"
+              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-foreground text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onChange={(event) =>
+                setThreadSort(event.target.value as ThreadSort)
+              }
+              value={threadSort}
+            >
+              <option value="recent">Recently updated</option>
+              <option value="unread">Unread first</option>
+              <option value="title">Title</option>
+              <option value="oldest">Oldest updated</option>
+            </select>
+          </label>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           <section className="space-y-1 p-3">
@@ -201,26 +266,64 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
             </div>
             {visibleThreads?.length ? (
               visibleThreads.map((thread) => (
-                <Link
+                <div
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors hover:bg-sidebar-accent",
+                    "group/thread flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
                     pathname === `/threads/${thread.id}` &&
                       "bg-sidebar-accent text-sidebar-accent-foreground"
                   )}
-                  href={`/threads/${thread.id}`}
                   key={thread.id}
                 >
-                  <MessageSquare className="size-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {thread.title || "New thread"}
-                  </span>
-                </Link>
+                  <Link
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-sm"
+                    href={`/threads/${thread.id}`}
+                  >
+                    <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        thread.unreadCount > 0 && "font-medium"
+                      )}
+                    >
+                      {thread.title || "New thread"}
+                    </span>
+                    {thread.unreadCount > 0 ? (
+                      <span
+                        aria-label={`${thread.unreadCount} unread answers`}
+                        className="flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 font-semibold text-[10px] text-primary-foreground tabular-nums"
+                      >
+                        {thread.unreadCount > 9 ? "9+" : thread.unreadCount}
+                      </span>
+                    ) : null}
+                  </Link>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label={`Thread actions for ${thread.title || "New thread"}`}
+                        className="mr-1 size-7 opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100 data-[state=open]:opacity-100"
+                        size="icon"
+                        variant="ghost"
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" side="right">
+                      <DropdownMenuItem
+                        onSelect={() => void archiveThread(thread.id)}
+                      >
+                        <Archive className="size-4" /> Archive thread
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               ))
             ) : (
               <p className="px-2 py-2 text-muted-foreground text-sm">
-                {activeProjectId
-                  ? "No Threads in this Project yet."
-                  : "Choose a Project to see its Threads."}
+                {threadQuery
+                  ? "No Threads match this filter."
+                  : activeProjectId
+                    ? "No Threads in this Project yet."
+                    : "No standalone Threads yet."}
               </p>
             )}
           </section>

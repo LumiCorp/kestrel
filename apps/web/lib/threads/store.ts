@@ -109,6 +109,50 @@ export async function listThreadsForUser(
     .limit(limit);
 }
 
+export async function getThreadUnreadCountsForUser(input: {
+  userId: string;
+  organizationId: string;
+  threadIds: string[];
+}) {
+  if (input.threadIds.length === 0) return new Map<string, number>();
+  const threadIds = sql.join(
+    input.threadIds.map((threadId) => sql`${threadId}`),
+    sql`, `
+  );
+  const rows = await knowledgeDb.execute(sql`
+    select
+      message.thread_id as "threadId",
+      count(*)::int as "unreadCount"
+    from thread_messages message
+    inner join threads thread on thread.id = message.thread_id
+    left join thread_read_states read_state
+      on read_state.thread_id = message.thread_id
+      and read_state.user_id = ${input.userId}
+      and read_state.organization_id = ${input.organizationId}
+    left join thread_messages last_read
+      on last_read.id = read_state.last_read_message_id
+    where
+      message.thread_id in (${threadIds})
+      and thread.organization_id = ${input.organizationId}
+      and message.role = 'assistant'
+      and (
+        last_read.id is null
+        or message.created_at > last_read.created_at
+        or (
+          message.created_at = last_read.created_at
+          and message.id > last_read.id
+        )
+      )
+    group by message.thread_id
+  `);
+  return new Map(
+    Array.from(rows).map((row) => [
+      String(row.threadId),
+      Number(row.unreadCount),
+    ])
+  );
+}
+
 export async function getThreadAccessForUser(
   id: string,
   userId: string,

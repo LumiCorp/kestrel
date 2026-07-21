@@ -5,6 +5,7 @@ import { Chat } from "@/components/chat";
 import { ThreadRouteLoading } from "@/components/chatbot/thread-route-loading";
 import { DataStreamHandler } from "@/components/data-stream-handler";
 import { ThreadActions } from "@/components/threads/thread-actions";
+import { ThreadReadMarker } from "@/components/threads/thread-read-marker";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
 import {
   getDefaultOrganizationEnvironment,
@@ -141,24 +142,32 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         threadTitle={chat?.title || "New Thread"}
       />
       {chat && (
-        <ThreadActions
-          archived={Boolean(chat.archivedAt)}
-          canManage={chat.access.canManage}
-          initialTitle={chat.title || "New thread"}
-          project={
-            projectDetail
-              ? {
-                  id: projectDetail.project.id,
-                  name: projectDetail.project.name,
-                }
-              : null
-          }
-          projects={projectRows.map(({ project }) => ({
-            id: project.id,
-            name: project.name,
-          }))}
-          threadId={chat.id}
-        />
+        <>
+          {chat.messages.at(-1)?.id ? (
+            <ThreadReadMarker
+              messageId={chat.messages.at(-1)!.id}
+              threadId={chat.id}
+            />
+          ) : null}
+          <ThreadActions
+            archived={Boolean(chat.archivedAt)}
+            canManage={chat.access.canManage}
+            initialTitle={chat.title || "New thread"}
+            project={
+              projectDetail
+                ? {
+                    id: projectDetail.project.id,
+                    name: projectDetail.project.name,
+                  }
+                : null
+            }
+            projects={projectRows.map(({ project }) => ({
+              id: project.id,
+              name: project.name,
+            }))}
+            threadId={chat.id}
+          />
+        </>
       )}
       <DataStreamHandler threadId={chat?.id ?? id} />
     </>
