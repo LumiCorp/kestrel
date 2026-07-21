@@ -1,13 +1,38 @@
 "use client";
 
-import { Archive, FolderCode, Pencil, Users } from "lucide-react";
+import {
+  Archive,
+  FolderCode,
+  FolderInput,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { SidebarToggle } from "@/components/chatbot/sidebar-toggle";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/chatbot/ui/alert-dialog";
 import { Button } from "@/components/chatbot/ui/button";
 import { Input } from "@/components/chatbot/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/chatbot/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -23,6 +48,7 @@ function PureChatHeader({
   threadId,
   threadTitle,
   project,
+  projects,
   selectedVisibilityType,
   isReadonly,
 }: {
@@ -31,6 +57,7 @@ function PureChatHeader({
   threadId: string;
   threadTitle?: string;
   project?: { id: string; name: string } | null;
+  projects: Array<{ id: string; name: string }>;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
 }) {
@@ -42,6 +69,12 @@ function PureChatHeader({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [assignmentDialogOpen, setAssignmentDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectId, setProjectId] = useState("");
   const renamePendingRef = useRef(false);
   const skipBlurSaveRef = useRef(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -50,7 +83,9 @@ function PureChatHeader({
   useEffect(() => {
     setDisplayTitle(initialTitle);
     setDraftTitle(initialTitle);
-  }, [initialTitle]);
+    setIsEditingTitle(false);
+    skipBlurSaveRef.current = false;
+  }, [initialTitle, threadId]);
 
   async function patchThread(body: Record<string, unknown>) {
     const response = await fetch(`/api/threads/${threadId}`, {
@@ -69,6 +104,7 @@ function PureChatHeader({
       mutate(`/api/threads/${threadId}`),
       mutate("/api/threads?limit=30"),
       mutate("/api/threads?limit=100"),
+      mutate("/api/projects"),
     ]);
   }
 
@@ -111,17 +147,17 @@ function PureChatHeader({
     }
   }
 
-  async function archiveThread() {
-    if (isArchiving) return;
-    setIsArchiving(true);
+  async function setArchived(nextArchived: boolean) {
+    if (isArchiving || isRestoring) return;
+    const setPending = nextArchived ? setIsArchiving : setIsRestoring;
+    setPending(true);
     try {
-      await patchThread({ archived: true });
-      await Promise.all([
-        mutate("/api/threads?limit=30"),
-        mutate("/api/threads?limit=100"),
-      ]);
-      toast.success("Thread archived");
-      router.replace(project ? `/projects/${project.id}` : "/threads");
+      await patchThread({ archived: nextArchived });
+      await refreshThreadCaches();
+      toast.success(nextArchived ? "Thread archived" : "Thread restored");
+      if (nextArchived) {
+        router.replace(project ? `/projects/${project.id}` : "/threads");
+      }
       router.refresh();
     } catch (error) {
       toast.error(
@@ -129,7 +165,54 @@ function PureChatHeader({
           ? error.message
           : "Thread lifecycle update failed."
       );
-      setIsArchiving(false);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function assignToProject() {
+    if (!projectId || isAssigning) return;
+    setIsAssigning(true);
+    try {
+      await patchThread({
+        projectId,
+        disclosureAccepted: true,
+      });
+      await refreshThreadCaches();
+      setAssignmentDialogOpen(false);
+      toast.success("Thread moved into Project");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Thread assignment failed."
+      );
+    } finally {
+      setIsAssigning(false);
+    }
+  }
+
+  async function permanentlyDeleteThread() {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/threads/${threadId}`, {
+        method: "DELETE",
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error || "Thread could not be deleted.");
+      }
+      await refreshThreadCaches();
+      toast.success("Thread permanently deleted");
+      router.replace(project ? `/projects/${project.id}` : "/threads");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Thread could not be deleted."
+      );
+      setIsDeleting(false);
     }
   }
 
@@ -211,6 +294,7 @@ function PureChatHeader({
                   className="size-8 shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/title:opacity-100 sm:group-focus-within/title:opacity-100"
                   disabled={isRenaming}
                   onClick={() => {
+                    skipBlurSaveRef.current = false;
                     setDraftTitle(displayTitle);
                     setIsEditingTitle(true);
                   }}
@@ -269,14 +353,66 @@ function PureChatHeader({
               <span className="hidden sm:inline">Workspace</span>
             </Button>
           )}
-          {canManage && !archived ? (
+          {canManage && !project && !archived && projects.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  aria-label="Move Thread to Project"
+                  className="size-8"
+                  onClick={() => {
+                    setProjectId("");
+                    setAssignmentDialogOpen(true);
+                  }}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <FolderInput className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Move Thread to Project</TooltipContent>
+            </Tooltip>
+          ) : null}
+          {canManage && archived ? (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    aria-label="Restore Thread"
+                    className="size-8"
+                    disabled={isRestoring || isDeleting}
+                    onClick={() => void setArchived(false)}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <RotateCcw className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Restore Thread</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    aria-label="Delete Thread permanently"
+                    className="size-8 text-destructive hover:text-destructive"
+                    disabled={isRestoring || isDeleting}
+                    onClick={() => setDeleteDialogOpen(true)}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Delete Thread permanently</TooltipContent>
+              </Tooltip>
+            </>
+          ) : canManage ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   aria-label="Archive Thread"
                   className="size-8"
                   disabled={isArchiving}
-                  onClick={() => void archiveThread()}
+                  onClick={() => void setArchived(true)}
                   size="icon"
                   variant="ghost"
                 >
@@ -288,6 +424,71 @@ function PureChatHeader({
           ) : null}
         </div>
       </header>
+
+      <AlertDialog
+        onOpenChange={setAssignmentDialogOpen}
+        open={assignmentDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Move this Thread into a Project?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Every Project member will be able to read and continue it. Public
+              sharing will be turned off.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Select onValueChange={setProjectId} value={projectId}>
+            <SelectTrigger aria-label="Project">
+              <SelectValue placeholder="Choose a Project" />
+            </SelectTrigger>
+            <SelectContent>
+              {projects.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isAssigning}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!projectId || isAssigning}
+              onClick={(event) => {
+                event.preventDefault();
+                void assignToProject();
+              }}
+            >
+              {isAssigning ? "Moving…" : "Move Thread"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete this Thread?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This archived Thread and its transcript will be removed. This
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void permanentlyDeleteThread();
+              }}
+            >
+              {isDeleting ? "Deleting…" : "Delete permanently"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </TooltipProvider>
   );
 }
@@ -301,6 +502,7 @@ export const ChatHeader = memo(
     prevProps.threadTitle === nextProps.threadTitle &&
     prevProps.project?.id === nextProps.project?.id &&
     prevProps.project?.name === nextProps.project?.name &&
+    prevProps.projects === nextProps.projects &&
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
     prevProps.isReadonly === nextProps.isReadonly
 );

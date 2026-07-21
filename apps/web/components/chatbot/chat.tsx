@@ -374,6 +374,7 @@ function ChatShell({
   activeEnvironment,
   modelScopeQuery,
   project,
+  projects,
   threadTitle,
   threadExists,
 }: {
@@ -417,6 +418,7 @@ function ChatShell({
   activeEnvironment?: { id: string; name: string };
   modelScopeQuery?: string;
   project?: { id: string; name: string } | null;
+  projects: Array<{ id: string; name: string }>;
   threadTitle?: string;
   threadExists: boolean;
 }) {
@@ -424,12 +426,16 @@ function ChatShell({
 
   return (
     <>
-      <div className="overscroll-behavior-contain flex h-full min-h-0 min-w-0 touch-pan-y flex-col overflow-hidden bg-background">
+      <div
+        className="overscroll-behavior-contain flex h-full min-h-0 min-w-0 touch-pan-y flex-col overflow-hidden bg-background"
+        data-slot="thread-shell"
+      >
         <ChatHeader
           archived={archived}
           canManage={canManage}
           isReadonly={headerReadonly}
           project={project}
+          projects={projects}
           selectedVisibilityType={selectedVisibilityType}
           threadId={threadId}
           threadTitle={threadTitle}
@@ -653,6 +659,7 @@ export function BootstrapChat({
         project={
           projectId && projectName ? { id: projectId, name: projectName } : null
         }
+        projects={[]}
         regenerate={async () => {}}
         selectedVisibilityType="private"
         sendMessage={sendBootstrapMessage}
@@ -687,6 +694,7 @@ export function Chat({
   archived = false,
   activeEnvironment,
   project,
+  projects = [],
   threadTitle,
 }: {
   id: string;
@@ -702,6 +710,7 @@ export function Chat({
   archived?: boolean;
   activeEnvironment?: { id: string; name: string };
   project?: { id: string; name: string } | null;
+  projects?: Array<{ id: string; name: string }>;
   threadTitle?: string;
 }) {
   const { resetArtifact, setMetadata } = useArtifact();
@@ -1175,6 +1184,7 @@ export function Chat({
         onRefreshConversationState={refreshConversationState}
         onRuntimeInteractionResponse={respondToRuntimeInteraction}
         project={project}
+        projects={projects}
         queueMessage={queueMessage}
         regenerate={controller.regenerate}
         selectedVisibilityType={visibilityType}

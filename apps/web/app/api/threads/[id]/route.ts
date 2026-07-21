@@ -94,11 +94,13 @@ export async function GET(
         threadId: thread.id,
         organizationId,
         userId: session.user.id,
+        includeArchived: true,
       }),
       listDurableThreadQueueForUser({
         threadId: thread.id,
         organizationId,
         userId: session.user.id,
+        includeArchived: true,
       }),
     ]);
     return NextResponse.json({

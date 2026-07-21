@@ -11,7 +11,7 @@ import {
   resolveThreadEnvironment,
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { getProjectDetail } from "@/lib/projects/store";
+import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
 import {
   listDurableThreadQueueForUser,
@@ -50,7 +50,8 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     environment?.id
   );
-  const [projectDetail, durableState, interactions] = await Promise.all([
+  const [projectDetail, projectRows, durableState, interactions] =
+    await Promise.all([
       chat?.projectId
         ? getProjectDetail({
             projectId: chat.projectId,
@@ -59,11 +60,13 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
             includeArchived: true,
           })
         : Promise.resolve(null),
+      listProjectsForUser({ organizationId, userId: session.user.id }),
       chat
         ? listDurableThreadQueueForUser({
             threadId: chat.id,
             organizationId,
             userId: session.user.id,
+            includeArchived: true,
           })
         : Promise.resolve(null),
       chat
@@ -71,6 +74,7 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
             threadId: chat.id,
             organizationId,
             userId: session.user.id,
+            includeArchived: true,
           })
         : Promise.resolve([]),
     ]);
@@ -138,6 +142,10 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
               }
             : null
         }
+        projects={projectRows.map(({ project }) => ({
+          id: project.id,
+          name: project.name,
+        }))}
         threadTitle={chat?.title || "New Thread"}
       />
       {chat && (

@@ -190,7 +190,12 @@ function queueLockKey(threadId: string) {
 
 async function lockAccessibleThread(
   tx: TurnTransaction,
-  input: { threadId: string; organizationId: string; userId: string }
+  input: {
+    threadId: string;
+    organizationId: string;
+    userId: string;
+    includeArchived?: boolean;
+  }
 ) {
   const [thread] = await tx
     .select()
@@ -203,7 +208,7 @@ async function lockAccessibleThread(
     )
     .limit(1)
     .for("update");
-  if (!thread || thread.archivedAt) {
+  if (!thread || (thread.archivedAt && !input.includeArchived)) {
     throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
   }
   if (!thread.projectId) {
@@ -1432,6 +1437,7 @@ export async function listThreadInteractionsForUser(input: {
   threadId: string;
   organizationId: string;
   userId: string;
+  includeArchived?: boolean;
 }) {
   return knowledgeDb.transaction(async (tx) => {
     await lockAccessibleThread(tx, input);
@@ -1766,6 +1772,7 @@ export async function listDurableThreadQueueForUser(input: {
   threadId: string;
   organizationId: string;
   userId: string;
+  includeArchived?: boolean;
 }) {
   return knowledgeDb.transaction(async (tx) => {
     await lockAccessibleThread(tx, input);
