@@ -79,11 +79,14 @@ Pull-request readiness:
 pnpm validate
 ```
 
-GitHub Actions runs this exact command. The runner uses the same fixed DAG and
-budgets locally and remotely, independent of which files changed. It builds
-shared artifacts once, runs independent work concurrently, and enforces the
-four test boundaries: hermetic, process, PostgreSQL, and Chromium. Focused
-commands are useful while iterating, but do not establish pull-request
+GitHub Actions runs this exact command. The runner uses the same fixed DAG,
+initialization, environment, cleanup, execution, and structured reporting
+locally and remotely, independent of which files changed. It builds shared
+artifacts once and runs production builds, hermetic groups, and process groups
+sequentially with Node test concurrency capped at four. It records durations
+without using elapsed time as a blocking correctness gate; GitHub's 15-minute
+job timeout remains the operational hang watchdog. Focused commands use the
+same runner lifecycle for iteration, but do not establish pull-request
 readiness. `pnpm validate` includes the critical mutation audit.
 
 Docs work:

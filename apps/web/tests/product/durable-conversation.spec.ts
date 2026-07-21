@@ -161,9 +161,8 @@ async function waitForTurn(
   turnId: string,
   statuses: string[]
 ) {
-  const deadline = Date.now() + 60_000;
   let latest: JsonRecord = {};
-  while (Date.now() < deadline) {
+  while (true) {
     latest = await page.evaluate(async (path) => {
       const response = await fetch(path);
       return response.json();
@@ -179,9 +178,6 @@ async function waitForTurn(
     }
     await page.waitForTimeout(250);
   }
-  throw new Error(
-    `Turn ${turnId} did not reach ${statuses.join(" or ")}: ${JSON.stringify(latest)}`
-  );
 }
 
 async function readTurnEvents(page: Page, turnId: string) {

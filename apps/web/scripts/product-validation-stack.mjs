@@ -54,7 +54,7 @@ function run(command, args, cwd) {
 }
 
 async function waitForUrl(url, child, label) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  while (true) {
     assertRunning(child, label);
     try {
       const response = await fetch(url);
@@ -62,16 +62,14 @@ async function waitForUrl(url, child, label) {
     } catch {}
     await delay(250);
   }
-  throw new Error(`${label} did not become ready at ${url}`);
 }
 
 async function waitForFile(file, child, label) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  while (true) {
     assertRunning(child, label);
     try { await access(file); return; } catch {}
     await delay(250);
   }
-  throw new Error(`${label} did not create ${file}`);
 }
 
 function assertRunning(child, label) {

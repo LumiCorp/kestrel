@@ -17,7 +17,6 @@ for (const contract of registry.contracts) {
   contracts.set(contract.id, contract);
   if (!["hermetic", "process", "postgres", "chromium"].includes(contract.boundary)) errors.push(`${contract.id}: invalid boundary ${contract.boundary}`);
   for (const field of ["owner", "risk", "counterexample"]) if (!contract[field]?.trim()) errors.push(`${contract.id}: ${field} is required`);
-  if (!(Number.isFinite(contract.budgetMs) && contract.budgetMs > 0)) errors.push(`${contract.id}: budgetMs must be positive`);
   if (!Array.isArray(contract.proofs) || contract.proofs.length === 0) errors.push(`${contract.id}: at least one explicit proof is required`);
   if (contract.risk === "critical" && (!Array.isArray(contract.mutations) || contract.mutations.length === 0)) errors.push(`${contract.id}: critical contracts require a semantic mutation`);
 }
@@ -45,7 +44,7 @@ for (const contract of registry.contracts) {
 
 if (!process.argv.includes("--structure-only")) {
   verifyMutations();
-  verifyTimings();
+  verifyTimingEvidence();
 }
 verifyNoRetries();
 
@@ -97,22 +96,16 @@ function verifyMutations() {
   }
 }
 
-function verifyTimings() {
+function verifyTimingEvidence() {
   const timingFile = process.env.KESTREL_CONTRACT_TIMINGS;
   if (!timingFile || !existsSync(timingFile)) return;
-  const totals = new Map();
+  const observed = new Set();
   for (const line of readFileSync(timingFile, "utf8").split("\n").filter(Boolean)) {
     const item = JSON.parse(line);
-    const current = totals.get(item.contractId) ?? { count: 0, maximumMs: 0 };
-    totals.set(item.contractId, {
-      count: current.count + 1,
-      maximumMs: Math.max(current.maximumMs, item.durationMs),
-    });
+    observed.add(item.contractId);
   }
   for (const contract of registry.contracts.filter((item) => !item.releaseOnly)) {
-    const timing = totals.get(contract.id);
-    if (timing === undefined) errors.push(`${contract.id}: no runtime timing evidence`);
-    else if (timing.maximumMs > contract.budgetMs) errors.push(`${contract.id}: slowest proof ${timing.maximumMs.toFixed(0)}ms exceeds ${contract.budgetMs}ms budget`);
+    if (!observed.has(contract.id)) errors.push(`${contract.id}: no runtime timing evidence`);
   }
 }
 

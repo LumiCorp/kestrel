@@ -189,9 +189,11 @@ pnpm validate
 
 Every automated test declares a named contract and exactly one of four
 boundaries: hermetic, process, PostgreSQL, or Chromium. Critical contracts carry
-current targeted killed-mutation evidence, and the validation runner enforces
-phase and whole-suite runtime budgets. Ruhroh owns model-quality evaluation execution;
-Kestrel validates only its declarative Ruhroh configuration.
+current targeted killed-mutation evidence. The validation runner records phase,
+task, and contract durations without treating machine-dependent elapsed time as
+correctness evidence; GitHub's job timeout is the operational hang watchdog.
+Ruhroh owns model-quality evaluation execution; Kestrel validates only its
+declarative Ruhroh configuration.
 
 ## Project Boundaries
 

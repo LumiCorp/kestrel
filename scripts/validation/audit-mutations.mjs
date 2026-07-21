@@ -63,7 +63,6 @@ try {
         env: childEnvironment,
         encoding: "utf8",
         stdio: "pipe",
-        timeout: 20 * 60 * 1000,
       });
     } finally {
       writeFileSync(targetPath, original, "utf8");

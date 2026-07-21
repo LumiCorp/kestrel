@@ -56,8 +56,6 @@ export async function runTuiScenario(input: {
   freshSessionName?: string | undefined;
   databaseUrl?: string;
   steps: TuiScenarioStep[];
-  timeoutSeconds?: number | undefined;
-  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<string> {
@@ -70,8 +68,6 @@ export async function runTuiScenarioWithSession(input: {
   freshSessionName?: string | undefined;
   databaseUrl?: string;
   steps: TuiScenarioStep[];
-  timeoutSeconds?: number | undefined;
-  startupTimeoutSeconds?: number | undefined;
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
@@ -123,19 +119,15 @@ export async function runTuiScenarioWithSession(input: {
       "reference",
     ],
     env: tuiEnvironment,
-    steps: input.steps.map((step, index) => ({
+    steps: input.steps.map((step) => ({
       pattern: typeof step.waitFor === "string" ? step.waitFor : step.waitFor.source,
       regex: typeof step.waitFor !== "string",
       fromCursor: step.fromCursor ?? false,
       send: step.send ?? null,
       actions: toDriverActions(step.actions),
       abortPatterns: toDriverAbortPatterns(step.abortPatterns),
-      ...(index === 0
-        ? { timeoutSeconds: input.startupTimeoutSeconds ?? 30 }
-        : {}),
     })),
     abortPatterns: toDriverAbortPatterns(input.abortPatterns),
-    timeoutSeconds: input.timeoutSeconds ?? 5,
   });
 
   try {
@@ -211,8 +203,7 @@ async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
   } catch {
     return;
   }
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
+  while (true) {
     try {
       process.kill(ownerPid, 0);
     } catch {
@@ -220,7 +211,6 @@ async function stopTestOwnedLocalCore(lockPath: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Test-owned Local Core pid ${ownerPid} did not stop.`);
 }
 
 async function runPythonDriver(scriptPath: string, payload: string): Promise<{

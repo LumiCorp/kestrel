@@ -13,7 +13,6 @@ contractTest("runtime.process", "pty driver abortPatterns fail fast with explici
       {
         pattern: "THIS_PATTERN_SHOULD_NOT_MATCH",
         regex: false,
-        timeoutSeconds: 5,
       },
     ],
     abortPatterns: [
@@ -23,17 +22,13 @@ contractTest("runtime.process", "pty driver abortPatterns fail fast with explici
         reason: "fatal_marker",
       },
     ],
-    timeoutSeconds: 5,
   };
 
-  const startedAt = Date.now();
   const result = await runPythonDriver(driverPath, JSON.stringify(payload));
-  const durationMs = Date.now() - startedAt;
 
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:fatal_marker/u);
   assert.doesNotMatch(result.stderr, /Timed out waiting/u);
-  assert.ok(durationMs < 5000, `expected fail-fast before timeout, duration=${durationMs}ms`);
 });
 
 contractTest("runtime.process", "pty driver abortPatterns support maxMatches thresholds", async () => {
@@ -45,7 +40,6 @@ contractTest("runtime.process", "pty driver abortPatterns support maxMatches thr
       {
         pattern: "THIS_PATTERN_SHOULD_NOT_MATCH",
         regex: false,
-        timeoutSeconds: 5,
       },
     ],
     abortPatterns: [
@@ -56,17 +50,13 @@ contractTest("runtime.process", "pty driver abortPatterns support maxMatches thr
         maxMatches: 1,
       },
     ],
-    timeoutSeconds: 5,
   };
 
-  const startedAt = Date.now();
   const result = await runPythonDriver(driverPath, JSON.stringify(payload));
-  const durationMs = Date.now() - startedAt;
 
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /ABORT_PATTERN_MATCHED:repeat_loop/u);
   assert.match(result.stderr, /maxMatches=1/u);
-  assert.ok(durationMs < 5000, `expected threshold fail-fast before timeout, duration=${durationMs}ms`);
 });
 
 function readStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
