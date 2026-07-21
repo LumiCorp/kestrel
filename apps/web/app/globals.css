@@ -232,21 +232,18 @@
 @keyframes composer-agent-ribbon {
   0% {
     transform: translateX(0%);
-    opacity: 0.3;
+    opacity: 0.2;
   }
   12% {
     opacity: 1;
   }
-  50% {
-    transform: translateX(290%);
+  88% {
+    transform: translateX(430%);
     opacity: 1;
   }
-  62% {
-    opacity: 0.95;
-  }
   100% {
-    transform: translateX(0%);
-    opacity: 0.3;
+    transform: translateX(430%);
+    opacity: 0.2;
   }
 }
 
