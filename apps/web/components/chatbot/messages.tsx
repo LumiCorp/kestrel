@@ -200,7 +200,7 @@ function PureMessages({
   };
 
   return (
-    <div className="relative flex-1 bg-background">
+    <div className="relative min-h-0 flex-1 overflow-hidden bg-background">
       <div
         className="absolute inset-0 touch-pan-y overflow-y-auto bg-background"
         ref={messagesContainerRef}
