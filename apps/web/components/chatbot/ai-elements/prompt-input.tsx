@@ -2,6 +2,7 @@
 
 import type { ChatStatus, FileUIPart } from "ai";
 import {
+  AudioLinesIcon,
   CornerDownLeftIcon,
   ImageIcon,
   Loader2Icon,
@@ -68,6 +69,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/chatbot/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/chatbot/ui/tooltip";
+import {
+  dictationShortcutLabel,
+  isDictationShortcut,
+} from "@/components/chatbot/dictation-shortcut";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
@@ -1147,7 +1158,13 @@ export const PromptInputSpeechButton = ({
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(
     null
   );
+  const [shortcutLabel, setShortcutLabel] = useState("Ctrl+Shift+M");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const shortcutTriggerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    setShortcutLabel(dictationShortcutLabel(navigator.platform));
+  }, []);
 
   useEffect(() => {
     if (
@@ -1223,13 +1240,7 @@ export const PromptInputSpeechButton = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key.toLowerCase() !== "m" ||
-        !event.ctrlKey ||
-        event.metaKey ||
-        event.altKey ||
-        event.shiftKey
-      ) {
+      if (!isDictationShortcut(event)) {
         return;
       }
 
@@ -1237,7 +1248,8 @@ export const PromptInputSpeechButton = ({
         textareaRef?.current &&
         document.activeElement &&
         document.activeElement !== document.body &&
-        document.activeElement !== textareaRef.current
+        document.activeElement !== textareaRef.current &&
+        !shortcutTriggerRef.current?.contains(document.activeElement)
       ) {
         return;
       }
@@ -1250,25 +1262,43 @@ export const PromptInputSpeechButton = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [textareaRef, toggleListening]);
 
+  const actionLabel = isListening ? "Stop dictation" : "Start dictation";
+
   return (
-    <PromptInputButton
-      aria-label={
-        isListening ? "Stop dictation (Ctrl+M)" : "Start dictation (Ctrl+M)"
-      }
-      className={cn(
-        "relative transition-all duration-200",
-        isListening && "animate-pulse bg-accent text-accent-foreground",
-        className
-      )}
-      disabled={Boolean(disabled) || !recognition}
-      onClick={toggleListening}
-      title={
-        isListening ? "Stop dictation (Ctrl+M)" : "Start dictation (Ctrl+M)"
-      }
-      {...props}
-    >
-      <MicIcon className="size-4" />
-    </PromptInputButton>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex" ref={shortcutTriggerRef}>
+            <PromptInputButton
+              aria-label={`${actionLabel} (${shortcutLabel})`}
+              aria-pressed={isListening}
+              className={cn(
+                "relative transition-all duration-200",
+                isListening &&
+                  "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground",
+                className
+              )}
+              disabled={Boolean(disabled) || !recognition}
+              onClick={toggleListening}
+              {...props}
+              title={`${actionLabel} (${shortcutLabel})`}
+            >
+              {isListening ? (
+                <AudioLinesIcon className="size-5 motion-safe:animate-pulse" />
+              ) : (
+                <MicIcon className="size-4" />
+              )}
+            </PromptInputButton>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="flex items-center gap-2" side="top">
+          <span>{actionLabel}</span>
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-medium font-mono text-[10px] text-muted-foreground">
+            {shortcutLabel}
+          </kbd>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 };
 
