@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +17,8 @@ import { normalizeContinuationOffer, type ContinuationOfferV1 } from "../../src/
 import { createRuntimeContinuationState } from "../../src/runtime/continuationState.js";
 import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
 import { appendUserTurnToTranscript, readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const READ_TEXT_TOOL: ModelToolSpec = {
   name: "fs.read_text",
@@ -614,7 +615,7 @@ function planningContinuationOffer() {
   };
 }
 
-test("plan-mode clarification replies preserve the transcript task as task instruction", async () => {
+contractTest("runtime.hermetic", "plan-mode clarification replies preserve the transcript task as task instruction", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build a NextJS text-only microblogging demo with signup and CRUD posts.";
   const reply = "yes assume simple defaults.";
@@ -676,7 +677,7 @@ test("plan-mode clarification replies preserve the transcript task as task instr
   assert.equal(items.at(-1)?.content, reply);
 });
 
-test("build-mode collected clarification replies preserve transcript task as task instruction", async () => {
+contractTest("runtime.hermetic", "build-mode collected clarification replies preserve transcript task as task instruction", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const reply = "lets do Vite instead of Nextjs... SQLite db via prisma is fine";
@@ -735,7 +736,7 @@ test("build-mode collected clarification replies preserve transcript task as tas
   assert.equal(items.at(-1)?.content, reply);
 });
 
-test("build-mode collected clarification resumeGoal does not seed missing transcript task", async () => {
+contractTest("runtime.hermetic", "build-mode collected clarification resumeGoal does not seed missing transcript task", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const reply = "lets do Vite instead of Nextjs... SQLite db via prisma is fine";
@@ -793,7 +794,7 @@ test("build-mode collected clarification resumeGoal does not seed missing transc
   );
 });
 
-test("build-mode fresh user messages replace transcript task when no active task state remains", async () => {
+contractTest("runtime.hermetic", "build-mode fresh user messages replace transcript task when no active task state remains", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const followUp = "you can use your tools to scaffold a project";
@@ -859,7 +860,7 @@ test("build-mode fresh user messages replace transcript task when no active task
   assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), followUp);
 });
 
-test("terminal user messages start a fresh task epoch and clear task-scoped state", async () => {
+contractTest("runtime.hermetic", "terminal user messages start a fresh task epoch and clear task-scoped state", async () => {
   let capturedRequest: ModelRequest | undefined;
   const oldTask = "Tell me about this workspace pls.";
   const buildRequest = "Build a bookmark manager with auth, bookmark CRUD, tags, and search.";
@@ -1009,7 +1010,7 @@ test("terminal user messages start a fresh task epoch and clear task-scoped stat
   assert.doesNotMatch(JSON.stringify(agentPatch), /visible_todo_finalize_continuation/u);
 });
 
-test("terminal user messages do not let stale task evidence satisfy fresh build finalization", async () => {
+contractTest("runtime.hermetic", "terminal user messages do not let stale task evidence satisfy fresh build finalization", async () => {
   const oldTask = "Build an old newsletter report.";
   const buildRequest = "Build a bookmark manager with auth, bookmark CRUD, tags, and search.";
   const transition = await buildStep()({
@@ -1081,7 +1082,7 @@ test("terminal user messages do not let stale task evidence satisfy fresh build 
   assert.equal(agentPatch.decisionVerification, undefined);
 });
 
-test("build-mode fresh user messages start a new task before live reply", async () => {
+contractTest("runtime.hermetic", "build-mode fresh user messages start a new task before live reply", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const followUp = "you can use your tools to scaffold a project";
@@ -1129,7 +1130,7 @@ test("build-mode fresh user messages start a new task before live reply", async 
   );
 });
 
-test("active follow-up payload message is appended instead of promoted to task fallback", async () => {
+contractTest("runtime.hermetic", "active follow-up payload message is appended instead of promoted to task fallback", async () => {
   let capturedRequest: ModelRequest | undefined;
   const followUp = "you can use your tools to scaffold a project";
   const transition = await buildStep()({
@@ -1179,7 +1180,7 @@ test("active follow-up payload message is appended instead of promoted to task f
   );
 });
 
-test("fresh payload message replaces transcript task and ignores stale payload goal", async () => {
+contractTest("runtime.hermetic", "fresh payload message replaces transcript task and ignores stale payload goal", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const stalePayloadGoal = "stale follow-up task";
@@ -1229,7 +1230,7 @@ test("fresh payload message replaces transcript task and ignores stale payload g
   );
 });
 
-test("fresh payload message replaces stale agent goal when transcript lacks active task", async () => {
+contractTest("runtime.hermetic", "fresh payload message replaces stale agent goal when transcript lacks active task", async () => {
   let capturedRequest: ModelRequest | undefined;
   const staleStateGoal = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const followUp = "you can use your tools to scaffold a project";
@@ -1289,7 +1290,7 @@ test("fresh payload message replaces stale agent goal when transcript lacks acti
   );
 });
 
-test("mismatched collected clarification replies do not override the transcript task", async () => {
+contractTest("runtime.hermetic", "mismatched collected clarification replies do not override the transcript task", async () => {
   let capturedRequest: ModelRequest | undefined;
   const currentGoal = "Review the current session state.";
   const buildRequest = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
@@ -1343,7 +1344,7 @@ test("mismatched collected clarification replies do not override the transcript 
   assert.equal(input.taskInstruction, currentGoal);
 });
 
-test("build full-auto submode reaches deliberator model request metadata", async () => {
+contractTest("runtime.hermetic", "build full-auto submode reaches deliberator model request metadata", async () => {
   const requests: ModelRequest[] = [];
   const transition = await buildStep()({
     ...context(),
@@ -1382,7 +1383,7 @@ test("build full-auto submode reaches deliberator model request metadata", async
   assert.equal(actionRequest?.metadata?.actSubmode, "full_auto");
 });
 
-test("compileIntent rejects removed legacy finalize evidence fields", () => {
+contractTest("runtime.hermetic", "compileIntent rejects removed legacy finalize evidence fields", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -1426,7 +1427,7 @@ test("compileIntent rejects removed legacy finalize evidence fields", () => {
   );
 });
 
-test("compileIntent allows coding goal_satisfied finalization without file-backed closeout", () => {
+contractTest("runtime.hermetic", "compileIntent allows coding goal_satisfied finalization without file-backed closeout", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -1461,7 +1462,7 @@ test("compileIntent allows coding goal_satisfied finalization without file-backe
   assert.equal(compiled.action?.kind, "finalize");
 });
 
-test("compileIntent allows goal_satisfied when runtime evidence has an active verification blocker", () => {
+contractTest("runtime.hermetic", "compileIntent allows goal_satisfied when runtime evidence has an active verification blocker", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -1512,7 +1513,7 @@ test("compileIntent allows goal_satisfied when runtime evidence has an active ve
   assert.equal(compiled.action?.kind, "finalize");
 });
 
-test("agent loop sends native tool specs for tool-capable turns", async () => {
+contractTest("runtime.hermetic", "agent loop sends native tool specs for tool-capable turns", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildContext = context();
   buildContext.event.payload = {
@@ -1557,7 +1558,7 @@ test("agent loop sends native tool specs for tool-capable turns", async () => {
   });
 });
 
-test("agent loop disables parallel tool calls when a surfaced action requires individual approval", async () => {
+contractTest("runtime.hermetic", "agent loop disables parallel tool calls when a surfaced action requires individual approval", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildContext = context();
   buildContext.event.payload = {
@@ -1609,7 +1610,7 @@ test("agent loop disables parallel tool calls when a surfaced action requires in
   assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
 });
 
-test("agent loop disables parallel tool calls under strict per-call approval policy", async () => {
+contractTest("runtime.hermetic", "agent loop disables parallel tool calls under strict per-call approval policy", async () => {
   let capturedRequest: ModelRequest | undefined;
   const buildContext = context();
   buildContext.event.payload = {
@@ -1646,7 +1647,7 @@ test("agent loop disables parallel tool calls under strict per-call approval pol
   assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
 });
 
-test("agent loop fails immediately when a required structured action is missing", async () => {
+contractTest("runtime.hermetic", "agent loop fails immediately when a required structured action is missing", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -1690,7 +1691,7 @@ test("agent loop fails immediately when a required structured action is missing"
   assert.equal(agent.retryContext, undefined);
 });
 
-test("chat direct answers use one required structured call", async () => {
+contractTest("runtime.hermetic", "chat direct answers use one required structured call", async () => {
   const chatContext = context();
   chatContext.event.payload = { ...chatContext.event.payload, interactionMode: "chat" };
   chatContext.session.state.agent = { interactionMode: "chat" };
@@ -1719,7 +1720,7 @@ test("chat direct answers use one required structured call", async () => {
   assert.equal(((commands[0]?.input as Record<string, unknown>).message), "The concise direct answer.");
 });
 
-test("required-action failure diagnostics do not retain prose as retry output", async () => {
+contractTest("runtime.hermetic", "required-action failure diagnostics do not retain prose as retry output", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -1763,7 +1764,7 @@ test("required-action failure diagnostics do not retain prose as retry output", 
   assert.equal(JSON.stringify(agent).includes("The work is complete."), false);
 });
 
-test("agent loop persists compiled decision verification for downstream finalize enforcement", async () => {
+contractTest("runtime.hermetic", "agent loop persists compiled decision verification for downstream finalize enforcement", async () => {
   const transition = await buildStep()(context(), {
     useModel: async () => modelResponse({
       version: "v2",
@@ -1796,7 +1797,7 @@ test("agent loop persists compiled decision verification for downstream finalize
   });
 });
 
-test("agent loop sends workspace, Project, and skill pack context in the user prompt, not system messages", async () => {
+contractTest("runtime.hermetic", "agent loop sends workspace, Project, and skill pack context in the user prompt, not system messages", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   ctx.event.payload.workspace = {
@@ -1852,7 +1853,7 @@ test("agent loop sends workspace, Project, and skill pack context in the user pr
   assert.match(userMessage as string, /Prefer grounded sources\./u);
 });
 
-test("agent loop compaction prompt preserves constraint-critical tool facts", async () => {
+contractTest("runtime.hermetic", "agent loop compaction prompt preserves constraint-critical tool facts", async () => {
   const requests: ModelRequest[] = [];
   const ctx = context();
   ctx.event.payload.message = "you can use your tools to continue";
@@ -1925,7 +1926,7 @@ test("agent loop compaction prompt preserves constraint-critical tool facts", as
   assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), originalTask);
 });
 
-test("agent loop exposes mission control context and accepts proactive task proposal", async () => {
+contractTest("runtime.hermetic", "agent loop exposes mission control context and accepts proactive task proposal", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
@@ -1990,7 +1991,7 @@ test("agent loop exposes mission control context and accepts proactive task prop
   });
 });
 
-test("agent loop accepts split task capture as multiple focused proposals", async () => {
+contractTest("runtime.hermetic", "agent loop accepts split task capture as multiple focused proposals", async () => {
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
   ctx.event.payload = {
@@ -2057,7 +2058,7 @@ test("agent loop accepts split task capture as multiple focused proposals", asyn
   assert.match(JSON.stringify(aggregateItems?.[1]?.input), /Add auth regression tests/u);
 });
 
-test("agent loop supplies existing matching tasks so duplicate proposal can be skipped", async () => {
+contractTest("runtime.hermetic", "agent loop supplies existing matching tasks so duplicate proposal can be skipped", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
@@ -2128,7 +2129,7 @@ test("agent loop supplies existing matching tasks so duplicate proposal can be s
   assert.doesNotMatch(JSON.stringify(commandBatch), /task\.propose/u);
 });
 
-test("agent loop omits mission control context when the turn has no project snapshot", async () => {
+contractTest("runtime.hermetic", "agent loop omits mission control context when the turn has no project snapshot", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
@@ -2167,7 +2168,7 @@ test("agent loop omits mission control context when the turn has no project snap
   assert.doesNotMatch(JSON.stringify(capturedRequest.messages), /Mission Control task queue/u);
 });
 
-test("agent loop commits a valid first action directly to exec dispatch", async () => {
+contractTest("runtime.hermetic", "agent loop commits a valid first action directly to exec dispatch", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2232,7 +2233,7 @@ test("agent loop commits a valid first action directly to exec dispatch", async 
   }
 });
 
-test("agent loop preserves model text reason from native tool-call responses", async () => {
+contractTest("runtime.hermetic", "agent loop preserves model text reason from native tool-call responses", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2267,7 +2268,7 @@ test("agent loop preserves model text reason from native tool-call responses", a
   );
 });
 
-test("agent loop routes premature visible-todo finalization back to open work", async () => {
+contractTest("runtime.hermetic", "agent loop routes premature visible-todo finalization back to open work", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2357,7 +2358,7 @@ test("agent loop routes premature visible-todo finalization back to open work", 
   assert.equal((agent.lastActionResult as Record<string, unknown> | undefined)?.kind, undefined);
 });
 
-test("agent loop accepts visible todo closure with finalization in one model turn", async () => {
+contractTest("runtime.hermetic", "agent loop accepts visible todo closure with finalization in one model turn", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2424,7 +2425,7 @@ test("agent loop accepts visible todo closure with finalization in one model tur
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop accepts documented residual gap finalization without another reasoning loop", async () => {
+contractTest("runtime.hermetic", "agent loop accepts documented residual gap finalization without another reasoning loop", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2525,7 +2526,7 @@ test("agent loop accepts documented residual gap finalization without another re
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop rejects same-turn todo closure after file mutation because a note is not validation evidence", async () => {
+contractTest("runtime.hermetic", "agent loop rejects same-turn todo closure after file mutation because a note is not validation evidence", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2577,7 +2578,7 @@ test("agent loop rejects same-turn todo closure after file mutation because a no
   assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop accepts finalization when a shell-changed file is read after the mutation", async () => {
+contractTest("runtime.hermetic", "agent loop accepts finalization when a shell-changed file is read after the mutation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2630,7 +2631,7 @@ test("agent loop accepts finalization when a shell-changed file is read after th
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop rejects finalization when shell changes a generated file that was not later validated", async () => {
+contractTest("runtime.hermetic", "agent loop rejects finalization when shell changes a generated file that was not later validated", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2675,7 +2676,7 @@ test("agent loop rejects finalization when shell changes a generated file that w
   assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop rejects finalization after token-changing replace_text when only a todo note claims validation", async () => {
+contractTest("runtime.hermetic", "agent loop rejects finalization after token-changing replace_text when only a todo note claims validation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2718,7 +2719,7 @@ test("agent loop rejects finalization after token-changing replace_text when onl
   assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop rejects finalization after token-preserving replace_text when only a todo note claims validation", async () => {
+contractTest("runtime.hermetic", "agent loop rejects finalization after token-preserving replace_text when only a todo note claims validation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2761,7 +2762,7 @@ test("agent loop rejects finalization after token-preserving replace_text when o
   assert.match(String(agent.decisionReason), /latest workspace mutation has no later current-state validation evidence/u);
 });
 
-test("agent loop accepts deliberator output without understanding", async () => {
+contractTest("runtime.hermetic", "agent loop accepts deliberator output without understanding", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -2793,7 +2794,7 @@ test("agent loop accepts deliberator output without understanding", async () => 
   });
 });
 
-test("agent loop retries invalid handoff continuation with targeted compact handoff guidance", async () => {
+contractTest("runtime.hermetic", "agent loop retries invalid handoff continuation with targeted compact handoff guidance", async () => {
   const retryingContext = context();
   retryingContext.event.payload = {
     message: "Lets start the build.",
@@ -2852,7 +2853,7 @@ test("agent loop retries invalid handoff continuation with targeted compact hand
   assert.equal(details.path, "toolCalls[0].input.continuation");
 });
 
-test("agent loop allows repeated broad filesystem inventory for runtime reuse", async () => {
+contractTest("runtime.hermetic", "agent loop allows repeated broad filesystem inventory for runtime reuse", async () => {
   const inventoryContext = context();
   inventoryContext.event.payload = {
     ...inventoryContext.event.payload,
@@ -2927,7 +2928,7 @@ test("agent loop allows repeated broad filesystem inventory for runtime reuse", 
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop dispatches repeated cached fs.read_text", async () => {
+contractTest("runtime.hermetic", "agent loop dispatches repeated cached fs.read_text", async () => {
   const repeatContext = context();
   repeatContext.event.payload = {
     message: "continue",
@@ -2986,7 +2987,7 @@ test("agent loop dispatches repeated cached fs.read_text", async () => {
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop rejects repeated failed shell action before engine loop guard", async () => {
+contractTest("runtime.hermetic", "agent loop rejects repeated failed shell action before engine loop guard", async () => {
   const shellContext = context();
   shellContext.event.payload = {
     message: "Build the app.",
@@ -3067,7 +3068,7 @@ test("agent loop rejects repeated failed shell action before engine loop guard",
   assert.match(String(previousFailure.outputSummary), /package\.json/u);
 });
 
-test("agent loop rejects repeated mixed batch when one item failed", async () => {
+contractTest("runtime.hermetic", "agent loop rejects repeated mixed batch when one item failed", async () => {
   const shellContext = context();
   const repeatedBatch = {
     kind: "tool_batch",
@@ -3156,7 +3157,7 @@ test("agent loop rejects repeated mixed batch when one item failed", async () =>
   assert.equal(failedBatchItems[0]?.errorCode, "COMMAND_FAILED");
 });
 
-test("agent loop compiles handoff_to_build without persisting legacy continuation offer state", async () => {
+contractTest("runtime.hermetic", "agent loop compiles handoff_to_build without persisting legacy continuation offer state", async () => {
   const planContext = context();
   planContext.session.state.agent = {
     ...(planContext.session.state.agent as Record<string, unknown>),
@@ -3192,7 +3193,7 @@ test("agent loop compiles handoff_to_build without persisting legacy continuatio
       });
 });
 
-test("agent loop accepts plan handoff when the live turn is plan mode even if agent state omits the mode", async () => {
+contractTest("runtime.hermetic", "agent loop accepts plan handoff when the live turn is plan mode even if agent state omits the mode", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "The plan is ready. Hand off to build.",
@@ -3235,7 +3236,7 @@ test("agent loop accepts plan handoff when the live turn is plan mode even if ag
       });
 });
 
-test("agent loop feeds missing plan document handoff back as planning write correction", async () => {
+contractTest("runtime.hermetic", "agent loop feeds missing plan document handoff back as planning write correction", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "The plan is ready. Hand off to build.",
@@ -3276,7 +3277,7 @@ test("agent loop feeds missing plan document handoff back as planning write corr
   assert.equal(handoffCorrection.forbiddenActionUntilPlanExists, "kestrel_handoff_to_build");
 });
 
-test("agent loop preserves live plan mode across deliberator retry before accepting plan handoff", async () => {
+contractTest("runtime.hermetic", "agent loop preserves live plan mode across deliberator retry before accepting plan handoff", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "The plan is ready. Hand off to build.",
@@ -3335,7 +3336,7 @@ test("agent loop preserves live plan mode across deliberator retry before accept
       });
 });
 
-test("agent loop assembles execution-ready fresh-app plan prompts and accepts plan handoff", async () => {
+contractTest("runtime.hermetic", "agent loop assembles execution-ready fresh-app plan prompts and accepts plan handoff", async () => {
   const planContext = context();
   planContext.event.payload = {
     message:
@@ -3451,7 +3452,7 @@ test("agent loop assembles execution-ready fresh-app plan prompts and accepts pl
   });
 });
 
-test("agent loop prompts for Build mode when accepting a pending implementation offer in plan mode", async () => {
+contractTest("runtime.hermetic", "agent loop prompts for Build mode when accepting a pending implementation offer in plan mode", async () => {
   const acceptanceContext = context();
   acceptanceContext.event = {
     id: "evt-accept-plan",
@@ -3557,7 +3558,7 @@ test("agent loop prompts for Build mode when accepting a pending implementation 
   );
 });
 
-test("agent loop mode-blocked transition does not restamp stale goal when transcript lacks a task", async () => {
+contractTest("runtime.hermetic", "agent loop mode-blocked transition does not restamp stale goal when transcript lacks a task", async () => {
   const acceptanceContext = context();
   acceptanceContext.event = {
     id: "evt-accept-plan",
@@ -3640,7 +3641,7 @@ test("agent loop mode-blocked transition does not restamp stale goal when transc
   assert.equal(metadata.reason, "planner_mode_blocked");
 });
 
-test("agent loop accepts missing assistantProgress with a neutral fallback", async () => {
+contractTest("runtime.hermetic", "agent loop accepts missing assistantProgress with a neutral fallback", async () => {
   let modelCallCount = 0;
   let retryRequest: ModelRequest | undefined;
   const transition = await buildStep({
@@ -3699,7 +3700,7 @@ test("agent loop accepts missing assistantProgress with a neutral fallback", asy
   assert.equal(transition.agentProgress, "I’m continuing the requested work.");
 });
 
-test("agent loop advertises assistantProgress inside every exec_command lifecycle branch", async () => {
+contractTest("runtime.hermetic", "agent loop advertises assistantProgress inside every exec_command lifecycle branch", async () => {
   let execCommandSchema: Record<string, unknown> | undefined;
   const execCommandLifecycleTool: ModelToolSpec = {
     name: "exec_command",
@@ -3759,7 +3760,7 @@ test("agent loop advertises assistantProgress inside every exec_command lifecycl
   }
 });
 
-test("agent loop does not spend retries on missing assistantProgress", async () => {
+contractTest("runtime.hermetic", "agent loop does not spend retries on missing assistantProgress", async () => {
   let modelCallCount = 0;
   const transition = await buildStep({
     tools: [READ_TEXT_TOOL],
@@ -3812,7 +3813,7 @@ test("agent loop does not spend retries on missing assistantProgress", async () 
   assert.equal(transition.agentProgress, "I’m continuing the requested work.");
 });
 
-test("agent loop rejects plan-mode external side-effect choices instead of asking for full-auto", async () => {
+contractTest("runtime.hermetic", "agent loop rejects plan-mode external side-effect choices instead of asking for full-auto", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "Give me a report on the status of this repo.",
@@ -3872,7 +3873,7 @@ test("agent loop rejects plan-mode external side-effect choices instead of askin
   assert.doesNotMatch(JSON.stringify(agent), /act\.full_auto|switch to act full auto/u);
 });
 
-test("agent loop rejects ask_user and preserves a noninteractive retry surface for SWE job runs", async () => {
+contractTest("runtime.hermetic", "agent loop rejects ask_user and preserves a noninteractive retry surface for SWE job runs", async () => {
   const sweContext = context();
   sweContext.event.type = "job.run";
   sweContext.event.payload = {
@@ -3946,7 +3947,7 @@ test("agent loop rejects ask_user and preserves a noninteractive retry surface f
   assert.equal(nextAction.name, "fs.read_text");
 });
 
-test("agent loop narrows build-mode cannot_satisfy reasons to concrete unavailable blockers", async () => {
+contractTest("runtime.hermetic", "agent loop narrows build-mode cannot_satisfy reasons to concrete unavailable blockers", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     message: "Inspect the repo and explain the blocker.",
@@ -3993,7 +3994,7 @@ test("agent loop narrows build-mode cannot_satisfy reasons to concrete unavailab
   assert.deepEqual(reasonCodeSchema.enum, ["missing_required_capability", "requested_tool_unavailable"]);
 });
 
-test("agent loop accepts a concrete unavailable build capability with blocker provenance", async () => {
+contractTest("runtime.hermetic", "agent loop accepts a concrete unavailable build capability with blocker provenance", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     message: "Apply the requested change or report the concrete blocker.",
@@ -4048,7 +4049,7 @@ test("agent loop accepts a concrete unavailable build capability with blocker pr
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop hides tools missing capability manifest entries", async () => {
+contractTest("runtime.hermetic", "agent loop hides tools missing capability manifest entries", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "Read the repo status.",
@@ -4098,7 +4099,7 @@ test("agent loop hides tools missing capability manifest entries", async () => {
   assert.equal(failureDetails.providerName, "dev_shell_run");
 });
 
-test("agent loop omits plan-only handoff control tool in build mode", async () => {
+contractTest("runtime.hermetic", "agent loop omits plan-only handoff control tool in build mode", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     message: "Read the repo status.",
@@ -4140,7 +4141,7 @@ test("agent loop omits plan-only handoff control tool in build mode", async () =
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
 });
 
-test("agent loop rejects capability-blocked tools with explicit policy feedback", async () => {
+contractTest("runtime.hermetic", "agent loop rejects capability-blocked tools with explicit policy feedback", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     message: "Propose a Mission Control task.",
@@ -4209,7 +4210,7 @@ test("agent loop rejects capability-blocked tools with explicit policy feedback"
   assert.equal(failureDetails.providerName, "task_propose");
 });
 
-test("agent loop resumes an accepted implementation offer when the current Build mode already allows it", async () => {
+contractTest("runtime.hermetic", "agent loop resumes an accepted implementation offer when the current Build mode already allows it", async () => {
   const acceptanceContext = context();
   acceptanceContext.event = {
     id: "evt-accept-act-safe",
@@ -4307,7 +4308,7 @@ test("agent loop resumes an accepted implementation offer when the current Build
   assert.equal(items.at(-1)?.content, "not a magic phrase");
 });
 
-test("agent loop preserves canonical handoff facts when accepting a plan handoff", async () => {
+contractTest("runtime.hermetic", "agent loop preserves canonical handoff facts when accepting a plan handoff", async () => {
   const acceptanceContext = context();
   acceptanceContext.event = {
     id: "evt-accept-plan-handoff",
@@ -4406,7 +4407,7 @@ test("agent loop preserves canonical handoff facts when accepting a plan handoff
   assert.equal(Object.hasOwn(modelInput ?? {}, "currentTurnSummary"), false);
 });
 
-test("agent loop allows build finalization without a planning document update", async () => {
+contractTest("runtime.hermetic", "agent loop allows build finalization without a planning document update", async () => {
   const finalizeContext = context();
   finalizeContext.event = {
     id: "evt-finalize-build-without-plan-doc",
@@ -4456,7 +4457,7 @@ test("agent loop allows build finalization without a planning document update", 
   });
 });
 
-test("agent loop dispatches selected tool work without hidden progress gates", async () => {
+contractTest("runtime.hermetic", "agent loop dispatches selected tool work without hidden progress gates", async () => {
   const finalizeContext = context();
   finalizeContext.event = {
     id: "evt-complete-ledger-tool-work",
@@ -4496,7 +4497,7 @@ test("agent loop dispatches selected tool work without hidden progress gates", a
   assert.equal((agent.lastActionResult as Record<string, unknown> | undefined), undefined);
 });
 
-test("agent loop dispatches goal_satisfied when artifact verification is inconclusive", async () => {
+contractTest("runtime.hermetic", "agent loop dispatches goal_satisfied when artifact verification is inconclusive", async () => {
   const finalizeContext = context();
   finalizeContext.event = {
     id: "evt-finalize-blocked-by-artifact-verification",
@@ -4570,7 +4571,7 @@ test("agent loop dispatches goal_satisfied when artifact verification is inconcl
   assert.equal(agent.retryContext, undefined);
 });
 
-test("agent loop resumes a mode-blocked continuation offer after structural mode-switch reply", async () => {
+contractTest("runtime.hermetic", "agent loop resumes a mode-blocked continuation offer after structural mode-switch reply", async () => {
   const acceptanceContext = context();
   const runtimeContinuation = {
     version: "runtime_continuation_v1",
@@ -4671,7 +4672,7 @@ test("agent loop resumes a mode-blocked continuation offer after structural mode
   assert.equal(modelInput?.taskInstruction, "Create a Python Pong game.");
 });
 
-test("agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode", async () => {
+contractTest("runtime.hermetic", "agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "Build it.",
@@ -4723,7 +4724,7 @@ test("agent loop rejects hidden sandboxed tool dispatch selected while still in 
   assert.doesNotMatch(JSON.stringify(agent), /switch to build/u);
 });
 
-test("agent loop allows direct conversational finalization while in plan mode", async () => {
+contractTest("runtime.hermetic", "agent loop allows direct conversational finalization while in plan mode", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "cwd?",
@@ -4772,7 +4773,7 @@ test("agent loop allows direct conversational finalization while in plan mode", 
   assert.equal(commands[0]?.name, "finalize");
 });
 
-test("agent loop allows clarifying questions while in plan mode before writing a plan", async () => {
+contractTest("runtime.hermetic", "agent loop allows clarifying questions while in plan mode before writing a plan", async () => {
   const planContext = context();
   planContext.event.payload = {
     message: "Let's fix plan mode.",
@@ -4815,7 +4816,7 @@ test("agent loop allows clarifying questions while in plan mode before writing a
   assert.equal(commands[0]?.name, "ask_user");
 });
 
-test("agent loop persists detached action snapshots", async () => {
+contractTest("runtime.hermetic", "agent loop persists detached action snapshots", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -4876,7 +4877,7 @@ test("agent loop persists detached action snapshots", async () => {
   assert.deepEqual(persisted.agent.commandBatch.commands[0]?.input, { path: "README.md" });
 });
 
-test("agent loop does not import session-scoped runtime notes into deliberation facts", async () => {
+contractTest("runtime.hermetic", "agent loop does not import session-scoped runtime notes into deliberation facts", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-agent-plan-import-"));
   const restoreKestrelHome = setKestrelHomeForTest(workspaceRoot);
   await writeLegacySessionNoteFixture(
@@ -4935,7 +4936,7 @@ test("agent loop does not import session-scoped runtime notes into deliberation 
   }
 });
 
-test("agent loop does not import legacy session notes into hidden progress state", async () => {
+contractTest("runtime.hermetic", "agent loop does not import legacy session notes into hidden progress state", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-agent-plan-malformed-"));
   const restoreKestrelHome = setKestrelHomeForTest(workspaceRoot);
   await writeLegacySessionNoteFixture(
@@ -4986,7 +4987,7 @@ test("agent loop does not import legacy session notes into hidden progress state
   }
 });
 
-test("agent loop feeds invalid tool names back as retry context instead of hard failing", async () => {
+contractTest("runtime.hermetic", "agent loop feeds invalid tool names back as retry context instead of hard failing", async () => {
   const invalidContext = context();
   invalidContext.session.state.agent = {
     nextAction: {
@@ -5026,7 +5027,7 @@ test("agent loop feeds invalid tool names back as retry context instead of hard 
   assert.equal(typeof observations.at(-1)?.timestamp, "string");
 });
 
-test("agent loop feeds internal finalize narration back as retry context instead of hard failing", async () => {
+contractTest("runtime.hermetic", "agent loop feeds internal finalize narration back as retry context instead of hard failing", async () => {
   const invalidContext = context();
 
   const transition = await buildStep()(invalidContext, {
@@ -5056,7 +5057,7 @@ test("agent loop feeds internal finalize narration back as retry context instead
   assert.equal(failureDetails.field, "finalize.message");
 });
 
-test("agent loop feeds internal ask_user narration back as retry context instead of hard failing", async () => {
+contractTest("runtime.hermetic", "agent loop feeds internal ask_user narration back as retry context instead of hard failing", async () => {
   const invalidContext = context();
 
   const transition = await buildStep()(invalidContext, {
@@ -5087,7 +5088,7 @@ test("agent loop feeds internal ask_user narration back as retry context instead
   assert.equal(failureDetails.field, "ask_user.prompt");
 });
 
-test("agent loop feeds internal cannot_satisfy narration back as retry context instead of hard failing", async () => {
+contractTest("runtime.hermetic", "agent loop feeds internal cannot_satisfy narration back as retry context instead of hard failing", async () => {
   const invalidContext = context();
 
   const transition = await buildStep()(invalidContext, {
@@ -5115,7 +5116,7 @@ test("agent loop feeds internal cannot_satisfy narration back as retry context i
   assert.equal(failureDetails.field, "cannot_satisfy.message");
 });
 
-test("agent loop rejects build-mode insufficient_horizon cannot_satisfy at the tool boundary", async () => {
+contractTest("runtime.hermetic", "agent loop rejects build-mode insufficient_horizon cannot_satisfy at the tool boundary", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5151,7 +5152,7 @@ test("agent loop rejects build-mode insufficient_horizon cannot_satisfy at the t
   assert.equal(failureDetails.path, "toolCalls[0].input.reasonCode");
 });
 
-test("agent loop rejects policy_blocked finalize after a cannot_satisfy retry", async () => {
+contractTest("runtime.hermetic", "agent loop rejects policy_blocked finalize after a cannot_satisfy retry", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5198,7 +5199,7 @@ test("agent loop rejects policy_blocked finalize after a cannot_satisfy retry", 
   assert.match(String(failure.message), /kestrel\.finalize requires status goal_satisfied or out_of_scope/u);
 });
 
-test("agent loop hides synthetic build blockers when executable tools are available", async () => {
+contractTest("runtime.hermetic", "agent loop hides synthetic build blockers when executable tools are available", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5246,7 +5247,7 @@ test("agent loop hides synthetic build blockers when executable tools are availa
   assert.deepEqual(statusSchema?.enum, ["goal_satisfied", "out_of_scope"]);
 });
 
-test("agent loop accepts model-authored visible todos", async () => {
+contractTest("runtime.hermetic", "agent loop accepts model-authored visible todos", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5316,7 +5317,7 @@ test("agent loop accepts model-authored visible todos", async () => {
   assert.equal(items[2]?.id, "replace-page");
 });
 
-test("agent loop accepts standalone visible todo updates as progress", async () => {
+contractTest("runtime.hermetic", "agent loop accepts standalone visible todo updates as progress", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5371,7 +5372,7 @@ test("agent loop accepts standalone visible todo updates as progress", async () 
   assert.equal(transcriptItems.some((item) => item.kind === "todo_update"), true);
 });
 
-test("agent loop accepts build-mode file mutation without a runtime visible-todo redirect", async () => {
+contractTest("runtime.hermetic", "agent loop accepts build-mode file mutation without a runtime visible-todo redirect", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5416,7 +5417,7 @@ test("agent loop accepts build-mode file mutation without a runtime visible-todo
   assert.equal(nextAction.name, "fs.write_text");
 });
 
-test("agent loop allows build-mode file mutation after visible todos exist", async () => {
+contractTest("runtime.hermetic", "agent loop allows build-mode file mutation after visible todos exist", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5476,7 +5477,7 @@ test("agent loop allows build-mode file mutation after visible todos exist", asy
   assert.equal(nextAction.name, "fs.write_text");
 });
 
-test("agent loop accepts same-response visible todo update and build-mode file mutation", async () => {
+contractTest("runtime.hermetic", "agent loop accepts same-response visible todo update and build-mode file mutation", async () => {
   const buildContext = context();
   buildContext.event.payload = {
     ...buildContext.event.payload,
@@ -5539,7 +5540,7 @@ test("agent loop accepts same-response visible todo update and build-mode file m
   assert.equal(items[0]?.id, "write-page");
 });
 
-test("compileIntent compiles simplified goal_satisfied finalization to internal action shape", () => {
+contractTest("runtime.hermetic", "compileIntent compiles simplified goal_satisfied finalization to internal action shape", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -5572,7 +5573,7 @@ test("compileIntent compiles simplified goal_satisfied finalization to internal 
   assert.deepEqual(compiled.action.input, { message: "Done." });
 });
 
-test("compileIntent accepts handoff_to_build", () => {
+contractTest("runtime.hermetic", "compileIntent accepts handoff_to_build", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "run-1",
@@ -5620,7 +5621,7 @@ test("compileIntent accepts handoff_to_build", () => {
   });
 });
 
-test("compileIntent allows handoff_to_build to declare future build capabilities without observed evidence", () => {
+contractTest("runtime.hermetic", "compileIntent allows handoff_to_build to declare future build capabilities without observed evidence", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "run-1",
@@ -5669,7 +5670,7 @@ test("compileIntent allows handoff_to_build to declare future build capabilities
   assert.deepEqual(compiled.action.continuation.requiredCapabilities, ["workspace.write"]);
 });
 
-test("compileIntent hydrates compact handoff_to_build continuation payloads", () => {
+contractTest("runtime.hermetic", "compileIntent hydrates compact handoff_to_build continuation payloads", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "run-1",
@@ -5707,7 +5708,7 @@ test("compileIntent hydrates compact handoff_to_build continuation payloads", ()
   assert.deepEqual(compiled.action.continuation, continuationOffer());
 });
 
-test("compileIntent rewrites model-supplied handoff lineage to the active run", () => {
+contractTest("runtime.hermetic", "compileIntent rewrites model-supplied handoff lineage to the active run", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "run-1",
@@ -5745,7 +5746,7 @@ test("compileIntent rewrites model-supplied handoff lineage to the active run", 
   assert.deepEqual(compiled.action.continuation, continuationOffer());
 });
 
-test("compileIntent rejects handoff_to_build outside plan mode", () => {
+contractTest("runtime.hermetic", "compileIntent rejects handoff_to_build outside plan mode", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -5779,7 +5780,7 @@ test("compileIntent rejects handoff_to_build outside plan mode", () => {
   );
 });
 
-test("compileIntent rewrites model-supplied handoff mode to build", () => {
+contractTest("runtime.hermetic", "compileIntent rewrites model-supplied handoff mode to build", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "run-1",
@@ -5820,7 +5821,7 @@ test("compileIntent rewrites model-supplied handoff mode to build", () => {
   assert.deepEqual(compiled.action.continuation, continuationOffer());
 });
 
-test("compileIntent rejects cannot_satisfy when extracted candidate tools are available", () => {
+contractTest("runtime.hermetic", "compileIntent rejects cannot_satisfy when extracted candidate tools are available", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -5865,7 +5866,7 @@ test("compileIntent rejects cannot_satisfy when extracted candidate tools are av
   );
 });
 
-test("compileIntent rejects internal finalize narration for user-visible closeouts", () => {
+contractTest("runtime.hermetic", "compileIntent rejects internal finalize narration for user-visible closeouts", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -5906,7 +5907,7 @@ test("compileIntent rejects internal finalize narration for user-visible closeou
   );
 });
 
-test("compileIntent rejects internal ask_user narration for user-visible prompts", () => {
+contractTest("runtime.hermetic", "compileIntent rejects internal ask_user narration for user-visible prompts", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -5949,7 +5950,7 @@ test("compileIntent rejects internal ask_user narration for user-visible prompts
   );
 });
 
-test("compileIntent rejects internal cannot_satisfy narration for user-visible blockers", () => {
+contractTest("runtime.hermetic", "compileIntent rejects internal cannot_satisfy narration for user-visible blockers", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -5989,7 +5990,7 @@ test("compileIntent rejects internal cannot_satisfy narration for user-visible b
   );
 });
 
-test("compileIntent allows root create-next-app scaffold under scaffold intent", () => {
+contractTest("runtime.hermetic", "compileIntent allows root create-next-app scaffold under scaffold intent", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -6036,7 +6037,7 @@ test("compileIntent allows root create-next-app scaffold under scaffold intent",
   assert.equal(compiled.action.name, "dev.shell.run");
 });
 
-test("agent loop allows file creation after empty-root evidence when visible todos exist", async () => {
+contractTest("runtime.hermetic", "agent loop allows file creation after empty-root evidence when visible todos exist", async () => {
   const scaffoldContext = context();
   let requestCount = 0;
   let retryInput: Record<string, unknown> | undefined;
@@ -6173,7 +6174,7 @@ test("agent loop allows file creation after empty-root evidence when visible tod
   assert.equal(nextAction.name, "fs.write_text");
 });
 
-test("compileIntent rejects fs.mkdir on the already-provisioned workspace root", () => {
+contractTest("runtime.hermetic", "compileIntent rejects fs.mkdir on the already-provisioned workspace root", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -6228,7 +6229,7 @@ test("compileIntent rejects fs.mkdir on the already-provisioned workspace root",
   );
 });
 
-test("compileIntent allows finalization when malformed optional browser evidence is dropped", () => {
+contractTest("runtime.hermetic", "compileIntent allows finalization when malformed optional browser evidence is dropped", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -6272,7 +6273,7 @@ test("compileIntent allows finalization when malformed optional browser evidence
   assert.equal(compiled.verification.browserEvidence, undefined);
 });
 
-test("agent loop hard fails after validation retry exhaustion", async () => {
+contractTest("runtime.hermetic", "agent loop hard fails after validation retry exhaustion", async () => {
   const exhaustedContext = context();
   exhaustedContext.session.state.agent = {
     nextAction: {

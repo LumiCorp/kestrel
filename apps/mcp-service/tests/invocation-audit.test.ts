@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { digestJson } from "../src/invocation-audit.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("MCP invocation evidence digests are deterministic and payload opaque", () => {
+
+contractTest("services.hermetic", "MCP invocation evidence digests are deterministic and payload opaque", () => {
   const secret = "upstream-secret-value";
   const left = digestJson({ b: 2, a: { secret, value: 1 } });
   const right = digestJson({ a: { value: 1, secret }, b: 2 });

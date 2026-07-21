@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -7,8 +6,10 @@ import { createRequire } from "node:module";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { RunnerProcess, resolveRunnerCommandForTests } from "../../cli/client/RunnerProcess.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("resolveRunnerCommandForTests prefers source runner for ts module path", () => {
+
+contractTest("runtime.process", "resolveRunnerCommandForTests prefers source runner for ts module path", () => {
   const modulePath = "/repo/cli/client/RunnerProcess.ts";
   const sourceRunnerPath = "/repo/cli/runner/main.ts";
   const distRunnerPath = "/repo/cli/runner/main.js";
@@ -23,7 +24,7 @@ test("resolveRunnerCommandForTests prefers source runner for ts module path", ()
   assert.deepEqual(resolved.args, ["--import", tsxImportPath, sourceRunnerPath]);
 });
 
-test("resolveRunnerCommandForTests prefers dist runner for js module path", () => {
+contractTest("runtime.process", "resolveRunnerCommandForTests prefers dist runner for js module path", () => {
   const modulePath = "/repo/dist/cli/client/RunnerProcess.js";
   const sourceRunnerPath = "/repo/dist/cli/runner/main.ts";
   const distRunnerPath = "/repo/dist/cli/runner/main.js";
@@ -36,7 +37,7 @@ test("resolveRunnerCommandForTests prefers dist runner for js module path", () =
   assert.deepEqual(resolved.args, [distRunnerPath]);
 });
 
-test("resolveRunnerCommandForTests is independent of process cwd", () => {
+contractTest("runtime.process", "resolveRunnerCommandForTests is independent of process cwd", () => {
   const originalCwd = process.cwd();
   const modulePath = "/repo/cli/client/RunnerProcess.ts";
   const sourceRunnerPath = "/repo/cli/runner/main.ts";
@@ -55,7 +56,7 @@ test("resolveRunnerCommandForTests is independent of process cwd", () => {
   }
 });
 
-test("RunnerProcess resolves tsx to an absolute import path for child startup", () => {
+contractTest("runtime.process", "RunnerProcess resolves tsx to an absolute import path for child startup", () => {
   const child = createMockChild();
   const spawnArgs: Array<[string, string[], { cwd?: string } | undefined]> = [];
   const runner = new RunnerProcess({
@@ -77,7 +78,7 @@ test("RunnerProcess resolves tsx to an absolute import path for child startup", 
   assert.match(args?.[2] ?? "", /\/cli\/runner\/main\.ts$/u);
 });
 
-test("RunnerProcess resolves tsx absolutely when loaded through createRequire", () => {
+contractTest("runtime.process", "RunnerProcess resolves tsx absolutely when loaded through createRequire", () => {
   const child = createMockChild();
   const spawnArgs: Array<[string, string[], { cwd?: string } | undefined]> = [];
   const requireFromProtocolClient = createRequire(
@@ -106,7 +107,7 @@ test("RunnerProcess resolves tsx absolutely when loaded through createRequire", 
   assert.match(args?.[2] ?? "", /\/cli\/runner\/main\.ts$/u);
 });
 
-test("RunnerProcess wires stdout and stderr through the transport handlers", async () => {
+contractTest("runtime.process", "RunnerProcess wires stdout and stderr through the transport handlers", async () => {
   const child = createMockChild();
   const stdoutLines: string[] = [];
   const stderrLines: string[] = [];
@@ -136,7 +137,7 @@ test("RunnerProcess wires stdout and stderr through the transport handlers", asy
   assert.deepEqual(exitCodes, []);
 });
 
-test("RunnerProcess clears listeners and allows restart after unexpected exit", async () => {
+contractTest("runtime.process", "RunnerProcess clears listeners and allows restart after unexpected exit", async () => {
   const firstChild = createMockChild();
   const secondChild = createMockChild();
   let spawnCount = 0;
@@ -184,7 +185,7 @@ test("RunnerProcess clears listeners and allows restart after unexpected exit", 
   assert.deepEqual(exitCodes, [1, 0]);
 });
 
-test("RunnerProcess surfaces child error diagnostics and finalizes once", async () => {
+contractTest("runtime.process", "RunnerProcess surfaces child error diagnostics and finalizes once", async () => {
   const child = createMockChild();
   const diagnostics: string[] = [];
   const exitCodes: Array<number | null> = [];
@@ -211,7 +212,7 @@ test("RunnerProcess surfaces child error diagnostics and finalizes once", async 
   assert.equal(readPrivate(runner, "child"), undefined);
 });
 
-test("RunnerProcess stop escalates to SIGKILL after timeout", async () => {
+contractTest("runtime.process", "RunnerProcess stop escalates to SIGKILL after timeout", async () => {
   const diagnostics: string[] = [];
   const exitCodes: Array<number | null> = [];
   const child = createMockChild({
@@ -249,7 +250,7 @@ test("RunnerProcess stop escalates to SIGKILL after timeout", async () => {
   assert.equal(readPrivate(runner, "child"), undefined);
 });
 
-test("RunnerProcess stop is idempotent and resolves through a single exit path", async () => {
+contractTest("runtime.process", "RunnerProcess stop is idempotent and resolves through a single exit path", async () => {
   const child = createMockChild({
     onKill(signal) {
       if (signal === "SIGTERM") {

@@ -7,9 +7,11 @@
     "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm run build:self",
     "build:self": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm run test:self",
-    "test:self": "node --import tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "pnpm run test:unit",
+    "test:unit": "node ../../scripts/validate.mjs --leaf hermetic apps/environment-router",
+    "test:integration": "node ../../scripts/validate.mjs --leaf process apps/environment-router",
+    "typecheck": "pnpm run typecheck:self",
+    "typecheck:self": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@lumi/kestrel-environment-auth": "workspace:*"

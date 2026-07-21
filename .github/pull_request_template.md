@@ -15,16 +15,15 @@
 
 ## Validation
 
-List the commands you ran, for example:
+Confirm the canonical pull-request validation:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
-pnpm run ci:local -- --base origin/main
-pnpm --filter @kestrel/desktop test
-pnpm --filter @kestrel/desktop build
+pnpm validate
 ```
+
+List any focused process, PostgreSQL, Chromium, mutation, documentation,
+Desktop, Ruhroh, or release checks separately when the change touches those
+surfaces.
 
 ## Notes
 

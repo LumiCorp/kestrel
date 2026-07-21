@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   appendRunNote,
@@ -25,8 +24,10 @@ import {
   runTerminalBench,
   validateTerminalBenchRepairPolicy,
 } from "../../scripts/terminal-bench.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("terminal bench appends concise run notes", () => {
+
+contractTest("runtime.hermetic", "terminal bench appends concise run notes", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-notes-"));
   try {
     const notesPath = path.join(tmp, "benchmarks", "terminal_bench", "term-bench-run-notes.md");
@@ -48,7 +49,7 @@ test("terminal bench appends concise run notes", () => {
   }
 });
 
-test("terminal bench exposes a tb shortcut that loads env and defaults OpenRouter", () => {
+contractTest("runtime.hermetic", "terminal bench exposes a tb shortcut that loads env and defaults OpenRouter", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -64,7 +65,7 @@ test("terminal bench exposes a tb shortcut that loads env and defaults OpenRoute
   assert.match(wrapper, /pnpm run bench:terminal -- run --task-id "\$\{task_id\}"/u);
 });
 
-test("terminal bench orchestrator defaults to the canonical Kestrel adapter on hello-world", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator defaults to the canonical Kestrel adapter on hello-world", () => {
   const options = parseTerminalBenchArgs([]);
   const commands = buildTerminalBenchCommands(options);
 
@@ -94,7 +95,7 @@ test("terminal bench orchestrator defaults to the canonical Kestrel adapter on h
   ]);
 });
 
-test("terminal bench improve defaults to Kestrel hello-world with a ten-iteration Codex loop", () => {
+contractTest("runtime.hermetic", "terminal bench improve defaults to Kestrel hello-world with a ten-iteration Codex loop", () => {
   const options = parseTerminalBenchArgs(["improve"]);
   assert.deepEqual(options, {
     mode: "improve",
@@ -122,7 +123,7 @@ test("terminal bench improve defaults to Kestrel hello-world with a ten-iteratio
   ]);
 });
 
-test("terminal bench improve accepts adapter, full dataset, and max iteration overrides", () => {
+contractTest("runtime.hermetic", "terminal bench improve accepts adapter, full dataset, and max iteration overrides", () => {
   const options = parseTerminalBenchArgs([
     "improve",
     "--adapter",
@@ -140,7 +141,7 @@ test("terminal bench improve accepts adapter, full dataset, and max iteration ov
   assert.equal(options.maxIterations, 3);
 });
 
-test("terminal bench exposes cleanup mode", () => {
+contractTest("runtime.hermetic", "terminal bench exposes cleanup mode", () => {
   const options = parseTerminalBenchArgs(["cleanup", "--dry-run"]);
 
   assert.equal(options.mode, "cleanup");
@@ -148,7 +149,7 @@ test("terminal bench exposes cleanup mode", () => {
   assert.equal(options.adapter, "kestrel");
 });
 
-test("terminal bench builds scoped docker cleanup command", () => {
+contractTest("runtime.hermetic", "terminal bench builds scoped docker cleanup command", () => {
   assert.deepEqual(buildDockerCleanupCommand({
     taskId: "play-zork",
     runId: "kestrel-cli-20260428231446",
@@ -179,7 +180,7 @@ test("terminal bench builds scoped docker cleanup command", () => {
   });
 });
 
-test("terminal bench docker cleanup never uses global prune commands", () => {
+contractTest("runtime.hermetic", "terminal bench docker cleanup never uses global prune commands", () => {
   const cleanup = buildDockerCleanupCommand({
     taskId: "hello-world",
     runId: "kestrel-cli-test",
@@ -193,7 +194,7 @@ test("terminal bench docker cleanup never uses global prune commands", () => {
   assert.deepEqual(cleanup.args.slice(-4), ["down", "--rmi", "all", "--volumes"]);
 });
 
-test("terminal bench docker cleanup rejects unsafe dataset segments", () => {
+contractTest("runtime.hermetic", "terminal bench docker cleanup rejects unsafe dataset segments", () => {
   for (const dataset of ["../x==0.1.1", "terminal-bench-core==../0.1.1"]) {
     assert.throws(
       () => buildDockerCleanupCommand({
@@ -208,7 +209,7 @@ test("terminal bench docker cleanup rejects unsafe dataset segments", () => {
   }
 });
 
-test("terminal bench docker cleanup rejects unsafe task ids", () => {
+contractTest("runtime.hermetic", "terminal bench docker cleanup rejects unsafe task ids", () => {
   for (const taskId of ["../play-zork", "play/zork"]) {
     assert.throws(
       () => buildDockerCleanupCommand({
@@ -223,7 +224,7 @@ test("terminal bench docker cleanup rejects unsafe task ids", () => {
   }
 });
 
-test("terminal bench docker cleanup rejects unsafe run ids", () => {
+contractTest("runtime.hermetic", "terminal bench docker cleanup rejects unsafe run ids", () => {
   for (const runId of ["kestrel.cli.test", "../kestrel-cli-test"]) {
     assert.throws(
       () => buildDockerCleanupCommand({
@@ -238,7 +239,7 @@ test("terminal bench docker cleanup rejects unsafe run ids", () => {
   }
 });
 
-test("terminal bench improve full enables queue mode implicitly", () => {
+contractTest("runtime.hermetic", "terminal bench improve full enables queue mode implicitly", () => {
   const options = parseTerminalBenchArgs(["improve", "--full", "--adapter", "kestrel"]);
 
   assert.equal(options.mode, "improve");
@@ -246,7 +247,7 @@ test("terminal bench improve full enables queue mode implicitly", () => {
   assert.equal(options.adapter, "kestrel");
 });
 
-test("terminal bench builds deterministic task queue state", () => {
+contractTest("runtime.hermetic", "terminal bench builds deterministic task queue state", () => {
   const queue = createTerminalBenchQueue({
     dataset: "terminal-bench-core==0.1.1",
     adapter: "kestrel",
@@ -258,7 +259,7 @@ test("terminal bench builds deterministic task queue state", () => {
   assert.deepEqual(queue.tasks.map((task) => task.status), ["pending", "pending"]);
 });
 
-test("terminal bench queue marks pass and first failure", () => {
+contractTest("runtime.hermetic", "terminal bench queue marks pass and first failure", () => {
   const queue = createTerminalBenchQueue({
     dataset: "terminal-bench-core==0.1.1",
     adapter: "kestrel",
@@ -277,7 +278,7 @@ test("terminal bench queue marks pass and first failure", () => {
   assert.equal(queue.tasks[1]?.last_failure_kind, "tb_verifier_failed");
 });
 
-test("terminal bench improve full queue stops on first unresolved task", async () => {
+contractTest("runtime.hermetic", "terminal bench improve full queue stops on first unresolved task", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-queue-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   try {
@@ -345,7 +346,7 @@ test("terminal bench improve full queue stops on first unresolved task", async (
   }
 });
 
-test("terminal bench improve full queue records canonical adapter metadata", async () => {
+contractTest("runtime.hermetic", "terminal bench improve full queue records canonical adapter metadata", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-queue-kestrel-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   try {
@@ -390,7 +391,7 @@ test("terminal bench improve full queue records canonical adapter metadata", asy
   }
 });
 
-test("terminal bench improve full queue verifies the failed canonical adapter after repair", async () => {
+contractTest("runtime.hermetic", "terminal bench improve full queue verifies the failed canonical adapter after repair", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-queue-failed-adapter-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   const verificationTbRuns: Array<{ command: string; args: string[] }> = [];
@@ -474,7 +475,7 @@ test("terminal bench improve full queue verifies the failed canonical adapter af
   }
 });
 
-test("terminal bench improve full queue continues after a repaired task", async () => {
+contractTest("runtime.hermetic", "terminal bench improve full queue continues after a repaired task", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-queue-continue-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let codexRan = false;
@@ -543,7 +544,7 @@ test("terminal bench improve full queue continues after a repaired task", async 
   }
 });
 
-test("terminal bench improve full queue uses distinct task-scoped run ids for fast same-adapter tasks", async () => {
+contractTest("runtime.hermetic", "terminal bench improve full queue uses distinct task-scoped run ids for fast same-adapter tasks", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-queue-runids-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   try {
@@ -595,7 +596,7 @@ test("terminal bench improve full queue uses distinct task-scoped run ids for fa
   }
 });
 
-test("terminal bench discovers task ids from cached dataset folders", () => {
+contractTest("runtime.hermetic", "terminal bench discovers task ids from cached dataset folders", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-tasks-"));
   try {
     mkdirSync(path.join(tmp, ".cache", "terminal-bench", "terminal-bench-core", "0.1.1", "hello-world"), { recursive: true });
@@ -614,7 +615,7 @@ test("terminal bench discovers task ids from cached dataset folders", () => {
   }
 });
 
-test("terminal bench discovers task ids across split cache roots", () => {
+contractTest("runtime.hermetic", "terminal bench discovers task ids across split cache roots", () => {
   const homeDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-home-"));
   const cwd = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-cwd-"));
   try {
@@ -634,7 +635,7 @@ test("terminal bench discovers task ids across split cache roots", () => {
   }
 });
 
-test("terminal bench rejects malformed dataset specs during task discovery", () => {
+contractTest("runtime.hermetic", "terminal bench rejects malformed dataset specs during task discovery", () => {
   for (const dataset of [
     "terminal-bench-core",
     "terminal-bench-core==",
@@ -652,7 +653,7 @@ test("terminal bench rejects malformed dataset specs during task discovery", () 
   }
 });
 
-test("terminal bench orchestrator maps the deprecated runtime command to canonical run", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator maps the deprecated runtime command to canonical run", () => {
   const options = parseTerminalBenchArgs(["runtime"]);
   const commands = buildTerminalBenchCommands(options);
 
@@ -673,7 +674,7 @@ test("terminal bench orchestrator maps the deprecated runtime command to canonic
   ]);
 });
 
-test("terminal bench orchestrator supports targeted canonical adapter runs", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator supports targeted canonical adapter runs", () => {
   const options = parseTerminalBenchArgs([
     "--",
     "run",
@@ -696,7 +697,7 @@ test("terminal bench orchestrator supports targeted canonical adapter runs", () 
   );
 });
 
-test("terminal bench orchestrator reports actionable preflight issues", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator reports actionable preflight issues", () => {
   const issues = collectPreflightIssues({
     tbVersion: failedSpawn("ENOENT"),
     uvVersion: failedSpawn("uv missing"),
@@ -711,7 +712,7 @@ test("terminal bench orchestrator reports actionable preflight issues", () => {
   ]);
 });
 
-test("terminal bench preflight reports unwritable Docker Buildx activity directory", () => {
+contractTest("runtime.hermetic", "terminal bench preflight reports unwritable Docker Buildx activity directory", () => {
   if (typeof process.getuid === "function" && process.getuid() === 0) {
     return;
   }
@@ -738,7 +739,7 @@ test("terminal bench preflight reports unwritable Docker Buildx activity directo
   }
 });
 
-test("terminal bench orchestrator tells operators to install tb when uv exists", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator tells operators to install tb when uv exists", () => {
   const issues = collectPreflightIssues({
     tbVersion: failedSpawn("tb missing"),
     uvVersion: passedSpawn(),
@@ -751,7 +752,7 @@ test("terminal bench orchestrator tells operators to install tb when uv exists",
   ]);
 });
 
-test("terminal bench orchestrator resolves tb from uv tool bin when PATH misses it", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator resolves tb from uv tool bin when PATH misses it", () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const resolution = resolveTerminalBenchBinary({
     requestedBinary: "tb",
@@ -780,7 +781,7 @@ test("terminal bench orchestrator resolves tb from uv tool bin when PATH misses 
   ]);
 });
 
-test("terminal bench orchestrator uses resolved uv tool tb for runs", async () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator uses resolved uv tool tb for runs", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   let stdout = "";
   const code = await runTerminalBench(["preflight"], {
@@ -817,7 +818,7 @@ test("terminal bench orchestrator uses resolved uv tool tb for runs", async () =
   assert.equal(calls.filter((call) => call.command === "/Users/example/.local/bin/tb" && call.args[0] === "run").length, 1);
 });
 
-test("terminal bench reports artifact pass with failed Kestrel adapter as local failure", async () => {
+contractTest("runtime.hermetic", "terminal bench reports artifact pass with failed Kestrel adapter as local failure", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-agent-failed-"));
   let stderr = "";
   try {
@@ -853,7 +854,7 @@ test("terminal bench reports artifact pass with failed Kestrel adapter as local 
   }
 });
 
-test("terminal bench reports unresolved task with failed Kestrel adapter kind", async () => {
+contractTest("runtime.hermetic", "terminal bench reports unresolved task with failed Kestrel adapter kind", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-unresolved-agent-kind-"));
   let stderr = "";
   try {
@@ -890,7 +891,7 @@ test("terminal bench reports unresolved task with failed Kestrel adapter kind", 
   }
 });
 
-test("terminal bench reports verifier failure after completed Kestrel adapter", async () => {
+contractTest("runtime.hermetic", "terminal bench reports verifier failure after completed Kestrel adapter", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-verifier-failed-"));
   let stderr = "";
   try {
@@ -928,7 +929,7 @@ test("terminal bench reports verifier failure after completed Kestrel adapter", 
   }
 });
 
-test("terminal bench outcome retains verifier timeout after completed adapter", () => {
+contractTest("runtime.hermetic", "terminal bench outcome retains verifier timeout after completed adapter", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-outcome-"));
   try {
     const args = ["run", "--run-id", "kestrel-cli-test"];
@@ -956,7 +957,7 @@ test("terminal bench outcome retains verifier timeout after completed adapter", 
   }
 });
 
-test("terminal bench outcome classifies setup failure before adapter start", () => {
+contractTest("runtime.hermetic", "terminal bench outcome classifies setup failure before adapter start", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-setup-before-adapter-"));
   try {
     const runDir = path.join(tmp, "runs", "kestrel-cli-test");
@@ -990,7 +991,7 @@ test("terminal bench outcome classifies setup failure before adapter start", () 
   }
 });
 
-test("terminal bench classifies tb run timeout before results as setup timeout", async () => {
+contractTest("runtime.hermetic", "terminal bench classifies tb run timeout before results as setup timeout", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-setup-timeout-"));
   let stderr = "";
   const timeouts: unknown[] = [];
@@ -1030,7 +1031,7 @@ test("terminal bench classifies tb run timeout before results as setup timeout",
   }
 });
 
-test("terminal bench cleanup no-ops without Docker when no queues exist", async () => {
+contractTest("runtime.hermetic", "terminal bench cleanup no-ops without Docker when no queues exist", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-cleanup-empty-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let stdout = "";
@@ -1055,7 +1056,7 @@ test("terminal bench cleanup no-ops without Docker when no queues exist", async 
   }
 });
 
-test("terminal bench cleanup removes only known queued run projects", async () => {
+contractTest("runtime.hermetic", "terminal bench cleanup removes only known queued run projects", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-cleanup-"));
   const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
   try {
@@ -1138,7 +1139,7 @@ test("terminal bench cleanup removes only known queued run projects", async () =
   }
 });
 
-test("terminal bench orchestrator exposes bootstrap mode", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator exposes bootstrap mode", () => {
   const options = parseTerminalBenchArgs(["bootstrap", "--dry-run"]);
 
   assert.equal(options.mode, "bootstrap");
@@ -1146,7 +1147,7 @@ test("terminal bench orchestrator exposes bootstrap mode", () => {
   assert.equal(options.adapter, "kestrel");
 });
 
-test("terminal bench bootstrap dry-run owns uv, terminal-bench, and Docker setup", async () => {
+contractTest("runtime.hermetic", "terminal bench bootstrap dry-run owns uv, terminal-bench, and Docker setup", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   let stdout = "";
   let stderr = "";
@@ -1189,7 +1190,7 @@ test("terminal bench bootstrap dry-run owns uv, terminal-bench, and Docker setup
   assert.match(stderr, /bootstrap warning: Kestrel benchmarks require OPENROUTER_API_KEY/u);
 });
 
-test("terminal bench bootstrap repairs a broken uv tool install", async () => {
+contractTest("runtime.hermetic", "terminal bench bootstrap repairs a broken uv tool install", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const code = await runTerminalBench(["bootstrap"], {
     spawn: ((command: string, args: readonly string[]) => {
@@ -1232,7 +1233,7 @@ test("terminal bench bootstrap repairs a broken uv tool install", async () => {
   );
 });
 
-test("terminal bench orchestrator resolves Docker host from the active Docker context", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator resolves Docker host from the active Docker context", () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const dockerHost = resolveDockerHost({
     env: {},
@@ -1254,7 +1255,7 @@ test("terminal bench orchestrator resolves Docker host from the active Docker co
   ]);
 });
 
-test("terminal bench orchestrator accepts OpenRouter provider key", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator accepts OpenRouter provider key", () => {
   const issues = collectPreflightIssues({
     tbVersion: passedSpawn(),
     dockerInfo: passedSpawn(),
@@ -1264,7 +1265,7 @@ test("terminal bench orchestrator accepts OpenRouter provider key", () => {
   assert.deepEqual(issues, []);
 });
 
-test("terminal bench orchestrator resolves only the OpenRouter benchmark provider", () => {
+contractTest("runtime.hermetic", "terminal bench orchestrator resolves only the OpenRouter benchmark provider", () => {
   assert.equal(resolveBenchmarkModelProvider({ OPENROUTER_API_KEY: "sk-test" }), "openrouter");
   assert.equal(resolveBenchmarkModelProvider({ ANTHROPIC_API_KEY: "sk-test" }), undefined);
   assert.equal(resolveBenchmarkModelProvider({
@@ -1273,7 +1274,7 @@ test("terminal bench orchestrator resolves only the OpenRouter benchmark provide
   }), undefined);
 });
 
-test("terminal bench warns when non-OpenRouter provider keys are present with OpenRouter", async () => {
+contractTest("runtime.hermetic", "terminal bench warns when non-OpenRouter provider keys are present with OpenRouter", async () => {
   let stderr = "";
   const code = await runTerminalBench(["run", "--task-id", "hello-world", "--dry-run"], {
     spawn: (() => failedSpawn("unexpected spawn")) as unknown as typeof import("node:child_process").spawnSync,
@@ -1291,7 +1292,7 @@ test("terminal bench warns when non-OpenRouter provider keys are present with Op
   assert.match(stderr, /Ignoring non-OpenRouter provider key\(s\) for Kestrel benchmarks: OPENAI_API_KEY/u);
 });
 
-test("terminal bench improve clean-worktree check reports dirty files", () => {
+contractTest("runtime.hermetic", "terminal bench improve clean-worktree check reports dirty files", () => {
   const clean = checkCleanWorktree({
     spawn: ((command: string, args: readonly string[]) => {
       assert.equal(command, "git");
@@ -1308,7 +1309,7 @@ test("terminal bench improve clean-worktree check reports dirty files", () => {
   assert.match(clean.details, /scripts\/terminal-bench\.ts/u);
 });
 
-test("terminal bench improve builds Codex exec command", () => {
+contractTest("runtime.hermetic", "terminal bench improve builds Codex exec command", () => {
   assert.deepEqual(buildCodexExecArgs("/repo"), ["exec", "--full-auto", "-m", "gpt-5.4", "--cd", "/repo", "-"]);
   assert.deepEqual(
     buildCodexExecArgs("/repo", { KESTREL_TBENCH_CODEX_MODEL: "gpt-5.2" }),
@@ -1316,7 +1317,7 @@ test("terminal bench improve builds Codex exec command", () => {
   );
 });
 
-test("terminal bench improve builds a raw evidence packet from run artifacts", () => {
+contractTest("runtime.hermetic", "terminal bench improve builds a raw evidence packet from run artifacts", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-packet-"));
   try {
     const runDir = path.join(tmp, "runs", "kestrel-cli-test");
@@ -1358,7 +1359,7 @@ test("terminal bench improve builds a raw evidence packet from run artifacts", (
   }
 });
 
-test("terminal bench improve refuses to start from a dirty worktree", async () => {
+contractTest("runtime.hermetic", "terminal bench improve refuses to start from a dirty worktree", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-dirty-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let stderr = "";
@@ -1394,7 +1395,7 @@ test("terminal bench improve refuses to start from a dirty worktree", async () =
   }
 });
 
-test("terminal bench improve does not commit when Codex repair fails", async () => {
+contractTest("runtime.hermetic", "terminal bench improve does not commit when Codex repair fails", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-codex-fail-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   try {
@@ -1436,7 +1437,7 @@ test("terminal bench improve does not commit when Codex repair fails", async () 
   }
 });
 
-test("terminal bench improve does not commit when verification fails", async () => {
+contractTest("runtime.hermetic", "terminal bench improve does not commit when verification fails", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-verify-fail-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let statusCalls = 0;
@@ -1482,7 +1483,7 @@ test("terminal bench improve does not commit when verification fails", async () 
   }
 });
 
-test("terminal bench repair policy rejects benchmark artifacts", () => {
+contractTest("runtime.hermetic", "terminal bench repair policy rejects benchmark artifacts", () => {
   const result = validateTerminalBenchRepairPolicy([
     " M src/runtime/kestrelHome.ts",
     " M runs/kestrel-cli-test/results.json",
@@ -1502,7 +1503,7 @@ test("terminal bench repair policy rejects benchmark artifacts", () => {
   ]);
 });
 
-test("terminal bench repair policy allows Kestrel runtime and tooling hardening", () => {
+contractTest("runtime.hermetic", "terminal bench repair policy allows Kestrel runtime and tooling hardening", () => {
   const result = validateTerminalBenchRepairPolicy([
     " M src/devshell/TerminalBenchDevShellService.ts",
     " M cli/contracts.ts",
@@ -1521,7 +1522,7 @@ test("terminal bench repair policy allows Kestrel runtime and tooling hardening"
   ]);
 });
 
-test("terminal bench improve stops when Codex edits forbidden benchmark artifacts", async () => {
+contractTest("runtime.hermetic", "terminal bench improve stops when Codex edits forbidden benchmark artifacts", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-policy-fail-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let statusCalls = 0;
@@ -1569,7 +1570,7 @@ test("terminal bench improve stops when Codex edits forbidden benchmark artifact
   }
 });
 
-test("terminal bench improve commits a verified repair iteration", async () => {
+contractTest("runtime.hermetic", "terminal bench improve commits a verified repair iteration", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-commit-"));
   const calls: Array<{ command: string; args: string[] }> = [];
   let statusCalls = 0;

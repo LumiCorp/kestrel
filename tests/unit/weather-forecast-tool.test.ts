@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
@@ -6,8 +5,10 @@ import {
   createToolProviderConfigurationResolver,
   createToolProviderRuntimeConfiguration,
 } from "../../tools/providers/runtimeConfiguration.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("weather forecast resolves target hour from city + local date/hour and returns daily forecast", async () => {
+
+contractTest("runtime.hermetic", "weather forecast resolves target hour from city + local date/hour and returns daily forecast", async () => {
   const requestedUrls: string[] = [];
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async (url) => {
@@ -89,7 +90,7 @@ test("weather forecast resolves target hour from city + local date/hour and retu
   assert.equal(daily[0]?.maxTemperatureC, 10);
 });
 
-test("weather forecast throws when no location is provided", async () => {
+contractTest("runtime.hermetic", "weather forecast throws when no location is provided", async () => {
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async () =>
       new Response("{}", {
@@ -108,7 +109,7 @@ test("weather forecast throws when no location is provided", async () => {
   );
 });
 
-test("weather forecast describes days as the date-range control", () => {
+contractTest("runtime.hermetic", "weather forecast describes days as the date-range control", () => {
   assert.match(
     weatherForecastTool.definition.description,
     /Use days for date ranges/u,
@@ -122,7 +123,7 @@ test("weather forecast describes days as the date-range control", () => {
   );
 });
 
-test("weather forecast publishes its normalized output contract", () => {
+contractTest("runtime.hermetic", "weather forecast publishes its normalized output contract", () => {
   assert.deepEqual(weatherForecastTool.definition.outputContract?.required, [
     "source",
     "latitude",
@@ -134,7 +135,7 @@ test("weather forecast publishes its normalized output contract", () => {
   ]);
 });
 
-test("weather forecast reports invalid daily evidence and an unavailable fallback", async () => {
+contractTest("runtime.hermetic", "weather forecast reports invalid daily evidence and an unavailable fallback", async () => {
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async () =>
       new Response(
@@ -164,7 +165,7 @@ test("weather forecast reports invalid daily evidence and an unavailable fallbac
   );
 });
 
-test("weather forecast normalizes Visual Crossing after an Open-Meteo payload failure", async () => {
+contractTest("runtime.hermetic", "weather forecast normalizes Visual Crossing after an Open-Meteo payload failure", async () => {
   const handler = weatherForecastTool.createHandler({
     providerConfigurations: createToolProviderConfigurationResolver([
       createToolProviderRuntimeConfiguration({
@@ -225,7 +226,7 @@ test("weather forecast normalizes Visual Crossing after an Open-Meteo payload fa
   assert.equal((output.daily as Array<unknown>).length, 1);
 });
 
-test("weather forecast starts unselected hourly evidence at the provider's current local hour", async () => {
+contractTest("runtime.hermetic", "weather forecast starts unselected hourly evidence at the provider's current local hour", async () => {
   const requestedUrls: string[] = [];
   const hourlyTimes = Array.from({ length: 36 }, (_, index) => {
     const day = index < 24 ? "12" : "13";
@@ -278,7 +279,7 @@ test("weather forecast starts unselected hourly evidence at the provider's curre
   assert.equal(requestedUrls[0]?.includes("current=temperature_2m"), true);
 });
 
-test("weather forecast rejects incomplete or conflicting target selectors before provider use", async () => {
+contractTest("runtime.hermetic", "weather forecast rejects incomplete or conflicting target selectors before provider use", async () => {
   let fetchCalls = 0;
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async () => {
@@ -316,7 +317,7 @@ test("weather forecast rejects incomplete or conflicting target selectors before
   assert.equal(fetchCalls, 0);
 });
 
-test("weather forecast reports an explicit out-of-range target instead of selecting the first hour", async () => {
+contractTest("runtime.hermetic", "weather forecast reports an explicit out-of-range target instead of selecting the first hour", async () => {
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async () =>
       new Response(
@@ -366,7 +367,7 @@ test("weather forecast reports an explicit out-of-range target instead of select
   );
 });
 
-test("weather forecast falls back to nominatim when open-meteo geocode has no results", async () => {
+contractTest("runtime.hermetic", "weather forecast falls back to nominatim when open-meteo geocode has no results", async () => {
   const handler = weatherForecastTool.createHandler({
     fetchImpl: async (url) => {
       const target = typeof url === "string" ? url : String(url);

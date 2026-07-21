@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { PostgresDevShellStore } from "../../src/devshell/PostgresDevShellStore.js";
@@ -7,8 +6,10 @@ import type {
   DevShellSourceWriteGuardResult,
 } from "../../src/devshell/contracts.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("PostgresDevShellStore persists source-write guard JSON on upsert", async () => {
+
+contractTest("runtime.hermetic", "PostgresDevShellStore persists source-write guard JSON on upsert", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^INSERT INTO dev_shell_processes/u, rowCount: 1 },
   ]);
@@ -24,7 +25,7 @@ test("PostgresDevShellStore persists source-write guard JSON on upsert", async (
   sql.assertExhausted();
 });
 
-test("PostgresDevShellStore maps source-write guard JSON from getProcess", async () => {
+contractTest("runtime.hermetic", "PostgresDevShellStore maps source-write guard JSON from getProcess", async () => {
   const sourceWriteGuard = buildSourceWriteGuard();
   const sql = new ScriptedSqlExecutor([
     {
@@ -41,7 +42,7 @@ test("PostgresDevShellStore maps source-write guard JSON from getProcess", async
   sql.assertExhausted();
 });
 
-test("PostgresDevShellStore maps source-write guard JSON from listProcesses", async () => {
+contractTest("runtime.hermetic", "PostgresDevShellStore maps source-write guard JSON from listProcesses", async () => {
   const sourceWriteGuard = buildSourceWriteGuard();
   const sql = new ScriptedSqlExecutor([
     {

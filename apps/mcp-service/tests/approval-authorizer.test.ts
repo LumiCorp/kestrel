@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type { Pool } from "pg";
 import { PostgresMcpApprovalAuthorizer } from "../src/approval-authorizer.js";
 import type { AuthorizedMcpGrant } from "../src/contracts.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("MCP approval lookup is Thread scoped, active, unexpired, and capability bound", async () => {
+
+contractTest("services.hermetic", "MCP approval lookup is Thread scoped, active, unexpired, and capability bound", async () => {
   const queries: Array<{ text: string; values?: unknown[] }> = [];
   const pool = {
     async query(text: string, values?: unknown[]) {

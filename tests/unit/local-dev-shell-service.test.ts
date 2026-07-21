@@ -4,7 +4,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import {
   appendBoundedDevShellOutput,
@@ -19,8 +18,9 @@ import {
   resolveDefaultDevShellLogPath,
   resolveDefaultDevShellSocketPath,
 } from "../../src/devshell/paths.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("developer shell launch resolution selects the source TypeScript entrypoint", () => {
+contractTest("runtime.process", "developer shell launch resolution selects the source TypeScript entrypoint", () => {
   const launch = resolveDevShellServiceLaunch(
     "file:///repo/src/devshell/LocalDevShellService.ts",
     "/repo/node_modules/tsx/dist/loader.mjs",
@@ -34,7 +34,7 @@ test("developer shell launch resolution selects the source TypeScript entrypoint
   ]);
 });
 
-test("developer shell launch resolution selects the compiled JavaScript entrypoint without tsx", () => {
+contractTest("runtime.process", "developer shell launch resolution selects the compiled JavaScript entrypoint without tsx", () => {
   const launch = resolveDevShellServiceLaunch(
     "file:///app/dist/src/devshell/LocalDevShellService.js",
     "/app/node_modules/tsx/dist/loader.mjs",
@@ -44,14 +44,14 @@ test("developer shell launch resolution selects the compiled JavaScript entrypoi
   assert.deepEqual(launch.nodeArguments, ["/app/dist/cli/dev-shell/service.js"]);
 });
 
-test("developer shell launch resolution rejects unsupported runtime module extensions", () => {
+contractTest("runtime.process", "developer shell launch resolution rejects unsupported runtime module extensions", () => {
   assert.throws(
     () => resolveDevShellServiceLaunch("file:///app/dist/src/devshell/LocalDevShellService.mjs"),
     /Unsupported LocalDevShellService runtime module extension: \.mjs/u,
   );
 });
 
-test("LocalDevShellService reports a missing resolved entrypoint before spawn", async () => {
+contractTest("runtime.process", "LocalDevShellService reports a missing resolved entrypoint before spawn", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-missing-entrypoint-"));
   const previousStoreDriver = process.env.KESTREL_STORE_DRIVER;
   const previousDatabaseUrl = process.env.DATABASE_URL;
@@ -89,7 +89,7 @@ test("LocalDevShellService reports a missing resolved entrypoint before spawn", 
   }
 });
 
-test("appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () => {
+contractTest("runtime.process", "appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () => {
   const first = appendBoundedDevShellOutput(
     { text: "", byteLength: 0, truncated: false },
     "abc",
@@ -103,7 +103,7 @@ test("appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () =>
   assert.equal(second.truncated, true);
 });
 
-test("appendBoundedDevShellOutput does not split multi-byte characters", () => {
+contractTest("runtime.process", "appendBoundedDevShellOutput does not split multi-byte characters", () => {
   const output = appendBoundedDevShellOutput(
     { text: "", byteLength: 0, truncated: false },
     "a🙂b",
@@ -116,7 +116,7 @@ test("appendBoundedDevShellOutput does not split multi-byte characters", () => {
   assert.equal(output.truncated, true);
 });
 
-test("LocalDevShellService defaults under KESTREL_HOME when available", async () => {
+contractTest("runtime.process", "LocalDevShellService defaults under KESTREL_HOME when available", async () => {
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-home-"));
   assert.equal(
     resolveDefaultDevShellBaseDir({ KESTREL_HOME: kestrelHome } as NodeJS.ProcessEnv),
@@ -140,7 +140,7 @@ test("LocalDevShellService defaults under KESTREL_HOME when available", async ()
   }
 });
 
-test("LocalDevShellService expands ~/ KESTREL_HOME for socket, log, and bootstrap status defaults", async () => {
+contractTest("runtime.process", "LocalDevShellService expands ~/ KESTREL_HOME for socket, log, and bootstrap status defaults", async () => {
   const relativeHome = "~/kestrel-dev-shell-home";
   const expectedBaseDir = path.join(os.homedir(), "kestrel-dev-shell-home", "dev-shell");
 
@@ -180,7 +180,7 @@ test("LocalDevShellService expands ~/ KESTREL_HOME for socket, log, and bootstra
   }
 });
 
-test("LocalDevShellService honors explicit dev shell path environment overrides", async () => {
+contractTest("runtime.process", "LocalDevShellService honors explicit dev shell path environment overrides", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-env-paths-"));
   const previousSocketPath = process.env.KESTREL_DEV_SHELL_SOCKET_PATH;
   const previousLogPath = process.env.KESTREL_DEV_SHELL_LOG_PATH;
@@ -203,7 +203,7 @@ test("LocalDevShellService honors explicit dev shell path environment overrides"
   }
 });
 
-test("LocalDevShellService reads startup timeout from environment", async () => {
+contractTest("runtime.process", "LocalDevShellService reads startup timeout from environment", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-timeout-env-"));
   const previousTimeout = process.env.KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS;
   process.env.KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS = "30000";
@@ -215,7 +215,7 @@ test("LocalDevShellService reads startup timeout from environment", async () => 
   }
 });
 
-test("LocalDevShellService shortens overlong isolated socket paths", async () => {
+contractTest("runtime.process", "LocalDevShellService shortens overlong isolated socket paths", async () => {
   const longHome = path.join(
     os.tmpdir(),
     "local-dev-shell-home-with-a-very-long-prefix-that-exceeds-darwin-unix-socket-path-limits",
@@ -231,7 +231,7 @@ test("LocalDevShellService shortens overlong isolated socket paths", async () =>
   assert.equal(Buffer.byteLength(socketPath, "utf8") < 104, true);
 });
 
-test("LocalDevShellService fails fast with an explicit bootstrap reason when postgres DATABASE_URL is missing", async () => {
+contractTest("runtime.process", "LocalDevShellService fails fast with an explicit bootstrap reason when postgres DATABASE_URL is missing", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,
@@ -272,7 +272,7 @@ test("LocalDevShellService fails fast with an explicit bootstrap reason when pos
   }
 });
 
-test("LocalDevShellService surfaces persisted bootstrap failure details before health timeout", async () => {
+contractTest("runtime.process", "LocalDevShellService surfaces persisted bootstrap failure details before health timeout", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   await mkdir(baseDir, { recursive: true });
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -322,7 +322,7 @@ test("LocalDevShellService surfaces persisted bootstrap failure details before h
   }
 });
 
-test("LocalDevShellService health timeout includes startup diagnostics", async () => {
+contractTest("runtime.process", "LocalDevShellService health timeout includes startup diagnostics", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-timeout-"));
   await mkdir(baseDir, { recursive: true });
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -389,7 +389,7 @@ test("LocalDevShellService health timeout includes startup diagnostics", async (
   }
 });
 
-test("LocalDevShellService preserves structured supervisor request errors", async () => {
+contractTest("runtime.process", "LocalDevShellService preserves structured supervisor request errors", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
@@ -445,7 +445,7 @@ test("LocalDevShellService preserves structured supervisor request errors", asyn
   }
 });
 
-test("LocalDevShellService restarts a stale supervisor with legacy health", async () => {
+contractTest("runtime.process", "LocalDevShellService restarts a stale supervisor with legacy health", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,
@@ -510,7 +510,7 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
   }
 });
 
-test("LocalDevShellService cleans up an incompatible supervisor socket recorded in bootstrap status", async () => {
+contractTest("runtime.process", "LocalDevShellService cleans up an incompatible supervisor socket recorded in bootstrap status", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
@@ -598,7 +598,7 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
   }
 });
 
-test("isCompatibleDevShellHealth requires the write_and_read process contract", () => {
+contractTest("runtime.process", "isCompatibleDevShellHealth requires the write_and_read process contract", () => {
   assert.equal(isCompatibleDevShellHealth({ ok: true }), false);
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
@@ -609,7 +609,7 @@ test("isCompatibleDevShellHealth requires the write_and_read process contract", 
   }), true);
 });
 
-test("LocalDevShellService close terminates a spawned supervisor process", async () => {
+contractTest("runtime.process", "LocalDevShellService close terminates a spawned supervisor process", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,
@@ -645,7 +645,7 @@ async function closeServer(server: http.Server): Promise<void> {
   await serverClosed(server);
 }
 
-test("LocalDevShellService observed run preserves source-write guard metadata", async () => {
+contractTest("runtime.process", "LocalDevShellService observed run preserves source-write guard metadata", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,

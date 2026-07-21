@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { selectEffectiveConnection } from "./project-service";
 import type { ProjectAppConnection } from "./project-service";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function connection(
   input: Partial<ProjectAppConnection> &
@@ -22,7 +23,7 @@ function connection(
   };
 }
 
-test("hybrid App resolution chooses the actor personal default first", () => {
+contractTest("web.hermetic", "hybrid App resolution chooses the actor personal default first", () => {
   const shared = connection({ id: "shared", scope: "shared" });
   const personal = connection({ id: "personal", scope: "personal" });
   assert.equal(
@@ -34,7 +35,7 @@ test("hybrid App resolution chooses the actor personal default first", () => {
   );
 });
 
-test("hybrid App resolution falls back to the Project shared default", () => {
+contractTest("web.hermetic", "hybrid App resolution falls back to the Project shared default", () => {
   const personal = connection({
     id: "personal",
     scope: "personal",
@@ -50,7 +51,7 @@ test("hybrid App resolution falls back to the Project shared default", () => {
   );
 });
 
-test("optional Environment Apps may resolve without a connection", () => {
+contractTest("web.hermetic", "optional Environment Apps may resolve without a connection", () => {
   assert.equal(
     selectEffectiveConnection({
       connectionModel: "environment",
@@ -60,7 +61,7 @@ test("optional Environment Apps may resolve without a connection", () => {
   );
 });
 
-test("a degraded default remains executable when no healthy connection is available", () => {
+contractTest("web.hermetic", "a degraded default remains executable when no healthy connection is available", () => {
   const degraded = connection({
     id: "degraded-shared",
     scope: "shared",

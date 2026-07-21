@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   applyTaskQueueAction,
@@ -9,8 +8,10 @@ import {
   type TaskAction,
   type TaskQueue,
 } from "../../src/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseTaskAction validates and preserves canonical task action fields", () => {
+
+contractTest("runtime.hermetic", "parseTaskAction validates and preserves canonical task action fields", () => {
   const parsed = parseTaskAction({
     type: "task.create",
     sessionId: "session-1",
@@ -34,7 +35,7 @@ test("parseTaskAction validates and preserves canonical task action fields", () 
   });
 });
 
-test("parseTaskAction rejects malformed task action boundaries", () => {
+contractTest("runtime.hermetic", "parseTaskAction rejects malformed task action boundaries", () => {
   assert.throws(
     () => parseTaskAction({ type: "task.approve", sessionId: "session-1" }),
     /actionId must be a non-empty string/u,
@@ -90,7 +91,7 @@ function apply(queue: TaskQueue, input: TaskActionDraft, index = 1): TaskQueue {
   return applyTaskQueueAction(queue, action(input, index));
 }
 
-test("user-created mission control tasks enter the approved queue", () => {
+contractTest("runtime.hermetic", "user-created mission control tasks enter the approved queue", () => {
   const queue = apply(createEmptyTaskQueue(), {
     type: "task.create",
     title: "Fix settings crash",
@@ -104,7 +105,7 @@ test("user-created mission control tasks enter the approved queue", () => {
   assert.equal(task?.priority, "high");
 });
 
-test("agent-proposed mission control tasks cannot be claimed until approved", () => {
+contractTest("runtime.hermetic", "agent-proposed mission control tasks cannot be claimed until approved", () => {
   let queue = apply(createEmptyTaskQueue(), {
     type: "task.propose",
     title: "Add regression test",
@@ -122,7 +123,7 @@ test("agent-proposed mission control tasks cannot be claimed until approved", ()
   assert.equal(queue.tasks[taskId ?? ""]?.assignedAgentId, "agent-1");
 });
 
-test("running mission control tasks move to attention or human review", () => {
+contractTest("runtime.hermetic", "running mission control tasks move to attention or human review", () => {
   let attentionQueue = apply(createEmptyTaskQueue(), {
     type: "task.create",
     title: "Investigate failed run",
@@ -162,7 +163,7 @@ test("running mission control tasks move to attention or human review", () => {
   assert.equal(reviewQueue.tasks[reviewTaskId]?.status, "done");
 });
 
-test("request changes returns ready mission control work to the queue", () => {
+contractTest("runtime.hermetic", "request changes returns ready mission control work to the queue", () => {
   let queue = apply(createEmptyTaskQueue(), {
     type: "task.create",
     title: "Tighten UI copy",

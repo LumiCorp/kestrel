@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,8 +5,10 @@ import {
   type CodeExecutionRequest,
 } from "../../src/code/contracts.js";
 import { evaluateExecutionPolicy } from "../../src/code/PolicyEngine.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("evaluateExecutionPolicy blocks when code-mode is disabled", () => {
+
+contractTest("runtime.hermetic", "evaluateExecutionPolicy blocks when code-mode is disabled", () => {
   const request: CodeExecutionRequest = {
     language: "javascript",
     code: "console.log('hi')",
@@ -29,7 +30,7 @@ test("evaluateExecutionPolicy blocks when code-mode is disabled", () => {
   assert.match(decision.result.summary, /disabled/);
 });
 
-test("evaluateExecutionPolicy enforces network tightening only", () => {
+contractTest("runtime.hermetic", "evaluateExecutionPolicy enforces network tightening only", () => {
   const request: CodeExecutionRequest = {
     language: "python",
     code: "print('x')",
@@ -55,7 +56,7 @@ test("evaluateExecutionPolicy enforces network tightening only", () => {
   assert.match(decision.result.summary, /network access/);
 });
 
-test("evaluateExecutionPolicy allows configured languages and clamps timeout", () => {
+contractTest("runtime.hermetic", "evaluateExecutionPolicy allows configured languages and clamps timeout", () => {
   const request: CodeExecutionRequest = {
     language: "javascript",
     code: "console.log('ok')",

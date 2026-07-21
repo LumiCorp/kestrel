@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { test } from "node:test";
 
 import {
   createTerminalBenchDevShellServiceFromEnv,
   TerminalBenchDevShellService,
 } from "../../src/devshell/TerminalBenchDevShellService.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("TerminalBenchDevShellService maps process calls to bridge HTTP endpoints", async () => {
+
+contractTest("runtime.process", "TerminalBenchDevShellService maps process calls to bridge HTTP endpoints", async () => {
   const calls: Array<{ method: string; url: string; body?: unknown }> = [];
   const server = http.createServer(async (request, response) => {
     const body = await readJsonBody(request);
@@ -107,7 +108,7 @@ test("TerminalBenchDevShellService maps process calls to bridge HTTP endpoints",
   await close(server);
 });
 
-test("TerminalBenchDevShellService returns bridge HTTP failures as lost process results", async () => {
+contractTest("runtime.process", "TerminalBenchDevShellService returns bridge HTTP failures as lost process results", async () => {
   const server = http.createServer((_request, response) => {
     response.statusCode = 503;
     response.setHeader("content-type", "application/json");
@@ -128,7 +129,7 @@ test("TerminalBenchDevShellService returns bridge HTTP failures as lost process 
   await close(server);
 });
 
-test("TerminalBenchDevShellService returns fetch failures as dev shell run results", async () => {
+contractTest("runtime.process", "TerminalBenchDevShellService returns fetch failures as dev shell run results", async () => {
   const server = http.createServer((_request, response) => {
     response.end("{}");
   });
@@ -144,7 +145,7 @@ test("TerminalBenchDevShellService returns fetch failures as dev shell run resul
   assert.match(result.failureReason ?? "", /bridge request failed/u);
 });
 
-test("TerminalBenchDevShellService returns invalid bridge JSON as failed writes", async () => {
+contractTest("runtime.process", "TerminalBenchDevShellService returns invalid bridge JSON as failed writes", async () => {
   const server = http.createServer((_request, response) => {
     response.setHeader("content-type", "application/json");
     response.end("{not-json");
@@ -162,7 +163,7 @@ test("TerminalBenchDevShellService returns invalid bridge JSON as failed writes"
   await close(server);
 });
 
-test("TerminalBenchDevShellService returns expected sandbox denials as failed process results", async () => {
+contractTest("runtime.process", "TerminalBenchDevShellService returns expected sandbox denials as failed process results", async () => {
   const server = http.createServer((_request, response) => {
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({
@@ -190,7 +191,7 @@ test("TerminalBenchDevShellService returns expected sandbox denials as failed pr
   await close(server);
 });
 
-test("TerminalBenchDevShellService uses only generic dev shell bridge env", () => {
+contractTest("runtime.process", "TerminalBenchDevShellService uses only generic dev shell bridge env", () => {
   const service = createTerminalBenchDevShellServiceFromEnv({
     KESTREL_DEV_SHELL_BRIDGE_URL: "http://127.0.0.1:1234",
   } as NodeJS.ProcessEnv);

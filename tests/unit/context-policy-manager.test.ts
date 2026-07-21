@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
@@ -8,6 +7,8 @@ import { evaluateContextAdaptation } from "../../src/orchestration/ContextAdapta
 import { ContextPolicyManager } from "../../src/orchestration/ContextPolicyManager.js";
 import type { SubmitTurnResult, ThreadRecord } from "../../src/orchestration/contracts.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 class SessionStateStore extends InMemorySessionStore {
   private readonly stateOverrides = new Map<string, Record<string, unknown>>();
@@ -32,7 +33,7 @@ class SessionStateStore extends InMemorySessionStore {
   }
 }
 
-test("evaluateContextAdaptation recommends split_into_child_thread for separable objectives under pressure", () => {
+contractTest("runtime.hermetic", "evaluateContextAdaptation recommends split_into_child_thread for separable objectives under pressure", () => {
   const thread = buildThread({
     threadId: "thread-eval-split",
     metadata: {
@@ -68,7 +69,7 @@ test("evaluateContextAdaptation recommends split_into_child_thread for separable
   assert.equal(evaluation.sourceSignals?.contextPressure, "high");
 });
 
-test("evaluateContextAdaptation recommends summarize_forward when evidence recovery is exhausted", () => {
+contractTest("runtime.hermetic", "evaluateContextAdaptation recommends summarize_forward when evidence recovery is exhausted", () => {
   const thread = buildThread({
     threadId: "thread-eval-summarize",
   });
@@ -107,7 +108,7 @@ test("evaluateContextAdaptation recommends summarize_forward when evidence recov
   assert.equal(evidenceSignals?.targetedFetchUsed, true);
 });
 
-test("evaluateContextAdaptation does not treat step recurrence as semantic thrash", () => {
+contractTest("runtime.hermetic", "evaluateContextAdaptation does not treat step recurrence as semantic thrash", () => {
   const thread = buildThread({
     threadId: "thread-eval-step-recurrence",
   });
@@ -130,7 +131,7 @@ test("evaluateContextAdaptation does not treat step recurrence as semantic thras
   assert.equal(evaluation.sourceSignals, undefined);
 });
 
-test("ContextPolicyManager records summarize_forward checkpoints from evaluator output", async () => {
+contractTest("runtime.hermetic", "ContextPolicyManager records summarize_forward checkpoints from evaluator output", async () => {
   const store = new SessionStateStore();
   const thread = buildThread({
     threadId: "thread-policy-summarize",
@@ -183,7 +184,7 @@ test("ContextPolicyManager records summarize_forward checkpoints from evaluator 
   assert.equal(checkpointEvents[0]?.metadata?.checkpointId, checkpoints[0]?.checkpointId);
 });
 
-test("ContextPolicyManager records split_into_child_thread checkpoints when capability loss coincides with pressure", async () => {
+contractTest("runtime.hermetic", "ContextPolicyManager records split_into_child_thread checkpoints when capability loss coincides with pressure", async () => {
   const store = new SessionStateStore();
   const thread = buildThread({
     threadId: "thread-policy-split",
@@ -235,7 +236,7 @@ test("ContextPolicyManager records split_into_child_thread checkpoints when capa
   assert.equal(checkpoints[0]?.signals?.capabilityLoss, true);
 });
 
-test("ContextPolicyManager refreshes the newest matching pending checkpoint in place", async () => {
+contractTest("runtime.hermetic", "ContextPolicyManager refreshes the newest matching pending checkpoint in place", async () => {
   const store = new SessionStateStore();
   const thread = buildThread({
     threadId: "thread-policy-refresh",
@@ -291,7 +292,7 @@ test("ContextPolicyManager refreshes the newest matching pending checkpoint in p
   assert.equal(typeof checkpoints[0]?.metadata?.reasonClass, "string");
 });
 
-test("ContextPolicyManager supersedes older pending non-fan-in checkpoints and preserves fan-in lifecycle", async () => {
+contractTest("runtime.hermetic", "ContextPolicyManager supersedes older pending non-fan-in checkpoints and preserves fan-in lifecycle", async () => {
   const store = new SessionStateStore();
   const thread = buildThread({
     threadId: "thread-policy-supersede",

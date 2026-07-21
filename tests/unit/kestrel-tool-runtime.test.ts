@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { RunConsoleUpdateV1, RunEvent } from "../../src/kestrel/contracts/events.js";
@@ -7,8 +6,10 @@ import type { ModelRequest, ToolGateway, ToolGatewayCallOptions } from "../../sr
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Kestrel.run invokes toolGateway.preRun on every run", async () => {
+
+contractTest("runtime.hermetic", "Kestrel.run invokes toolGateway.preRun on every run", async () => {
   const store = new InMemorySessionStore();
   let preRunCalls = 0;
 
@@ -46,7 +47,7 @@ test("Kestrel.run invokes toolGateway.preRun on every run", async () => {
   assert.equal(preRunCalls, 2);
 });
 
-test("Kestrel.run returns FAILED with preserved preRun error code/details", async () => {
+contractTest("runtime.hermetic", "Kestrel.run returns FAILED with preserved preRun error code/details", async () => {
   const store = new InMemorySessionStore();
   let stepCalls = 0;
 
@@ -93,7 +94,7 @@ test("Kestrel.run returns FAILED with preserved preRun error code/details", asyn
   assert.equal(stepCalls, 0);
 });
 
-test("Kestrel tool runtime status defaults to healthy empty providers", async () => {
+contractTest("runtime.hermetic", "Kestrel tool runtime status defaults to healthy empty providers", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -112,7 +113,7 @@ test("Kestrel tool runtime status defaults to healthy empty providers", async ()
   assert.deepEqual(refreshed.providers, {});
 });
 
-test("Kestrel delegates tool runtime status hooks when gateway implements them", async () => {
+contractTest("runtime.hermetic", "Kestrel delegates tool runtime status hooks when gateway implements them", async () => {
   const store = new InMemorySessionStore();
   let getCalls = 0;
   let refreshCalls = 0;
@@ -154,7 +155,7 @@ test("Kestrel delegates tool runtime status hooks when gateway implements them",
   assert.equal(refreshCalls, 1);
 });
 
-test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", async () => {
+contractTest("runtime.hermetic", "Kestrel rejects overlapping runs for the same session with SESSION_BUSY", async () => {
   const store = new InMemorySessionStore();
   let releaseFirstRun: (() => void) | undefined;
   let markFirstRunEntered: (() => void) | undefined;
@@ -206,7 +207,7 @@ test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", 
   assert.equal(firstOutput.status, "COMPLETED");
 });
 
-test("Kestrel returns RUN_CANCELLED when aborted during a model call", async () => {
+contractTest("runtime.hermetic", "Kestrel returns RUN_CANCELLED when aborted during a model call", async () => {
   const store = new InMemorySessionStore();
   const controller = new AbortController();
 
@@ -262,7 +263,7 @@ test("Kestrel returns RUN_CANCELLED when aborted during a model call", async () 
   assert.equal(followup.status, "COMPLETED");
 });
 
-test("Kestrel runtime IO forwards runtime budget metadata into model calls", async () => {
+contractTest("runtime.hermetic", "Kestrel runtime IO forwards runtime budget metadata into model calls", async () => {
   const store = new InMemorySessionStore();
   const seenRequests: ModelRequest[] = [];
 
@@ -313,7 +314,7 @@ test("Kestrel runtime IO forwards runtime budget metadata into model calls", asy
   assert.equal((seenRequests[0]?.metadata?.runtimeBudgetRemainingMs as number) > 0, true);
 });
 
-test("Kestrel runtime IO streams dev-shell console updates through the console listener", async () => {
+contractTest("runtime.hermetic", "Kestrel runtime IO streams dev-shell console updates through the console listener", async () => {
   const store = new InMemorySessionStore();
   const consoleUpdates: RunConsoleUpdateV1[] = [];
   const runEvents: RunEvent[] = [];

@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { DiagnosticLogStore } from "../../cli/diagnostics/DiagnosticLogStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("DiagnosticLogStore appends readable startup diagnostics entries", async () => {
+
+contractTest("runtime.hermetic", "DiagnosticLogStore appends readable startup diagnostics entries", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-diagnostics-store-"));
   const store = new DiagnosticLogStore(tempDir);
 
@@ -31,7 +32,7 @@ test("DiagnosticLogStore appends readable startup diagnostics entries", async ()
   assert.match(raw, /details:\nError: Cannot find module '\.\/missing-runner-dependency\.js'/u);
 });
 
-test("DiagnosticLogStore defaults under expanded ~/ KESTREL_HOME", () => {
+contractTest("runtime.hermetic", "DiagnosticLogStore defaults under expanded ~/ KESTREL_HOME", () => {
   const previousHome = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = "~/kestrel-diagnostics-home";
   try {

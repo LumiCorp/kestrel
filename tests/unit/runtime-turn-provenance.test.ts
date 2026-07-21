@@ -1,11 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ThreadRuntime } from "../../src/orchestration/ThreadRuntime.js";
 import { RunReplayService } from "../../src/replay/RunReplayService.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("ThreadRuntime groups a submitted run into a durable conversation turn", async () => {
+
+contractTest("runtime.hermetic", "ThreadRuntime groups a submitted run into a durable conversation turn", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -59,7 +60,7 @@ test("ThreadRuntime groups a submitted run into a durable conversation turn", as
   assert.match(segments[0]?.messageHash ?? "", /^[a-f0-9]{64}$/u);
 });
 
-test("ThreadRuntime appends resume replies as segments without changing the root run", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime appends resume replies as segments without changing the root run", async () => {
   const store = new InMemorySessionStore();
   let callCount = 0;
   const runtime = new ThreadRuntime({
@@ -125,7 +126,7 @@ test("ThreadRuntime appends resume replies as segments without changing the root
   assert.equal(segments[1]?.requestId, waiting.wait.request.requestId);
 });
 
-test("RunReplayService exposes turn and hash-only model provenance without prompt text", async () => {
+contractTest("runtime.hermetic", "RunReplayService exposes turn and hash-only model provenance without prompt text", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("session-1");
   await store.upsertThread({

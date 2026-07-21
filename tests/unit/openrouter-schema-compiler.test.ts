@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { compileOpenRouterResponseSchema } from "../../models/index.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("OpenRouter schema compiler normalizes object required fields", () => {
+
+contractTest("runtime.hermetic", "OpenRouter schema compiler normalizes object required fields", () => {
   const compiled = compileOpenRouterResponseSchema({
     schemaName: "kestrel_test",
     schema: {
@@ -26,7 +27,7 @@ test("OpenRouter schema compiler normalizes object required fields", () => {
   assert.equal(compiled.diagnostics.nullablePropertyWraps, 1);
 });
 
-test("OpenRouter schema compiler rejects unsupported keywords deterministically", () => {
+contractTest("runtime.hermetic", "OpenRouter schema compiler rejects unsupported keywords deterministically", () => {
   assert.throws(
     () =>
       compileOpenRouterResponseSchema({
@@ -49,7 +50,7 @@ test("OpenRouter schema compiler rejects unsupported keywords deterministically"
   );
 });
 
-test("OpenRouter schema compiler converts open objects to object-or-json-string fallback", () => {
+contractTest("runtime.hermetic", "OpenRouter schema compiler converts open objects to object-or-json-string fallback", () => {
   const compiled = compileOpenRouterResponseSchema({
     schemaName: "kestrel_test",
     schema: {
@@ -78,7 +79,7 @@ test("OpenRouter schema compiler converts open objects to object-or-json-string 
   assert.equal(compiled.diagnostics.openObjectStringFallbacks, 1);
 });
 
-test("OpenRouter schema compiler strips unsupported string formats", () => {
+contractTest("runtime.hermetic", "OpenRouter schema compiler strips unsupported string formats", () => {
   const compiled = compileOpenRouterResponseSchema({
     schemaName: "kestrel_test",
     schema: {
@@ -103,7 +104,7 @@ test("OpenRouter schema compiler strips unsupported string formats", () => {
   assert.equal(compiled.diagnostics.unsupportedStringFormatRemovals, 1);
 });
 
-test("OpenRouter schema compiler preserves supported string formats", () => {
+contractTest("runtime.hermetic", "OpenRouter schema compiler preserves supported string formats", () => {
   const compiled = compileOpenRouterResponseSchema({
     schemaName: "kestrel_test",
     schema: {

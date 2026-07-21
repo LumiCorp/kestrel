@@ -1,9 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Guardrails, GuardrailViolationError } from "../../src/engine/Guardrails.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Guardrails enforce model and tool call limits", () => {
+
+contractTest("runtime.hermetic", "Guardrails enforce model and tool call limits", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 5,
     maxToolCallsPerRun: 1,
@@ -24,7 +25,7 @@ test("Guardrails enforce model and tool call limits", () => {
   assert.throws(() => guardrails.onModelCall(), GuardrailViolationError);
 });
 
-test("Guardrails count model-selected workspace tools, not runtime-internal tools", () => {
+contractTest("runtime.hermetic", "Guardrails count model-selected workspace tools, not runtime-internal tools", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 5,
     maxToolCallsPerRun: 1,
@@ -51,7 +52,7 @@ test("Guardrails count model-selected workspace tools, not runtime-internal tool
   );
 });
 
-test("Guardrails count model-authored effect-dispatched tool calls", () => {
+contractTest("runtime.hermetic", "Guardrails count model-authored effect-dispatched tool calls", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 5,
     maxToolCallsPerRun: 1,
@@ -77,7 +78,7 @@ test("Guardrails count model-authored effect-dispatched tool calls", () => {
   );
 });
 
-test("Guardrails count maintenance model calls separately from action calls", () => {
+contractTest("runtime.hermetic", "Guardrails count maintenance model calls separately from action calls", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 5,
     maxToolCallsPerRun: 5,
@@ -110,7 +111,7 @@ test("Guardrails count maintenance model calls separately from action calls", ()
   );
 });
 
-test("Guardrails enforce step visit limits", () => {
+contractTest("runtime.hermetic", "Guardrails enforce step visit limits", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 10,
     maxToolCallsPerRun: 10,
@@ -127,7 +128,7 @@ test("Guardrails enforce step visit limits", () => {
   assert.throws(() => guardrails.onStep("repeat"), GuardrailViolationError);
 });
 
-test("Guardrails report finite remaining time from an external deadline", () => {
+contractTest("runtime.hermetic", "Guardrails report finite remaining time from an external deadline", () => {
   const guardrails = new Guardrails(
     {
       maxStepsPerRun: 10,

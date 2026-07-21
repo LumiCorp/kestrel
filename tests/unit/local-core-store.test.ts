@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { ensureLocalCoreReady } from "../../src/localCore/ready.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../src/localCore/home.js";
@@ -11,8 +10,10 @@ import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
 } from "../../src/localCore/store.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("the 0.6 Core initializes one PGlite store without touching 0.5 state", async () => {
+
+contractTest("runtime.hermetic", "the 0.6 Core initializes one PGlite store without touching 0.5 state", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-epoch-"));
   const legacyManifestPath = path.join(productRoot, "core", "manifest.json");
   const legacyRuntimePath = path.join(productRoot, "runtime.db");
@@ -67,7 +68,7 @@ test("the 0.6 Core initializes one PGlite store without touching 0.5 state", asy
   }
 });
 
-test("Local Core store keys canonicalize symlink aliases to one PGlite authority", async () => {
+contractTest("runtime.hermetic", "Local Core store keys canonicalize symlink aliases to one PGlite authority", async () => {
   const productRoot = await mkdtemp(path.join("/tmp", "kcstore-real-"));
   const alias = `${productRoot}-alias`;
   await symlink(productRoot, alias, "dir");
@@ -95,7 +96,7 @@ test("Local Core store keys canonicalize symlink aliases to one PGlite authority
   }
 });
 
-test("Local Core archives the canonical PGlite store without touching legacy state", async () => {
+contractTest("runtime.hermetic", "Local Core archives the canonical PGlite store without touching legacy state", async () => {
   const productRoot = await mkdtemp(path.join("/tmp", "kcstore-archive-"));
   const alias = `${productRoot}-alias`;
   const now = new Date("2026-07-13T12:00:00.000Z");
@@ -130,7 +131,7 @@ test("Local Core archives the canonical PGlite store without touching legacy sta
   }
 });
 
-test("Local Core archives a leaf symlink without traversing its external target", async () => {
+contractTest("runtime.hermetic", "Local Core archives a leaf symlink without traversing its external target", async () => {
   const productRoot = await mkdtemp(path.join("/tmp", "kcstore-link-"));
   const externalTarget = await mkdtemp(path.join("/tmp", "kcstore-external-"));
   const paths = resolveLocalCorePaths(productRoot);
@@ -155,7 +156,7 @@ test("Local Core archives a leaf symlink without traversing its external target"
   }
 });
 
-test("Local Core reports a missing PGlite store without inventing an archive", async () => {
+contractTest("runtime.hermetic", "Local Core reports a missing PGlite store without inventing an archive", async () => {
   const productRoot = await mkdtemp(path.join("/tmp", "kcstore-missing-"));
   try {
     const reset = await archiveLocalCorePgliteStore({
@@ -169,7 +170,7 @@ test("Local Core reports a missing PGlite store without inventing an archive", a
   }
 });
 
-test("Local Core makes existing state and PGlite authority roots private", async () => {
+contractTest("runtime.hermetic", "Local Core makes existing state and PGlite authority roots private", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-private-store-"));
   const paths = resolveLocalCorePaths(productRoot);
   try {
@@ -197,7 +198,7 @@ test("Local Core makes existing state and PGlite authority roots private", async
   }
 });
 
-test("Local Core PGlite initialization honors its explicit migration directory", async () => {
+contractTest("runtime.hermetic", "Local Core PGlite initialization honors its explicit migration directory", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-explicit-migrations-"));
   const migrationsDir = path.join(productRoot, "runtime-assets", "db", "migrations");
   try {
@@ -222,7 +223,7 @@ test("Local Core PGlite initialization honors its explicit migration directory",
   }
 });
 
-test("external Postgres readiness rejects an unreachable explicit database", async () => {
+contractTest("runtime.hermetic", "external Postgres readiness rejects an unreachable explicit database", async () => {
   const productRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-external-store-"));
   const databaseUrl = "postgres://kestrel:kestrel@127.0.0.1:1/kestrel?connect_timeout=1";
   try {

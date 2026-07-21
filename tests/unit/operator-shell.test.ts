@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   buildOperatorBackActionLabel,
@@ -21,13 +20,15 @@ import {
   pickResumeTarget,
   resolveOperatorStartTask,
 } from "../../src/operatorShell.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("formatOperatorMode renders legacy runtime mode values as Build labels", () => {
+
+contractTest("runtime.hermetic", "formatOperatorMode renders legacy runtime mode values as Build labels", () => {
   assert.equal(formatOperatorMode("plan", undefined), "Plan");
   assert.equal(formatOperatorMode("act", "strict"), "Build");
 });
 
-test("deriveOperatorJourney prefers explicit waiting and failure state", () => {
+contractTest("runtime.hermetic", "deriveOperatorJourney prefers explicit waiting and failure state", () => {
   const waiting = deriveOperatorJourney({
     id: "s1",
     title: "Waiting task",
@@ -45,7 +46,7 @@ test("deriveOperatorJourney prefers explicit waiting and failure state", () => {
   assert.equal(failed.recommendedAction, "recover_failed");
 });
 
-test("pickResumeTarget prefers waiting sessions before failures and recents", () => {
+contractTest("runtime.hermetic", "pickResumeTarget prefers waiting sessions before failures and recents", () => {
   const selected = pickResumeTarget([
     {
       id: "recent",
@@ -69,7 +70,7 @@ test("pickResumeTarget prefers waiting sessions before failures and recents", ()
   assert.equal(selected?.id, "waiting");
 });
 
-test("buildOperatorStatusSnapshot turns runtime state into operator copy", () => {
+contractTest("runtime.hermetic", "buildOperatorStatusSnapshot turns runtime state into operator copy", () => {
   const snapshot = buildOperatorStatusSnapshot({
     title: "Launch copy",
     profileLabel: "reference-openai",
@@ -86,13 +87,13 @@ test("buildOperatorStatusSnapshot turns runtime state into operator copy", () =>
   assert.match(snapshot.subline, /reference-openai/u);
 });
 
-test("buildOperatorBackActionLabel derives stack-aware labels deterministically", () => {
+contractTest("runtime.hermetic", "buildOperatorBackActionLabel derives stack-aware labels deterministically", () => {
   assert.equal(buildOperatorBackActionLabel(undefined), "Back to Chat");
   assert.equal(buildOperatorBackActionLabel("history"), "Back to History");
   assert.equal(buildOperatorBackActionLabel("workspace"), "Back to Workspace");
 });
 
-test("buildOperatorHistoryHome orders active, waiting, failed, and recent entries deterministically", () => {
+contractTest("runtime.hermetic", "buildOperatorHistoryHome orders active, waiting, failed, and recent entries deterministically", () => {
   const entries = buildOperatorHistoryHome([
     {
       id: "recent",
@@ -140,7 +141,7 @@ test("buildOperatorHistoryHome orders active, waiting, failed, and recent entrie
   assert.equal(entries[3]?.restartAvailable, true);
 });
 
-test("resolveOperatorStartTask applies explicit defaults deterministically", () => {
+contractTest("runtime.hermetic", "resolveOperatorStartTask applies explicit defaults deterministically", () => {
   const launch = resolveOperatorStartTask({
     title: "Investigate queue latency",
     presetId: "investigation",
@@ -165,7 +166,7 @@ test("resolveOperatorStartTask applies explicit defaults deterministically", () 
   assert.match(formatOperatorLaunchSummary(launch), /Preset=Investigation/u);
 });
 
-test("resolveOperatorStartTask preserves explicit runtime identity fields", () => {
+contractTest("runtime.hermetic", "resolveOperatorStartTask preserves explicit runtime identity fields", () => {
   const launch = resolveOperatorStartTask({
     title: "Inspect desktop runtime",
     profileId: "reference-web",
@@ -192,7 +193,7 @@ test("resolveOperatorStartTask preserves explicit runtime identity fields", () =
   assert.equal(launch.effectiveAssemblyLabel, "Reference React on desktop:desktop_dev_local");
 });
 
-test("resolveOperatorStartTask infers prompt-seeded launch kind from explicit prompt only", () => {
+contractTest("runtime.hermetic", "resolveOperatorStartTask infers prompt-seeded launch kind from explicit prompt only", () => {
   const launch = resolveOperatorStartTask({
     title: "Recover blocked run",
     initialPrompt: "Inspect the failure and propose next action.",
@@ -208,7 +209,7 @@ test("resolveOperatorStartTask infers prompt-seeded launch kind from explicit pr
   assert.equal(launch.actSubmode, "safe");
 });
 
-test("buildOperatorWorkspaceJourney derives mismatch and discovered workspace state from explicit input", () => {
+contractTest("runtime.hermetic", "buildOperatorWorkspaceJourney derives mismatch and discovered workspace state from explicit input", () => {
   const snapshot = buildOperatorWorkspaceJourney({
     sessionTitle: "Workspace drill",
     profileLabel: "Reference",
@@ -239,7 +240,7 @@ test("buildOperatorWorkspaceJourney derives mismatch and discovered workspace st
   assert.equal(snapshot.nextActions?.destination, "workspace");
 });
 
-test("buildOperatorMcpWorkspace derives degraded workspace state from explicit MCP snapshot", () => {
+contractTest("runtime.hermetic", "buildOperatorMcpWorkspace derives degraded workspace state from explicit MCP snapshot", () => {
   const snapshot = buildOperatorMcpWorkspace({
     sessionTitle: "Investigate MCP",
     profileLabel: "Reference",
@@ -271,7 +272,7 @@ test("buildOperatorMcpWorkspace derives degraded workspace state from explicit M
   assert.equal(snapshot.nextActions?.orderedActions[0]?.id, "mcp.refresh");
 });
 
-test("mcp workspace exposes concrete remove actions only for known servers", () => {
+contractTest("runtime.hermetic", "mcp workspace exposes concrete remove actions only for known servers", () => {
   const empty = buildOperatorMcpWorkspace({
     sessionTitle: "active",
     profileLabel: "Reference",
@@ -313,7 +314,7 @@ test("mcp workspace exposes concrete remove actions only for known servers", () 
   );
 });
 
-test("buildOperatorCodeWorkspace derives deterministic code policy summary", () => {
+contractTest("runtime.hermetic", "buildOperatorCodeWorkspace derives deterministic code policy summary", () => {
   const snapshot = buildOperatorCodeWorkspace({
     sessionTitle: "Investigate queue latency",
     profileLabel: "Reference",
@@ -352,7 +353,7 @@ test("buildOperatorCodeWorkspace derives deterministic code policy summary", () 
   assert.equal(snapshot.nextActions?.orderedActions[0]?.id, "code.policy");
 });
 
-test("next action snapshots keep deterministic destination parity across journey surfaces", () => {
+contractTest("runtime.hermetic", "next action snapshots keep deterministic destination parity across journey surfaces", () => {
   const historyEntries = buildOperatorHistoryHome([
     {
       id: "session-1",
@@ -416,7 +417,7 @@ test("next action snapshots keep deterministic destination parity across journey
   assert.equal(code.orderedActions[0]?.id, "code.policy");
 });
 
-test("buildOperatorDelegationWorkspace derives child review state from explicit input", () => {
+contractTest("runtime.hermetic", "buildOperatorDelegationWorkspace derives child review state from explicit input", () => {
   const snapshot = buildOperatorDelegationWorkspace({
     sessionTitle: "Review child outcomes",
     profileLabel: "Reference",
@@ -463,7 +464,7 @@ test("buildOperatorDelegationWorkspace derives child review state from explicit 
   assert.equal(snapshot.secondaryActions.some((action) => action.command === "/focus child-1"), true);
 });
 
-test("buildOperatorDelegationWorkspace derives outcome preview from result envelope", () => {
+contractTest("runtime.hermetic", "buildOperatorDelegationWorkspace derives outcome preview from result envelope", () => {
   const snapshot = buildOperatorDelegationWorkspace({
     sessionTitle: "Review child outcomes",
     profileLabel: "Reference",
@@ -491,7 +492,7 @@ test("buildOperatorDelegationWorkspace derives outcome preview from result envel
   assert.deepEqual(snapshot.childOutcomes[0]?.references, ["file:///tmp/ui.md"]);
 });
 
-test("buildOperatorDelegationWorkspace preserves error and reference only outcomes", () => {
+contractTest("runtime.hermetic", "buildOperatorDelegationWorkspace preserves error and reference only outcomes", () => {
   const snapshot = buildOperatorDelegationWorkspace({
     sessionTitle: "Review child outcomes",
     profileLabel: "Reference",
@@ -520,7 +521,7 @@ test("buildOperatorDelegationWorkspace preserves error and reference only outcom
   assert.deepEqual(snapshot.childOutcomes[1]?.references, ["file:///tmp/reference.md"]);
 });
 
-test("delegation workspace hides fan-in and child-target actions without concrete ids", () => {
+contractTest("runtime.hermetic", "delegation workspace hides fan-in and child-target actions without concrete ids", () => {
   const snapshot = buildOperatorDelegationWorkspace({
     sessionTitle: "active",
     profileLabel: "Reference",
@@ -538,7 +539,7 @@ test("delegation workspace hides fan-in and child-target actions without concret
   assert.equal(actions.some((action) => action.draft === "/child spawn "), true);
 });
 
-test("delegation workspace uses concrete fan-in checkpoint and child focus actions", () => {
+contractTest("runtime.hermetic", "delegation workspace uses concrete fan-in checkpoint and child focus actions", () => {
   const snapshot = buildOperatorDelegationWorkspace({
     sessionTitle: "active",
     profileLabel: "Reference",
@@ -565,7 +566,7 @@ test("delegation workspace uses concrete fan-in checkpoint and child focus actio
   assert.equal(actions.some((action) => action.command === "/focus thread-child-1"), true);
 });
 
-test("buildOperatorRecoveryCenter derives explicit checkpoint timeline", () => {
+contractTest("runtime.hermetic", "buildOperatorRecoveryCenter derives explicit checkpoint timeline", () => {
   const snapshot = buildOperatorRecoveryCenter({
     sessionTitle: "Recover failed run",
     profileLabel: "Reference",
@@ -633,7 +634,7 @@ test("buildOperatorRecoveryCenter derives explicit checkpoint timeline", () => {
   assert.equal(snapshot.nextActions?.orderedActions[0]?.id, "checkpoint.inspect.latest");
 });
 
-test("recovery center hides checkpoint actions without concrete checkpoint state", () => {
+contractTest("runtime.hermetic", "recovery center hides checkpoint actions without concrete checkpoint state", () => {
   const snapshot = buildOperatorRecoveryCenter({
     sessionTitle: "active",
     profileLabel: "Reference",
@@ -648,7 +649,7 @@ test("recovery center hides checkpoint actions without concrete checkpoint state
   assert.equal(actions.some((action) => action.draft?.startsWith("/checkpoint restore")), false);
 });
 
-test("recovery center uses concrete checkpoint ids for available actions", () => {
+contractTest("runtime.hermetic", "recovery center uses concrete checkpoint ids for available actions", () => {
   const snapshot = buildOperatorRecoveryCenter({
     sessionTitle: "active",
     profileLabel: "Reference",
@@ -691,7 +692,7 @@ test("recovery center uses concrete checkpoint ids for available actions", () =>
   assert.equal(actions.some((action) => action.draft === "/checkpoint restore workspace-1 "), true);
 });
 
-test("buildOperatorLaunchSetup returns fixed presets, templates, and relaunches", () => {
+contractTest("runtime.hermetic", "buildOperatorLaunchSetup returns fixed presets, templates, and relaunches", () => {
   const snapshot = buildOperatorLaunchSetup({
     profileLabel: "Reference",
     workspaceLabel: "Workspace=demo Root=/tmp/demo",
@@ -719,7 +720,7 @@ test("buildOperatorLaunchSetup returns fixed presets, templates, and relaunches"
   assert.match(snapshot.bootstrapHint ?? "", /next history|next start|next chat/u);
 });
 
-test("buildOperatorNextActionsSnapshot orders preferred actions deterministically", () => {
+contractTest("runtime.hermetic", "buildOperatorNextActionsSnapshot orders preferred actions deterministically", () => {
   const snapshot = buildOperatorNextActionsSnapshot({
     destination: "mcp",
     recommendedLabel: "Refresh MCP",
@@ -739,7 +740,7 @@ test("buildOperatorNextActionsSnapshot orders preferred actions deterministicall
   assert.match(snapshot.rationaleSummary, /MCP health degraded/u);
 });
 
-test("buildOperatorHistoryNextActions derives deterministic history actions", () => {
+contractTest("runtime.hermetic", "buildOperatorHistoryNextActions derives deterministic history actions", () => {
   const snapshot = buildOperatorHistoryNextActions([
     {
       id: "waiting",
@@ -762,7 +763,7 @@ test("buildOperatorHistoryNextActions derives deterministic history actions", ()
   assert.equal(snapshot.orderedActions[1]?.id, "history.start");
 });
 
-test("buildOperatorBootstrapSnapshot derives deterministic first-run recommendation", () => {
+contractTest("runtime.hermetic", "buildOperatorBootstrapSnapshot derives deterministic first-run recommendation", () => {
   const firstRun = buildOperatorBootstrapSnapshot({
     hasWorkspace: true,
     profileLabel: "Reference",
@@ -785,7 +786,7 @@ test("buildOperatorBootstrapSnapshot derives deterministic first-run recommendat
   assert.equal(returning.runnerPreflightStatus, "degraded");
 });
 
-test("buildChildMissionPrompt compiles an explicit child mission contract", () => {
+contractTest("runtime.hermetic", "buildChildMissionPrompt compiles an explicit child mission contract", () => {
   const prompt = buildChildMissionPrompt({
     title: "Collect sources",
     scope: "Find the missing primary documents.",

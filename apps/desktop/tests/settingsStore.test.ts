@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
 
 import {
@@ -16,8 +15,10 @@ import {
   normalizeDesktopSettings,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("legacy desktop settings seed the Default model configuration from Local Core policy", () => {
+
+contractTest("desktop.hermetic", "legacy desktop settings seed the Default model configuration from Local Core policy", () => {
   const settings = normalizeDesktopSettings({ selectedProvider: "openrouter" }, {
     fallbackModelPolicy: {
       version: 1,
@@ -33,7 +34,7 @@ test("legacy desktop settings seed the Default model configuration from Local Co
   assert.equal(settings.modelConfigurations[0]?.revisions[0]?.policy.model, "claude-sonnet-4-5");
 });
 
-test("readDesktopSettings returns default settings when the file is missing", async () => {
+contractTest("desktop.hermetic", "readDesktopSettings returns default settings when the file is missing", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settings = await readDesktopSettings(path.join(tempDir, "desktop-settings.json"));
 
@@ -41,7 +42,7 @@ test("readDesktopSettings returns default settings when the file is missing", as
   assert.equal(settings.providerSelectionCompletedAt, undefined);
 });
 
-test("readDesktopSettings normalizes legacy OpenRouter-only settings", async () => {
+contractTest("desktop.hermetic", "readDesktopSettings normalizes legacy OpenRouter-only settings", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -62,7 +63,7 @@ test("readDesktopSettings normalizes legacy OpenRouter-only settings", async () 
   assert.equal(typeof restored.setupCompletedAt, "string");
 });
 
-test("readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults", async () => {
+contractTest("desktop.hermetic", "readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -82,7 +83,7 @@ test("readDesktopSettings keeps provider selection unset for pristine legacy Ope
   assert.equal(restored.selectedProvider, "openrouter");
 });
 
-test("readDesktopSettings backfills provider selection for intentional legacy provider states", async () => {
+contractTest("desktop.hermetic", "readDesktopSettings backfills provider selection for intentional legacy provider states", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -104,7 +105,7 @@ test("readDesktopSettings backfills provider selection for intentional legacy pr
   assert.equal(restored.ollamaBaseUrl, "http://127.0.0.1:11434");
 });
 
-test("writeDesktopSettings persists provider options without serializing credentials", async () => {
+contractTest("desktop.hermetic", "writeDesktopSettings persists provider options without serializing credentials", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -190,7 +191,7 @@ test("writeDesktopSettings persists provider options without serializing credent
   assert.match(raw, /"projects": \[/u);
 });
 
-test("writeDesktopSettings persists external database mode without serializing its credential", async () => {
+contractTest("desktop.hermetic", "writeDesktopSettings persists external database mode without serializing its credential", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -217,7 +218,7 @@ test("writeDesktopSettings persists external database mode without serializing i
   assert.equal(raw.includes("user:password"), false);
 });
 
-test("writeDesktopSettings round-trips local-provider settings", async () => {
+contractTest("desktop.hermetic", "writeDesktopSettings round-trips local-provider settings", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
 
@@ -243,7 +244,7 @@ test("writeDesktopSettings round-trips local-provider settings", async () => {
   assert.equal(restored.lmstudioBaseUrl, "http://127.0.0.1:1234");
 });
 
-test("buildDesktopModelEnvironment exposes only the selected provider key", () => {
+contractTest("desktop.hermetic", "buildDesktopModelEnvironment exposes only the selected provider key", () => {
   const openrouterEnv = buildDesktopModelEnvironment(
     {
       PATH: "/usr/bin",
@@ -452,7 +453,7 @@ test("buildDesktopModelEnvironment exposes only the selected provider key", () =
   assert.equal(anthropicEnv.TAVILY_API_KEY, "tavily-key");
 });
 
-test("buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys", () => {
+contractTest("desktop.hermetic", "buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys", () => {
   const env = buildDesktopModelEnvironment(
     {
       PATH: "/usr/bin",
@@ -493,7 +494,7 @@ test("buildDesktopModelEnvironment configures local OpenAI-compatible providers 
   assert.equal(env.LMSTUDIO_BASE_URL, "http://127.0.0.1:1234");
 });
 
-test("buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs", () => {
+contractTest("desktop.hermetic", "buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs", () => {
   const env = buildDesktopRunnerEnvironment(
     {
       PATH: "/usr/bin",
@@ -531,7 +532,7 @@ test("buildDesktopRunnerEnvironment applies local runtime defaults for desktop r
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, "desktop_default");
 });
 
-test("buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres", () => {
+contractTest("desktop.hermetic", "buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres", () => {
   const env = buildDesktopRunnerEnvironment(
     {
       PATH: "/usr/bin",
@@ -566,7 +567,7 @@ test("buildDesktopRunnerEnvironment preserves explicit database wiring for manag
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, "desktop_managed");
 });
 
-test("buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL", () => {
+contractTest("desktop.hermetic", "buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL", () => {
   const env = buildDesktopRunnerEnvironment(
     {
       PATH: "/usr/bin",
@@ -597,7 +598,7 @@ test("buildDesktopRunnerEnvironment does not fallback to local defaults when ext
   assert.equal(env.KESTREL_DATABASE_URL_SOURCE, "desktop_external");
 });
 
-test("buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority", () => {
+contractTest("desktop.hermetic", "buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority", () => {
   const env = buildDesktopModelEnvironment(
     {
       PATH: "/usr/bin",
@@ -633,7 +634,7 @@ test("buildDesktopModelEnvironment uses the shared model policy instead of Deskt
   assert.equal(env.OPENAI_MODEL, "gpt-5.4-2026-03-05");
 });
 
-test("buildDesktopRunnerProfile applies the selected model policy to run.start", () => {
+contractTest("desktop.hermetic", "buildDesktopRunnerProfile applies the selected model policy to run.start", () => {
   const profile = buildDesktopRunnerProfile({
     version: 1,
     provider: "ollama",
@@ -652,7 +653,7 @@ test("buildDesktopRunnerProfile applies the selected model policy to run.start",
   );
 });
 
-test("buildDesktopRunnerProfile applies verified managed MCP servers and tools", () => {
+contractTest("desktop.hermetic", "buildDesktopRunnerProfile applies verified managed MCP servers and tools", () => {
   const settings = {
     ...createDefaultDesktopSettings(),
     mcpServers: [{
@@ -670,7 +671,7 @@ test("buildDesktopRunnerProfile applies verified managed MCP servers and tools",
   assert.equal(profile.toolAllowlist?.includes("mcp.docs.search"), true);
 });
 
-test("hasConfiguredDesktopProviderCredential follows the selected provider", () => {
+contractTest("desktop.hermetic", "hasConfiguredDesktopProviderCredential follows the selected provider", () => {
   assert.equal(
     hasConfiguredDesktopProviderCredential({
       selectedProvider: "openrouter",
@@ -721,7 +722,7 @@ test("hasConfiguredDesktopProviderCredential follows the selected provider", () 
   );
 });
 
-test("describeDesktopProviderCredentialRequirement explains the missing selected provider key", () => {
+contractTest("desktop.hermetic", "describeDesktopProviderCredentialRequirement explains the missing selected provider key", () => {
   assert.equal(
     describeDesktopProviderCredentialRequirement({
       selectedProvider: "openrouter",

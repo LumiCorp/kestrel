@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   createVisualCrossingWeatherAdapter,
   verifyVisualCrossingCredential,
 } from "../../tools/free/visualCrossingWeather.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("Visual Crossing credential verification requires normalized provider evidence", async () => {
+
+contractTest("runtime.hermetic", "Visual Crossing credential verification requires normalized provider evidence", async () => {
   const result = await verifyVisualCrossingCredential({
     apiKey: "visual-secret",
     fetchImpl: async () => new Response(
@@ -26,7 +27,7 @@ test("Visual Crossing credential verification requires normalized provider evide
   assert.equal(JSON.stringify(result).includes("visual-secret"), false);
 });
 
-test("Visual Crossing current weather normalizes provider data without exposing its credential", async () => {
+contractTest("runtime.hermetic", "Visual Crossing current weather normalizes provider data without exposing its credential", async () => {
   let requestedUrl = "";
   const adapter = createVisualCrossingWeatherAdapter({
     apiKey: "visual-secret",
@@ -64,7 +65,7 @@ test("Visual Crossing current weather normalizes provider data without exposing 
   assert.equal(new URL(requestedUrl).searchParams.get("key"), "visual-secret");
 });
 
-test("Visual Crossing forecast maps days and hours into the shared weather payload", async () => {
+contractTest("runtime.hermetic", "Visual Crossing forecast maps days and hours into the shared weather payload", async () => {
   const adapter = createVisualCrossingWeatherAdapter({
     apiKey: "visual-secret",
     fetchImpl: async () =>
@@ -116,7 +117,7 @@ test("Visual Crossing forecast maps days and hours into the shared weather paylo
   assert.deepEqual(daily.temperature_2m_max, [24]);
 });
 
-test("Visual Crossing rejects a forecast without daily evidence", async () => {
+contractTest("runtime.hermetic", "Visual Crossing rejects a forecast without daily evidence", async () => {
   const adapter = createVisualCrossingWeatherAdapter({
     apiKey: "visual-secret",
     fetchImpl: async () =>

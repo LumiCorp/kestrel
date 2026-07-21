@@ -1,7 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { normalizeContinuationOffer } from "../../src/runtime/continuationOffer.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function offer(requiredMode: string) {
   return {
@@ -15,7 +16,7 @@ function offer(requiredMode: string) {
   };
 }
 
-test("normalizeContinuationOffer migrates legacy act required modes while emitting build names", () => {
+contractTest("runtime.hermetic", "normalizeContinuationOffer migrates legacy act required modes while emitting build names", () => {
   assert.equal(normalizeContinuationOffer(offer("act.safe"), "fallback-run")?.requiredMode, "build");
   assert.equal(normalizeContinuationOffer(offer("act.full_auto"), "fallback-run")?.requiredMode, "build");
   assert.equal(normalizeContinuationOffer(offer("build.guarded"), "fallback-run")?.requiredMode, "build");
@@ -23,7 +24,7 @@ test("normalizeContinuationOffer migrates legacy act required modes while emitti
   assert.equal(normalizeContinuationOffer(offer("build"), "fallback-run")?.requiredMode, "build");
 });
 
-test("normalizeContinuationOffer preserves resumeMessage for backward compatibility", () => {
+contractTest("runtime.hermetic", "normalizeContinuationOffer preserves resumeMessage for backward compatibility", () => {
   const normalized = normalizeContinuationOffer(
     {
       ...offer("build"),

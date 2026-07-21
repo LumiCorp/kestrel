@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import postgres from "postgres";
 import { hashGitHubActionPayload } from "./github-action-approval-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-test(
-  "GitHub action approval consumption is exact and single-use",
+contractTest(
+  "web.postgres", "GitHub action approval consumption is exact and single-use",
   async () => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     const sql = postgres(databaseUrl, { max: 1 });

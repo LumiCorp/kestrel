@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   projectTabHref,
   resolveProjectTab,
 } from "./project-tabs";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -17,7 +18,7 @@ function readAppSource(relativePath: string) {
   return fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 }
 
-test("Project tabs stay owned by the URL across same-page navigation", () => {
+contractTest("web.hermetic", "Project tabs stay owned by the URL across same-page navigation", () => {
   assert.equal(resolveProjectTab({ tab: "apps", hasGoogle: false }), "apps");
   assert.equal(
     resolveProjectTab({ tab: "context", hasGoogle: false }),
@@ -32,7 +33,7 @@ test("Project tabs stay owned by the URL across same-page navigation", () => {
   );
 });
 
-test("Project uploads compensate new documents when context attachment fails", () => {
+contractTest("web.hermetic", "Project uploads compensate new documents when context attachment fails", () => {
   const source = readAppSource("app/api/projects/[id]/files/route.ts");
 
   assert.match(source, /catch \(attachmentError\)/);
@@ -42,7 +43,7 @@ test("Project uploads compensate new documents when context attachment fails", (
   );
 });
 
-test("Project deletion commits metadata before best-effort blob cleanup", () => {
+contractTest("web.hermetic", "Project deletion commits metadata before best-effort blob cleanup", () => {
   const source = readAppSource("lib/projects/store.ts");
   const transactionIndex = source.indexOf(
     "const deleted = await knowledgeDb.transaction"
@@ -57,7 +58,7 @@ test("Project deletion commits metadata before best-effort blob cleanup", () => 
   );
 });
 
-test("Project collaborators use canonical Thread access for message actions", () => {
+contractTest("web.hermetic", "Project collaborators use canonical Thread access for message actions", () => {
   for (const relativePath of [
     "app/api/messages/[id]/feedback/route.ts",
     "lib/messages/speech.ts",
@@ -68,7 +69,7 @@ test("Project collaborators use canonical Thread access for message actions", ()
   }
 });
 
-test("mobile Thread responses pin Project context and Environment before durable dispatch", () => {
+contractTest("web.hermetic", "mobile Thread responses pin Project context and Environment before durable dispatch", () => {
   const source = readAppSource(
     "app/api/mobile/v1/threads/[id]/turns/route.ts"
   );
@@ -81,7 +82,7 @@ test("mobile Thread responses pin Project context and Environment before durable
   assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
 });
 
-test("durable interactions preserve exact request identity through runtime resume", () => {
+contractTest("web.hermetic", "durable interactions preserve exact request identity through runtime resume", () => {
   const store = readAppSource("lib/turns/store.ts");
   const worker = readAppSource("lib/turns/process-runtime.ts");
   const runtime = readAppSource("lib/agent/kestrel-runtime-core.ts");
@@ -93,7 +94,7 @@ test("durable interactions preserve exact request identity through runtime resum
   assert.match(runtime, /eventType: interactionResponse\?\.eventType/u);
 });
 
-test("durable turn creation never rebinds an existing message ID", () => {
+contractTest("web.hermetic", "durable turn creation never rebinds an existing message ID", () => {
   const source = readAppSource("lib/turns/store.ts");
 
   assert.match(

@@ -1,43 +1,105 @@
 {
-  "version": 1,
+  "version": 2,
   "mutations": [
     {
-      "id": "runtime-replay-verdict-inversion",
-      "contractId": "runtime.replay-integrity",
-      "target": "src/governance/replayBaseline.ts",
-      "find": "if (nextIndex === -1) {",
-      "replace": "if (nextIndex !== -1) {",
-      "command": "node",
-      "args": ["--import", "tsx", "--test", "tests/unit/governance-replay-baseline.test.ts"],
-      "testFiles": ["tests/unit/governance-replay-baseline.test.ts"]
-    },
-    {
-      "id": "postgres-retry-source-loss",
-      "contractId": "web.durable-postgres",
+      "id": "turn-retry-lineage-loss",
+      "contractId": "web.turn-retry-lineage",
       "target": "apps/web/lib/turns/store.ts",
       "find": "sourceMessageId: input.sourceMessageId ?? null,",
       "replace": "sourceMessageId: null,",
       "command": "pnpm",
-      "args": ["run", "ci:postgres:local"],
-      "testFiles": [
-        "apps/web/lib/apps/service.postgres.test.ts",
-        "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
-        "apps/web/lib/environments/reconcile-lock.postgres.test.ts",
-        "apps/web/lib/environments/store.postgres.test.ts",
-        "apps/web/lib/integrations/github-action-approvals.postgres.test.ts",
-        "apps/web/lib/turns/mobile-store.postgres.test.ts",
-        "apps/web/lib/turns/store.postgres.test.ts"
-      ]
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=mobile Thread creation", "lib/turns/mobile-store.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/mobile-store.postgres.test.ts"]
     },
     {
-      "id": "product-retry-source-loss",
-      "contractId": "web.durable-product",
-      "target": "apps/web/app/api/mobile/v2/turns/[turnId]/retry/route.ts",
-      "find": "sourceMessageId: retrySource.sourceMessageId,",
-      "replace": "sourceMessageId: null,",
+      "id": "interaction-request-identity-bypass",
+      "contractId": "web.interaction-request-identity",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "interaction.eventType !== input.eventType",
+      "replace": "interaction.eventType === input.eventType",
       "command": "pnpm",
-      "args": ["run", "ci:product"],
-      "testFiles": ["apps/web/tests/product/durable-conversation.spec.ts"]
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=durable turns converge", "lib/turns/store.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/store.postgres.test.ts"]
+    },
+    {
+      "id": "turn-idempotency-bypass",
+      "contractId": "web.idempotency",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "eq(schema.threadTurns.idempotencyKey, input.idempotencyKey)",
+      "replace": "eq(schema.threadTurns.idempotencyKey, `bypass-${input.idempotencyKey}`)",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=mobile Thread creation", "lib/turns/mobile-store.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/mobile-store.postgres.test.ts"]
+    },
+    {
+      "id": "turn-partial-transaction-commit",
+      "contractId": "web.turn-transaction",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "return knowledgeDb.transaction(callback);",
+      "replace": "return callback(knowledgeDb as unknown as TurnTransaction);",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=mobile Thread creation", "lib/turns/mobile-store.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/mobile-store.postgres.test.ts"]
+    },
+    {
+      "id": "worker-claim-recovery-disabled",
+      "contractId": "web.worker-claim-recovery",
+      "target": "apps/web/lib/turns/queue.ts",
+      "find": "if (turn.status === \"running\") {",
+      "replace": "if (false && turn.status === \"running\") {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=durable turns converge", "lib/turns/store.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/store.postgres.test.ts"]
+    },
+    {
+      "id": "runtime-replay-ordering-inversion",
+      "contractId": "runtime.replay-ordering",
+      "target": "src/governance/replayBaseline.ts",
+      "find": "if (nextIndex === -1) {",
+      "replace": "if (nextIndex !== -1) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=catches missing strict events", "tests/unit/governance-replay-baseline.test.ts"],
+      "testFiles": ["tests/unit/governance-replay-baseline.test.ts"]
+    },
+    {
+      "id": "cross-tenant-authorization-acceptance",
+      "contractId": "security.cross-tenant-authorization",
+      "target": "cli/runner/RunnerHost.ts",
+      "find": "profile.modelCredential.organizationId !== tenantId",
+      "replace": "profile.modelCredential.organizationId === tenantId",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=binds a gateway-managed credential", "tests/integration/runner-protocol.test.ts"],
+      "testFiles": ["tests/integration/runner-protocol.test.ts"]
+    },
+    {
+      "id": "stream-terminal-event-omission",
+      "contractId": "runtime.stream-terminal",
+      "target": "packages/sdk/src/internal/LocalRunnerTransport.ts",
+      "find": "if (streamSettled === false) {",
+      "replace": "if (false) {",
+      "command": "pnpm",
+      "args": ["--dir", "packages/sdk", "exec", "node", "--import", "tsx", "--test", "--test-timeout=5000", "--test-name-pattern=ends before a terminal event", "tests/local-client.test.ts"],
+      "testFiles": ["packages/sdk/tests/local-client.test.ts"]
+    },
+    {
+      "id": "source-write-guard-fail-open",
+      "contractId": "runtime.source-write-guard",
+      "target": "src/devshell/DevShellSupervisor.ts",
+      "find": "if (hasUnauthorizedSourceWrites(result)) {",
+      "replace": "if (false && hasUnauthorizedSourceWrites(result)) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=source-write guard fails", "tests/unit/dev-shell-supervisor.test.ts"],
+      "testFiles": ["tests/unit/dev-shell-supervisor.test.ts"]
+    },
+    {
+      "id": "local-core-authority-lock-theft",
+      "contractId": "local-core.authority-lock",
+      "target": "src/localCore/api.ts",
+      "find": "status.lock.lock.ownerPid === process.pid\n    && status.lock.lock.authorityId === authorityId",
+      "replace": "true\n    && true",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=does not steal or unlink", "tests/unit/local-core-api.test.ts"],
+      "testFiles": ["tests/unit/local-core-api.test.ts"]
     }
   ]
 }

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   getToolProviderDefinition,
   listToolProviders,
   listToolRuntimeNames,
 } from "./registry";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("tool registry includes seeded built-in and external providers", () => {
+
+contractTest("web.hermetic", "tool registry includes seeded built-in and external providers", () => {
   const providers = listToolProviders();
   assert.ok(providers.some((provider) => provider.key === "built_in.weather"));
   assert.ok(providers.some((provider) => provider.key === "built_in.time"));
@@ -28,7 +29,7 @@ test("tool registry includes seeded built-in and external providers", () => {
   assert.ok(providers.some((provider) => provider.key === "source.youtube"));
 });
 
-test("GitHub exposes governed capabilities while source adapters stay connection-only", () => {
+contractTest("web.hermetic", "GitHub exposes governed capabilities while source adapters stay connection-only", () => {
   const github = getToolProviderDefinition("github");
   const discord = getToolProviderDefinition("discord");
   const githubSources = getToolProviderDefinition("source.github");
@@ -58,7 +59,7 @@ test("GitHub exposes governed capabilities while source adapters stay connection
   assert.equal(youtubeSources?.capabilities.length, 0);
 });
 
-test("weather provider defaults weather capability to auto approval", () => {
+contractTest("web.hermetic", "weather provider defaults weather capability to auto approval", () => {
   const provider = getToolProviderDefinition("built_in.weather");
   assert.ok(provider);
   assert.equal(provider?.capabilities[0]?.key, "getWeather");
@@ -75,7 +76,7 @@ test("weather provider defaults weather capability to auto approval", () => {
   );
 });
 
-test("runtime names expose current chat tools", () => {
+contractTest("web.hermetic", "runtime names expose current chat tools", () => {
   const runtimeNames = listToolRuntimeNames();
   assert.ok(runtimeNames.includes("free.weather.current"));
   assert.ok(runtimeNames.includes("free.weather.forecast"));
@@ -87,7 +88,7 @@ test("runtime names expose current chat tools", () => {
   assert.ok(runtimeNames.includes("createDocument"));
 });
 
-test("every provider declares a coherent App connection contract", () => {
+contractTest("web.hermetic", "every provider declares a coherent App connection contract", () => {
   for (const provider of listToolProviders()) {
     assert.equal(
       provider.app.connectionModel === "none",

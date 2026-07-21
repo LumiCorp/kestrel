@@ -180,20 +180,19 @@ Model-backed development requires a configured provider. Start from
 
 ## Quality Gates
 
-Run a focused test while iterating. Before a runtime or repository-wide change
-is considered ready, run the shared gates:
+Before any pull request is considered ready, run the same minimal portable
+validation contract used by GitHub Actions:
 
 ```bash
-pnpm run governance:check
-pnpm run test
-pnpm run test-proofs:check
-pnpm run ruhroh:validate # only when evaluation configuration changes
+pnpm validate
 ```
 
-The proof registry assigns every retained automated test to a named contract
-and required CI lane. High- and critical-risk contracts also carry current
-killed-mutation evidence. Ruhroh owns model-quality evaluation execution;
-Kestrel validates only its declarative Ruhroh configuration.
+The required gate checks the public repository boundary, builds shared and root
+artifacts, typechecks workspaces, and runs hermetic tests. Process, PostgreSQL,
+Chromium, mutation, documentation, Desktop, Ruhroh, and release checks remain
+explicit commands for their owning surfaces. The runner records phase, task,
+and contract durations without treating machine-dependent elapsed time as
+correctness evidence; GitHub's job timeout is the operational hang watchdog.
 
 ## Project Boundaries
 

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import MiniSearch from "minisearch";
 
 import { buildSerializedSearchIndex } from "../lib/search";
 import { SEARCH_FIELDS, SEARCH_STORE_FIELDS, searchWithIndex } from "../lib/search-utils";
 import type { SearchDocument } from "../lib/types";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("search represents every public journey without leaking internal metadata", async () => {
+
+contractTest("docs.hermetic", "search represents every public journey without leaking internal metadata", async () => {
   const { initialResults, serializedIndex } = await buildSerializedSearchIndex();
   const index = MiniSearch.loadJSON<SearchDocument>(serializedIndex, {
     fields: [...SEARCH_FIELDS],

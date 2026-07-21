@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   isRetryableDatabaseError,
@@ -8,22 +7,24 @@ import {
   resolveDockerCommandForTests,
   resolveStartCommands,
 } from "../../scripts/start.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("parseStartArgs defaults to tui without skipping migrations", () => {
+
+contractTest("runtime.hermetic", "parseStartArgs defaults to tui without skipping migrations", () => {
   assert.deepEqual(parseStartArgs([]), {
     target: "tui",
     skipMigrate: false,
   });
 });
 
-test("parseStartArgs accepts explicit target and skip-migrate", () => {
+contractTest("runtime.hermetic", "parseStartArgs accepts explicit target and skip-migrate", () => {
   assert.deepEqual(parseStartArgs(["--target", "web", "--skip-migrate"]), {
     target: "web",
     skipMigrate: true,
   });
 });
 
-test("resolveStartCommands launches canonical Kestrel One for the web target", () => {
+contractTest("runtime.hermetic", "resolveStartCommands launches canonical Kestrel One for the web target", () => {
   const commands = resolveStartCommands("web");
   assert.equal(commands.length, 1);
   assert.equal(commands[0]?.id, "web");
@@ -31,7 +32,7 @@ test("resolveStartCommands launches canonical Kestrel One for the web target", (
   assert.deepEqual(commands[0]?.args, ["--filter", "@kestrel/kestrel-one", "dev"]);
 });
 
-test("resolveDockerCommandForTests honors KCHAT_DOCKER_BIN override", () => {
+contractTest("runtime.hermetic", "resolveDockerCommandForTests honors KCHAT_DOCKER_BIN override", () => {
   const docker = resolveDockerCommandForTests({
     env: { KCHAT_DOCKER_BIN: "/tmp/docker-custom " },
     platform: "darwin",
@@ -41,7 +42,7 @@ test("resolveDockerCommandForTests honors KCHAT_DOCKER_BIN override", () => {
   assert.equal(docker, "/tmp/docker-custom");
 });
 
-test("resolveDockerCommandForTests falls back to Docker.app on macOS", () => {
+contractTest("runtime.hermetic", "resolveDockerCommandForTests falls back to Docker.app on macOS", () => {
   const docker = resolveDockerCommandForTests({
     env: {},
     platform: "darwin",
@@ -51,7 +52,7 @@ test("resolveDockerCommandForTests falls back to Docker.app on macOS", () => {
   assert.equal(docker, "/Applications/Docker.app/Contents/Resources/bin/docker");
 });
 
-test("resolveDockerCommandForTests keeps docker on non-macOS", () => {
+contractTest("runtime.hermetic", "resolveDockerCommandForTests keeps docker on non-macOS", () => {
   const docker = resolveDockerCommandForTests({
     env: {},
     platform: "linux",
@@ -61,7 +62,7 @@ test("resolveDockerCommandForTests keeps docker on non-macOS", () => {
   assert.equal(docker, "docker");
 });
 
-test("resolveDatabaseStopCommand stops only the supervised postgres service", () => {
+contractTest("runtime.hermetic", "resolveDatabaseStopCommand stops only the supervised postgres service", () => {
   assert.deepEqual(resolveDatabaseStopCommand("docker"), {
     id: "db-down",
     label: "postgres container shutdown",
@@ -70,7 +71,7 @@ test("resolveDatabaseStopCommand stops only the supervised postgres service", ()
   });
 });
 
-test("isRetryableDatabaseError recognizes connection-refused aggregate failures", () => {
+contractTest("runtime.hermetic", "isRetryableDatabaseError recognizes connection-refused aggregate failures", () => {
   const error = {
     errors: [{ code: "ECONNREFUSED" }],
   };
@@ -78,7 +79,7 @@ test("isRetryableDatabaseError recognizes connection-refused aggregate failures"
   assert.equal(isRetryableDatabaseError(error), true);
 });
 
-test("isRetryableDatabaseError does not hide authentication failures", () => {
+contractTest("runtime.hermetic", "isRetryableDatabaseError does not hide authentication failures", () => {
   const error = {
     code: "28P01",
     message: "password authentication failed for user 'kestrel'",

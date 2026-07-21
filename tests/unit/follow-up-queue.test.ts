@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 import {
@@ -11,6 +10,8 @@ import {
   removeFollowUp,
   resumeFollowUps,
 } from "../../src/orchestration/FollowUpQueue.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const thread: ThreadRecord = {
   threadId: "thread-1",
@@ -21,7 +22,7 @@ const thread: ThreadRecord = {
   updatedAt: "2026-07-20T12:00:00.000Z",
 };
 
-test("follow-up queue persists deterministic FIFO entries and deduplicates stable IDs", () => {
+contractTest("runtime.hermetic", "follow-up queue persists deterministic FIFO entries and deduplicates stable IDs", () => {
   const first = enqueueFollowUp(thread, {
     followUpId: "follow-up-1",
     message: "first",
@@ -56,7 +57,7 @@ test("follow-up queue persists deterministic FIFO entries and deduplicates stabl
   assert.deepEqual(readFollowUpQueue(edited).items.map((entry) => entry.followUpId), ["follow-up-1", "follow-up-2"]);
 });
 
-test("follow-up queue recovers starting entries when paused and resumed", () => {
+contractTest("runtime.hermetic", "follow-up queue recovers starting entries when paused and resumed", () => {
   const queued = enqueueFollowUp(thread, {
     followUpId: "follow-up-1",
     message: "first",

@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { createRunnerServiceServer } from "../../../cli/runner/RunnerService.js";
@@ -14,12 +12,13 @@ import { createAgent } from "../../../packages/sdk/src/index.js";
 import {
   createProfileProvider,
   createSdkE2eRuntimeFactory,
-  packPackage,
+  preparePackedConsumerFixture,
   runChildProcess,
   sdkE2eContext,
   sdkE2eProfile,
-  writePnpmWorkspaceOverrides,
 } from "./helpers.js";
+import { contractTest } from "../../helpers/contract-test.js";
+
 
 const observabilityRequire = createRequire(new URL("../../../packages/observability/package.json", import.meta.url));
 const { InMemorySpanExporter } = await import(
@@ -32,7 +31,7 @@ const { InMemorySpanExporter } = await import(
   };
 };
 
-test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory", async (t) => {
+contractTest("runtime.process", "core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -147,7 +146,7 @@ test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory"
   );
 });
 
-test("core SDK e2e isolates concurrent subscriptions and rejects stale concurrent memory writers", async (t) => {
+contractTest("runtime.process", "core SDK e2e isolates concurrent subscriptions and rejects stale concurrent memory writers", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -253,7 +252,7 @@ test("core SDK e2e isolates concurrent subscriptions and rejects stale concurren
   assert.match(memoryAfterRace.value.findings, /writer/u);
 });
 
-test("core SDK e2e stream lifecycle and subscription delivery stay consistent for the same session", async (t) => {
+contractTest("runtime.process", "core SDK e2e stream lifecycle and subscription delivery stay consistent for the same session", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -311,7 +310,7 @@ test("core SDK e2e stream lifecycle and subscription delivery stay consistent fo
   assert.equal(events[events.length - 1], "run.completed");
 });
 
-test("observability e2e exports native traces and real OTEL spans", async (t) => {
+contractTest("runtime.process", "observability e2e exports native traces and real OTEL spans", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -360,7 +359,7 @@ test("observability e2e exports native traces and real OTEL spans", async (t) =>
   assert.equal(spans[0]?.attributes["kestrel.outcome"], "ok");
 });
 
-test("next route helpers e2e preserve correlation and propagate abort cancellation", async (t) => {
+contractTest("runtime.process", "next route helpers e2e preserve correlation and propagate abort cancellation", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -436,7 +435,7 @@ test("next route helpers e2e preserve correlation and propagate abort cancellati
   assert.match(body, /event: run\.cancelled/);
 });
 
-test("packed tarball consumer fixture installs and executes real SDK behavior against the live runner service", async (t) => {
+contractTest("runtime.process", "packed tarball consumer fixture installs and executes real SDK behavior against the live runner service", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -445,41 +444,7 @@ test("packed tarball consumer fixture installs and executes real SDK behavior ag
     await server.close();
   });
 
-  const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-ecosystem-pack-"));
-  const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-ecosystem-fixture-"));
-  const storeDir = path.join(os.tmpdir(), "kestrel-ecosystem-pnpm-store");
-  t.after(() => {
-    rmSync(packDir, { recursive: true, force: true });
-    rmSync(fixtureDir, { recursive: true, force: true });
-  });
-
-  const protocolTarball = packPackage(path.join(process.cwd(), "packages/protocol"), packDir);
-  const sdkTarball = packPackage(path.join(process.cwd(), "packages/sdk"), packDir);
-  const observabilityTarball = packPackage(path.join(process.cwd(), "packages/observability"), packDir);
-  writeFileSync(path.join(fixtureDir, "package.json"), JSON.stringify({
-    name: "kestrel-sdk-e2e-fixture",
-    private: true,
-    type: "module",
-    packageManager: "pnpm@9.12.2",
-    pnpm: {
-      overrides: {
-        "@kestrel-agents/protocol": protocolTarball,
-        "@kestrel-agents/sdk": sdkTarball,
-      },
-    },
-  }, null, 2));
-  writePnpmWorkspaceOverrides(fixtureDir, {
-    "@kestrel-agents/protocol": protocolTarball,
-    "@kestrel-agents/sdk": sdkTarball,
-  });
-
-  await runChildProcess("pnpm", ["add", "--workspace-root", protocolTarball, sdkTarball, observabilityTarball], {
-    cwd: fixtureDir,
-    env: {
-      ...process.env,
-      npm_config_store_dir: storeDir,
-    },
-  });
+  const fixtureDir = preparePackedConsumerFixture();
 
   writeFileSync(path.join(fixtureDir, "consumer.mjs"), `
 import assert from "node:assert/strict";

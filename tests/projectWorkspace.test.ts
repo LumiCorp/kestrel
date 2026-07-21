@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { ProductProjectSetupState } from "../src/project/contracts.js";
 import { ProductProjectWorkspaceService } from "../src/project/workspace.js";
 import type { ProductTaskGraph } from "../src/taskGraph/contracts.js";
+import { contractTest } from "./helpers/contract-test.js";
+
 
 const graph: ProductTaskGraph = {
   version: 1,
@@ -52,7 +53,7 @@ const baseSetup: ProductProjectSetupState = {
   mcpReady: false,
 };
 
-test("inspectReviewDetail uses changed file paths for default selection", async () => {
+contractTest("runtime.hermetic", "inspectReviewDetail uses changed file paths for default selection", async () => {
   const runner = {
     async run(command: string, args: string[]) {
       if (command === "git" && args.join(" ") === "diff --name-status --find-renames main...HEAD") {
@@ -85,7 +86,7 @@ test("inspectReviewDetail uses changed file paths for default selection", async 
   assert.equal(detail.diffHunks[0]?.header, "@@ -1 +1 @@");
 });
 
-test("inspectReviewDetail merges GitHub review metadata when connected", async () => {
+contractTest("runtime.hermetic", "inspectReviewDetail merges GitHub review metadata when connected", async () => {
   const runner = {
     async run(command: string, args: string[]) {
       if (command === "git" && args.join(" ") === "diff --name-status --find-renames main...HEAD") {
@@ -168,7 +169,7 @@ test("inspectReviewDetail merges GitHub review metadata when connected", async (
   assert.equal(detail.comments.length, 2);
 });
 
-test("applyReviewAction posts file-scoped comments through GitHub API", async () => {
+contractTest("runtime.hermetic", "applyReviewAction posts file-scoped comments through GitHub API", async () => {
   const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
   const runner = {
     async run(command: string, args: string[], cwd: string) {
@@ -208,7 +209,7 @@ test("applyReviewAction posts file-scoped comments through GitHub API", async ()
   assert.match(calls[1]?.args.join(" "), /path=src\/project\/workspace\.ts/);
 });
 
-test("inspectReviewState drops invalid branch and pull request summaries", async () => {
+contractTest("runtime.hermetic", "inspectReviewState drops invalid branch and pull request summaries", async () => {
   const runner = {
     async run(command: string, args: string[]) {
       if (command === "git" && args.join(" ") === "branch --show-current") {

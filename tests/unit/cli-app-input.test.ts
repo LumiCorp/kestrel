@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,6 +6,8 @@ import {
   type InkInputKey,
 } from "../../cli/ink/inputDispatcher.js";
 import { buildInitialUiRuntimeState, type UiRuntimeState } from "../../cli/ink/store/UiStore.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 function makeState(): UiRuntimeState {
   const now = new Date().toISOString();
@@ -82,7 +83,7 @@ function dispatch(state: UiRuntimeState, input: string, key: InkInputKey = {}): 
   return calls;
 }
 
-test("splash owns input before global shortcuts", () => {
+contractTest("runtime.hermetic", "splash owns input before global shortcuts", () => {
   const state = makeState();
   state.splashVisible = true;
 
@@ -90,7 +91,7 @@ test("splash owns input before global shortcuts", () => {
   assert.deepEqual(dispatch(state, " ", {}), ["dismissSplash"]);
 });
 
-test("error overlay owns escape, details, and scroll keys", () => {
+contractTest("runtime.hermetic", "error overlay owns escape, details, and scroll keys", () => {
   const state = makeState();
   state.errorOverlay = { message: "boom" };
 
@@ -101,7 +102,7 @@ test("error overlay owns escape, details, and scroll keys", () => {
   assert.deepEqual(dispatch(state, "G"), ["jumpErrorScroll:end"]);
 });
 
-test("help overlay owns close keys before normal navigation", () => {
+contractTest("runtime.hermetic", "help overlay owns close keys before normal navigation", () => {
   const state = makeState();
   state.helpOpen = true;
 
@@ -110,7 +111,7 @@ test("help overlay owns close keys before normal navigation", () => {
   assert.deepEqual(dispatch(state, "", { f1: true }), ["toggleHelp"]);
 });
 
-test("palette owns close, move, and select keys", () => {
+contractTest("runtime.hermetic", "palette owns close, move, and select keys", () => {
   const state = makeState();
   state.paletteOpen = true;
   state.activeRegion = "command_bar";
@@ -127,7 +128,7 @@ test("palette owns close, move, and select keys", () => {
   assert.deepEqual(dispatch(state, "", { return: true }), ["executePaletteSelection"]);
 });
 
-test("composer owns palette, search, draft clear, newline, and tab keys", () => {
+contractTest("runtime.hermetic", "composer owns palette, search, draft clear, newline, and tab keys", () => {
   const state = makeState();
   state.activeRegion = "composer";
 
@@ -144,7 +145,7 @@ test("composer owns palette, search, draft clear, newline, and tab keys", () => 
   assert.deepEqual(dispatch(state, "G"), []);
 });
 
-test("composer remains editable for plain queued messages while a run is active", () => {
+contractTest("runtime.hermetic", "composer remains editable for plain queued messages while a run is active", () => {
   const state = makeState();
   state.activeRegion = "composer";
   state.running = true;
@@ -154,7 +155,7 @@ test("composer remains editable for plain queued messages while a run is active"
   assert.deepEqual(dispatch(state, "", { shift: true, return: true }), ["appendDraftLineBreak"]);
 });
 
-test("global focus, search, and slash keys route outside the composer", () => {
+contractTest("runtime.hermetic", "global focus, search, and slash keys route outside the composer", () => {
   const state = makeState();
   state.activeRegion = "chat_list";
 
@@ -163,7 +164,7 @@ test("global focus, search, and slash keys route outside the composer", () => {
   assert.deepEqual(dispatch(state, "/"), ["openSlashPalette"]);
 });
 
-test("chat view printable input seeds the composer when focus is on transcript", () => {
+contractTest("runtime.hermetic", "chat view printable input seeds the composer when focus is on transcript", () => {
   const state = makeState();
   state.activeView = "chat";
   state.activeRegion = "chat_list";
@@ -173,7 +174,7 @@ test("chat view printable input seeds the composer when focus is on transcript",
   assert.deepEqual(dispatch(state, "/"), ["openSlashPalette"]);
 });
 
-test("chat transcript keeps list keys while browsing history", () => {
+contractTest("runtime.hermetic", "chat transcript keeps list keys while browsing history", () => {
   const state = makeState();
   state.activeView = "chat";
   state.activeRegion = "chat_list";
@@ -184,7 +185,7 @@ test("chat transcript keeps list keys while browsing history", () => {
   assert.deepEqual(dispatch(state, "h"), []);
 });
 
-test("context search closes on escape or return", () => {
+contractTest("runtime.hermetic", "context search closes on escape or return", () => {
   const state = makeState();
   state.activeRegion = "logs";
   state.logsFilterMode = true;

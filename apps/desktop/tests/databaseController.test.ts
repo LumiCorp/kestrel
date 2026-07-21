@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import { createCoreOwnedDesktopDatabaseController } from "../src/databaseController.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("Core-owned Desktop database accepts healthy PGlite without a database URL", async () => {
+
+contractTest("desktop.hermetic", "Core-owned Desktop database accepts healthy PGlite without a database URL", async () => {
   const status = pgliteStatus();
   const controller = createCoreOwnedDesktopDatabaseController({
     ensureReady: async () => status,
@@ -22,7 +23,7 @@ test("Core-owned Desktop database accepts healthy PGlite without a database URL"
   });
 });
 
-test("Core-owned Desktop database still rejects unavailable PGlite", async () => {
+contractTest("desktop.hermetic", "Core-owned Desktop database still rejects unavailable PGlite", async () => {
   const status = pgliteStatus({
     state: "degraded",
     initialized: false,
@@ -45,7 +46,7 @@ test("Core-owned Desktop database still rejects unavailable PGlite", async () =>
   );
 });
 
-test("Core-owned Desktop database accepts verified external storage without returning its URL", async () => {
+contractTest("desktop.hermetic", "Core-owned Desktop database accepts verified external storage without returning its URL", async () => {
   const controller = createCoreOwnedDesktopDatabaseController({
     async ensureReady() {
       return { ...pgliteStatus(), dbMode: "external", database: { mode: "external", state: "healthy", summary: "External ready", managed: false, initialized: true, running: true, identityVerified: true } };

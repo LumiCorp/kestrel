@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const migration = fs.readFileSync(
   path.join(
@@ -12,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-test("Threads migration is a physical hard cutover with preserved IDs", () => {
+contractTest("web.hermetic", "Threads migration is a physical hard cutover with preserved IDs", () => {
   assert.match(migration, /ALTER TABLE "chats" RENAME TO "threads"/);
   assert.match(migration, /ALTER TABLE "messages" RENAME TO "thread_messages"/);
   assert.match(migration, /RENAME COLUMN "chat_id" TO "thread_id"/);
@@ -20,7 +21,7 @@ test("Threads migration is a physical hard cutover with preserved IDs", () => {
   assert.doesNotMatch(migration, /INSERT INTO "threads"[\s\S]*SELECT/i);
 });
 
-test("Threads migration backfills authorship, search text, and canonical foreign keys", () => {
+contractTest("web.hermetic", "Threads migration backfills authorship, search text, and canonical foreign keys", () => {
   assert.match(migration, /SET "author_user_id" = t\."created_by_user_id"/);
   assert.match(migration, /SET "search_text" = COALESCE/);
   assert.match(migration, /CONSTRAINT "thread_messages_thread_fk"/);
@@ -36,7 +37,7 @@ test("Threads migration backfills authorship, search text, and canonical foreign
   assert.match(migration, /CONSTRAINT "media_generation_jobs_thread_fk"/);
 });
 
-test("Projects migration establishes memberships and immutable context revisions", () => {
+contractTest("web.hermetic", "Projects migration establishes memberships and immutable context revisions", () => {
   assert.match(migration, /CREATE TABLE "project_members"/);
   assert.match(migration, /project_members_role_check/);
   assert.match(migration, /CREATE FUNCTION "enforce_project_has_owner"/);

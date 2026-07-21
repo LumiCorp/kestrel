@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { mobileMessageParts, mobileV2DurablePartTypes } from "./message-parts";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("mobile v2 retains progress and tool activity after reload", () => {
+
+contractTest("web.hermetic", "mobile v2 retains progress and tool activity after reload", () => {
   assert.equal(mobileV2DurablePartTypes.has("progress"), true);
   assert.equal(mobileV2DurablePartTypes.has("tool_status"), true);
 });
 
-test("mobile snapshots preserve the durable Kestrel presentation timeline", () => {
+contractTest("web.hermetic", "mobile snapshots preserve the durable Kestrel presentation timeline", () => {
   const parts = mobileMessageParts([
     {
       type: "data-kestrel-progress",
@@ -107,7 +108,7 @@ test("mobile snapshots preserve the durable Kestrel presentation timeline", () =
   );
 });
 
-test("mobile snapshots never label runtime progress as agent progress", () => {
+contractTest("web.hermetic", "mobile snapshots never label runtime progress as agent progress", () => {
   const parts = mobileMessageParts([
     {
       type: "data-kestrel-progress",
@@ -133,7 +134,7 @@ test("mobile snapshots never label runtime progress as agent progress", () => {
   assert.equal(JSON.stringify(parts).includes("Qwen"), false);
 });
 
-test("mobile snapshots expose contract failure without leaking internal errors", () => {
+contractTest("web.hermetic", "mobile snapshots expose contract failure without leaking internal errors", () => {
   assert.deepEqual(
     mobileMessageParts([
       {
@@ -155,7 +156,7 @@ test("mobile snapshots expose contract failure without leaking internal errors",
   );
 });
 
-test("mobile snapshots collapse internal tool states to a stable public enum", () => {
+contractTest("web.hermetic", "mobile snapshots collapse internal tool states to a stable public enum", () => {
   const states = [
     "input-streaming",
     "input-available",
@@ -188,7 +189,7 @@ test("mobile snapshots collapse internal tool states to a stable public enum", (
   );
 });
 
-test("mobile snapshots omit unrecognized internal interaction and status values", () => {
+contractTest("web.hermetic", "mobile snapshots omit unrecognized internal interaction and status values", () => {
   assert.deepEqual(
     mobileMessageParts([
       {
@@ -209,7 +210,7 @@ test("mobile snapshots omit unrecognized internal interaction and status values"
   );
 });
 
-test("mobile snapshots replace MCP sampling prompts with safe copy", () => {
+contractTest("web.hermetic", "mobile snapshots replace MCP sampling prompts with safe copy", () => {
   const parts = mobileMessageParts([
     {
       type: "data-kestrel-interaction",

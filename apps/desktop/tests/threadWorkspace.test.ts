@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import test from "node:test";
 
 import { resolveDesktopThreadWorkspace } from "../src/threadWorkspace.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("desktop project threads use the registered project as their workspace and launch cwd", () => {
+
+contractTest("desktop.hermetic", "desktop project threads use the registered project as their workspace and launch cwd", () => {
   const projectPath = path.join(path.sep, "workspace", "project-a");
   const workspace = resolveDesktopThreadWorkspace({
     projectPath,
@@ -21,7 +22,7 @@ test("desktop project threads use the registered project as their workspace and 
   assert.equal(workspace.managedWorktreeRequired, false);
 });
 
-test("desktop build threads can explicitly select managed worktree isolation", () => {
+contractTest("desktop.hermetic", "desktop build threads can explicitly select managed worktree isolation", () => {
   const projectPath = path.join(path.sep, "workspace", "project-a");
   const workspace = resolveDesktopThreadWorkspace({
     projectPath,
@@ -42,7 +43,7 @@ test("desktop build threads can explicitly select managed worktree isolation", (
   assert.deepEqual(workspace.managedWorktreeSetup?.approvedIgnoredFiles, [".env"]);
 });
 
-test("desktop unscoped threads use the default Kestrel folder instead of the app bundle", () => {
+contractTest("desktop.hermetic", "desktop unscoped threads use the default Kestrel folder instead of the app bundle", () => {
   const defaultKestrelRoot = path.join(path.sep, "Users", "person", "Library", "Application Support", "Kestrel");
   const workspace = resolveDesktopThreadWorkspace({
     projects: [],
@@ -55,7 +56,7 @@ test("desktop unscoped threads use the default Kestrel folder instead of the app
   assert.equal(workspace.managedWorktreeRequired, false);
 });
 
-test("desktop thread workspaces reject unregistered project paths", () => {
+contractTest("desktop.hermetic", "desktop thread workspaces reject unregistered project paths", () => {
   assert.throws(
     () => resolveDesktopThreadWorkspace({
       projectPath: path.join(path.sep, "workspace", "forged"),

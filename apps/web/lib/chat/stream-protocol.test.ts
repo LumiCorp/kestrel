@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { KESTREL_PRESENTATION_DATA_PART_KEYS } from "@kestrel-agents/ai-sdk";
 import {
   type ChatStreamChunk,
   reorderToolInvocationChunks,
   sanitizeChatStream,
 } from "@/lib/chat/stream-protocol";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 function streamFromChunks(chunks: unknown[]) {
   return new ReadableStream<unknown>({
@@ -32,7 +33,7 @@ async function readAllChunks(stream: ReadableStream<ChatStreamChunk>) {
   }
 }
 
-test("sanitizeChatStream drops malformed provider chunks and emits one warning", async () => {
+contractTest("web.hermetic", "sanitizeChatStream drops malformed provider chunks and emits one warning", async () => {
   const chunks = await readAllChunks(
     sanitizeChatStream(
       streamFromChunks([
@@ -66,7 +67,7 @@ test("sanitizeChatStream drops malformed provider chunks and emits one warning",
   });
 });
 
-test("sanitizeChatStream preserves every shared Kestrel presentation data part", async () => {
+contractTest("web.hermetic", "sanitizeChatStream preserves every shared Kestrel presentation data part", async () => {
   const presentationChunks = KESTREL_PRESENTATION_DATA_PART_KEYS.map((key) => ({
     type: `data-${key}`,
     id: `part-${key}`,
@@ -86,7 +87,7 @@ test("sanitizeChatStream preserves every shared Kestrel presentation data part",
   );
 });
 
-test("sanitizeChatStream preserves resumable status data chunks", async () => {
+contractTest("web.hermetic", "sanitizeChatStream preserves resumable status data chunks", async () => {
   const chunks = await readAllChunks(
     sanitizeChatStream(
       streamFromChunks([
@@ -124,7 +125,7 @@ test("sanitizeChatStream preserves resumable status data chunks", async () => {
   ]);
 });
 
-test("reorderToolInvocationChunks preserves supported tool chunks after sanitization", async () => {
+contractTest("web.hermetic", "reorderToolInvocationChunks preserves supported tool chunks after sanitization", async () => {
   const chunks = await readAllChunks(
     reorderToolInvocationChunks(
       sanitizeChatStream(

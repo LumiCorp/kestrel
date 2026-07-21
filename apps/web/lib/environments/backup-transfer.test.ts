@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { uploadBackupArchive } from "./backup-transfer";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("backup transfer stays within bounded gateway requests and refreshes tickets", async () => {
+
+contractTest("web.hermetic", "backup transfer stays within bounded gateway requests and refreshes tickets", async () => {
   const requests: Array<{
     pathname: string;
     method: string;
@@ -52,7 +53,7 @@ test("backup transfer stays within bounded gateway requests and refreshes ticket
   );
 });
 
-test("failed backup transfer aborts the import", async () => {
+contractTest("web.hermetic", "failed backup transfer aborts the import", async () => {
   const methods: string[] = [];
   const fetchImpl = (async (
     request: string | URL | Request,

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   assertGoogleCalendarRange,
   GOOGLE_CALENDAR_SCOPES,
@@ -9,8 +8,10 @@ import {
   parseGoogleOAuthScopes,
   shouldStartGoogleCalendarOAuth,
 } from "./google-calendar-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("Google Calendar requires only the selected Calendar scopes", () => {
+
+contractTest("web.hermetic", "Google Calendar requires only the selected Calendar scopes", () => {
   const scopes = parseGoogleOAuthScopes(GOOGLE_CALENDAR_SCOPES.join(" "));
   assert.equal(hasRequiredGoogleCalendarScopes(scopes), true);
   assert.equal(hasRequiredGoogleCalendarScopes(scopes.slice(0, -1)), false);
@@ -24,7 +25,7 @@ test("Google Calendar requires only the selected Calendar scopes", () => {
   );
 });
 
-test("degraded Calendar connections always restart Google OAuth", () => {
+contractTest("web.hermetic", "degraded Calendar connections always restart Google OAuth", () => {
   assert.equal(
     shouldStartGoogleCalendarOAuth({
       scopes: GOOGLE_CALENDAR_SCOPES,
@@ -48,7 +49,7 @@ test("degraded Calendar connections always restart Google OAuth", () => {
   );
 });
 
-test("Project Calendar policy can restrict but never widen Environment approval", () => {
+contractTest("web.hermetic", "Project Calendar policy can restrict but never widen Environment approval", () => {
   assert.equal(
     intersectGoogleCalendarApprovalModes({
       environmentMode: "deny",
@@ -75,7 +76,7 @@ test("Project Calendar policy can restrict but never widen Environment approval"
   );
 });
 
-test("attendee notifications default off", () => {
+contractTest("web.hermetic", "attendee notifications default off", () => {
   const parsed = googleCalendarRuntimeInputSchema.parse({
     operation: "events.create",
     event: {
@@ -89,7 +90,7 @@ test("attendee notifications default off", () => {
   assert.equal(parsed.notifyAttendees, false);
 });
 
-test("Calendar inputs reject mixed all-day/timed events and oversized ranges", () => {
+contractTest("web.hermetic", "Calendar inputs reject mixed all-day/timed events and oversized ranges", () => {
   assert.throws(() =>
     googleCalendarRuntimeInputSchema.parse({
       operation: "events.create",
@@ -110,7 +111,7 @@ test("Calendar inputs reject mixed all-day/timed events and oversized ranges", (
   );
 });
 
-test("availability inputs use opaque UUID subjects and enforce the subject cap", () => {
+contractTest("web.hermetic", "availability inputs use opaque UUID subjects and enforce the subject cap", () => {
   assert.throws(() =>
     googleCalendarRuntimeInputSchema.parse({
       operation: "availability.query",

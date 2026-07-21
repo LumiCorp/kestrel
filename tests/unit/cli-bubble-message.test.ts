@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
 
 import { BubbleMessage } from "../../cli/ink/components/BubbleMessage.js";
 import { theme } from "../../cli/ink/theme/tokens.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("BubbleMessage renders user headers with neutral emphasis", () => {
+
+contractTest("runtime.hermetic", "BubbleMessage renders user headers with neutral emphasis", () => {
   const user = BubbleMessage({
     role: "user",
     lines: ["hello"],
@@ -22,7 +23,7 @@ test("BubbleMessage renders user headers with neutral emphasis", () => {
   assert.equal(children[0]?.props.color, theme.text);
 });
 
-test("BubbleMessage renders selected assistant headers with neutral emphasis", () => {
+contractTest("runtime.hermetic", "BubbleMessage renders selected assistant headers with neutral emphasis", () => {
   const assistant = BubbleMessage({
     role: "assistant",
     lines: ["hi"],
@@ -38,7 +39,7 @@ test("BubbleMessage renders selected assistant headers with neutral emphasis", (
   assert.equal(children[0]?.props.color, theme.text);
 });
 
-test("BubbleMessage keeps system cards muted", () => {
+contractTest("runtime.hermetic", "BubbleMessage keeps system cards muted", () => {
   const system = BubbleMessage({
     role: "system",
     lines: ["notice"],
@@ -54,7 +55,7 @@ test("BubbleMessage keeps system cards muted", () => {
   assert.equal(children[1]?.props.color, theme.muted);
 });
 
-test("BubbleMessage renders attention system rows with warning emphasis", () => {
+contractTest("runtime.hermetic", "BubbleMessage renders attention system rows with warning emphasis", () => {
   const system = BubbleMessage({
     role: "system",
     lines: ["Waiting for your reply.", "Which workspace should I inspect?"],
@@ -71,7 +72,7 @@ test("BubbleMessage renders attention system rows with warning emphasis", () => 
   assert.equal(children[2]?.props.color, theme.warn);
 });
 
-test("BubbleMessage renders assistant reasoning rows as muted entries", () => {
+contractTest("runtime.hermetic", "BubbleMessage renders assistant reasoning rows as muted entries", () => {
   const reasoning = BubbleMessage({
     role: "assistant",
     lines: ["Evaluating next best tool."],

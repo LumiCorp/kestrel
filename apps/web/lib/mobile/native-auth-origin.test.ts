@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { withExpoOrigin } from "./native-auth-origin";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("promotes the Expo origin on native auth requests", async () => {
+
+contractTest("web.hermetic", "promotes the Expo origin on native auth requests", async () => {
   const request = new Request("https://kestrel.one/api/auth/sign-in/email", {
     method: "POST",
     headers: {
@@ -26,7 +27,7 @@ test("promotes the Expo origin on native auth requests", async () => {
   });
 });
 
-test("preserves an existing browser origin", async () => {
+contractTest("web.hermetic", "preserves an existing browser origin", async () => {
   const request = new Request("https://kestrel.one/api/auth/sign-in/email", {
     method: "POST",
     headers: {
@@ -39,7 +40,7 @@ test("preserves an existing browser origin", async () => {
   assert.equal(request.headers.get("origin"), "https://kestrel.one");
 });
 
-test("leaves requests without origin metadata unchanged", async () => {
+contractTest("web.hermetic", "leaves requests without origin metadata unchanged", async () => {
   const request = new Request("https://kestrel.one/api/auth/get-session");
 
   assert.equal(await withExpoOrigin(request), request);

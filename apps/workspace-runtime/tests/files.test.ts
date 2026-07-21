@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 import {
   readWorkspaceFile,
   writeWorkspaceFile,
 } from "../src/files.js";
 import { WorkspaceRequestError } from "../src/security.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("Workspace file writes require the revision that was read", async () => {
+
+contractTest("services.hermetic", "Workspace file writes require the revision that was read", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-"));
   try {
     await writeFile(path.join(root, "app.ts"), "version one");
@@ -27,7 +28,7 @@ test("Workspace file writes require the revision that was read", async () => {
   }
 });
 
-test("Workspace file writes reject a stale human edit after an agent change", async () => {
+contractTest("services.hermetic", "Workspace file writes reject a stale human edit after an agent change", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-"));
   try {
     const filePath = path.join(root, "app.ts");
@@ -52,7 +53,7 @@ test("Workspace file writes reject a stale human edit after an agent change", as
   }
 });
 
-test("Workspace file writes fail closed without a revision", async () => {
+contractTest("services.hermetic", "Workspace file writes fail closed without a revision", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-"));
   try {
     await writeFile(path.join(root, "app.ts"), "content");

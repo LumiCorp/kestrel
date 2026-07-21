@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   applyActiveTaskRuntimeMetadata,
   persistDelegationTaskUpdateToGraph,
 } from "../../src/taskGraph/runtimeIntegration.js";
 import type { DelegationTaskUpdate } from "../../src/orchestration/DelegationSupervisor.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("applyActiveTaskRuntimeMetadata injects active task id from task graph", async () => {
+
+contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata injects active task id from task graph", async () => {
   const input = {
     sessionId: "session-1",
     message: "continue",
@@ -30,7 +31,7 @@ test("applyActiveTaskRuntimeMetadata injects active task id from task graph", as
   });
 });
 
-test("applyActiveTaskRuntimeMetadata preserves explicit active task metadata", async () => {
+contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata preserves explicit active task metadata", async () => {
   let graphRead = false;
   const input = {
     sessionId: "session-1",
@@ -52,7 +53,7 @@ test("applyActiveTaskRuntimeMetadata preserves explicit active task metadata", a
   assert.equal(graphRead, false);
 });
 
-test("persistDelegationTaskUpdateToGraph maps runtime delegation snapshots into task graph updates", async () => {
+contractTest("runtime.hermetic", "persistDelegationTaskUpdateToGraph maps runtime delegation snapshots into task graph updates", async () => {
   let persisted: unknown;
   const update: DelegationTaskUpdate = {
     kind: "completed",

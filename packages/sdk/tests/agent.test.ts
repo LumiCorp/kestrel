@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import {
   createAgent,
   type KestrelAgentDefinition,
   type KestrelMemorySnapshot,
 } from "../src/index.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
+
 
 const context = {
   actor: {
@@ -30,7 +31,7 @@ function createRemoteAgent(
   });
 }
 
-test("createAgent runs and resumes with the configured profile", async () => {
+contractTest("packages.hermetic", "createAgent runs and resumes with the configured profile", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const agent = createRemoteAgent({
     id: "support",
@@ -121,7 +122,7 @@ test("createAgent runs and resumes with the configured profile", async () => {
   await agent.close();
 });
 
-test("agent session memory reads and writes through task graph state", async () => {
+contractTest("packages.hermetic", "agent session memory reads and writes through task graph state", async () => {
   let storedMemory: KestrelMemorySnapshot = {
     goal: "Ship the release",
     currentPlan: "Write docs",

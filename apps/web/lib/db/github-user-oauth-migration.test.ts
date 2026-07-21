@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const migration = fs.readFileSync(
   path.join(
@@ -12,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-test("GitHub OAuth migration assigns connections to users and auth accounts", () => {
+contractTest("web.hermetic", "GitHub OAuth migration assigns connections to users and auth accounts", () => {
   assert.match(migration, /CREATE TABLE "user_tool_connections"/u);
   assert.match(migration, /"user_id" text NOT NULL/u);
   assert.match(migration, /"auth_account_id" text NOT NULL/u);
@@ -21,14 +22,14 @@ test("GitHub OAuth migration assigns connections to users and auth accounts", ()
   assert.doesNotMatch(migration, /(?:access|refresh)[_-]?token/iu);
 });
 
-test("GitHub OAuth migration records actor-specific repository access", () => {
+contractTest("web.hermetic", "GitHub OAuth migration records actor-specific repository access", () => {
   assert.match(migration, /CREATE TABLE "user_tool_connection_resources"/u);
   assert.match(migration, /"can_pull" boolean DEFAULT true NOT NULL/u);
   assert.match(migration, /"can_push" boolean DEFAULT false NOT NULL/u);
   assert.match(migration, /user_tool_connection_resources_resource_idx/u);
 });
 
-test("Workspace sources reference repository resources, not installations", () => {
+contractTest("web.hermetic", "Workspace sources reference repository resources, not installations", () => {
   assert.match(
     migration,
     /RENAME COLUMN "source_connection_id" TO "source_resource_id"/u

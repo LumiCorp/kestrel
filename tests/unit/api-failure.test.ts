@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { toApiFailure } from "../../src/governance/apiFailure.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("toApiFailure preserves structured database failure details", () => {
+
+contractTest("runtime.hermetic", "toApiFailure preserves structured database failure details", () => {
   const error = Object.assign(
     new Error("Local Postgres is not reachable at localhost:55432/kestrel."),
     {

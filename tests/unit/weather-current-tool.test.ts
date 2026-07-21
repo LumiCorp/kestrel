@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import { weatherCurrentTool } from "../../tools/free/weatherCurrent.js";
@@ -6,8 +5,10 @@ import {
   createToolProviderConfigurationResolver,
   createToolProviderRuntimeConfiguration,
 } from "../../tools/providers/runtimeConfiguration.js";
+import { contractTest } from "../helpers/contract-test.js";
 
-test("weather current falls back to nominatim when open-meteo geocode has no results", async () => {
+
+contractTest("runtime.hermetic", "weather current falls back to nominatim when open-meteo geocode has no results", async () => {
   const handler = weatherCurrentTool.createHandler({
     fetchImpl: async (url) => {
       const target = typeof url === "string" ? url : String(url);
@@ -72,7 +73,7 @@ test("weather current falls back to nominatim when open-meteo geocode has no res
   assert.equal(output.fallbackUsed, false);
 });
 
-test("weather current falls back to nominatim when open-meteo geocoding fails", async () => {
+contractTest("runtime.hermetic", "weather current falls back to nominatim when open-meteo geocoding fails", async () => {
   const requestedUrls: string[] = [];
   const handler = weatherCurrentTool.createHandler({
     fetchImpl: async (url) => {
@@ -120,7 +121,7 @@ test("weather current falls back to nominatim when open-meteo geocoding fails", 
   );
 });
 
-test("weather current reports incomplete provider data and an unavailable fallback", async () => {
+contractTest("runtime.hermetic", "weather current reports incomplete provider data and an unavailable fallback", async () => {
   const handler = weatherCurrentTool.createHandler({
     fetchImpl: async () =>
       new Response(JSON.stringify({ current: { weather_code: 1 } }), {
@@ -146,7 +147,7 @@ test("weather current reports incomplete provider data and an unavailable fallba
   );
 });
 
-test("weather current fails over from a retryable Open-Meteo status to Visual Crossing", async () => {
+contractTest("runtime.hermetic", "weather current fails over from a retryable Open-Meteo status to Visual Crossing", async () => {
   const seenUrls: string[] = [];
   const handler = weatherCurrentTool.createHandler({
     providerConfigurations: createToolProviderConfigurationResolver([
@@ -192,7 +193,7 @@ test("weather current fails over from a retryable Open-Meteo status to Visual Cr
   assert.equal(JSON.stringify(output).includes("visual-secret"), false);
 });
 
-test("weather current throws when no location is provided", async () => {
+contractTest("runtime.hermetic", "weather current throws when no location is provided", async () => {
   const handler = weatherCurrentTool.createHandler({
     fetchImpl: async () =>
       new Response("{}", {
@@ -207,7 +208,7 @@ test("weather current throws when no location is provided", async () => {
   );
 });
 
-test("weather current accepts location as a city alias", async () => {
+contractTest("runtime.hermetic", "weather current accepts location as a city alias", async () => {
   const seenUrls: string[] = [];
   const handler = weatherCurrentTool.createHandler({
     fetchImpl: async (url) => {

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
 
 import { archiveRuntimeStore } from "../src/runtimeStoreReset.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("archiveRuntimeStore renames runtime.db to a timestamped archive path", async () => {
+
+contractTest("desktop.hermetic", "archiveRuntimeStore renames runtime.db to a timestamped archive path", async () => {
   const runtimeHomePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-runtime-home-"));
   const storePath = path.join(runtimeHomePath, "runtime.db");
   await mkdir(storePath);
@@ -22,7 +23,7 @@ test("archiveRuntimeStore renames runtime.db to a timestamped archive path", asy
   await assert.rejects(() => stat(storePath));
 });
 
-test("archiveRuntimeStore succeeds when runtime.db does not exist", async () => {
+contractTest("desktop.hermetic", "archiveRuntimeStore succeeds when runtime.db does not exist", async () => {
   const runtimeHomePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-runtime-home-empty-"));
 
   const reset = await archiveRuntimeStore(runtimeHomePath, {

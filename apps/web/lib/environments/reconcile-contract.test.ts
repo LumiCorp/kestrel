@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import type {
   EnvironmentProviderInventory,
   EnvironmentProviderMachine,
@@ -9,6 +8,8 @@ import {
   mountedVolumeIdsFromInventory,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const workspaceId = "87408a50-5dc3-448a-b099-aada6811996a";
 const expectedVolumeName = "ws_87408a505dc3448ab099";
@@ -56,7 +57,7 @@ function inventory(
   };
 }
 
-test("Workspace reconciliation accepts an unchanged exact Volume binding", () => {
+contractTest("web.hermetic", "Workspace reconciliation accepts an unchanged exact Volume binding", () => {
   assert.deepEqual(
     assessWorkspaceVolumeBinding({
       workspaceId,
@@ -70,7 +71,7 @@ test("Workspace reconciliation accepts an unchanged exact Volume binding", () =>
   );
 });
 
-test("Workspace reconciliation adopts an exact replacement Volume", () => {
+contractTest("web.hermetic", "Workspace reconciliation adopts an exact replacement Volume", () => {
   assert.deepEqual(
     assessWorkspaceVolumeBinding({
       workspaceId,
@@ -176,21 +177,21 @@ const assertAmbiguousWorkspaceReconciliation = (
   assert.equal(assessment.status, "degraded");
 };
 
-test("Workspace reconciliation degrades when the recorded Machine is missing", () =>
+contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Machine is missing", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[0]!));
-test("Workspace reconciliation degrades when the recorded Volume is attached elsewhere", () =>
+contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Volume is attached elsewhere", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[1]!));
-test("Workspace reconciliation degrades when the recorded Volume still exists", () =>
+contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Volume still exists", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[2]!));
 
-test("orphan cleanup protection includes every mounted inventory Volume", () => {
+contractTest("web.hermetic", "orphan cleanup protection includes every mounted inventory Volume", () => {
   assert.deepEqual(
     [...mountedVolumeIdsFromInventory(inventory())],
     ["volume-new"]
   );
 });
 
-test("orphan cleanup excludes mounted Volumes even when the database binding is stale", () => {
+contractTest("web.hermetic", "orphan cleanup excludes mounted Volumes even when the database binding is stale", () => {
   const providerInventory = inventory({
     volumes: [
       ...inventory().volumes,

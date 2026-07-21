@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
+
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -11,7 +12,7 @@ const appRoot = path.resolve(
 const read = (relativePath: string) =>
   fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 
-test("Environment inference routes use organization-admin authority", () => {
+contractTest("web.hermetic", "Environment inference routes use organization-admin authority", () => {
   for (const route of [
     "app/api/admin/environments/[id]/inference/route.ts",
     "app/api/admin/environments/[id]/inference/deployments/[deploymentId]/route.ts",
@@ -22,7 +23,7 @@ test("Environment inference routes use organization-admin authority", () => {
   }
 });
 
-test("connected inference remains independent from the managed feature gate", () => {
+contractTest("web.hermetic", "connected inference remains independent from the managed feature gate", () => {
   const route = read("app/api/admin/environments/[id]/inference/route.ts");
   const connectedBranch = route.indexOf('body.kind === "connected"');
   const managedGate = route.indexOf("assertManagedRunPodEnabled()");
@@ -31,7 +32,7 @@ test("connected inference remains independent from the managed feature gate", ()
   assert.match(route, /assertEnvironmentPrivateInferenceEnabled/u);
 });
 
-test("managed jobs are produced by Vercel and consumed by the persistent worker", () => {
+contractTest("web.hermetic", "managed jobs are produced by Vercel and consumed by the persistent worker", () => {
   const queue = read("lib/knowledge/queue.ts");
   const worker = read("scripts/managed-runpod-worker.ts");
   const packageJson = read("package.json");
@@ -53,7 +54,7 @@ test("managed jobs are produced by Vercel and consumed by the persistent worker"
   }
 });
 
-test("managed maintenance idles until its provider connection is enabled", () => {
+contractTest("web.hermetic", "managed maintenance idles until its provider connection is enabled", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
   assert.match(runtime, /await getRunPodProviderConnection\(\)/u);
   assert.equal(
@@ -62,14 +63,14 @@ test("managed maintenance idles until its provider connection is enabled", () =>
   );
 });
 
-test("Qwen bootstrap preserves the administrator-selected credential source", () => {
+contractTest("web.hermetic", "Qwen bootstrap preserves the administrator-selected credential source", () => {
   const bootstrap = read("scripts/bootstrap-qwen3-runpod-profile.ts");
   assert.match(bootstrap, /await testRunPodProviderConnection\(\)/u);
   assert.doesNotMatch(bootstrap, /configureRunPodProviderConnection/u);
   assert.doesNotMatch(bootstrap, /useEnvironment/u);
 });
 
-test("managed inference validates the declared model without discovery", () => {
+contractTest("web.hermetic", "managed inference validates the declared model without discovery", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
   assert.match(
     runtime,
@@ -90,7 +91,7 @@ test("managed inference validates the declared model without discovery", () => {
   assert.doesNotMatch(runtime, /\/models/u);
 });
 
-test("qualification warms one temporary worker without changing scale-to-zero deployments", () => {
+contractTest("web.hermetic", "qualification warms one temporary worker without changing scale-to-zero deployments", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
   const profile = read("lib/ai/qwen3-runpod-profile.ts");
   assert.match(
@@ -100,7 +101,7 @@ test("qualification warms one temporary worker without changing scale-to-zero de
   assert.match(profile, /workersMin: 0/u);
 });
 
-test("connected inference supports explicit model validation when discovery fails", () => {
+contractTest("web.hermetic", "connected inference supports explicit model validation when discovery fails", () => {
   const route = read(
     "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"
   );
@@ -119,7 +120,7 @@ test("connected inference supports explicit model validation when discovery fail
   assert.match(client, /Queue-only \/run and \/runsync/u);
 });
 
-test("manual RunPod model validation still requires tool round-trip evidence", () => {
+contractTest("web.hermetic", "manual RunPod model validation still requires tool round-trip evidence", () => {
   const gateways = read("lib/ai/gateways.ts");
   assert.match(
     gateways,
@@ -131,7 +132,7 @@ test("manual RunPod model validation still requires tool round-trip evidence", (
   );
 });
 
-test("turn Environment is enforced before runtime credential use", () => {
+contractTest("web.hermetic", "turn Environment is enforced before runtime credential use", () => {
   assert.match(
     read("lib/agent/kestrel-runtime.ts"),
     /expectedEnvironmentId: input\.environmentId/u
@@ -151,7 +152,7 @@ test("turn Environment is enforced before runtime credential use", () => {
   );
 });
 
-test("Environment deletion refuses owned private inference", () => {
+contractTest("web.hermetic", "Environment deletion refuses owned private inference", () => {
   const provisioner = read("lib/environments/provisioner.ts");
   assert.match(provisioner, /ENVIRONMENT_HAS_PRIVATE_INFERENCE/u);
   assert.match(

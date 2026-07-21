@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 type EvaluationDisposition = "ruhroh" | "runtime_test";
 type EvaluationParityStatus = "pending_execution" | "pending_independent_test" | "passed";
@@ -344,8 +345,31 @@ async function validateReplacementTestEvidence(
     return;
   }
 
-  const source = await readFile(resolvedPath, "utf8");
-  if (!source.includes(`test("${evidence.testName}"`)) {
+  const sourceText = await readFile(resolvedPath, "utf8");
+  const source = ts.createSourceFile(
+    resolvedPath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    resolvedPath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "contractTest" &&
+      node.arguments[1] !== undefined &&
+      (ts.isStringLiteral(node.arguments[1]) || ts.isNoSubstitutionTemplateLiteral(node.arguments[1])) &&
+      node.arguments[1].text === evidence.testName
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (!found) {
     errors.push(`${behaviorId} replacement test name not found in ${evidence.path}: ${evidence.testName}`);
   }
 }

@@ -1,4 +1,3 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -12,6 +11,8 @@ import {
   ReferenceReactCommandProcessor,
 } from "../../agents/reference-react/src/commandProcessor.js";
 import { createExecCollectStep, createExecDispatchStep } from "../../agents/reference-react/src/steps/execStates.js";
+import { contractTest } from "../helpers/contract-test.js";
+
 
 const snapshot = {
   runId: "run-1",
@@ -22,7 +23,7 @@ const snapshot = {
   reactState: {},
 };
 
-test("ReferenceReactCommandProcessor allows parallel read batches and records visible working plan", () => {
+contractTest("runtime.hermetic", "ReferenceReactCommandProcessor allows parallel read batches and records visible working plan", () => {
   const result = new ReferenceReactCommandProcessor().process(snapshot, {
     batchId: "batch-read",
     planningSummary: "Read the relevant files before editing.",
@@ -53,7 +54,7 @@ test("ReferenceReactCommandProcessor allows parallel read batches and records vi
   );
 });
 
-test("ReferenceReactCommandProcessor rejects mixed side-effect batches", () => {
+contractTest("runtime.hermetic", "ReferenceReactCommandProcessor rejects mixed side-effect batches", () => {
   assert.throws(
     () =>
       new ReferenceReactCommandProcessor().process(snapshot, {
@@ -77,7 +78,7 @@ test("ReferenceReactCommandProcessor rejects mixed side-effect batches", () => {
   );
 });
 
-test("ReferenceReactCommandProcessor turns waits into WAITING transitions", () => {
+contractTest("runtime.hermetic", "ReferenceReactCommandProcessor turns waits into WAITING transitions", () => {
   const result = new ReferenceReactCommandProcessor().process(snapshot, {
     batchId: "batch-wait",
     commands: [
@@ -100,7 +101,7 @@ test("ReferenceReactCommandProcessor turns waits into WAITING transitions", () =
   assert.equal(result.transition.waitFor?.eventType, "user.reply");
 });
 
-test("buildReferenceReactCommandBatchFromAction keeps read batches parallel and side effects checkpointed", () => {
+contractTest("runtime.hermetic", "buildReferenceReactCommandBatchFromAction keeps read batches parallel and side effects checkpointed", () => {
   const readBatch = buildReferenceReactCommandBatchFromAction({
     stepIndex: 4,
     toolExecutionClassByName: {
@@ -139,7 +140,7 @@ test("buildReferenceReactCommandBatchFromAction keeps read batches parallel and 
   assert.equal(sideEffectBatch.commands[0]?.commandClass, "effect");
 });
 
-test("buildReferenceReactCommandBatchFromAction preserves planning_write tools as write checkpoints", () => {
+contractTest("runtime.hermetic", "buildReferenceReactCommandBatchFromAction preserves planning_write tools as write checkpoints", () => {
   const batch = buildReferenceReactCommandBatchFromAction({
     stepIndex: 6,
     toolExecutionClassByName: {
@@ -160,7 +161,7 @@ test("buildReferenceReactCommandBatchFromAction preserves planning_write tools a
   assert.equal(batch.commands[0]?.commandClass, "write");
 });
 
-test("createReferenceReactExecutionCheckpoint records processor-owned route state", () => {
+contractTest("runtime.hermetic", "createReferenceReactExecutionCheckpoint records processor-owned route state", () => {
   const transition = createReferenceReactExecutionCheckpoint({
     snapshot: {
       ...snapshot,
@@ -197,7 +198,7 @@ test("createReferenceReactExecutionCheckpoint records processor-owned route stat
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("applyReferenceReactExecPatch centralizes pending exec state merges", () => {
+contractTest("runtime.hermetic", "applyReferenceReactExecPatch centralizes pending exec state merges", () => {
   const patched = applyReferenceReactExecPatch(
     {
       phase: "ACT",
@@ -228,7 +229,7 @@ test("applyReferenceReactExecPatch centralizes pending exec state merges", () =>
   });
 });
 
-test("createReferenceReactWaitCheckpoint records processor-owned user waits and region patch", () => {
+contractTest("runtime.hermetic", "createReferenceReactWaitCheckpoint records processor-owned user waits and region patch", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -288,7 +289,7 @@ test("createReferenceReactWaitCheckpoint records processor-owned user waits and 
   assert.equal(transition.emitEvents?.[0]?.type, "ui.prompt");
 });
 
-test("createReferenceReactWaitCheckpoint does not create narration memory", () => {
+contractTest("runtime.hermetic", "createReferenceReactWaitCheckpoint does not create narration memory", () => {
   const transition = createReferenceReactWaitCheckpoint({
     memory: {
       working: {
@@ -314,7 +315,7 @@ test("createReferenceReactWaitCheckpoint does not create narration memory", () =
   assert.equal(Object.hasOwn(transition.statePatch ?? {}, "memory"), false);
 });
 
-test("createReferenceReactWaitCheckpoint records processor-owned approval waits", () => {
+contractTest("runtime.hermetic", "createReferenceReactWaitCheckpoint records processor-owned approval waits", () => {
   const waitFor = {
     kind: "approval" as const,
     eventType: "user.approval",
@@ -370,7 +371,7 @@ test("createReferenceReactWaitCheckpoint records processor-owned approval waits"
   assert.equal(workingPlan.status, "waiting");
 });
 
-test("createReferenceReactWaitCheckpoint records processor-owned effect waits", () => {
+contractTest("runtime.hermetic", "createReferenceReactWaitCheckpoint records processor-owned effect waits", () => {
   const waitFor = {
     kind: "effect" as const,
     eventType: "effect.result.available",
@@ -408,7 +409,7 @@ test("createReferenceReactWaitCheckpoint records processor-owned effect waits", 
   assert.equal(workingPlan.status, "waiting");
 });
 
-test("createReferenceReactEffectDispatchCheckpoint records processor-owned effect dispatch", () => {
+contractTest("runtime.hermetic", "createReferenceReactEffectDispatchCheckpoint records processor-owned effect dispatch", () => {
   const transition = createReferenceReactEffectDispatchCheckpoint({
     reactState: { goal: "write file" },
     currentStepAgent: "agent.exec.dispatch",
@@ -453,7 +454,7 @@ test("createReferenceReactEffectDispatchCheckpoint records processor-owned effec
   assert.equal((region.exec as Record<string, unknown>).pendingEffectKey, "effect-1");
 });
 
-test("createReferenceReactEffectCollectCheckpoint records processor-owned effect collection", () => {
+contractTest("runtime.hermetic", "createReferenceReactEffectCollectCheckpoint records processor-owned effect collection", () => {
   const transition = createReferenceReactEffectCollectCheckpoint({
     reactState: {
       exec: {
@@ -494,7 +495,7 @@ test("createReferenceReactEffectCollectCheckpoint records processor-owned effect
   assert.equal(workingPlan.status, "collecting");
 });
 
-test("createReferenceReactFinalizeCheckpoint records processor-owned finalization", () => {
+contractTest("runtime.hermetic", "createReferenceReactFinalizeCheckpoint records processor-owned finalization", () => {
   const transition = createReferenceReactFinalizeCheckpoint({
     reactState: {
       exec: {
@@ -531,7 +532,7 @@ test("createReferenceReactFinalizeCheckpoint records processor-owned finalizatio
   assert.equal(workingPlan.status, "finalizing");
 });
 
-test("exec dispatch consumes a ready command batch before executing the selected action", async () => {
+contractTest("runtime.hermetic", "exec dispatch consumes a ready command batch before executing the selected action", async () => {
   const action = {
     kind: "tool" as const,
     name: "fs.read_text",
@@ -601,7 +602,7 @@ test("exec dispatch consumes a ready command batch before executing the selected
   assert.equal(transition.emitEvents?.some((event) => event.type === "decision.executed"), true);
 });
 
-test("exec collect routes completed batches through processor checkpoints", async () => {
+contractTest("runtime.hermetic", "exec collect routes completed batches through processor checkpoints", async () => {
   const step = createExecCollectStep({
     loopStepId: "agent.loop",
     effectResultLookupTool: "effect.lookup",

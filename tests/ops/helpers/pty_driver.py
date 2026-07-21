@@ -20,7 +20,6 @@ def main() -> int:
     env = payload["env"]
     steps = payload["steps"]
     abort_patterns = payload.get("abortPatterns") or []
-    timeout_seconds = payload.get("timeoutSeconds", 5)
 
     pid, master_fd = pty.fork()
     if pid == 0:
@@ -33,16 +32,15 @@ def main() -> int:
     visible_cursor = 0
     try:
         for step in steps:
-            step_timeout = step.get("timeoutSeconds", timeout_seconds)
             step_abort_patterns = step.get("abortPatterns") or abort_patterns
             transcript, visible_cursor = wait_for_step(
+                pid=pid,
                 master_fd=master_fd,
                 transcript=transcript,
                 pattern=step["pattern"],
                 regex=bool(step["regex"]),
                 from_cursor=bool(step.get("fromCursor", False)),
                 visible_cursor=visible_cursor,
-                timeout_seconds=float(step_timeout),
                 abort_patterns=step_abort_patterns,
             )
             send_value = step.get("send")
@@ -118,19 +116,24 @@ def read_initial_payload():
 
 
 def wait_for_step(
+    pid: int,
     master_fd: int,
     transcript: str,
     pattern: str,
     regex: bool,
     from_cursor: bool,
     visible_cursor: int,
-    timeout_seconds: float,
     abort_patterns,
 ):
-    deadline = time.time() + timeout_seconds
     matcher = re.compile(pattern) if regex else None
 
-    while time.time() < deadline:
+    while True:
+        waited_pid, status = poll_child(pid)
+        if waited_pid == pid:
+            transcript = drain_output(master_fd, transcript)
+            raise RuntimeError(
+                f"TUI exited before matching {pattern!r} with status {status}\n{transcript}"
+            )
         ready, _, _ = select.select([master_fd], [], [], 0.1)
         if ready:
             transcript += read_available(master_fd)
@@ -159,7 +162,6 @@ def wait_for_step(
                     return transcript, len(visible)
             elif pattern in haystack:
                 return transcript, len(visible)
-    raise RuntimeError(f"Timed out waiting for {pattern!r}\n{transcript}")
 
 
 def run_interactive_loop(

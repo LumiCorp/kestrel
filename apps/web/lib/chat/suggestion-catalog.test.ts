@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { selectChatSuggestions } from "./suggestion-catalog";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-test("selectChatSuggestions is deterministic for the same seed", () => {
+
+contractTest("web.hermetic", "selectChatSuggestions is deterministic for the same seed", () => {
   const first = selectChatSuggestions({
     seed: "chat-123",
     imageEnabled: true,
@@ -17,7 +18,7 @@ test("selectChatSuggestions is deterministic for the same seed", () => {
   assert.deepEqual(second, first);
 });
 
-test("selectChatSuggestions covers all primary lanes when media is enabled", () => {
+contractTest("web.hermetic", "selectChatSuggestions covers all primary lanes when media is enabled", () => {
   const selected = selectChatSuggestions({
     seed: "chat-coverage",
     imageEnabled: true,
@@ -31,7 +32,7 @@ test("selectChatSuggestions covers all primary lanes when media is enabled", () 
   );
 });
 
-test("selectChatSuggestions excludes media suggestions when media is unavailable", () => {
+contractTest("web.hermetic", "selectChatSuggestions excludes media suggestions when media is unavailable", () => {
   const selected = selectChatSuggestions({
     seed: "chat-no-media",
     imageEnabled: false,
@@ -43,7 +44,7 @@ test("selectChatSuggestions excludes media suggestions when media is unavailable
   assert.ok(selected.every((suggestion) => suggestion.kind === "prompt"));
 });
 
-test("selectChatSuggestions only includes enabled media kinds", () => {
+contractTest("web.hermetic", "selectChatSuggestions only includes enabled media kinds", () => {
   const selected = selectChatSuggestions({
     seed: "chat-image-only",
     imageEnabled: true,
@@ -59,7 +60,7 @@ test("selectChatSuggestions only includes enabled media kinds", () => {
   assert.equal(mediaSuggestion?.mediaKind, "image");
 });
 
-test("selectChatSuggestions excludes knowledge suggestions when knowledge is unavailable", () => {
+contractTest("web.hermetic", "selectChatSuggestions excludes knowledge suggestions when knowledge is unavailable", () => {
   const selected = selectChatSuggestions({
     seed: "chat-no-knowledge",
     imageEnabled: true,
