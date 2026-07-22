@@ -1,6 +1,6 @@
 import { Folder, Plus, RefreshCw } from "lucide-react";
 import { getKestrelStandardAppManifest } from "@kestrel-agents/protocol";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import React, { type PointerEvent as ReactPointerEvent } from "react";
 
 import type {
   DesktopBridgeInfo,

@@ -116,6 +116,7 @@ import {
   isHighConfidenceContinuation,
 } from "../../../../src/runtime/userReplyIntent.js";
 import { readActiveWaitState } from "../../../../src/runtime/waitState.js";
+import { readActiveSkillPackContext } from "../../../../src/runtime/agent-context/runtimeContext.js";
 import {
   resolveKestrelTurnObjective,
   shouldStartFreshUserMessageTaskEpoch,
