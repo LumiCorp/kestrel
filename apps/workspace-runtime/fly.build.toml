@@ -1,0 +1,5 @@
+app = "kestrel-one-runner"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"

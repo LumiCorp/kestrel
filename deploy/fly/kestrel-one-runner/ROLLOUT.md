@@ -61,17 +61,15 @@ ignore file:
 
 ```bash
 fly deploy . \
-  --app kestrel-one-runner \
+  --config apps/workspace-runtime/fly.build.toml \
   --build-only \
   --push \
-  --dockerfile apps/workspace-runtime/Dockerfile \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
 
 fly deploy . \
-  --app kestrel-one-runner \
+  --config apps/environment-router/fly.build.toml \
   --build-only \
   --push \
-  --dockerfile apps/environment-router/Dockerfile \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
 ```
 
