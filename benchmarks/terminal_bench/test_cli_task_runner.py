@@ -82,7 +82,19 @@ class CliTaskRunnerTest(unittest.TestCase):
 
         self.assertEqual(TERMINAL_BENCH_ENTRY_STEP_AGENT, "agent.loop")
         self.assertEqual(job_input["turn"]["stepAgent"], "agent.loop")
+        self.assertNotIn("storeDriver", job_input)
+        self.assertNotIn("storeDriver", job_input["profile"])
         assert_terminal_bench_job_input_contract(job_input)
+
+    def test_job_contract_rejects_explicit_persistence_selection(self) -> None:
+        job_input = build_job_input("Solve it.", "sample-task")
+
+        with self.assertRaisesRegex(AssertionError, "leave persistence selection to Local Core"):
+            assert_terminal_bench_job_input_contract({**job_input, "storeDriver": "sqlite"})
+        with self.assertRaisesRegex(AssertionError, "leave persistence selection to Local Core"):
+            assert_terminal_bench_job_input_contract(
+                {**job_input, "profile": {**job_input["profile"], "storeDriver": "sqlite"}}
+            )
 
     def test_job_command_leaves_persistence_selection_to_local_core(self) -> None:
         command = build_kestrel_job_command(Path("/tmp/job-input.json"), Path("/tmp/job-output.json"))
@@ -112,6 +124,7 @@ class CliTaskRunnerTest(unittest.TestCase):
         self.assertEqual(profile["defaultActSubmode"], "full_auto")
         self.assertEqual(profile["guardrails"], benchmark_guardrails())
         self.assertEqual(profile["toolAllowlist"], TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS)
+        self.assertNotIn("storeDriver", profile)
         assert_terminal_bench_profile_contract(profile)
         invalid_profile = dict(profile)
         invalid_profile["devShell"] = {"enabled": True, "envMode": "inherit"}

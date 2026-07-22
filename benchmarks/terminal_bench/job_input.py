@@ -78,7 +78,6 @@ def build_terminal_bench_profile() -> dict:
         "agentStageConfig": {
             "modelByStage": terminal_bench_model_by_stage(config.model),
         },
-        "storeDriver": "sqlite",
         "approvalPolicyPackId": "dev",
         "modeSystemV2Enabled": True,
         **benchmark_profile_mode(),
@@ -120,7 +119,6 @@ def build_terminal_bench_job_input(
     normalized_required_artifacts = normalize_required_artifacts(required_artifacts or [])
     job_input = {
         "version": "job_input_v1",
-        "storeDriver": "sqlite",
         "approvalPolicyPackId": "dev",
         "profile": build_terminal_bench_profile(),
         "turn": {
@@ -176,6 +174,8 @@ def normalize_required_artifacts(values: list[str]) -> list[str]:
 def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) -> None:
     if job_input.get("version") != "job_input_v1":
         raise AssertionError("Terminal-Bench job input must use job_input_v1.")
+    if "storeDriver" in job_input:
+        raise AssertionError("Terminal-Bench job input must leave persistence selection to Local Core.")
 
     profile = job_input.get("profile")
     if not isinstance(profile, Mapping):
@@ -223,6 +223,8 @@ def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) ->
 
 def assert_terminal_bench_profile_contract(profile: Mapping[str, object]) -> None:
     assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
+    if "storeDriver" in profile:
+        raise AssertionError("Terminal-Bench profile must leave persistence selection to Local Core.")
     if profile.get("agent") != "reference-react":
         raise AssertionError("Terminal-Bench profile must use reference-react.")
     if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
