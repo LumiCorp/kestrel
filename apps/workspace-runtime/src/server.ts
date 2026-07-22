@@ -27,7 +27,7 @@ import { requestGitHubToolCredential } from "./github-credentials.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import { isPortListening } from "./previews.js";
-import { buildWorkspaceProxyHeaders } from "./proxy.js";
+import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
@@ -118,7 +118,7 @@ const server = createServer(async (request, response) => {
     if (!url.pathname.startsWith("/v1/backups/imports")) {
       await ensureWorkspaceSource(request.headers.authorization ?? "");
     }
-    if (url.pathname === "/commands" || url.pathname === "/commands/stream") {
+    if (isRunnerProxyPath(url.pathname)) {
       await ensureRunnerReady();
       await proxyHttp(request, response, {
         port: 43_105,

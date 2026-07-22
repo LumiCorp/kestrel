@@ -2930,8 +2930,16 @@ export class RunnerHost {
   }
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {
-    const commandId = this.commandBySession.get(update.task.parentSessionId);
-    const threadId = this.threadIdBySession.get(update.task.parentSessionId);
+    void this.emitTaskUpdate(update);
+  }
+
+  private async emitTaskUpdate(update: DelegationTaskUpdate): Promise<void> {
+    const parentThreadId = update.task.parentSessionId;
+    const sessionId =
+      this.findSessionIdForThread(parentThreadId) ??
+      await this.resolveSessionIdForThread(parentThreadId);
+    const externalThreadId = sessionId ?? parentThreadId;
+    const commandId = this.commandBySession.get(externalThreadId);
     this.writer.emit(
       "task.updated",
       {
@@ -2946,11 +2954,37 @@ export class RunnerHost {
           : {}),
       },
       {
-        sessionId: update.task.parentSessionId,
-        ...(threadId !== undefined ? { threadId } : {}),
+        sessionId: externalThreadId,
+        threadId: externalThreadId,
         ...(commandId !== undefined ? { commandId } : {}),
       }
     );
+  }
+
+  private findSessionIdForThread(threadId: string): string | undefined {
+    for (const [sessionId, mappedThreadId] of this.threadIdBySession) {
+      if (mappedThreadId === threadId) return sessionId;
+    }
+    return undefined;
+  }
+
+  private async resolveSessionIdForThread(
+    threadId: string
+  ): Promise<string | undefined> {
+    for (const entry of this.runtimes.values()) {
+      if (typeof entry.runtime.getOperatorThreadView !== "function") continue;
+      try {
+        const view = await entry.runtime.getOperatorThreadView(threadId);
+        const sessionId = view?.thread.sessionId;
+        if (typeof sessionId === "string" && sessionId.length > 0) {
+          this.threadIdBySession.set(sessionId, threadId);
+          return sessionId;
+        }
+      } catch {
+        // Collaborator event enrichment is isolated from primary execution.
+      }
+    }
+    return undefined;
   }
 
   private async appendTerminalHandoffDiagnostic(input: {

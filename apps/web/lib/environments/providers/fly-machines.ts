@@ -568,7 +568,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             state: "stopped",
             timeoutSeconds: 60,
           });
-        } else if (machine?.state !== "stopped") {
+        } else if (
+          machine?.state !== "stopped" &&
+          machine?.state !== "created"
+        ) {
           throw new EnvironmentProviderError(
             "FLY_PROVIDER_REJECTED",
             `Fly Machine start was rejected while the authoritative Machine state was ${machine?.state ?? "unavailable"}.`,
@@ -684,13 +687,22 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         );
         return;
       } catch (error) {
-        if (
-          !(error instanceof EnvironmentProviderError) ||
-          error.status !== 408 ||
-          Date.now() >= deadline
-        ) {
+        if (!(error instanceof EnvironmentProviderError)) {
           throw error;
         }
+        if ((error.status === 408 || error.status === 409)) {
+          const machine = await this.getMachine(input);
+          if (machine?.state === input.state) return;
+          if (
+            error.status === 409 &&
+            machine?.state === "replacing" &&
+            Date.now() < deadline
+          ) {
+            await this.sleepImpl(MACHINE_START_RETRY_INTERVAL_MS);
+            continue;
+          }
+        }
+        if (error.status !== 408 || Date.now() >= deadline) throw error;
       }
     }
   }
