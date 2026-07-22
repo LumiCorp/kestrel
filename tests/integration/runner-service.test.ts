@@ -1546,16 +1546,20 @@ contractTest("runtime.process", "in-memory runner service resolves cleanly when 
   }
 });
 
-contractTest("runtime.process", "runner service streams filtered subscription events over /events/stream", async () => {
+contractTest("runtime.process", "runner service maps internal collaborator threads onto external thread subscriptions", async () => {
   const server = await createRunnerServiceServer({
     runtimeFactory: (_profile, _onRunLog, _onProgress, _onConsole, _onReasoning, onTaskUpdate) => ({
+      getOperatorThreadView: async (threadId) =>
+        threadId === "runtime-thread-subscribe"
+          ? ({ thread: { sessionId: "session-subscribe" } } as never)
+          : null,
       runTurn: async () => {
         onTaskUpdate({
           kind: "waiting",
           assistantText: null,
           task: {
             taskId: "task-subscribe-1",
-            parentSessionId: "session-subscribe",
+            parentSessionId: "runtime-thread-subscribe",
             title: "Wait for operator input",
             status: "WAITING",
             childSessionId: "child-session-1",
