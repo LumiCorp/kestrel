@@ -16,6 +16,7 @@ from .cli_task_runner import (
     TERMINAL_BENCH_ENTRY_STEP_AGENT,
     TERMINAL_BENCH_PROTECTED_PATH_FAILURE_KIND,
     bridge_process_traffic,
+    build_kestrel_job_command,
     build_job_input,
     build_profile,
     classify_cli_failure_kind,
@@ -82,6 +83,24 @@ class CliTaskRunnerTest(unittest.TestCase):
         self.assertEqual(TERMINAL_BENCH_ENTRY_STEP_AGENT, "agent.loop")
         self.assertEqual(job_input["turn"]["stepAgent"], "agent.loop")
         assert_terminal_bench_job_input_contract(job_input)
+
+    def test_job_command_leaves_persistence_selection_to_local_core(self) -> None:
+        command = build_kestrel_job_command(Path("/tmp/job-input.json"), Path("/tmp/job-output.json"))
+
+        self.assertEqual(
+            command,
+            [
+                "node",
+                "/opt/kestrel/bin/kestrel.js",
+                "job",
+                "run",
+                "--json-in",
+                "/tmp/job-input.json",
+                "--json-out",
+                "/tmp/job-output.json",
+            ],
+        )
+        self.assertNotIn("--store", command)
 
     def test_profile_uses_canonical_build_mode(self) -> None:
         profile = build_profile()

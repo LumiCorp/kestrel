@@ -652,6 +652,7 @@ export class StepRunner {
           runtimeError,
         });
         if (verifiedRetrievalRecovery === undefined) {
+          await this.deps.flushStepObservabilityFrame(stepFrame);
           throw error;
         }
         transition = verifiedRetrievalRecovery.transition;

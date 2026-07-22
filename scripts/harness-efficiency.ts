@@ -90,7 +90,7 @@ export function validatePlanLaneProfiles(
       const result = spawn(command[0] as string, command.slice(1), {
         cwd: variant.sourceRoot,
         env: {
-          ...process.env,
+          ...buildHarnessEfficiencyVariantEnvironment(variant.profile, process.env),
           KESTREL_BENCHMARK_PROFILE_FILE: variant.profileFile,
           KESTREL_BENCHMARK_PROFILE_ID: variant.profileId,
         },
@@ -206,7 +206,7 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
       const result = spawnSync(planned.command[0] as string, planned.command.slice(1), {
         cwd: planned.cwd,
         env: {
-          ...process.env,
+          ...buildHarnessEfficiencyVariantEnvironment(plan.variants[variantName].profile, process.env),
           KESTREL_BENCHMARK_PAIR_ID: pair.pairId,
           KESTREL_BENCHMARK_TRIAL: String(pair.trial),
           KESTREL_BENCHMARK_PROFILE_FILE: planned.profileFile,
@@ -228,6 +228,20 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
     }
   }
   return comparePlan(plan, output);
+}
+
+export function buildHarnessEfficiencyVariantEnvironment(
+  profile: HarnessEfficiencyPlanV1["variants"][VariantName]["profile"],
+  baseEnvironment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const modelProvider = requireString(profile.modelProvider, "selected profile modelProvider");
+  const model = requireString(profile.model, "selected profile model");
+  return {
+    ...baseEnvironment,
+    KESTREL_BENCHMARK_MODEL_PROVIDER: modelProvider,
+    KESTREL_BENCHMARK_MODEL: model,
+    ...(modelProvider === "openrouter" ? { OPENROUTER_MODEL: model } : {}),
+  };
 }
 
 function comparePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStream, "write">): number {

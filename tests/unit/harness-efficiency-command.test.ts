@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  buildHarnessEfficiencyVariantEnvironment,
   createPlan,
   findNewEfficiencyResultCandidates,
   isCollectedEfficiencyResultPath,
@@ -42,6 +43,23 @@ contractTest("runtime.hermetic", "efficiency plan validates strict profiles and 
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+contractTest("runtime.hermetic", "efficiency attempts derive model identity from the selected profile", () => {
+  const selectedProfile = {
+    ...profile("observe"),
+    modelProvider: "openrouter",
+    model: "z-ai/glm-5.2",
+  };
+
+  const environment = buildHarnessEfficiencyVariantEnvironment(selectedProfile, {
+    OPENROUTER_MODEL: "ambient/wrong-model",
+    KESTREL_BENCHMARK_MODEL: "ambient/wrong-model",
+  });
+
+  assert.equal(environment.OPENROUTER_MODEL, "z-ai/glm-5.2");
+  assert.equal(environment.KESTREL_BENCHMARK_MODEL_PROVIDER, "openrouter");
+  assert.equal(environment.KESTREL_BENCHMARK_MODEL, "z-ai/glm-5.2");
 });
 
 contractTest("runtime.hermetic", "efficiency comparison reads only collector-owned result artifacts", () => {

@@ -1319,7 +1319,14 @@ contractTest("runtime.hermetic", "ExecutionEngine rehydrates compacted tool arti
         | undefined;
       capturedSystemPrompt = typeof input.messages?.[0]?.content === "string" ? input.messages[0].content : "";
       capturedUserPrompt = typeof input.messages?.[1]?.content === "string" ? input.messages[1].content : "";
-      return "Cincinnati evidence is ready: FOX19 reported Theetge's legal action at https://www.fox19.com/theetge." as T;
+      return {
+        message: "Cincinnati evidence is ready: FOX19 reported Theetge's legal action at https://www.fox19.com/theetge.",
+        usage: {
+          inputTokens: 120,
+          outputTokens: 20,
+          totalTokens: 140,
+        },
+      } as T;
     }),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1479,6 +1486,12 @@ contractTest("runtime.hermetic", "ExecutionEngine rehydrates compacted tool arti
     unknown
   >;
   assert.match(String(finalOutput.message ?? ""), /FOX19/u);
+  assert.equal(output.telemetry.modelCalls, 1);
+  assert.equal(output.telemetry.inputTokens, 120);
+  assert.equal(output.telemetry.outputTokens, 20);
+  assert.equal(output.telemetry.totalTokens, 140);
+  assert.equal(store.getRunEvents().filter((event) => event.type === "economics.model_call.requested").length, 1);
+  assert.equal(store.getRunEvents().filter((event) => event.type === "economics.model_call.completed").length, 1);
 });
 
 contractTest("runtime.hermetic", "ExecutionEngine reports missing compacted tool artifacts without synthesizing", async () => {
@@ -1895,14 +1908,22 @@ contractTest("runtime.hermetic", "ExecutionEngine loop-guards redundant fs.read_
     toolGateway: {
       call: async () => null as never,
     },
-    modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
+    modelGateway: new RetryingModelGateway(async <T>() => ({
+      message: "Continue with the filesystem read.",
+      usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+    } as T)),
     guardrails: {
       maxStepsPerRun: 200,
       maxStepVisits: 200,
     },
   });
 
-  kestrel.registerStep("agent.loop", async (ctx) => {
+  kestrel.registerStep("agent.loop", async (ctx, io) => {
+    await io.useModel({
+      responseFormat: "text",
+      input: { objective: "Choose the next filesystem read." },
+      messages: [{ role: "user", content: "Choose the next filesystem read." }],
+    });
     const react = ctx.session.state.agent as Record<string, unknown> | undefined;
     const reads = typeof ctx.session.state.reads === "number" ? (ctx.session.state.reads as number) : 0;
     const path = reads % 2 === 0 ? "notes/release.md" : "./notes/release.md";
@@ -1993,6 +2014,14 @@ contractTest("runtime.hermetic", "ExecutionEngine loop-guards redundant fs.read_
   assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
   assert.equal(output.waitFor, undefined);
   assert.equal(store.getRunEvents().some((event) => event.type === "loop.guard_triggered"), true);
+  assert.equal(
+    store.getRunEvents().filter((event) => event.type === "economics.model_call.requested").length,
+    output.telemetry.modelCalls,
+  );
+  assert.equal(
+    store.getRunEvents().filter((event) => event.type === "economics.model_call.completed").length,
+    output.telemetry.modelCalls,
+  );
 
   const session = await store.getSession("session-retrieval-loop-guard-same-file");
   assert.ok(Number(session?.state.reads ?? 0) >= 1);

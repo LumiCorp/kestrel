@@ -776,6 +776,33 @@ export class ExecutionEngine {
 
           const errorDetails = this.asRecord(runtimeError.details);
           if (errorDetails?.guardType === "REPEATED_REDUNDANT_RETRIEVAL_PIVOT") {
+            const recoveryIO = this.createStepIO(
+              guardrails,
+              {
+                runId,
+                sessionId: session.sessionId,
+                stepIndex: guardrails.telemetry().stepsExecuted,
+                stepAgent: lastStepAgent,
+                phase: this.resolveProgressPhase(lastStepAgent),
+                signal: options.signal,
+                sequence: () => {
+                  progressSeq += 1;
+                  return progressSeq;
+                },
+              },
+              session,
+              {
+                ...(this.asRecord(event.payload.orchestration) ?? {}),
+                ...(this.asRecord(event.payload.metadata) ?? {}),
+                ...(this.asRecord(event.payload.workspace) !== undefined
+                  ? { workspace: this.asRecord(event.payload.workspace) }
+                  : {}),
+              },
+              event.payload,
+              (updated) => {
+                session = updated;
+              },
+            );
             const synthesizedOutput = await this.loopGuardCoordinator.maybeCompleteVerifiedRetrievalSynthesis({
               runId,
               event,
@@ -784,8 +811,10 @@ export class ExecutionEngine {
               stepIndex: guardrails.telemetry().stepsExecuted,
               guardrails,
               progressSeq,
+              getProgressSeq: () => progressSeq,
               runtimeError,
               signal: options.signal,
+              useModel: recoveryIO.useModel,
             });
             if (synthesizedOutput !== undefined) {
               return synthesizedOutput;

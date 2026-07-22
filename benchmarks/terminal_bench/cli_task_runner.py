@@ -120,18 +120,7 @@ def main() -> int:
     try:
         emit_progress(f"launching Kestrel runtime; event log: {event_log}; bridge log: {bridge_log}")
         completed = subprocess.run(
-            [
-                "node",
-                "/opt/kestrel/bin/kestrel.js",
-                "job",
-                "run",
-                "--json-in",
-                str(job_in),
-                "--json-out",
-                str(job_out),
-                "--store",
-                "sqlite",
-            ],
+            build_kestrel_job_command(job_in, job_out),
             cwd=workspace_root,
             env=env,
             text=True,
@@ -212,6 +201,19 @@ def main() -> int:
 
 def result_adapter() -> str:
     return os.environ.get("KESTREL_TBENCH_RESULT_ADAPTER") or DEFAULT_RESULT_ADAPTER
+
+
+def build_kestrel_job_command(job_input_path: Path, job_output_path: Path) -> list[str]:
+    return [
+        "node",
+        "/opt/kestrel/bin/kestrel.js",
+        "job",
+        "run",
+        "--json-in",
+        str(job_input_path),
+        "--json-out",
+        str(job_output_path),
+    ]
 
 
 def result_dataset() -> str:
