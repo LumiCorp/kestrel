@@ -77,6 +77,7 @@ export * from "./profile/modelCatalog.js";
 export * from "./profile/modelCatalogDiscovery.js";
 export * from "./profile/modelCatalogPresentation.js";
 export * from "./profile/runtimeProfile.js";
+export * from "./economics/index.js";
 export * from "./workspace/threadWorkspaceBinding.js";
 export * from "./workspace/WorkspaceAuthority.js";
 export * from "./skills/index.js";

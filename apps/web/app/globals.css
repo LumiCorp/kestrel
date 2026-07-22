@@ -52,6 +52,8 @@
   --color-code-number: var(--code-number);
   --color-selection: var(--selection);
   --color-selection-foreground: var(--selection-foreground);
+  --color-message-user: var(--message-user);
+  --color-message-user-foreground: var(--message-user-foreground);
 
   --shadow-glow: 0 0 4px oklch(0 0 0 / 0.1);
   --shadow-inner-shadow:
@@ -109,93 +111,181 @@
   --lumi-teal: #5e8fa0;
   --lumi-teal-soft: #8eb0bb;
 
-  --background: var(--lumi-paper);
-  --foreground: var(--lumi-charcoal);
-  --card: var(--lumi-cream);
-  --card-foreground: var(--lumi-charcoal);
-  --popover: var(--lumi-paper);
-  --popover-foreground: var(--lumi-charcoal);
-  --primary: var(--lumi-amber);
-  --primary-foreground: var(--lumi-paper);
-  --secondary: #f1ece1;
-  --secondary-foreground: var(--lumi-charcoal);
-  --muted: #efe7da;
-  --muted-foreground: #5c564d;
-  --accent: var(--lumi-teal);
-  --accent-foreground: var(--lumi-paper);
-  --destructive: #a75f2c;
-  --border: #ddd5c7;
-  --input: #ddd5c7;
-  --ring: var(--lumi-teal);
-  --chart-1: var(--lumi-amber);
-  --chart-2: var(--lumi-teal);
-  --chart-3: #8b5b3a;
-  --chart-4: var(--lumi-teal-soft);
-  --chart-5: var(--lumi-amber-soft);
-  --sidebar: #fbf7ef;
-  --sidebar-foreground: var(--lumi-charcoal);
-  --sidebar-primary: var(--lumi-amber);
-  --sidebar-primary-foreground: var(--lumi-paper);
-  --sidebar-accent: #e8efe9;
-  --sidebar-accent-foreground: var(--lumi-charcoal);
-  --sidebar-border: #ddd5c7;
-  --sidebar-ring: var(--lumi-teal);
+  /* Lumi is the no-JavaScript and first-visit fallback. The bootstrap script
+     replaces both prefixed sets before first paint when preferences exist. */
+  --palette-light-background: #fffdf7;
+  --palette-light-foreground: #111111;
+  --palette-light-card: #f7f3e8;
+  --palette-light-card-foreground: #111111;
+  --palette-light-popover: #fffdf7;
+  --palette-light-popover-foreground: #111111;
+  --palette-light-primary: #c77738;
+  --palette-light-primary-foreground: #111111;
+  --palette-light-secondary: #f1ece1;
+  --palette-light-secondary-foreground: #111111;
+  --palette-light-muted: #efe7da;
+  --palette-light-muted-foreground: #5c564d;
+  --palette-light-accent: #5e8fa0;
+  --palette-light-accent-foreground: #111111;
+  --palette-light-destructive: #a33f2b;
+  --palette-light-border: #ddd5c7;
+  --palette-light-input: #ddd5c7;
+  --palette-light-ring: #5e8fa0;
+  --palette-light-chart-1: #c77738;
+  --palette-light-chart-2: #5e8fa0;
+  --palette-light-chart-3: #8b5b3a;
+  --palette-light-chart-4: #8eb0bb;
+  --palette-light-chart-5: #d59664;
+  --palette-light-sidebar: #fbf7ef;
+  --palette-light-sidebar-foreground: #111111;
+  --palette-light-sidebar-primary: #c77738;
+  --palette-light-sidebar-primary-foreground: #111111;
+  --palette-light-sidebar-accent: #e8efe9;
+  --palette-light-sidebar-accent-foreground: #111111;
+  --palette-light-sidebar-border: #ddd5c7;
+  --palette-light-sidebar-ring: #5e8fa0;
+  --palette-light-secondary-offset: #fcf8ef;
+  --palette-light-surface: #fcf8ef;
+  --palette-light-surface-foreground: #111111;
+  --palette-light-code: #fcf8ef;
+  --palette-light-code-foreground: #111111;
+  --palette-light-code-highlight: #f1ece1;
+  --palette-light-code-number: #8b4b1d;
+  --palette-light-selection: #111111;
+  --palette-light-selection-foreground: #fffdf7;
+  --palette-light-message-user: #005bd6;
+  --palette-light-message-user-foreground: #ffffff;
 
-  --secondary-offset: #fcf8ef;
+  --palette-dark-background: #111111;
+  --palette-dark-foreground: #f7f3e8;
+  --palette-dark-card: #181818;
+  --palette-dark-card-foreground: #f7f3e8;
+  --palette-dark-popover: #151515;
+  --palette-dark-popover-foreground: #f7f3e8;
+  --palette-dark-primary: #c77738;
+  --palette-dark-primary-foreground: #111111;
+  --palette-dark-secondary: #202020;
+  --palette-dark-secondary-foreground: #f7f3e8;
+  --palette-dark-muted: #232323;
+  --palette-dark-muted-foreground: #c8bfb0;
+  --palette-dark-accent: #8eb0bb;
+  --palette-dark-accent-foreground: #111111;
+  --palette-dark-destructive: #d07a4a;
+  --palette-dark-border: #34312e;
+  --palette-dark-input: #3c3834;
+  --palette-dark-ring: #8eb0bb;
+  --palette-dark-chart-1: #d59664;
+  --palette-dark-chart-2: #8eb0bb;
+  --palette-dark-chart-3: #f7f3e8;
+  --palette-dark-chart-4: #6e98a7;
+  --palette-dark-chart-5: #b96a30;
+  --palette-dark-sidebar: #171717;
+  --palette-dark-sidebar-foreground: #f7f3e8;
+  --palette-dark-sidebar-primary: #c77738;
+  --palette-dark-sidebar-primary-foreground: #111111;
+  --palette-dark-sidebar-accent: #202425;
+  --palette-dark-sidebar-accent-foreground: #f7f3e8;
+  --palette-dark-sidebar-border: #34312e;
+  --palette-dark-sidebar-ring: #8eb0bb;
+  --palette-dark-secondary-offset: #1a1a1a;
+  --palette-dark-surface: #1a1a1a;
+  --palette-dark-surface-foreground: #d8cebf;
+  --palette-dark-code: #1a1a1a;
+  --palette-dark-code-foreground: #d8cebf;
+  --palette-dark-code-highlight: #242424;
+  --palette-dark-code-number: #d59664;
+  --palette-dark-selection: #f7f3e8;
+  --palette-dark-selection-foreground: #111111;
+  --palette-dark-message-user: #2869d8;
+  --palette-dark-message-user-foreground: #ffffff;
 
-  --surface: #fcf8ef;
-  --surface-foreground: var(--foreground);
-  --code: var(--surface);
-  --code-foreground: var(--surface-foreground);
-  --code-highlight: #f1ece1;
-  --code-number: var(--lumi-amber);
-  --selection: var(--lumi-charcoal);
-  --selection-foreground: var(--lumi-paper);
+  --background: var(--palette-light-background);
+  --foreground: var(--palette-light-foreground);
+  --card: var(--palette-light-card);
+  --card-foreground: var(--palette-light-card-foreground);
+  --popover: var(--palette-light-popover);
+  --popover-foreground: var(--palette-light-popover-foreground);
+  --primary: var(--palette-light-primary);
+  --primary-foreground: var(--palette-light-primary-foreground);
+  --secondary: var(--palette-light-secondary);
+  --secondary-foreground: var(--palette-light-secondary-foreground);
+  --muted: var(--palette-light-muted);
+  --muted-foreground: var(--palette-light-muted-foreground);
+  --accent: var(--palette-light-accent);
+  --accent-foreground: var(--palette-light-accent-foreground);
+  --destructive: var(--palette-light-destructive);
+  --border: var(--palette-light-border);
+  --input: var(--palette-light-input);
+  --ring: var(--palette-light-ring);
+  --chart-1: var(--palette-light-chart-1);
+  --chart-2: var(--palette-light-chart-2);
+  --chart-3: var(--palette-light-chart-3);
+  --chart-4: var(--palette-light-chart-4);
+  --chart-5: var(--palette-light-chart-5);
+  --sidebar: var(--palette-light-sidebar);
+  --sidebar-foreground: var(--palette-light-sidebar-foreground);
+  --sidebar-primary: var(--palette-light-sidebar-primary);
+  --sidebar-primary-foreground: var(--palette-light-sidebar-primary-foreground);
+  --sidebar-accent: var(--palette-light-sidebar-accent);
+  --sidebar-accent-foreground: var(--palette-light-sidebar-accent-foreground);
+  --sidebar-border: var(--palette-light-sidebar-border);
+  --sidebar-ring: var(--palette-light-sidebar-ring);
+  --secondary-offset: var(--palette-light-secondary-offset);
+  --surface: var(--palette-light-surface);
+  --surface-foreground: var(--palette-light-surface-foreground);
+  --code: var(--palette-light-code);
+  --code-foreground: var(--palette-light-code-foreground);
+  --code-highlight: var(--palette-light-code-highlight);
+  --code-number: var(--palette-light-code-number);
+  --selection: var(--palette-light-selection);
+  --selection-foreground: var(--palette-light-selection-foreground);
+  --message-user: var(--palette-light-message-user);
+  --message-user-foreground: var(--palette-light-message-user-foreground);
 }
 
 .dark {
-  --background: var(--lumi-charcoal);
-  --foreground: var(--lumi-cream);
-  --card: #181818;
-  --card-foreground: var(--lumi-cream);
-  --popover: #151515;
-  --popover-foreground: var(--lumi-cream);
-  --primary: var(--lumi-amber);
-  --primary-foreground: var(--lumi-charcoal);
-  --secondary: #202020;
-  --secondary-foreground: var(--lumi-cream);
-  --muted: #232323;
-  --muted-foreground: #c8bfb0;
-  --accent: var(--lumi-teal);
-  --accent-foreground: var(--lumi-charcoal);
-  --destructive: #b56630;
-  --border: rgba(247, 243, 232, 0.12);
-  --input: rgba(247, 243, 232, 0.16);
-  --ring: var(--lumi-teal-soft);
-  --chart-1: var(--lumi-amber);
-  --chart-2: var(--lumi-teal);
-  --chart-3: var(--lumi-cream);
-  --chart-4: var(--lumi-teal-soft);
-  --chart-5: var(--lumi-amber-soft);
-  --sidebar: #171717;
-  --sidebar-foreground: var(--lumi-cream);
-  --sidebar-primary: var(--lumi-amber);
-  --sidebar-primary-foreground: var(--lumi-charcoal);
-  --sidebar-accent: #202425;
-  --sidebar-accent-foreground: var(--lumi-cream);
-  --sidebar-border: rgba(247, 243, 232, 0.12);
-  --sidebar-ring: var(--lumi-teal-soft);
-
-  --secondary-offset: #1a1a1a;
-
-  --surface: #1a1a1a;
-  --surface-foreground: #d8cebf;
-  --code: var(--surface);
-  --code-foreground: var(--surface-foreground);
-  --code-highlight: #242424;
-  --code-number: var(--lumi-amber-soft);
-  --selection: var(--lumi-cream);
-  --selection-foreground: var(--lumi-charcoal);
+  --background: var(--palette-dark-background);
+  --foreground: var(--palette-dark-foreground);
+  --card: var(--palette-dark-card);
+  --card-foreground: var(--palette-dark-card-foreground);
+  --popover: var(--palette-dark-popover);
+  --popover-foreground: var(--palette-dark-popover-foreground);
+  --primary: var(--palette-dark-primary);
+  --primary-foreground: var(--palette-dark-primary-foreground);
+  --secondary: var(--palette-dark-secondary);
+  --secondary-foreground: var(--palette-dark-secondary-foreground);
+  --muted: var(--palette-dark-muted);
+  --muted-foreground: var(--palette-dark-muted-foreground);
+  --accent: var(--palette-dark-accent);
+  --accent-foreground: var(--palette-dark-accent-foreground);
+  --destructive: var(--palette-dark-destructive);
+  --border: var(--palette-dark-border);
+  --input: var(--palette-dark-input);
+  --ring: var(--palette-dark-ring);
+  --chart-1: var(--palette-dark-chart-1);
+  --chart-2: var(--palette-dark-chart-2);
+  --chart-3: var(--palette-dark-chart-3);
+  --chart-4: var(--palette-dark-chart-4);
+  --chart-5: var(--palette-dark-chart-5);
+  --sidebar: var(--palette-dark-sidebar);
+  --sidebar-foreground: var(--palette-dark-sidebar-foreground);
+  --sidebar-primary: var(--palette-dark-sidebar-primary);
+  --sidebar-primary-foreground: var(--palette-dark-sidebar-primary-foreground);
+  --sidebar-accent: var(--palette-dark-sidebar-accent);
+  --sidebar-accent-foreground: var(--palette-dark-sidebar-accent-foreground);
+  --sidebar-border: var(--palette-dark-sidebar-border);
+  --sidebar-ring: var(--palette-dark-sidebar-ring);
+  --secondary-offset: var(--palette-dark-secondary-offset);
+  --surface: var(--palette-dark-surface);
+  --surface-foreground: var(--palette-dark-surface-foreground);
+  --code: var(--palette-dark-code);
+  --code-foreground: var(--palette-dark-code-foreground);
+  --code-highlight: var(--palette-dark-code-highlight);
+  --code-number: var(--palette-dark-code-number);
+  --selection: var(--palette-dark-selection);
+  --selection-foreground: var(--palette-dark-selection-foreground);
+  --message-user: var(--palette-dark-message-user);
+  --message-user-foreground: var(--palette-dark-message-user-foreground);
 
   --shadow-elevation-light:
     0px 10px 20px oklch(0 0 0 / 0.6), 0px 6px 12px oklch(0 0 0 / 0.5),
@@ -257,42 +347,6 @@
     animation: none;
     transform: translateX(110%);
     opacity: 0.85;
-  }
-}
-
-@keyframes hawk-ascii-gradient-sweep {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-.hawk-ascii-sweep {
-  background-image: linear-gradient(
-    115deg,
-    var(--lumi-cream) 0%,
-    var(--lumi-amber) 30%,
-    var(--lumi-teal) 68%,
-    var(--lumi-amber-soft) 100%
-  );
-  background-size: 220% 220%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  animation: hawk-ascii-gradient-sweep 22s ease-in-out infinite;
-  will-change: background-position;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hawk-ascii-sweep {
-    animation: none;
-    background-position: 50% 50%;
   }
 }
 

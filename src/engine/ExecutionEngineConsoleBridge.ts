@@ -102,15 +102,27 @@ export function createToolConsoleBridge(input: {
   return {
     sink,
     emitStatus: async (status, result) => {
+      const completedOutput = readAgentToolOutput(result);
       await emitUpdate({
         status,
         command: readConsoleCommand(input.input),
         cwd: readConsoleCwd(input.input),
-        processId: readConsoleProcessId(result) ?? readConsoleProcessId(input.input),
-        exitCode: readConsoleExitCode(result),
+        processId: readConsoleProcessId(completedOutput) ?? readConsoleProcessId(input.input),
+        exitCode: readConsoleExitCode(completedOutput),
       });
     },
   };
+}
+
+function readAgentToolOutput(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const auditRecord = (value as Record<string, unknown>).auditRecord;
+  if (typeof auditRecord !== "object" || auditRecord === null || Array.isArray(auditRecord)) {
+    return value;
+  }
+  return (auditRecord as Record<string, unknown>).output;
 }
 
 export async function emitDevShellConsoleStatus(input: {

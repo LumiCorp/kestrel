@@ -1,5 +1,12 @@
 import type { StepAgent, StepContext, StepIO, Transition, UserWaitForMatcher } from "../../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelRequest, ModelResponse, ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
+import {
+  buildToolSurfaceManifest,
+  parseHarnessEconomicsPolicyV1,
+  parseModelEconomicsProfileV1,
+  selectToolsForEconomicsPolicyV1,
+  type ToolExposureSelectionV1,
+} from "../../../../src/economics/index.js";
 
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import {
@@ -38,7 +45,9 @@ import {
   buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
+  buildKestrelCompactionSummarySchema,
   buildKestrelAgentValidationFeedbackMessage,
+  planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
   type KestrelAgentCannotSatisfyReasonCode,
   type KestrelAgentFinalizeStatus,
@@ -49,6 +58,7 @@ import {
   appendToolResultToTranscript,
   appendTodoUpdateToTranscript,
   readActiveTaskGoalFromTranscript,
+  normalizeModelTranscript,
 } from "../../../../src/runtime/modelTranscript.js";
 import {
   resolveDeliberatorPromptVariant,
@@ -106,6 +116,7 @@ import {
   isHighConfidenceContinuation,
 } from "../../../../src/runtime/userReplyIntent.js";
 import { readActiveWaitState } from "../../../../src/runtime/waitState.js";
+import { readActiveSkillPackContext } from "../../../../src/runtime/agent-context/runtimeContext.js";
 import {
   resolveKestrelTurnObjective,
   shouldStartFreshUserMessageTaskEpoch,
@@ -336,14 +347,22 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const activeWorkspaceModelContext = buildWorkspaceModelContext(activeWorkspace);
     const activeWorkspaceSkills = ctx.event.payload.workspaceSkills;
     const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
+    const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
+    const runtimeEconomics = readRuntimeEconomics(eventPayload);
     const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
       tools: deliberatorTools,
       capabilityManifest,
       modeResolution,
       executionPolicy,
     });
+    const economicsScopedDeliberatorTools = selectToolsForEconomicsPolicyV1({
+      tools: modeScopedDeliberatorTools,
+      capabilityManifest,
+      ...(runtimeEconomics.policy !== undefined ? { policy: runtimeEconomics.policy } : {}),
+      phase: "agent.loop",
+    });
     const initialFilteredTools = filterDeliberatorToolsForContext(
-      modeScopedDeliberatorTools,
+      economicsScopedDeliberatorTools.tools,
       {
         devShellProcesses: buildDevShellToolFilterProcesses(
           decisionContext.devShellProcesses,
@@ -382,12 +401,14 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       activeWorkspace: activeWorkspaceModelContext,
       activeWorkspaceSkills,
       activeProjectContext,
+      activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
     contextRequest = await compactContextRequestIfNeeded({
       io,
       config,
       contextRequest,
+      tools: initialFilteredTools.tools,
       reactState,
       eventPayload,
       goal,
@@ -400,6 +421,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       activeWorkspace: activeWorkspaceModelContext,
       activeWorkspaceSkills,
       activeProjectContext,
+      activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
     goal = readActiveTaskGoalFromContextRequest({
@@ -435,12 +457,14 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       config,
       contextRequest.modelInput,
       contextRequest.messages,
+      contextRequest.metadata,
       initialFilteredTools.tools,
       "required",
       initialParallelToolCalls,
       modeScopedControlToolNames,
       finalizeStatuses,
       cannotSatisfyReasonCodes,
+      economicsScopedDeliberatorTools.selection,
     );
     if (response.toolIntents.length === 0) {
       return toRequiredToolCallMissingTransition({
@@ -465,7 +489,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       runId: ctx.runId,
       interactionMode: modeResolution.interactionMode,
-      deliberatorTools: modeScopedDeliberatorTools,
+      deliberatorTools: economicsScopedDeliberatorTools.tools,
       capabilityManifest,
       decisionContext,
       observedCapabilities,
@@ -524,6 +548,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         activeWorkspace: activeWorkspaceModelContext,
         activeWorkspaceSkills,
         activeProjectContext,
+        activeSkillPack: activeSkillPackContext,
         stepIndex: ctx.stepIndex,
       });
       const assistantProgressRepairToolName = readAssistantProgressRepairToolName(attempt.error);
@@ -537,6 +562,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         config,
         retryRequest.modelInput,
         retryRequest.messages,
+        retryRequest.metadata,
         retryTools.tools,
         "required",
         assistantProgressRepairToolName === undefined && shouldEnableParallelToolCalls({
@@ -548,6 +574,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
+        economicsScopedDeliberatorTools.selection,
         assistantProgressRepairToolName,
       );
       if (response.toolIntents.length === 0) {
@@ -568,7 +595,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         stepIndex: ctx.stepIndex,
         runId: ctx.runId,
         interactionMode: modeResolution.interactionMode,
-        deliberatorTools: modeScopedDeliberatorTools,
+        deliberatorTools: economicsScopedDeliberatorTools.tools,
         capabilityManifest,
         decisionContext,
         observedCapabilities,
@@ -972,12 +999,14 @@ async function askDeliberator(
   config: AgentLoopStepConfig,
   input: Record<string, unknown>,
   messages: ModelRequest["messages"],
+  contextMetadata: ReturnType<typeof buildContextRequest>["metadata"],
   deliberatorTools: ModelToolSpec[],
   toolChoice: "required" = "required",
   parallelToolCalls = true,
   controlToolNames?: readonly string[] | undefined,
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined,
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined,
+  economicsToolExposureSelection?: ToolExposureSelectionV1 | undefined,
   requiredProviderToolName?: string | undefined,
 ): Promise<ModelResponse<unknown>> {
   const promptInput = readDeliberatorPromptInput(input);
@@ -1025,6 +1054,12 @@ async function askDeliberator(
       ...(promptInput.actSubmode !== undefined ? { actSubmode: promptInput.actSubmode } : {}),
       reasoningRetention: config.reasoningRetention ?? { mode: "live_only", days: 7 },
       reasoningRetentionScope: config.reasoningRetentionScope ?? "default",
+      contextBuilder: contextMetadata.builder,
+      contextBuilderVersion: contextMetadata.version,
+      contextSections: contextMetadata.manifestSections,
+      ...(economicsToolExposureSelection !== undefined
+        ? { economicsToolExposureSelection }
+        : {}),
     },
   };
   return io.useModel<ModelResponse<unknown>>(request);
@@ -1034,6 +1069,7 @@ async function compactContextRequestIfNeeded(input: {
   io: StepIO;
   config: AgentLoopStepConfig;
   contextRequest: ReturnType<typeof buildContextRequest>;
+  tools: ModelToolSpec[];
   reactState: Record<string, unknown>;
   eventPayload: Record<string, unknown>;
   goal: string;
@@ -1046,11 +1082,30 @@ async function compactContextRequestIfNeeded(input: {
   activeWorkspace?: unknown;
   activeWorkspaceSkills?: unknown;
   activeProjectContext?: unknown;
+  activeSkillPack?: unknown;
   stepIndex: number;
 }): Promise<ReturnType<typeof buildContextRequest>> {
-  if (shouldCompactKestrelAgentContext({ transcript: input.contextRequest.transcript }) === false) {
+  const runtimeEconomics = readRuntimeEconomics(input.eventPayload);
+  const contextTokens = input.contextRequest.metadata.manifestSections.reduce(
+    (total, section) => total + section.count.tokens,
+    0,
+  );
+  const toolSchemaTokens = buildToolSurfaceManifest(input.tools).count.tokens;
+  if (shouldCompactKestrelAgentContext({
+    transcript: input.contextRequest.transcript,
+    ...(runtimeEconomics.policy !== undefined ? { policy: runtimeEconomics.policy } : {}),
+    ...(runtimeEconomics.modelProfile !== undefined ? { modelProfile: runtimeEconomics.modelProfile } : {}),
+    contextTokens,
+    toolSchemaTokens,
+  }) === false) {
     return input.contextRequest;
   }
+  const compactionSource = normalizeModelTranscript(input.contextRequest.transcript);
+  if (compactionSource === undefined) {
+    throw new Error("Compaction requires a valid model transcript.");
+  }
+  const compactionPlan = planKestrelAgentCompaction(compactionSource);
+  const { activeTaskItemId, replacedItemIds } = compactionPlan;
   const response = await input.io.useModel<ModelResponse<unknown>>({
     model: input.config.agentModel,
     input: {
@@ -1059,8 +1114,12 @@ async function compactContextRequestIfNeeded(input: {
     },
     messages: buildKestrelAgentCompactionMessages({
       contextMessages: input.contextRequest.contextMessages,
+      activeTaskItemId,
+      replacedItemIds,
+      sourceItems: compactionSource.items,
     }),
-    responseFormat: "text",
+    responseFormat: "json",
+    responseSchema: buildKestrelCompactionSummarySchema(activeTaskItemId, replacedItemIds),
     reasoning: { mode: "off" },
     providerOptions: {
       openrouter: { endpoint: "chat", toolChoice: "none" },
@@ -1075,10 +1134,12 @@ async function compactContextRequestIfNeeded(input: {
       modelRole: "compaction",
       modelBudgetClass: "maintenance",
       reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
+      contextBuilder: input.contextRequest.metadata.builder,
+      contextBuilderVersion: input.contextRequest.metadata.version,
+      contextSections: input.contextRequest.metadata.manifestSections,
     },
   });
-  const summary = response.text?.trim() ??
-    (typeof response.output === "string" ? response.output.trim() : undefined);
+  const summary = response.output ?? response.text;
   const compactedTranscript = buildKestrelAgentCompactedTranscript({
     transcript: input.contextRequest.transcript,
     summary,
@@ -1106,6 +1167,7 @@ async function compactContextRequestIfNeeded(input: {
     activeWorkspace: input.activeWorkspace,
     activeWorkspaceSkills: input.activeWorkspaceSkills,
     activeProjectContext: input.activeProjectContext,
+    activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
   });
 }
@@ -1151,6 +1213,20 @@ function readRuntimeAssemblyPromptVariant(eventPayload: Record<string, unknown>)
     asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
     asRecord(eventPayload.runtimeAssembly);
   return asString(runtimeAssembly?.promptVariant);
+}
+
+function readRuntimeEconomics(eventPayload: Record<string, unknown>) {
+  const runtimeAssembly =
+    asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
+    asRecord(eventPayload.runtimeAssembly);
+  return {
+    ...(runtimeAssembly?.economicsPolicy !== undefined
+      ? { policy: parseHarnessEconomicsPolicyV1(runtimeAssembly.economicsPolicy) }
+      : {}),
+    ...(runtimeAssembly?.modelEconomicsProfile !== undefined
+      ? { modelProfile: parseModelEconomicsProfileV1(runtimeAssembly.modelEconomicsProfile) }
+      : {}),
+  };
 }
 
 function readRuntimeShellKind(

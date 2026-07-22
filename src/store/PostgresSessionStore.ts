@@ -2323,6 +2323,11 @@ export class PostgresSessionStore implements SessionStore {
     return this.orchestrationStore.upsertContextPolicyDefinition(record);
   }
 
+  async getContextPolicyDefinition(contextPolicyId: string) {
+    await this.ensureSchemaV3();
+    return this.orchestrationStore.getContextPolicyDefinition(contextPolicyId);
+  }
+
   async listContextPolicyDefinitions() {
     await this.ensureSchemaV3();
     return this.orchestrationStore.listContextPolicyDefinitions();
@@ -2895,6 +2900,7 @@ export class PostgresSessionStore implements SessionStore {
       has_orchestration_assembly_change_decisions: boolean;
       has_orchestration_specialist_definitions: boolean;
       has_orchestration_context_policy_definitions: boolean;
+      has_context_policy_economics: boolean;
       has_conversation_turns: boolean;
       has_conversation_turn_segments: boolean;
       has_model_call_provenance: boolean;
@@ -2984,6 +2990,13 @@ export class PostgresSessionStore implements SessionStore {
          to_regclass('public.orchestration_assembly_change_decisions') IS NOT NULL AS has_orchestration_assembly_change_decisions,
          to_regclass('public.orchestration_specialist_definitions') IS NOT NULL AS has_orchestration_specialist_definitions,
          to_regclass('public.orchestration_context_policy_definitions') IS NOT NULL AS has_orchestration_context_policy_definitions,
+         EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = 'orchestration_context_policy_definitions'
+             AND column_name = 'economics_policy_json'
+         ) AS has_context_policy_economics,
          to_regclass('public.conversation_turns') IS NOT NULL AS has_conversation_turns,
          to_regclass('public.conversation_turn_segments') IS NOT NULL AS has_conversation_turn_segments,
          to_regclass('public.model_call_provenance') IS NOT NULL AS has_model_call_provenance,
@@ -3023,6 +3036,7 @@ export class PostgresSessionStore implements SessionStore {
       row.has_orchestration_assembly_change_decisions !== true ||
       row.has_orchestration_specialist_definitions !== true ||
       row.has_orchestration_context_policy_definitions !== true ||
+      row.has_context_policy_economics !== true ||
       row.has_conversation_turns !== true ||
       row.has_conversation_turn_segments !== true ||
       row.has_model_call_provenance !== true ||

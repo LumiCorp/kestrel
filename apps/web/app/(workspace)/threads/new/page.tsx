@@ -5,6 +5,7 @@ import { DataStreamHandler } from "@/components/data-stream-handler";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
 import { getDefaultOrganizationEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { generateUUID } from "@/lib/utils";
 
 function BootstrapChatFallback() {
@@ -17,6 +18,7 @@ export default async function ChatIndexPage() {
     cookies(),
   ]);
   const environment = await getDefaultOrganizationEnvironment(organizationId);
+  const readiness = await getOrganizationChatReadiness(organizationId);
   const modelIdFromCookie = cookieStore.get("chat-model");
   const id = generateUUID();
   const initialChatModel = await resolvePreferredLanguageModelId(
@@ -34,6 +36,11 @@ export default async function ChatIndexPage() {
           id={id}
           initialChatModel={initialChatModel}
           key={id}
+          newTurnDisabledReason={
+            readiness.applicable && !readiness.ready
+              ? "Finish organization setup before starting a new agent turn."
+              : undefined
+          }
         />
       </Suspense>
       <DataStreamHandler threadId={id} />

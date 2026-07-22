@@ -34,6 +34,13 @@ export type ComposerPresentation = {
   tone: ComposerPresentationTone;
 };
 
+export function isComposerPrimaryActionBlockedBySetup(
+  actionKind: ComposerPrimaryActionKind,
+  setupBlocked: boolean
+) {
+  return setupBlocked && (actionKind === "send" || actionKind === "queue");
+}
+
 export function resolveComposerPresentation(input: {
   attachmentCount: number;
   canInterrupt: boolean;

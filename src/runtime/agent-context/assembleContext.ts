@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+
 import type { ModelMessage } from "../../kestrel/contracts/model-io.js";
+import type { ContextSectionCandidateV1 } from "../../economics/contracts.js";
+import { countTextTokens } from "../../economics/tokenCounting.js";
 
 import {
   buildDeliberatorSystemPrompt,
@@ -12,7 +16,7 @@ import {
   renderModelTranscriptMessages,
   type ModelTranscript,
 } from "../modelTranscript.js";
-import { buildRuntimeContextFragment } from "./runtimeContext.js";
+import { buildRuntimeContextFragment, buildRuntimeContextSections } from "./runtimeContext.js";
 import {
   readBenchmarkContext,
   renderTaskInstruction,
@@ -41,10 +45,16 @@ export type { KestrelBenchmarkContext, KestrelBenchmarkSource } from "./benchmar
 export {
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
+  buildKestrelCompactionSummarySchema,
   buildKestrelTerminalBenchRepairPrompt,
+  KESTREL_COMPACTION_SUMMARY_SCHEMA,
+  parseKestrelCompactionSummaryV1,
+  planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
+  type KestrelCompactionSummaryV1,
   type KestrelAgentCompactedTranscriptInput,
   type KestrelAgentCompactionBuildInput,
+  type KestrelAgentCompactionPlan,
   type KestrelAgentCompactionPolicyInput,
   type KestrelTerminalBenchRepairPromptInput,
 } from "./maintenancePrompts.js";
@@ -80,6 +90,7 @@ export interface KestrelAgentContextBuildInput {
   activeWorkspace?: unknown;
   activeWorkspaceSkills?: unknown;
   activeProjectContext?: unknown;
+  activeSkillPack?: unknown;
   retryContext?: Record<string, unknown> | undefined;
   systemPrompt?: KestrelAgentSystemPromptInput | undefined;
   stepIndex?: number | undefined;
@@ -101,8 +112,9 @@ export interface KestrelAgentContextBuildOutput {
 
 export interface KestrelAgentContextMetadata {
   builder: "kestrel-agent-context";
-  version: 1;
+  version: 2;
   sections: KestrelAgentContextSection[];
+  manifestSections: ContextSectionCandidateV1[];
 }
 
 export interface KestrelAgentContextSection {
@@ -184,6 +196,28 @@ export function buildKestrelAgentContext(
     workspaceContext: input.activeWorkspace,
     workspaceSkillsContext: input.activeWorkspaceSkills,
     projectContext: input.activeProjectContext,
+    skillPackContext: input.activeSkillPack,
+    ...(activeProcessEvidence !== undefined ? { activeProcessEvidence } : {}),
+    ...(recentFilesystemEvidence !== undefined ? { recentFilesystemEvidence } : {}),
+    ...(recentToolResultEvidence !== undefined ? { recentToolResultEvidence } : {}),
+    ...(projectTaskQueueContext !== undefined ? { projectTaskQueueContext } : {}),
+    ...(recoveryContext !== undefined ? { recoveryContext } : {}),
+    ...(visibleTodos !== undefined ? { visibleTodos } : {}),
+    workspaceFreshness,
+    ...(activeExecCommandSessions.length > 0 ? { activeExecCommandSessions } : {}),
+    ...(correction !== undefined ? { correction } : {}),
+    activeWait: input.reactState.waitingFor,
+  });
+  const runtimeSections = buildRuntimeContextSections({
+    ...(runtimeTaskInstruction !== undefined ? { taskInstruction: runtimeTaskInstruction } : {}),
+    eventType: input.eventType,
+    interactionMode: input.interactionMode,
+    ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+    ...(input.promptVariant !== undefined ? { promptVariant: input.promptVariant } : {}),
+    workspaceContext: input.activeWorkspace,
+    workspaceSkillsContext: input.activeWorkspaceSkills,
+    projectContext: input.activeProjectContext,
+    skillPackContext: input.activeSkillPack,
     ...(activeProcessEvidence !== undefined ? { activeProcessEvidence } : {}),
     ...(recentFilesystemEvidence !== undefined ? { recentFilesystemEvidence } : {}),
     ...(recentToolResultEvidence !== undefined ? { recentToolResultEvidence } : {}),
@@ -216,6 +250,21 @@ export function buildKestrelAgentContext(
     ...(recoveryContext !== undefined ? { recoveryContext } : {}),
     transcript: normalizeModelTranscript(transcript),
   };
+  const transcriptMessages = contextMessages.slice(runtimeContext.trim().length > 0 ? 1 : 0);
+  const manifestSections = withExactDuplicates([
+    ...(systemMessage !== undefined
+      ? [toManifestSection("systemPrompt", "system-prompt", serializeMessageContent(systemMessage))]
+      : []),
+    ...runtimeSections.map((section) => toManifestSection(
+      section.id,
+      section.origin,
+      section.content,
+      section.revision,
+    )),
+    ...(transcriptMessages.length > 0
+      ? [toManifestSection("transcript", "model-transcript", JSON.stringify(transcriptMessages))]
+      : []),
+  ]);
   return {
     transcript,
     messages,
@@ -223,7 +272,8 @@ export function buildKestrelAgentContext(
     modelInput,
     metadata: {
       builder: "kestrel-agent-context",
-      version: 1,
+      version: 2,
+      manifestSections,
       sections: [
         { id: "systemPrompt", origin: "system-prompt", rendered: systemMessage !== undefined },
         { id: "task", origin: "turn", rendered: input.goal.trim().length > 0 },
@@ -251,6 +301,38 @@ export function buildKestrelAgentContext(
       ],
     },
   };
+}
+
+function toManifestSection(
+  id: string,
+  origin: string,
+  content: string,
+  revision?: string | undefined,
+): ContextSectionCandidateV1 {
+  return {
+    id,
+    origin,
+    ...(revision !== undefined ? { revision } : {}),
+    contentHash: createHash("sha256").update(content).digest("hex"),
+    count: countTextTokens(content),
+  };
+}
+
+function withExactDuplicates(sections: ContextSectionCandidateV1[]): ContextSectionCandidateV1[] {
+  const idsByHash = new Map<string, string[]>();
+  for (const section of sections) {
+    const ids = idsByHash.get(section.contentHash) ?? [];
+    ids.push(section.id);
+    idsByHash.set(section.contentHash, ids);
+  }
+  return sections.map((section) => {
+    const duplicateOf = (idsByHash.get(section.contentHash) ?? []).filter((id) => id !== section.id);
+    return duplicateOf.length > 0 ? { ...section, duplicateOf } : section;
+  });
+}
+
+function serializeMessageContent(message: ModelMessage): string {
+  return typeof message.content === "string" ? message.content : JSON.stringify(message.content);
 }
 
 function transcriptHasUserMessage(transcript: ModelTranscript, message: string): boolean {

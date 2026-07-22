@@ -2,20 +2,28 @@ import assert from "node:assert/strict";
 
 import {
   acceptRendererPrompt,
+  addRendererDraftAttachment,
   addRendererThread,
   appendRendererTranscript,
+  archiveRendererThread,
   createRendererThread,
   getRendererTurnContinuation,
+  getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
+  groupRendererThreads,
+  isRendererThreadProjectLocked,
   MAX_PERSISTED_TRANSCRIPT_BYTES,
   MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD,
   readDesktopRendererState,
+  renameRendererThread,
   resolveRendererThreadProjectPath,
+  restoreRendererThread,
   serializeDesktopRendererState,
   updateRendererDraft,
   updateRendererDraftAttachments,
   toDesktopRunHistory,
+  undoArchiveRendererThread,
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
@@ -100,6 +108,7 @@ contractTest("desktop.hermetic", "Vite renderer hydrates legacy threads and pres
   assert.equal(state.threads[0]?.mode, "plan");
   assert.equal(state.threads[0]?.workspaceMode, "local");
   assert.equal(state.threads[0]?.workspaceBaseRef, "HEAD");
+  assert.equal(state.threads[0]?.titleLocked, true);
   assert.equal(state.threads[0]?.workspaceSetupExecutable, "");
   assert.deepEqual(state.threads[0]?.openFiles, [
     "/workspace/project/src/app.ts",
@@ -140,6 +149,35 @@ contractTest("desktop.hermetic", "Vite renderer hydrates legacy threads and pres
     ["pull_request", "17", "side-by-side"],
   );
   assert.equal((store.states["thread-1"]?.transcript as unknown[]).length, 2);
+});
+
+contractTest("desktop.hermetic", "Vite renderer repairs a blank persisted session without dropping its conversation", () => {
+  const state = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "legacy-local-storage",
+    capturedAt: "2026-07-22T12:00:00.000Z",
+    entries: {
+      "kchat:web:active-thread:v1": "thread-blank-session",
+      "kchat:web:threads:v2": JSON.stringify({
+        summaries: [{ id: "thread-blank-session", title: "Keep me" }],
+        states: {
+          "thread-blank-session": {
+            sessionId: "   ",
+            transcript: [{ role: "user", text: "Preserve this", timestamp: "2026-07-22T12:00:00.000Z" }],
+          },
+        },
+      }),
+    },
+  });
+
+  assert.equal(state.activeThreadId, "thread-blank-session");
+  assert.equal(state.threads[0]?.title, "Keep me");
+  assert.equal(state.threads[0]?.transcript[0]?.text, "Preserve this");
+  assert.ok((state.threads[0]?.sessionId.length ?? 0) > 0);
+  const serialized = JSON.parse(serializeDesktopRendererState(state)["kchat:web:threads:v2"]!) as {
+    states: Record<string, { sessionId?: string }>;
+  };
+  assert.ok((serialized.states["thread-blank-session"]?.sessionId?.length ?? 0) > 0);
 });
 
 contractTest("desktop.hermetic", "Vite renderer persists and resumes the pending wait contract", () => {
@@ -282,28 +320,18 @@ contractTest("desktop.hermetic", "Vite renderer persists a project binding on pr
   assert.equal(hydrated.threads[1]?.projectPath, undefined);
 });
 
-contractTest("desktop.hermetic", "Vite renderer binds an unscoped conversation turn to the active registered project", () => {
+contractTest("desktop.hermetic", "Vite renderer does not implicitly bind an unscoped conversation", () => {
   const state = readDesktopRendererState(null);
   const projectPath = resolveRendererThreadProjectPath({
     thread: state.threads[0]!,
-    activeProjectPath: "/workspace/project-b",
-    projects: [
-      { path: "/workspace/project-a" },
-      { path: "/workspace/project-b" },
-    ],
   });
 
-  assert.equal(projectPath, "/workspace/project-b");
+  assert.equal(projectPath, undefined);
 });
 
-contractTest("desktop.hermetic", "Vite renderer preserves a conversation project binding over the currently viewed project", () => {
+contractTest("desktop.hermetic", "Vite renderer preserves a persisted conversation project binding", () => {
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
-    activeProjectPath: "/workspace/project-b",
-    projects: [
-      { path: "/workspace/project-a" },
-      { path: "/workspace/project-b" },
-    ],
   });
 
   assert.equal(projectPath, "/workspace/project-a");
@@ -313,15 +341,128 @@ contractTest("desktop.hermetic", "Vite renderer prefers the authoritative thread
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
     authoritativeProjectPath: "/workspace/project-b",
-    activeProjectPath: "/workspace/project-c",
-    projects: [
-      { path: "/workspace/project-a" },
-      { path: "/workspace/project-b" },
-      { path: "/workspace/project-c" },
-    ],
   });
 
   assert.equal(projectPath, "/workspace/project-b");
+});
+
+contractTest("desktop.hermetic", "manual conversation titles are trimmed, bounded, and locked against first-message replacement", () => {
+  const initial = readDesktopRendererState(null);
+  const threadId = initial.activeThreadId;
+  const renamed = renameRendererThread(initial, threadId, `  ${"A".repeat(70)}  `);
+  assert.equal(renamed.threads[0]?.title, `${"A".repeat(51)}...`);
+  assert.equal(renamed.threads[0]?.titleLocked, true);
+  assert.equal(isRendererThreadProjectLocked(renamed.threads[0]!), false);
+
+  const messaged = appendRendererTranscript(renamed, threadId, {
+    role: "user",
+    text: "This would normally become the automatic title",
+    timestamp: "2026-07-22T12:00:00.000Z",
+  });
+  assert.equal(messaged.threads[0]?.title, `${"A".repeat(51)}...`);
+  assert.equal(isRendererThreadProjectLocked(messaged.threads[0]!), true);
+  assert.equal(renameRendererThread(messaged, threadId, "   "), messaged);
+});
+
+contractTest("desktop.hermetic", "archive selects the next active conversation and restore supports Undo", () => {
+  const first = { ...createRendererThread({ projectPath: "/workspace/a" }), id: "first", updatedAt: "2026-07-22T12:00:00.000Z" };
+  const second = { ...createRendererThread({ projectPath: "/workspace/b" }), id: "second", updatedAt: "2026-07-22T11:00:00.000Z" };
+  const initial = { ...readDesktopRendererState(null), activeThreadId: first.id, threads: [first, second] };
+  const archived = archiveRendererThread(initial, first.id, {}, "2026-07-22T13:00:00.000Z");
+  assert.equal(archived.activeThreadId, second.id);
+  assert.equal(archived.threads.find((thread) => thread.id === first.id)?.archivedAt, "2026-07-22T13:00:00.000Z");
+
+  const restored = restoreRendererThread(archived, first.id);
+  assert.equal(restored.activeThreadId, first.id);
+  assert.equal(restored.threads.find((thread) => thread.id === first.id)?.archivedAt, undefined);
+});
+
+contractTest("desktop.hermetic", "archive blocking explains running turns, pending waits, and actionable requests", () => {
+  const thread = createRendererThread();
+  assert.match(getRendererThreadArchiveBlockReason(thread, { runActive: true, actionableOperatorRequest: false }) ?? "", /Stop the running work/u);
+  assert.match(getRendererThreadArchiveBlockReason({ ...thread, pendingWaitEventType: "user.reply" }, { runActive: false, actionableOperatorRequest: false }) ?? "", /pending wait/u);
+  assert.match(getRendererThreadArchiveBlockReason(thread, { runActive: false, runtimeWaiting: true, actionableOperatorRequest: false }) ?? "", /pending wait/u);
+  assert.match(getRendererThreadArchiveBlockReason(thread, { runActive: false, actionableOperatorRequest: true }) ?? "", /operator request/u);
+  assert.equal(getRendererThreadArchiveBlockReason(thread, { runActive: false, actionableOperatorRequest: false }), undefined);
+});
+
+contractTest("desktop.hermetic", "generated attachments update their owning conversation after navigation", () => {
+  const first = { ...createRendererThread(), id: "first", draft: "" };
+  const second = { ...createRendererThread(), id: "second", draft: "Second draft" };
+  const initial = { ...readDesktopRendererState(null), activeThreadId: second.id, threads: [first, second] };
+  const updated = addRendererDraftAttachment(initial, first.id, {
+    attachmentId: "attachment-1",
+    generatedDraft: "Review the generated evidence.",
+  });
+  assert.equal(updated.activeThreadId, second.id);
+  assert.deepEqual(updated.threads.find((thread) => thread.id === first.id)?.draftAttachmentIds, ["attachment-1"]);
+  assert.equal(updated.threads.find((thread) => thread.id === first.id)?.draft, "Review the generated evidence.");
+  assert.equal(updated.threads.find((thread) => thread.id === second.id)?.draft, "Second draft");
+});
+
+contractTest("desktop.hermetic", "generated attachments preserve draft limits and replacement policy", () => {
+  const thread = { ...createRendererThread(), id: "thread", draft: "Keep me", draftAttachmentIds: Array.from({ length: 8 }, (_, index) => `attachment-${index}`) };
+  const initial = { ...readDesktopRendererState(null), activeThreadId: thread.id, threads: [thread] };
+  const overflow = addRendererDraftAttachment(initial, thread.id, { attachmentId: "overflow", generatedDraft: "Replace" });
+  assert.equal(overflow.threads[0], thread);
+  const available = { ...initial, threads: [{ ...thread, draftAttachmentIds: [] }] };
+  const preserved = addRendererDraftAttachment(available, thread.id, { attachmentId: "new", generatedDraft: "Replace" });
+  assert.equal(preserved.threads[0]?.draft, "Keep me");
+  const replaced = addRendererDraftAttachment(available, thread.id, { attachmentId: "new", generatedDraft: "Replace", replaceDraft: true });
+  assert.equal(replaced.threads[0]?.draft, "Replace");
+});
+
+contractTest("desktop.hermetic", "archiving the only active conversation creates an empty replacement in the same project", () => {
+  const only = { ...createRendererThread({ projectPath: "/workspace/a" }), id: "only" };
+  const initial = { ...readDesktopRendererState(null), activeThreadId: only.id, threads: [only] };
+  const archived = archiveRendererThread(initial, only.id, {}, "2026-07-22T13:00:00.000Z");
+  const replacement = archived.threads.find((thread) => thread.id === archived.activeThreadId);
+  assert.notEqual(replacement?.id, only.id);
+  assert.equal(replacement?.projectPath, "/workspace/a");
+  assert.deepEqual(replacement?.transcript, []);
+  const undone = undoArchiveRendererThread(archived, only.id, true);
+  assert.equal(undone.activeThreadId, only.id);
+  assert.deepEqual(undone.threads.map((thread) => thread.id), [only.id]);
+  assert.equal(undone.threads[0]?.archivedAt, undefined);
+});
+
+contractTest("desktop.hermetic", "archived state persists without dropping unknown legacy fields", () => {
+  const initial = readDesktopRendererState(null);
+  const thread = initial.threads[0]!;
+  const changed = {
+    ...initial,
+    threads: [{ ...thread, archivedAt: "2026-07-22T13:00:00.000Z", titleLocked: true, rawSummary: { legacySummary: "keep" }, rawState: { legacyState: "keep" } }],
+  };
+  const serialized = serializeDesktopRendererState(changed);
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    capturedAt: "2026-07-22T13:01:00.000Z",
+    entries: serialized,
+  });
+  assert.equal(hydrated.threads[0]?.archivedAt, "2026-07-22T13:00:00.000Z");
+  assert.equal(hydrated.threads[0]?.titleLocked, true);
+  const reserialized = JSON.parse(serializeDesktopRendererState(hydrated)["kchat:web:threads:v2"]!) as { summaries: Record<string, unknown>[]; states: Record<string, Record<string, unknown>> };
+  assert.equal(reserialized.summaries[0]?.legacySummary, "keep");
+  assert.equal(reserialized.states[thread.id]?.legacyState, "keep");
+});
+
+contractTest("desktop.hermetic", "conversation groups order projects and threads while separating archive and unavailable paths", () => {
+  const threads = [
+    { ...createRendererThread({ projectPath: "/workspace/a" }), id: "a-old", title: "Alpha old", updatedAt: "2026-07-22T10:00:00.000Z" },
+    { ...createRendererThread({ projectPath: "/workspace/a" }), id: "a-new", title: "Alpha new", updatedAt: "2026-07-22T12:00:00.000Z" },
+    { ...createRendererThread({ projectPath: "/workspace/b" }), id: "b", title: "Beta", updatedAt: "2026-07-22T11:00:00.000Z" },
+    { ...createRendererThread(), id: "none", title: "Loose", updatedAt: "2026-07-22T14:00:00.000Z" },
+    { ...createRendererThread({ projectPath: "/removed/path" }), id: "missing", title: "Legacy", updatedAt: "2026-07-22T13:00:00.000Z" },
+    { ...createRendererThread({ projectPath: "/workspace/b" }), id: "archived", title: "Archived beta", archivedAt: "2026-07-22T15:00:00.000Z", updatedAt: "2026-07-22T15:00:00.000Z" },
+  ];
+  const projects = [{ path: "/workspace/a", label: "Alpha project" }, { path: "/workspace/b", label: "Beta project" }];
+  const activeGroups = groupRendererThreads({ threads, projects, archived: false });
+  assert.deepEqual(activeGroups.map((group) => group.label), ["Alpha project", "Beta project", "No project", "Unavailable project"]);
+  assert.deepEqual(activeGroups[0]?.threads.map((thread) => thread.id), ["a-new", "a-old"]);
+  assert.deepEqual(groupRendererThreads({ threads, projects, archived: true }).flatMap((group) => group.threads.map((thread) => thread.id)), ["archived"]);
+  assert.deepEqual(groupRendererThreads({ threads, projects, archived: false, query: "beta project" }).flatMap((group) => group.threads.map((thread) => thread.id)), ["b"]);
+  assert.deepEqual(groupRendererThreads({ threads, projects, archived: false, query: "legacy" }).flatMap((group) => group.threads.map((thread) => thread.id)), ["missing"]);
 });
 
 contractTest("desktop.hermetic", "Vite renderer submits only tagged runtime waiting prompts as system history", () => {

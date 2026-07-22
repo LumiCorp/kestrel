@@ -217,6 +217,24 @@ contractTest("web.hermetic", "mobile responses, snapshots, message parts, errors
   );
   assert.ok(Array.isArray(contract.components.schemas.TurnEvent.oneOf));
   assert.ok(contract.components.schemas.ErrorResponse.properties);
+  const mobileError = contract.components.schemas.ErrorResponse.properties as {
+    error: {
+      properties: {
+        code: { enum: string[] };
+        nextStep: { enum: string[] };
+      };
+    };
+  };
+  assert.ok(
+    mobileError.error.properties.code.enum.includes(
+      "ORGANIZATION_SETUP_REQUIRED"
+    )
+  );
+  assert.deepEqual(mobileError.error.properties.nextStep.enum, [
+    "model_access",
+    "workspace_compute",
+    "environment_execution",
+  ]);
   assert.deepEqual(
     (
       contract.components.schemas.InteractionStatusPart.properties as Record<

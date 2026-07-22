@@ -72,6 +72,15 @@ export function projectDesktopRunStream(
     const format = readString(update.format) ?? "provider_reasoning_text";
     const reasoningKey = `${runId}:${attempt}:${format}`;
     const phase = event.type.slice("run.model.reasoning.".length);
+    const last = current.at(-1);
+    if (
+      phase === "started"
+      && last?.kind === "reasoning"
+      && last.reasoningKey === reasoningKey
+      && last.status === "active"
+    ) {
+      return [...current];
+    }
     if (phase === "completed" || phase === "failed") {
       return completeMostRecentReasoning(
         current,
@@ -81,7 +90,6 @@ export function projectDesktopRunStream(
     }
     const contentState = update.contentState === "not_retained" ? "not_retained" : "live";
     const delta = phase === "delta" && contentState === "live" ? readString(update.delta) : undefined;
-    const last = current.at(-1);
     const continuesTail = phase !== "started"
       && last?.kind === "reasoning"
       && last.reasoningKey === reasoningKey

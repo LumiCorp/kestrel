@@ -32,6 +32,7 @@ export function resolveDesktopLibexecRoot(input: {
 
 export function resolveDesktopPathConfig(input: {
   cwd: string;
+  appPath?: string | undefined;
   resourcesPath?: string | undefined;
   userDataPath: string;
   localCoreHomePath?: string | undefined;
@@ -39,10 +40,10 @@ export function resolveDesktopPathConfig(input: {
 }): DesktopPathConfig {
   const repoRoot = input.isPackaged
     ? path.join(input.resourcesPath ?? input.cwd, "kestrel-repo")
-    : resolveRepoRoot(input.cwd);
+    : resolveRepoRoot([input.cwd, input.appPath]);
   const staticPath = input.isPackaged
     ? path.join(input.resourcesPath ?? input.cwd, "static")
-    : path.join(resolveRepoRoot(input.cwd), "apps", "desktop", "static");
+    : path.join(repoRoot, "apps", "desktop", "static");
   const iconPath = input.isPackaged
     ? path.join(input.resourcesPath ?? input.cwd, "kestrel-head.png")
     : path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png");
@@ -65,21 +66,29 @@ export function resolveDesktopPathConfig(input: {
   };
 }
 
-function resolveRepoRoot(cwd: string): string {
-  let current = cwd;
-  while (true) {
-    const candidate = path.join(current, "pnpm-workspace.yaml");
-    if (existsSync(candidate)) {
-      return current;
+function resolveRepoRoot(searchRoots: Array<string | undefined>): string {
+  for (const searchRoot of searchRoots) {
+    if (searchRoot === undefined || searchRoot.trim().length === 0) {
+      continue;
     }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      throw createDesktopError({
-        code: "desktop.repo_root_not_found",
-        message: "Unable to locate the desktop repo root.",
-        details: `cwd=${cwd}`,
-      });
+
+    let current = searchRoot;
+    while (true) {
+      const candidate = path.join(current, "pnpm-workspace.yaml");
+      if (existsSync(candidate)) {
+        return current;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        break;
+      }
+      current = parent;
     }
-    current = parent;
   }
+
+  throw createDesktopError({
+    code: "desktop.repo_root_not_found",
+    message: "Unable to locate the desktop repo root.",
+    details: `searchRoots=${searchRoots.filter((value): value is string => value !== undefined).join(",")}`,
+  });
 }

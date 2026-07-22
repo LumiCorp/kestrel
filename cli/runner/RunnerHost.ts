@@ -1326,7 +1326,7 @@ export class RunnerHost {
     this.writer.emit(
       "runner.error",
       {
-        code: "RUNNER_RUNTIME_ERROR",
+        code: "OPERATOR_THREAD_NOT_FOUND",
         message: `Thread '${payload.threadId}' was not found.`,
       },
       { commandId }

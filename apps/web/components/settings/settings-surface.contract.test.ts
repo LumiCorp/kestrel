@@ -50,15 +50,20 @@ contractTest(
     const manifest = read("app/route-ownership.manifest.ts");
     const inference = read("components/settings/inference-client.tsx");
     const environments = read("components/settings/environments-client.tsx");
+    const setup = read("components/settings/setup-client.tsx");
 
     assert.match(layout, /max-w-7xl/u);
     assert.match(layout, /<main className="[^"]*px-4/u);
     assert.match(navigation, /\/settings\/organization\/inference/u);
+    assert.match(navigation, /\/settings\/organization\/setup/u);
     assert.doesNotMatch(navigation, /\/settings\/organization\/infrastructure/u);
     assert.match(manifest, /\/settings\/organization\/inference", "models"/u);
+    assert.match(manifest, /\/settings\/organization\/setup", "models"/u);
     assert.doesNotMatch(manifest, /\/settings\/organization\/infrastructure"/u);
     assert.doesNotMatch(inference, /connections\/fly/u);
-    assert.doesNotMatch(environments, /FlyWorkspaceProviderClient/u);
+    assert.match(environments, /FlyWorkspaceProviderClient/u);
+    assert.match(setup, /Start first chat/u);
+    assert.doesNotMatch(setup, /components\/ui\/card/u);
     assert.equal(
       fs.existsSync(
         path.join(

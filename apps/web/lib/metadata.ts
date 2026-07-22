@@ -1,6 +1,16 @@
 import type { Metadata } from "next/types";
 import { publicAppUrl, publicOgImageUrl } from "@/lib/public-config";
 
+const DEFAULT_SOCIAL_IMAGE = "/brand/kestrel-one-social-card.png";
+type SocialImages = Exclude<Metadata["openGraph"], null | undefined>["images"];
+
+export function resolveSocialImages(
+  routeImages: SocialImages,
+  configuredImage: string | null = publicOgImageUrl
+): SocialImages {
+  return configuredImage || routeImages || DEFAULT_SOCIAL_IMAGE;
+}
+
 export function createMetadata(override: Metadata): Metadata {
   const openGraph: Metadata["openGraph"] = {
     title: override.title ?? undefined,
@@ -13,9 +23,7 @@ export function createMetadata(override: Metadata): Metadata {
     openGraph.url = publicAppUrl;
   }
 
-  if (!openGraph?.images && publicOgImageUrl) {
-    openGraph.images = publicOgImageUrl;
-  }
+  openGraph.images = resolveSocialImages(openGraph.images);
 
   const twitter: Metadata["twitter"] = {
     card: "summary_large_image",
@@ -24,9 +32,7 @@ export function createMetadata(override: Metadata): Metadata {
     ...override.twitter,
   };
 
-  if (!twitter?.images && publicOgImageUrl) {
-    twitter.images = publicOgImageUrl;
-  }
+  twitter.images = resolveSocialImages(twitter.images);
 
   return {
     ...override,

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   DesktopBootState,
+  DesktopAttachmentImportInput,
   DesktopBridge,
   DesktopBridgeInfo,
   DesktopCapabilityView,
@@ -16,9 +17,11 @@ import type {
   DesktopProjectSnapshotResponse,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
+  DesktopRunCancellationResult,
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
   DesktopRuntimeHealth,
+  DesktopThreadAuthorityResult,
   DesktopSupportBundle,
   DesktopShellCommand,
   DesktopUiStateSyncResult,
@@ -67,6 +70,9 @@ const desktopBridge: DesktopBridge = {
   selectAttachments(threadId) {
     return ipcRenderer.invoke("desktop:select-attachments", threadId);
   },
+  importAttachment(input: DesktopAttachmentImportInput) {
+    return ipcRenderer.invoke("desktop:import-attachment", input);
+  },
   listAttachments(threadId) {
     return ipcRenderer.invoke("desktop:list-attachments", threadId);
   },
@@ -80,7 +86,7 @@ const desktopBridge: DesktopBridge = {
   submitOperatorControl(request) {
     return ipcRenderer.invoke("desktop:operator-control", request);
   },
-  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent> {
+  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunCancellationResult> {
     return ipcRenderer.invoke("desktop:cancel-run", request);
   },
   onRunnerEvent(listener) {
@@ -314,6 +320,9 @@ const desktopBridge: DesktopBridge = {
   },
   getOperatorThread(threadId) {
     return ipcRenderer.invoke("desktop:get-operator-thread", threadId);
+  },
+  inspectThreadAuthority(threadId): Promise<DesktopThreadAuthorityResult> {
+    return ipcRenderer.invoke("desktop:inspect-thread-authority", threadId);
   },
   listOperatorRuns(query) {
     return ipcRenderer.invoke("desktop:list-operator-runs", query);

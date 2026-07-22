@@ -6,6 +6,10 @@ import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
 import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
 import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
 import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
+import {
+  parseHarnessEconomicsPolicyV1,
+  parseModelEconomicsProfileV1,
+} from "../../src/economics/policy.js";
 import type { McpServerConfig } from "../../src/mcp/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
@@ -477,6 +481,12 @@ function validateProfile(
     version >= 3 ? parseDelegation(item.delegation) : undefined;
   const reasoning =
     version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
+  const harnessEconomicsPolicy = item.harnessEconomicsPolicy === undefined
+    ? undefined
+    : parseHarnessEconomicsPolicyV1(item.harnessEconomicsPolicy);
+  const modelEconomicsProfile = item.modelEconomicsProfile === undefined
+    ? undefined
+    : parseModelEconomicsProfileV1(item.modelEconomicsProfile);
 
   return {
     id,
@@ -505,6 +515,8 @@ function validateProfile(
     ...(delegation !== undefined ? { delegation } : {}),
     ...(theme !== undefined ? { theme } : {}),
     ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(harnessEconomicsPolicy !== undefined ? { harnessEconomicsPolicy } : {}),
+    ...(modelEconomicsProfile !== undefined ? { modelEconomicsProfile } : {}),
     ...(defaultFlag !== undefined ? { default: defaultFlag } : {}),
   };
 }

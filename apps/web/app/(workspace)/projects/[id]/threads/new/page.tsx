@@ -6,6 +6,7 @@ import { DataStreamHandler } from "@/components/data-stream-handler";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { requireProjectRole } from "@/lib/projects/access";
 import { generateUUID } from "@/lib/utils";
 
@@ -29,6 +30,7 @@ export default async function NewProjectThreadPage({
     organizationId,
     environmentId: access.project.environmentId,
   });
+  const readiness = await getOrganizationChatReadiness(organizationId);
   const threadId = generateUUID();
   const modelIdFromCookie = cookieStore.get("chat-model");
   const initialChatModel = await resolvePreferredLanguageModelId(
@@ -49,6 +51,11 @@ export default async function NewProjectThreadPage({
           id={threadId}
           initialChatModel={initialChatModel}
           key={threadId}
+          newTurnDisabledReason={
+            readiness.applicable && !readiness.ready
+              ? "Finish organization setup before starting a new agent turn."
+              : undefined
+          }
           projectId={projectId}
           projectName={access.project.name}
         />
