@@ -51,6 +51,7 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
   prompt: string;
   context: KestrelRequestContext;
   clientCapabilities: KestrelAgentTurnInput["clientCapabilities"];
+  workspaceSkills?: RunnerTurnInput["workspaceSkills"] | undefined;
   mcpContext?: RunnerTurnInput["mcpContext"] | undefined;
   mcpAuthorization?: RunnerTurnInput["mcpAuthorization"] | undefined;
 }): Promise<KestrelOneExternalReply> {
@@ -66,6 +67,9 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
       sessionId: input.sessionId,
       message: input.prompt,
       clientCapabilities: input.clientCapabilities,
+      ...(input.workspaceSkills
+        ? { workspaceSkills: input.workspaceSkills }
+        : {}),
       ...(input.mcpContext ? { mcpContext: input.mcpContext } : {}),
       ...(input.mcpAuthorization
         ? { mcpAuthorization: input.mcpAuthorization }

@@ -138,8 +138,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
     environmentId: environment.id,
   });
   let mcpContext;
+  let projectId: string | null | undefined;
   if (input.recordExecution) {
-    const projectId = await recordEnvironmentExecution({
+    projectId = await recordEnvironmentExecution({
       id: runId,
       organizationId: input.organizationId,
       environmentId: environment.id,
@@ -194,6 +195,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     runId,
     environmentId: environment.id,
     workspaceId: workspace.id,
+    projectId,
     effectiveCapabilities,
     reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),
@@ -243,8 +245,9 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     environmentId: resolved.binding.environmentId,
   });
   let mcpContext;
+  let projectId: string | null | undefined;
   if (input.recordExecution) {
-    const projectId = await recordEnvironmentExecution({
+    projectId = await recordEnvironmentExecution({
       id: runId,
       organizationId: input.organizationId,
       environmentId: resolved.binding.environmentId,
@@ -278,6 +281,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     runId,
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
+    projectId,
     effectiveCapabilities,
     reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),

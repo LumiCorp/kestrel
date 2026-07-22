@@ -413,6 +413,15 @@ export interface RunnerAutoCompaction {
   suppressOnce?: boolean | undefined;
 }
 
+export interface RunnerWorkspaceSkillCatalogEntry {
+  installationId: string;
+  name: string;
+  description: string;
+  commitSha: string;
+  contentDigest: string;
+  skillFile: string;
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -437,6 +446,7 @@ export interface RunnerTurnInput {
   manualCompaction?: boolean | undefined;
   autoCompaction?: RunnerAutoCompaction | undefined;
   workspace?: Record<string, unknown> | undefined;
+  workspaceSkills?: RunnerWorkspaceSkillCatalogEntry[] | undefined;
 }
 
 export interface RunnerRunError {
@@ -2565,6 +2575,7 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalBoolean(turn.manualCompaction, `${label}.manualCompaction`);
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
+  validateOptionalWorkspaceSkills(turn.workspaceSkills, `${label}.workspaceSkills`);
 }
 
 function parseJobInput(value: unknown, label: string): RunnerJobInputV1 {
@@ -3082,6 +3093,20 @@ function validateOptionalAttachments(value: unknown, label: string): void {
     validateOptionalNonEmptyString(attachment.createdAt, `${attachmentLabel}.createdAt`);
     validateOptionalString(attachment.data, `${attachmentLabel}.data`);
     validateOptionalString(attachment.text, `${attachmentLabel}.text`);
+  });
+}
+
+function validateOptionalWorkspaceSkills(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+  validateRecordArray(value, label, (entry, entryLabel) => {
+    requireNonEmptyString(entry.installationId, `${entryLabel}.installationId`);
+    requireNonEmptyString(entry.name, `${entryLabel}.name`);
+    requireNonEmptyString(entry.description, `${entryLabel}.description`);
+    requireNonEmptyString(entry.commitSha, `${entryLabel}.commitSha`);
+    requireNonEmptyString(entry.contentDigest, `${entryLabel}.contentDigest`);
+    requireNonEmptyString(entry.skillFile, `${entryLabel}.skillFile`);
   });
 }
 

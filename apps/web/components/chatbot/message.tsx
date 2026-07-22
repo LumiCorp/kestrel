@@ -586,6 +586,8 @@ const PurePreviewMessage = ({
                       <Response
                         className={cn({
                           "text-pretty": message.role === "assistant",
+                          "text-message-user-foreground":
+                            message.role === "user",
                         })}
                       >
                         {sanitizeText(part.text)}

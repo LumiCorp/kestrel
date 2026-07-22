@@ -244,6 +244,9 @@ export const projects = pgTable(
     currentContextRevision: integer("current_context_revision")
       .notNull()
       .default(1),
+    skillCatalogInitializedAt: timestamp("skill_catalog_initialized_at", {
+      withTimezone: true,
+    }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -254,6 +257,7 @@ export const projects = pgTable(
   },
   (table) => [
     index("projects_org_id_idx").on(table.organizationId),
+    uniqueIndex("projects_org_id_id_idx").on(table.organizationId, table.id),
     index("projects_environment_id_idx").on(table.environmentId),
     foreignKey({
       columns: [table.organizationId, table.environmentId],
@@ -346,6 +350,75 @@ export const projectAuditEvents = pgTable(
       table.createdAt
     ),
     index("project_audit_events_actor_idx").on(table.actorUserId),
+  ]
+);
+
+export const projectSkillInstallations = pgTable(
+  "project_skill_installations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    gitUrl: text("git_url").notNull(),
+    branch: text("branch").notNull().default("main"),
+    path: text("path").notNull().default(""),
+    status: text("status", {
+      enum: [
+        "pending",
+        "syncing",
+        "ready",
+        "stale",
+        "failed",
+        "removal_pending",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    revision: jsonb("revision").$type<Record<string, unknown>>(),
+    lastSyncAttemptAt: timestamp("last_sync_attempt_at", {
+      withTimezone: true,
+    }),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_skill_installations_organization_project_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("project_skill_installations_source_idx").on(
+      table.projectId,
+      table.gitUrl,
+      table.branch,
+      table.path
+    ),
+    index("project_skill_installations_org_project_idx").on(
+      table.organizationId,
+      table.projectId
+    ),
+    index("project_skill_installations_status_idx").on(
+      table.organizationId,
+      table.status
+    ),
+    check(
+      "project_skill_installations_status_check",
+      sql`${table.status} IN ('pending', 'syncing', 'ready', 'stale', 'failed', 'removal_pending')`
+    ),
   ]
 );
 

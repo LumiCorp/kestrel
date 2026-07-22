@@ -299,6 +299,26 @@ export async function validateWorkspaceSkillSource(
   input: WorkspaceSkillSource,
   resolveHost: (hostname: string) => Promise<readonly string[]> = resolvePublicHost,
 ): Promise<ValidatedWorkspaceSkillSource> {
+  const normalized = normalizeWorkspaceSkillSource(input);
+  const url = new URL(normalized.gitUrl);
+  const hostname = url.hostname.startsWith("[") && url.hostname.endsWith("]")
+    ? url.hostname.slice(1, -1)
+    : url.hostname;
+  const addresses = await resolveHost(hostname);
+  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
+    throw new Error("Skill Git URL must resolve only to public network addresses.");
+  }
+  const address = addresses[0];
+  if (address === undefined) throw new Error("Skill Git URL must resolve to a public network address.");
+  return {
+    ...normalized,
+    resolution: { hostname, address },
+  };
+}
+
+export function normalizeWorkspaceSkillSource(
+  input: WorkspaceSkillSource,
+): WorkspaceSkillSource {
   let url: URL;
   try {
     url = new URL(input.gitUrl.trim());
@@ -310,23 +330,13 @@ export async function validateWorkspaceSkillSource(
   }
   if (url.search || url.hash) throw new Error("Skill Git URL must not contain query parameters or fragments.");
   if (!url.pathname || url.pathname === "/") throw new Error("Skill Git URL must identify a repository path.");
-  const hostname = url.hostname.startsWith("[") && url.hostname.endsWith("]")
-    ? url.hostname.slice(1, -1)
-    : url.hostname;
-  const addresses = await resolveHost(hostname);
-  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-    throw new Error("Skill Git URL must resolve only to public network addresses.");
-  }
   const branch = input.branch.trim();
   if (!isValidBranch(branch)) throw new Error("Skill branch is not a valid Git branch name.");
   const skillPath = normalizeSkillPath(input.path);
-  const address = addresses[0];
-  if (address === undefined) throw new Error("Skill Git URL must resolve to a public network address.");
   return {
     gitUrl: url.toString(),
     branch,
     ...(skillPath ? { path: skillPath } : {}),
-    resolution: { hostname, address },
   };
 }
 

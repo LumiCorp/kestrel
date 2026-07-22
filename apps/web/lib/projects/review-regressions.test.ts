@@ -59,8 +59,64 @@ contractTest("web.hermetic", "Project skills have a first-class tab separate fro
   assert.match(workspaceRail, /label: "Apps", tab: "apps"/u);
   assert.match(workspaceRail, /label: "Skills", tab: "skills"/u);
   assert.match(projectSkills, /placeholder="https:\/\/github\.com\/org\/skills\.git"/u);
+  assert.match(projectSkills, />Add from Git</u);
+  assert.match(projectSkills, />Git repository URL</u);
+  assert.match(projectSkills, /pending: "Pending activation"/u);
   assert.match(projectSkills, /Advanced source options/u);
+  assert.doesNotMatch(projectSkills, /Project Workspace required/u);
+  assert.doesNotMatch(projectSkills, /href=.*workspace/u);
   assert.doesNotMatch(workspaceSetup, /Agent skills/u);
+});
+
+contractTest("web.hermetic", "Project actions render only on Project Overview", () => {
+  const projectHome = readAppSource(
+    "components/projects/project-home-client.tsx"
+  );
+  const overviewGuard = projectHome.indexOf('activeTab === "overview"');
+  const overviewContent = projectHome.indexOf(
+    '<TabsContent value="overview">'
+  );
+
+  assert.ok(overviewGuard >= 0);
+  assert.ok(overviewContent > overviewGuard);
+  const guardedActions = projectHome.slice(overviewGuard, overviewContent);
+  assert.match(guardedActions, /New Thread/u);
+  assert.match(guardedActions, /Restore/u);
+  assert.match(guardedActions, /Delete permanently/u);
+  assert.match(guardedActions, /Archive/u);
+});
+
+contractTest("web.hermetic", "Project skill catalog migration owns tenant-safe canonical state", () => {
+  const migration = readAppSource(
+    "lib/db/migrations/0044_project_skill_catalog.sql"
+  );
+  const journal = readAppSource("lib/db/migrations/meta/_journal.json");
+
+  assert.match(migration, /ADD COLUMN "skill_catalog_initialized_at"/u);
+  assert.match(migration, /CREATE TABLE "project_skill_installations"/u);
+  assert.match(
+    migration,
+    /FOREIGN KEY \("organization_id", "project_id"\)[\s\S]*REFERENCES "public"\."projects"\("organization_id", "id"\)/u
+  );
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX "project_skill_installations_source_idx"/u
+  );
+  assert.match(migration, /project_skill_installations_status_check/u);
+  assert.match(journal, /"tag": "0044_project_skill_catalog"/u);
+});
+
+contractTest("web.hermetic", "Project runs reconcile skills before starting the runtime", () => {
+  const runtime = readAppSource("lib/agent/kestrel-runtime.ts");
+  const synchronizeIndex = runtime.indexOf("synchronizeProjectSkills({");
+  const runIndex = runtime.indexOf("client.streamRunWithProfile(");
+
+  assert.ok(synchronizeIndex >= 0);
+  assert.ok(runIndex > synchronizeIndex);
+  assert.match(
+    runtime.slice(synchronizeIndex, runIndex),
+    /workspaceSkills: projectSkills\.catalog/u
+  );
 });
 
 contractTest("web.hermetic", "Organization changes refresh Project and Thread sidebar data", () => {

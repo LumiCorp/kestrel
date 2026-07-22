@@ -46,6 +46,7 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = 403;
   } else if (
     code === "PROJECT_CONTEXT_CONFLICT" ||
+    code === "PROJECT_SKILL_CONFLICT" ||
     code === "PROJECT_LAST_OWNER" ||
     code === "GITHUB_APPROVAL_REQUIRED" ||
     code === "GITHUB_APPROVAL_INVALID" ||
@@ -66,6 +67,10 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     message === "MCP capability snapshot has already been reviewed."
   ) {
     status = 409;
+  } else if (code === "PROJECT_SKILL_NOT_FOUND") {
+    status = 404;
+  } else if (code === "PROJECT_SKILL_SOURCE_INVALID") {
+    status = 400;
   } else if (code === "APP_CONNECTION_INVALID") {
     status = 400;
   } else if (

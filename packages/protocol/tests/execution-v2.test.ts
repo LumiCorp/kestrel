@@ -797,6 +797,44 @@ contractTest("packages.hermetic", "canonical turn parsing validates structured a
   );
 });
 
+contractTest("packages.hermetic", "canonical turn parsing validates workspace skill catalogs", () => {
+  const workspaceSkills = [{
+    installationId: "skill-1",
+    name: "Release guide",
+    description: "Project release instructions",
+    commitSha: "0123456789abcdef",
+    contentDigest: "sha256:0123456789abcdef",
+    skillFile: "skills/release/SKILL.md",
+  }];
+  const parsed = parseRunnerCommandV2({
+    id: "command-workspace-skills",
+    type: "run.start",
+    payload: {
+      profileId: "reference",
+      turn: { ...turn, workspaceSkills },
+    },
+  });
+  assert.equal(parsed.type, "run.start");
+  if (parsed.type === "run.start") {
+    assert.deepEqual(parsed.payload.turn.workspaceSkills, workspaceSkills);
+  }
+
+  assert.throws(
+    () => parseRunnerCommandV2({
+      id: "command-invalid-workspace-skills",
+      type: "run.start",
+      payload: {
+        profileId: "reference",
+        turn: {
+          ...turn,
+          workspaceSkills: [{ ...workspaceSkills[0], contentDigest: "" }],
+        },
+      },
+    }),
+    /workspaceSkills\[0\]\.contentDigest must be a non-empty string/u,
+  );
+});
+
 contractTest("packages.hermetic", "canonical turn history distinguishes runtime assistant text from legacy waiting prompts", () => {
   const parsed = parseRunnerCommandV2({
     id: "command-runtime-assistant-history",

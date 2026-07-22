@@ -376,6 +376,9 @@ importers:
       '@kestrel-agents/sdk':
         specifier: 0.6.0
         version: link:../../packages/sdk
+      '@kestrel-agents/workspace-skills':
+        specifier: workspace:^
+        version: link:../../packages/workspace-skills
       '@kestrel/mcp-security':
         specifier: workspace:*
         version: link:../../packages/mcp-security
@@ -15252,6 +15255,7 @@ snapshots:
   entities@6.0.1: {}
 
   entities@7.0.1: {}
+
   entities@8.0.0: {}
 
   env-paths@2.2.1: {}

@@ -87,6 +87,7 @@
     "@kestrel-agents/next": "0.6.0",
     "@kestrel-agents/protocol": "0.6.0",
     "@kestrel-agents/sdk": "0.6.0",
+    "@kestrel-agents/workspace-skills": "workspace:^",
     "@kestrel/mcp-security": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:*",
     "@napi-rs/canvas": "0.1.80",
