@@ -104,6 +104,7 @@ try {
   assert.equal(manifest.main, "dist/src/index.js");
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
+  assert.equal(manifest.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
   assert.ok(filePaths.has(manifest.types), `runtime package types '${manifest.types}' are not packed`);
 
@@ -126,6 +127,11 @@ try {
     packedManifest.dependencies?.["@kestrel-agents/protocol"],
     packedManifest.version,
     "packed runtime must depend on the exact matching protocol version",
+  );
+  assert.equal(
+    packedManifest.dependencies?.["@kestrel-agents/workspace-skills"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching workspace-skills version",
   );
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);

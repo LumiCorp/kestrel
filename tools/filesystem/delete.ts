@@ -4,6 +4,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput } from "../helpers.js";
 import {
   createFileSystemCapability,
+  assertWorkspaceSkillStateMutationAllowed,
   createFileSystemPresentation,
   readBoolean,
   readRequiredPath,
@@ -36,6 +37,7 @@ export const fsDeleteTool: SharedToolModule = {
       const targetPath = readRequiredPath(body, "path", "fs.delete");
       const recursive = readBoolean(body, "recursive") ?? false;
       const resolved = await resolveExistingFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.delete", destructive: true });
 
       if (resolved.stat.isDirectory() && recursive === false) {
         const directory = await opendir(resolved.absolutePath);

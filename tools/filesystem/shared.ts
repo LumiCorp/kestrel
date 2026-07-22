@@ -347,6 +347,31 @@ export async function resolveTargetFileSystemPath(
   };
 }
 
+export function assertWorkspaceSkillStateMutationAllowed(input: {
+  absolutePath: string;
+  config: FileSystemToolPolicyConfig | undefined;
+  toolName: string;
+  destructive?: boolean | undefined;
+}): void {
+  const policy = resolveFileSystemPolicy(input.config);
+  const candidate = path.resolve(input.absolutePath);
+  const protectedRoot = path.join(policy.workspaceRoot, ".kestrel", "skills");
+  if (
+    isWithinRoot(candidate, protectedRoot) ||
+    (input.destructive === true && isWithinRoot(protectedRoot, candidate))
+  ) {
+    throw createFileSystemFailure(
+      "WORKSPACE_SKILL_STATE_PROTECTED",
+      `${input.toolName} cannot modify Kestrel-owned workspace skill state.`,
+      {
+        path: normalizeDisplayPath(candidate, policy),
+        classification: "policy",
+        recoverable: false,
+      },
+    );
+  }
+}
+
 export async function ensureParentDirectory(
   targetPath: string,
   config: FileSystemToolPolicyConfig | undefined,

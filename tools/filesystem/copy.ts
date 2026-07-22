@@ -4,6 +4,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { assertString, parseObjectInput } from "../helpers.js";
 import {
   createFileSystemCapability,
+  assertWorkspaceSkillStateMutationAllowed,
   createFileSystemPresentation,
   prepareDestinationForMutation,
   readBoolean,
@@ -50,6 +51,12 @@ export const fsCopyTool: SharedToolModule = {
         destinationInput,
         context.fileSystem,
       );
+      assertWorkspaceSkillStateMutationAllowed({
+        absolutePath: destinationPath.absolutePath,
+        config: context.fileSystem,
+        toolName: "fs.copy",
+        destructive: true,
+      });
       await prepareDestinationForMutation({
         sourcePath,
         destinationPath,

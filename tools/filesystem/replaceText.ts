@@ -4,6 +4,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput, readString } from "../helpers.js";
 import {
   MAX_TEXT_EDIT_BYTES,
+  assertWorkspaceSkillStateMutationAllowed,
   buildUtf8TextStats,
   createFileSystemCapability,
   createFileSystemPresentation,
@@ -58,6 +59,7 @@ export const fsReplaceTextTool: SharedToolModule = {
       }
       const replaceAll = readBoolean(body, "all") ?? false;
       const resolved = await resolveExistingFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.replace_text" });
       if (Number(resolved.stat.size) > MAX_TEXT_EDIT_BYTES) {
         throw createToolInputError("fs.replace_text", `File is too large for fs.replace_text: ${resolved.displayPath}`, {
           path: resolved.displayPath,

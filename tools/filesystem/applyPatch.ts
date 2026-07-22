@@ -9,6 +9,7 @@ import { createToolInputError, parseObjectInput, readString } from "../helpers.j
 import { readTextArtifact } from "../runtime/artifactStore.js";
 import {
   createFileSystemCapability,
+  assertWorkspaceSkillStateMutationAllowed,
   createFileSystemPresentation,
   pathExists,
   resolveExistingFileSystemPath,
@@ -85,6 +86,7 @@ export const fsApplyPatchTool: SharedToolModule = {
       for (const patchPath of changedPaths) {
         const workspacePath = patchPath;
         const target = await resolveTargetFileSystemPath(workspacePath, context.fileSystem);
+        assertWorkspaceSkillStateMutationAllowed({ absolutePath: target.absolutePath, config: context.fileSystem, toolName: "fs.apply_patch" });
         if (await pathExists(target.absolutePath)) {
           const resolved = await resolveExistingFileSystemPath(workspacePath, context.fileSystem);
           const actualRevision = await readRevision(resolved.absolutePath);
