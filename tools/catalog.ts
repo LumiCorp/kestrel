@@ -51,6 +51,9 @@ import { finalizeAnswerTool } from "./runtime/finalizeAnswer.js";
 import { planningWriteDocumentTool } from "./runtime/planningWriteDocument.js";
 import { artifactReadTool } from "./runtime/artifactRead.js";
 import { agentSpawnTool } from "./runtime/agentSpawn.js";
+import { dialogOpenTool } from "./runtime/dialogOpen.js";
+import { dialogSendTool } from "./runtime/dialogSend.js";
+import { dialogCloseTool } from "./runtime/dialogClose.js";
 import { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 import { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
 import { delegateGetChildResultTool } from "./runtime/delegateGetChildResult.js";
@@ -130,6 +133,9 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   finalizeAnswerTool,
   planningWriteDocumentTool,
   agentSpawnTool,
+  dialogOpenTool,
+  dialogSendTool,
+  dialogCloseTool,
   delegateSpawnChildTool,
   delegateListChildrenTool,
   delegateGetChildResultTool,

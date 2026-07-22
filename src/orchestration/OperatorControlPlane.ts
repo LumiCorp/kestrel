@@ -26,6 +26,7 @@ import {
 } from "./Supervision.js";
 import { enqueuePendingSteer } from "./SteeringQueue.js";
 import { readFollowUpQueue } from "./FollowUpQueue.js";
+import { readDialogView } from "./DelegationSupervisor.js";
 import type {
   AssemblyChangeProposalRecord,
   ContextCheckpointAction,
@@ -173,6 +174,10 @@ export class OperatorControlPlane {
       ...(focus !== null ? { focusedThreadId: focus.threadId } : {}),
       ...(parentThread !== null ? { parentThread } : {}),
       childThreads,
+      dialogs: status.delegations.flatMap((record) => {
+        const dialog = readDialogView(record);
+        return dialog === undefined ? [] : [dialog];
+      }),
       ...(supervision !== undefined ? { supervision } : {}),
       ...(childOutcomes.length > 0 ? { childOutcomes } : {}),
       ...(childResults.length > 0 ? { childResults } : {}),

@@ -100,6 +100,10 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
   return [{ followUpId, message, attachmentIds,
     ...(interactionMode !== undefined ? { interactionMode } : {}),
     ...(actSubmode !== undefined ? { actSubmode } : {}),
+    ...(entry?.source === "dialog" ? { source: "dialog" as const } : entry?.source === "human" ? { source: "human" as const } : {}),
+    ...(nonEmptyString(entry?.dialogId) !== undefined ? { dialogId: nonEmptyString(entry?.dialogId) } : {}),
+    ...(nonEmptyString(entry?.dialogName) !== undefined ? { dialogName: nonEmptyString(entry?.dialogName) } : {}),
+    ...(nonEmptyString(entry?.sourceMessageId) !== undefined ? { sourceMessageId: nonEmptyString(entry?.sourceMessageId) } : {}),
     createdAt, state: entry?.state === "starting" ? "starting" : "queued" }];
 }
 

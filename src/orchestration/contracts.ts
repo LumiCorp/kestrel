@@ -60,6 +60,11 @@ export type ThreadEventType =
   | "delegation.failed"
   | "delegation.superseded"
   | "delegation.reconciled"
+  | "dialog.opened"
+  | "dialog.message"
+  | "dialog.execution_failed"
+  | "dialog.execution_cancelled"
+  | "dialog.closed"
   | "interaction.requested"
   | "interaction.resolved"
   | "approval.granted"
@@ -68,6 +73,8 @@ export type ThreadEventType =
   | "context.adaptation_applied";
 
 export interface ChildThreadPolicy {
+  /** Internal persistence envelope for model-visible collaborator dialogs. */
+  dialog?: Record<string, unknown> | undefined;
   allowApprovalInheritance?: boolean | undefined;
   allowedToolClasses?: ToolExecutionClass[] | undefined;
   allowedCapabilities?: string[] | undefined;
@@ -588,6 +595,7 @@ export interface OperatorThreadView {
   focusedThreadId?: string | undefined;
   parentThread?: ThreadRecord | undefined;
   childThreads: ThreadRecord[];
+  dialogs?: DialogView[] | undefined;
   supervision?: SupervisionSummary | undefined;
   childOutcomes?: SupervisionChildSummary[] | undefined;
   childResults?: OperatorChildResultSummary[] | undefined;
@@ -623,6 +631,23 @@ export interface OperatorThreadView {
   inboxItems?: OperatorInboxItem[] | undefined;
 }
 
+export interface DialogView {
+  dialogId: string;
+  name: string;
+  status: "open" | "closed";
+  childThreadId: string;
+  messages: Array<{
+    messageId: string;
+    dialogId: string;
+    name: string;
+    childSessionId: string;
+    sender: "kestrel" | "collaborator" | "system";
+    text: string;
+    createdAt: string;
+    status?: "failed" | "cancelled" | undefined;
+  }>;
+}
+
 export type FollowUpQueuePauseReason = "waiting" | "failed" | "cancelled" | "operator";
 
 export interface FollowUpQueueEntry {
@@ -633,6 +658,10 @@ export interface FollowUpQueueEntry {
   actSubmode?: ActSubmode | undefined;
   createdAt: string;
   state: "queued" | "starting";
+  source?: "human" | "dialog" | undefined;
+  dialogId?: string | undefined;
+  dialogName?: string | undefined;
+  sourceMessageId?: string | undefined;
 }
 
 export interface FollowUpQueueView {
@@ -649,6 +678,10 @@ export interface EnqueueFollowUpInput {
   interactionMode?: InteractionMode | undefined;
   actSubmode?: ActSubmode | undefined;
   issuedBy?: string | undefined;
+  source?: "human" | "dialog" | undefined;
+  dialogId?: string | undefined;
+  dialogName?: string | undefined;
+  sourceMessageId?: string | undefined;
 }
 
 export interface PendingSteerRecord {

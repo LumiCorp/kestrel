@@ -2929,6 +2929,7 @@ export class RunnerHost {
   }
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {
+    const commandId = this.commandBySession.get(update.task.parentSessionId);
     this.writer.emit(
       "task.updated",
       {
@@ -2938,9 +2939,13 @@ export class RunnerHost {
         ...(update.finalizedPayload !== undefined
           ? { finalizedPayload: update.finalizedPayload }
           : {}),
+        ...(update.dialogMessage !== undefined
+          ? { dialogMessage: update.dialogMessage }
+          : {}),
       },
       {
         sessionId: update.task.parentSessionId,
+        ...(commandId !== undefined ? { commandId } : {}),
       }
     );
   }

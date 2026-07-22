@@ -231,20 +231,7 @@ export class OperatorController {
       return;
     }
     if (subcommand === "spawn") {
-      const prompt = rest.join(" ").trim();
-      if (prompt.length === 0) {
-        await this.context.beginChildMissionJourney();
-        return;
-      }
-      const response = await this.context.client.sendCommand("operator.control", {
-        action: "spawn_child_thread",
-        threadId: focusedThreadId,
-        message: prompt,
-      }, this.context.getActiveRunnerMetadata());
-      if (response.type !== "operator.controlled") {
-        throw new Error(`Unexpected operator child response '${response.type}'`);
-      }
-      await this.context.applyOperatorControlResponse("child_spawn", response.payload);
+      await this.context.appendHistoryLine("system", "Collaborator dialogs are opened by Kestrel in the conversation; they cannot be launched manually.");
       return;
     }
     if (subcommand === "supersede") {
@@ -265,7 +252,7 @@ export class OperatorController {
       await this.context.applyOperatorControlResponse("child_supersede", response.payload);
       return;
     }
-    await this.context.appendHistoryLine("system", "Usage: /child <spawn|supersede> ...");
+    await this.context.appendHistoryLine("system", "Usage: /child supersede <delegationId> [reason]");
   }
 
   async handleFanInCommand(args: string[]): Promise<void> {

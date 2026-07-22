@@ -55,7 +55,9 @@ const DEFAULT_DELEGATION_POLICY = {
   maxDepth: 2,
 };
 const DELEGATION_TOOL_NAMES = [
-  "agent.spawn",
+  "dialog.open",
+  "dialog.send",
+  "dialog.close",
   "delegate.spawn_child",
   "delegate.list_children",
   "delegate.get_child_result",

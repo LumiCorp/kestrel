@@ -100,6 +100,18 @@ export interface KestrelStatusPresentation {
   errorMessage?: string | undefined;
 }
 
+export interface KestrelDialogMessagePresentation {
+  version: "v1";
+  messageId: string;
+  dialogId: string;
+  name: string;
+  childSessionId: string;
+  sender: "kestrel" | "collaborator" | "system";
+  text: string;
+  createdAt: string;
+  status?: "failed" | "cancelled" | undefined;
+}
+
 export interface KestrelMessageMetadata {
   kestrelTerminalStatus: KestrelTerminalStatus;
   /** Durable product turn that owns this assistant stream segment. */
@@ -121,6 +133,7 @@ export const KESTREL_PRESENTATION_DATA_PART_KEYS = [
   "kestrel-artifact",
   "kestrel-interaction",
   "kestrel-status",
+  "kestrel-dialog-message",
 ] as const;
 
 export type KestrelPresentationDataPartKey =
@@ -135,6 +148,7 @@ type KestrelPresentationDataPartPayloads = {
   "kestrel-artifact": KestrelArtifactPresentation;
   "kestrel-interaction": KestrelInteractionPresentation;
   "kestrel-status": KestrelStatusPresentation;
+  "kestrel-dialog-message": KestrelDialogMessagePresentation;
 };
 
 export type KestrelPresentationDataParts = {

@@ -28,7 +28,43 @@ contractTest("packages.hermetic", "presentation data part runtime keys stay alig
     "kestrel-artifact",
     "kestrel-interaction",
     "kestrel-status",
+    "kestrel-dialog-message",
   ]);
+});
+
+contractTest("packages.hermetic", "task dialog updates become durable presentation parts", () => {
+  const accumulator = createKestrelPresentationAccumulator({ assistantMessageId: "assistant-dialog" });
+  const parts = accumulator.append({
+    id: "event-dialog",
+    type: "task.updated",
+    ts: "2026-07-21T12:00:00.000Z",
+    sessionId: "thread-root",
+    payload: {
+      task: {},
+      kind: "waiting",
+      assistantText: null,
+      dialogMessage: {
+        messageId: "dialog-message-1",
+        dialogId: "dialog-1",
+        name: "Peregrine",
+        childSessionId: "child-1",
+        sender: "collaborator",
+        text: "I found the boundary.",
+        createdAt: "2026-07-21T12:00:00.000Z",
+      },
+    },
+  });
+  assert.equal(parts[0]?.type, "data-kestrel-dialog-message");
+  assert.deepEqual(parts[0] && "data" in parts[0] ? parts[0].data : null, {
+    version: "v1",
+    messageId: "dialog-message-1",
+    dialogId: "dialog-1",
+    name: "Peregrine",
+    childSessionId: "child-1",
+    sender: "collaborator",
+    text: "I found the boundary.",
+    createdAt: "2026-07-21T12:00:00.000Z",
+  });
 });
 
 contractTest("packages.hermetic", "completed output becomes canonical assistant text", () => {

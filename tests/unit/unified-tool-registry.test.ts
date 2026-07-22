@@ -2074,24 +2074,11 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preserves runtime built-in
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes agent.spawn as the model-facing runtime spawn tool", async () => {
+contractTest("runtime.hermetic", "UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn tools", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn", "delegate.spawn_child", "FinalizeAnswer"],
+    allowlist: ["dialog.open", "dialog.send", "dialog.close", "agent.spawn", "delegate.spawn_child"],
     context: {
-      onFinalize: (payload) => payload,
-      delegationService: {
-        async spawnTask() {
-          throw new Error(
-            "spawnTask should not be called by model tool listing"
-          );
-        },
-        async listTasks() {
-          return [];
-        },
-        async getTaskResult() {
-          return null;
-        },
-      },
+      dialogService: { async open() { throw new Error("not called"); }, async send() { throw new Error("not called"); }, async close() { throw new Error("not called"); } },
     },
     mcpManager: new MockMcpProvider({
       healthy: true,
@@ -2104,47 +2091,16 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes agent.spawn as the
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["agent.spawn"]
+    ["dialog.open", "dialog.send", "dialog.close"]
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry blocks internal delegate runtime tools even when allowlisted", async () => {
-  const now = new Date().toISOString();
+contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: [
-      "agent.spawn",
-      "delegate.spawn_child",
-      "delegate.list_children",
-      "delegate.get_child_result",
-    ],
-    context: {
-      delegationService: {
-        async spawnTask(input) {
-          return {
-            taskId: "task-child",
-            parentSessionId: input.parentSessionId,
-            title: input.title,
-            status: "PENDING",
-            childSessionId: "child-session",
-            childSessionName: "Child Session",
-            profileId: "default",
-            provider: "openrouter",
-            model: "model",
-            createdAt: now,
-            updatedAt: now,
-          };
-        },
-        async listTasks() {
-          return [];
-        },
-        async getTaskResult() {
-          return null;
-        },
-      },
-    },
+    allowlist: ["agent.spawn", "delegate.spawn_child", "delegate.list_children", "delegate.get_child_result"],
     mcpManager: new MockMcpProvider({
       healthy: true,
-      checkedAt: now,
+      checkedAt: new Date().toISOString(),
       servers: [],
       tools: [],
     }),
@@ -2153,8 +2109,9 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks internal delegate r
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["agent.spawn"]
+    []
   );
+  await assert.rejects(() => registry.call("agent.spawn", { task: "legacy" }), /internal-only runtime tool/);
   await assert.rejects(
     () =>
       registry.call("delegate.spawn_child", {
@@ -2171,49 +2128,13 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks internal delegate r
       }),
     /internal-only runtime tool/
   );
-
-  const result = await registry.call(
-    "agent.spawn",
-    {
-      task: "Spawn through the supported boundary",
-    },
-    {
-      runContext: createToolRunContext({
-        runId: "run-parent",
-        sessionId: "session-parent",
-        payload: {
-          orchestration: {
-            threadId: "thread-parent",
-            activeTaskId: "task-parent",
-            runtimeAssembly: {
-              toolAllowlist: ["agent.spawn"],
-            },
-          },
-        },
-      }),
-    }
-  );
-  assert.equal(
-    (result.auditRecord.output as { taskId?: string }).taskId,
-    "task-child"
-  );
 });
 
-contractTest("runtime.hermetic", "agent.spawn accepts only a task string", async () => {
+contractTest("runtime.hermetic", "dialog.open validates its minimal name and message contract", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn"],
+    allowlist: ["dialog.open"],
     context: {
-      delegationService: {
-        async spawnTask() {
-          throw new Error("spawnTask should not be called by validation");
-        },
-        async listTasks() {
-          return [];
-        },
-        async getTaskResult() {
-          return null;
-        },
-      },
+      dialogService: { async open() { throw new Error("not called"); }, async send() { throw new Error("not called"); }, async close() { throw new Error("not called"); } },
     },
     mcpManager: new MockMcpProvider({
       healthy: true,
@@ -2225,55 +2146,48 @@ contractTest("runtime.hermetic", "agent.spawn accepts only a task string", async
   await registry.refresh();
 
   assert.deepEqual(
-    await registry.validateInput("agent.spawn", {
-      task: "Investigate failing tests",
+    await registry.validateInput("dialog.open", {
+      name: "Peregrine",
+      message: "Investigate failing tests",
     }),
     {
-      task: "Investigate failing tests",
+      name: "Peregrine",
+      message: "Investigate failing tests",
     }
   );
   await assert.rejects(
     () =>
-      registry.validateInput("agent.spawn", {
-        task: "Investigate failing tests",
+      registry.validateInput("dialog.open", {
+        name: "Peregrine",
+        message: "Investigate failing tests",
         parentSessionId: "session-1",
       }),
     /parentSessionId/
   );
 });
 
-contractTest("runtime.hermetic", "agent.spawn delegates using the active runtime context", async () => {
+contractTest("runtime.hermetic", "dialog.open uses active thread identity and forbids nested dialogs", async () => {
   const requests: unknown[] = [];
   const now = new Date().toISOString();
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn"],
+    allowlist: ["dialog.open"],
     context: {
-      delegationService: {
-        async spawnTask(input) {
+      dialogService: {
+        async open(input) {
           requests.push(input);
           return {
-            taskId: "task-child",
+            dialogId: "dialog-child",
+            name: input.name,
             parentSessionId: input.parentSessionId,
-            ...(input.parentRunId !== undefined
-              ? { parentRunId: input.parentRunId }
-              : {}),
-            title: input.title,
-            status: "PENDING",
+            status: "open",
+            active: true,
             childSessionId: "child-session",
-            childSessionName: "Child Session",
-            profileId: "default",
-            provider: "openrouter",
-            model: "model",
             createdAt: now,
             updatedAt: now,
           };
         },
-        async listTasks() {
-          return [];
-        },
-        async getTaskResult() {
-          return null;
-        },
+        async send() { throw new Error("not called"); },
+        async close() { throw new Error("not called"); },
       },
     },
     mcpManager: new MockMcpProvider({
@@ -2285,9 +2199,10 @@ contractTest("runtime.hermetic", "agent.spawn delegates using the active runtime
   });
   await registry.refresh();
   const result = await registry.call(
-    "agent.spawn",
+    "dialog.open",
     {
-      task: "Investigate failing tests\nUse the unit output as the starting point.",
+      name: "Peregrine",
+      message: "Investigate failing tests",
     },
     {
       runContext: createToolRunContext({
@@ -2296,11 +2211,8 @@ contractTest("runtime.hermetic", "agent.spawn delegates using the active runtime
         payload: {
           orchestration: {
             threadId: "thread-parent",
-            activeTaskId: "task-parent",
-            delegationId: "delegation-parent",
-            delegationDepth: 2,
             runtimeAssembly: {
-              toolAllowlist: ["agent.spawn"],
+              toolAllowlist: ["dialog.open"],
             },
           },
         },
@@ -2308,24 +2220,24 @@ contractTest("runtime.hermetic", "agent.spawn delegates using the active runtime
     }
   );
 
-  assert.equal(
-    (result.auditRecord.output as { taskId?: string }).taskId,
-    "task-child"
-  );
+  assert.equal((result.auditRecord.output as { dialogId?: string }).dialogId, "dialog-child");
   assert.deepEqual(requests, [
     {
       parentSessionId: "thread-parent",
       parentRunId: "run-parent",
-      title: "Investigate failing tests",
-      prompt:
-        "Investigate failing tests\nUse the unit output as the starting point.",
-      launchedBy: "agent",
-      taskId: "task-parent",
-      parentTaskId: "task-parent",
-      delegationDepth: 2,
-      rootDelegationId: "delegation-parent",
+      name: "Peregrine",
+      message: "Investigate failing tests",
     },
   ]);
+  const nested = await registry.call("dialog.open", { name: "Osprey", message: "nested" }, {
+      runContext: createToolRunContext({
+        runId: "run-child",
+        sessionId: "session-child",
+        payload: { orchestration: { threadId: "thread-child", delegationId: "dialog-parent", delegationDepth: 1, runtimeAssembly: { toolAllowlist: ["dialog.open"] } } },
+      }),
+    });
+  assert.equal(nested.status, "FAILED");
+  assert.match(String((nested.auditRecord.error as { message?: string } | undefined)?.message), /Only Kestrel can open collaborator dialogs/);
 });
 
 contractTest("runtime.hermetic", "UnifiedToolRegistry scopes filesystem root per workspace payload", async () => {
