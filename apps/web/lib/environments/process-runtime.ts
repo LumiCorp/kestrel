@@ -7,15 +7,25 @@ import {
 } from "./provisioner";
 import { withEnvironmentOperationLock } from "./reconcile-lock";
 
-export async function processEnvironmentOperation(operationId: string) {
+export async function processEnvironmentOperation(
+  operationId: string,
+  options: { workerSignal?: AbortSignal | undefined } = {},
+) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: eq(schema.environmentOperations.id, operationId),
-    columns: { organizationId: true },
+    columns: { organizationId: true, type: true },
   });
   if (!operation) throw new Error("Environment operation was not found.");
   const locked = await withEnvironmentOperationLock({
     operationId,
     run: async () => {
+      if (operation.type === "workspace.backup") {
+        const { processQueuedWorkspaceBackup } = await import("./backups");
+        return processQueuedWorkspaceBackup({
+          operationId,
+          signal: options.workerSignal,
+        });
+      }
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
         provider: await createFlyProviderClient(),

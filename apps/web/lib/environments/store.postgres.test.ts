@@ -403,6 +403,109 @@ contractTest(
       WHERE "id" = ${projectBinding.workspace.id}
     `;
 
+    const interruptedBackupOperationId = `backup-operation-${suffix}`;
+    const interruptedBackupId = `backup-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "environment_operations" (
+          "id", "organization_id", "environment_id", "workspace_id",
+          "requested_by_user_id", "type", "status", "stage",
+          "idempotency_key", "started_at", "created_at", "updated_at"
+        ) VALUES (
+          ${interruptedBackupOperationId}, ${organizationA},
+          ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+          ${userA}, 'workspace.backup', 'running', 'workspace.backup.exporting',
+          ${`workspace.backup:${interruptedBackupId}`}, ${now}, ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "workspace_backups" (
+          "id", "organization_id", "environment_id", "workspace_id",
+          "operation_id", "reason", "status", "expires_at", "created_at", "updated_at"
+        ) VALUES (
+          ${interruptedBackupId}, ${organizationA},
+          ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+          ${interruptedBackupOperationId}, 'daily', 'creating',
+          ${new Date(now.getTime() + 86_400_000)}, ${now}, ${now}
+        )
+      `;
+    });
+    const {
+      failInterruptedWorkspaceBackup,
+      reconcileTerminalWorkspaceBackupRecords,
+    } = await import("./backups");
+    await failInterruptedWorkspaceBackup(interruptedBackupOperationId);
+    await failInterruptedWorkspaceBackup(interruptedBackupOperationId);
+    const [interruptedBackup] = await sql<
+      Array<{ operationStatus: string; backupStatus: string; errorCode: string | null }>
+    >`
+      SELECT
+        operation."status" AS "operationStatus",
+        backup."status" AS "backupStatus",
+        operation."error_code" AS "errorCode"
+      FROM "environment_operations" operation
+      JOIN "workspace_backups" backup ON backup."operation_id" = operation."id"
+      WHERE operation."id" = ${interruptedBackupOperationId}
+    `;
+    assert.deepEqual(interruptedBackup, {
+      operationStatus: "failed",
+      backupStatus: "failed",
+      errorCode: "WORKSPACE_BACKUP_WORKER_INTERRUPTED",
+    });
+    await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'completed', "stage" = 'workspace.backup.available',
+          "error_code" = NULL, "completed_at" = ${now}
+      WHERE "id" = ${interruptedBackupOperationId}
+    `;
+    await sql`
+      UPDATE "workspace_backups"
+      SET "status" = 'available', "object_key" = 'backups/available.enc'
+      WHERE "id" = ${interruptedBackupId}
+    `;
+    await failInterruptedWorkspaceBackup(interruptedBackupOperationId);
+    const [availableBackup] = await sql<
+      Array<{ operationStatus: string; backupStatus: string }>
+    >`
+      SELECT operation."status" AS "operationStatus", backup."status" AS "backupStatus"
+      FROM "environment_operations" operation
+      JOIN "workspace_backups" backup ON backup."operation_id" = operation."id"
+      WHERE operation."id" = ${interruptedBackupOperationId}
+    `;
+    assert.deepEqual(availableBackup, {
+      operationStatus: "completed",
+      backupStatus: "available",
+    });
+    await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'failed', "stage" = 'workspace.backup.failed',
+          "error_code" = 'WORKSPACE_BACKUP_FAILED', "completed_at" = ${now}
+      WHERE "id" = ${interruptedBackupOperationId}
+    `;
+    await sql`
+      UPDATE "workspace_backups"
+      SET "status" = 'creating', "object_key" = NULL
+      WHERE "id" = ${interruptedBackupId}
+    `;
+    assert.equal(await reconcileTerminalWorkspaceBackupRecords(), 1);
+    assert.equal(await reconcileTerminalWorkspaceBackupRecords(), 0);
+    const [reconciledBackup] = await sql<
+      Array<{ operationStatus: string; backupStatus: string; errorCode: string | null }>
+    >`
+      SELECT
+        operation."status" AS "operationStatus",
+        backup."status" AS "backupStatus",
+        operation."error_code" AS "errorCode"
+      FROM "environment_operations" operation
+      JOIN "workspace_backups" backup ON backup."operation_id" = operation."id"
+      WHERE operation."id" = ${interruptedBackupOperationId}
+    `;
+    assert.deepEqual(reconciledBackup, {
+      operationStatus: "failed",
+      backupStatus: "failed",
+      errorCode: "WORKSPACE_BACKUP_FAILED",
+    });
+
     const [preservedThread] = await sql<
       Array<{ id: string; projectId: string | null }>
     >`

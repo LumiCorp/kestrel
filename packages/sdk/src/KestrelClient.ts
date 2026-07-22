@@ -707,7 +707,12 @@ export class KestrelClient {
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("text/event-stream") === false) {
       const body = await response.text();
-      const event = parseRunnerEvent(body);
+      let event: RunnerEvent | undefined;
+      try {
+        event = parseRunnerEvent(body);
+      } catch (error) {
+        if (response.ok) throw error;
+      }
       if (event?.type === "runner.error") {
         throw toKestrelError(event.payload);
       }

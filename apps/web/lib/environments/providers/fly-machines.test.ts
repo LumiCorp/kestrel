@@ -4,6 +4,7 @@ import {
   flyEnvironmentAppName,
   flyEnvironmentNetworkName,
 } from "./fly-machines";
+import { EnvironmentProviderError } from "./contracts";
 import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
@@ -281,7 +282,11 @@ contractTest("web.hermetic", "Fly readiness fails closed when the named Machine 
         id: "machine-1",
         state: "started",
         region: "iad",
-        checks: [{ name: "workspace", status: "critical" }],
+        checks: [{
+          name: "workspace",
+          status: "critical",
+          output: "token=super-secret\nprocess exited with status 1",
+        }],
       })) as unknown as typeof fetch,
   });
 
@@ -292,7 +297,14 @@ contractTest("web.hermetic", "Fly readiness fails closed when the named Machine 
       checkName: "workspace",
       timeoutSeconds: 0,
     }),
-    /workspace did not pass/u
+    (error: unknown) => {
+      assert.ok(error instanceof EnvironmentProviderError);
+      assert.match(error.message, /machine-1 was started/u);
+      assert.match(error.message, /workspace was critical/u);
+      assert.match(error.message, /token=\[redacted\]/u);
+      assert.doesNotMatch(error.message, /super-secret/u);
+      return true;
+    }
   );
 });
 

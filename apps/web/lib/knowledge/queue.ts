@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { PgBoss } from "pg-boss";
+import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
@@ -8,6 +8,9 @@ import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 const KNOWLEDGE_SYNC_QUEUE = "knowledge.sync";
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
+export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
+export const ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60;
+export const ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS = 30;
 const MANAGED_RUNPOD_RUN_QUEUE = "ai.runpod.run";
 const MANAGED_RUNPOD_RECONCILE_QUEUE = "ai.runpod.reconcile";
 const MANAGED_RUNPOD_USAGE_QUEUE = "ai.runpod.usage";
@@ -16,6 +19,9 @@ const MANAGED_RUNPOD_RUN_OPTIONS = {
   retryDelay: 15,
   retryBackoff: true,
 } as const;
+const NONTERMINAL_JOB_STATES = new Set(["active", "created", "retry"]);
+let environmentMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let environmentMaintenanceRunning = false;
 
 async function sendManagedRunPodRun(boss: PgBoss, runId: string) {
   await boss.send(
@@ -48,7 +54,14 @@ async function createBoss() {
   await boss.start();
   await boss.createQueue(KNOWLEDGE_SYNC_QUEUE);
   await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE);
-  await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE);
+  await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
+  await boss.updateQueue(ENVIRONMENT_OPERATION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.createQueue(ENVIRONMENT_RECONCILE_QUEUE);
   await boss.schedule(
     ENVIRONMENT_RECONCILE_QUEUE,
@@ -97,26 +110,6 @@ export async function getKnowledgeBoss() {
         }
       }
     );
-    await boss.work(
-      ENVIRONMENT_OPERATION_QUEUE,
-      async (jobs: Array<{ data?: unknown }>) => {
-        const { processEnvironmentOperation } = await import(
-          "@/lib/environments/process-runtime"
-        );
-        for (const job of jobs) {
-          const payload = job.data as { operationId?: string } | null;
-          if (payload?.operationId) {
-            await processEnvironmentOperation(payload.operationId);
-          }
-        }
-      }
-    );
-    await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
-      const { runScheduledEnvironmentReconciliation } = await import(
-        "@/lib/environments/reconcile-schedule"
-      );
-      await runScheduledEnvironmentReconciliation();
-    });
   }
 
   return boss;
@@ -180,12 +173,122 @@ export async function enqueueKnowledgeDocumentRun(runId: string) {
 }
 
 export async function enqueueEnvironmentOperation(operationId: string) {
-  const boss = await getKnowledgeBoss();
-  await boss.send(
+  const boss = await getKnowledgeBossProducer();
+  const jobId = await boss.send(
     ENVIRONMENT_OPERATION_QUEUE,
     { operationId },
-    { retryLimit: 20, retryDelay: 3, retryBackoff: true }
+    {
+      retryLimit: 20,
+      retryDelay: 3,
+      retryBackoff: true,
+      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+    }
   );
+  if (!jobId) throw new Error("The Environment operation queue rejected the job.");
+}
+
+async function hasNonterminalEnvironmentJob(
+  boss: PgBoss,
+  operationId: string,
+) {
+  const jobs = await boss.findJobs<{ operationId?: unknown }>(
+    ENVIRONMENT_OPERATION_QUEUE,
+    { data: { operationId } },
+  );
+  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
+export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
+  const { reconcileTerminalWorkspaceBackupRecords } = await import(
+    "@/lib/environments/backups"
+  );
+  await reconcileTerminalWorkspaceBackupRecords();
+  const { PROVISIONER_OPERATION_TYPES } = await import(
+    "@/lib/environments/operation-routing"
+  );
+  const operations = await knowledgeDb.query.environmentOperations.findMany({
+    where: (table, { and, inArray }) =>
+      and(
+        inArray(table.status, ["queued", "running"]),
+        inArray(table.type, [...PROVISIONER_OPERATION_TYPES, "workspace.backup"]),
+      ),
+    columns: { id: true, status: true, type: true },
+    limit: 100,
+  });
+  for (const operation of operations) {
+    if (await hasNonterminalEnvironmentJob(boss, operation.id)) continue;
+    if (operation.status === "running" && operation.type === "workspace.backup") {
+      const { failInterruptedWorkspaceBackup } = await import(
+        "@/lib/environments/backups"
+      );
+      await failInterruptedWorkspaceBackup(operation.id);
+      continue;
+    }
+    await enqueueEnvironmentOperation(operation.id);
+  }
+}
+
+async function runEnvironmentMaintenance(boss: PgBoss) {
+  if (environmentMaintenanceRunning) return;
+  environmentMaintenanceRunning = true;
+  try {
+    await reconcileEnvironmentOperationQueue(boss);
+  } finally {
+    environmentMaintenanceRunning = false;
+  }
+}
+
+export async function startEnvironmentLifecycleWorker() {
+  const boss = await getKnowledgeBossProducer();
+  if (knowledgeQueueState.environmentWorkersRegistered) return boss;
+  knowledgeQueueState.environmentWorkersRegistered = true;
+  await boss.work(
+    ENVIRONMENT_OPERATION_QUEUE,
+    {
+      batchSize: 1,
+      includeMetadata: true,
+      heartbeatRefreshSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS,
+    },
+    async (jobs: Array<JobWithMetadata<{ operationId?: unknown }>>) => {
+      const { processEnvironmentOperation } = await import(
+        "@/lib/environments/process-runtime"
+      );
+      for (const job of jobs) {
+        if (typeof job.data?.operationId !== "string") continue;
+        await processEnvironmentOperation(job.data.operationId, {
+          workerSignal: job.signal,
+        });
+      }
+    },
+  );
+  await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
+    const { runScheduledEnvironmentReconciliation } = await import(
+      "@/lib/environments/reconcile-schedule"
+    );
+    await runScheduledEnvironmentReconciliation();
+  });
+  await reconcileEnvironmentOperationQueue(boss);
+  environmentMaintenanceTimer = setInterval(() => {
+    void runEnvironmentMaintenance(boss).catch((error) => {
+      console.error("Environment lifecycle worker maintenance failed.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    });
+  }, 5000);
+  return boss;
+}
+
+export async function stopEnvironmentLifecycleWorker() {
+  if (environmentMaintenanceTimer) {
+    clearInterval(environmentMaintenanceTimer);
+    environmentMaintenanceTimer = null;
+  }
+  if (!knowledgeQueueState.bossPromise) return;
+  const boss = await knowledgeQueueState.bossPromise;
+  await boss.stop({ graceful: true, timeout: 30_000 });
+  knowledgeQueueState.bossPromise = null;
+  knowledgeQueueState.environmentWorkersRegistered = false;
 }
 
 export async function enqueueManagedRunPodRun(runId: string) {

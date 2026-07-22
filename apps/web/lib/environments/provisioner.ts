@@ -128,6 +128,7 @@ export interface EnvironmentProvisioningRepository {
   updateOperationStage(input: {
     operationId: string;
     stage: string;
+    result?: Record<string, unknown> | undefined;
   }): Promise<void>;
   completeOperation(input: {
     operationId: string;
@@ -625,72 +626,94 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.workspace.mounting",
     });
-    const volume = await this.provider.ensureWorkspaceVolume({
-      appName: environment.flyAppName,
-      workspaceId: workspace.id,
-      region: environment.region,
-    });
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.machine.starting",
-    });
-    const workspaceServiceToken = createEnvironmentServiceToken();
-    const machine = await this.provider.ensureWorkspaceMachine({
-      appName: environment.flyAppName,
-      environmentId: environment.id,
-      organizationId: operation.organizationId,
-      workspaceId: workspace.id,
-      volumeId: volume.id,
-      region: environment.region,
-      runtimeImage: environment.runtimeImage ?? this.runtimeImage,
-      ticketPublicKey: this.ticketPublicKey,
-      controlPlaneUrl: this.controlPlaneUrl,
-      serviceToken: workspaceServiceToken,
-      source: {
-        type: workspace.sourceType,
-        ...(workspace.sourceResourceId
-          ? { resourceId: workspace.sourceResourceId }
-          : {}),
-        ...(workspace.sourceRepository
-          ? { repository: workspace.sourceRepository }
-          : {}),
-        ...(workspace.sourceDefaultBranch
-          ? { defaultBranch: workspace.sourceDefaultBranch }
-          : {}),
-      },
-      idleTimeoutMinutes:
-        environment.idleTimeoutMinutes || ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
-    });
-    if (machine.state !== "started") {
-      await this.provider.waitForMachine({
+    let volumeId: string | undefined;
+    let machineId: string | undefined;
+    try {
+      const volume = await this.provider.ensureWorkspaceVolume({
+        appName: environment.flyAppName,
+        workspaceId: workspace.id,
+        region: environment.region,
+      });
+      volumeId = volume.id;
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: "environment.machine.starting",
+        result: { provisionalVolumeId: volume.id },
+      });
+      const workspaceServiceToken = createEnvironmentServiceToken();
+      const machine = await this.provider.ensureWorkspaceMachine({
+        appName: environment.flyAppName,
+        environmentId: environment.id,
+        organizationId: operation.organizationId,
+        workspaceId: workspace.id,
+        volumeId: volume.id,
+        region: environment.region,
+        runtimeImage: environment.runtimeImage ?? this.runtimeImage,
+        ticketPublicKey: this.ticketPublicKey,
+        controlPlaneUrl: this.controlPlaneUrl,
+        serviceToken: workspaceServiceToken,
+        source: {
+          type: workspace.sourceType,
+          ...(workspace.sourceResourceId ? { resourceId: workspace.sourceResourceId } : {}),
+          ...(workspace.sourceRepository ? { repository: workspace.sourceRepository } : {}),
+          ...(workspace.sourceDefaultBranch ? { defaultBranch: workspace.sourceDefaultBranch } : {}),
+        },
+        idleTimeoutMinutes:
+          environment.idleTimeoutMinutes || ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
+      });
+      machineId = machine.id;
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: "environment.machine.starting",
+        result: {
+          provisionalVolumeId: volume.id,
+          provisionalMachineId: machine.id,
+        },
+      });
+      if (machine.state !== "started") {
+        await this.provider.waitForMachine({
+          appName: environment.flyAppName,
+          machineId: machine.id,
+          state: "started",
+          timeoutSeconds: 60,
+        });
+      }
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: "environment.health.checking",
+        result: {
+          provisionalVolumeId: volume.id,
+          provisionalMachineId: machine.id,
+        },
+      });
+      await this.provider.waitForMachineHealth({
         appName: environment.flyAppName,
         machineId: machine.id,
-        state: "started",
+        checkName: "workspace",
         timeoutSeconds: 60,
       });
+      await this.repository.completeWorkspace({
+        workspaceId: workspace.id,
+        volumeId: volume.id,
+        machineId: machine.id,
+        runtimeImage: environment.runtimeImage ?? this.runtimeImage,
+        serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
+      });
+      await this.repository.completeOperation({
+        operationId: operation.id,
+        stage: "environment.activation.ready",
+        result: { volumeId: volume.id, machineId: machine.id, runtimeContractRevision: 2 },
+      });
+    } catch (error) {
+      await cleanupFailedWorkspaceProvisioning({
+        provider: this.provider,
+        appName: environment.flyAppName,
+        operationId: operation.id,
+        machineId,
+        volumeId,
+      });
+      throw error;
     }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.health.checking",
-    });
-    await this.provider.waitForMachineHealth({
-      appName: environment.flyAppName,
-      machineId: machine.id,
-      checkName: "workspace",
-      timeoutSeconds: 60,
-    });
-    await this.repository.completeWorkspace({
-      workspaceId: workspace.id,
-      volumeId: volume.id,
-      machineId: machine.id,
-      runtimeImage: environment.runtimeImage ?? this.runtimeImage,
-      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
-    });
-    await this.repository.completeOperation({
-      operationId: operation.id,
-      stage: "environment.activation.ready",
-      result: { volumeId: volume.id, machineId: machine.id },
-    });
   }
 
   private async startWorkspace(operation: ProvisioningOperation) {
@@ -1355,7 +1378,11 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
     async updateOperationStage(input) {
       await knowledgeDb
         .update(schema.environmentOperations)
-        .set({ stage: input.stage, updatedAt: new Date() })
+        .set({
+          stage: input.stage,
+          ...(input.result !== undefined ? { result: input.result } : {}),
+          updatedAt: new Date(),
+        })
         .where(
           and(
             eq(schema.environmentOperations.id, input.operationId),
@@ -1406,6 +1433,35 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
 
 function operationError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
+}
+
+async function cleanupFailedWorkspaceProvisioning(input: {
+  provider: EnvironmentInfrastructureProvider;
+  appName: string;
+  operationId: string;
+  machineId?: string | undefined;
+  volumeId?: string | undefined;
+}) {
+  const failures: string[] = [];
+  if (input.machineId) {
+    await input.provider.deleteMachine({
+      appName: input.appName,
+      machineId: input.machineId,
+    }).catch((error) => failures.push(error instanceof Error ? error.message : "machine cleanup failed"));
+  }
+  if (input.volumeId) {
+    await input.provider.deleteVolume({
+      appName: input.appName,
+      volumeId: input.volumeId,
+    }).catch((error) => failures.push(error instanceof Error ? error.message : "volume cleanup failed"));
+  }
+  if (failures.length > 0) {
+    console.error("Workspace provisioning cleanup failed.", {
+      operationId: input.operationId,
+      resourceFailureCount: failures.length,
+      messages: failures.map((message) => message.slice(0, 300)),
+    });
+  }
 }
 
 function workspaceRuntimeIdentityPatch(input: {

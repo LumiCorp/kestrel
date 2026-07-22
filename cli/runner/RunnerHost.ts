@@ -628,6 +628,7 @@ export class RunnerHost {
     const reasoningVaultStatus = runtime.getProviderReasoningVaultStatus?.();
     this.commandBySession.set(turn.sessionId, commandId);
     this.commandTypeBySession.set(turn.sessionId, "run.start");
+    this.threadIdBySession.set(turn.sessionId, turn.sessionId);
     const abortController = new AbortController();
     this.activeRuns.set(turn.sessionId, {
       commandId,
@@ -2930,6 +2931,7 @@ export class RunnerHost {
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {
     const commandId = this.commandBySession.get(update.task.parentSessionId);
+    const threadId = this.threadIdBySession.get(update.task.parentSessionId);
     this.writer.emit(
       "task.updated",
       {
@@ -2945,6 +2947,7 @@ export class RunnerHost {
       },
       {
         sessionId: update.task.parentSessionId,
+        ...(threadId !== undefined ? { threadId } : {}),
         ...(commandId !== undefined ? { commandId } : {}),
       }
     );

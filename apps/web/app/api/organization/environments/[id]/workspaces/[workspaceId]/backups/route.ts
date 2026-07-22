@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  createWorkspaceBackup,
   listWorkspaceBackups,
+  queueWorkspaceBackup,
 } from "@/lib/environments/backups";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -41,14 +41,14 @@ export async function POST(
     const { id, workspaceId } = await context.params;
     const { reason } = backupInputSchema.parse(await request.json());
     return NextResponse.json(
-      await createWorkspaceBackup({
+      await queueWorkspaceBackup({
         organizationId,
         environmentId: id,
         workspaceId,
         actorUserId: session.user.id,
         reason,
       }),
-      { status: 201 }
+      { status: 202 }
     );
   } catch (error) {
     return errorResponse(error, 400);

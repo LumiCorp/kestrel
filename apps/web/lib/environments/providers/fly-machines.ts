@@ -719,9 +719,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       );
       if (check?.status === "passing") return;
       if (Date.now() >= deadline) {
+        const output = sanitizeHealthCheckOutput(check?.output);
         throw new EnvironmentProviderError(
           "FLY_MACHINE_UNHEALTHY",
-          `Fly Machine health check ${checkName} did not pass before the readiness deadline.`
+          `Fly Machine ${machine.id} was ${machine.state}; health check ${checkName} was ${check?.status ?? "missing"} before the readiness deadline${output ? `: ${output}` : "."}`
         );
       }
       await new Promise((resolve) =>
@@ -831,6 +832,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     }
     return response.json().catch(() => ({}));
   }
+}
+
+function sanitizeHealthCheckOutput(value: string | undefined) {
+  if (!value) return "";
+  return value
+    .replace(/(authorization|token|secret|password)\s*[:=]\s*\S+/giu, "$1=[redacted]")
+    .replace(/[\r\n\t]+/gu, " ")
+    .trim()
+    .slice(0, 300);
 }
 
 function sleep(milliseconds: number): Promise<void> {

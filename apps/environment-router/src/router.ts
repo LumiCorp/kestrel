@@ -60,7 +60,23 @@ export function authorizeEnvironmentSubscription(input: {
   if (metadata?.tenantId !== verified.ticket.organizationId) {
     return { status: 403, code: "ENVIRONMENT_TENANT_MISMATCH" };
   }
-  if (filter?.sessionId !== verified.ticket.threadId) {
+  const sessionId = readOptionalNonEmptyString(filter?.sessionId);
+  const threadId = readOptionalNonEmptyString(filter?.threadId);
+  const invalidSessionId = Boolean(
+    filter && "sessionId" in filter && sessionId === undefined,
+  );
+  const invalidThreadId = Boolean(
+    filter && "threadId" in filter && threadId === undefined,
+  );
+  if (!sessionId && !threadId) {
+    return { status: 403, code: "ENVIRONMENT_THREAD_SCOPE_REQUIRED" };
+  }
+  if (
+    invalidSessionId ||
+    invalidThreadId ||
+    (sessionId !== undefined && sessionId !== verified.ticket.threadId) ||
+    (threadId !== undefined && threadId !== verified.ticket.threadId)
+  ) {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
   return {
@@ -237,4 +253,10 @@ function readBearer(value: string | undefined) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readOptionalNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }

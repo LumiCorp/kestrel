@@ -132,6 +132,8 @@ contractTest("web.hermetic", "the worker entrypoint starts without top-level awa
   );
 
   assert.doesNotMatch(workerSource, /^await startDurableThreadTurnWorker/mu);
+  assert.match(workerSource, /startEnvironmentLifecycleWorker/u);
+  assert.match(workerSource, /stopEnvironmentLifecycleWorker/u);
   assert.match(workerSource, /void main\(\)\.catch/u);
 });
 

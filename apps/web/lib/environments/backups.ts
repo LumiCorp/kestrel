@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import {
@@ -31,6 +31,7 @@ export async function createWorkspaceBackup(input: {
   actorUserId: string;
   reason: "checkpoint" | "daily" | "pre_destructive" | "pre_promotion";
   idempotencyKey?: string;
+  signal?: AbortSignal | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
     knowledgeDb.query.environments.findFirst({
@@ -78,12 +79,18 @@ export async function createWorkspaceBackup(input: {
   if (prepared.available) return prepared.available;
   const { operationId, backupId } = prepared;
   try {
+    input.signal?.throwIfAborted();
     const route = await resolveEnvironmentExecutionRoute({
       organizationId: input.organizationId,
       threadId: binding.threadId,
       actorUserId: input.actorUserId,
     });
-    const archive = await fetchBackupArchive(route.baseUrl, route.authToken);
+    const archive = await fetchBackupArchive(
+      route.baseUrl,
+      route.authToken,
+      input.signal,
+    );
+    input.signal?.throwIfAborted();
     const checksumSha256 = createHash("sha256").update(archive).digest("hex");
     const encrypted = encryptWorkspaceBackup(archive, backupKey());
     const storage = getStorageAdapter();
@@ -103,6 +110,7 @@ export async function createWorkspaceBackup(input: {
         encryptionKeyId: backupKeyId(),
       },
     });
+    input.signal?.throwIfAborted();
     const provider = await createFlyProviderClient();
     const snapshot = await createAuxiliaryVolumeSnapshot({
       appName: environment.flyAppName,
@@ -110,6 +118,7 @@ export async function createWorkspaceBackup(input: {
       createSnapshot: (snapshotInput) =>
         provider.createVolumeSnapshot(snapshotInput),
     });
+    input.signal?.throwIfAborted();
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
       await transaction
@@ -154,6 +163,10 @@ export async function createWorkspaceBackup(input: {
       expiresAt,
     };
   } catch (error) {
+    if (input.signal?.aborted) {
+      await failInterruptedWorkspaceBackup(operationId);
+      throw error;
+    }
     const message =
       error instanceof Error
         ? error.message.slice(0, 500)
@@ -180,6 +193,145 @@ export async function createWorkspaceBackup(input: {
   }
 }
 
+export async function queueWorkspaceBackup(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  actorUserId: string;
+  reason: "checkpoint" | "daily" | "pre_destructive" | "pre_promotion";
+  idempotencyKey?: string | undefined;
+}) {
+  await assertWorkspaceBackupReady(input);
+  const now = new Date();
+  const expiresAt = new Date(
+    now.getTime() + WORKSPACE_BACKUP_RETENTION_DAYS * 86_400_000,
+  );
+  const prepared = await prepareWorkspaceBackup({
+    ...input,
+    now,
+    expiresAt,
+    initialStatus: "queued",
+  });
+  if (prepared.available) {
+    return { ...prepared.available, status: "available" as const };
+  }
+  const { enqueueEnvironmentOperation } = await import("@/lib/knowledge/queue");
+  await enqueueEnvironmentOperation(prepared.operationId);
+  return {
+    backupId: prepared.backupId,
+    operationId: prepared.operationId,
+    status: "queued" as const,
+    expiresAt,
+  };
+}
+
+export async function processQueuedWorkspaceBackup(input: {
+  operationId: string;
+  signal?: AbortSignal | undefined;
+}) {
+  const operation = await knowledgeDb.query.environmentOperations.findFirst({
+    where: (table, { eq }) => eq(table.id, input.operationId),
+  });
+  if (!operation || operation.type !== "workspace.backup") {
+    return "not_claimed" as const;
+  }
+  const backup = await knowledgeDb.query.workspaceBackups.findFirst({
+    where: (table, { eq }) => eq(table.operationId, operation.id),
+  });
+  if (!backup) {
+    throw new Error("Queued Workspace backup is missing its backup record.");
+  }
+  if (operation.status === "running") {
+    await failInterruptedWorkspaceBackup(operation.id);
+    return "interrupted" as const;
+  }
+  if (operation.status !== "queued") return "not_claimed" as const;
+  if (!operation.requestedByUserId) {
+    await failInterruptedWorkspaceBackup(operation.id);
+    return "interrupted" as const;
+  }
+  await createWorkspaceBackup({
+    organizationId: operation.organizationId,
+    environmentId: operation.environmentId,
+    workspaceId: backup.workspaceId,
+    actorUserId: operation.requestedByUserId,
+    reason: backup.reason,
+    idempotencyKey: operation.idempotencyKey,
+    signal: input.signal,
+  });
+  return "processed" as const;
+}
+
+export async function failInterruptedWorkspaceBackup(operationId: string) {
+  const failedAt = new Date();
+  await knowledgeDb.transaction(async (transaction) => {
+    const [failedOperation] = await transaction
+      .update(schema.environmentOperations)
+      .set({
+        status: "failed",
+        stage: "workspace.backup.interrupted",
+        errorCode: "WORKSPACE_BACKUP_WORKER_INTERRUPTED",
+        errorMessage:
+          "The Workspace backup worker stopped before the export completed. Start a new backup.",
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      })
+      .where(
+        and(
+          eq(schema.environmentOperations.id, operationId),
+          eq(schema.environmentOperations.status, "running"),
+        ),
+      )
+      .returning({ id: schema.environmentOperations.id });
+    if (!failedOperation) return;
+    await transaction
+      .update(schema.workspaceBackups)
+      .set({ status: "failed", updatedAt: failedAt })
+      .where(eq(schema.workspaceBackups.operationId, operationId));
+  });
+}
+
+export async function reconcileTerminalWorkspaceBackupRecords() {
+  const activeBackups = await knowledgeDb.query.workspaceBackups.findMany({
+    where: (table, { and, inArray, isNotNull }) =>
+      and(
+        inArray(table.status, ["queued", "creating"]),
+        isNotNull(table.operationId),
+      ),
+    columns: { id: true, operationId: true },
+    limit: 100,
+  });
+  const operationIds = activeBackups.flatMap((backup) =>
+    backup.operationId ? [backup.operationId] : [],
+  );
+  if (operationIds.length === 0) return 0;
+  const terminalOperations = await knowledgeDb.query.environmentOperations.findMany({
+    where: (table, { and, inArray }) =>
+      and(
+        inArray(table.id, operationIds),
+        inArray(table.status, ["failed", "cancelled"]),
+      ),
+    columns: { id: true },
+  });
+  const terminalIds = new Set(terminalOperations.map((operation) => operation.id));
+  const backupIds = activeBackups
+    .filter((backup) => backup.operationId && terminalIds.has(backup.operationId))
+    .map((backup) => backup.id);
+  if (backupIds.length === 0) return 0;
+  const repairedAt = new Date();
+  const repaired = await knowledgeDb
+    .update(schema.workspaceBackups)
+    .set({ status: "failed", updatedAt: repairedAt })
+    .where(
+      and(
+        inArray(schema.workspaceBackups.id, backupIds),
+        inArray(schema.workspaceBackups.status, ["queued", "creating"]),
+      ),
+    )
+    .returning({ id: schema.workspaceBackups.id });
+  return repaired.length;
+}
+
 type PreparedWorkspaceBackup =
   | {
       available: {
@@ -201,6 +353,7 @@ async function prepareWorkspaceBackup(input: {
   idempotencyKey?: string;
   now: Date;
   expiresAt: Date;
+  initialStatus?: "queued" | "running" | undefined;
 }): Promise<PreparedWorkspaceBackup> {
   const requestedKey = input.idempotencyKey?.trim();
   if (requestedKey) {
@@ -244,19 +397,22 @@ async function prepareWorkspaceBackup(input: {
         await transaction
           .update(schema.environmentOperations)
           .set({
-            status: "running",
-            stage: "workspace.backup.exporting",
+            status: input.initialStatus ?? "running",
+            stage:
+              input.initialStatus === "queued"
+                ? "workspace.backup.queued"
+                : "workspace.backup.exporting",
             errorCode: null,
             errorMessage: null,
             completedAt: null,
-            startedAt: input.now,
+            startedAt: input.initialStatus === "queued" ? null : input.now,
             updatedAt: input.now,
           })
           .where(eq(schema.environmentOperations.id, existingOperation.id));
         await transaction
           .update(schema.workspaceBackups)
           .set({
-            status: "creating",
+            status: input.initialStatus === "queued" ? "queued" : "creating",
             objectKey: null,
             encryptionKeyId: null,
             checksumSha256: null,
@@ -276,6 +432,7 @@ async function prepareWorkspaceBackup(input: {
   }
   const operationId = crypto.randomUUID();
   const backupId = crypto.randomUUID();
+  const initialStatus = input.initialStatus ?? "running";
   await knowledgeDb.transaction(async (transaction) => {
     await transaction.insert(schema.environmentOperations).values({
       id: operationId,
@@ -284,10 +441,13 @@ async function prepareWorkspaceBackup(input: {
       workspaceId: input.workspaceId,
       requestedByUserId: input.actorUserId,
       type: "workspace.backup",
-      status: "running",
-      stage: "workspace.backup.exporting",
+      status: initialStatus,
+      stage:
+        initialStatus === "queued"
+          ? "workspace.backup.queued"
+          : "workspace.backup.exporting",
       idempotencyKey: requestedKey ?? `workspace.backup:${backupId}`,
-      startedAt: input.now,
+      startedAt: initialStatus === "running" ? input.now : null,
       createdAt: input.now,
       updatedAt: input.now,
     });
@@ -298,7 +458,7 @@ async function prepareWorkspaceBackup(input: {
       workspaceId: input.workspaceId,
       operationId,
       reason: input.reason,
-      status: "creating",
+      status: initialStatus === "queued" ? "queued" : "creating",
       expiresAt: input.expiresAt,
       createdAt: input.now,
       updatedAt: input.now,
@@ -648,10 +808,15 @@ export async function restoreWorkspaceBackup(input: {
   }
 }
 
-async function fetchBackupArchive(baseUrl: string, token: string) {
+async function fetchBackupArchive(
+  baseUrl: string,
+  token: string,
+  signal?: AbortSignal | undefined,
+) {
   const response = await fetch(new URL("/v1/backups/export", baseUrl), {
     headers: { authorization: `Bearer ${token}` },
     cache: "no-store",
+    signal,
   });
   if (!(response.ok && response.body)) {
     throw new Error("Workspace backup export failed.");
@@ -660,6 +825,7 @@ async function fetchBackupArchive(baseUrl: string, token: string) {
   let size = 0;
   const reader = response.body.getReader();
   while (true) {
+    signal?.throwIfAborted();
     const { value, done } = await reader.read();
     if (done) break;
     size += value.length;
@@ -670,6 +836,47 @@ async function fetchBackupArchive(baseUrl: string, token: string) {
     chunks.push(value);
   }
   return Buffer.concat(chunks);
+}
+
+async function assertWorkspaceBackupReady(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+}) {
+  const [environment, workspace, binding] = await Promise.all([
+    knowledgeDb.query.environments.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+        ),
+    }),
+    knowledgeDb.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+        ),
+    }),
+    knowledgeDb.query.threadExecutionBindings.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.workspaceId, input.workspaceId),
+          eq(table.organizationId, input.organizationId),
+        ),
+    }),
+  ]);
+  if (
+    !(
+      environment?.flyAppName &&
+      workspace?.flyVolumeId &&
+      workspace.flyMachineId &&
+      binding
+    )
+  ) {
+    throw new Error("Workspace is not ready for backup.");
+  }
 }
 
 function backupKey() {

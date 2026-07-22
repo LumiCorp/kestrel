@@ -37,6 +37,7 @@ import {
   type WorkspaceSkillSource,
 } from "@kestrel-agents/workspace-skills";
 
+const WORKSPACE_RUNTIME_CONTRACT_REVISION = 2;
 const config = readConfig();
 await mkdir(config.workspaceRoot, { recursive: true });
 await mkdir(path.join(config.workspaceRoot, ".kestrel"), { recursive: true });
@@ -67,9 +68,18 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     try {
       await workspaceSkillsActivation;
-      writeJson(response, 200, { ok: true, workspaceId: config.workspaceId });
+      writeJson(response, 200, {
+        ok: true,
+        workspaceId: config.workspaceId,
+        runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
+      });
     } catch {
-      writeJson(response, 503, { ok: false, workspaceId: config.workspaceId, error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" } });
+      writeJson(response, 503, {
+        ok: false,
+        workspaceId: config.workspaceId,
+        runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
+        error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" },
+      });
     }
     return;
   }

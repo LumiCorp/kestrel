@@ -33,6 +33,16 @@ contractTest("web.hermetic", "knowledge queue status does not eagerly load worke
   assert.match(queueSource, /await import\([\s\S]*documents\/process-runtime/u);
   assert.doesNotMatch(queueSource, /documents\/runtime["']/u);
   assert.match(queueSource, /await import\([\s\S]*sync-runtime/u);
+  assert.match(queueSource, /ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 \* 60 \* 60/u);
+  assert.match(queueSource, /ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60/u);
+  assert.match(queueSource, /heartbeatRefreshSeconds:\s*ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS/u);
+  assert.match(queueSource, /export async function startEnvironmentLifecycleWorker/u);
+  assert.match(queueSource, /export async function reconcileEnvironmentOperationQueue/u);
+  assert.match(queueSource, /await reconcileTerminalWorkspaceBackupRecords\(\)/u);
+  assert.match(
+    queueSource,
+    /export async function enqueueEnvironmentOperation[\s\S]*getKnowledgeBossProducer\(\)/u,
+  );
   assert.doesNotMatch(documentRuntimeSource, /documents\/process-runtime/u);
   assert.doesNotMatch(documentRuntimeSource, /from ["']\.\/extract["']/u);
   assert.match(processRuntimeSource, /from ["']\.\/extract["']/u);

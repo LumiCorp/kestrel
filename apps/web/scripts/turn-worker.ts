@@ -2,6 +2,10 @@ import {
   startDurableThreadTurnWorker,
   stopDurableThreadTurnWorker,
 } from "@/lib/turns/queue";
+import {
+  startEnvironmentLifecycleWorker,
+  stopEnvironmentLifecycleWorker,
+} from "@/lib/knowledge/queue";
 import { rm, writeFile } from "node:fs/promises";
 
 const readyFile = process.env.KESTREL_TURN_WORKER_READY_FILE;
@@ -19,14 +23,20 @@ async function clearReady() {
 }
 
 async function main() {
-  await startDurableThreadTurnWorker();
+  await Promise.all([
+    startDurableThreadTurnWorker(),
+    startEnvironmentLifecycleWorker(),
+  ]);
   await markReady();
   process.stdout.write("Kestrel One durable turn worker started.\n");
 }
 
 async function shutdown(signal: string) {
   process.stdout.write(`Kestrel One durable turn worker received ${signal}.\n`);
-  await stopDurableThreadTurnWorker();
+  await Promise.all([
+    stopDurableThreadTurnWorker(),
+    stopEnvironmentLifecycleWorker(),
+  ]);
   await clearReady();
   process.exit(0);
 }
