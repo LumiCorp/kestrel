@@ -10,6 +10,7 @@ import {
   readRecentHarborRunFailure,
   readRecentHarborRunSummary,
   runTerminalBenchHarbor,
+  terminalBenchTaskInputHash,
 } from "../../scripts/terminal-bench-harbor.js";
 import { formatTb2ReadableSummary } from "../../scripts/tb2-result-summary.js";
 import { contractTest } from "../helpers/contract-test.js";
@@ -30,6 +31,14 @@ contractTest("runtime.hermetic", "terminal bench exposes a tb2 shortcut for Harb
   assert.match(wrapper, /unset OPENROUTER_MODEL/u);
   assert.doesNotMatch(wrapper, /KESTREL_TBENCH_MODEL_PROVIDER/u);
   assert.match(wrapper, /pnpm run bench:terminal:harbor -- "\$@"/u);
+});
+
+contractTest("runtime.hermetic", "terminal bench task identity excludes randomized job envelope fields", () => {
+  const baseline = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
+  const candidate = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
+
+  assert.equal(baseline, candidate);
+  assert.notEqual(baseline, terminalBenchTaskInputHash("terminal-bench@2.0", "prove-plus-comm"));
 });
 
 contractTest("runtime.hermetic", "terminal bench exposes a tb2 passing regression script", () => {

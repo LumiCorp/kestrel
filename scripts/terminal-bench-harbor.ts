@@ -341,9 +341,7 @@ function writeHarborEfficiencyResult(input: {
     durationMs: typeof adapter?.duration_ms === "number" ? Math.max(0, Math.trunc(adapter.duration_ms)) : Math.max(0, Date.now() - input.startedAt),
     frozen: {
       protocolHash: hashHarnessEfficiencyValue({ evaluator: "harbor", dataset: input.dataset }),
-      taskInputHash: typeof adapter?.job_input_sha256 === "string"
-        ? adapter.job_input_sha256
-        : hashHarnessEfficiencyValue({ dataset: input.dataset, taskId }),
+      taskInputHash: terminalBenchTaskInputHash(input.dataset, taskId),
       benchmarkConfigHash: hashHarnessEfficiencyValue({ dataset: input.dataset, profileId: input.env.KESTREL_BENCHMARK_PROFILE_ID }),
       controlVariantHash: hashHarnessEfficiencyValue(profile?.harnessEconomics ?? null),
       harnessRevision: typeof adapter?.harness_revision === "string" ? adapter.harness_revision : "unknown",
@@ -367,6 +365,10 @@ function writeHarborEfficiencyResult(input: {
   const resultPath = path.join(outputDirectory, "result.v2.json");
   writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   return resultPath;
+}
+
+export function terminalBenchTaskInputHash(dataset: string, taskId: string): string {
+  return hashHarnessEfficiencyValue({ dataset, taskId });
 }
 
 function readReferencedJson(cwd: string, value: unknown): unknown | undefined {
