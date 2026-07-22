@@ -24,9 +24,18 @@ contractTest("web.hermetic", "Fly waits split long deadlines into accepted reque
     organizationSlug: "kestrel-test",
     fetchImpl: (async (url: string | URL | Request) => {
       requests.push(String(url));
-      return requests.length === 1
-        ? new Response(null, { status: 408 })
-        : Response.json({});
+      if (String(url).includes("/wait?")) {
+        return requests.filter((request) => request.includes("/wait?")).length === 1
+          ? new Response(null, { status: 408 })
+          : Response.json({});
+      }
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "starting",
+        region: "iad",
+        config: {},
+      });
     }) as typeof fetch,
   });
   await client.waitForMachine({
@@ -35,8 +44,106 @@ contractTest("web.hermetic", "Fly waits split long deadlines into accepted reque
     state: "started",
     timeoutSeconds: 90,
   });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.filter((url) => url.includes("/wait?")).length, 2);
   assert.match(requests[0] ?? "", /[?&]timeout=60(?:&|$)/u);
+});
+
+contractTest("web.hermetic", "Fly waits accept the authoritative target state after a timeout", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (String(url).includes("/wait?")) {
+        return new Response(null, { status: 408 });
+      }
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "started",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "started",
+    timeoutSeconds: 60,
+  });
+
+  assert.equal(requests.filter((url) => url.includes("/wait?")).length, 1);
+});
+
+contractTest("web.hermetic", "Fly waits continue through an authoritative replacing state", async () => {
+  const requests: string[] = [];
+  const sleeps: number[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (String(url).includes("/wait?") && requests.length === 1) {
+        return new Response(null, { status: 409 });
+      }
+      if (!String(url).includes("/wait?")) {
+        return Response.json({
+          id: "machine-1",
+          instance_id: "instance-1",
+          state: "replacing",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch,
+  });
+
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "started",
+    timeoutSeconds: 60,
+  });
+
+  assert.deepEqual(sleeps, [1000]);
+  assert.equal(requests.filter((url) => url.includes("/wait?")).length, 2);
+});
+
+contractTest("web.hermetic", "Fly waits preserve a 409 outside the replacing transition", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      if (String(url).includes("/wait?")) {
+        return new Response(null, { status: 409 });
+      }
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "destroying",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.waitForMachine({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+      state: "started",
+      timeoutSeconds: 60,
+    }),
+    (error: unknown) =>
+      error instanceof EnvironmentProviderError && error.status === 409,
+  );
 });
 
 contractTest("web.hermetic", "Fly stopped waits bind the current Machine instance", async () => {
@@ -145,6 +252,45 @@ contractTest("web.hermetic", "Fly start retries a transient stopped-state reject
         return Response.json({
           id: "machine-1",
           state: "stopped",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+  });
+
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET", "POST"]
+  );
+  assert.deepEqual(sleeps, [1000]);
+});
+
+contractTest("web.hermetic", "Fly start retries while a replacement Machine is created", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const sleeps: number[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (request.method === "POST" && requests.length === 1) {
+        return new Response(null, { status: 412 });
+      }
+      if (request.method === "GET") {
+        return Response.json({
+          id: "machine-1",
+          state: "created",
           region: "iad",
           config: {},
         });

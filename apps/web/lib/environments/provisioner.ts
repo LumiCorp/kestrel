@@ -547,6 +547,7 @@ export class EnvironmentProvisioner {
         workspaceId: workspace.id,
         machineId: workspace.flyMachineId,
         runtimeImage,
+        forceStart: true,
       });
     }
     await this.repository.updateOperationStage({

@@ -307,6 +307,8 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
     "workspace:starting",
     "provider:image:workspace-machine-id",
     "provider:wait",
+    "provider:start",
+    "provider:wait",
     "provider:health",
     "workspace:rebuilt",
     "operation:stage:environment.update.verifying",

@@ -98,6 +98,25 @@ export class RemoteRunnerTransport implements ProtocolTransport {
       }
 
       const body = await response.text();
+      if (response.ok === false) {
+        let event: RunnerEvent | undefined;
+        try {
+          event = parseRunnerEvent(body);
+        } catch {
+          // Router and proxy errors are valid HTTP responses, not runner events.
+        }
+        if (event === undefined) {
+          this.emitEvent(makeSyntheticRunnerError(command.id, {
+            code: "RUNNER_HTTP_ERROR",
+            message: `Remote runner returned HTTP ${response.status}.`,
+            details: {
+              status: response.status,
+              ...(body.length > 0 ? { body } : {}),
+            },
+          }));
+          return;
+        }
+      }
       const event = parseRunnerEvent(body);
       if (event !== undefined) {
         if (
@@ -117,18 +136,6 @@ export class RemoteRunnerTransport implements ProtocolTransport {
           return;
         }
         this.emitEvent(event);
-        return;
-      }
-
-      if (response.ok === false) {
-        this.emitEvent(makeSyntheticRunnerError(command.id, {
-          code: "RUNNER_HTTP_ERROR",
-          message: `Remote runner returned HTTP ${response.status}.`,
-          details: {
-            status: response.status,
-            ...(body.length > 0 ? { body } : {}),
-          },
-        }));
         return;
       }
 
