@@ -5,6 +5,7 @@ import {
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { errorResponse } from "@/lib/knowledge/http";
+import { enrichUsageEvent, recordUsageEvent } from "@/lib/costs/store";
 import { getAppProviderAdapter } from "./provider-adapter";
 import { appProviderHealthTransition } from "./provider-health";
 import { handleNgrokPreviewLifecycle } from "./ngrok-preview-lifecycle";
@@ -26,6 +27,8 @@ export async function handleAppRuntimeRequest(input: {
 }) {
   let ticket: EnvironmentExecutionTicket | null = null;
   let connectionId: string | null = null;
+  let usageEventId: string | null = null;
+  let upstreamStatus: number | null = null;
   try {
     ticket = verifyEnvironmentExecutionTicket({
       token: readBearer(input.request.headers.get("authorization")),
@@ -110,6 +113,30 @@ export async function handleAppRuntimeRequest(input: {
       body,
       credential: policy.credential,
     });
+    const usageEvent = await recordUsageEvent({
+      organizationId: ticket.organizationId,
+      actorUserId: ticket.actorId,
+      projectId: policy.projectId,
+      threadId: ticket.threadId,
+      runId: ticket.runId,
+      category: "services",
+      provider: input.appKey,
+      service: input.appKey,
+      meter: input.capabilityKey,
+      quantity: 1,
+      unit: "invocation",
+      sourceKind: "app_runtime_invocation",
+      sourceId:
+        input.request.headers.get("x-kestrel-request-id")?.trim() ||
+        input.request.headers.get("x-request-id")?.trim() ||
+        crypto.randomUUID(),
+      occurredAt: new Date(),
+      metadata: {
+        connectionId: policy.connectionId,
+        approvalMode: policy.capability.approvalMode,
+      },
+    });
+    usageEventId = usageEvent.id;
     const upstream = await fetch(upstreamRequest.url, {
       ...upstreamRequest.init,
       signal:
@@ -120,9 +147,19 @@ export async function handleAppRuntimeRequest(input: {
               AbortSignal.timeout(upstreamRequest.timeoutMs),
             ]),
     });
+    upstreamStatus = upstream.status;
     const healthTransition = appProviderHealthTransition({
       status: upstream.status,
       degradedStatusCodes: runtime.degradedStatusCodes,
+    });
+    await enrichUsageEvent(usageEventId, {
+      outcome: upstream.ok ? "succeeded" : "provider_error",
+      upstreamStatus: upstream.status,
+    }).catch((error) => {
+      console.error("[costs] App usage outcome enrichment failed.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        usageEventId,
+      });
     });
     if (policy.connectionId && healthTransition === "degraded") {
       await markAppConnectionDegraded({
@@ -158,6 +195,7 @@ export async function handleAppRuntimeRequest(input: {
         approvalMode: policy.capability.approvalMode,
         loggingMode: policy.capability.loggingMode,
         upstreamStatus: upstream.status,
+        usageEventId,
       },
     });
     return new Response(await upstream.arrayBuffer(), {
@@ -169,6 +207,28 @@ export async function handleAppRuntimeRequest(input: {
       },
     });
   } catch (error) {
+    if (usageEventId) {
+      await enrichUsageEvent(usageEventId, {
+        outcome:
+          upstreamStatus == null
+            ? "failed"
+            : upstreamStatus >= 200 && upstreamStatus < 300
+              ? "succeeded"
+              : "provider_error",
+        ...(upstreamStatus == null
+          ? {
+              errorCode:
+                error instanceof AppRuntimeError
+                  ? error.code
+                  : isRuntimeContractError(error)
+                    ? error.code
+                    : error instanceof DOMException
+                      ? "APP_RUNTIME_PROVIDER_TIMEOUT"
+                      : "APP_RUNTIME_PROVIDER_FAILED",
+            }
+          : { upstreamStatus }),
+      }).catch(() => {});
+    }
     if (error instanceof AppRuntimeError) {
       return NextResponse.json(
         { error: { code: error.code } },

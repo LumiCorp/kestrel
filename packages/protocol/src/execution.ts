@@ -451,7 +451,9 @@ export interface RunnerTelemetry {
   modelCalls?: number | undefined;
   durationMs?: number | undefined;
   inputTokens?: number | undefined;
+  cachedInputTokens?: number | undefined;
   outputTokens?: number | undefined;
+  reasoningTokens?: number | undefined;
   totalTokens?: number | undefined;
   [key: string]: unknown;
 }
@@ -2722,7 +2724,9 @@ function validateRunnerTelemetry(value: unknown, label: string): void {
     "modelCalls",
     "durationMs",
     "inputTokens",
+    "cachedInputTokens",
     "outputTokens",
+    "reasoningTokens",
     "totalTokens",
   ] as const) {
     validateOptionalNonNegativeNumber(telemetry[field], `${label}.${field}`);

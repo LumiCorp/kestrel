@@ -3,7 +3,10 @@ import { execFileSync, spawn } from "node:child_process";
 const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.test.ts"], { encoding: "utf8" })
   .split("\0")
   .filter(Boolean)
-  .concat("apps/web/lib/environments/cutover-readiness.postgres.test.ts")
+  .concat(
+    "apps/web/lib/costs/store.postgres.test.ts",
+    "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
+  )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
   .map((file) => file.slice("apps/web/".length));
@@ -20,6 +23,7 @@ const groups = [
     name: "Environment",
     databaseUrl: required("KESTREL_ENVIRONMENT_DB_TEST_URL"),
     files: [
+      "lib/costs/store.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
       "lib/environments/reconcile-lock.postgres.test.ts",
       "lib/environments/store.postgres.test.ts",

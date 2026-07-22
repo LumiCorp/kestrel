@@ -5,6 +5,7 @@ export type KestrelOneRouteOwner =
   | "artifacts"
   | "auth"
   | "credential-boundary"
+  | "costs"
   | "projects"
   | "dashboard"
   | "debug"
@@ -951,6 +952,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied"
   ),
   api("app/api/stats/route.ts", "/api/stats", "stats", "admin", "admin-denied"),
+  api(
+    "app/api/organization/costs/route.ts",
+    "/api/organization/costs",
+    "costs",
+    "authenticated",
+    "api-unauthorized"
+  ),
+  api(
+    "app/api/organization/costs/rates/route.ts",
+    "/api/organization/costs/rates",
+    "costs",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/organization/costs/settings/route.ts",
+    "/api/organization/costs/settings",
+    "costs",
+    "admin",
+    "admin-denied"
+  ),
   api("app/api/sync/route.ts", "/api/sync", "sync", "admin", "admin-denied"),
   api(
     "app/api/sync/[source]/route.ts",
@@ -1615,7 +1637,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page("app/(workspace)/settings/organization/inference/page.tsx", "/settings/organization/inference", "models", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/email/page.tsx", "/settings/organization/email", "email-delivery", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/api-keys/page.tsx", "/settings/organization/api-keys", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/usage/page.tsx", "/settings/organization/usage", "stats", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/usage/page.tsx", "/settings/organization/usage", "costs", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/audit/page.tsx", "/settings/organization/audit", "admin", "admin", "admin-denied"),
   page("app/(workspace)/settings/platform/page.tsx", "/settings/platform", "admin", "admin", "admin-denied"),
   page("app/(workspace)/settings/platform/users/page.tsx", "/settings/platform/users", "admin", "admin", "admin-denied"),
