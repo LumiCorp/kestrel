@@ -5,12 +5,10 @@ import {
   ChevronsUpDown,
   CreditCard,
   LogOut,
-  Moon,
-  Sun,
+  Palette,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -35,7 +33,6 @@ export function NavUser({ session }: { session: Session | null }) {
   const router = useRouter();
   const { data } = useSession();
   const currentSession = data || session;
-  const { setTheme, theme } = useTheme();
 
   if (!currentSession?.user) {
     return null;
@@ -49,36 +46,6 @@ export function NavUser({ session }: { session: Session | null }) {
         },
       },
     });
-  };
-
-  const handleThemeToggle = () => {
-    if (theme === "light") {
-      setTheme("dark");
-    } else if (theme === "dark") {
-      setTheme("system");
-    } else {
-      setTheme("light");
-    }
-  };
-
-  const getThemeIcon = () => {
-    if (theme === "light") {
-      return <Sun className="size-4" />;
-    }
-    if (theme === "dark") {
-      return <Moon className="size-4" />;
-    }
-    return <Sun className="size-4" />;
-  };
-
-  const getThemeLabel = () => {
-    if (theme === "light") {
-      return "Light";
-    }
-    if (theme === "dark") {
-      return "Dark";
-    }
-    return "System";
   };
 
   return (
@@ -151,9 +118,11 @@ export function NavUser({ session }: { session: Session | null }) {
                   Billing
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleThemeToggle}>
-                {getThemeIcon()}
-                Theme: {getThemeLabel()}
+              <DropdownMenuItem asChild>
+                <Link href="/settings/appearance">
+                  <Palette />
+                  Appearance
+                </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

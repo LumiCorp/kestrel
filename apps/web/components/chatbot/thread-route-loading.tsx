@@ -32,7 +32,7 @@ export function ThreadRouteLoading({ threadId }: { threadId: string }) {
       </header>
       <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-end gap-6 px-4 py-6">
         {userText ? (
-          <div className="ml-auto max-w-[80%] rounded-2xl bg-[#006cff] px-3 py-2 text-white">
+          <div className="ml-auto max-w-[80%] rounded-2xl bg-message-user px-3 py-2 text-message-user-foreground">
             {userText}
           </div>
         ) : null}

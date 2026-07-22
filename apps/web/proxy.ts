@@ -15,7 +15,8 @@ export async function proxy(request: NextRequest) {
     "/two-factor",
     "/accept-invitation",
     "/shared",
-    "/hawk",
+    "/brand",
+    "/manifest.webmanifest",
     "/api/auth",
     "/api/dev/auto-login",
   ];

@@ -9,6 +9,7 @@ import {
   HardDrive,
   KeyRound,
   Mail,
+  Palette,
   PlugZap,
   ScrollText,
   Server,
@@ -35,6 +36,7 @@ type SettingsGroup = {
 
 const personalItems: SettingsItem[] = [
   { href: "/settings/profile", icon: User, label: "Profile" },
+  { href: "/settings/appearance", icon: Palette, label: "Appearance" },
   { href: "/settings/api-keys", icon: KeyRound, label: "API keys" },
   { href: "/apps?view=connections", icon: PlugZap, label: "Connections" },
 ];
