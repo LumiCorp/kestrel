@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 import { hasCompletedExecCommandCanaryProof } from "./workspace-command-canary";
 
-test("workspace command canary requires a completed OK exec_command record containing the marker", () => {
+contractTest("web.hermetic", "workspace command canary requires a completed OK exec_command record containing the marker", () => {
   const marker = "kestrel-command-canary-123";
   const messages = [{
     role: "assistant",

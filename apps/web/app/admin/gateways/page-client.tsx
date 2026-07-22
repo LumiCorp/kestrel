@@ -191,7 +191,7 @@ export function GatewayAdminClient() {
   const [creatingGateway, setCreatingGateway] = useState(false);
 
   async function load() {
-    const response = await fetch("/api/admin/gateways", { cache: "no-store" });
+    const response = await fetch("/api/organization/ai/gateways", { cache: "no-store" });
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
       toast.error(json.error || "Failed to load gateways.");
@@ -318,7 +318,7 @@ export function GatewayAdminClient() {
                 onClick={async () => {
                   try {
                     setCreatingGateway(true);
-                    const response = await fetch("/api/admin/gateways", {
+                    const response = await fetch("/api/organization/ai/gateways", {
                       method: "POST",
                       headers: {
                         "content-type": "application/json",
@@ -572,7 +572,7 @@ function GatewayDetailPane({
     try {
       setSavingModelId(model.id);
       const response = await fetch(
-        `/api/admin/gateways/${bundle.gateway.id}/models`,
+        `/api/organization/ai/gateways/${bundle.gateway.id}/models`,
         {
           method: "POST",
           headers: {
@@ -615,7 +615,7 @@ function GatewayDetailPane({
     try {
       setAddingModel(true);
       const response = await fetch(
-        `/api/admin/gateways/${bundle.gateway.id}/models`,
+        `/api/organization/ai/gateways/${bundle.gateway.id}/models`,
         {
           method: "POST",
           headers: {
@@ -718,7 +718,7 @@ function GatewayDetailPane({
                   try {
                     setBusy(true);
                     const response = await fetch(
-                      `/api/admin/gateways/${bundle.gateway.id}`,
+                      `/api/organization/ai/gateways/${bundle.gateway.id}`,
                       {
                         method: "PUT",
                         headers: {
@@ -759,7 +759,7 @@ function GatewayDetailPane({
                   try {
                     setBusy(true);
                     const response = await fetch(
-                      `/api/admin/gateways/${bundle.gateway.id}/sync`,
+                      `/api/organization/ai/gateways/${bundle.gateway.id}/sync`,
                       { method: "POST" }
                     );
                     const json = await response.json().catch(() => ({}));
@@ -788,7 +788,7 @@ function GatewayDetailPane({
                   try {
                     setBusy(true);
                     const response = await fetch(
-                      `/api/admin/gateways/${bundle.gateway.id}`,
+                      `/api/organization/ai/gateways/${bundle.gateway.id}`,
                       {
                         method: "DELETE",
                       }
@@ -1151,7 +1151,7 @@ function GatewayDetailPane({
                               try {
                                 setValidatingModelId(model.id);
                                 const response = await fetch(
-                                  `/api/admin/gateways/${bundle.gateway.id}/models/${model.id}/validate`,
+                                  `/api/organization/ai/gateways/${bundle.gateway.id}/models/${model.id}/validate`,
                                   { method: "POST" }
                                 );
                                 const json = await response
@@ -1273,7 +1273,7 @@ function GatewayDetailPane({
                             try {
                               setBusy(true);
                               const response = await fetch(
-                                `/api/admin/gateways/${bundle.gateway.id}/models?modelId=${model.id}`,
+                                `/api/organization/ai/gateways/${bundle.gateway.id}/models?modelId=${model.id}`,
                                 {
                                   method: "DELETE",
                                 }

@@ -83,6 +83,7 @@ export async function resolveMcpInteraction(input: {
       const responseEnvelope = await executeApprovedSampling(
         checkpoint.requestEnvelope,
         processingExpiresAt,
+        input.organizationId,
       );
       updated = await knowledgeDb.transaction(async (tx) => {
         const completedAt = new Date();
@@ -258,6 +259,7 @@ function interactionConflict() {
 async function executeApprovedSampling(
   value: unknown,
   processingExpiresAt: Date,
+  organizationId: string,
 ) {
   const request = z
     .object({
@@ -283,7 +285,10 @@ async function executeApprovedSampling(
         .optional(),
     })
     .parse(value);
-  const resolved = await resolveRequiredLanguageModel({ surface: "chat" });
+  const resolved = await resolveRequiredLanguageModel({
+    surface: "chat",
+    organizationId,
+  });
   const prompt = request.messages
     .map((message) => `${message.role}: ${extractText(message.content)}`)
     .join("\n");

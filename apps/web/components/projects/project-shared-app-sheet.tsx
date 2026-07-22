@@ -388,7 +388,7 @@ export function ProjectSharedAppSheet({
                               href={
                                 isPersonalOnly
                                   ? `/apps/${encodeURIComponent(appKey)}`
-                                  : `/settings/environments/${configuration.environmentId}/apps`
+                                  : `/settings/organization/environments/${configuration.environmentId}/apps`
                               }
                             >
                               {isPersonalOnly

@@ -1,4 +1,6 @@
-import { FlyMachinesClient } from "./providers/fly-machines";
+import { createFlyProviderClient } from "./fly-connection";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { eq } from "drizzle-orm";
 import {
   databaseEnvironmentProvisioningRepository,
   EnvironmentProvisioner,
@@ -6,15 +8,17 @@ import {
 import { withEnvironmentOperationLock } from "./reconcile-lock";
 
 export async function processEnvironmentOperation(operationId: string) {
+  const operation = await knowledgeDb.query.environmentOperations.findFirst({
+    where: eq(schema.environmentOperations.id, operationId),
+    columns: { organizationId: true },
+  });
+  if (!operation) throw new Error("Environment operation was not found.");
   const locked = await withEnvironmentOperationLock({
     operationId,
     run: async () => {
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
-        provider: new FlyMachinesClient({
-          token: process.env.FLY_API_TOKEN ?? "",
-          organizationSlug: process.env.KESTREL_FLY_ORGANIZATION_SLUG ?? "",
-        }),
+        provider: await createFlyProviderClient(operation.organizationId),
         runtimeImage: process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "",
         routerImage: process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "",
         ticketPublicKey:

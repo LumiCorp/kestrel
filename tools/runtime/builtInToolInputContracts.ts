@@ -73,6 +73,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.google_calendar_delete_event": { mode: "schema-only" },
   "kestrel_one.google_calendar_list_availability_subjects": { mode: "schema-only" },
   "kestrel_one.google_calendar_check_availability": { mode: "schema-only" },
+  "kestrel_one.email_send": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
 export function validateBuiltInToolInputContract(name: string, input: unknown): void {

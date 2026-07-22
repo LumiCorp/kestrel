@@ -29,7 +29,7 @@ export function ReasoningPolicyForm(props: {
     setSaving(true);
     setStatus(undefined);
     try {
-      const response = await fetch(`/api/admin/environments/${props.environmentId}`, {
+      const response = await fetch(`/api/organization/environments/${props.environmentId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

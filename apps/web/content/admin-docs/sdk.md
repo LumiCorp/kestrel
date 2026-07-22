@@ -33,8 +33,8 @@ Kestrel One standardizes on a canonical chat, knowledge, and runtime API family.
 
 ## Runtime and configuration endpoints
 
-- `/api/agent-config`
-- `/api/agent-config/public`
+- `/api/organization/agent-config`
+- `/api/organization/agent-config/public`
 - `/api/runtime/apps`
 - `/api/sandbox/shell`
 - `/api/sandbox/snapshot`
@@ -46,5 +46,5 @@ Kestrel One standardizes on a canonical chat, knowledge, and runtime API family.
 
 - Use the app session flow for browser requests.
 - Treat all knowledge, snapshot, runtime, and admin calls as active-organization scoped.
-- Use `/api/agent-config/public` for client-side org configuration reads; keep `/api/agent-config` for admin/config mutation flows.
+- Use `/api/organization/agent-config/public` for client-side organization configuration reads; use `/api/organization/agent-config` for Organization Admin mutations.
 - Prefer these canonical routes instead of legacy chatbot shims or older compatibility endpoints.

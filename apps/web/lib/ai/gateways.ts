@@ -12,10 +12,6 @@ import {
 } from "./gateway-credential-crypto";
 import {
   normalizeGatewayStoredCredential,
-  resolveGatewayEnvironmentCredential,
-  selectGatewayCredentialEnvVarForCreate,
-  selectGatewayCredentialEnvVarForUpdate,
-  shouldClearStoredGatewayCredentialForUpdate,
 } from "./gateway-credential-source";
 import {
   buildRunPodServerlessBaseUrl,
@@ -109,25 +105,6 @@ function getDefaultBaseUrl(provider: GatewayProvider) {
   }
 }
 
-function getDefaultApiKeyEnvVar(provider: GatewayProvider) {
-  switch (provider) {
-    case "lumi":
-      return "LUMI_API_KEY";
-    case "openai":
-      return "OPENAI_API_KEY";
-    case "openrouter":
-      return "OPENROUTER_API_KEY";
-    case "anthropic":
-      return "ANTHROPIC_API_KEY";
-    case "runpod":
-      return "RUNPOD_API_KEY";
-    case "replicate":
-      return "REPLICATE_API_TOKEN";
-    default:
-      return null;
-  }
-}
-
 export function getGatewayApiKey(
   gateway: Pick<GatewayRecord, "apiKey" | "apiKeyEnvVar" | "id" | "provider">
 ) {
@@ -138,9 +115,7 @@ export function getGatewayApiKey(
     });
   }
 
-  return resolveGatewayEnvironmentCredential({
-    apiKeyEnvVar: gateway.apiKeyEnvVar,
-  });
+  return null;
 }
 
 function getOpenAICompatibleBaseUrl(gateway: GatewayRecord) {
@@ -457,21 +432,17 @@ function sanitizeGateway(gateway: GatewayRecord) {
   return {
     ...gateway,
     apiKey: null,
-    hasApiKey: Boolean(
-      gateway.apiKey?.trim() ||
-        resolveGatewayEnvironmentCredential({
-          apiKeyEnvVar: gateway.apiKeyEnvVar,
-        })
-    ),
+    apiKeyEnvVar: null,
+    hasApiKey: Boolean(gateway.apiKey?.trim()),
   };
 }
 
-export async function listAIGatewaysWithModels() {
+export async function listAIGatewaysWithModels(organizationId: string) {
   const [gateways, models] = await Promise.all([
     knowledgeDb
       .select()
       .from(schema.aiGateways)
-      .where(isNull(schema.aiGateways.organizationId))
+      .where(eq(schema.aiGateways.organizationId, organizationId))
       .orderBy(
         asc(schema.aiGateways.provider),
         asc(schema.aiGateways.displayName)
@@ -479,6 +450,7 @@ export async function listAIGatewaysWithModels() {
     knowledgeDb
       .select()
       .from(schema.aiGatewayModels)
+      .where(eq(schema.aiGatewayModels.organizationId, organizationId))
       .orderBy(
         asc(schema.aiGatewayModels.modality),
         asc(schema.aiGatewayModels.alias),
@@ -505,7 +477,7 @@ export async function listAIGatewaysWithModels() {
 
 export async function listApprovedModels(
   modality: GatewayModality,
-  organizationId?: string,
+  organizationId: string,
   environmentId?: string
 ) {
   const [rows, environmentDefault] = await Promise.all([
@@ -524,23 +496,13 @@ export async function listApprovedModels(
           eq(schema.aiGatewayModels.approved, true),
           eq(schema.aiGatewayModels.modality, modality),
           eq(schema.aiGateways.enabled, true),
-          organizationId && environmentId
+          eq(schema.aiGateways.organizationId, organizationId),
+          environmentId
             ? or(
-                isNull(schema.aiGateways.organizationId),
-                and(
-                  eq(schema.aiGateways.organizationId, organizationId),
-                  or(
-                    isNull(schema.aiGateways.environmentId),
-                    eq(schema.aiGateways.environmentId, environmentId)
-                  )
-                )
+                isNull(schema.aiGateways.environmentId),
+                eq(schema.aiGateways.environmentId, environmentId)
               )
-            : organizationId
-              ? or(
-                  isNull(schema.aiGateways.organizationId),
-                  eq(schema.aiGateways.organizationId, organizationId)
-                )
-              : isNull(schema.aiGateways.organizationId)
+            : isNull(schema.aiGateways.environmentId)
         )
       )
       .orderBy(
@@ -553,6 +515,7 @@ export async function listApprovedModels(
       ? knowledgeDb.query.environmentAiModelDefaults.findFirst({
           where: and(
             eq(schema.environmentAiModelDefaults.environmentId, environmentId),
+            eq(schema.environmentAiModelDefaults.organizationId, organizationId),
             eq(schema.environmentAiModelDefaults.modality, modality)
           ),
           columns: { modelId: true },
@@ -592,14 +555,14 @@ export async function listApprovedModels(
 }
 
 export async function getApprovedLanguageModels(
-  organizationId?: string,
+  organizationId: string,
   environmentId?: string
 ) {
   return listApprovedModels("language", organizationId, environmentId);
 }
 
 export async function getApprovedKestrelRuntimeLanguageModels(
-  organizationId?: string,
+  organizationId: string,
   environmentId?: string
 ) {
   const models = await getApprovedLanguageModels(organizationId, environmentId);
@@ -609,9 +572,9 @@ export async function getApprovedKestrelRuntimeLanguageModels(
 }
 
 export async function resolvePreferredLanguageModelId(
-  selectedModelId?: string | null,
-  fallbackModelId?: string | null,
-  organizationId?: string,
+  selectedModelId: string | null | undefined,
+  fallbackModelId: string | null | undefined,
+  organizationId: string,
   environmentId?: string
 ) {
   const languageModels = await getApprovedKestrelRuntimeLanguageModels(
@@ -628,8 +591,8 @@ export async function resolvePreferredLanguageModelId(
 }
 
 export async function getSpeechModelForLanguageSelection(
-  languageModelId?: string | null,
-  organizationId?: string,
+  languageModelId: string | null | undefined,
+  organizationId: string,
   environmentId?: string
 ) {
   const languageModels = await getApprovedLanguageModels(
@@ -665,7 +628,7 @@ export async function getSpeechModelForLanguageSelection(
 
 export async function getGenerationModelsByKind(
   kind: "image" | "video",
-  organizationId?: string
+  organizationId: string
 ) {
   return listApprovedModels(kind, organizationId);
 }
@@ -673,7 +636,7 @@ export async function getGenerationModelsByKind(
 export async function resolveGatewayModelSelection(input: {
   selection?: string | null;
   modality: GatewayModality;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }) {
   const models = await listApprovedModels(
@@ -686,16 +649,15 @@ export async function resolveGatewayModelSelection(input: {
 }
 
 export async function createGateway(input: {
+  organizationId: string;
   provider: GatewayProvider;
   endpointId?: string;
   displayName?: string;
   baseUrl?: string | null;
-  apiKeyEnvVar?: string | null;
   apiKey?: string | null;
   enabled?: boolean;
   supportedModalities?: GatewayModality[];
   metadata?: Record<string, unknown> | null;
-  organizationId?: string | null;
   environmentId?: string | null;
   deploymentId?: string | null;
   providerConnectionId?: string | null;
@@ -710,18 +672,14 @@ export async function createGateway(input: {
     .insert(schema.aiGateways)
     .values({
       id: gatewayId,
-      organizationId: input.organizationId ?? null,
+      organizationId: input.organizationId,
       environmentId: input.environmentId ?? null,
       deploymentId: input.deploymentId ?? null,
       providerConnectionId: input.providerConnectionId ?? null,
       provider: input.provider,
       displayName: input.displayName || getProviderDisplayName(input.provider),
       baseUrl,
-      apiKeyEnvVar: selectGatewayCredentialEnvVarForCreate({
-        apiKey,
-        apiKeyEnvVar: input.apiKeyEnvVar,
-        defaultApiKeyEnvVar: getDefaultApiKeyEnvVar(input.provider),
-      }),
+      apiKeyEnvVar: null,
       apiKey: apiKey
         ? encryptGatewayCredential({
             gatewayId,
@@ -742,11 +700,11 @@ export async function createGateway(input: {
 }
 
 export async function updateGateway(
+  organizationId: string,
   gatewayId: string,
   input: Partial<{
     displayName: string;
     baseUrl: string | null;
-    apiKeyEnvVar: string | null;
     apiKey: string | null;
     enabled: boolean;
     supportedModalities: GatewayModality[];
@@ -754,14 +712,6 @@ export async function updateGateway(
   }>
 ) {
   const apiKey = normalizeGatewayStoredCredential(input.apiKey);
-  const apiKeyEnvVar = selectGatewayCredentialEnvVarForUpdate({
-    apiKey,
-    apiKeyEnvVar: input.apiKeyEnvVar,
-  });
-  const clearStoredApiKey = shouldClearStoredGatewayCredentialForUpdate({
-    apiKey,
-    apiKeyEnvVar: input.apiKeyEnvVar,
-  });
   const [gateway] = await knowledgeDb
     .update(schema.aiGateways)
     .set({
@@ -769,10 +719,8 @@ export async function updateGateway(
         ? { displayName: input.displayName }
         : {}),
       ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
-      ...(apiKeyEnvVar !== undefined ? { apiKeyEnvVar } : {}),
-      ...(clearStoredApiKey
-        ? { apiKey: null }
-        : apiKey !== undefined
+      apiKeyEnvVar: null,
+      ...(apiKey !== undefined
           ? {
               apiKey: apiKey
                 ? encryptGatewayCredential({
@@ -789,15 +737,27 @@ export async function updateGateway(
       ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
       updatedAt: new Date(),
     })
-    .where(eq(schema.aiGateways.id, gatewayId))
+    .where(
+      and(
+        eq(schema.aiGateways.id, gatewayId),
+        eq(schema.aiGateways.organizationId, organizationId)
+      )
+    )
     .returning();
 
   return gateway ? sanitizeGateway(gateway) : null;
 }
 
-export async function syncGatewayModels(gatewayId: string) {
+export async function syncGatewayModels(
+  organizationId: string,
+  gatewayId: string
+) {
   const gateway = await knowledgeDb.query.aiGateways.findFirst({
-    where: (table, operators) => operators.eq(table.id, gatewayId),
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.id, gatewayId),
+        operators.eq(table.organizationId, organizationId)
+      ),
   });
 
   if (!gateway) {
@@ -806,7 +766,7 @@ export async function syncGatewayModels(gatewayId: string) {
 
   const [syncedModels, existingModels] = await Promise.all([
     fetchGatewayModels(gateway),
-    listModelsForGateway(gatewayId),
+    listModelsForGateway(organizationId, gatewayId),
   ]);
 
   const existingByRawModelId = new Map(
@@ -823,6 +783,7 @@ export async function syncGatewayModels(gatewayId: string) {
     const existing = existingByRawModelId.get(syncedModel.rawModelId);
     const savedModel = await saveGatewayModel({
       id: existing?.id,
+      organizationId,
       gatewayId,
       rawModelId: syncedModel.rawModelId,
       alias: existing?.alias ?? null,
@@ -875,6 +836,7 @@ export async function syncGatewayModels(gatewayId: string) {
 }
 
 export async function saveGatewayModel(input: {
+  organizationId: string;
   id?: string;
   gatewayId: string;
   gatewayProvider?: GatewayProvider;
@@ -895,7 +857,11 @@ export async function saveGatewayModel(input: {
         })
       : knowledgeDb.query.aiGateways.findFirst({
           columns: { provider: true, baseUrl: true },
-          where: (table, operators) => operators.eq(table.id, input.gatewayId),
+          where: (table, operators) =>
+            operators.and(
+              operators.eq(table.id, input.gatewayId),
+              operators.eq(table.organizationId, input.organizationId)
+            ),
         }),
     input.id
       ? knowledgeDb.query.aiGatewayModels.findFirst({
@@ -907,7 +873,8 @@ export async function saveGatewayModel(input: {
           where: (table, operators) =>
             operators.and(
               operators.eq(table.id, input.id!),
-              operators.eq(table.gatewayId, input.gatewayId)
+              operators.eq(table.gatewayId, input.gatewayId),
+              operators.eq(table.organizationId, input.organizationId)
             ),
         })
       : Promise.resolve(undefined),
@@ -992,7 +959,8 @@ export async function saveGatewayModel(input: {
       .where(
         and(
           eq(schema.aiGatewayModels.id, input.id),
-          eq(schema.aiGatewayModels.gatewayId, input.gatewayId)
+          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+          eq(schema.aiGatewayModels.organizationId, input.organizationId)
         )
       )
       .returning();
@@ -1007,6 +975,7 @@ export async function saveGatewayModel(input: {
     .insert(schema.aiGatewayModels)
     .values({
       id: crypto.randomUUID(),
+      organizationId: input.organizationId,
       gatewayId: input.gatewayId,
       rawModelId: input.rawModelId,
       alias: input.alias ?? null,
@@ -1024,6 +993,7 @@ export async function saveGatewayModel(input: {
 }
 
 export async function validateRunPodGatewayModel(input: {
+  organizationId: string;
   gatewayId: string;
   modelId: string;
   timeoutMs?: number;
@@ -1040,6 +1010,7 @@ export async function validateRunPodGatewayModel(input: {
     .where(
       and(
         eq(schema.aiGateways.id, input.gatewayId),
+        eq(schema.aiGateways.organizationId, input.organizationId),
         eq(schema.aiGatewayModels.id, input.modelId)
       )
     )
@@ -1079,6 +1050,7 @@ export async function validateRunPodGatewayModel(input: {
     .where(
       and(
         eq(schema.aiGatewayModels.id, input.modelId),
+        eq(schema.aiGatewayModels.organizationId, input.organizationId),
         eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
         eq(schema.aiGatewayModels.rawModelId, selected.model.rawModelId),
         eq(schema.aiGatewayModels.modality, selected.model.modality)
@@ -1092,6 +1064,7 @@ export async function validateRunPodGatewayModel(input: {
 }
 
 export async function validateRunPodGatewayModelByRawId(input: {
+  organizationId: string;
   gatewayId: string;
   rawModelId: string;
   isDefault?: boolean;
@@ -1100,7 +1073,11 @@ export async function validateRunPodGatewayModelByRawId(input: {
   now?: Date;
 }) {
   const gateway = await knowledgeDb.query.aiGateways.findFirst({
-    where: (table, operators) => operators.eq(table.id, input.gatewayId),
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.id, input.gatewayId),
+        operators.eq(table.organizationId, input.organizationId)
+      ),
   });
   if (gateway?.provider !== "runpod") {
     throw new Error("RunPod gateway not found.");
@@ -1119,6 +1096,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     where: (table, operators) =>
       operators.and(
         operators.eq(table.gatewayId, gateway.id),
+        operators.eq(table.organizationId, input.organizationId),
         operators.eq(table.rawModelId, rawModelId)
       ),
   });
@@ -1126,6 +1104,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     existing ??
     (await saveGatewayModel({
       gatewayId: gateway.id,
+      organizationId: input.organizationId,
       gatewayProvider: "runpod",
       gatewayBaseUrl: gateway.baseUrl,
       rawModelId,
@@ -1136,6 +1115,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     }));
   const validation = await validateRunPodGatewayModel({
     gatewayId: gateway.id,
+    organizationId: input.organizationId,
     modelId: candidate.id,
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
@@ -1143,6 +1123,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
   });
   const model = await saveGatewayModel({
     id: validation.model.id,
+    organizationId: input.organizationId,
     gatewayId: gateway.id,
     gatewayProvider: "runpod",
     gatewayBaseUrl: gateway.baseUrl,
@@ -1166,7 +1147,7 @@ type ResolvedGatewayModel = {
 async function getResolvedGatewayModel(input: {
   selection?: string | null;
   modality: GatewayModality;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }): Promise<ResolvedGatewayModel | null> {
   const selection = await resolveGatewayModelSelection(input);
@@ -1198,7 +1179,7 @@ async function hydrateResolvedGatewayModel(
 export async function getResolvedGatewayExecutionModel(input: {
   selection?: string | null;
   modality: GatewayModality;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }) {
   return getResolvedGatewayModel(input);
@@ -1206,7 +1187,7 @@ export async function getResolvedGatewayExecutionModel(input: {
 
 export async function getResolvedKestrelRuntimeExecutionModel(input: {
   selection?: string | null;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }) {
   const models = await getApprovedKestrelRuntimeLanguageModels(
@@ -1285,7 +1266,7 @@ function createGatewayProvider(input: {
 export async function resolveLanguageModelHandle(input: {
   selection?: string | null;
   usage?: "default" | "tool-loop";
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }) {
   const resolved = await getResolvedGatewayModel({
@@ -1323,11 +1304,15 @@ export async function resolveLanguageModelHandle(input: {
 }
 
 export async function resolveLanguageModelRetryFallback(
-  selection?: string | null
+  selection: string | null | undefined,
+  organizationId: string,
+  environmentId?: string
 ) {
   const resolved = await getResolvedGatewayModel({
     selection,
     modality: "language",
+    organizationId,
+    environmentId,
   });
 
   if (!resolved || resolved.gateway.provider !== "openrouter") {
@@ -1339,7 +1324,7 @@ export async function resolveLanguageModelRetryFallback(
     resolved.model.rawModelId
   );
 
-  const languageModels = await getApprovedLanguageModels();
+  const languageModels = await getApprovedLanguageModels(organizationId, environmentId);
   const candidates = languageModels.filter(
     (model) =>
       model.gatewayId !== resolved.gateway.id &&
@@ -1358,10 +1343,12 @@ export async function resolveLanguageModelRetryFallback(
   );
 }
 
-export async function resolveSpeechModelHandle(selection?: string | null) {
+export async function resolveSpeechModelHandle(input: { selection?: string | null; organizationId: string; environmentId?: string }) {
   const resolved = await getResolvedGatewayModel({
-    selection,
+    selection: input.selection,
     modality: "speech",
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
 
   if (!resolved) {
@@ -1382,10 +1369,12 @@ export async function resolveSpeechModelHandle(selection?: string | null) {
   };
 }
 
-export async function resolveImageModelHandle(selection?: string | null) {
+export async function resolveImageModelHandle(input: { selection?: string | null; organizationId: string; environmentId?: string }) {
   const resolved = await getResolvedGatewayModel({
-    selection,
+    selection: input.selection,
     modality: "image",
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
   });
 
   if (!resolved) {
@@ -1401,19 +1390,34 @@ export async function resolveImageModelHandle(selection?: string | null) {
   };
 }
 
-export async function getGatewayById(gatewayId: string) {
+export async function getGatewayById(
+  organizationId: string,
+  gatewayId: string
+) {
   const gateway = await knowledgeDb.query.aiGateways.findFirst({
-    where: (table, operators) => operators.eq(table.id, gatewayId),
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.id, gatewayId),
+        operators.eq(table.organizationId, organizationId)
+      ),
   });
 
   return gateway ? sanitizeGateway(gateway) : null;
 }
 
-export async function listModelsForGateway(gatewayId: string) {
+export async function listModelsForGateway(
+  organizationId: string,
+  gatewayId: string
+) {
   return knowledgeDb
     .select()
     .from(schema.aiGatewayModels)
-    .where(eq(schema.aiGatewayModels.gatewayId, gatewayId))
+    .where(
+      and(
+        eq(schema.aiGatewayModels.organizationId, organizationId),
+        eq(schema.aiGatewayModels.gatewayId, gatewayId)
+      )
+    )
     .orderBy(
       asc(schema.aiGatewayModels.modality),
       asc(schema.aiGatewayModels.alias),
@@ -1421,21 +1425,34 @@ export async function listModelsForGateway(gatewayId: string) {
     );
 }
 
-export async function deleteGateway(gatewayId: string) {
+export async function deleteGateway(
+  organizationId: string,
+  gatewayId: string
+) {
   const [deleted] = await knowledgeDb
     .delete(schema.aiGateways)
-    .where(eq(schema.aiGateways.id, gatewayId))
+    .where(
+      and(
+        eq(schema.aiGateways.id, gatewayId),
+        eq(schema.aiGateways.organizationId, organizationId)
+      )
+    )
     .returning();
 
   return deleted ? sanitizeGateway(deleted) : null;
 }
 
-export async function deleteGatewayModel(gatewayId: string, modelId: string) {
+export async function deleteGatewayModel(
+  organizationId: string,
+  gatewayId: string,
+  modelId: string
+) {
   const [deleted] = await knowledgeDb
     .delete(schema.aiGatewayModels)
     .where(
       and(
         eq(schema.aiGatewayModels.id, modelId),
+        eq(schema.aiGatewayModels.organizationId, organizationId),
         eq(schema.aiGatewayModels.gatewayId, gatewayId)
       )
     )

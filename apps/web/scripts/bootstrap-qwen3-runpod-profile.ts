@@ -14,17 +14,18 @@ import { enqueueManagedRunPodRun } from "@/lib/knowledge/queue";
 
 async function run() {
   const actorUserId = process.env.KESTREL_BOOTSTRAP_ACTOR_USER_ID?.trim();
+  const organizationId = process.env.KESTREL_BOOTSTRAP_ORGANIZATION_ID?.trim();
   const imageRef =
     process.env.RUNPOD_WORKER_VLLM_IMAGE_DIGEST?.trim() ||
     QWEN3_8B_RUNPOD_IMAGE;
-  if (!actorUserId) {
-    throw new Error("KESTREL_BOOTSTRAP_ACTOR_USER_ID is required");
+  if (!(actorUserId && organizationId)) {
+    throw new Error("KESTREL_BOOTSTRAP_ACTOR_USER_ID and KESTREL_BOOTSTRAP_ORGANIZATION_ID are required");
   }
-  await testRunPodProviderConnection();
+  await testRunPodProviderConnection({ organizationId });
 
   const profileInput = buildQwen3RunPodProfile(imageRef);
   const specHash = hashManagedRunPodProfile(profileInput);
-  const profiles = await listManagedRunPodProfiles({ includeInactive: true });
+  const profiles = await listManagedRunPodProfiles({ organizationId, includeInactive: true });
   let profile = profiles.find(
     (candidate) =>
       candidate.profileKey === QWEN3_8B_RUNPOD_PROFILE_KEY &&
@@ -33,6 +34,7 @@ async function run() {
 
   if (!profile) {
     profile = await createManagedRunPodProfile({
+      organizationId,
       actorUserId,
       profile: profileInput,
     });
@@ -41,6 +43,7 @@ async function run() {
 
   if (profile.status === "draft" && !profile.qualifiedAt) {
     const qualification = await queueManagedRunPodQualification({
+      organizationId,
       profileId: profile.id,
     });
     if (!qualification) {

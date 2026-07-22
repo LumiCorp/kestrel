@@ -123,6 +123,16 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     this.sleepImpl = input.sleepImpl ?? sleep;
   }
 
+  async testConnection() {
+    parseResponse(
+      appListSchema,
+      await this.request(
+        `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
+        { method: "GET" }
+      )
+    );
+  }
+
   async ensureEnvironmentApp(input: {
     appName: string;
     networkName: string;

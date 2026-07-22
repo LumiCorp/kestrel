@@ -11,13 +11,11 @@ import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 export function AuthenticatedAppShell({
   activeOrganization,
   children,
-  isAdmin,
   sectionLabel,
   session,
 }: {
   activeOrganization: OrganizationSnapshot | null;
   children: ReactNode;
-  isAdmin: boolean;
   sectionLabel: string;
   session: Session;
 }) {
@@ -25,8 +23,6 @@ export function AuthenticatedAppShell({
     <SidebarProvider>
       <AppSidebar
         activeOrganization={activeOrganization}
-        canManageOrganization={isAdmin}
-        isAdmin={isAdmin}
         session={session}
       />
       <SidebarInset>

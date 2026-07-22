@@ -44,7 +44,7 @@ type ChangePlanDialogProps = {
 function ChangePlanDialog(props: ChangePlanDialogProps) {
   const [selectedPlan, setSelectedPlan] = useState("plus");
   const id = useId();
-  const returnUrl = props.returnUrl || "/dashboard/organizations";
+  const returnUrl = props.returnUrl || "/settings/organization/members";
 
   return (
     <Dialog>

@@ -6,13 +6,15 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { activeOrganization, isAdmin, session } =
+  const {
+    activeOrganization,
+    session,
+  } =
     await requireAuthenticatedShell();
 
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
-      isAdmin={isAdmin}
       sectionLabel="Dashboard"
       session={session}
     >

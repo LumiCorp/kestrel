@@ -8,5 +8,5 @@ export default async function ModelDeploymentsPage() {
     organizationId,
     userId: session.user.id,
   });
-  redirect(`/settings/environments/${environment.id}/inference`);
+  redirect(`/settings/organization/environments/${environment.id}/inference`);
 }

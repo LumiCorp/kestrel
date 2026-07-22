@@ -17,6 +17,7 @@ export type AppCategory =
 export type AppKind = "built_in" | "external" | "custom";
 export type AppConnectionModel =
   | "none"
+  | "organization"
   | "personal"
   | "environment"
   | "hybrid";
@@ -61,7 +62,12 @@ export type AppCapability = {
 export type AppConnectionSummary = {
   id: string;
   name: string;
-  ownerType: "system" | "personal" | "environment" | "deployment_managed";
+  ownerType:
+    | "system"
+    | "organization"
+    | "personal"
+    | "environment"
+    | "deployment_managed";
   status: "connected" | "degraded" | "disconnected";
   environmentId: string | null;
   isMine: boolean;

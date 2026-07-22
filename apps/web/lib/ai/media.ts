@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import {
   type GatewayProvider,
+  getGatewayApiKey,
   getResolvedGatewayExecutionModel,
 } from "@/lib/ai/gateways";
 import { generateImageForModel } from "@/lib/ai/providers";
@@ -22,30 +23,9 @@ type CreateMediaJobInput = {
   modelId: string;
 };
 
-function getReplicateApiToken(apiKey: string | null) {
-  return apiKey || process.env.REPLICATE_API_TOKEN?.trim() || null;
-}
-
-function getGatewayApiKey(gateway: {
-  apiKey: string | null;
-  apiKeyEnvVar: string | null;
-  provider: GatewayProvider;
-}) {
-  if (gateway.apiKey?.trim()) {
-    return gateway.apiKey.trim();
-  }
-
-  if (gateway.apiKeyEnvVar?.trim()) {
-    return process.env[gateway.apiKeyEnvVar.trim()]?.trim() || null;
-  }
-
-  return gateway.provider === "replicate"
-    ? process.env.REPLICATE_API_TOKEN?.trim() || null
-    : null;
-}
-
 async function createReplicatePrediction(input: {
   gateway: {
+    id: string;
     apiKey: string | null;
     apiKeyEnvVar: string | null;
     baseUrl: string | null;
@@ -54,7 +34,7 @@ async function createReplicatePrediction(input: {
   modelId: string;
   prompt: string;
 }) {
-  const token = getReplicateApiToken(getGatewayApiKey(input.gateway));
+  const token = getGatewayApiKey(input.gateway);
 
   if (!token) {
     throw new Error("Replicate API token is not configured for this gateway.");
@@ -94,6 +74,7 @@ async function createReplicatePrediction(input: {
 
 async function pollReplicatePrediction(input: {
   gateway: {
+    id: string;
     apiKey: string | null;
     apiKeyEnvVar: string | null;
     baseUrl: string | null;
@@ -101,7 +82,7 @@ async function pollReplicatePrediction(input: {
   };
   providerJobId: string;
 }) {
-  const token = getReplicateApiToken(getGatewayApiKey(input.gateway));
+  const token = getGatewayApiKey(input.gateway);
 
   if (!token) {
     throw new Error("Replicate API token is not configured for this gateway.");
@@ -195,6 +176,8 @@ export async function createMediaGenerationJob(input: CreateMediaJobInput) {
 
   if (resolved.gateway.provider !== "replicate" && input.kind === "image") {
     const generated = await generateImageForModel({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
       modelId: input.modelId,
       prompt: input.prompt,
       size: "1024x1024",
