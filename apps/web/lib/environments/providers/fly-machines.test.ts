@@ -24,9 +24,18 @@ contractTest("web.hermetic", "Fly waits split long deadlines into accepted reque
     organizationSlug: "kestrel-test",
     fetchImpl: (async (url: string | URL | Request) => {
       requests.push(String(url));
-      return requests.length === 1
-        ? new Response(null, { status: 408 })
-        : Response.json({});
+      if (String(url).includes("/wait?")) {
+        return requests.filter((request) => request.includes("/wait?")).length === 1
+          ? new Response(null, { status: 408 })
+          : Response.json({});
+      }
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "starting",
+        region: "iad",
+        config: {},
+      });
     }) as typeof fetch,
   });
   await client.waitForMachine({
@@ -35,8 +44,38 @@ contractTest("web.hermetic", "Fly waits split long deadlines into accepted reque
     state: "started",
     timeoutSeconds: 90,
   });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.filter((url) => url.includes("/wait?")).length, 2);
   assert.match(requests[0] ?? "", /[?&]timeout=60(?:&|$)/u);
+});
+
+contractTest("web.hermetic", "Fly waits accept the authoritative target state after a timeout", async () => {
+  const requests: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (String(url).includes("/wait?")) {
+        return new Response(null, { status: 408 });
+      }
+      return Response.json({
+        id: "machine-1",
+        instance_id: "instance-1",
+        state: "started",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await client.waitForMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+    state: "started",
+    timeoutSeconds: 60,
+  });
+
+  assert.equal(requests.filter((url) => url.includes("/wait?")).length, 1);
 });
 
 contractTest("web.hermetic", "Fly waits continue through an authoritative replacing state", async () => {
