@@ -122,7 +122,6 @@ export interface DelegationRequest {
   profileId?: string | undefined;
   provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   launchedBy?: "operator" | "agent" | undefined;
   resultContract?: string | undefined;
   policy?: ChildThreadPolicy | undefined;
@@ -703,7 +702,6 @@ export interface SpawnChildThreadInput {
   profileId?: string | undefined;
   provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   policy?: ChildThreadPolicy | undefined;
   issuedBy?: string | undefined;
 }

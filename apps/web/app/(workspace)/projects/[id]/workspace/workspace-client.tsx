@@ -29,6 +29,14 @@ type WorkspaceSetup = {
   grants: EnvironmentAppCapabilityGrant[];
 };
 
+type WorkspaceSkill = {
+  installationId: string;
+  status: "pending" | "syncing" | "ready" | "stale" | "failed" | "removal_pending";
+  source: { gitUrl: string; branch: string; path?: string };
+  revision?: { name: string; description: string; commitSha: string; contentDigest: string; skillFile: string };
+  lastSyncError?: string;
+};
+
 export function ProjectWorkspaceClient({
   canEdit,
   projectId,
@@ -42,6 +50,12 @@ export function ProjectWorkspaceClient({
   const [environmentId, setEnvironmentId] = useState("");
   const [sourceType, setSourceType] = useState<"blank" | "github">("blank");
   const [resourceId, setResourceId] = useState("");
+  const [skills, setSkills] = useState<WorkspaceSkill[]>([]);
+  const [skillGitUrl, setSkillGitUrl] = useState("");
+  const [skillBranch, setSkillBranch] = useState("main");
+  const [skillPath, setSkillPath] = useState("");
+  const [editingSkillId, setEditingSkillId] = useState<string>();
+  const [skillBusy, setSkillBusy] = useState(false);
 
   useEffect(() => {
     void fetch(`/api/projects/${projectId}/workspace`)
@@ -66,6 +80,16 @@ export function ProjectWorkspaceClient({
         )
       );
   }, [projectId]);
+
+  useEffect(() => {
+    if (setup?.workspace?.status !== "ready") {
+      setSkills([]);
+      return;
+    }
+    void loadSkills().catch((error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Workspace skills unavailable.")
+    );
+  }, [projectId, setup?.workspace?.id, setup?.workspace?.status]);
 
   const repositories = useMemo(() => {
     if (!setup) return [];
@@ -139,6 +163,71 @@ export function ProjectWorkspaceClient({
         ? "Project Workspace provisioning requested."
         : "Project Environment moved and its new Workspace was requested."
     );
+  }
+
+  async function loadSkills() {
+    const response = await fetch(`/api/projects/${projectId}/workspace/skills`, { cache: "no-store" });
+    const payload = (await response.json()) as { skills?: WorkspaceSkill[]; error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Workspace skills unavailable.");
+    setSkills(payload.skills ?? []);
+  }
+
+  async function installSkill() {
+    setSkillBusy(true);
+    try {
+      const endpoint = editingSkillId === undefined
+        ? `/api/projects/${projectId}/workspace/skills`
+        : `/api/projects/${projectId}/workspace/skills/${encodeURIComponent(editingSkillId)}`;
+      const response = await fetch(endpoint, {
+        method: editingSkillId === undefined ? "POST" : "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          gitUrl: skillGitUrl.trim(),
+          branch: skillBranch.trim(),
+          ...(skillPath.trim() ? { path: skillPath.trim() } : {}),
+        }),
+      });
+      const payload = (await response.json()) as { skill?: WorkspaceSkill; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Skill installation failed.");
+      await loadSkills();
+      setSkillGitUrl("");
+      setSkillBranch("main");
+      setSkillPath("");
+      setEditingSkillId(undefined);
+      toast.success(payload.skill?.status === "ready" ? "Workspace skill is ready." : "Workspace skill source saved; synchronization is pending or degraded.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skill installation failed.");
+    } finally {
+      setSkillBusy(false);
+    }
+  }
+
+  async function syncSkills() {
+    setSkillBusy(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workspace/skills/sync`, { method: "POST" });
+      const payload = (await response.json()) as { skills?: WorkspaceSkill[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Skill synchronization failed.");
+      setSkills(payload.skills ?? []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skill synchronization failed.");
+    } finally {
+      setSkillBusy(false);
+    }
+  }
+
+  async function removeSkill(installationId: string) {
+    setSkillBusy(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workspace/skills/${encodeURIComponent(installationId)}`, { method: "DELETE" });
+      const payload = (await response.json()) as { skills?: WorkspaceSkill[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Skill removal failed.");
+      setSkills(payload.skills ?? []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skill removal failed.");
+    } finally {
+      setSkillBusy(false);
+    }
   }
 
   return (
@@ -242,6 +331,77 @@ export function ProjectWorkspaceClient({
                 : "Move and Configure"}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+      <Card className="mt-6">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>Agent skills</CardTitle>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Install guidance packages from public HTTPS Git repositories. Skills never grant permissions or run install hooks.
+              </p>
+            </div>
+            <Button disabled={!canEdit || skillBusy || setup?.workspace?.status !== "ready"} variant="outline" onClick={() => void syncSkills()}>
+              Sync
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {setup?.workspace?.status !== "ready" ? (
+            <p className="text-muted-foreground text-sm">Start the Project Workspace to install or inspect its skills.</p>
+          ) : (
+            <>
+              <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr_auto]">
+                <input className="border-input bg-background h-9 rounded-md border px-3 text-sm" aria-label="Skill Git URL" placeholder="https://github.com/org/skills.git" value={skillGitUrl} onChange={(event) => setSkillGitUrl(event.target.value)} />
+                <input className="border-input bg-background h-9 rounded-md border px-3 text-sm" aria-label="Skill branch" placeholder="main" value={skillBranch} onChange={(event) => setSkillBranch(event.target.value)} />
+                <input className="border-input bg-background h-9 rounded-md border px-3 text-sm" aria-label="Skill path" placeholder="Optional path" value={skillPath} onChange={(event) => setSkillPath(event.target.value)} />
+                <Button disabled={!canEdit || skillBusy || !skillGitUrl.trim() || !skillBranch.trim()} onClick={() => void installSkill()}>
+                  {editingSkillId === undefined ? "Install" : "Update"}
+                </Button>
+              </div>
+              {editingSkillId !== undefined ? (
+                <Button size="sm" variant="ghost" onClick={() => {
+                  setEditingSkillId(undefined);
+                  setSkillGitUrl("");
+                  setSkillBranch("main");
+                  setSkillPath("");
+                }}>Cancel edit</Button>
+              ) : null}
+              <div className="space-y-2">
+                {skills.map((skill) => (
+                  <div className="flex items-start justify-between gap-4 rounded-md border p-3" key={skill.installationId}>
+                    <div className="min-w-0">
+                      <div className="font-medium">{skill.revision?.name ?? "Pending skill"}</div>
+                      <div className="text-muted-foreground text-sm">{skill.revision?.description ?? skill.source.gitUrl}</div>
+                      <div className="text-muted-foreground mt-1 text-xs">
+                        {skill.status}{skill.revision?.commitSha ? ` · ${skill.revision.commitSha.slice(0, 12)} · ${skill.revision.contentDigest}` : ""}
+                      </div>
+                      {skill.lastSyncError ? <div className="text-destructive mt-1 text-xs">{skill.lastSyncError}</div> : null}
+                      <details className="text-muted-foreground mt-2 text-xs">
+                        <summary>Inspect</summary>
+                        <div>Source: {skill.source.gitUrl}</div>
+                        <div>Branch: {skill.source.branch}{skill.source.path ? ` · ${skill.source.path}` : ""}</div>
+                        {skill.revision ? <div>Commit: {skill.revision.commitSha}</div> : null}
+                        {skill.revision ? <div>Digest: {skill.revision.contentDigest}</div> : null}
+                        {skill.revision ? <div>Instructions: {skill.revision.skillFile}</div> : null}
+                      </details>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button disabled={!canEdit || skillBusy} size="sm" variant="outline" onClick={() => {
+                        setEditingSkillId(skill.installationId);
+                        setSkillGitUrl(skill.source.gitUrl);
+                        setSkillBranch(skill.source.branch);
+                        setSkillPath(skill.source.path ?? "");
+                      }}>Edit</Button>
+                      <Button disabled={!canEdit || skillBusy} size="sm" variant="outline" onClick={() => void removeSkill(skill.installationId)}>Remove</Button>
+                    </div>
+                  </div>
+                ))}
+                {skills.length === 0 ? <p className="text-muted-foreground text-sm">No workspace skills installed.</p> : null}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </AppPage>

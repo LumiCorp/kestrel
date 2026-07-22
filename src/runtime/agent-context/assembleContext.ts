@@ -78,8 +78,8 @@ export interface KestrelAgentContextBuildInput {
   actSubmode?: string | undefined;
   promptVariant?: string | undefined;
   activeWorkspace?: unknown;
+  activeWorkspaceSkills?: unknown;
   activeProjectContext?: unknown;
-  activeSkillPack?: unknown;
   retryContext?: Record<string, unknown> | undefined;
   systemPrompt?: KestrelAgentSystemPromptInput | undefined;
   stepIndex?: number | undefined;
@@ -182,8 +182,8 @@ export function buildKestrelAgentContext(
     ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
     ...(input.promptVariant !== undefined ? { promptVariant: input.promptVariant } : {}),
     workspaceContext: input.activeWorkspace,
+    workspaceSkillsContext: input.activeWorkspaceSkills,
     projectContext: input.activeProjectContext,
-    skillPackContext: input.activeSkillPack,
     ...(activeProcessEvidence !== undefined ? { activeProcessEvidence } : {}),
     ...(recentFilesystemEvidence !== undefined ? { recentFilesystemEvidence } : {}),
     ...(recentToolResultEvidence !== undefined ? { recentToolResultEvidence } : {}),
@@ -230,8 +230,8 @@ export function buildKestrelAgentContext(
         { id: "benchmarkContext", origin: "benchmark", rendered: benchmarkContext !== undefined },
         { id: "mode", origin: "turn", rendered: input.interactionMode.trim().length > 0 },
         { id: "workspace", origin: "workspace", rendered: input.activeWorkspace !== undefined },
+        { id: "workspaceSkills", origin: "workspace-skills", rendered: input.activeWorkspaceSkills !== undefined },
         { id: "projectContext", origin: "project", rendered: input.activeProjectContext !== undefined },
-        { id: "skillPack", origin: "skill-pack", rendered: input.activeSkillPack !== undefined },
         { id: "activeProcessEvidence", origin: "runtime-state", rendered: activeProcessEvidence !== undefined },
         { id: "recentFilesystemEvidence", origin: "runtime-state", rendered: recentFilesystemEvidence !== undefined },
         { id: "recentToolResultEvidence", origin: "model-transcript", rendered: recentToolResultEvidence !== undefined },

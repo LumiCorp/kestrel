@@ -22,7 +22,6 @@ import type {
 import {
   compileRuntimeTurn,
   type RuntimeTurnInput,
-  type RuntimeTurnSkillPack,
 } from "./RuntimeTurn.js";
 import { isUserFacingWait } from "./assistantResponseContract.js";
 import { readWaitResumeStepAgent } from "./waitState.js";
@@ -48,9 +47,6 @@ export interface RuntimeThreadedTurnExecutorOptions {
     input?: RuntimeTurnInput | undefined,
     options?: { includeGrantedMcpTools?: boolean | undefined } | undefined
   ): string[];
-  resolveSkillPackById?:
-    | ((skillPackId: string) => RuntimeTurnSkillPack | undefined)
-    | undefined;
   handleCapabilityLoss?:
     | ((input: { threadId: string; availableToolNames: string[] }) => Promise<{
         record: ThreadAssemblyRecord;
@@ -68,7 +64,6 @@ export class RuntimeThreadedTurnExecutor {
   private readonly runKernel: RuntimeThreadedTurnExecutorOptions["runKernel"];
   private readonly refreshToolRuntime: RuntimeThreadedTurnExecutorOptions["refreshToolRuntime"];
   private readonly resolveAvailableToolAllowlist: RuntimeThreadedTurnExecutorOptions["resolveAvailableToolAllowlist"];
-  private readonly resolveSkillPackById: RuntimeThreadedTurnExecutorOptions["resolveSkillPackById"];
   private readonly handleCapabilityLoss: RuntimeThreadedTurnExecutorOptions["handleCapabilityLoss"];
 
   constructor(options: RuntimeThreadedTurnExecutorOptions) {
@@ -78,7 +73,6 @@ export class RuntimeThreadedTurnExecutor {
     this.runKernel = options.runKernel;
     this.refreshToolRuntime = options.refreshToolRuntime;
     this.resolveAvailableToolAllowlist = options.resolveAvailableToolAllowlist;
-    this.resolveSkillPackById = options.resolveSkillPackById;
     this.handleCapabilityLoss = options.handleCapabilityLoss;
   }
 
@@ -233,14 +227,6 @@ export class RuntimeThreadedTurnExecutor {
       approvalPolicyId?: string | undefined;
     };
   }): RuntimeTurnInput {
-    const skillPackId =
-      asString(input.baseRuntimeTurn?.metadata?.skillPackId) ??
-      asString(input.input.metadata?.skillPackId);
-    const skillPack =
-      skillPackId !== undefined
-        ? (input.baseRuntimeTurn?.skillPack ??
-          this.resolveSkillPackById?.(skillPackId))
-        : undefined;
     const executionPolicy =
       input.baseRuntimeTurn?.executionPolicy ??
       (asRecord(input.orchestrationMetadata?.executionPolicy) !== undefined
@@ -291,7 +277,11 @@ export class RuntimeThreadedTurnExecutor {
             }
           : {}),
       ...(projectContext !== undefined ? { projectContext } : {}),
-      ...(skillPack !== undefined ? { skillPack } : {}),
+      ...(input.baseRuntimeTurn?.workspaceSkills !== undefined
+        ? { workspaceSkills: input.baseRuntimeTurn.workspaceSkills }
+        : Array.isArray(input.orchestrationMetadata?.workspaceSkills)
+          ? { workspaceSkills: input.orchestrationMetadata.workspaceSkills as RuntimeTurnInput["workspaceSkills"] }
+          : {}),
       metadata: {
         ...(input.baseRuntimeTurn?.metadata ?? {}),
         ...(input.input.metadata ?? {}),

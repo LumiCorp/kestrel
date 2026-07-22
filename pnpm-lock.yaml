@@ -17,6 +17,9 @@ importers:
       '@kestrel-agents/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@kestrel-agents/workspace-skills':
+        specifier: workspace:*
+        version: link:packages/workspace-skills
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -803,6 +806,9 @@ importers:
       '@kestrel-agents/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@kestrel-agents/workspace-skills':
+        specifier: workspace:*
+        version: link:../../packages/workspace-skills
       '@lumi/kestrel-environment-auth':
         specifier: workspace:*
         version: link:../../packages/environment-auth
@@ -886,6 +892,19 @@ importers:
       '@kestrel-agents/protocol':
         specifier: workspace:*
         version: link:../protocol
+
+  packages/workspace-skills:
+    dependencies:
+      yaml:
+        specifier: 2.8.2
+        version: 2.8.2
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.11
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
 
 packages:
 

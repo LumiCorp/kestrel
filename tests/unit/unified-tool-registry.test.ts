@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
 import type {
   InternetExtractOutput,
   InternetFetchResult,
@@ -2411,4 +2412,70 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry scopes filesystem root per
       }
     );
   }, /outside allowed roots/i);
+});
+
+contractTest("runtime.hermetic", "UnifiedToolRegistry records exact provenance when an installed SKILL.md is fully loaded", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-skill-read-"));
+  const commitSha = "a".repeat(40);
+  const skillFile = `.kestrel/skills/review/revisions/${commitSha}/SKILL.md`;
+  await fsMkdir(path.dirname(path.join(workspaceRoot, skillFile)), { recursive: true });
+  await writeFile(
+    path.join(workspaceRoot, skillFile),
+    `---\nname: review\ndescription: Review carefully.\n---\n\n# Review\n\n${"Use evidence.\n".repeat(700)}`,
+    "utf8",
+  );
+  const contentDigest = (await validateWorkspaceSkillPackage(path.dirname(path.join(workspaceRoot, skillFile)))).contentDigest;
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["fs.read_text", "fs.write_text"],
+    context: { fileSystem: { workspaceRoot, tempRoots: [os.tmpdir()] } },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refresh();
+  const runContext = createToolRunContext({
+    runId: "run-skill-read",
+    sessionId: "session-skill-read",
+    payload: {
+      workspace: { workspaceId: "workspace-skill", workspaceRoot, appRoot: ".", commands: {} },
+      workspaceSkills: [{
+        installationId: "review",
+        name: "review",
+        description: "Review carefully.",
+        commitSha,
+        contentDigest,
+        skillFile,
+      }],
+    },
+  });
+  const firstPage = await registry.call("fs.read_text", { path: skillFile }, {
+    runContext,
+  });
+  assert.equal((firstPage.auditRecord.output as { workspaceSkillProvenance?: unknown }).workspaceSkillProvenance, undefined);
+  const firstOutput = firstPage.auditRecord.output as { nextOffsetBytes: number; revision: string };
+  const result = await registry.call("fs.read_text", {
+    path: skillFile,
+    offsetBytes: firstOutput.nextOffsetBytes,
+    expectedRevision: firstOutput.revision,
+  }, { runContext });
+  assert.deepEqual((result.auditRecord.output as { range: unknown; complete: unknown }).range, {
+    startByte: firstOutput.nextOffsetBytes,
+    endByte: (result.auditRecord.output as { totalBytes: number }).totalBytes,
+  });
+  assert.equal((result.auditRecord.output as { complete: boolean }).complete, true);
+  assert.deepEqual((result.auditRecord.output as { workspaceSkillProvenance?: unknown }).workspaceSkillProvenance, {
+    installationId: "review",
+    name: "review",
+    commitSha,
+    contentDigest,
+    skillFile,
+    loaded: true,
+  });
+  await assert.rejects(
+    registry.call("fs.write_text", { path: skillFile, content: "tampered" }, { runContext }),
+    /cannot modify Kestrel-owned workspace skill state/u,
+  );
 });

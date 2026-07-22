@@ -43,6 +43,8 @@ const ROUTE_CAPABILITIES = [
   "workspace.apps.write",
   "workspace.backups.export",
   "workspace.backups.restore",
+  "workspace.skills.read",
+  "workspace.skills.write",
   "workspace.promotions.read",
   "workspace.promotions.apply",
   "knowledge.search",

@@ -11,7 +11,6 @@ export const delegateSpawnChildTool: SharedToolModule = {
       properties: {
         title: { type: "string" },
         prompt: { type: "string" },
-        skillPackId: { type: "string" },
         profileId: { type: "string" },
         provider: { type: "string" },
         model: { type: "string" },
@@ -67,7 +66,6 @@ export const delegateSpawnChildTool: SharedToolModule = {
           ? { provider: body.provider as "openrouter" | "openai" | "anthropic" }
           : {}),
         ...(typeof body.model === "string" ? { model: body.model } : {}),
-        ...(typeof body.skillPackId === "string" ? { skillPackId: body.skillPackId } : {}),
         ...(typeof body.resultContract === "string" ? { resultContract: body.resultContract } : {}),
         launchedBy: "agent",
       });

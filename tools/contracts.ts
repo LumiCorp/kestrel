@@ -98,7 +98,6 @@ export interface DelegationTaskSpawnRequest {
     | "lmstudio"
     | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   resultContract?: string | undefined;
   launchedBy?: "operator" | "agent" | undefined;
 }
@@ -129,7 +128,6 @@ export interface DelegationTaskSnapshot {
   profileId: string;
   provider: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
   model: string;
-  skillPackId?: string | undefined;
   waitEventType?: string | undefined;
   result?: SubAgentResultEnvelope | undefined;
   resultSummary?: string | undefined;

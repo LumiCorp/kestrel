@@ -150,11 +150,6 @@ import {
   formatOperatorAffordance,
 } from "../runtime/operatorAffordances.js";
 import { buildOperatorAffordanceFromSessionProjection } from "../../src/orchestration/OperatorAffordanceProjection.js";
-import {
-  applySkillPackToProfile,
-  getSkillPackById,
-  listSkillPacks,
-} from "../runtime/skillPacks.js";
 import type { WorkspaceStore } from "../workspace/WorkspaceStore.js";
 import {
   describeResolvedWorkspace,
@@ -2434,9 +2429,6 @@ export class App {
           code: async (args) => {
             await this.getCodeModeController().handleCodeCommandSafely(args);
           },
-          skill: async (args) => {
-            await this.handleSkillCommand(args);
-          },
           compact: async (args) => {
             await this.handleCompactCommand(args);
           },
@@ -2901,70 +2893,6 @@ export class App {
     await this.getWorkspaceController().handleWorkspaceCommand(args);
   }
 
-  private async handleSkillCommand(args: string[]): Promise<void> {
-    const [subcommand, skillId] = args;
-    const state = this.uiStore.getState();
-    const currentSkillPack = getSkillPackById(state.activeSession.activeSkillPackId);
-
-    if (subcommand === undefined || subcommand === "status") {
-      if (currentSkillPack === undefined) {
-        await this.appendHistoryLine("system", "Skill pack: none");
-        return;
-      }
-      await this.appendHistoryLine(
-        "system",
-        [
-          `Skill pack: ${currentSkillPack.id} (${currentSkillPack.label})`,
-          `Allowed tools: ${currentSkillPack.allowedTools.join(", ")}`,
-          `Instructions: ${currentSkillPack.instructions.join(" ")}`,
-        ].join("\n"),
-      );
-      return;
-    }
-
-    if (subcommand === "list") {
-      const lines = listSkillPacks().map((entry) => {
-        const active = entry.id === currentSkillPack?.id ? " (active)" : "";
-        return `${entry.id}${active}: ${entry.label}`;
-      });
-      await this.appendHistoryLine("system", `Skill packs:\n${lines.join("\n")}`);
-      return;
-    }
-
-    if (subcommand === "use") {
-      if (skillId === undefined || skillId.trim().length === 0) {
-        await this.appendHistoryLine("system", "Usage: /skill use <id>");
-        return;
-      }
-      const nextSkillPack = getSkillPackById(skillId);
-      if (nextSkillPack === undefined) {
-        await this.appendHistoryLine("system", `Skill pack '${skillId}' not found.`);
-        return;
-      }
-      await this.setActiveSessionState({
-        activeSkillPackId: nextSkillPack.id,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.refreshActiveSessionOperatorState();
-      await this.persistSessionAndUi();
-      await this.appendHistoryLine("system", `Skill pack set to '${nextSkillPack.id}'.`);
-      return;
-    }
-
-    if (subcommand === "clear") {
-      await this.setActiveSessionState({
-        activeSkillPackId: undefined,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.refreshActiveSessionOperatorState();
-      await this.persistSessionAndUi();
-      await this.appendHistoryLine("system", "Skill pack cleared.");
-      return;
-    }
-
-    await this.appendHistoryLine("system", "Usage: /skill status | /skill list | /skill use <id> | /skill clear");
-  }
-
   private async handleTasksCommand(args: string[]): Promise<void> {
     const [subcommand, ...rest] = args;
     const state = this.uiStore.getState();
@@ -2973,7 +2901,7 @@ export class App {
     if (subcommand === undefined || subcommand === "list") {
       const lines = tasks.map((session) => {
         const delegation = session.delegation!;
-        return `${session.name} [${delegation.status}] provider=${delegation.provider}/${delegation.model} skill=${delegation.skillPackId ?? "none"}`;
+        return `${session.name} [${delegation.status}] provider=${delegation.provider}/${delegation.model}`;
       });
       await this.appendHistoryLine("system", `Tasks:\n${lines.join("\n") || "(none)"}`);
       this.uiStore.patch({ activeView: "tasks", activeRegion: "sessions" });
@@ -3030,9 +2958,6 @@ export class App {
         profileId: profile.id,
         provider: profile.modelProvider ?? "openrouter",
         model: profile.model ?? "(env default)",
-        ...(state.activeSession.activeSkillPackId !== undefined
-          ? { skillPackId: state.activeSession.activeSkillPackId }
-          : {}),
         launchedBy: "operator",
         createdAt: now,
         updatedAt: now,
@@ -3057,10 +2982,7 @@ export class App {
       );
       await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
 
-      const skillPack = getSkillPackById(state.activeSession.activeSkillPackId);
-      const effectiveProfile = toCoreExecutionProfile(
-        applySkillPackToProfile(profile, skillPack),
-      );
+      const effectiveProfile = toCoreExecutionProfile(profile);
       void this.client.sendCommand("run.start", {
         profile: effectiveProfile,
         turn: {
@@ -3076,7 +2998,6 @@ export class App {
             state: "idle",
           },
           ...(workspace !== undefined ? { workspace: workspace.runtimeContext } : {}),
-          ...(skillPack !== undefined ? { skillPack } : {}),
           stepAgent: getEntryStepAgent(effectiveProfile),
         },
       }).catch(async (error) => {
@@ -3523,13 +3444,11 @@ export class App {
     profile: TuiProfile;
     runtime?: TuiSessionMeta["operatorState"] | undefined;
   }): NonNullable<TuiSessionMeta["operatorState"]> {
-    const skillPack = getSkillPackById(input.session.activeSkillPackId);
     const decorated = decorateOperatorAffordance({
       base: input.runtime ?? input.session.operatorState,
       runtimeAuthoritative: input.runtime !== undefined,
       profile: input.profile,
       session: input.session,
-      skillPack,
     });
     const childTasks = this.listChildTaskSessions(input.session.sessionId);
     if (childTasks.length === 0) {
@@ -5305,14 +5224,6 @@ function buildSplashPreflightState(input: {
     mode: input.themeMode,
     overrides: input.profile.theme,
   });
-  const activeSkillPack = getSkillPackById(input.session.activeSkillPackId);
-  const skillsDetail =
-    input.session.activeSkillPackId === undefined
-      ? "builtin packs ready"
-      : activeSkillPack !== undefined
-        ? `active=${activeSkillPack.id}`
-        : `missing=${input.session.activeSkillPackId}`;
-
   return {
     phase: "running",
     summary: "pre-flight checks in progress",
@@ -5320,12 +5231,6 @@ function buildSplashPreflightState(input: {
       { id: "profiles", label: "profiles", state: "ok", detail: input.profile.id },
       { id: "session", label: "session", state: "ok", detail: input.session.name },
       { id: "theme", label: "theme", state: "ok", detail: `${themeSelection.mode}:${themeSelection.resolvedMode}` },
-      {
-        id: "skills",
-        label: "skills",
-        state: activeSkillPack === undefined && input.session.activeSkillPackId !== undefined ? "fail" : "ok",
-        detail: skillsDetail,
-      },
       { id: "runner", label: "runner", state: "pending", detail: "waiting" },
       { id: "handshake", label: "handshake", state: "pending", detail: input.session.sessionId },
       { id: "database", label: "database", state: "pending", detail: "waiting" },
@@ -5335,7 +5240,7 @@ function buildSplashPreflightState(input: {
   };
 }
 
-function resolveRequiredPreflightEnvVars(profile: TuiProfile, session: TuiSessionMeta): string[] {
+function resolveRequiredPreflightEnvVars(profile: TuiProfile, _session: TuiSessionMeta): string[] {
   const required = new Set<string>();
   const provider = profile.modelProvider ?? "openrouter";
   if (provider === "openai") {
@@ -5348,9 +5253,7 @@ function resolveRequiredPreflightEnvVars(profile: TuiProfile, session: TuiSessio
     required.add("OPENROUTER_API_KEY");
   }
 
-  const skillPack = getSkillPackById(session.activeSkillPackId);
-  const effectiveProfile = applySkillPackToProfile(profile, skillPack);
-  const usesInternet = (effectiveProfile.toolAllowlist ?? []).some((toolName) => toolName.startsWith("internet."));
+  const usesInternet = (profile.toolAllowlist ?? []).some((toolName) => toolName.startsWith("internet."));
   if (usesInternet) {
     required.add("TAVILY_API_KEY");
   }

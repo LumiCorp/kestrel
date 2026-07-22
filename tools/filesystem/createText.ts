@@ -5,6 +5,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput, readString } from "../helpers.js";
 import {
   createFileSystemCapability,
+  assertWorkspaceSkillStateMutationAllowed,
   createFileSystemPresentation,
   ensureParentDirectory,
   readBoolean,
@@ -43,6 +44,7 @@ export const fsCreateTextTool: SharedToolModule = {
         throw createToolInputError("fs.create_text", "fs.create_text requires input.content.", { field: "content" });
       }
       const resolved = await resolveTargetFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.create_text" });
       if (readBoolean(body, "createParents") === true) {
         await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
       } else {

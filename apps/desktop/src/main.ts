@@ -109,6 +109,7 @@ import { createDesktopError } from "./errors.js";
 import {
   assertWithinRoot,
   parseDesktopPathTargetInput,
+  resolveRegisteredDesktopProjectRoot,
   resolveDesktopProjectRootForWatcherCleanup,
   resolveVerifiedDesktopPathTarget,
 } from "./fileAccess.js";
@@ -141,7 +142,9 @@ import { probeDesktopCapabilities } from "./capabilityProbes.js";
 import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
 import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
 import { buildDesktopCapabilityConfigurationPlan } from "./capabilityConfiguration.js";
-import { resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
+import { deriveDesktopWorkspaceId, resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
+import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.js";
+import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
   getDesktopProjectSnapshot,
@@ -225,6 +228,9 @@ let embeddedPreviewSecurityConfigured = false;
 const fileEditorWindows = new Map<string, BrowserWindow>();
 const projectFileWatchers = new Map<string, DesktopProjectFileWatcher>();
 const projectFileIndex = new DesktopProjectFileIndex();
+const activeDesktopWorkspaceRunCounts = new Map<string, number>();
+const activatedDesktopWorkspaceSkills = new Set<string>();
+const desktopWorkspaceSkillManagers = new Map<string, WorkspaceSkillManager>();
 const EDITABLE_TEXT_FILE_MAX_BYTES = 1024 * 1024;
 const READABLE_TEXT_FILE_MAX_BYTES = 5 * 1024 * 1024;
 const DESKTOP_RUNNER_REQUEST_CONTEXT = {
@@ -924,18 +930,31 @@ function registerIpcHandlers(
       ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
       ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
     });
-    return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
-      {
-        ...turnRequest,
-        ...(attachments !== undefined ? { attachments } : {}),
-        workspace,
-        metadata: { desktopExecutionSelection: executionSelection },
-      },
-      {
-        onEvent() {},
-      },
-      { ...DESKTOP_RUNNER_REQUEST_CONTEXT, profile: runProfile },
-    );
+    const skillWorkspaceRoot = projectPath === undefined ? undefined : path.resolve(workspace.sourceWorkspaceRoot ?? workspace.workspaceRoot);
+    if (skillWorkspaceRoot !== undefined) {
+      await activateDesktopWorkspaceSkills(skillWorkspaceRoot);
+      activeDesktopWorkspaceRunCounts.set(skillWorkspaceRoot, (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 0) + 1);
+    }
+    try {
+      return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
+        {
+          ...turnRequest,
+          ...(attachments !== undefined ? { attachments } : {}),
+          workspace,
+          metadata: { desktopExecutionSelection: executionSelection },
+        },
+        {
+          onEvent() {},
+        },
+        { ...DESKTOP_RUNNER_REQUEST_CONTEXT, profile: runProfile },
+      );
+    } finally {
+      if (skillWorkspaceRoot !== undefined) {
+        const remaining = (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 1) - 1;
+        if (remaining > 0) activeDesktopWorkspaceRunCounts.set(skillWorkspaceRoot, remaining);
+        else activeDesktopWorkspaceRunCounts.delete(skillWorkspaceRoot);
+      }
+    }
   });
   ipcMain.handle("desktop:select-attachments", async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
     const normalizedThreadId = parseDesktopThreadId(threadId);
@@ -1586,6 +1605,22 @@ function registerIpcHandlers(
           : {}),
       }),
     );
+  });
+  ipcMain.handle("desktop:list-workspace-skills", async (_event, projectPath: unknown) =>
+    await desktopWorkspaceSkillManager(projectPath).list());
+  ipcMain.handle("desktop:install-workspace-skill", async (_event, projectPath: unknown, source: unknown) =>
+    await desktopWorkspaceSkillManager(projectPath).install(parseDesktopWorkspaceSkillSource(source)));
+  ipcMain.handle("desktop:update-workspace-skill", async (_event, projectPath: unknown, installationId: unknown, source: unknown) =>
+    await desktopWorkspaceSkillManager(projectPath).updateSource(
+      requireDesktopString(installationId, "desktop.updateWorkspaceSkill requires an installation id."),
+      parseDesktopWorkspaceSkillSource(source),
+    ));
+  ipcMain.handle("desktop:sync-workspace-skills", async (_event, projectPath: unknown) =>
+    await desktopWorkspaceSkillManager(projectPath).syncAll());
+  ipcMain.handle("desktop:remove-workspace-skill", async (_event, projectPath: unknown, installationId: unknown) => {
+    const manager = desktopWorkspaceSkillManager(projectPath);
+    await manager.remove(requireDesktopString(installationId, "desktop.removeWorkspaceSkill requires an installation id."));
+    return await manager.list();
   });
   ipcMain.handle("desktop:list-project-runs", async (): Promise<DesktopManagedProjectRun[]> => requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.listDesktopProjectRuns(),
@@ -2984,6 +3019,55 @@ function isPreviewableHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function desktopWorkspaceSkillManager(projectPath: unknown): WorkspaceSkillManager {
+  const requested = requireDesktopString(projectPath, "Desktop workspace skills require a project path.");
+  const workspaceRoot = resolveRegisteredDesktopProjectRoot(
+    requested,
+    desktopSettings.projects.map((project) => project.path),
+  );
+  const existing = desktopWorkspaceSkillManagers.get(workspaceRoot);
+  if (existing !== undefined) return existing;
+  const manager = new WorkspaceSkillManager({
+    workspaceId: deriveDesktopWorkspaceId(workspaceRoot),
+    workspaceRoot,
+  }, {
+    isWorkspaceIdle: async () => (activeDesktopWorkspaceRunCounts.get(path.resolve(workspaceRoot)) ?? 0) === 0,
+  });
+  desktopWorkspaceSkillManagers.set(workspaceRoot, manager);
+  return manager;
+}
+
+async function activateDesktopWorkspaceSkills(workspaceRoot: string): Promise<void> {
+  const normalizedRoot = path.resolve(workspaceRoot);
+  if (activatedDesktopWorkspaceSkills.has(normalizedRoot)) return;
+  await desktopWorkspaceSkillManager(normalizedRoot).syncAll();
+  activatedDesktopWorkspaceSkills.add(normalizedRoot);
+}
+
+function parseDesktopWorkspaceSkillSource(value: unknown): WorkspaceSkillSource {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw createDesktopError({
+      code: "desktop.invalid_workspace_skill_source",
+      message: "Workspace skill source must be an object.",
+    });
+  }
+  const record = value as Record<string, unknown>;
+  const gitUrl = requireDesktopString(record.gitUrl, "Workspace skill Git URL is required.");
+  const branch = requireDesktopString(record.branch, "Workspace skill branch is required.");
+  return {
+    gitUrl,
+    branch,
+    ...(typeof record.path === "string" && record.path.trim().length > 0 ? { path: record.path.trim() } : {}),
+  };
+}
+
+function requireDesktopString(value: unknown, message: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw createDesktopError({ code: "desktop.invalid_input", message });
+  }
+  return value.trim();
 }
 
 function readDesktopErrorCode(error: unknown): string | undefined {

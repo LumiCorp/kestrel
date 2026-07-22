@@ -50,7 +50,7 @@ export function resolveDesktopThreadWorkspace(input: {
   };
 }
 
-function deriveDesktopWorkspaceId(workspaceRoot: string): string {
+export function deriveDesktopWorkspaceId(workspaceRoot: string): string {
   const digest = createHash("sha256")
     .update(path.resolve(workspaceRoot))
     .digest("hex")

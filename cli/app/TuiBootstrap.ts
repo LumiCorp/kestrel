@@ -28,7 +28,6 @@ import {
 import {
   decorateOperatorAffordance,
 } from "../runtime/operatorAffordances.js";
-import { getSkillPackById } from "../runtime/skillPacks.js";
 import type {
   ResolvedWorkspace,
   SessionsFile,
@@ -344,14 +343,6 @@ function buildSplashPreflightState(input: {
     mode: input.themeMode,
     overrides: input.profile.theme,
   });
-  const activeSkillPack = getSkillPackById(input.session.activeSkillPackId);
-  const skillsDetail =
-    input.session.activeSkillPackId === undefined
-      ? "builtin packs ready"
-      : activeSkillPack !== undefined
-        ? `active=${activeSkillPack.id}`
-        : `missing=${input.session.activeSkillPackId}`;
-
   return {
     phase: "running",
     summary: "pre-flight checks in progress",
@@ -359,12 +350,6 @@ function buildSplashPreflightState(input: {
       { id: "profiles", label: "profiles", state: "ok", detail: input.profile.id },
       { id: "session", label: "session", state: "ok", detail: input.session.name },
       { id: "theme", label: "theme", state: "ok", detail: `${themeSelection.mode}:${themeSelection.resolvedMode}` },
-      {
-        id: "skills",
-        label: "skills",
-        state: activeSkillPack === undefined && input.session.activeSkillPackId !== undefined ? "fail" : "ok",
-        detail: skillsDetail,
-      },
       { id: "runner", label: "runner", state: "pending", detail: "waiting" },
       { id: "handshake", label: "handshake", state: "pending", detail: input.session.sessionId },
       { id: "database", label: "database", state: "pending", detail: "waiting" },
@@ -759,7 +744,6 @@ function createSessionMeta(
       runtimeAuthoritative: false,
       profile,
       session,
-      skillPack: undefined,
     }),
   };
 }

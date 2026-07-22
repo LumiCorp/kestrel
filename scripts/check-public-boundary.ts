@@ -85,6 +85,7 @@ for (const relativePath of [
   "packages/sdk/package.json",
   "packages/observability/package.json",
   "packages/next/package.json",
+  "packages/workspace-skills/package.json",
 ] as const) {
   const manifest = JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8")) as {
     repository?: { url?: string };

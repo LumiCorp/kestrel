@@ -1,0 +1,50 @@
+---
+title: "@kestrel-agents/workspace-skills"
+summary: Secure installation, immutable revisions, and exact provenance for workspace-scoped SKILL.md packages.
+section: reference
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-07-21
+---
+
+Use this package when a Kestrel host needs to install portable agent guidance
+into a persistent workspace.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/workspace-skills@0.6.0
+```
+
+## Create a workspace manager
+
+```ts
+import { WorkspaceSkillManager } from "@kestrel-agents/workspace-skills";
+
+const skills = new WorkspaceSkillManager(
+  { workspaceId: "project-1", workspaceRoot: "/workspace/project-1" },
+  { isWorkspaceIdle: async () => activeRuns === 0 },
+);
+
+await skills.install({
+  gitUrl: "https://github.com/example/agent-skills.git",
+  branch: "main",
+  path: "skills/review",
+});
+```
+
+## Runtime guarantees
+
+- Sources must use credential-free public HTTPS Git URLs.
+- A package must contain a root `SKILL.md` with valid `name` and `description`
+  YAML frontmatter.
+- Published revisions are immutable and identified by commit and SHA-256
+  content digest.
+- Failed refreshes retain the last verified revision.
+- Installs, updates, and removals may remain pending until the host reports the
+  workspace idle.
+- Installation never runs hooks or code from the source repository.
+
+Skill instructions are guidance only. The host remains responsible for its
+tool, credential, network, and filesystem policy.

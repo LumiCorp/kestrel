@@ -1465,6 +1465,27 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
+    "app/api/projects/[id]/workspace/skills/route.ts",
+    "/api/projects/:id/workspace/skills",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/workspace/skills/sync/route.ts",
+    "/api/projects/:id/workspace/skills/sync",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
+    "app/api/projects/[id]/workspace/skills/[installationId]/route.ts",
+    "/api/projects/:id/workspace/skills/:installationId",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/projects/[id]/apps/route.ts",
     "/api/projects/:id/apps",
     "apps",

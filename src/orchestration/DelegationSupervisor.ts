@@ -101,7 +101,6 @@ export class DelegationSupervisor implements DelegationServicePort {
       ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
       ...(input.resultContract !== undefined ? { resultContract: input.resultContract } : {}),
       ...(input.launchedBy !== undefined ? { launchedBy: input.launchedBy } : {}),
       ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
@@ -154,7 +153,6 @@ export class DelegationSupervisor implements DelegationServicePort {
     profileId?: string | undefined;
     provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
     model?: string | undefined;
-    skillPackId?: string | undefined;
     launchedBy?: "operator" | "agent" | undefined;
     resultContract?: string | undefined;
     taskId?: string | undefined;
@@ -202,7 +200,6 @@ export class DelegationSupervisor implements DelegationServicePort {
       ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
       provider: input.provider ?? this.profile.modelProvider ?? "openrouter",
       model: input.model ?? this.profile.model ?? "(env default)",
-      ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
       ...(input.launchedBy !== undefined ? { launchedBy: input.launchedBy } : {}),
       ...(input.resultContract !== undefined ? { resultContract: input.resultContract } : {}),
       policy: writeDelegationLineagePolicy({
@@ -465,7 +462,6 @@ function toTaskSnapshot(record: DelegationRecord, profile: TuiProfile): Delegati
     profileId: record.profileId ?? profile.id,
     provider: record.provider ?? profile.modelProvider ?? "openrouter",
     model: record.model ?? profile.model ?? "(env default)",
-    ...(record.skillPackId !== undefined ? { skillPackId: record.skillPackId } : {}),
     ...(record.waitEventType !== undefined ? { waitEventType: record.waitEventType } : {}),
     ...(record.result !== undefined ? { result: record.result } : {}),
     ...(record.resultSummary !== undefined ? { resultSummary: record.resultSummary } : {}),

@@ -601,7 +601,6 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           ...(command.profileId !== undefined ? { profileId: command.profileId } : {}),
           ...(command.provider !== undefined ? { provider: command.provider } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
-          ...(command.skillPackId !== undefined ? { skillPackId: command.skillPackId } : {}),
           ...(command.maxTurns !== undefined ? { maxTurns: command.maxTurns } : {}),
           ...(command.maxRuntimeMs !== undefined ? { maxRuntimeMs: command.maxRuntimeMs } : {}),
           ...(command.allowApprovalInheritance !== undefined

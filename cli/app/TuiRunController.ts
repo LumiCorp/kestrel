@@ -9,10 +9,6 @@ import type {
 } from "../contracts.js";
 import type { RunnerEvent } from "../protocol/contracts.js";
 import {
-  applySkillPackToProfile,
-  getSkillPackById,
-} from "../runtime/skillPacks.js";
-import {
   buildWaitingSystemText,
   extractWaitPrompt,
 } from "./waitForPrompt.js";
@@ -92,10 +88,7 @@ export class TuiRunController {
     const pendingWait = input.forceFreshTurn === true ? undefined : submittedPendingWait;
     const eventType = pendingWait?.eventType ?? "user.message";
     const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
-    const activeSkillPack = getSkillPackById(state.activeSession.activeSkillPackId);
-    const effectiveProfile = toCoreExecutionProfile(
-      applySkillPackToProfile(state.activeProfile, activeSkillPack),
-    );
+    const effectiveProfile = toCoreExecutionProfile(state.activeProfile);
     const workspace = await this.context.refreshWorkspaceForActiveSession();
     const baseHistorySource =
       pendingWait !== undefined
@@ -165,7 +158,6 @@ export class TuiRunController {
             suppressOnce: state.activeSession.suppressAutoCompactionOnce === true,
           },
           ...(workspace !== undefined ? { workspace: workspace.runtimeContext } : {}),
-          ...(activeSkillPack !== undefined ? { skillPack: activeSkillPack } : {}),
           ...(stepAgent !== undefined ? { stepAgent } : {}),
         },
       });

@@ -69,7 +69,7 @@ contractTest("docs.hermetic", "release metadata names only real public packages 
   assert.deepEqual(names, releasedNames);
   assert.deepEqual([...new Set(manifests.map(({ version }) => version))], [DOCS_RELEASE.version]);
 
-  for (const route of ["protocol", "sdk", "nextjs", "ai-sdk", "observability"]) {
+  for (const route of ["protocol", "sdk", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   }
 });

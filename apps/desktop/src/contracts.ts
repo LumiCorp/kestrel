@@ -74,6 +74,7 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { WorkspaceSkillInstallation, WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 export {
   DESKTOP_BRIDGE_CAPABILITIES,
   DESKTOP_BRIDGE_VERSION,
@@ -197,6 +198,7 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
+export type { WorkspaceSkillInstallation, WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 export type {
   DesktopAppDefinition,
   DesktopAppRef,
@@ -295,6 +297,11 @@ export interface DesktopBridge {
   saveMcpServer(input: DesktopMcpServerMutationInput): Promise<DesktopMcpDiscoveryResult>;
   deleteMcpServer(id: string): Promise<DesktopMcpDiscoveryResult>;
   readProjectLauncher(projectPath: string, packageManagerOverride?: DesktopPackageManager, threadId?: string): Promise<DesktopProjectLauncherDescriptor | undefined>;
+  listWorkspaceSkills(projectPath: string): Promise<WorkspaceSkillInstallation[]>;
+  installWorkspaceSkill(projectPath: string, source: WorkspaceSkillSource): Promise<WorkspaceSkillInstallation>;
+  updateWorkspaceSkill(projectPath: string, installationId: string, source: WorkspaceSkillSource): Promise<WorkspaceSkillInstallation>;
+  syncWorkspaceSkills(projectPath: string): Promise<WorkspaceSkillInstallation[]>;
+  removeWorkspaceSkill(projectPath: string, installationId: string): Promise<WorkspaceSkillInstallation[]>;
   listProjectRuns(): Promise<DesktopManagedProjectRun[]>;
   startProjectRun(input: {
     projectPath: string;

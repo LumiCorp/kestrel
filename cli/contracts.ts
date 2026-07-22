@@ -95,13 +95,6 @@ export type DelegationTaskStatus =
   | "COMPLETED"
   | "FAILED";
 
-export interface SkillPackDefinition {
-  id: string;
-  label: string;
-  instructions: string[];
-  allowedTools: string[];
-}
-
 export interface WorkspaceManifest {
   version: 1;
   workspaceId: string;
@@ -174,7 +167,6 @@ export interface DelegationTaskMeta {
   profileId: string;
   provider: ModelProviderId;
   model: string;
-  skillPackId?: string | undefined;
   waitEventType?: string | undefined;
   result?: SubAgentResultEnvelope | undefined;
   resultSummary?: string | undefined;
@@ -324,7 +316,6 @@ export interface TuiSessionMeta {
   launchSummary?: string | undefined;
   hasArtifacts?: boolean | undefined;
   hasSummary?: boolean | undefined;
-  activeSkillPackId?: string | undefined;
   pendingManualCompaction?: boolean | undefined;
   autoCompactionEnabled?: boolean | undefined;
   suppressAutoCompactionOnce?: boolean | undefined;
@@ -502,7 +493,6 @@ export type ParsedInput =
         | "status"
         | "mcp"
         | "code"
-        | "skill"
         | "compact"
         | "snapshot"
         | "restore"

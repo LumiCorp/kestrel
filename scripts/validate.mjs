@@ -89,6 +89,8 @@ async function runFullValidation() {
       "@kestrel-agents/next",
       "--filter",
       "@kestrel-agents/observability",
+      "--filter",
+      "@kestrel-agents/workspace-skills",
       "run",
       "build:self",
     ]),
