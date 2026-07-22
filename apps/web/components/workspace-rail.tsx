@@ -19,7 +19,7 @@ import {
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
@@ -96,12 +96,16 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       ? projectRouteSegment
       : undefined;
   const routeThreadId = pathname.match(/^\/threads\/([^/]+)/)?.[1];
-  const { data: projects } = useSWR<ProjectsResponse>("/api/projects", fetcher);
+  const previousOrganizationId = useRef(organizationId);
+  const { data: projects, mutate: mutateProjects } =
+    useSWR<ProjectsResponse>("/api/projects", fetcher);
   const { data: threads, mutate: mutateThreads } = useSWR<ThreadsResponse>(
     "/api/threads?limit=100",
     fetcher
   );
-  const { data: threadDetail } = useSWR<ThreadDetailResponse>(
+  const { data: threadDetail, mutate: mutateThreadDetail } = useSWR<
+    ThreadDetailResponse
+  >(
     routeThreadId && routeThreadId !== "new"
       ? `/api/threads/${routeThreadId}`
       : null,
@@ -131,6 +135,24 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
   const newThreadHref = activeProjectId
     ? `/projects/${activeProjectId}/threads/new`
     : "/threads/new";
+
+  useEffect(() => {
+    if (previousOrganizationId.current === organizationId) {
+      return;
+    }
+    previousOrganizationId.current = organizationId;
+
+    void Promise.allSettled([
+      mutateProjects({ projects: [] }, { revalidate: true }),
+      mutateThreads({ threads: [] }, { revalidate: true }),
+      mutateThreadDetail(undefined, { revalidate: true }),
+    ]);
+  }, [
+    organizationId,
+    mutateProjects,
+    mutateThreadDetail,
+    mutateThreads,
+  ]);
 
   useEffect(() => {
     if (!activeProjectId) return;
