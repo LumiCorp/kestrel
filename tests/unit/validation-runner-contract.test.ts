@@ -7,6 +7,16 @@ const runner = readFileSync(
   new URL("../../scripts/validate.mjs", import.meta.url),
   "utf8",
 );
+const rootPackage = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+) as { scripts?: Record<string, string> };
+const runnerDockerIgnore = readFileSync(
+  new URL(
+    "../../deploy/fly/kestrel-one-runner/Dockerfile.dockerignore",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const workflow = readFileSync(
   new URL("../../.github/workflows/ci.yml", import.meta.url),
   "utf8",
@@ -176,6 +186,10 @@ contractTest(
     );
     assert.match(fullValidation, /task\("public boundary", PNPM, \["run", "check:public-boundary"\]\)/u);
     assert.match(fullValidation, /phase\("sharedBuild"/u);
+    assert.match(
+      fullValidation,
+      /task\("shared artifacts", PNPM, \["run", "build:shared"\]\)/u,
+    );
     assert.match(fullValidation, /phase\("hermetic", hermeticTasks\(\)\)/u);
     for (const excluded of [
       "webProductionBuildTask",
@@ -198,6 +212,37 @@ contractTest(
     assert.doesNotMatch(
       workflow,
       /playwright install|actions\/upload-artifact|test-results/u,
+    );
+  },
+);
+
+contractTest(
+  "runtime.hermetic",
+  "root builds prepare every shared workspace artifact before compilation",
+  () => {
+    assert.equal(
+      rootPackage.scripts?.build,
+      "pnpm run build:shared && pnpm run build:self",
+    );
+    const sharedBuild = rootPackage.scripts?.["build:shared"] ?? "";
+    for (const packageName of [
+      "@lumi/kestrel-environment-auth",
+      "@kestrel/mcp-security",
+      "@kestrel-agents/protocol",
+      "@kestrel-agents/sdk",
+      "@kestrel-agents/ai-sdk",
+      "@kestrel-agents/next",
+      "@kestrel-agents/observability",
+      "@kestrel-agents/workspace-skills",
+    ]) {
+      assert.match(sharedBuild, new RegExp(`--filter ${packageName}`, "u"));
+    }
+    assert.match(sharedBuild, /run build:self$/u);
+    assert.match(runnerDockerIgnore, /^tests\/\*$/mu);
+    assert.match(runnerDockerIgnore, /^!tests\/helpers\/$/mu);
+    assert.match(
+      runnerDockerIgnore,
+      /^!tests\/helpers\/contract-test\.ts$/mu,
     );
   },
 );
