@@ -792,9 +792,9 @@ function assertLocalCoreApiOwnership(
   authorityId: string,
 ): void {
   if (
-    status.lock.state === "live" &&
-    status.lock.lock.ownerPid === process.pid &&
-    status.lock.lock.authorityId === authorityId
+    status.lock.state === "live"
+    && status.lock.lock.ownerPid === process.pid
+    && status.lock.lock.authorityId === authorityId
   ) {
     return;
   }
