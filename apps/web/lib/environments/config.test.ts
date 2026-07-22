@@ -213,6 +213,22 @@ contractTest("web.hermetic", "hosted cutover accepts complete immutable Environm
   );
 });
 
+contractTest("web.hermetic", "hosted Environments require platform Fly authority", () => {
+  const missingToken = validEnvironment();
+  delete (missingToken as Partial<typeof missingToken>).FLY_API_TOKEN;
+  assert.throws(
+    () => assertHostedEnvironmentConfiguration(missingToken),
+    /FLY_API_TOKEN/u
+  );
+  const missingOrganization = validEnvironment();
+  delete (missingOrganization as Partial<typeof missingOrganization>)
+    .KESTREL_FLY_ORGANIZATION_SLUG;
+  assert.throws(
+    () => assertHostedEnvironmentConfiguration(missingOrganization),
+    /KESTREL_FLY_ORGANIZATION_SLUG/u
+  );
+});
+
 contractTest("web.hermetic", "hosted runtime preparation permits the legacy runner during staged deployment", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentRuntimeConfiguration({

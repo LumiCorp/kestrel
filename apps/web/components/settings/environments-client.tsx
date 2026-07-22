@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { FlyWorkspaceProviderClient } from "@/components/settings/fly-workspace-provider-client";
 import {
   RuntimePolicySettingsClient,
   type RuntimePolicySettings,
@@ -237,7 +236,6 @@ export function EnvironmentsAdminClient({
         title="Environments"
       />
 
-      <FlyWorkspaceProviderClient />
       <RuntimePolicySettingsClient initialSettings={initialRuntimePolicy} />
 
       <SettingsSection
