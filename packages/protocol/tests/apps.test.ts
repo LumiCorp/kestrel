@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import {
   getKestrelStandardAppManifest,
   KESTREL_APP_IDS,
   KESTREL_STANDARD_APP_MANIFESTS,
   type KestrelAppId,
 } from "../src/apps.js";
+import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-test("standard App manifests contain only product-facing concepts", () => {
+contractTest("packages.hermetic", "standard App manifests contain only product-facing concepts", () => {
   assert.equal(
     new Set(KESTREL_STANDARD_APP_MANIFESTS.map((app) => app.id)).size,
     KESTREL_STANDARD_APP_MANIFESTS.length,
@@ -20,7 +20,7 @@ test("standard App manifests contain only product-facing concepts", () => {
   );
 });
 
-test("Microsoft 365 is one App with selectable service capability packs", () => {
+contractTest("packages.hermetic", "Microsoft 365 is one App with selectable service capability packs", () => {
   const microsoft365 = getKestrelStandardAppManifest(
     KESTREL_APP_IDS.MICROSOFT_365,
   );
@@ -35,7 +35,7 @@ test("Microsoft 365 is one App with selectable service capability packs", () => 
   );
 });
 
-test("built-in capabilities are published through the same App catalog", () => {
+contractTest("packages.hermetic", "built-in capabilities are published through the same App catalog", () => {
   const builtIns = KESTREL_STANDARD_APP_MANIFESTS.filter(
     (app) => app.category === "built_in",
   );
@@ -54,7 +54,7 @@ test("built-in capabilities are published through the same App catalog", () => {
   assert.ok(builtIns.every((app) => app.capabilityPacks.length > 0));
 });
 
-test("workflow Apps declare their missing-dependency roles in App terms", () => {
+contractTest("packages.hermetic", "workflow Apps declare their missing-dependency roles in App terms", () => {
   const workflows = KESTREL_STANDARD_APP_MANIFESTS.filter(
     (app) => app.category === "workflow",
   );
