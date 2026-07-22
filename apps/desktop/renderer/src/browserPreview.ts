@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopAttachmentImportInput,
   DesktopAttachmentMetadata,
   DesktopFileContent,
   DesktopFileReadInput,
@@ -477,6 +478,20 @@ export function ensureBrowserPreviewBridge(): void {
       previewAttachments.set(threadId, attachments);
       return attachments;
     },
+    async importAttachment(input: DesktopAttachmentImportInput) {
+      const attachment: DesktopAttachmentMetadata = {
+        attachmentId: crypto.randomUUID(),
+        threadId: input.threadId,
+        filename: input.filename,
+        mimeType: input.mimeType ?? "application/octet-stream",
+        sizeBytes: Math.floor(input.data.length * 3 / 4),
+        sha256: input.sha256 ?? `preview:${crypto.randomUUID()}`,
+        kind: input.mimeType?.startsWith("image/") === true ? "image" : "text",
+        createdAt: new Date().toISOString(),
+      };
+      previewAttachments.set(input.threadId, [...(previewAttachments.get(input.threadId) ?? []), attachment]);
+      return attachment;
+    },
     async listAttachments(threadId: string) {
       return previewAttachments.get(threadId) ?? [];
     },
@@ -524,7 +539,7 @@ export function ensureBrowserPreviewBridge(): void {
             },
           },
         };
-      return cancelled;
+      return { status: "cancelled" as const, event: cancelled };
     },
     async restartRuntime() {
       return {
@@ -696,6 +711,9 @@ export function ensureBrowserPreviewBridge(): void {
       threadId: string,
     ): Promise<DesktopRuntimeThreadInspection> {
       return createPreviewRuntimeThreadInspection(threadId);
+    },
+    async inspectThreadAuthority(threadId: string) {
+      return { status: "available" as const, view: createPreviewRuntimeThreadInspection(threadId) };
     },
     async listOperatorRuns(
       query: DesktopRuntimeRunIndexQuery = {},

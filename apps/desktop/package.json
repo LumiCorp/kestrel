@@ -59,6 +59,7 @@
     "@types/react-dom": "^19.2.3",
     "electron": "^37.2.6",
     "electron-packager": "^17.1.2",
+    "happy-dom": "20.9.0",
     "typescript": "^5.8.2",
     "vite": "^7.3.2"
   }

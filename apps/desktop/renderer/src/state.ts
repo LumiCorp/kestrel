@@ -19,6 +19,7 @@ const INTERACTION_STATE_STORAGE_KEY = "kestrel:desktop-interaction-state:v1";
 const LEGACY_DRAFTS_STORAGE_KEY = "kchat:web:composer-drafts:v1";
 const LEGACY_HISTORY_STORAGE_KEY = "kchat:web:prompt-history:v1";
 export const MAX_PROMPT_HISTORY = 100;
+export const MAX_RENDERER_THREAD_TITLE_LENGTH = 54;
 export const MAX_PERSISTED_TRANSCRIPT_BYTES = 6 * 1024 * 1024;
 export const MAX_PERSISTED_TRANSCRIPT_LINES_PER_THREAD = 500;
 const MAX_PERSISTED_TRANSCRIPT_LINE_TEXT_BYTES = 64 * 1024;
@@ -58,6 +59,8 @@ export interface RendererThread {
   title: string;
   sessionId: string;
   projectPath?: string | undefined;
+  archivedAt?: string | undefined;
+  titleLocked?: boolean | undefined;
   updatedAt: string;
   transcript: RendererTranscriptLine[];
   pendingWaitEventType?: string | undefined;
@@ -79,6 +82,14 @@ export interface RendererThread {
   enabledAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
+}
+
+export interface RendererThreadGroup {
+  key: string;
+  label: string;
+  projectPath?: string | undefined;
+  kind: "project" | "no-project" | "unavailable-project";
+  threads: RendererThread[];
 }
 
 export interface DesktopRendererState {
@@ -188,11 +199,9 @@ export function appendRendererTranscript(
     return {
       ...thread,
       title:
-        firstUserText === undefined
+        firstUserText === undefined || thread.titleLocked === true
           ? thread.title
-          : firstUserText.length > 54
-            ? `${firstUserText.slice(0, 51)}...`
-            : firstUserText,
+          : normalizeRendererThreadTitle(firstUserText),
       updatedAt: line.timestamp,
       transcript: [...thread.transcript, line],
     };
@@ -233,6 +242,167 @@ export function selectRendererThread(
     : state;
 }
 
+export function renameRendererThread(
+  state: DesktopRendererState,
+  threadId: string,
+  title: string,
+): DesktopRendererState {
+  const normalizedTitle = normalizeRendererThreadTitle(title);
+  if (normalizedTitle.length === 0) return state;
+  return updateRendererThread(state, threadId, (thread) => ({
+    ...thread,
+    title: normalizedTitle,
+    titleLocked: true,
+  }));
+}
+
+export function archiveRendererThread(
+  state: DesktopRendererState,
+  threadId: string,
+  input: Parameters<typeof createRendererThread>[0] = {},
+  archivedAt = new Date().toISOString(),
+): DesktopRendererState {
+  const archivedThread = state.threads.find((thread) => thread.id === threadId);
+  if (archivedThread === undefined || archivedThread.archivedAt !== undefined) return state;
+  const threads = state.threads.map((thread) => thread.id === threadId
+    ? { ...thread, archivedAt }
+    : thread);
+  if (state.activeThreadId !== threadId) return { ...state, threads };
+  const nextActive = threads
+    .filter((thread) => thread.archivedAt === undefined)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  if (nextActive !== undefined) {
+    return { ...state, activeThreadId: nextActive.id, threads };
+  }
+  const replacement = createRendererThread({
+    ...input,
+    ...(archivedThread.projectPath !== undefined
+      ? { projectPath: archivedThread.projectPath }
+      : {}),
+  });
+  return { ...state, activeThreadId: replacement.id, threads: [replacement, ...threads] };
+}
+
+export function restoreRendererThread(
+  state: DesktopRendererState,
+  threadId: string,
+  select = true,
+): DesktopRendererState {
+  if (!state.threads.some((thread) => thread.id === threadId && thread.archivedAt !== undefined)) return state;
+  return {
+    ...state,
+    ...(select ? { activeThreadId: threadId } : {}),
+    threads: state.threads.map((thread) => thread.id === threadId
+      ? { ...thread, archivedAt: undefined }
+      : thread),
+  };
+}
+
+export function undoArchiveRendererThread(
+  state: DesktopRendererState,
+  threadId: string,
+  removeReplacement = false,
+): DesktopRendererState {
+  const archived = state.threads.find((thread) => thread.id === threadId);
+  if (archived?.archivedAt === undefined) return state;
+  const replacement = state.threads.find((thread) => thread.id === state.activeThreadId);
+  const canRemoveReplacement = removeReplacement
+    && replacement !== undefined
+    && replacement.id !== threadId
+    && replacement.archivedAt === undefined
+    && replacement.transcript.length === 0
+    && replacement.draft.trim().length === 0
+    && replacement.pendingWaitEventType === undefined
+    && replacement.projectPath === archived.projectPath;
+  return {
+    ...state,
+    activeThreadId: threadId,
+    threads: state.threads
+      .filter((thread) => !canRemoveReplacement || thread.id !== replacement?.id)
+      .map((thread) => thread.id === threadId ? { ...thread, archivedAt: undefined } : thread),
+  };
+}
+
+export function isRendererThreadProjectLocked(
+  thread: Pick<RendererThread, "transcript">,
+  hasAuthoritativeWorkspace = false,
+): boolean {
+  return hasAuthoritativeWorkspace || thread.transcript.some((line) => line.role === "user");
+}
+
+export function getRendererThreadArchiveBlockReason(
+  thread: Pick<RendererThread, "pendingWaitEventType">,
+  input: { runActive: boolean; runtimeWaiting?: boolean | undefined; actionableOperatorRequest: boolean },
+): string | undefined {
+  if (input.runActive) return "Stop the running work before archiving this conversation.";
+  if (thread.pendingWaitEventType !== undefined || input.runtimeWaiting === true) return "Resolve the pending wait before archiving this conversation.";
+  if (input.actionableOperatorRequest) return "Resolve the pending operator request before archiving this conversation.";
+  return undefined;
+}
+
+export function groupRendererThreads(input: {
+  threads: readonly RendererThread[];
+  projects: readonly { path: string; label: string }[];
+  archived: boolean;
+  query?: string | undefined;
+}): RendererThreadGroup[] {
+  const query = input.query?.trim().toLocaleLowerCase() ?? "";
+  const projectByPath = new Map(input.projects.map((project) => [project.path, project]));
+  const matching = input.threads
+    .filter((thread) => (thread.archivedAt !== undefined) === input.archived)
+    .filter((thread) => {
+      if (query.length === 0) return true;
+      const projectLabel = thread.projectPath === undefined
+        ? "No project"
+        : (projectByPath.get(thread.projectPath)?.label ?? "Unavailable project");
+      return thread.title.toLocaleLowerCase().includes(query)
+        || projectLabel.toLocaleLowerCase().includes(query);
+    });
+  const byPath = new Map<string, RendererThread[]>();
+  const noProject: RendererThread[] = [];
+  const unavailable: RendererThread[] = [];
+  for (const thread of matching) {
+    if (thread.projectPath === undefined) noProject.push(thread);
+    else if (projectByPath.has(thread.projectPath)) {
+      const entries = byPath.get(thread.projectPath) ?? [];
+      entries.push(thread);
+      byPath.set(thread.projectPath, entries);
+    } else unavailable.push(thread);
+  }
+  const sortThreads = (threads: RendererThread[]) =>
+    threads.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const registered = input.projects.flatMap<RendererThreadGroup>((project) => {
+    const threads = byPath.get(project.path);
+    return threads === undefined || threads.length === 0 ? [] : [{
+      key: `project:${project.path}`,
+      label: project.label,
+      projectPath: project.path,
+      kind: "project",
+      threads: sortThreads(threads),
+    }];
+  }).sort((left, right) => right.threads[0]!.updatedAt.localeCompare(left.threads[0]!.updatedAt));
+  if (noProject.length > 0) registered.push({
+    key: "no-project",
+    label: "No project",
+    kind: "no-project",
+    threads: sortThreads(noProject),
+  });
+  if (unavailable.length > 0) registered.push({
+    key: "unavailable-project",
+    label: "Unavailable project",
+    kind: "unavailable-project",
+    threads: sortThreads(unavailable),
+  });
+  return registered;
+}
+
+export function normalizeRendererThreadTitle(title: string): string {
+  const trimmed = title.trim();
+  return trimmed.length > MAX_RENDERER_THREAD_TITLE_LENGTH
+    ? `${trimmed.slice(0, MAX_RENDERER_THREAD_TITLE_LENGTH - 3)}...`
+    : trimmed;
+}
+
 export function updateRendererDraft(
   state: DesktopRendererState,
   threadId: string,
@@ -247,6 +417,25 @@ export function updateRendererDraftAttachments(
   attachmentIds: string[],
 ): DesktopRendererState {
   return updateRendererThread(state, threadId, (thread) => ({ ...thread, draftAttachmentIds: attachmentIds }));
+}
+
+export function addRendererDraftAttachment(
+  state: DesktopRendererState,
+  threadId: string,
+  input: { attachmentId: string; generatedDraft?: string | undefined; replaceDraft?: boolean | undefined },
+): DesktopRendererState {
+  return updateRendererThread(state, threadId, (thread) => {
+    if (thread.draftAttachmentIds.includes(input.attachmentId) || thread.draftAttachmentIds.length >= 8) return thread;
+    return {
+      ...thread,
+      draftAttachmentIds: [...thread.draftAttachmentIds, input.attachmentId],
+      draft: input.generatedDraft === undefined
+        ? thread.draft
+        : input.replaceDraft === true || thread.draft.trim().length === 0
+          ? input.generatedDraft
+          : thread.draft,
+    };
+  });
 }
 
 export function acceptRendererPrompt(
@@ -266,31 +455,8 @@ export function acceptRendererPrompt(
 export function resolveRendererThreadProjectPath(input: {
   thread: Pick<RendererThread, "projectPath">;
   authoritativeProjectPath?: string | undefined;
-  activeProjectPath?: string | undefined;
-  projects: readonly { path: string }[];
 }): string | undefined {
-  const registeredPaths = new Set(
-    input.projects.map((project) => project.path),
-  );
-  if (
-    input.authoritativeProjectPath !== undefined &&
-    registeredPaths.has(input.authoritativeProjectPath)
-  ) {
-    return input.authoritativeProjectPath;
-  }
-  if (
-    input.thread.projectPath !== undefined &&
-    registeredPaths.has(input.thread.projectPath)
-  ) {
-    return input.thread.projectPath;
-  }
-  if (
-    input.activeProjectPath !== undefined &&
-    registeredPaths.has(input.activeProjectPath)
-  ) {
-    return input.activeProjectPath;
-  }
-  return input.projects[0]?.path;
+  return input.authoritativeProjectPath ?? input.thread.projectPath;
 }
 
 export function setRendererTheme(
@@ -309,6 +475,12 @@ export function serializeDesktopRendererState(
     id: thread.id,
     title: thread.title,
     updatedAt: thread.updatedAt,
+    ...(thread.archivedAt !== undefined
+      ? { archivedAt: thread.archivedAt }
+      : { archivedAt: undefined }),
+    ...(thread.titleLocked === true
+      ? { titleLocked: true }
+      : { titleLocked: undefined }),
     createdAt:
       typeof thread.rawSummary.createdAt === "string"
         ? thread.rawSummary.createdAt
@@ -550,6 +722,9 @@ function collectThreads(store: {
       if (rawState === undefined || typeof rawState.sessionId !== "string") {
         return [];
       }
+      const sessionId = rawState.sessionId.trim().length > 0
+        ? rawState.sessionId.trim()
+        : crypto.randomUUID();
       const rawSummary = summaries.get(id) ?? {};
       const transcript = Array.isArray(rawState.transcript)
         ? rawState.transcript.flatMap(parseTranscriptLine)
@@ -607,12 +782,16 @@ function collectThreads(store: {
             rawSummary.title.trim().length > 0
               ? rawSummary.title
               : "Conversation",
-          sessionId: rawState.sessionId,
+          sessionId,
           ...(typeof rawState.projectPath === "string" &&
           rawState.projectPath.trim().length > 0
             ? { projectPath: rawState.projectPath.trim() }
             : {}),
           updatedAt,
+          ...(typeof rawSummary.archivedAt === "string" && rawSummary.archivedAt.trim().length > 0
+            ? { archivedAt: normalizeTimestamp(rawSummary.archivedAt) }
+            : {}),
+          ...(rawSummary.titleLocked === true ? { titleLocked: true } : {}),
           transcript,
           ...(typeof rawState.pendingWaitEventType === "string" &&
           rawState.pendingWaitEventType.trim().length > 0
