@@ -684,13 +684,18 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         );
         return;
       } catch (error) {
-        if (
-          !(error instanceof EnvironmentProviderError) ||
-          error.status !== 408 ||
-          Date.now() >= deadline
-        ) {
+        if (!(error instanceof EnvironmentProviderError)) {
           throw error;
         }
+        if (error.status === 409 && Date.now() < deadline) {
+          const machine = await this.getMachine(input);
+          if (machine?.state === input.state) return;
+          if (machine?.state === "replacing") {
+            await this.sleepImpl(MACHINE_START_RETRY_INTERVAL_MS);
+            continue;
+          }
+        }
+        if (error.status !== 408 || Date.now() >= deadline) throw error;
       }
     }
   }
